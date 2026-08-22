@@ -186,7 +186,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const { data: customerPrices } = useCustomerPrices(customerId ?? "");
   const customerTier = customerDetail?.pricingTier ?? 1;
   const cpMap = useMemo(() => {
-    const m = new Map<string, number>();
+    const m = new Map<string, number | null>();
     for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
     return m;
   }, [customerPrices]);

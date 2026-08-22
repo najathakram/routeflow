@@ -109,53 +109,46 @@ Two fixes made by hand after the pipeline (it had deferred to the plan's "no API
 tests pass** · prettier clean. (2562 not 2568 — the extra 6 were the peer's
 `email-smtp-verify.spec.ts`, correctly no longer on this branch.)
 
-### PR-B (MSRP) — IN PROGRESS, work is UNCOMMITTED in the worktree
+### PR-B (MSRP) — ✅ IMPLEMENTED + REVIEWED, PR OPEN, NOT MERGED (2026-08-22)
 
 Branch `feat/msrp-on-invoices` in worktree `.claude/worktrees/msrp`. **Full work-package
 plan (5 WPs, with the exact resolver code and migration SQL):
 `.claude/pipeline/plans/2026-08-22-msrp-on-invoices.md`.** The summary below duplicates its
 key decisions so this file stands alone.
 
-**Status as of 2026-08-22:** a `dev-pipeline` run (5 Sonnet implementers → Opus review) was
-launched and had produced **~32 modified files plus these 5 new ones** before this note was
-written:
+**Finished 2026-08-22 (this session):** completed the pipeline output, sweep-fixed every
+nullable-`pricingTier` caller repo-wide, fixed 8 spec suites' DI (services gained
+`EntitlementsService`/`PlanCatalogService` injections), added the required regression specs
+(msrp-only row is pricing-inert; `applyMsrpSnapshots` flag-off/flag-on), then ran a 3-lens
+Opus review with 2 adversarial refuters per finding (25 agents; 11 findings → 5 confirmed →
+all fixed → fix delta re-verified by an independent Opus pass):
 
-- `apps/api/src/common/msrp.ts` + `msrp.spec.ts` (the resolver)
-- `apps/api/prisma/migrations/20260831000000_add_msrp_pricing/`
-- `apps/api/prisma/publish-plan-catalog-v9.ts`
-- `apps/api/src/products/dto/bulk-set-msrp.dto.ts`
+1. **Entitlements pinned-version fallback** (`entitlements.service.ts compute()`): an addon
+   SKU a tenant's pinned catalog version predates (MSRP ships in v9) now resolves against
+   the published catalog — without it, enabling MSRP on ANY grandfathered tenant granted no
+   flag while the addon-keyed web gates turned on, 403-ing every product save.
+2. **OPERATOR-gated implicit delete** (`customers.service.ts upsertCustomerPrice`): clearing
+   both fields deletes the row, and `POST /:id/prices` admits DRIVER — the delete branch now
+   requires an OPERATOR-satisfying role, matching the OPERATOR-only DELETE route.
+3. **Mobile catalog modal null-tier coercion** (`(operator)/customers/[id]/catalog.tsx`):
+   opening an msrp-only override on mobile and saving silently converted it to a Tier-1
+   override (repricing to list). Modal is now null-aware with a "Default" chip.
 
-> ⚠️ **This work is UNCOMMITTED and UNVERIFIED.** It has not been typechecked, tested,
-> reviewed, or exercised in a browser, and the pipeline's own review/fix rounds may not have
-> finished. **Do not push or open a PR on it as-is.**
->
-> **To resume:** `cd .claude/worktrees/msrp` → `git status` to see the real current state →
-> re-read the plan → finish or re-run the remaining work → then
-> `npm run check-types && npm run lint && npm run test` → commit → PR.
-> `git diff` against `origin/master` (`de557140`) is the source of truth for what changed.
->
-> **Known failure right now** (`npm run check-types`, 1 error — the predicted risk landing
-> exactly where the plan warned):
->
-> ```
-> apps/web/app/(dashboard)/invoices/new/page.tsx(733,46): error TS2345:
->   Argument of type 'number | null' is not assignable to parameter of type 'number'.
-> ```
->
-> Cause: making `CustomerPrice.pricingTier` nullable ripples into every `getTierPrice(...)`
-> caller, and **`invoices/new/page.tsx` was not in any work package's file list**. Fix is the
-> established fallback used everywhere else — `getTierPrice(cp.product, cp.pricingTier ?? customerTier ?? 1)`.
-> **Grep the whole repo for `pricingTier` before declaring this done** — there may be more
-> callers outside the packaged files (mobile `invoices/new.tsx`, `edit-items.tsx`,
-> `NewOrderScreen.tsx` and the buyer services all read it).
->
-> **If the work looks broken or half-applied, throwing it away is cheap and safe**:
-> `git checkout -- . && git clean -fd` in that worktree returns to clean merged master, and
-> the plan file (committed) lets you re-run the pipeline from scratch.
->
-> **Prod is untouched by PR-B** — its migration exists only as a file; nothing has been
-> applied to any database. `20260830000000_payment_method_zelle` (PR-A) is the only migration
-> that has been applied to prod.
+**Gates, all on the final code:** forced typecheck 8/8 workspaces · lint 0 errors ·
+**2598 api + 1175 mobile tests green** · full **15-migration chain replayed clean from an
+empty scratch DB** in `routeflow_postgres` (3× `msrp numeric(10,2)` + nullable
+`pricingTier` verified; scratch dropped; stale `routeflow_dev` untouched). One flaky full-run
+had 4 uploads/compress failures under CPU contention — re-run green twice; not MSRP-related.
+
+> **Prod is untouched by PR-B.** The migration exists only as a file. Deploy runbook, in
+> order: (1) backup → `20260831000000_add_msrp_pricing` to prod via the standard
+> `prod-migrate.mjs` route **BEFORE the merge**; (2) `npm run db:publish:catalog:v9`
+> (idempotent, grandfathering-safe) **BEFORE enabling the msrp addon on any tenant** — the
+> addon-enabled-while-no-catalog-has-the-SKU window still 403s MSRP saves (verified: only
+> MSRP saves; ordinary edits omit the key); (3) merge → Railway deploy; (4) enable the
+> `msrp` addon per tenant in platform-admin. Browser exercise deferred: local dev DB is the
+> known-stale one, and preview tools can't target this worktree — covered instead by unit
+> specs + the review round; exercise on prod/demo after deploy.
 
 **Verified facts (already checked against the code — do not re-research):**
 

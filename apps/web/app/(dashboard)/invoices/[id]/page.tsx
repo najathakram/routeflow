@@ -2275,6 +2275,15 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                               {fmt(Number(item.unitPrice))}
                             </span>
                           )}
+                          {/* Suggested retail price, snapshotted at line creation — appears
+                              regardless of priceType. Keyed off data presence, not the flag,
+                              so an issued invoice keeps rendering it even if the tenant later
+                              loses the MSRP addon. */}
+                          {item.msrp != null && (
+                            <p className="mt-0.5 text-[10px] text-navy/50">
+                              MSRP {fmt(Number(item.msrp))}/pc
+                            </p>
+                          )}
                         </td>
                         <td className="px-8 py-3 text-right">
                           <span className="money text-navy">

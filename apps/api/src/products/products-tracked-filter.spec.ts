@@ -4,6 +4,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { EntitlementsService } from "../billing/entitlements.service";
+import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 /**
@@ -38,6 +40,8 @@ describe("ProductsService.findAll — tracked-category exclusion is NULL-safe", 
         },
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn() } },
       ],
     }).compile();
     service = mod.get(ProductsService);

@@ -1,6 +1,10 @@
 # Plan: MSRP (suggested retail price) on invoices
 
-> Authored by Fable 5 on 2026-08-22. Status: APPROVED
+> Authored by Fable 5 on 2026-08-22. Status: IMPLEMENTED (2026-08-22 — all 5 WPs + review
+> round; gates green: typecheck 8/8, lint 0 errors, 2598 api + 1175 mobile tests, full
+> 15-migration chain replayed clean on a scratch DB. Review confirmed+fixed 3 defects:
+> entitlements pinned-version SKU fallback, OPERATOR-gated implicit delete in
+> upsertCustomerPrice, mobile catalog modal null-tier coercion.)
 > This file is the ONLY context the implementation and review agents receive.
 > It must stand alone: no references to "the conversation", no "as discussed".
 

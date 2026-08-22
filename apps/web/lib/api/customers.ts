@@ -265,7 +265,15 @@ export interface CustomerPrice {
   id: string;
   customerId: string;
   productId: string;
-  pricingTier: number;
+  /**
+   * A row may now be tier-only, MSRP-only, or both — null means "no tier
+   * override" (the customer's default tier applies), not "Tier 0". Every
+   * existing reader already falls back with `?? defaultTier`.
+   */
+  pricingTier: number | null;
+  /** Per-customer MSRP override, per PIECE. null = no override (product default applies).
+   *  Prisma Decimal serializes as a string on the wire. */
+  msrp?: number | string | null;
   notes?: string;
   product?: {
     id: string;
@@ -279,6 +287,7 @@ export interface CustomerPrice {
     priceTier5?: number | string;
     averageCost?: number | string | null;
     unitsPerBox?: number | null;
+    msrp?: number | string | null;
   };
 }
 
@@ -299,7 +308,13 @@ export function useUpsertCustomerPrice() {
     }: {
       customerId: string;
       productId: string;
-      pricingTier: number;
+      /** Explicit null clears the tier override. Omit the key (don't pass undefined
+       *  through) rather than sending it when the caller never touched this field. */
+      pricingTier?: number | null;
+      /** Explicit null clears the MSRP override. Omit the key entirely (never send
+       *  `msrp: undefined`/null) for a tenant without the MSRP addon — the server
+       *  403s on any *present* msrp key when flag.msrp is off. */
+      msrp?: number | null;
       notes?: string;
     }) => apiClient.post(`/customers/${customerId}/prices`, data).then((r) => r.data),
     onSuccess: (_d, vars) => {

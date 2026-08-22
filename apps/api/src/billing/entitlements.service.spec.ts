@@ -183,6 +183,44 @@ describe("EntitlementsService.resolve", () => {
     expect(e.flags).toContain("addon.regulated_items");
   });
 
+  it("falls back to the PUBLISHED catalog for an addon SKU the pinned version predates (MSRP on a grandfathered tenant)", async () => {
+    // Pinned v7 has no MSRP AddonSku row; the SKU first ships in v9. Without the
+    // fallback, enabling the addon grants nothing, the addon-keyed web gates turn
+    // on anyway, and every gated write 403s — the addon would be un-grantable for
+    // every grandfathered tenant.
+    const { svc, catalog } = makeService(
+      tenantFixture({ plan: "STARTER", addons: [{ addonKey: "msrp", sku: "MSRP" }] }),
+    );
+    catalog.getVersionForTenant.mockImplementation(async (pinned: string | null) =>
+      pinned === null
+        ? {
+            ...catalogVersion(),
+            id: "planver_v9",
+            addonSkus: [
+              ...catalogVersion().addonSkus,
+              { sku: "MSRP", meteredKey: null, capacityPerUnit: null, grantsFlags: ["flag.msrp"] },
+            ],
+          }
+        : catalogVersion(),
+    );
+    const e = await svc.resolve("t1");
+    expect(e.addons).toContain("MSRP");
+    expect(e.flags).toContain("flag.msrp");
+    expect(catalog.getVersionForTenant).toHaveBeenCalledWith("planver_v7");
+    expect(catalog.getVersionForTenant).toHaveBeenCalledWith(null);
+  });
+
+  it("never fetches the published catalog when the pinned version already knows every active SKU", async () => {
+    const { svc, catalog } = makeService(
+      tenantFixture({
+        plan: "STARTER",
+        addons: [{ addonKey: "buyer_portal", sku: "BUYER_PORTAL" }],
+      }),
+    );
+    await svc.resolve("t1");
+    expect(catalog.getVersionForTenant).toHaveBeenCalledTimes(1);
+  });
+
   it("treats Enterprise caps as unlimited (null), even with capacity add-ons", async () => {
     const { svc } = makeService(
       tenantFixture({

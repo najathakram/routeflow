@@ -16,6 +16,12 @@ import { checkBadgeFor } from "../../../lib/check-badge";
 import { formatPaymentMethod, paymentRowFlags } from "../../../lib/buyer-payments-logic";
 import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 
+// buyer.ts's BuyerInvoiceItem doesn't declare `msrp` yet even though the
+// server now snapshots it onto every InvoiceItem (display-only, per PIECE)
+// and GET /buyer/invoices/:id returns it already. Widen locally rather than
+// touching buyer.ts's canonical type (out of scope for this change).
+type ItemMsrpField = { msrp?: number | null };
+
 function invoicePill(status: string, isOverdue?: boolean) {
   if (isOverdue) return { variant: "gray" as const, label: "Overdue" };
   switch (status) {
@@ -228,6 +234,7 @@ export default function CustomerInvoiceDetailScreen() {
 function LineItemRow({ item, last }: { item: BuyerInvoiceItem; last: boolean }) {
   const label = item.product?.name ?? item.description;
   const unit = item.product?.unit;
+  const itemMsrp = (item as typeof item & ItemMsrpField).msrp;
   return (
     <View style={[styles.itemRow, last && { borderBottomWidth: 0 }]}>
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -239,6 +246,10 @@ function LineItemRow({ item, last }: { item: BuyerInvoiceItem; last: boolean }) 
           {unit ? ` / ${unit}` : ""}
           {item.discount ? ` − $${Number(item.discount).toFixed(2)} disc` : ""}
         </Text>
+        {/* Suggested retail price snapshot — per PIECE, display-only. */}
+        {itemMsrp != null ? (
+          <Text style={styles.itemMsrp}>MSRP ${Number(itemMsrp).toFixed(2)}/pc</Text>
+        ) : null}
         {/* BUY_N_GET_M: name the free units, or the reduced line subtotal
             reads as a pricing error (web parity). */}
         {freeUnitsLabel(item.promoFreeUnits) ? (
@@ -322,6 +333,7 @@ const styles = StyleSheet.create({
   },
   itemName: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
   itemMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  itemMsrp: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label3, marginTop: 2 },
   itemFreeLabel: {
     fontSize: 11,
     fontFamily: "Inter_600SemiBold",

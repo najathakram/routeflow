@@ -18,6 +18,8 @@ import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { PlanFlagGuard } from "../billing/plan-flag.guard";
+import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { ProductsService } from "./products.service";
 import { CreateProductDto } from "./dto/create-product.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
@@ -25,6 +27,7 @@ import { ListProductsDto } from "./dto/list-products.dto";
 import { ImportProductsDto } from "./dto/import-products.dto";
 import { BulkAssignParentDto } from "./dto/bulk-assign-parent.dto";
 import { BulkDeleteProductsDto } from "./dto/bulk-delete-products.dto";
+import { BulkSetMsrpDto } from "./dto/bulk-set-msrp.dto";
 
 @Controller("products")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -75,6 +78,18 @@ export class ProductsController {
   @Roles(UserRole.OPERATOR)
   bulkAssignParent(@Body() dto: BulkAssignParentDto) {
     return this.productsService.bulkAssignParent(dto);
+  }
+
+  // Must be declared before :id to avoid route collision. The primary MSRP
+  // bulk-edit path — gated on flag.msrp itself (unlike create/update, which
+  // gate only when the DTO carries an msrp key, this route has no other
+  // purpose a flag-less tenant needs).
+  @Post("msrp/bulk")
+  @Roles(UserRole.OPERATOR)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.msrp")
+  bulkSetMsrp(@Body() dto: BulkSetMsrpDto) {
+    return this.productsService.bulkSetMsrp(dto);
   }
 
   // Must be declared before :id to avoid route collision

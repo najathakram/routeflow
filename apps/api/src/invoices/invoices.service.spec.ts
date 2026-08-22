@@ -32,6 +32,7 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
+import { EntitlementsService } from "../billing/entitlements.service";
 import { CheckStatus, InvoiceStatus, NotificationEvent } from "@prisma/client";
 import { computeLineSubtotal, roundMoney } from "../common/pricing";
 
@@ -76,8 +77,15 @@ describe("InvoicesService", () => {
     delete: jest.fn().mockResolvedValue(undefined),
   };
 
+  // flag.msrp — reset to OFF in beforeEach; MSRP snapshot tests flip it ON.
+  const mockEntitlements = {
+    hasFlag: jest.fn().mockResolvedValue(false),
+  };
+
   beforeEach(async () => {
     prisma = createMockPrisma();
+    mockEntitlements.hasFlag.mockReset();
+    mockEntitlements.hasFlag.mockResolvedValue(false);
     mockMessaging.notify.mockClear();
     mockMessaging.notifyEvent.mockClear();
     mockCreditNotes.autoApplyOldestCreditsInTx.mockClear();
@@ -122,10 +130,55 @@ describe("InvoicesService", () => {
         { provide: CreditNotesService, useValue: mockCreditNotes },
         { provide: MessagingService, useValue: mockMessaging },
         { provide: StorageService, useValue: mockStorage },
+        // flag.msrp defaults OFF so applyMsrpSnapshots is a no-op — the
+        // pre-MSRP tests keep their exact write shapes (msrp stays null).
+        { provide: EntitlementsService, useValue: mockEntitlements },
       ],
     }).compile();
 
     service = module.get<InvoicesService>(InvoicesService);
+  });
+
+  // ─── MSRP snapshots — applyMsrpSnapshots stamps lines at creation time ─────
+
+  describe("MSRP snapshots (applyMsrpSnapshots)", () => {
+    const stamp = (items: Array<{ productId?: string | null; msrp?: number | null }>) =>
+      (service as any).applyMsrpSnapshots(prisma.forTenant(), "cust-1", items);
+
+    it("no-ops (never even queries) when the tenant lacks flag.msrp", async () => {
+      mockEntitlements.hasFlag.mockResolvedValue(false);
+      const items = [{ productId: "p1", msrp: null }];
+
+      await stamp(items);
+
+      expect(items[0].msrp).toBeNull();
+      expect(prisma.product.findMany).not.toHaveBeenCalled();
+      expect(prisma.customerPrice.findMany).not.toHaveBeenCalled();
+    });
+
+    it("stamps the resolved MSRP per line when flag.msrp is on — customer override beats product default, productless lines untouched", async () => {
+      mockEntitlements.hasFlag.mockResolvedValue(true);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "p1", msrp: 7.5 }, // product default only
+        { id: "p2", msrp: 4 }, // overridden per-customer below
+        { id: "p3", msrp: null }, // no MSRP anywhere
+      ]);
+      prisma.customerPrice.findMany.mockResolvedValue([{ productId: "p2", msrp: 3.25 }]);
+      const items = [
+        { productId: "p1", msrp: null },
+        { productId: "p2", msrp: null },
+        { productId: "p3", msrp: null },
+        { productId: null, msrp: null }, // NSF-style productless line
+      ];
+
+      await stamp(items);
+
+      expect(items[0].msrp).toBe(7.5);
+      expect(items[1].msrp).toBe(3.25);
+      expect(items[2].msrp).toBeNull();
+      expect(items[3].msrp).toBeNull();
+      expect(mockEntitlements.hasFlag).toHaveBeenCalledWith("test-tenant", "flag.msrp");
+    });
   });
 
   // ─── RF-011: duplicate() must reject order-linked invoices ─────────────────

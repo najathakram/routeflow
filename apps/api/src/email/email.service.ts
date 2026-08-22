@@ -639,7 +639,14 @@ export class EmailService {
     issueDate: string;
     dueDate: string;
     total: number;
-    items: { description: string; qty: number; unitPrice: number; subtotal: number }[];
+    items: {
+      description: string;
+      qty: number;
+      unitPrice: number;
+      subtotal: number;
+      /** Suggested retail price snapshot, per PIECE — display-only, null renders nothing. */
+      msrp?: number | null;
+    }[];
     pdfUrl?: string;
     isReminder?: boolean;
   }) {
@@ -803,7 +810,14 @@ export class EmailService {
       issueDate: string;
       dueDate: string;
       total: number;
-      items: { description: string; qty: number; unitPrice: number; subtotal: number }[];
+      items: {
+        description: string;
+        qty: number;
+        unitPrice: number;
+        subtotal: number;
+        /** Suggested retail price snapshot, per PIECE — display-only, null renders nothing. */
+        msrp?: number | null;
+      }[];
       pdfUrl?: string;
       isReminder?: boolean;
     },
@@ -818,7 +832,11 @@ export class EmailService {
         <tr>
           <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;">${it.description}</td>
           <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;text-align:center;">${it.qty}</td>
-          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;text-align:right;">${fmt(it.unitPrice)}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;text-align:right;">${fmt(it.unitPrice)}${
+            it.msrp != null
+              ? `<div style="font-size:11px;color:#9ca3af;font-weight:400;margin-top:2px;">MSRP ${fmt(it.msrp)}/pc</div>`
+              : ""
+          }</td>
           <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;text-align:right;font-weight:600;">${fmt(it.subtotal)}</td>
         </tr>`,
       )

@@ -13,14 +13,19 @@ import { StorageService } from "../storage/storage.service";
 import { compressImage } from "../storage/compress.util";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { EntitlementsService } from "../billing/entitlements.service";
+import { PlanCatalogService } from "../billing/plan-catalog.service";
+import { buildPlanGateBody } from "../billing/plan-gate";
 import { CreateProductDto } from "./dto/create-product.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
 import { BulkAssignParentDto } from "./dto/bulk-assign-parent.dto";
+import { BulkSetMsrpDto } from "./dto/bulk-set-msrp.dto";
 import { ListProductsDto, StockStatusFilter } from "./dto/list-products.dto";
 import { ImportProductsDto } from "./dto/import-products.dto";
 import { isValidItemType, isValidUom, templateByKey } from "../regulated/template-registry";
 import { normalizeScanCode, pickBestScanMatch } from "../common/barcode-normalize";
 import { buildScanSearchOr } from "./scan-search";
+import { isMsrpBelowWholesale, wholesalePerPiece } from "../common/msrp";
 
 /** `-fp50x40` → focal point 50% across, 40% down. Omitted if focal is centre. */
 function encodeFocalSuffix(focal?: { x: number; y: number }): string {
@@ -36,6 +41,20 @@ function clampPct(n: number): number {
   if (n < 0) return 0;
   if (n > 100) return 100;
   return Math.round(n);
+}
+
+/**
+ * MSRP writes are normalized before they reach Prisma: 0, negative, and
+ * non-numeric decimal strings are never stored — a "$0.00" MSRP must render
+ * blank per the resolver's contract (common/msrp.ts), so it can't be allowed
+ * to reach the column at all. `undefined` (key not sent) passes through so
+ * Prisma leaves the column untouched.
+ */
+function normalizeMsrpForWrite(v: string | null | undefined): string | null | undefined {
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? v : null;
 }
 
 /**
@@ -57,7 +76,28 @@ export class ProductsService {
     private readonly storage: StorageService,
     private readonly addonService: AddonService,
     private readonly systemConfig: SystemConfigService,
+    private readonly entitlements: EntitlementsService,
+    private readonly planCatalog: PlanCatalogService,
   ) {}
+
+  /**
+   * MSRP writes are flag-gated INSIDE the service, not on the whole route —
+   * gating the whole create/update PATCH would 403 an ordinary product edit for
+   * a tenant that never touches MSRP. Callers only invoke this when the DTO
+   * actually carries an `msrp` key.
+   */
+  private async assertMsrpAllowed(): Promise<void> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return; // no tenant context (e.g. SUPER_ADMIN) — nothing to gate
+    if (await this.entitlements.hasFlag(tenantId, "flag.msrp")) return;
+    const upgrade = await this.planCatalog.upgradeTargetForFlag("flag.msrp").catch(() => ({
+      planKey: null,
+      planMonthlyPrice: null,
+      addonSku: null,
+      addonMonthlyPrice: null,
+    }));
+    throw new ForbiddenException(buildPlanGateBody("flag.msrp", upgrade));
+  }
 
   /**
    * The costing method a NEW product should use (pos-cost-roles-spec §1): an
@@ -386,6 +426,7 @@ export class ProductsService {
 
   async create(dto: CreateProductDto) {
     await this.assertCanFlagTobacco(dto.isTobacco);
+    if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     // Name uniqueness is scoped by parent, matching the partial unique
     // indexes in the DB (see prisma/migrations/.../variant_name_per_parent).
     //   - Standalone product → unique among other STANDALONE products.
@@ -550,6 +591,9 @@ export class ProductsService {
           ? (dto.costingMethod ?? parent.costingMethod)
           : await this.resolveCostingMethod(dto.costingMethod),
         standardCost: dto.standardCost ?? parent?.standardCost?.toString(),
+        // MSRP (suggested retail price) — per PIECE, display-only, never money math.
+        // 0/negative are normalized to null (never rendered as $0.00).
+        msrp: normalizeMsrpForWrite(dto.msrp),
         unitsPerBox: dto.unitsPerBox ?? parent?.unitsPerBox ?? undefined,
         parentProductId: dto.parentProductId ?? null,
         variantName: dto.variantName ?? null,
@@ -565,6 +609,7 @@ export class ProductsService {
 
   async update(id: string, dto: UpdateProductDto) {
     await this.assertCanFlagTobacco(dto.isTobacco);
+    if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     const existing = await this.findOne(id);
     if (dto.name || dto.parentProductId !== undefined) {
       // The product's effective parent is the dto value if provided (could be
@@ -727,9 +772,60 @@ export class ProductsService {
       // force it back to the synced name rather than letting it desync.
       data.category = existing.trackedSubcategory?.name ?? null;
     }
+    // MSRP: normalize 0/negative to null even though the spread already carries
+    // dto.msrp through — a bare "0" decimal string must never persist.
+    if (dto.msrp !== undefined) {
+      data.msrp = normalizeMsrpForWrite(dto.msrp);
+    }
     return this.prisma.forTenant().product.update({
       where: { id },
       data,
+    });
+  }
+
+  /**
+   * POST /products/msrp/bulk — the primary MSRP bulk-edit path (mirrors
+   * bulkSetCostBasis: validate every id belongs to the tenant, then one
+   * tenantTransaction). The route itself is gated by @RequirePlanFlag —
+   * unlike create/update this endpoint has no OTHER purpose a flag-less
+   * tenant needs, so gating the whole route (rather than per-field) is correct
+   * here. Returns warnings (never blocks) for rows whose new MSRP undercuts the
+   * product's wholesale per-piece price.
+   */
+  async bulkSetMsrp(dto: BulkSetMsrpDto) {
+    const productIds = Array.from(new Set(dto.items.map((i) => i.productId)));
+    const products = await this.prisma.forTenant().product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, pricePerUnit: true, unitsPerBox: true },
+    });
+    const productMap = new Map(products.map((p) => [p.id, p]));
+    const missing = productIds.filter((id) => !productMap.has(id));
+    if (missing.length > 0) {
+      throw new NotFoundException({
+        message: "One or more products could not be found",
+        missingProductIds: missing,
+      });
+    }
+
+    return this.prisma.tenantTransaction(async (tx) => {
+      let updated = 0;
+      const warnings: Array<{ productId: string; msrp: number; wholesalePerPiece: number }> = [];
+      for (const item of dto.items) {
+        const normalized = normalizeMsrpForWrite(item.msrp == null ? null : String(item.msrp));
+        await tx.product.update({ where: { id: item.productId }, data: { msrp: normalized } });
+        updated++;
+        if (normalized != null) {
+          const product = productMap.get(item.productId)!;
+          if (isMsrpBelowWholesale(normalized, product.pricePerUnit, product.unitsPerBox)) {
+            warnings.push({
+              productId: item.productId,
+              msrp: Number(normalized),
+              wholesalePerPiece: wholesalePerPiece(product.pricePerUnit, product.unitsPerBox) ?? 0,
+            });
+          }
+        }
+      }
+      return { updated, warnings };
     });
   }
 

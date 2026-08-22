@@ -499,6 +499,17 @@ status:"ISSUED"})` never runs unscoped; filters via `isCreditOpenForApply`; full
   and `(customer)/invoices/[id].tsx`. Gated on `item.msrp != null`, not on the addon flag. **v1 is
   display-only on mobile** — no MSRP editing here (product form and the per-customer override stay
   web-only); MSRP is per PIECE and never enters money math, so `lib/pricing.ts` is untouched.
+  Nullable-tier sweep (2026-08-22): `lib/api/customers.ts` `CustomerPrice.pricingTier` is
+  `number | null`; the three cart cpMaps (`orders/[id]/edit-items.tsx`, `invoices/new.tsx`,
+  `NewOrderScreen.tsx`) are `Map<string, number | null>` (consumption `?? customerTier ?? 1` was
+  already safe); `customers/[id]/catalog.tsx` now loads `useCustomer` for the default tier — an
+  msrp-only row shows a "Default" badge and prices at the customer's default tier instead of
+  passing `null` into `getTierPrice` (which silently priced at list). The edit modal is null-aware
+  too: tier state is `number | null` seeded `existing.pricingTier ?? null` (⚠️ the old `?? 1` seed
+  silently converted an msrp-only row into a Tier-1 override on save — review-confirmed money bug),
+  with a "Default" chip offered only when the row keeps an MSRP (`allowNoTier`); new overrides
+  still require a tier, and tier-only rows can't be nulled from mobile (that would be a server-side
+  delete — mobile deletes via the trash icon only).
 - **`lib/payment-methods.ts`** (new 2026-08-21) — **THE single source for payment-method lists in
   mobile.** `SELECTABLE_PAYMENT_METHODS` (`CASH,CHECK,ZELLE,ACH,CREDIT_CARD,OTHER`),
   `SELECTABLE_METHOD_OPTIONS` (`{id,label}[]`, ready for the chip rows every payment screen

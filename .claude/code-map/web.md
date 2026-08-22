@@ -78,6 +78,9 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   of that tab** (shipped in #408; it is the fix for operators not finding the customer-wide tier).
   Types in `lib/api/{products,invoices,customers}.ts`; `CustomerPrice.pricingTier` is now
   `number | null` — every `getTierPrice(...)` caller needs its `?? customerTier ?? 1` fallback.
+  Swept 2026-08-22: `invoices/new/page.tsx` priceMap (falls back to `customer?.pricingTier`),
+  `orders/[id]/page.tsx` cpMap and `orders/_components/CreateOrderModal.tsx` cpMap (both
+  `Map<string, number | null>`; their `.get(id) ?? customerTier` consumption was already null-safe).
   Admin toggle: `(platform-admin)/admin/tenants/[id]/page.tsx` `AVAILABLE_ADDONS` += `msrp`.
 - **`lib/payment-methods.ts`** (new 2026-08-21) — **THE single source for payment-method lists in web.**
   `SELECTABLE_PAYMENT_METHODS` (`CASH,CHECK,ZELLE,ACH,CREDIT_CARD,OTHER` — pickers) vs

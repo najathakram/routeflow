@@ -171,11 +171,29 @@ export class EntitlementsService {
       CUSTOMERS: 0,
     };
 
+    // An addon SKU introduced in a LATER catalog version than the tenant's
+    // pinned one (e.g. MSRP, first published in v9) has no row in the pinned
+    // catalog — without a fallback, enabling that addon would grant nothing
+    // for every grandfathered tenant, while the addon-keyed UI gates turn on
+    // and each gated write 403s. Pinning protects plan PRICING; it must not
+    // make newer addons un-grantable. Resolved lazily: the published catalog
+    // is only fetched when a pinned catalog actually misses a code.
+    let publishedSkuByCode: Map<string, (typeof version.addonSkus)[number]> | null = null;
     for (const addon of tenant.addons) {
       const code = addonSkuCode(addon);
       if (!code) continue;
       activeCodes.push(code);
-      const meta = skuByCode.get(code);
+      let meta = skuByCode.get(code);
+      if (!meta) {
+        if (!publishedSkuByCode) {
+          const published = await this.catalog.getVersionForTenant(null);
+          publishedSkuByCode =
+            published.id === version.id
+              ? new Map()
+              : new Map(published.addonSkus.map((s) => [s.sku, s]));
+        }
+        meta = publishedSkuByCode.get(code);
+      }
       if (!meta) continue;
       for (const flag of meta.grantsFlags) flags.add(flag);
       if (meta.meteredKey && meta.capacityPerUnit) {
