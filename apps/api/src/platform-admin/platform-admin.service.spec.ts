@@ -6,6 +6,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { BillingService } from "../billing/billing.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
+import { PlatformPricingService } from "../billing/platform-pricing.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { MeterService } from "../billing/meter.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
@@ -27,6 +28,7 @@ describe("PlatformAdminService — audit provenance", () => {
   let planCatalogService: { getPublishedVersion: jest.Mock };
   let entitlementsService: { resolve: jest.Mock };
   let meterService: { readAll: jest.Mock };
+  let platformPricingService: { resolveTenantPricing: jest.Mock };
 
   const ADMIN_ID = "super-1";
   const TENANT_ID = "tenant-1";
@@ -45,6 +47,7 @@ describe("PlatformAdminService — audit provenance", () => {
     planCatalogService = { getPublishedVersion: jest.fn().mockResolvedValue(null) };
     entitlementsService = { resolve: jest.fn() };
     meterService = { readAll: jest.fn() };
+    platformPricingService = { resolveTenantPricing: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -61,6 +64,7 @@ describe("PlatformAdminService — audit provenance", () => {
           useValue: { createCheckoutSession: jest.fn().mockRejectedValue(new Error("no stripe")) },
         },
         { provide: PlanCatalogService, useValue: planCatalogService },
+        { provide: PlatformPricingService, useValue: platformPricingService },
         { provide: EntitlementsService, useValue: entitlementsService },
         { provide: MeterService, useValue: meterService },
         { provide: TenantStatusGuard, useValue: { invalidate: jest.fn() } },

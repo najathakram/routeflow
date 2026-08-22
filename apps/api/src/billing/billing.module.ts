@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { StripeService } from "./stripe.service";
 import { BillingService } from "./billing.service";
+import { PlatformPricingService } from "./platform-pricing.service";
 import { AddonService } from "./addon.service";
 import { AddonGuard } from "./addon.guard";
 import { BillingController } from "./billing.controller";
@@ -29,6 +30,7 @@ import { EntitlementsModule } from "./entitlements.module";
   providers: [
     StripeService,
     BillingService,
+    PlatformPricingService,
     AddonService,
     AddonGuard,
     ProrationService,
@@ -38,6 +40,13 @@ import { EntitlementsModule } from "./entitlements.module";
     BillingCronService,
     MrrService,
   ],
-  exports: [StripeService, BillingService, AddonService, AddonGuard, EntitlementsModule],
+  exports: [
+    StripeService,
+    BillingService,
+    PlatformPricingService,
+    AddonService,
+    AddonGuard,
+    EntitlementsModule,
+  ],
 })
 export class BillingModule {}
