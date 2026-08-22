@@ -493,6 +493,12 @@ status:"ISSUED"})` never runs unscoped; filters via `isCreditOpenForApply`; full
 
 ### Wave 3 2026-08-12 — payments at the door (mobile-first program)
 
+- **MSRP display (2026-08-22, PR-B — ⚠️ IN FLIGHT on `feat/msrp-on-invoices`, NOT on master)** —
+  read-only mirror of web's invoice sub-line: `InvoiceItem.msrp` in `lib/api/invoices.ts`, rendered
+  as a muted `MSRP $X.XX/pc` under the `qty × price` line on `(operator)/(tabs)/invoices/[id].tsx`
+  and `(customer)/invoices/[id].tsx`. Gated on `item.msrp != null`, not on the addon flag. **v1 is
+  display-only on mobile** — no MSRP editing here (product form and the per-customer override stay
+  web-only); MSRP is per PIECE and never enters money math, so `lib/pricing.ts` is untouched.
 - **`lib/payment-methods.ts`** (new 2026-08-21) — **THE single source for payment-method lists in
   mobile.** `SELECTABLE_PAYMENT_METHODS` (`CASH,CHECK,ZELLE,ACH,CREDIT_CARD,OTHER`),
   `SELECTABLE_METHOD_OPTIONS` (`{id,label}[]`, ready for the chip rows every payment screen

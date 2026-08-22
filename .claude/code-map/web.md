@@ -63,6 +63,22 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 - **`lib/socket.ts`** — Socket.io singleton, token auth, reconnect.
 - **`lib/auth-keys.ts`** — `OP_KEYS`/`BUYER_KEYS`/`DRIVER_KEYS` (prevent cross-context token bleed).
 - **`lib/page-title-context.tsx`** — `usePageTitle()`.
+- **MSRP surfaces (2026-08-22, PR-B — ⚠️ IN FLIGHT on `feat/msrp-on-invoices`, NOT on master).**
+  Suggested-retail price, **per PIECE** (`MSRP $X.XX/pc`), display-only — it never enters any
+  money calculation. **Read surfaces key off `item.msrp != null`, NOT off the addon flag**, so an
+  invoice issued while the feature was on keeps rendering correctly if the tenant later loses it:
+  `invoices/[id]/page.tsx` (a muted sub-line under Unit Price, across every `priceType` branch)
+  and `buyer/portal/[seller]/invoices/[id]/page.tsx`. **Entry surfaces are flag-gated**
+  (`useHasAddon(MSRP_ADDON)`, `MSRP_ADDON = "msrp"` in `lib/api/addons.ts`):
+  `products/[id]/page.tsx` (field + an amber below-wholesale warning that warns and never blocks),
+  `products/page.tsx` (an MSRP column on the generic `QuickEditCell` — the primary bulk-edit path,
+  same wiring as `priceTier2..5`), and the customers Special Prices tab
+  (`customers/[id]/page.tsx`), where a row may now be tier-only, MSRP-only, or both — render the
+  tier badge only when `pricingTier != null`. ⚠️ **Keep the "Default Pricing Tier" card at the top
+  of that tab** (shipped in #408; it is the fix for operators not finding the customer-wide tier).
+  Types in `lib/api/{products,invoices,customers}.ts`; `CustomerPrice.pricingTier` is now
+  `number | null` — every `getTierPrice(...)` caller needs its `?? customerTier ?? 1` fallback.
+  Admin toggle: `(platform-admin)/admin/tenants/[id]/page.tsx` `AVAILABLE_ADDONS` += `msrp`.
 - **`lib/payment-methods.ts`** (new 2026-08-21) — **THE single source for payment-method lists in web.**
   `SELECTABLE_PAYMENT_METHODS` (`CASH,CHECK,ZELLE,ACH,CREDIT_CARD,OTHER` — pickers) vs
   `ALL_PAYMENT_METHODS` (+`CREDIT_NOTE`,`ADVANCE` — display/filters ONLY; the server rejects
