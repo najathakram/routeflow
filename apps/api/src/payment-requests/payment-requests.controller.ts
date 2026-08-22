@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
-import { IsOptional, IsString, MaxLength } from "class-validator";
-import { UserRole } from "@prisma/client";
+import { IsEnum, IsOptional, IsString, MaxLength } from "class-validator";
+import { BuyerPaymentRequestStatus, UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -11,6 +11,13 @@ import { PaymentRequestsService } from "./payment-requests.service";
 
 class RejectPaymentRequestDto {
   @IsOptional() @IsString() @MaxLength(300) reason?: string;
+}
+
+export class ListPaymentRequestsDto {
+  /** class-validator rejects anything outside the enum with a 400 — a raw
+   * `@Query("status") status?: string` would otherwise pass a garbage value
+   * straight into a Prisma `where.status` and 500. */
+  @IsOptional() @IsEnum(BuyerPaymentRequestStatus) status?: BuyerPaymentRequestStatus;
 }
 
 /**
@@ -29,11 +36,8 @@ export class PaymentRequestsController {
 
   @Get()
   @ApiOperation({ summary: "Buyer payment requests, with allocation preview on pending ones" })
-  list(@Query("status") status?: string) {
-    // Whitelist rather than pass through: an arbitrary string reaches a Prisma
-    // enum filter and 500s (review finding). Unknown values read as "all".
-    const VALID = ["PENDING", "APPROVED", "REJECTED", "CANCELLED", "FAILED", "EXPIRED"];
-    return this.payments.listForTenant(status && VALID.includes(status) ? status : undefined);
+  list(@Query() query: ListPaymentRequestsDto) {
+    return this.payments.listForTenant(query.status);
   }
 
   @Post(":id/approve")
