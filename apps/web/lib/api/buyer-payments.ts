@@ -22,9 +22,15 @@ export type BuyerPaymentRequestKind = "CARD" | "CASH";
 
 export type BuyerPaymentRequestStatus =
   | "PENDING"
+  /** Claimed by the webhook and writing the InvoicePayment — never cancellable,
+   *  always transient (flips to SETTLED in the same handler run). */
+  | "SETTLING"
+  | "SETTLED"
   | "APPROVED"
   | "REJECTED"
   | "FAILED"
+  /** checkout.session.expired flipped a CARD request here — not blocking, the
+   *  buyer can start a new request immediately (see MakePaymentPanel). */
   | "EXPIRED"
   | "CANCELLED";
 
@@ -46,7 +52,14 @@ export interface BuyerPaymentContext {
   balanceDue: number;
   cardEnabled: boolean;
   openInvoices: BuyerPaymentAllocationLine[];
-  /** Always PENDING — a buyer can only have one open request at a time. */
+  /** PENDING or SETTLING — a buyer can only have one open request at a time
+   *  (enforced server-side by a partial unique index that excludes EXPIRED,
+   *  so an expired request never blocks starting a new one). When nothing is
+   *  open, the API instead returns the buyer's most recent request IF it
+   *  EXPIRED in the last 24h and nothing has happened since — not a blocker,
+   *  just the notice MakePaymentPanel turns into "your payment link expired /
+   *  start again". Older expiries are withheld server-side so an abandoned
+   *  Checkout doesn't hide the amount form on every visit thereafter. */
   pendingRequests: BuyerPaymentRequestRow[];
 }
 

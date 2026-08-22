@@ -45,6 +45,24 @@ export class StripeConnectController {
 }
 
 /**
+ * Fixed set of user-safe messages for every code `StripeConnectService.
+ * completeOAuth` can throw (invariant 12) — the public callback must NEVER
+ * reflect internal exception text (Stripe SDK errors, raw jwt failures,
+ * anything else unexpected) into the redirect URL. A code that isn't in this
+ * table — including anything not thrown by `completeOAuth` at all — falls
+ * back to the generic message below rather than being echoed verbatim.
+ */
+const OAUTH_ERROR_MESSAGES: Record<string, string> = {
+  state_expired: "That connect link expired — start again from Settings.",
+  state_invalid: "That connect link wasn't valid — start again from Settings.",
+  state_replayed: "That connect link was already used — start again from Settings.",
+  tenant_not_found: "We couldn't find your account — start again from Settings.",
+  stripe_exchange_failed: "Stripe rejected the connect code — try linking again.",
+  account_missing: "Stripe did not return an account — try linking again.",
+};
+const OAUTH_GENERIC_ERROR = "Could not connect Stripe — try again from Settings.";
+
+/**
  * The OAuth return leg. Stripe redirects the operator's BROWSER here, without
  * our auth headers, so this controller is public — the signed `state` (verified
  * in the service) is the sole authority for which tenant gets linked. On any
@@ -60,16 +78,17 @@ export class StripeConnectCallbackController {
     @Query("code") code: string | undefined,
     @Query("state") state: string | undefined,
     @Query("error") error: string | undefined,
-    @Query("error_description") errorDescription: string | undefined,
     @Res() res: Response,
   ) {
     const webUrl = (process.env.WEB_URL ?? "https://www.routeflow.info").replace(/\/$/, "");
     const back = (params: Record<string, string>) =>
       `${webUrl}/settings?${new URLSearchParams(params).toString()}`;
 
-    // The operator clicked "cancel" on Stripe's screen, or Stripe refused.
+    // The operator clicked "cancel" on Stripe's screen, or Stripe refused —
+    // never reflect Stripe's own `error`/`error_description` query params
+    // verbatim into our redirect (invariant 12: fixed, user-safe copy only).
     if (error || !code || !state) {
-      res.redirect(back({ stripe: "error", reason: errorDescription ?? error ?? "missing_code" }));
+      res.redirect(back({ stripe: "error", reason: OAUTH_GENERIC_ERROR }));
       return;
     }
     try {
@@ -78,11 +97,11 @@ export class StripeConnectCallbackController {
         back({ stripe: "connected", charges: result.chargesEnabled ? "enabled" : "pending" }),
       );
     } catch (err) {
-      const reason =
-        err instanceof BadRequestException
-          ? ((err.getResponse() as any)?.message ?? "failed")
-          : "failed";
-      res.redirect(back({ stripe: "error", reason: String(reason).slice(0, 180) }));
+      const code2 =
+        err instanceof BadRequestException ? String((err.getResponse() as any)?.message ?? "") : "";
+      res.redirect(
+        back({ stripe: "error", reason: OAUTH_ERROR_MESSAGES[code2] ?? OAUTH_GENERIC_ERROR }),
+      );
     }
   }
 }
