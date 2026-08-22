@@ -321,28 +321,23 @@ export class StripeConnectService {
    * `updateMany` (not `update`) on purpose — one business may run two
    * tenants off one Stripe account.
    */
-  async applyAccountUpdate(
-    accountRef: string,
-    capabilities: { chargesEnabled: boolean; detailsSubmitted: boolean },
-    eventCreatedAt: Date,
-  ): Promise<boolean> {
+  async applyAccountUpdate(accountRef: string): Promise<boolean> {
     if (!accountRef) return false;
-    const lastApplied = await this.prisma.stripeConnectEvent.findFirst({
-      where: { accountRef, type: "account.updated", outcome: "applied" },
-      orderBy: { createdAt: "desc" },
-    });
-    if (lastApplied && lastApplied.createdAt >= eventCreatedAt) {
-      this.logger.log(
-        `Stale account.updated for ${accountRef} (event ${eventCreatedAt.toISOString()} <= ` +
-          `last-applied ${lastApplied.createdAt.toISOString()}) — skipping`,
-      );
-      return false;
-    }
+    // The event is a TRIGGER, never a data source. Stripe delivers
+    // account.updated out of order and retries failed deliveries for days —
+    // during the #400 rawBody outage a Restricted-era retry backlog built up,
+    // and one stale snapshot disabled card payments for a fully-live account
+    // (2026-08-22 incident). Ledger-ordering guards can't close that hole
+    // either (a cold-start ledger has no baseline), so the only robust
+    // pattern is Stripe's own recommendation: retrieve the account's CURRENT
+    // state and persist that. Idempotent and order-proof by construction.
+    // A retrieve failure throws — the controller 500s and Stripe redelivers.
+    const snapshot = await this.oauth.retrieveAccount(accountRef);
     await this.prisma.tenantStripeConnect.updateMany({
       where: { stripeAccountId: accountRef, disconnectedAt: null },
       data: {
-        chargesEnabled: capabilities.chargesEnabled,
-        detailsSubmitted: capabilities.detailsSubmitted,
+        chargesEnabled: snapshot.chargesEnabled,
+        detailsSubmitted: snapshot.detailsSubmitted,
       },
     });
     return true;
