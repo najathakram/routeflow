@@ -576,7 +576,7 @@ function Header({
         >
           <Search className="h-[15px] w-[15px]" />
           <span>{t("topbar.searchPlaceholder")}</span>
-          <kbd className="ml-auto inline-flex h-5 items-center rounded-[5px] border border-line-strong border-b-2 bg-paper px-1.5 font-mono text-[11px] text-ink-500">
+          <kbd className="ml-auto inline-flex h-5 items-center rounded-[5px] border border-line-strong bg-paper px-1.5 font-mono text-[11px] text-ink-500">
             ⌘K
           </kbd>
         </button>
