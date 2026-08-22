@@ -371,7 +371,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
     Web-side twin of (2): `TenantPricingCard` prefills its inputs from the **raw override columns**
     the endpoint returns, never the resolved figures — blanking the annual input makes the next
     save send `annual: null` and destroy the negotiated price. Migration
-    `20260827000000_tenant_price_override` adds
+    `20260829000000_tenant_price_override` adds
     three additive columns to `TenantSubscription`: `priceOverrideMonthly` /
     `priceOverrideAnnual` (Decimal(10,2), null = fall back to the catalog) and
     `billingInterval` ("month" | "year", stamped when checkout completes). Resolution order

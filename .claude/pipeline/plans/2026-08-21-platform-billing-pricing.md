@@ -62,14 +62,14 @@ form edit.
 ### WP1 — Schema + migration (additive only)
 
 - **files:** `apps/api/prisma/schema.prisma`,
-  `apps/api/prisma/migrations/20260827000000_tenant_price_override/migration.sql`
+  `apps/api/prisma/migrations/20260829000000_tenant_price_override/migration.sql`
 - On `TenantSubscription` add:
   - `priceOverrideMonthly Decimal? @db.Decimal(10, 2)` — custom monthly fee; null = catalog.
   - `priceOverrideAnnual  Decimal? @db.Decimal(10, 2)` — custom annual fee; null = derive.
   - `billingInterval      String?` — "month" | "year", stamped at checkout completion.
 - Migration: hand-written `ALTER TABLE "TenantSubscription" ADD COLUMN IF NOT EXISTS …`
   (three columns, no defaults needed, no existing-row rewrite). Folder name EXACTLY
-  `20260827000000_tenant_price_override` (sorts after every existing 202608\* migration).
+  `20260829000000_tenant_price_override` (sorts after every existing 202608\* migration).
 - After editing schema run `npx prisma generate --schema apps/api/prisma/schema.prisma`
   from the worktree root so later packages compile.
 
