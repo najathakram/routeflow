@@ -109,7 +109,7 @@ Two fixes made by hand after the pipeline (it had deferred to the plan's "no API
 tests pass** · prettier clean. (2562 not 2568 — the extra 6 were the peer's
 `email-smtp-verify.spec.ts`, correctly no longer on this branch.)
 
-### PR-B (MSRP) — ✅ IMPLEMENTED + REVIEWED, PR OPEN, NOT MERGED (2026-08-22)
+### PR-B (MSRP) — ✅ IMPLEMENTED + REVIEWED — [PR #411](https://github.com/najathakram/routeflow/pull/411) OPEN, NOT MERGED (2026-08-22)
 
 Branch `feat/msrp-on-invoices` in worktree `.claude/worktrees/msrp`. **Full work-package
 plan (5 WPs, with the exact resolver code and migration SQL):
