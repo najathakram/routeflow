@@ -79,7 +79,8 @@ export class ImportService {
     const m = (method || "").toLowerCase().trim();
     if (m === "cash") return "CASH";
     if (m === "check" || m === "cheque") return "CHECK";
-    if (m === "zelle" || m === "ach" || m === "wire") return "ACH";
+    if (m === "zelle") return "ZELLE";
+    if (m === "ach" || m === "wire") return "ACH";
     return "OTHER";
   }
 

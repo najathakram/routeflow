@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import type { PaymentMethod } from "./invoices"; // reuse the existing 7-value union
+import type { PaymentMethod } from "./invoices"; // reuse the existing 8-value union
+import type { SelectablePaymentMethod } from "../payment-methods";
 import type { ImageUploadFile } from "../product-image";
 
 // ─── Types (mirror apps/web/lib/api/invoices.ts payment surface) ────────────────
@@ -111,7 +112,7 @@ export function useVoidPayment() {
 
 /** Payment methods that are directly editable (Advance/Credit-Note are debited
  *  from a source balance and can't be hand-edited — server rejects them). */
-export type EditablePaymentMethod = "CASH" | "CHECK" | "ACH" | "CREDIT_CARD" | "OTHER";
+export type EditablePaymentMethod = SelectablePaymentMethod;
 
 export interface UpdatePaymentDto {
   invoiceId: string;

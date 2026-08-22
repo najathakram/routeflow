@@ -19,6 +19,7 @@ describe("paymentMethodPill", () => {
   const cases: [PaymentMethod, string, string][] = [
     ["CASH", "green", "Cash"],
     ["CHECK", "brand", "Check"],
+    ["ZELLE", "purple", "Zelle"],
     ["ACH", "purple", "ACH"],
     ["CREDIT_CARD", "orange", "Card"],
     ["CREDIT_NOTE", "purple", "Credit Note"],

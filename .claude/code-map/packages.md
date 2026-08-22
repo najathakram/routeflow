@@ -22,7 +22,10 @@ Shared workspace packages (types, UI, configs) consumed by apps via npm workspac
 Shared DTO/enum definitions. Entry: `index.ts` (no `src/`).
 
 - **Enums** (synced with Prisma): `UserRole`, `UserStatus`; `OrderStatus`, `ItemStatus`;
-  `RouteRunStatus`, `RouteRunStopStatus`; `TxnStatus`, `PaymentMethod`; `MutationType`,
+  `RouteRunStatus`, `RouteRunStopStatus`; `TxnStatus`, `PaymentMethod` (2026-08-21: backfilled
+  from a stale 4 values to all 8 — `CASH,CHECK,ACH,OTHER,CREDIT_NOTE,ADVANCE,CREDIT_CARD,ZELLE`
+  — matching Prisma; note the apps do NOT import it, they use their own
+  `{web,mobile}/lib/payment-methods.ts` constants); `MutationType`,
   `FulfillPath`, `DriverStatus`.
 - **Interfaces**: `User`, `Order`, `PaginatedResponse<T>` (data + meta: total/page/limit/totalPages),
   `ApiResponse<T>`.

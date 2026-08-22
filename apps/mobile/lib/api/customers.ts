@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { SelectablePaymentMethod } from "../payment-methods";
 
 export interface CustomerSummary {
   id: string;
@@ -127,8 +128,8 @@ export interface CreateAdvancePaymentDto {
   /** Cents-rounded CLIENT-side — the server stores it verbatim (no roundMoney,
    *  and no class-validator on these routes at all — validate before sending). */
   amount: number;
-  /** Hand-enterable methods only (web offers CASH/CHECK/ACH/OTHER). */
-  method: "CASH" | "CHECK" | "ACH" | "OTHER";
+  /** Hand-enterable methods only — see lib/payment-methods.ts (web offers the same list). */
+  method: SelectablePaymentMethod;
   reference?: string;
   notes?: string;
 }

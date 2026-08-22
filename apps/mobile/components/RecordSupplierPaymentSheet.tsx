@@ -16,7 +16,6 @@ import { FormField, FormSection, FormTextInput } from "./FormSheet";
 import { MoneyTextInput } from "./MoneyTextInput";
 import { useVendorBills, type VendorBill } from "../lib/api/vendor-bills";
 import { useRecordSupplierPayment, type SupplierAllocationRow } from "../lib/api/supplier-payments";
-import type { EditablePaymentMethod } from "../lib/api/payments";
 import {
   billAllocationTotals,
   billBalance,
@@ -26,14 +25,9 @@ import {
 } from "../lib/supplier-payment-logic";
 import { roundMoney } from "../lib/pricing";
 import { showToast } from "../lib/toast";
+import { SELECTABLE_METHOD_OPTIONS, type SelectablePaymentMethod } from "../lib/payment-methods";
 
-const METHODS: { id: EditablePaymentMethod; label: string }[] = [
-  { id: "CASH", label: "Cash" },
-  { id: "CHECK", label: "Check" },
-  { id: "ACH", label: "ACH" },
-  { id: "CREDIT_CARD", label: "Credit card" },
-  { id: "OTHER", label: "Other" },
-];
+const METHODS = SELECTABLE_METHOD_OPTIONS;
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -67,7 +61,7 @@ export function RecordSupplierPaymentSheet({
     [billsData],
   );
 
-  const [method, setMethod] = React.useState<EditablePaymentMethod>("CASH");
+  const [method, setMethod] = React.useState<SelectablePaymentMethod>("CASH");
   const [amount, setAmount] = React.useState("");
   const [reference, setReference] = React.useState("");
   const [notes, setNotes] = React.useState("");

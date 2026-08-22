@@ -69,6 +69,7 @@ import { SupplierSelect } from "@/components/SupplierSelect";
 import Link from "next/link";
 import { fmt, fmtDate, todayIso } from "@/lib/formatting";
 import { apiClient } from "@/lib/api-client";
+import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1049,10 +1050,11 @@ function InventoryPurchasesTab() {
               title="Payment method"
               className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             >
-              <option value="CASH">Cash</option>
-              <option value="CHECK">Check</option>
-              <option value="ACH">ACH</option>
-              <option value="OTHER">Other</option>
+              {SELECTABLE_PAYMENT_METHODS.map((m) => (
+                <option key={m} value={m}>
+                  {PAYMENT_METHOD_LABELS[m]}
+                </option>
+              ))}
             </select>
             <input
               type="date"

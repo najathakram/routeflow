@@ -63,6 +63,10 @@ export enum PaymentMethod {
   CHECK = "CHECK",
   ACH = "ACH",
   OTHER = "OTHER",
+  CREDIT_NOTE = "CREDIT_NOTE",
+  ADVANCE = "ADVANCE",
+  CREDIT_CARD = "CREDIT_CARD",
+  ZELLE = "ZELLE",
 }
 
 export enum FulfillPath {

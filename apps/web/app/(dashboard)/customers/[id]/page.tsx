@@ -64,6 +64,12 @@ import { CustomerFormModal } from "../_components/CustomerFormModal";
 import { AuthorizationsTab } from "../_components/AuthorizationsTab";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { getTierPrice, computeMarginFraction, classifyMargin } from "@/lib/pricing";
+import {
+  SELECTABLE_PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS,
+  paymentMethodLabel,
+  type SelectablePaymentMethod,
+} from "@/lib/payment-methods";
 import { useMarginConfig } from "@/lib/api/margin";
 import {
   useCustomer,
@@ -748,6 +754,13 @@ function ContactPersonModal({
 // ── Special Prices Tab ────────────────────────────────────────────────────────
 
 function SpecialPricesTab({ customerId }: { customerId: string }) {
+  const { data: customer } = useCustomer(customerId);
+  const updateCustomer = useUpdateCustomer();
+  const { user } = useAuth();
+  // TENANT_ADMIN satisfies OPERATOR server-side (ROLE_SATISFIES in roles.guard.ts), so the
+  // @Roles(OPERATOR) customer endpoints accept it — gating the UI on OPERATOR alone hid
+  // these controls from a user the API already authorizes.
+  const isOperator = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
   const { data: prices, isLoading } = useCustomerPrices(customerId);
   const upsertPrice = useUpsertCustomerPrice();
   const deletePrice = useDeleteCustomerPrice();
@@ -823,6 +836,42 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
 
   return (
     <Tabs.Content value="special-prices" className="mt-5 focus:outline-none">
+      <Card className="mb-5">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h3 className="text-base font-semibold text-navy">Default Pricing Tier</h3>
+            <p className="mt-0.5 text-xs text-navy/70">
+              Applies to every product for this customer. Per-product overrides below take
+              precedence.
+            </p>
+          </div>
+          {isOperator ? (
+            <select
+              value={customer?.pricingTier ?? 1}
+              onChange={(e) => {
+                updateCustomer.mutate({ id: customerId, pricingTier: Number(e.target.value) });
+              }}
+              className="rounded border border-surface-border bg-white px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            >
+              {[1, 2, 3, 4, 5].map((t) => (
+                <option key={t} value={t}>
+                  Tier {t}
+                  {t === 1 ? " (Default)" : ""}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <p className="text-sm font-semibold text-navy">Tier {customer?.pricingTier ?? 1}</p>
+          )}
+        </div>
+        {priceList.length > 0 && (
+          <p className="mt-3 text-xs text-navy/70">
+            {priceList.length} product{priceList.length === 1 ? " has" : "s have"} a per-product
+            override and will keep {priceList.length === 1 ? "its" : "their"} own tier.
+          </p>
+        )}
+      </Card>
+
       <Card>
         <div className="mb-4 flex items-center justify-between">
           <div>
@@ -1509,7 +1558,8 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
   const { setTitle } = usePageTitle();
   const router = useRouter();
   const { user } = useAuth();
-  const isOperator = user?.role === "OPERATOR";
+  // See the note in SpecialPricesTab: TENANT_ADMIN satisfies OPERATOR server-side.
+  const isOperator = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
 
   const { data: customer, isLoading } = useCustomer(params.id);
   const { data: ordersResult } = useCustomerOrders(params.id);
@@ -1658,7 +1708,12 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
 
   // Advance payment
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
-  const [advanceForm, setAdvanceForm] = React.useState({
+  const [advanceForm, setAdvanceForm] = React.useState<{
+    method: SelectablePaymentMethod;
+    amount: string;
+    reference: string;
+    notes: string;
+  }>({
     method: "ACH",
     amount: "",
     reference: "",
@@ -3114,7 +3169,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                           </span>
                         </div>
                         <p className="mt-0.5 text-xs text-navy/70">
-                          {ap.method}
+                          {paymentMethodLabel(ap.method)}
                           {ap.reference ? ` \u00b7 ${ap.reference}` : ""} \u00b7{" "}
                           {new Date(ap.createdAt).toLocaleDateString()}
                         </p>
@@ -3401,15 +3456,16 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                   onChange={(e) =>
                     setAdvanceForm((f) => ({
                       ...f,
-                      method: e.target.value,
+                      method: e.target.value as SelectablePaymentMethod,
                     }))
                   }
                   className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 >
-                  <option value="CASH">Cash</option>
-                  <option value="CHECK">Check</option>
-                  <option value="ACH">ACH / Bank Transfer</option>
-                  <option value="OTHER">Other</option>
+                  {SELECTABLE_PAYMENT_METHODS.map((m) => (
+                    <option key={m} value={m}>
+                      {PAYMENT_METHOD_LABELS[m]}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>

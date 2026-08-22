@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { fetchPdfBlob } from "../fetch-pdf-blob";
+import type { AnyPaymentMethod, SelectablePaymentMethod } from "../payment-methods";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -53,7 +54,7 @@ export interface InvoiceItem {
 export interface InvoicePayment {
   id: string;
   amount: number;
-  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_NOTE" | "ADVANCE" | "CREDIT_CARD";
+  method: AnyPaymentMethod;
   status?: "DRAFT" | "PAID" | "VOID";
   reference?: string;
   notes?: string;
@@ -176,7 +177,7 @@ export function useInvoice(id: string) {
 export interface AllPayment {
   id: string;
   amount: number;
-  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_NOTE" | "ADVANCE" | "CREDIT_CARD";
+  method: AnyPaymentMethod;
   reference?: string;
   notes?: string;
   bankCharges?: number;
@@ -474,7 +475,7 @@ export function useDownloadInvoicePdf() {
 
 export interface RecordInvoicePaymentDto {
   id: string;
-  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD";
+  method: SelectablePaymentMethod;
   amount: number;
   paidAt?: string;
   /** Bank landing date. May be in the future; omit when unknown. */
@@ -500,7 +501,7 @@ export function useRecordInvoicePayment() {
 export interface UpdateInvoicePaymentDto {
   invoiceId: string;
   paymentId: string;
-  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD";
+  method: SelectablePaymentMethod;
   amount: number;
   paidAt?: string;
   /** Omit to keep the stored bank date; send null to clear it. */
@@ -581,7 +582,7 @@ export function useGetPaymentImageUrl() {
 export interface StandalonePaymentDto {
   customerId: string;
   totalAmount: number;
-  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD";
+  method: SelectablePaymentMethod;
   paidAt?: string;
   /** Bank landing date applied to every allocation row of the group. */
   settledAt?: string | null;

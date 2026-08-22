@@ -27,6 +27,7 @@ import { PhotoCapture } from "../../../../../components/PhotoCapture";
 import { usePodStore } from "../../../../../store/podStore";
 import { useDeliveryPlanStore } from "../../../../../store/delivery-plan-store";
 import { useRunSettlementStore } from "../../../../../store/runSettlementStore";
+import type { CollectedMethod } from "../../../../../lib/run-settlement";
 import {
   buildDeliveries,
   reconciledTotal,
@@ -37,7 +38,11 @@ import { regulatedPodGateError } from "../../../../../lib/pod-gating";
 import { openRouteInMaps } from "../../../../../components/openInMaps";
 import * as Location from "expo-location";
 
-const METHODS = ["Cash", "Card", "Cheque", "On account"] as const;
+// Driver-vocabulary labels for the at-door SegmentedControl. Segments are
+// `flex: 1`, so with five of them each label gets ~60pt of text width on a
+// 375-390pt phone — "On account" ellipsizes there, hence the shorter
+// "Account" (the submit button below still spells out "Mark on account").
+const METHODS = ["Cash", "Card", "Cheque", "Zelle", "Account"] as const;
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "·", "0", "⌫"];
 
 async function readDriverLocation(): Promise<{ lat: number; lng: number } | null> {
@@ -146,10 +151,13 @@ export default function PaymentScreen() {
   const closeStop = async () => {
     if (!stopId || !runId || !stop) return;
 
-    // RF-006: block submit when physical-money methods have zero collected amount
-    const requiresAmount = method === "Cash" || method === "Card" || method === "Cheque";
+    // RF-006: block submit when a money-collecting method has zero collected
+    // amount. Every method except "Account" (on account) collects something at the door.
+    const requiresAmount = method !== "Account";
     if (requiresAmount && receivedNum === 0) {
-      setAmountError(`Enter the ${method.toLowerCase()} amount received before closing.`);
+      // "Zelle" is a brand name — never lowercased.
+      const noun = method === "Zelle" ? "Zelle" : method.toLowerCase();
+      setAmountError(`Enter the ${noun} amount received before closing.`);
       return;
     }
     setAmountError(null);
@@ -214,9 +222,10 @@ export default function PaymentScreen() {
       Cash: "CASH",
       Card: "CREDIT_CARD",
       Cheque: "CHECK",
-      "On account": "ADVANCE",
-    }[method] ?? "OTHER") as "CASH" | "CHECK" | "CREDIT_CARD" | "ADVANCE" | "OTHER";
-    const collected = method === "On account" ? 0 : Math.min(receivedNum, invoiceTotal);
+      Zelle: "ZELLE",
+      Account: "ADVANCE",
+    }[method] ?? "OTHER") as CollectedMethod;
+    const collected = method === "Account" ? 0 : Math.min(receivedNum, invoiceTotal);
 
     // BUG-DRV1-3: stable per-attempt idempotency-key. The header is captured
     // by the offline-queue persister so a retry after a network blip cannot
@@ -414,7 +423,7 @@ export default function PaymentScreen() {
             <Text style={styles.greenBtnText}>
               {submitting
                 ? "Closing…"
-                : method === "On account"
+                : method === "Account"
                   ? "Mark on account & close"
                   : "Receive payment & close"}
             </Text>

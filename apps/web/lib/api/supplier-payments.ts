@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { roundMoney } from "../pricing";
+import type { SelectablePaymentMethod } from "../payment-methods";
 import type { VendorBillStatus } from "./vendor-bills";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -14,7 +15,7 @@ import type { VendorBillStatus } from "./vendor-bills";
 /** Selectable "how was it paid" options — mirrors the AR modal's method
  *  select. CREDIT_NOTE/ADVANCE are payment EFFECTS (auto-apply of on-account
  *  credit), never an operator-chosen input. */
-export type SupplierPaymentMethod = "CASH" | "CHECK" | "ACH" | "CREDIT_CARD" | "OTHER";
+export type SupplierPaymentMethod = SelectablePaymentMethod;
 
 export interface SupplierAllocationLine {
   vendorBillId: string;

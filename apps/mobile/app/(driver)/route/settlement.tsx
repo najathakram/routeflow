@@ -33,6 +33,7 @@ const EMPTY_COLLECTIONS: CollectionEntry[] = [];
 function methodLabel(m: CollectedMethod): string {
   if (m === "CASH") return "Cash";
   if (m === "CHECK") return "Check";
+  if (m === "ZELLE") return "Zelle";
   if (m === "CREDIT_CARD") return "Card";
   if (m === "ADVANCE") return "On account";
   return "Other";
@@ -148,7 +149,7 @@ export default function RunSettlementScreen() {
         </Text>
 
         <View style={styles.card}>
-          {(["CASH", "CHECK", "CREDIT_CARD", "ADVANCE", "OTHER"] as const)
+          {(["CASH", "CHECK", "ZELLE", "CREDIT_CARD", "ADVANCE", "OTHER"] as const)
             .filter((m) => summary.byMethod[m])
             .map((m) => (
               <View key={m} style={styles.row}>
