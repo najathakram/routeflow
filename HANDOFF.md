@@ -2,6 +2,12 @@
 
 **Written:** 2026-08-22 · **Branch:** `feat/msrp-on-invoices` (worktree `.claude/worktrees/msrp`) · **Visibility:** private (CI runs private — no flips) · **Open PRs:** [#407](https://github.com/najathakram/routeflow/pull/407) (parallel session, SMTP)
 
+> **Two independent workstreams are live in this document.** The PR sequence below
+> (MSRP · Sales Agents · quick wins) is code and branches. **§1b is the product-image /
+> description pipeline** — no repo code, writes to prod through the public API, and is
+> currently waiting on the owner's review of 600 images. They do not interact; pick up
+> either without touching the other.
+
 ## 🚧 IN FLIGHT — MSRP · Sales Agents · feature gating · quick wins (2026-08-21/22)
 
 Approved plan: `~/.claude/plans/imagine-you-are-a-breezy-ripple.md` (4 features, 4 PRs).
@@ -18,14 +24,23 @@ Feature gating answer: **no per-tenant branches** — one trunk, entitlement fla
 1. **PR-A [#408](https://github.com/najathakram/routeflow/pull/408) is DONE** — merged,
    deployed, prod migration applied, post-deploy check green. Nothing left. **Do NOT
    re-apply its migration.**
-2. **PR-B (MSRP) is the active task.** Work in the worktree
-   **`.claude/worktrees/msrp`** on branch **`feat/msrp-on-invoices`** (branched off merged
-   master `de557140`, has its own `node_modules` from `npm ci`). The full work-package plan
-   is committed at **`.claude/pipeline/plans/2026-08-22-msrp-on-invoices.md`** — hand that
-   path to the implementers; the summary below is the short version.
+2. **PR-B (MSRP) is the active task and is PART-IMPLEMENTED — uncommitted.** Work in the
+   worktree **`.claude/worktrees/msrp`** on branch **`feat/msrp-on-invoices`** (branched off
+   merged master `de557140`, has its own `node_modules` from `npm ci`). The full work-package
+   plan is committed at **`.claude/pipeline/plans/2026-08-22-msrp-on-invoices.md`** — hand
+   that path to the implementers. **See "PR-B status" below before continuing: there is
+   uncommitted work in that worktree that has NOT been typechecked, tested or reviewed yet.**
 3. **Do not work in the main checkout** (`C:\ClaudeCode\routeflow`): a parallel session owns
-   it, is on `fix/smtp-provider-instructions` for PR #407, and has uncommitted HANDOFF edits
-   there. Leave it alone.
+   it, is on the merged-and-deleted `feat/zelle-tier-quickwins`, and has **uncommitted**
+   HANDOFF edits there. Leave it alone.
+
+> 📌 **The parallel session's HANDOFF sections were rescued into git by this session
+> (2026-08-22).** Their §"IN FLIGHT (parallel session)" and §1b were living ONLY as an
+> uncommitted working-tree edit in the main checkout, on a branch that had already been
+> merged and remote-deleted — one stray `git checkout` there would have destroyed them. They
+> are reproduced **verbatim, unedited** below. That session may still hold a newer local copy;
+> if both get committed the overlap is a plain markdown conflict — **keep the newer text, and
+> never delete a section you did not write.**
 
 > ⚠️ **MULTI-SESSION TANGLE HAPPENED HERE — read before committing anything.** A peer session
 > switched the MAIN CHECKOUT onto `fix/smtp-provider-instructions` mid-turn, so two of my
@@ -82,12 +97,53 @@ Two fixes made by hand after the pipeline (it had deferred to the plan's "no API
 tests pass** · prettier clean. (2562 not 2568 — the extra 6 were the peer's
 `email-smtp-verify.spec.ts`, correctly no longer on this branch.)
 
-### PR-B (MSRP) — ready to start, everything needed is here
+### PR-B (MSRP) — IN PROGRESS, work is UNCOMMITTED in the worktree
 
-Branch `feat/msrp-on-invoices` exists in worktree `.claude/worktrees/msrp`. **Full
-work-package plan (5 WPs, exact code for the resolver and the migration SQL):
+Branch `feat/msrp-on-invoices` in worktree `.claude/worktrees/msrp`. **Full work-package
+plan (5 WPs, with the exact resolver code and migration SQL):
 `.claude/pipeline/plans/2026-08-22-msrp-on-invoices.md`.** The summary below duplicates its
 key decisions so this file stands alone.
+
+**Status as of 2026-08-22:** a `dev-pipeline` run (5 Sonnet implementers → Opus review) was
+launched and had produced **~32 modified files plus these 5 new ones** before this note was
+written:
+
+- `apps/api/src/common/msrp.ts` + `msrp.spec.ts` (the resolver)
+- `apps/api/prisma/migrations/20260831000000_add_msrp_pricing/`
+- `apps/api/prisma/publish-plan-catalog-v9.ts`
+- `apps/api/src/products/dto/bulk-set-msrp.dto.ts`
+
+> ⚠️ **This work is UNCOMMITTED and UNVERIFIED.** It has not been typechecked, tested,
+> reviewed, or exercised in a browser, and the pipeline's own review/fix rounds may not have
+> finished. **Do not push or open a PR on it as-is.**
+>
+> **To resume:** `cd .claude/worktrees/msrp` → `git status` to see the real current state →
+> re-read the plan → finish or re-run the remaining work → then
+> `npm run check-types && npm run lint && npm run test` → commit → PR.
+> `git diff` against `origin/master` (`de557140`) is the source of truth for what changed.
+>
+> **Known failure right now** (`npm run check-types`, 1 error — the predicted risk landing
+> exactly where the plan warned):
+>
+> ```
+> apps/web/app/(dashboard)/invoices/new/page.tsx(733,46): error TS2345:
+>   Argument of type 'number | null' is not assignable to parameter of type 'number'.
+> ```
+>
+> Cause: making `CustomerPrice.pricingTier` nullable ripples into every `getTierPrice(...)`
+> caller, and **`invoices/new/page.tsx` was not in any work package's file list**. Fix is the
+> established fallback used everywhere else — `getTierPrice(cp.product, cp.pricingTier ?? customerTier ?? 1)`.
+> **Grep the whole repo for `pricingTier` before declaring this done** — there may be more
+> callers outside the packaged files (mobile `invoices/new.tsx`, `edit-items.tsx`,
+> `NewOrderScreen.tsx` and the buyer services all read it).
+>
+> **If the work looks broken or half-applied, throwing it away is cheap and safe**:
+> `git checkout -- . && git clean -fd` in that worktree returns to clean merged master, and
+> the plan file (committed) lets you re-run the pipeline from scratch.
+>
+> **Prod is untouched by PR-B** — its migration exists only as a file; nothing has been
+> applied to any database. `20260830000000_payment_method_zelle` (PR-A) is the only migration
+> that has been applied to prod.
 
 **Verified facts (already checked against the code — do not re-research):**
 
@@ -162,6 +218,208 @@ key decisions so this file stands alone.
 > call needs `DATABASE_URL` exported explicitly, else "datasource.url property is required".
 > `prisma migrate dev` also HANGS in a non-interactive shell (it prompts); write the migration
 > SQL by hand and use `migrate deploy`.
+
+## 🚧 IN FLIGHT (parallel session, 2026-08-21/22) — SMTP instructions PR + web layout audit
+
+> Separate session, separate branch. Does **not** touch the MSRP / sales-agents work above.
+> ⚠️ That session and this one share one checkout; branch switches under a running session are
+> the norm here, not a bug. Commit early, and read `git branch --show-current` before trusting
+> the working tree.
+
+### ✅ Done — PR #407, green, OPEN and unmerged on purpose
+
+`fix/smtp-provider-instructions` (`3a35722b`) — **[PR #407](https://github.com/najathakram/routeflow/pull/407)**, CI all green (Lint / Type Check / Test / Security Audit).
+
+Corrects the SMTP provider setup instructions, which had gone stale against the vendors:
+
+- **Microsoft preset was guaranteed-fail for personal mailboxes.** It advertised "Outlook.com" and
+  pointed at `smtp.office365.com`, but Microsoft ended password sign-in for personal
+  Outlook.com/Hotmail/Live/MSN on **2026-04-30** (OAuth only). Those users were told to ask an admin
+  to enable "Authenticated SMTP" — an errand that can never help them. Preset is now
+  **"Microsoft 365 (business)"** and leads with the limitation.
+- **Gmail steps described a UI Google removed** — no "select Mail / select device → Generate"
+  dropdowns any more (type an app **name** → **Create**), and App Passwords is no longer linked
+  from the Security page.
+- Added, each verified against vendor docs: tenant **security defaults** must be off or M365 SMTP
+  stays blocked; Microsoft disables SMTP basic auth **by default for all tenants end of Dec 2026**
+  (removal announced H2 2027) — this preset has a shelf life; Workspace admins must allow app
+  passwords; **changing a Google password revokes the app password** (silent future breakage);
+  GoDaddy has migrated nearly all Workspace Email to M365; custom preset now states the accepted
+  ports (25/465/587/2525).
+- API `mapSmtpError` gained an optional `user` arg + `isConsumerMicrosoftMailbox`, since a personal
+  and a business Microsoft mailbox are indistinguishable by host — both get typed against
+  `smtp.office365.com`.
+
+**Why it is not merged:** merging to master IS the Railway deploy trigger, and the diff touches
+`apps/api/**` + `apps/web/**` (both watched). "Land but don't deploy" is not achievable; the green
+open PR is that state. Merge when you want it live.
+
+### ⛔ Blocked on the owner — `routeflow-demo` still cannot send email at all
+
+Settings → Email is configured up to the last field: Gmail preset, sender "RouteFlow Demo",
+address `najathakram1@gmail.com`. **The Google App Password is the only thing missing**, and it is
+owner-only work (creating one changes Google account security settings; Google demanded password
+re-verification). Until it is saved, the tenant has **no working email path at all** —
+`isEmailConfigured()` is false, so invoice sends 400 with `EMAIL_NOT_CONFIGURED`. There is no Resend
+fallback either (`RESEND_API_KEY` is still unset on the Railway API service).
+
+Verified in passing: **`ENCRYPTION_KEY` IS correctly set on prod** — `routeflow-demo` renders a
+decrypted `anthropic.apiKey` preview, and that key sits in the same `SECRET_KEYS` allowlist as
+`email.smtpPassword`. So the App Password will save and read back; no encryption work needed.
+
+### ✅ AUDIT COMPLETE — operator-dashboard layout · ⛔ AWAITING OWNER BATCH APPROVAL
+
+> **Everything needed to continue is committed under
+> [`docs/audit/2026-08-22-web-layout/`](docs/audit/2026-08-22-web-layout/). Start there, not here.**
+>
+> | File                                                                  | What it is                                                                                                                           |
+> | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+> | [`AUDIT-LAYOUT.md`](docs/audit/2026-08-22-web-layout/AUDIT-LAYOUT.md) | **THE APPROVAL DOC** — 46 findings grouped by fix batch, one checkbox each. Owner ticks; you build.                                  |
+> | [`PLAN.md`](docs/audit/2026-08-22-web-layout/PLAN.md)                 | The owner-approved plan (phases, batch order, pre-flight gates, diff invariant, risks)                                               |
+> | [`RUBRIC.md`](docs/audit/2026-08-22-web-layout/RUBRIC.md)             | The audit standard — categories, severities, the two anti-false-positive rules                                                       |
+> | `tools/*.mjs`                                                         | The harness: `build-manifest` → `capture` (probe+screenshot) → `static-scan` → `partition` → `synthesize`. Idempotent and resumable. |
+> | `data/probe-all.json`                                                 | 198 runtime measurements — the evidence behind every S0/S1                                                                           |
+> | `data/findings.jsonl`                                                 | Raw agent findings (4 shards merged)                                                                                                 |
+> | `data/{manifest,static}.json`                                         | 66 capture targets · per-file source scan                                                                                            |
+>
+> **Screenshots (178 PNGs, 20MB) are NOT stored** — deliberately. Regenerate with
+> `node tools/capture.mjs --widths=1440,1280,1024` (~25 min, resumable, skips what exists).
+>
+> ⚠️ **`docs/audit/` is GITIGNORED** (`.gitignore:90`) — the same convention as the existing
+> `gap-analysis-2026-07-13.md` / `deep-dive-2026-08-17.md` reports. So this folder is **local to
+> this machine and will NOT survive a fresh clone.** On this machine it is safe (ignored files are
+> untouched by branch switches). If the audit needs to travel, either un-ignore this one folder or
+> re-run the harness from `tools/` — every artifact except the owner's tick-marks is regenerable.
+> The approved plan also has a second copy at `~/.claude/plans/frolicking-soaring-cherny.md`.
+
+**The gate:** owner asked for findings-first approval and has NOT yet picked batches. **Do not start
+fixing.** Put `AUDIT-LAYOUT.md` in front of them, get ticks, then run each approved batch through
+`dev-pipeline` (owner explicitly asked for it), one PR per batch, `style(web):`.
+
+#### What the audit found — 46 findings over 61 screens (S0:6 · S1:25 · S2:2 · S3:12 · S4:1)
+
+**All six S0s are invisible at 1440 and only appear at 1024.** A 1440-only pass concludes "mostly
+fine" — that conclusion would be wrong.
+
+| S0  | Page                                | Defect                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| --- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `customers/[id]`                    | tab bar overflows; Documents/Licenses tabs **unreachable** (`main` is `overflow-x-hidden` — it clips, never scrolls)                                                                                                                                                                                                                                                                                                                |
+| 2   | `suppliers`                         | table +64px past its host, no scroller → trailing columns clipped                                                                                                                                                                                                                                                                                                                                                                   |
+| 3   | `finance/payments`                  | 10-col table clips the **Actions** column                                                                                                                                                                                                                                                                                                                                                                                           |
+| 4   | `finance/expenses`                  | 11-col table clips Paid/Balance/Status                                                                                                                                                                                                                                                                                                                                                                                              |
+| 5   | `inventory`                         | toolbar doesn't wrap at 1024; "Quick Restock" cut mid-word                                                                                                                                                                                                                                                                                                                                                                          |
+| 6   | **DraftDock overlays page content** | `bottom-24 z-40` at up to `max-h-[70vh]`, but `<main>` reserves only `pb-24` (96px). Hides the City field on Settings→Profile and Total/Balance on `vendor-bills/[id]`. Found independently by **two** agents on disjoint slices, then verified in source ([DraftDock.tsx:132](apps/web/components/DraftDock.tsx:132) vs [layout.tsx:1141](<apps/web/app/(dashboard)/layout.tsx:1141>)). Conditional — only when a draft is docked. |
+
+**The dominant defect is cheap:** 24 files render a second `<h1>` duplicating the topbar's. One tag
+change each (`<h1>`→`<h2>`), near-zero risk. That is batch L0.
+
+| Batch  | Scope                                              | Risk                                 |
+| ------ | -------------------------------------------------- | ------------------------------------ |
+| **L0** | 24 files — duplicate `<h1>`                        | ~zero                                |
+| **L1** | 3 files — wrap clipped tables in `overflow-x-auto` | low                                  |
+| **L2** | 4 files — page container standardisation           | low                                  |
+| **L3** | 1 file — `PageHeader` adoption                     | MEDIUM (DOM nesting; e2e xpath gate) |
+| **L4** | 1 file — token conformance                         | **BLOCKED** (see landmine below)     |
+| **L6** | 12 files — density/alignment/whitespace            | judgement, last                      |
+
+**Recommended first move:** L0 + L1 together — 27 findings, 27 files, near-zero risk, and it clears
+**4 of the 6 S0s**. Good proof of the `dev-pipeline` loop before anything riskier.
+
+#### ⚠️ Corrections — do not re-inherit my earlier wrong numbers
+
+- **Clipped tables are 3, not 16.** The static scan found 16 files missing `overflow-x-auto`; only
+  **3 actually clip** at any captured width. The other 13 are latent, NOT defects. An earlier draft
+  of this handoff claimed 16 as confirmed breakage — it was wrong.
+- **The app measures clean at 1440.** Zero overflow, zero escaping elements. All real damage is at 1024. Always capture the narrow widths.
+
+#### Gaps the next session must close (do not read silence as "clean")
+
+- **10 detail pages never captured** — `products/[id]`, `drivers/[id]`, `routes/[id]`,
+  `routes/templates/[id]`, `estimates/[id]`, `returns/[id]`, `finance/payments/[id]`,
+  `bookkeeping/[transactionId]`, plus `routes/[id]/dispatch` (resolver harvested an id the
+  sub-route rejects → stuck on a spinner). Cause: those lists are **empty in `e2e-routeflow`**, so
+  the row-click id resolver has nothing to click.
+- **Only 1 `DATA_THIN` flagged, which is suspiciously low** — thin data probably _suppressed_
+  density findings rather than surfacing them. Density/whitespace conclusions are weak until re-run.
+- **Fix for both:** capture against `routeflow-demo` (852 products, 64 orders). Credentials come
+  from the ENVIRONMENT — never a literal, never a CLI arg:
+  ```
+  AUDIT_TENANT=routeflow-demo AUDIT_USER=... AUDIT_PASSWORD=... node tools/capture.mjs --login
+  node tools/capture.mjs --widths=1440,1280,1024      # picks up the saved demo state automatically
+  ```
+
+#### Harness gotchas already paid for
+
+- Playwright storage state (`apps/web/e2e/setup/.auth/operator.json`, gitignored) **goes stale in
+  ~2 days** — a run that worked minutes ago will die mid-pass with `AUTH STALE`. Refresh:
+  `cd apps/web && npx playwright test --project=setup`. (The _customer_ setup flake is pre-existing
+  and harmless here.)
+- **Pin `localStorage['rf-sidebar-collapsed']='false'`** before every capture — a collapsed rail
+  moves content width by 176px and silently poisons every width-based finding. `capture.mjs`
+  already does this via `addInitScript`; don't remove it.
+- Most list pages navigate by row `onClick`, **not** `<a href>` — id resolution must click
+  `tbody tr` and read the resulting URL. Anchor-only resolution fails on 14 of 18 dynamic routes.
+- Bash-style `/c/...` paths passed to `node -e` are read as `C:\c\...`. Use `C:/...` in Node args.
+
+#### 🚧 Original in-flight notes (superseded by the above, kept for the drift numbers)
+
+Owner report: layouts have drifted and look messy after many feature batches. Constraints: **no
+redesign, no look-and-feel or branding change, no functional change.** Scope: `(dashboard)` +
+Settings (**66 capture targets**; buyer portal, platform-admin and marketing are out). Owner chose
+**findings-first approval** and fix depth **"structural + in-page tidying"**. Fix batches run
+through `dev-pipeline`.
+
+**Key discovery: RouteFlow already has a written design system** — `docs/design-package/project/unified/system-sheet.html`,
+`ux-standards.html`, `HANDOFF-CLAUDE-CODE.md`, tokens in `packages/config/tailwind.config.ts`. It
+states surfaces differ _only_ by accent and density, "never by being a different app." So this work
+is **conformance to an existing spec**, not new design judgement — that is what keeps it inside the
+owner's "don't redesign" line.
+
+Measured drift (static scan of 86 dashboard `.tsx`, plus a runtime probe on prod):
+
+| Batch  | Confirmed             | Detail                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------ | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **L1** | 16 files, **latent**  | raw `<table>` with **no** overflow wrapper. `<main>` is `overflow-x-hidden`, so if one ever exceeds its host the columns are clipped and unreachable rather than scrollable — but the runtime probe at 1440 (1200px content) measured **0 actually clipped**. Treat as a latent risk, NOT a live defect, until the 1280/1024 pass says otherwise. Worst candidates: `finance/reports` (18 tables), `settings`. |
+| **L0** | **17 pages measured** | duplicate page-level `<h1>` — confirmed at runtime, not inferred (probe on `/settings` returned `h1s: ["Settings","Settings"]`). Incl. 5 settings screens, `compliance`, `finance/dashboard`, `finance/payments`, `invoices/new`, `routes/create`. Source scan counts 41 `<h1>` tags across 36 files.                                                                                                          |
+| **L3** | 26 files              | hand-rolled titles, `PageHeader` never imported (it is used by only 19 files repo-wide)                                                                                                                                                                                                                                                                                                                        |
+| **L4** | 96 / 49 / 31          | `rounded-xl` in 32 files · off-token `shadow-sm\|md\|lg` in 28 · `bg-black/N` scrims in 16                                                                                                                                                                                                                                                                                                                     |
+
+> ⚠️ **LANDMINE — do not "just" retoken `Modal.tsx`.** `packages/ui/src/web/Modal.tsx:42` uses
+> `rounded-xl`, and **two e2e specs select the dialog by that class string**
+> (`e2e/15-stock-count-ui.spec.ts:116`, `e2e/16-variant-split-ui.spec.ts:114`). Changing it to
+> `rounded-card` is invisible (12px→10px), passes typecheck and lint, and silently breaks both specs
+> across 46 Modal call sites. A test-only re-selector PR must land FIRST.
+
+**Tooling built (scratchpad only, nothing in the repo):** `audit/build-manifest.mjs`,
+`audit/capture.mjs` (Playwright probe + screenshot, resumable, kill-safe per page),
+`audit/static-scan.mjs`, `audit/RUBRIC.md`.
+
+#### ▶ RESUME HERE
+
+1. Finish the 1440 capture, then widen to 1280/1920 (+1024 for table-heavy pages).
+2. Run **4 Sonnet agents max** (hard cap) over the shots+probes using `RUBRIC.md`, each appending to
+   its own `findings/shard-N.jsonl` after every page.
+3. Synthesise `AUDIT-LAYOUT.md` grouped **by fix batch, not by page**, and put it to the owner.
+4. On approval, run each batch through `dev-pipeline`, one PR per batch, `style(web):`.
+
+**Gotchas already paid for:**
+
+- Playwright storage state at `apps/web/e2e/setup/.auth/operator.json` (gitignored) goes stale in
+  ~2 days; refresh with `npx playwright test --project=setup` from `apps/web`. It is bound to
+  **`e2e-routeflow`**, whose data is thin — good enough for structural findings, but density and
+  whitespace judgements need `routeflow-demo` credentials exported as env vars.
+- Pin `localStorage['rf-sidebar-collapsed']='false'` before every capture — a collapsed rail moves
+  content width by 176px and poisons every width-based finding.
+- **Quarantine:** 8-12 in-scope files are being edited by the parallel session
+  (`customers/[id]`, `invoices/[id]`, `finance/expenses*`, `finance/payments*`, `finance/reports`,
+  `vendor-bills/[id]`, `bookkeeping/[transactionId]`, `ScanInvoiceModal`). Audit them, fix them
+  **last**, after that session's PR merges.
+
+### 📌 Also raised, not started
+
+`assertSafeSmtpEndpoint` (api `email.service.ts`) only **string-matches** the hostname, so a domain
+name resolving to an internal address bypasses the SSRF guard entirely — the IP-prefix regexes only
+fire when a raw IP is typed. Pre-existing; spun out as its own task.
 
 ## ✅ THE UX EXPANSION BATCH IS COMPLETE — all six PRs shipped and live
 
@@ -240,6 +498,101 @@ Wave 5 / Wave 6 of the mobile-first UX program (tasks #23/#24), in-app pack size
 
 Enable **Authenticated SMTP** on the M365 mailbox; Railway billing auto-top-up;
 healthchecks.io cadence to 2-hourly; an uptime monitor on `/api/v1/health`.
+
+---
+
+## 1b. 📸 PRODUCT IMAGES + DESCRIPTIONS — partially shipped, owner review is the gate
+
+Separate workstream from the PRs above. **No repo code is involved** — the whole pipeline
+lives in `.personal/img/` (gitignored) and writes to prod only through the public API.
+Full detail: `.personal/img/README.md`; memory `project_product_image_pipeline_2026-08-20`.
+
+**Live in prod now: 941 of 1,826 `affa` products have an image.** 852 uploaded with zero
+failures and 62 name corrections applied, both verified read-only against the prod DB.
+
+| what                        | count     | state                                                             |
+| --------------------------- | --------- | ----------------------------------------------------------------- |
+| Images uploaded             | 852       | ✅ live, verified                                                 |
+| Tier A name fixes           | 62        | ✅ live (`corrections-applied.json` keeps old names → reversible) |
+| Images awaiting review      | **600**   | ⏸ held out of upload                                              |
+| — of those, rejected so far | 4         | 🔄 owner review IN PROGRESS                                       |
+| Descriptions ready          | **1,087** | ⏸ none uploaded                                                   |
+| Tier B renames              | 25        | ⏸ owner's call                                                    |
+| No image findable           | 284       | ✋ not a tooling gap — see README                                 |
+
+**Owner review has started and the flow is proven.** 4 rejections recorded so far, and all
+four are real catches the automated gates let through — a glass _bubbler_ matched to
+"7 Star", _e-liquid_ matched to a Geek Bar **device**, a rebranded box ("HoneyPacks Gold,
+formerly Black Thai"), and a pack-size mismatch. This is exactly why the 600 are
+quarantined rather than pushed: the 852 already live were machine-judged only.
+
+### ▶ RESUME HERE
+
+1. **Owner reviews the 600** at
+   **https://review-sheet-production.up.railway.app/r/UWT1t0Zn1MeQWCVa**
+   (Railway service, autosaving, shareable with anyone — claude.ai refuses to link-share
+   this content class, and republishing does not clear it). Then:
+   `node .personal/img/review.mjs --apply-rejects` →
+   `node .personal/img/upload.mjs --include-review --live`
+2. **Descriptions:** `node .personal/img/upload.mjs --descriptions --live`.
+   Least reversible of the three writes — fills only EMPTY descriptions, never overwrites
+   operator copy, but there is no per-field undo.
+3. **Tier B renames:** `node .personal/img/corrections.mjs --live --tier-b` — Smogger
+   30K→40K ×14, Fogger Pod 45K→30K ×10, and Geek Next 50K→Geek Bar Pulse X 25K ×1
+   (barcode-proven, `810203870351`).
+
+Credentials from the environment only — `RF_USERNAME`/`RF_PASSWORD` (the tenant admin is
+sufficient; TENANT*ADMIN satisfies the OPERATOR both write routes require) or
+`SUPER_ADMIN*\*`as a fallback. PowerShell:`$env:RF_USERNAME = '…'`.
+
+### ⚠️ Two things that must NOT be applied without a compliance decision
+
+**AGFN "CBN" → "D9"** (3 products) and **ZourZ "250mg" → 100mg** (6). Both are well
+evidenced, but they change a **cannabinoid designation / potency** on a tenant whose
+regulated categories feed tax filings. That is the owner's call, not an inference from a
+product page. Deliberately left out of both correction tiers.
+
+### Traps worth inheriting
+
+- **`railway up` respects `.gitignore`.** The review service source is in
+  `.personal/img/review-site/`, which is ignored — deploying from there uploads an EMPTY
+  bundle and fails with a railpack "no start command" error. Deploy from a copy outside
+  the repo.
+- **A rendered page must be verified in a browser, not with curl.** A dead script serves a
+  perfectly healthy HTTP 200 with the full payload and an empty grid; that shipped once.
+  `review.mjs` now refuses to write the file if the script fails `new Function(script)`.
+- **Renames:** invoices snapshot the line label (`InvoiceItem.description`) so history is
+  safe, but **orders read the product name live** (`OrderItem.name` is null for catalog
+  lines) — so past orders re-render with the new name.
+- **API throttle is 100 req/60s** and each product costs TWO requests; the uploaders pace
+  at 1,400ms with 429/5xx backoff. Do not speed this up.
+
+### Cold start — a session that knows nothing about this
+
+Everything is **machine-local and outside git** (`.personal/` is gitignored), so this does
+not travel with a clone or a fresh worktree. On this machine it is all still there.
+
+Orientation, in order: `.personal/img/README.md` → `node .personal/img/stats.mjs` (prints
+live counts) → this section. The two agent briefs (`DEEP-BRIEF.md`, `RETRY-BRIEF.md`) carry
+every search technique that worked, including the dead-end brand list.
+
+State files that matter — nothing else needs reading:
+
+| file                       | what it is                                                                                                                       |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `manifest.json`            | **the source of truth** — every image: status, file path, matched name, confidence, `needsReview`, `uploaded`                    |
+| `worklist.json`            | catalog snapshot from prod. **Re-pull after any rename**: `railway run --service postgres node .personal/img/fetch-worklist.mjs` |
+| `descriptions.json`        | 1,087 matched descriptions, none uploaded                                                                                        |
+| `corrections-applied.json` | old→new names, history array per product (reversible)                                                                            |
+| `index*.json`              | ~425K harvested reference products from ~200 sources. Big (150MB+); rebuild with `harvest.mjs` if lost                           |
+| `candidates/*.jsonl`       | append-only record of every image URL found. **Never overwrite** — a failed download can only be retried from here               |
+| `review-site/`             | the Railway review service source + `.token`                                                                                     |
+
+Every stage is **idempotent and resumable**: uploaders re-check each product server-side
+before writing, so interrupting anything and re-running is always safe.
+
+If `stats.mjs` and prod ever disagree, prod wins — re-pull `worklist.json` and re-run
+`match.mjs --verify` to re-audit what is staged against the current gates.
 
 ---
 
