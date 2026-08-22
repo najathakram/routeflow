@@ -3066,10 +3066,16 @@ model BuyerPaymentRequest {
   note                  String?
   reference             String?
   stripeSessionId       String?                   @unique
+  /// DEPRECATED (2026-08-22) — read `providerPaymentId` instead. Written only
+  /// by the pre-#399 settle path; rows from that era were backfilled into
+  /// providerPaymentId by 20260828000000_unify_provider_payment_id, so this
+  /// column is now redundant and NOTHING should read or write it. Kept only
+  /// until a cleanup migration drops it. Same concept in two columns split by
+  /// deploy date = silent NULLs for whichever a reader picks wrong.
   stripePaymentIntentId String?
   /// The settled PaymentIntent id (invariant 7/9) — provider-agnostic name,
-  /// set once `settleByPaymentIntent` claims/completes the row. Distinct from
-  /// the legacy `stripePaymentIntentId` column above.
+  /// set once `settleByPaymentIntent` claims/completes the row. The ONE
+  /// column for "which processor payment settled this request".
   providerPaymentId     String?
   /// Free-text note for an anomalous settle (e.g. money arrived for a row
   /// that was CANCELLED/REJECTED/FAILED/EXPIRED, or the charged amount
