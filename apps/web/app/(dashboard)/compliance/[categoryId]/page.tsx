@@ -132,7 +132,7 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
         <div className="mt-1">
           <div className="flex items-center gap-2">
             <ShieldCheck className="h-5 w-5 text-brand-600" />
-            <h1 className="text-2xl font-bold text-navy">{c.name}</h1>
+            <h2 className="text-2xl font-bold text-navy">{c.name}</h2>
             {c.requiresLicense && <Badge variant="warning" label="License" />}
             {!c.active && <Badge variant="neutral" label="Off" />}
           </div>

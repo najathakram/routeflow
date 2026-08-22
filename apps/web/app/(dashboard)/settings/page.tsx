@@ -2579,7 +2579,7 @@ function SettingsPageInner() {
     <div className="mx-auto max-w-5xl p-6">
       {!section ? (
         <>
-          <h1 className="mb-5 text-2xl font-bold text-navy">Settings</h1>
+          <h2 className="mb-5 text-2xl font-bold text-navy">Settings</h2>
           <SettingsHub isAdmin={isAdmin} />
           {/* Stripe Connect lives on the hub itself (not behind a `?tab=`) because the
               OAuth callback returns the operator to bare `/settings?stripe=...` and the
@@ -2596,7 +2596,7 @@ function SettingsPageInner() {
           >
             <ArrowLeft className="h-4 w-4" /> All settings
           </NextLink>
-          <h1 className="mb-5 text-2xl font-bold text-navy">{section.title}</h1>
+          <h2 className="mb-5 text-2xl font-bold text-navy">{section.title}</h2>
           <div className={section.width ?? ""}>{section.node}</div>
         </>
       )}
@@ -2610,7 +2610,7 @@ export default function SettingsPage() {
     <React.Suspense
       fallback={
         <div className="mx-auto max-w-5xl p-6">
-          <h1 className="mb-5 text-2xl font-bold text-navy">Settings</h1>
+          <h2 className="mb-5 text-2xl font-bold text-navy">Settings</h2>
         </div>
       }
     >

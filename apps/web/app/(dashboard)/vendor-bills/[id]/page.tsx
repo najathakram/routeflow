@@ -984,7 +984,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="mono text-2xl font-bold text-navy">{bill.billNumber}</h1>
+            <h2 className="mono text-2xl font-bold text-navy">{bill.billNumber}</h2>
             {status === "DRAFT" && unlinkedCount > 0 && (
               <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
                 {unlinkedCount} unlinked {unlinkedCount === 1 ? "item" : "items"}

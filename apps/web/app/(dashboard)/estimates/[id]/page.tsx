@@ -226,7 +226,7 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-navy">{estimate.estimateNumber}</h1>
+          <h2 className="text-2xl font-bold text-navy">{estimate.estimateNumber}</h2>
           <Badge status={status} />
         </div>
 
