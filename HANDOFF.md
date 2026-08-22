@@ -1,12 +1,24 @@
 # HANDOFF — current state & what to pick up next
 
-**Written:** 2026-08-22 · **Branch:** `feat/msrp-on-invoices` (worktree `.claude/worktrees/msrp`) · **Visibility:** private (CI runs private — no flips) · **Open PRs:** [#407](https://github.com/najathakram/routeflow/pull/407) (parallel session, SMTP)
+**Written:** 2026-08-22 · **Branch:** `feat/msrp-on-invoices` (worktree `.claude/worktrees/msrp`) · **Visibility:** private (CI runs private — no flips) · **Open PRs:** [#407](https://github.com/najathakram/routeflow/pull/407) (parallel session, SMTP instructions — MERGEABLE) · [#408](https://github.com/najathakram/routeflow/pull/408) **MERGED 05:34 UTC**
 
-> **Two independent workstreams are live in this document.** The PR sequence below
-> (MSRP · Sales Agents · quick wins) is code and branches. **§1b is the product-image /
-> description pipeline** — no repo code, writes to prod through the public API, and is
-> currently waiting on the owner's review of 600 images. They do not interact; pick up
-> either without touching the other.
+> **THREE independent workstreams are live in this document.** They do not interact — pick up any
+> one without touching the others.
+>
+> 1. **MSRP · Sales Agents · quick wins** — the PR sequence immediately below. Code and branches.
+> 2. **§1b product-image / description pipeline** — no repo code, writes to prod through the public
+>    API, waiting on the owner's review of 600 images.
+> 3. **🎨 Web layout audit — COMPLETE, awaiting the owner's batch ticks.** Jump to
+>    _"✅ AUDIT COMPLETE — operator-dashboard layout"_. **Everything you need is under
+>    [`docs/audit/2026-08-22-web-layout/`](docs/audit/2026-08-22-web-layout/) — read
+>    `AUDIT-LAYOUT.md` first, it is the approval doc.** 46 findings over 61 screens, 6 of them
+>    S0 (content clipped/unreachable at 1024px). **Do not start fixing** — the owner chose
+>    findings-first approval and has not yet picked batches. Once they do: run each batch through
+>    `dev-pipeline`, one PR per batch, `style(web):`. Recommended opener is **L0 + L1** (27
+>    findings, 27 files, near-zero risk, clears 4 of the 6 S0s). Also open on this workstream:
+>    [PR #407](https://github.com/najathakram/routeflow/pull/407) (SMTP setup instructions,
+>    MERGEABLE, deliberately unmerged because merging **is** the Railway deploy trigger) and the
+>    `routeflow-demo` email blocker (owner-only Google App Password).
 
 ## 🚧 IN FLIGHT — MSRP · Sales Agents · feature gating · quick wins (2026-08-21/22)
 
@@ -226,9 +238,21 @@ written:
 > the norm here, not a bug. Commit early, and read `git branch --show-current` before trusting
 > the working tree.
 
-### ✅ Done — PR #407, green, OPEN and unmerged on purpose
+### ✅ Done — PR #407, OPEN and unmerged on purpose
 
-`fix/smtp-provider-instructions` (`3a35722b`) — **[PR #407](https://github.com/najathakram/routeflow/pull/407)**, CI all green (Lint / Type Check / Test / Security Audit).
+`fix/smtp-provider-instructions` (head `15c55301`) — **[PR #407](https://github.com/najathakram/routeflow/pull/407)**. CI was all green on `3a35722b`; re-running after the merge below.
+
+> **Conflict with #408 — already resolved (2026-08-22).** #408 merged to master at 05:34 and #407
+> went `CONFLICTING`. **My fault, and worth learning from:** I staged `.claude/code-map/{api,web}.md`
+>
+> - `_meta.json` by explicit path, believing that was safe — but those shared files already carried
+>   the peer session's **uncommitted** edits, so my commit absorbed their work. Explicit-path staging
+>   is NOT sufficient protection in a shared checkout; only a worktree is.
+>   Resolved in an isolated worktree (merge `origin/master` → keep BOTH sets of entries → push):
+>   `adc21b31` + `15c55301`. Only 2 files conflicted (`api.md`, `_meta.json`), **no source code**.
+>   Verified after merge: my source changes intact (`isConsumerMicrosoftMailbox` ×2 in
+>   `email.service.ts`, the 30-April-2026 copy in `settings/page.tsx`, the new specs) AND the peer's
+>   Zelle/`mapPaymentMethod` entries intact. PR is **MERGEABLE** again.
 
 Corrects the SMTP provider setup instructions, which had gone stale against the vendors:
 
