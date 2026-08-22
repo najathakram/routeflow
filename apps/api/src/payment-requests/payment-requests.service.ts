@@ -509,6 +509,10 @@ export class PaymentRequestsService {
         decidedAt: r.decidedAt,
         decidedByName: r.decidedByName,
         outcome: r.outcome,
+        // The settled provider payment id (pi_…) — the operator's link from a
+        // recorded payment back to the processor. Was populated but never
+        // serialized until 2026-08-22.
+        providerPaymentId: r.providerPaymentId,
         allocationPreview:
           r.status === "PENDING"
             ? (await this.buildOldestFirstAllocation(r.customerId, Number(r.amount))).lines.filter(
