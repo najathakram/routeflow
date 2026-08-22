@@ -220,47 +220,47 @@ describe("StripeConnectService", () => {
     });
   });
 
-  // ─── applyAccountUpdate — ledger-ordering guard (invariant 3) ─────────────
+  // ─── applyAccountUpdate — retrieve current truth, never trust the event ────
+  // (2026-08-22 incident: a Restricted-era account.updated retry, replayed
+  // after the rawBody fix, disabled card payments for a fully-live account.
+  // Ledger ordering can't close a cold-start hole; retrieving CURRENT state
+  // is order-proof by construction.)
 
   describe("applyAccountUpdate", () => {
-    it("applies the capability flags when no prior account.updated has been applied", async () => {
-      stripeConnectEvent.findFirst.mockResolvedValue(null);
-      const applied = await service.applyAccountUpdate(
-        "acct_1",
-        { chargesEnabled: true, detailsSubmitted: true },
-        new Date("2026-08-21T12:00:00Z"),
-      );
+    it("persists the RETRIEVED account state, ignoring whatever the event carried", async () => {
+      mockOauth.retrieveAccount.mockResolvedValue({ chargesEnabled: true, detailsSubmitted: true });
+      const applied = await service.applyAccountUpdate("acct_1");
       expect(applied).toBe(true);
+      expect(mockOauth.retrieveAccount).toHaveBeenCalledWith("acct_1");
       expect(tenantStripeConnect.updateMany).toHaveBeenCalledWith({
         where: { stripeAccountId: "acct_1", disconnectedAt: null },
         data: { chargesEnabled: true, detailsSubmitted: true },
       });
     });
 
-    it("skips a delivery that is not newer than the last-applied one (stale/out-of-order)", async () => {
-      stripeConnectEvent.findFirst.mockResolvedValue({
-        createdAt: new Date("2026-08-21T12:00:00Z"),
-      });
-      const applied = await service.applyAccountUpdate(
-        "acct_1",
-        { chargesEnabled: false, detailsSubmitted: false },
-        new Date("2026-08-21T11:00:00Z"), // older than last-applied
+    it("a stale replay HEALS the row rather than clobbering it — retrieve wins", async () => {
+      // The delivery that triggers this may be a days-old Restricted snapshot;
+      // the persisted values must still be the live account's.
+      mockOauth.retrieveAccount.mockResolvedValue({ chargesEnabled: true, detailsSubmitted: true });
+      const applied = await service.applyAccountUpdate("acct_1");
+      expect(applied).toBe(true);
+      expect(tenantStripeConnect.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { chargesEnabled: true, detailsSubmitted: true },
+        }),
       );
-      expect(applied).toBe(false);
+    });
+
+    it("propagates a retrieve failure so the webhook 500s and Stripe redelivers", async () => {
+      mockOauth.retrieveAccount.mockRejectedValue(new Error("stripe down"));
+      await expect(service.applyAccountUpdate("acct_1")).rejects.toThrow("stripe down");
       expect(tenantStripeConnect.updateMany).not.toHaveBeenCalled();
     });
 
-    it("applies a delivery strictly newer than the last-applied one", async () => {
-      stripeConnectEvent.findFirst.mockResolvedValue({
-        createdAt: new Date("2026-08-21T12:00:00Z"),
-      });
-      const applied = await service.applyAccountUpdate(
-        "acct_1",
-        { chargesEnabled: true, detailsSubmitted: true },
-        new Date("2026-08-21T13:00:00Z"), // newer
-      );
-      expect(applied).toBe(true);
-      expect(tenantStripeConnect.updateMany).toHaveBeenCalledTimes(1);
+    it("no-ops on a missing accountRef", async () => {
+      const applied = await service.applyAccountUpdate("");
+      expect(applied).toBe(false);
+      expect(mockOauth.retrieveAccount).not.toHaveBeenCalled();
     });
   });
 

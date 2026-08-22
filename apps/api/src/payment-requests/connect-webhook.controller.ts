@@ -214,12 +214,11 @@ export class ConnectWebhookController {
         return "ignored:display-only";
 
       case "account.updated": {
-        const applied = await this.connect.applyAccountUpdate(
-          evt.accountRef,
-          { chargesEnabled: evt.chargesEnabled, detailsSubmitted: evt.detailsSubmitted },
-          evt.created,
-        );
-        return applied ? "applied" : "stale";
+        // The event payload is deliberately IGNORED — it is a snapshot that
+        // can arrive days late and out of order (retry backlogs). The service
+        // retrieves the account's current state and persists that instead.
+        const applied = await this.connect.applyAccountUpdate(evt.accountRef);
+        return applied ? "applied:refreshed" : "no_account_ref";
       }
 
       case "charge.refunded": {
