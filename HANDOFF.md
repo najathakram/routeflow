@@ -15,14 +15,17 @@ Feature gating answer: **no per-tenant branches** — one trunk, entitlement fla
 
 ### ▶ RESUME HERE (if the session switched)
 
-1. **PR-A [#408](https://github.com/najathakram/routeflow/pull/408) is pushed and its
-   migration is ALREADY APPLIED TO PROD** (see below). Remaining: wait for the `Test` check
-   → `gh pr merge 408 --squash --delete-branch` → watch Railway → `npm run post-deploy-check`.
-   **Do NOT re-apply the migration.**
-2. Then start **PR-B (MSRP)**. Its full work-package plan is written but currently lives in a
-   session-scoped scratchpad — **if it is gone, re-derive it from the design summary in
-   "PR-B (MSRP) — ready to start" below**, which carries every decision that matters.
-   Intended home once branched: `.claude/pipeline/plans/2026-08-22-msrp-on-invoices.md`.
+1. **PR-A [#408](https://github.com/najathakram/routeflow/pull/408) is DONE** — merged,
+   deployed, prod migration applied, post-deploy check green. Nothing left. **Do NOT
+   re-apply its migration.**
+2. **PR-B (MSRP) is the active task.** Work in the worktree
+   **`.claude/worktrees/msrp`** on branch **`feat/msrp-on-invoices`** (branched off merged
+   master `de557140`, has its own `node_modules` from `npm ci`). The full work-package plan
+   is committed at **`.claude/pipeline/plans/2026-08-22-msrp-on-invoices.md`** — hand that
+   path to the implementers; the summary below is the short version.
+3. **Do not work in the main checkout** (`C:\ClaudeCode\routeflow`): a parallel session owns
+   it, is on `fix/smtp-provider-instructions` for PR #407, and has uncommitted HANDOFF edits
+   there. Leave it alone.
 
 > ⚠️ **MULTI-SESSION TANGLE HAPPENED HERE — read before committing anything.** A peer session
 > switched the MAIN CHECKOUT onto `fix/smtp-provider-instructions` mid-turn, so two of my
@@ -36,18 +39,20 @@ Feature gating answer: **no per-tenant branches** — one trunk, entitlement fla
 > `code-map/{web,api}.md` + `_meta.json`. Resolve by keeping both sets of entries.
 > **Discipline: work in your own `git worktree`, never `git add -A` in the shared checkout.**
 
-**PR-A `feat/zelle-tier-quickwins` → [#408](https://github.com/najathakram/routeflow/pull/408) — PUSHED, CI running, PROD MIGRATION APPLIED, not yet merged.**
-Commits `ea943aa2` (feat) + `328ecb80` (docs). Plan:
-`.claude/pipeline/plans/2026-08-21-zelle-tier-quickwins.md`.
+**PR-A `feat/zelle-tier-quickwins` → [#408](https://github.com/najathakram/routeflow/pull/408) — ✅ SHIPPED AND LIVE (merged `de557140`, 2026-08-22).**
+Plan: `.claude/pipeline/plans/2026-08-21-zelle-tier-quickwins.md`.
 
-| Step                                                 | State                                                                                                                                             |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run verify`                                     | ✅ 18/18 tasks · 2562 api + 1175 mobile tests · lint 0 errors                                                                                     |
-| Branch pushed + PR opened                            | ✅ #408 · `mergeable: MERGEABLE`                                                                                                                  |
-| CI (private repo)                                    | ✅ Lint · ✅ Type Check · ✅ Security Audit · ⏳ Test                                                                                             |
-| Pre-migration prod backup                            | ✅ `backups/pre-zelle-migration-2026-08-22.sql` (11 MB, **validated**: 117 CREATE TABLE = 117 COPY = 117 `\.`, dump-complete marker present)      |
-| **Prod migration applied**                           | ✅ `20260830000000_payment_method_zelle` — verified live: prod enum now reads `CASH, CHECK, ACH, OTHER, CREDIT_NOTE, ADVANCE, CREDIT_CARD, ZELLE` |
-| Merge → Railway deploy → `npm run post-deploy-check` | ⏳ **NEXT**                                                                                                                                       |
+| Step                        | State                                                                                                                                                                  |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run verify`            | ✅ 18/18 tasks · 2562 api + 1175 mobile tests · lint 0 errors                                                                                                          |
+| CI (private repo)           | ✅ Lint · Type Check · Test · Security Audit (E2E skipped on PRs by design)                                                                                            |
+| Pre-migration prod backup   | ✅ `backups/pre-zelle-migration-2026-08-22.sql` (11 MB, **validated**: 117 CREATE TABLE = 117 COPY = 117 `\.`, dump-complete marker present)                           |
+| **Prod migration**          | ✅ `20260830000000_payment_method_zelle` applied BEFORE the merge — verified live: prod enum reads `CASH, CHECK, ACH, OTHER, CREDIT_NOTE, ADVANCE, CREDIT_CARD, ZELLE` |
+| Merge → Railway deploy      | ✅ squash-merged `de557140`; api + web both **SUCCESS**                                                                                                                |
+| `npm run post-deploy-check` | ✅ **all checks OK** — health, login, orders/invoices/customers/products/drivers money fields, invoice math, order↔invoice reconciliation                              |
+
+> The deploy ordering worked exactly as intended: schema first, app second, so the new image
+> never met a missing value. No visibility flips were needed (CI runs on the private repo).
 
 | Item                                                                                                                         | State                                                                                 |
 | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
@@ -79,10 +84,10 @@ tests pass** · prettier clean. (2562 not 2568 — the extra 6 were the peer's
 
 ### PR-B (MSRP) — ready to start, everything needed is here
 
-Branch off master as `feat/msrp-on-invoices`. Full work-package plan was drafted to the
-session scratchpad and should be written to
-`.claude/pipeline/plans/2026-08-22-msrp-on-invoices.md` on the branch. If that draft is lost,
-this section is sufficient to rebuild it.
+Branch `feat/msrp-on-invoices` exists in worktree `.claude/worktrees/msrp`. **Full
+work-package plan (5 WPs, exact code for the resolver and the migration SQL):
+`.claude/pipeline/plans/2026-08-22-msrp-on-invoices.md`.** The summary below duplicates its
+key decisions so this file stands alone.
 
 **Verified facts (already checked against the code — do not re-research):**
 
