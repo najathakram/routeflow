@@ -7,6 +7,7 @@ import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { roundMoney } from "../common/pricing";
 import { StripeService } from "./stripe.service";
 import { BillingEventService } from "./billing-event.service";
+import { PlatformPricingService } from "./platform-pricing.service";
 import { BILLING_EVENTS, BillingEventType } from "./plan-catalog.constants";
 
 /** Grace period (in days) after a payment failure before suspending the tenant. */
@@ -22,6 +23,7 @@ export class BillingService {
     private readonly email: EmailService,
     private readonly tenantStatusGuard: TenantStatusGuard,
     private readonly events: BillingEventService,
+    private readonly pricing: PlatformPricingService,
   ) {}
 
   /**
@@ -165,16 +167,27 @@ export class BillingService {
   // ─── Checkout Session ──────────────────────────────────────────────────────
 
   /**
-   * Creates a Stripe Checkout Session for a tenant to subscribe.
+   * Creates a Stripe Checkout Session for a tenant to subscribe. Prices are computed
+   * inline via `PlatformPricingService` (catalog or per-tenant custom fee) and sent to
+   * Stripe as `price_data` — no env-configured Stripe Price IDs involved, so any
+   * plan/tier the catalog knows about (including GROWTH/SCALE) can check out.
    * Returns the checkout URL that the tenant owner should visit to pay.
    */
   async createCheckoutSession(
     tenantId: string,
-    opts?: { successUrl?: string; cancelUrl?: string },
+    // Accepts either the plan-specified bare interval (`interval = "month"`) or a
+    // fuller opts object (pre-existing callers pass successUrl/cancelUrl this way) —
+    // one signature that satisfies both call shapes without touching either caller.
+    intervalOrOpts?:
+      | "month"
+      | "year"
+      | { interval?: "month" | "year"; successUrl?: string; cancelUrl?: string },
   ): Promise<{ checkoutUrl: string; sessionId: string }> {
+    const opts = typeof intervalOrOpts === "string" ? { interval: intervalOrOpts } : intervalOrOpts;
+
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { id: true, slug: true, plan: true },
+      select: { id: true, slug: true },
     });
     if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
 
@@ -184,27 +197,236 @@ export class BillingService {
       );
     }
 
-    const customerId = await this.ensureStripeCustomer(tenantId);
-    const priceId = this.stripe.getPriceIdForPlan(tenant.plan ?? "STARTER");
-
-    if (!priceId) {
-      throw new BadRequestException(
-        `No Stripe price configured for plan ${tenant.plan}. Set STRIPE_PRICE_${tenant.plan} env var.`,
-      );
+    // A second checkout on a tenant that already has a live subscription creates a
+    // SECOND Stripe subscription on the same customer: both invoice every cycle, and
+    // the completion webhook overwrites `stripeSubId`, orphaning the first one where
+    // nothing in RouteFlow can see (or cancel) it. Price changes never need a new
+    // checkout — they ride the existing subscription via syncStripeSubscriptionPrice.
+    const existingSub = await this.prisma.tenantSubscription.findUnique({
+      where: { tenantId },
+      select: { stripeSubId: true },
+    });
+    if (existingSub?.stripeSubId) {
+      let liveStatus: string | undefined;
+      try {
+        liveStatus = (await this.stripe.getSubscription(existingSub.stripeSubId))?.status;
+      } catch {
+        // Stripe no longer knows this subscription (deleted / wrong account) — the
+        // stored id is stale, so a fresh checkout is the correct recovery.
+        liveStatus = undefined;
+      }
+      if (liveStatus && liveStatus !== "canceled" && liveStatus !== "incomplete_expired") {
+        throw new BadRequestException(
+          `Tenant already has a ${liveStatus} Stripe subscription (${existingSub.stripeSubId}). ` +
+            `Change its price with the custom fee / plan price tools (applies at the next ` +
+            `billing cycle) — creating another checkout would bill the tenant twice. Cancel ` +
+            `the existing subscription first if you really need a new one.`,
+        );
+      }
     }
+
+    const interval: "month" | "year" = opts?.interval === "year" ? "year" : "month";
+    const customerId = await this.ensureStripeCustomer(tenantId);
+    // Throws BadRequestException when neither an override nor a catalog price
+    // exists for this tenant's plan (e.g. Enterprise with no custom fee yet).
+    const pricing = await this.pricing.resolveTenantPricing(tenantId);
+    const priceData = await this.pricing.checkoutPriceData(tenantId, interval);
 
     const baseUrl = process.env.FRONTEND_URL ?? "http://localhost:3001";
 
-    const session = await this.stripe.createCheckoutSession({
-      customerId,
-      priceId,
-      successUrl: opts?.successUrl ?? `${baseUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancelUrl: opts?.cancelUrl ?? `${baseUrl}/billing/cancel`,
-      metadata: { tenantId, slug: tenant.slug },
+    // Inline price_data line item — bypasses StripeService.createCheckoutSession
+    // (which only accepts a pre-created `priceId`) via the underlying client, since
+    // no env-configured Stripe Price exists for catalog-driven plans/tiers.
+    const session = await this.stripe.client.checkout.sessions.create({
+      customer: customerId,
+      mode: "subscription",
+      line_items: [{ price_data: priceData, quantity: 1 }],
+      success_url:
+        opts?.successUrl ?? `${baseUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: opts?.cancelUrl ?? `${baseUrl}/billing/cancel`,
+      metadata: { tenantId, slug: tenant.slug, planKey: pricing.planKey, interval },
     });
 
-    this.logger.log(`Checkout session ${session.id} created for tenant ${tenantId}`);
+    this.logger.log(
+      `Checkout session ${session.id} created for tenant ${tenantId} (plan ${pricing.planKey}, ${interval})`,
+    );
     return { checkoutUrl: session.url, sessionId: session.id };
+  }
+
+  // ─── Price sync (admin-driven price changes → live Stripe subscriptions) ──────
+
+  /**
+   * Push the tenant's currently-resolved price (override or catalog) onto its live
+   * Stripe subscription, taking effect at the NEXT BILLING CYCLE
+   * (`proration_behavior: "none"` — owner decision, never mid-period). No-ops with a
+   * `reason` when there is no active Stripe subscription to update.
+   *
+   * Also reconciles the MRR ledger (basePriceSnapshot + a signed BillingEvent
+   * `amountDelta`) so reported revenue follows the price actually charged.
+   */
+  async syncStripeSubscriptionPrice(tenantId: string): Promise<{
+    synced: boolean;
+    reason?: string;
+    oldAmount?: number;
+    newAmount?: number;
+  }> {
+    // Resolve FIRST: an unresolvable price (isCustom plan with no custom fee) must be a
+    // clean no-op result, not a thrown 400 out of a "sync" call — callers fan this out.
+    let pricing: Awaited<ReturnType<PlatformPricingService["resolveTenantPricing"]>>;
+    try {
+      pricing = await this.pricing.resolveTenantPricing(tenantId);
+    } catch (err) {
+      this.logger.warn(
+        `Cannot sync Stripe price for tenant ${tenantId}: ${(err as Error).message}`,
+      );
+      return { synced: false, reason: "price_unresolvable" };
+    }
+
+    const result = await this.pushResolvedPriceToStripe(tenantId);
+    // Reported MRR must follow the money: basePriceSnapshot is what MrrService prices
+    // every paying tenant from, and Σ BillingEvent.amountDelta is what it reconciles
+    // against — so a price change writes BOTH, whatever Stripe did.
+    await this.reconcilePriceLedger(tenantId, pricing.monthly, pricing.planKey, result);
+    return result;
+  }
+
+  /** The Stripe half of `syncStripeSubscriptionPrice` (no ledger side effects). */
+  private async pushResolvedPriceToStripe(tenantId: string): Promise<{
+    synced: boolean;
+    reason?: string;
+    oldAmount?: number;
+    newAmount?: number;
+  }> {
+    const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
+    if (!sub?.stripeSubId) {
+      return { synced: false, reason: "no_active_stripe_subscription" };
+    }
+    if (!this.stripe.isConfigured) {
+      return { synced: false, reason: "stripe_not_configured" };
+    }
+
+    let stripeSub: any;
+    try {
+      stripeSub = await this.stripe.getSubscription(sub.stripeSubId);
+    } catch (err) {
+      this.logger.error(
+        `Failed to retrieve Stripe subscription for tenant ${tenantId}`,
+        err as Error,
+      );
+      return { synced: false, reason: "stripe_retrieve_failed" };
+    }
+
+    if (stripeSub.status !== "active" && stripeSub.status !== "trialing") {
+      return { synced: false, reason: `subscription_not_active_${stripeSub.status}` };
+    }
+
+    const item = stripeSub.items?.data?.[0];
+    if (!item) {
+      return { synced: false, reason: "no_subscription_item" };
+    }
+
+    const itemInterval = item.price?.recurring?.interval;
+    const interval: "month" | "year" =
+      itemInterval === "year" || itemInterval === "month"
+        ? itemInterval
+        : sub.billingInterval === "year"
+          ? "year"
+          : "month";
+
+    const priceData = await this.pricing.checkoutPriceData(tenantId, interval);
+    const oldAmount =
+      typeof item.price?.unit_amount === "number" ? item.price.unit_amount / 100 : undefined;
+    const newAmount = priceData.unit_amount / 100;
+
+    // Stripe requires a `product` ID on inline price_data for a subscription-item
+    // update — `product_data` is a Checkout-session-only shape and is REJECTED here
+    // ("unknown parameter"), which would surface as a silent wrong-price. Reuse the
+    // item's existing product when present, otherwise create one to point at.
+    let productId: string | undefined =
+      typeof item.price?.product === "string" ? item.price.product : item.price?.product?.id;
+    if (!productId) {
+      try {
+        const product = await this.stripe.client.products.create({
+          name: priceData.product_data.name,
+        });
+        productId = product.id;
+      } catch (err) {
+        this.logger.error(
+          `Failed to create a Stripe product for tenant ${tenantId}'s price sync`,
+          err as Error,
+        );
+        return { synced: false, reason: "stripe_product_create_failed" };
+      }
+    }
+    const updatePriceData: any = {
+      currency: priceData.currency,
+      unit_amount: priceData.unit_amount,
+      recurring: priceData.recurring,
+      product: productId,
+    };
+
+    try {
+      await this.stripe.updateSubscription(sub.stripeSubId, {
+        items: [{ id: item.id, price_data: updatePriceData }],
+        proration_behavior: "none",
+      });
+    } catch (err) {
+      this.logger.error(
+        `Failed to sync Stripe subscription price for tenant ${tenantId}`,
+        err as Error,
+      );
+      return { synced: false, reason: "stripe_update_failed" };
+    }
+
+    this.logger.log(
+      `Synced Stripe subscription price for tenant ${tenantId}: ${oldAmount ?? "?"} -> ${newAmount} (${interval}, proration_behavior=none)`,
+    );
+    return { synced: true, oldAmount, newAmount };
+  }
+
+  /**
+   * Keep platform MRR in step with a re-priced tenant: `basePriceSnapshot` is the
+   * monthly run-rate MrrService prices each paying subscription from, and the
+   * append-only BillingEvent ledger reconciles against Σ `amountDelta`. Without this
+   * an admin price change moves the money Stripe collects but neither MRR source.
+   *
+   * NO-OP when the tenant isn't in the paying set (`planKey == null` — MrrService's own
+   * predicate) or when the run-rate is unchanged, so the ledger never drifts from the
+   * snapshot total.
+   */
+  private async reconcilePriceLedger(
+    tenantId: string,
+    resolvedMonthly: number,
+    planKey: string,
+    sync: { synced: boolean; reason?: string },
+  ): Promise<void> {
+    const sub = await this.prisma.tenantSubscription.findUnique({
+      where: { tenantId },
+      select: { planKey: true, basePriceSnapshot: true },
+    });
+    if (!sub || sub.planKey == null) return;
+
+    const oldMonthly = sub.basePriceSnapshot != null ? Number(sub.basePriceSnapshot) : 0;
+    const newMonthly = roundMoney(resolvedMonthly);
+    if (oldMonthly === newMonthly) return;
+
+    await this.prisma.tenantSubscription.update({
+      where: { tenantId },
+      data: { basePriceSnapshot: newMonthly },
+    });
+    await this.events.emit(
+      tenantId,
+      BILLING_EVENTS.PLAN_CHANGED,
+      {
+        source: "platform_pricing_sync",
+        planKey,
+        oldMonthly,
+        newMonthly,
+        stripeSynced: sync.synced,
+        stripeReason: sync.reason ?? null,
+      },
+      { amountDelta: roundMoney(newMonthly - oldMonthly) },
+    );
   }
 
   // ─── Billing Portal ───────────────────────────────────────────────────────
@@ -286,6 +508,12 @@ export class BillingService {
 
     // Fetch the full subscription to get period dates
     const stripeSub = await this.stripe.getSubscription(subscriptionId);
+    // Platform billing: which interval the tenant checked out with (set in
+    // BillingService.createCheckoutSession metadata), stamped for sync/resume use.
+    const billingInterval: string | undefined =
+      session.metadata?.interval === "year" || session.metadata?.interval === "month"
+        ? session.metadata.interval
+        : undefined;
 
     const upserted = await this.prisma.tenantSubscription.upsert({
       where: { tenantId },
@@ -296,12 +524,14 @@ export class BillingService {
         currentPlan: (session.metadata?.plan as TenantPlan) ?? "STARTER",
         periodStart: new Date(stripeSub.current_period_start * 1000),
         periodEnd: new Date(stripeSub.current_period_end * 1000),
+        billingInterval,
       },
       update: {
         stripeSubId: subscriptionId,
         stripeCustomerId: session.customer as string,
         periodStart: new Date(stripeSub.current_period_start * 1000),
         periodEnd: new Date(stripeSub.current_period_end * 1000),
+        ...(billingInterval ? { billingInterval } : {}),
       },
     });
 

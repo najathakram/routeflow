@@ -499,6 +499,11 @@ model TenantSubscription {
   externalPaymentMethod String? // ZELLE | BANK_TRANSFER | CHECK | CASH | WIRE | OTHER
   externalPaymentRef    String? // transaction ID or confirmation number
   externalPaymentNotes  String?
+  // Platform billing — catalog-driven Stripe prices (Plans & Billing pricing batch).
+  // Per-tenant custom fee overrides; null = fall back to the catalog (PlanDefinition).
+  priceOverrideMonthly  Decimal?     @db.Decimal(10, 2)
+  priceOverrideAnnual   Decimal?     @db.Decimal(10, 2)
+  billingInterval       String? // "month" | "year", stamped at checkout completion
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
 

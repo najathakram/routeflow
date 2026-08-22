@@ -40,13 +40,30 @@ export class SubscriptionService {
       };
     });
 
+    const monthlyPrice =
+      sub?.priceOverrideMonthly != null
+        ? Number(sub.priceOverrideMonthly)
+        : def?.monthlyPrice != null
+          ? Number(def.monthlyPrice)
+          : null;
+
     return {
       planKey: ent.planKey,
       planName: ent.planName,
       status: ent.status,
       cycle: sub?.cycle ?? "MONTHLY",
-      monthlyPrice: def?.monthlyPrice != null ? Number(def.monthlyPrice) : null,
-      annualPrice: def?.annualPrice != null ? Number(def.annualPrice) : null,
+      // A per-tenant custom fee is what Stripe actually bills — show THAT, never the
+      // catalog number it replaced, or the tenant sees one price and is charged another.
+      // Mirrors PlatformPricingService.resolveTenantPricing (annual → monthly × 10).
+      monthlyPrice,
+      annualPrice:
+        sub?.priceOverrideAnnual != null
+          ? Number(sub.priceOverrideAnnual)
+          : sub?.priceOverrideMonthly != null
+            ? Number(sub.priceOverrideMonthly) * 10
+            : def?.annualPrice != null
+              ? Number(def.annualPrice)
+              : null,
       isCustom: def?.isCustom ?? false,
       renewalAt: sub?.periodEnd ?? null,
       cancelAtPeriodEnd: sub?.cancelAtPeriodEnd ?? false,

@@ -25,6 +25,8 @@ import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { ExtendTrialDto } from "./dto/extend-trial.dto";
 import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
 import { UpdateTenantConfigDto } from "./dto/update-tenant-config.dto";
+import { UpdateTenantPriceDto } from "./dto/update-tenant-price.dto";
+import { UpdatePlanPricesDto } from "./dto/update-plan-prices.dto";
 import { EnableAddonDto, DisableAddonDto } from "../billing/dto/manage-addon.dto";
 import { AdminAuditAction } from "./audit-actions.constant";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -260,9 +262,12 @@ export class PlatformAdminController {
 
   @Post("tenants/:id/billing/checkout")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Generate a Stripe Checkout link for a tenant to subscribe" })
-  createCheckout(@Param("id") id: string) {
-    return this.billingService.createCheckoutSession(id);
+  @ApiOperation({
+    summary: "Generate a Stripe Checkout link for a tenant to subscribe",
+    description: 'Optional JSON body: { interval?: "month" | "year" } — defaults to month.',
+  })
+  createCheckout(@Param("id") id: string, @Body("interval") interval?: "month" | "year") {
+    return this.billingService.createCheckoutSession(id, interval === "year" ? "year" : "month");
   }
 
   @Post("tenants/:id/billing/portal")
@@ -270,6 +275,39 @@ export class PlatformAdminController {
   @ApiOperation({ summary: "Generate a Stripe Billing Portal link for a tenant" })
   createPortal(@Param("id") id: string) {
     return this.billingService.createBillingPortalSession(id);
+  }
+
+  @Get("tenants/:id/billing/pricing")
+  @ApiOperation({
+    summary: "Resolved pricing for a tenant (catalog or custom override) + live subscription state",
+  })
+  getTenantPricing(@Param("id") id: string) {
+    return this.svc.getTenantPricing(id);
+  }
+
+  @Patch("tenants/:id/billing/price-override")
+  @ApiOperation({
+    summary: "Set or clear a tenant's custom price override; syncs any live Stripe subscription",
+  })
+  updateTenantPriceOverride(
+    @Param("id") id: string,
+    @Body() dto: UpdateTenantPriceDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    return this.svc.updateTenantPriceOverride(id, dto, admin.sub);
+  }
+
+  @Patch("plans/:planKey/prices")
+  @ApiOperation({
+    summary:
+      "Edit the current catalog price for a plan key; fans out to matching live subscriptions",
+  })
+  updatePlanPrices(
+    @Param("planKey") planKey: string,
+    @Body() dto: UpdatePlanPricesDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    return this.svc.updatePlanPrices(planKey, dto, admin.sub);
   }
 
   // ─── Add-ons ──────────────────────────────────────────────────────────────

@@ -13,6 +13,7 @@ import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { BillingService } from "../billing/billing.service";
+import { PlatformPricingService } from "../billing/platform-pricing.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { MeterService } from "../billing/meter.service";
@@ -27,6 +28,8 @@ import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { IRS_SYSTEM_CATEGORIES } from "../bookkeeping/irs-categories.constant";
 import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
 import { UpdateTenantConfigDto } from "./dto/update-tenant-config.dto";
+import { UpdateTenantPriceDto } from "./dto/update-tenant-price.dto";
+import { UpdatePlanPricesDto } from "./dto/update-plan-prices.dto";
 import { AuditService } from "../audit/audit.service";
 import {
   AdminAuditAction,
@@ -46,6 +49,7 @@ export class PlatformAdminService {
     private readonly config: ConfigService<AppConfig>,
     private readonly emailService: EmailService,
     private readonly billingService: BillingService,
+    private readonly platformPricingService: PlatformPricingService,
     private readonly planCatalogService: PlanCatalogService,
     private readonly entitlementsService: EntitlementsService,
     private readonly meterService: MeterService,
@@ -706,6 +710,212 @@ ${paymentSection}
         cancelAtPeriodEnd: s.cancelAtPeriodEnd,
         stripeCustomerId: s.stripeCustomerId,
       })),
+    };
+  }
+
+  // ─── Platform pricing (catalog-driven Stripe prices + tenant overrides) ───────
+
+  /**
+   * Resolved pricing for a tenant (catalog or custom override) plus whether it has
+   * a live Stripe subscription, so the admin UI can explain what "apply" will do.
+   *
+   * An UNRESOLVABLE price (ENTERPRISE / `isCustom` with no custom fee yet) is reported
+   * as `resolvable: false` + a reason, NOT a 400 — those are exactly the tenants that
+   * need the admin UI's custom-fee form, so the read must never fail them out of it.
+   */
+  async getTenantPricing(id: string) {
+    const [pricing, sub] = await Promise.all([
+      this.platformPricingService.resolveTenantPricing(id).catch((e) => {
+        if (e instanceof BadRequestException) return null;
+        throw e;
+      }),
+      this.prisma.tenantSubscription.findUnique({
+        where: { tenantId: id },
+        select: {
+          stripeSubId: true,
+          cancelAtPeriodEnd: true,
+          periodEnd: true,
+          billingInterval: true,
+          priceOverrideMonthly: true,
+          priceOverrideAnnual: true,
+        },
+      }),
+    ]);
+
+    const hasLiveSubscription = !!sub?.stripeSubId;
+    return {
+      resolvable: pricing !== null,
+      planKey: pricing?.planKey ?? null,
+      planName: pricing?.planName ?? null,
+      monthly: pricing?.monthly ?? null,
+      annual: pricing?.annual ?? null,
+      source: pricing?.source ?? null,
+      currency: "usd" as const,
+      // The RAW override columns, not just the resolved figures: the admin UI prefills
+      // its inputs from these, so re-saving a custom fee can't silently wipe a
+      // negotiated annual price the resolver had already folded away.
+      override: {
+        monthly: sub?.priceOverrideMonthly == null ? null : Number(sub.priceOverrideMonthly),
+        annual: sub?.priceOverrideAnnual == null ? null : Number(sub.priceOverrideAnnual),
+      },
+      subscription: {
+        stripeSubId: sub?.stripeSubId ?? null,
+        status: !hasLiveSubscription ? "none" : sub?.cancelAtPeriodEnd ? "canceling" : "active",
+        periodEnd: sub?.periodEnd ?? null,
+        billingInterval: sub?.billingInterval ?? null,
+      },
+    };
+  }
+
+  /**
+   * Set or clear a tenant's custom price override, then sync any live Stripe
+   * subscription to the new resolved price (owner decision: `proration_behavior:
+   * "none"` — applies from the next billing cycle, never mid-period).
+   */
+  async updateTenantPriceOverride(id: string, dto: UpdateTenantPriceDto, adminId: string | null) {
+    await this._findOrThrow(id);
+
+    // Reject BEFORE writing when the resulting state has no resolvable monthly price
+    // (e.g. clearing the custom fee on an ENTERPRISE/isCustom plan with no catalog
+    // price). Writing first and failing on the follow-up resolve would delete the
+    // negotiated fee, leave Stripe billing the old amount, and tell the admin it failed.
+    const existing = await this.prisma.tenantSubscription.findUnique({
+      where: { tenantId: id },
+      select: { priceOverrideMonthly: true },
+    });
+    const nextMonthly =
+      dto.monthly === undefined ? (existing?.priceOverrideMonthly ?? null) : dto.monthly;
+    if (nextMonthly == null) {
+      // Throws BadRequestException when the catalog can't price this tenant's plan.
+      await this.platformPricingService.resolveCatalogPricing(id);
+    }
+
+    await this.prisma.tenantSubscription.upsert({
+      where: { tenantId: id },
+      update: {
+        priceOverrideMonthly: dto.monthly === undefined ? undefined : dto.monthly,
+        priceOverrideAnnual: dto.annual === undefined ? undefined : dto.annual,
+      },
+      create: {
+        tenantId: id,
+        priceOverrideMonthly: dto.monthly ?? null,
+        priceOverrideAnnual: dto.annual ?? null,
+      },
+    });
+
+    const [sync, pricing] = await Promise.all([
+      this.billingService.syncStripeSubscriptionPrice(id),
+      this.platformPricingService.resolveTenantPricing(id),
+    ]);
+
+    await this.recordAdminAction(id, adminId, AdminAuditAction.TENANT_CONFIG_UPDATED, {
+      kind: "price_override",
+      monthly: dto.monthly ?? null,
+      annual: dto.annual ?? null,
+      sync,
+    });
+
+    return { ...pricing, sync };
+  }
+
+  /**
+   * Edit the CURRENT (latest published) PlanVersion's catalog price for one plan
+   * key, then best-effort fans out `syncStripeSubscriptionPrice` to every tenant
+   * on that plan key whose subscription has no price override and whose pinned
+   * version IS that latest version — overrides and grandfathered (older-version)
+   * tenants keep their own pricing untouched.
+   */
+  async updatePlanPrices(planKeyParam: string, dto: UpdatePlanPricesDto, adminId: string | null) {
+    const planKey = normalizePlanKey(planKeyParam);
+    if (!planKey) {
+      throw new BadRequestException(`Unknown plan key "${planKeyParam}"`);
+    }
+
+    const version = await this.planCatalogService.getPublishedVersion();
+    if (!version) {
+      throw new NotFoundException(
+        "No published plan catalog exists. Seed the billing catalog first.",
+      );
+    }
+    const definition = version.definitions.find((d) => normalizePlanKey(d.planKey) === planKey);
+    if (!definition) {
+      throw new NotFoundException(`Plan ${planKey} not found in the current catalog version`);
+    }
+
+    const annualPrice =
+      dto.annual === undefined
+        ? new Prisma.Decimal(dto.monthly).mul(10)
+        : dto.annual === null
+          ? null
+          : dto.annual;
+
+    const updated = await this.prisma.planDefinition.update({
+      where: { planVersionId_planKey: { planVersionId: version.id, planKey: definition.planKey } },
+      data: { monthlyPrice: dto.monthly, annualPrice },
+    });
+
+    // Fan-out targets: tenants that actually resolve against THIS (latest) version for
+    // this plan key and have no custom MONTHLY fee of their own.
+    //   • `planVersionId: null` is included on purpose — PlanCatalogService.
+    //     getVersionForTenant(null) resolves to the PUBLISHED version, so an unpinned
+    //     tenant IS priced from this catalog row. Every Stripe-checkout tenant is
+    //     unpinned (only self-service subscribe/upgrade ever writes the pin), so
+    //     matching on `planVersionId: version.id` alone reaches no live subscription
+    //     at all and a catalog price edit would never leave the database.
+    //   • Only `priceOverrideMonthly` disqualifies: a tenant with an annual-only custom
+    //     fee still takes its monthly from the catalog, so it must be re-synced too.
+    const candidates = await this.prisma.tenantSubscription.findMany({
+      where: {
+        priceOverrideMonthly: null,
+        tenant: {
+          deletedAt: null,
+          OR: [{ planVersionId: version.id }, { planVersionId: null }],
+        },
+      },
+      select: { tenantId: true, planKey: true, tenant: { select: { plan: true } } },
+    });
+    const targets = candidates.filter(
+      (c) => normalizePlanKey(c.planKey ?? c.tenant.plan) === planKey,
+    );
+
+    let synced = 0;
+    let failed = 0;
+    for (const target of targets) {
+      try {
+        const result = await this.billingService.syncStripeSubscriptionPrice(target.tenantId);
+        if (result?.synced) synced++;
+      } catch (e) {
+        failed++;
+        this.logger.warn(
+          `Plan price fan-out sync failed for tenant ${target.tenantId}: ${(e as Error).message}`,
+        );
+      }
+    }
+
+    await this.auditService.log({
+      tenantId: null,
+      userId: adminId,
+      action: "PLAN_PRICES_UPDATED",
+      entityType: "plan_definition",
+      entityId: definition.id,
+      meta: {
+        platformAdmin: true,
+        planKey,
+        monthlyPrice: dto.monthly,
+        annualPrice: annualPrice === null ? null : Number(annualPrice),
+        updated: targets.length,
+        synced,
+        failed,
+      },
+    });
+
+    return {
+      planKey,
+      monthlyPrice: Number(updated.monthlyPrice),
+      annualPrice: updated.annualPrice === null ? null : Number(updated.annualPrice),
+      updated: targets.length,
+      synced,
+      failed,
     };
   }
 

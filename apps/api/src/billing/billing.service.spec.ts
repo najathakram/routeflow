@@ -1,5 +1,12 @@
+import { Test, TestingModule } from "@nestjs/testing";
 import { BillingService } from "./billing.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
+import { PrismaService } from "../prisma/prisma.service";
+import { StripeService } from "./stripe.service";
+import { EmailService } from "../email/email.service";
+import { TenantStatusGuard } from "../tenant/tenant-status.guard";
+import { BillingEventService } from "./billing-event.service";
+import { PlatformPricingService } from "./platform-pricing.service";
 
 /**
  * MRR-ledger reconciliation for the LEGACY Stripe lifecycle (Plans & Billing P6 follow-up).
@@ -170,5 +177,217 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
       });
       expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
     });
+  });
+});
+
+/**
+ * BillingService.syncStripeSubscriptionPrice (Platform billing — catalog-driven Stripe
+ * prices batch, WP2). Fans a resolved catalog/override price out to a tenant's LIVE
+ * Stripe subscription. The owner-decided semantics are `proration_behavior: "none"` —
+ * next-billing-cycle only, NEVER an immediate prorated charge/credit — and a tenant with
+ * no live Stripe subscription (or one Stripe no longer reports active) is a clean no-op,
+ * not an error.
+ *
+ * Uses Test.createTestingModule (resolving providers by type, not position, so this
+ * test doesn't depend on the constructor's exact parameter order).
+ */
+describe("BillingService.syncStripeSubscriptionPrice", () => {
+  let service: BillingService;
+  let prisma: { tenantSubscription: { findUnique: jest.Mock; update: jest.Mock } };
+  let stripe: { getSubscription: jest.Mock; updateSubscription: jest.Mock; isConfigured: boolean };
+  let pricing: { checkoutPriceData: jest.Mock; resolveTenantPricing: jest.Mock };
+  let events: { emit: jest.Mock };
+
+  beforeEach(async () => {
+    prisma = {
+      tenantSubscription: { findUnique: jest.fn(), update: jest.fn().mockResolvedValue({}) },
+    };
+    stripe = {
+      getSubscription: jest.fn(),
+      updateSubscription: jest.fn().mockResolvedValue({}),
+      isConfigured: true,
+    };
+    pricing = {
+      checkoutPriceData: jest.fn(),
+      // The sync resolves the price up front (for the MRR ledger reconciliation) and
+      // again as price_data for Stripe.
+      resolveTenantPricing: jest.fn().mockResolvedValue({
+        planKey: "GROWTH",
+        planName: "Growth",
+        monthly: 150,
+        annual: 1500,
+        source: "override",
+        currency: "usd",
+      }),
+    };
+    events = { emit: jest.fn().mockResolvedValue({}) };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BillingService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: StripeService, useValue: stripe },
+        { provide: EmailService, useValue: { send: jest.fn() } },
+        { provide: TenantStatusGuard, useValue: { invalidate: jest.fn() } },
+        { provide: BillingEventService, useValue: events },
+        { provide: PlatformPricingService, useValue: pricing },
+      ],
+    }).compile();
+
+    service = module.get<BillingService>(BillingService);
+  });
+
+  it("is a no-op ({ synced: false, reason: 'no_active_stripe_subscription' }) when the tenant has no stripeSubId", async () => {
+    prisma.tenantSubscription.findUnique.mockResolvedValue({
+      tenantId: "t1",
+      stripeSubId: null,
+      billingInterval: null,
+    });
+
+    const result = await service.syncStripeSubscriptionPrice("t1");
+
+    expect(result).toEqual({ synced: false, reason: "no_active_stripe_subscription" });
+    expect(stripe.getSubscription).not.toHaveBeenCalled();
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op ({ synced: false }) when Stripe no longer reports the subscription active", async () => {
+    prisma.tenantSubscription.findUnique.mockResolvedValue({
+      tenantId: "t1",
+      stripeSubId: "sub_1",
+      billingInterval: "month",
+    });
+    stripe.getSubscription.mockResolvedValue({
+      status: "canceled",
+      items: {
+        data: [{ id: "si_1", price: { recurring: { interval: "month" }, product: "prod_1" } }],
+      },
+    });
+
+    const result = await service.syncStripeSubscriptionPrice("t1");
+
+    expect(result.synced).toBe(false);
+    expect(result.reason).toBe("subscription_not_active_canceled");
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+  });
+
+  it("syncs an active subscription with proration_behavior: 'none' — NEVER an immediate proration/credit", async () => {
+    prisma.tenantSubscription.findUnique.mockResolvedValue({
+      tenantId: "t1",
+      stripeSubId: "sub_1",
+      billingInterval: "month",
+    });
+    stripe.getSubscription.mockResolvedValue({
+      status: "active",
+      items: {
+        data: [{ id: "si_1", price: { recurring: { interval: "month" }, product: "prod_1" } }],
+      },
+    });
+    pricing.checkoutPriceData.mockResolvedValue({
+      currency: "usd",
+      product_data: { name: "RouteFlow Growth — monthly" },
+      unit_amount: 15000,
+      recurring: { interval: "month" },
+    });
+
+    const result = await service.syncStripeSubscriptionPrice("t1");
+
+    expect(result.synced).toBe(true);
+    expect(pricing.checkoutPriceData).toHaveBeenCalledWith("t1", "month");
+    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+    const [subId, params] = stripe.updateSubscription.mock.calls[0];
+    expect(subId).toBe("sub_1");
+    expect(params.proration_behavior).toBe("none");
+    expect(params.items).toEqual([
+      expect.objectContaining({ id: "si_1", price_data: expect.any(Object) }),
+    ]);
+    // Owner decision: next-billing-cycle only. "create_prorations" would charge/credit
+    // the tenant immediately mid-period — must never be sent.
+    expect(params.proration_behavior).not.toBe("create_prorations");
+  });
+
+  it("is a no-op ({ synced: false, reason: 'price_unresolvable' }) when no price resolves, instead of throwing", async () => {
+    pricing.resolveTenantPricing.mockRejectedValue(new Error("No price is resolvable"));
+
+    const result = await service.syncStripeSubscriptionPrice("t1");
+
+    // Fan-outs call this per tenant; an unpriceable ENTERPRISE tenant must not abort
+    // (or 400) the caller — it reports itself as unsynced.
+    expect(result).toEqual({ synced: false, reason: "price_unresolvable" });
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+  });
+
+  it("moves the MRR ledger with the price: writes basePriceSnapshot and emits a signed amountDelta", async () => {
+    prisma.tenantSubscription.findUnique.mockResolvedValue({
+      tenantId: "t1",
+      planKey: "GROWTH",
+      basePriceSnapshot: 249,
+      stripeSubId: "sub_1",
+      billingInterval: "month",
+    });
+    stripe.getSubscription.mockResolvedValue({
+      status: "active",
+      items: {
+        data: [{ id: "si_1", price: { recurring: { interval: "month" }, product: "prod_1" } }],
+      },
+    });
+    pricing.checkoutPriceData.mockResolvedValue({
+      currency: "usd",
+      product_data: { name: "RouteFlow Growth — monthly" },
+      unit_amount: 15000,
+      recurring: { interval: "month" },
+    });
+
+    await service.syncStripeSubscriptionPrice("t1");
+
+    // MrrService prices every paying tenant from basePriceSnapshot and reconciles the
+    // total against Σ BillingEvent.amountDelta — a price change must move BOTH.
+    expect(prisma.tenantSubscription.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { basePriceSnapshot: 150 } }),
+    );
+    const call = events.emit.mock.calls.find((c: any[]) => c[1] === BILLING_EVENTS.PLAN_CHANGED);
+    expect(call).toBeDefined();
+    expect(call[3]?.amountDelta).toBe(-99); // 150 − 249
+  });
+
+  it("does not touch the ledger for a non-paying (planKey null) subscription", async () => {
+    prisma.tenantSubscription.findUnique.mockResolvedValue({
+      tenantId: "t1",
+      planKey: null,
+      basePriceSnapshot: null,
+      stripeSubId: null,
+      billingInterval: null,
+    });
+
+    await service.syncStripeSubscriptionPrice("t1");
+
+    // MrrService ignores planKey-null tenants entirely; emitting a delta for one would
+    // desync the ledger from the snapshot total.
+    expect(prisma.tenantSubscription.update).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the item's own recurring interval over the stored billingInterval when they disagree", async () => {
+    prisma.tenantSubscription.findUnique.mockResolvedValue({
+      tenantId: "t1",
+      stripeSubId: "sub_1",
+      billingInterval: "year", // stale/stored value — the live Stripe item says otherwise
+    });
+    stripe.getSubscription.mockResolvedValue({
+      status: "active",
+      items: {
+        data: [{ id: "si_1", price: { recurring: { interval: "month" }, product: "prod_1" } }],
+      },
+    });
+    pricing.checkoutPriceData.mockResolvedValue({
+      currency: "usd",
+      product_data: { name: "RouteFlow Growth — monthly" },
+      unit_amount: 15000,
+      recurring: { interval: "month" },
+    });
+
+    await service.syncStripeSubscriptionPrice("t1");
+
+    expect(pricing.checkoutPriceData).toHaveBeenCalledWith("t1", "month");
   });
 });

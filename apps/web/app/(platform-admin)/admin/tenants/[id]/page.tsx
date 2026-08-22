@@ -10,6 +10,7 @@ import { AdminTabs } from "../../../_components/AdminTabs";
 import { AdminBadge, planLabel } from "../../../_components/AdminBadge";
 import { AdminCard } from "../../../_components/AdminCard";
 import { AdminModal } from "../../../_components/AdminModal";
+import { TenantPricingCard } from "./_components/TenantPricingCard";
 import { LayoutDashboard, CreditCard, Puzzle, Settings, ScrollText } from "lucide-react";
 
 const usd = (n: number) =>
@@ -793,7 +794,6 @@ function BillingTab({
   onRefreshTenant: () => void;
 }) {
   const [portalLoading, setPortalLoading] = React.useState(false);
-  const [checkoutLoading, setCheckoutLoading] = React.useState(false);
   const [msg, setMsg] = React.useState<{ type: "success" | "error" | "info"; text: string } | null>(
     null,
   );
@@ -829,25 +829,6 @@ function BillingTab({
       });
     } finally {
       setPortalLoading(false);
-    }
-  };
-
-  const createCheckout = async () => {
-    setCheckoutLoading(true);
-    try {
-      const res = await superAdminClient.post(
-        `/platform-admin/tenants/${tenant.id}/billing/checkout`,
-      );
-      setMsg({ type: "info", text: `Checkout URL: ${res.data.checkoutUrl}` });
-    } catch (err: unknown) {
-      setMsg({
-        type: "error",
-        text:
-          (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          "Failed to create checkout session",
-      });
-    } finally {
-      setCheckoutLoading(false);
     }
   };
 
@@ -1086,7 +1067,7 @@ function BillingTab({
         </form>
       </AdminCard>
 
-      {/* Stripe Actions */}
+      {/* Stripe Actions — checkout now lives on the Pricing card below (interval-aware) */}
       <AdminCard title="Stripe Actions" className="lg:col-span-2">
         <div className="flex flex-wrap gap-3">
           <button
@@ -1096,15 +1077,11 @@ function BillingTab({
           >
             {portalLoading ? "Opening..." : "Open Billing Portal"}
           </button>
-          <button
-            disabled={checkoutLoading}
-            onClick={createCheckout}
-            className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
-          >
-            {checkoutLoading ? "Creating..." : "Create Checkout Session"}
-          </button>
         </div>
       </AdminCard>
+
+      {/* Pricing — resolved catalog/custom price + the sole checkout entry point */}
+      <TenantPricingCard tenantId={tenant.id} />
     </div>
   );
 }
