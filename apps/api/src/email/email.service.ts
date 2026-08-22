@@ -47,6 +47,19 @@ function assertSafeSmtpEndpoint(host: string, port: number): void {
 }
 
 /**
+ * A PERSONAL Microsoft mailbox (Outlook.com/Hotmail/Live/MSN), as opposed to a business
+ * Microsoft 365 one. Microsoft permanently ended basic (password) auth for consumer
+ * mailboxes on 2026-04-30 — OAuth only — so SMTP+password can never work for these, and
+ * no admin setting changes that. Detected from the consumer submission host OR the
+ * address domain, because operators routinely enter an @outlook.com address against
+ * smtp.office365.com (our own preset used to invite exactly that).
+ */
+function isConsumerMicrosoftMailbox(host: string, user?: string): boolean {
+  if (host.includes("smtp-mail.outlook.com")) return true;
+  return /@(outlook|hotmail|live|msn)\./i.test(user ?? "");
+}
+
+/**
  * Translate a raw SMTP failure into plain-language, provider-aware guidance the
  * operator can act on. Exported for tests. The raw error is logged by the caller —
  * this string is what the settings UI shows, so it must say what to DO, not just
@@ -58,6 +71,15 @@ export function mapSmtpError(
   err: { message?: string; code?: string; responseCode?: number } | null | undefined,
   host: string,
   port: number,
+  /**
+   * The mailbox being authenticated, when known. A personal Outlook.com/Hotmail/Live/MSN
+   * address is UNFIXABLE over SMTP+password (Microsoft ended basic auth for consumer
+   * mailboxes on 2026-04-30, OAuth only), but it's indistinguishable from a business
+   * Microsoft 365 mailbox by host alone — both are commonly entered against
+   * smtp.office365.com. Without this the operator is told to go ask an admin to tick a
+   * box that will never help them.
+   */
+  user?: string,
 ): string {
   const msg = err?.message ?? "";
   const code = err?.code ?? "";
@@ -75,8 +97,10 @@ export function mapSmtpError(
   }
   if (lower.includes("basic authentication is disabled") || lower.includes("basic auth")) {
     return (
-      "This mailbox has basic (password) sign-in disabled. Enable 'Authenticated SMTP' for it in the " +
-      "Microsoft 365 admin center, or use an app password if your organisation requires one."
+      "This mailbox has basic (password) sign-in disabled. For a BUSINESS Microsoft 365 mailbox an admin " +
+      "can enable 'Authenticated SMTP' for it (and must turn off tenant security defaults). For a PERSONAL " +
+      "Outlook.com/Hotmail/Live/MSN address there is no fix — Microsoft ended password sign-in for those on " +
+      "30 April 2026 and now requires OAuth, so send from Gmail or another SMTP provider instead."
     );
   }
 
@@ -101,12 +125,15 @@ export function mapSmtpError(
     );
   }
   if (code === "EAUTH" || msg.includes("535") || lower.includes("password not accepted")) {
-    const gmailHint = h.includes("gmail")
+    const hint = h.includes("gmail")
       ? " Gmail needs an App Password (myaccount.google.com/apppasswords), not your normal password."
-      : h.includes("office365") || h.includes("outlook")
-        ? " For Microsoft 365, make sure 'Authenticated SMTP' is enabled for the mailbox, and use an app password if you have 2-step verification."
-        : "";
-    return `The email address or password wasn't accepted by the mail server.${gmailHint} Double-check both and try again.`;
+      : isConsumerMicrosoftMailbox(h, user)
+        ? " Personal Outlook.com/Hotmail/Live/MSN addresses can no longer send over SMTP with a password — " +
+          "Microsoft ended that on 30 April 2026 and now requires OAuth. Send from Gmail or another SMTP provider instead."
+        : h.includes("office365") || h.includes("outlook")
+          ? " For a business Microsoft 365 mailbox, an admin must enable 'Authenticated SMTP' for it and turn off tenant security defaults."
+          : "";
+    return `The email address or password wasn't accepted by the mail server.${hint} Double-check both and try again.`;
   }
 
   // Connection-level problems: wrong host, wrong port, or a TLS mismatch.
@@ -590,7 +617,7 @@ export class EmailService {
       return { ok: true, message: "Connection successful — your credentials were accepted." };
     } catch (err: any) {
       this.logger.warn(`SMTP verify failed for ${host}:${port} — ${err?.message}`);
-      return { ok: false, message: mapSmtpError(err, host, port) };
+      return { ok: false, message: mapSmtpError(err, host, port, user) };
     }
   }
 
@@ -740,7 +767,7 @@ export class EmailService {
       } catch (err: any) {
         const rawMessage: string = err?.message ?? "SMTP send failed";
         smtpError = rawMessage;
-        smtpFallbackReason = mapSmtpError(err, emailCfg.host, emailCfg.port);
+        smtpFallbackReason = mapSmtpError(err, emailCfg.host, emailCfg.port, emailCfg.user);
         this.logger.error(
           `Tenant SMTP send failed [code=${err?.code ?? "unknown"}` +
             `${err?.responseCode ? ` responseCode=${err.responseCode}` : ""}]: ` +

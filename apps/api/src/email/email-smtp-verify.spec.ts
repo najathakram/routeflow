@@ -58,6 +58,47 @@ describe("mapSmtpError — provider-aware guidance", () => {
     expect(msg).toMatch(/App Password/i);
   });
 
+  // A personal Outlook.com mailbox against smtp.office365.com is the one auth failure no
+  // admin setting can fix (Microsoft ended consumer basic auth 2026-04-30, OAuth only).
+  // It must NOT inherit the business-M365 "ask your admin to tick Authenticated SMTP"
+  // advice, which would send the operator on an unfixable errand.
+  it("tells a PERSONAL Outlook.com mailbox that SMTP+password is dead, not to ask an admin", () => {
+    const msg = mapSmtpError(
+      { code: "EAUTH", message: "535 5.7.3 Authentication unsuccessful" },
+      "smtp.office365.com",
+      587,
+      "owner@outlook.com",
+    );
+    expect(msg).toMatch(/no longer send over SMTP with a password/i);
+    expect(msg).toMatch(/30 April 2026/);
+    expect(msg).not.toMatch(/Authenticated SMTP/);
+  });
+
+  it.each(["me@hotmail.com", "me@live.co.uk", "me@msn.com"])(
+    "treats %s as a personal Microsoft mailbox",
+    (mailbox) => {
+      const msg = mapSmtpError({ code: "EAUTH" }, "smtp.office365.com", 587, mailbox);
+      expect(msg).toMatch(/OAuth/);
+    },
+  );
+
+  it("still gives a BUSINESS M365 mailbox the admin-center fix", () => {
+    const msg = mapSmtpError(
+      { code: "EAUTH", message: "535 5.7.3 Authentication unsuccessful" },
+      "smtp.office365.com",
+      587,
+      "owner@acme.com",
+    );
+    expect(msg).toMatch(/Authenticated SMTP/);
+    expect(msg).toMatch(/security defaults/i);
+    expect(msg).not.toMatch(/30 April 2026/);
+  });
+
+  it("detects a personal mailbox from the consumer host even without the address", () => {
+    const msg = mapSmtpError({ code: "EAUTH" }, "smtp-mail.outlook.com", 587);
+    expect(msg).toMatch(/OAuth/);
+  });
+
   it("maps a timeout to host/port guidance with the STARTTLS/SSL pairs", () => {
     const msg = mapSmtpError(
       { code: "ETIMEDOUT", message: "connect ETIMEDOUT" },
