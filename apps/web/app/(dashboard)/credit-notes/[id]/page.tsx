@@ -26,7 +26,7 @@ import {
   useUpdateCreditNote,
 } from "@/lib/api/credit-notes";
 import { useInvoices } from "@/lib/api/invoices";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { DocumentLetterhead } from "@/components/DocumentLetterhead";
 
 // ─── Issue confirm modal ──────────────────────────────────────────────────────
@@ -503,7 +503,7 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
                 </p>
                 <p className="text-sm text-navy/70">
                   <span className="font-medium text-navy">Issue Date:</span>{" "}
-                  {fmtDate(cn.issueDate ?? cn.createdAt)}
+                  {fmtCalendarDate(cn.issueDate ?? cn.createdAt)}
                 </p>
                 {cn.invoiceId && (
                   <p className="mt-1 text-sm text-navy/70">
@@ -627,12 +627,12 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
               </div>
               <div className="flex justify-between">
                 <dt className="text-navy/70">Issue Date</dt>
-                <dd className="text-navy">{fmtDate(cn.issueDate ?? cn.createdAt)}</dd>
+                <dd className="text-navy">{fmtCalendarDate(cn.issueDate ?? cn.createdAt)}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-navy/70">Expires</dt>
                 <dd className={isExpired ? "font-medium text-danger" : "text-navy"}>
-                  {cn.expiresAt ? fmtDate(cn.expiresAt) : "Never"}
+                  {cn.expiresAt ? fmtCalendarDate(cn.expiresAt) : "Never"}
                 </dd>
               </div>
               {cn.invoiceId && (

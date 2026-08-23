@@ -11,7 +11,7 @@ import {
   type SupplierPaymentMethod,
   type RecordSupplierPaymentDto,
 } from "@/lib/api/supplier-payments";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 
 const fieldCls =
@@ -263,7 +263,7 @@ export function RecordSupplierPaymentModal({
                           <td className="px-3 py-2 font-medium text-brand-600">
                             {a.billNumber}
                             <div className="text-xs font-normal text-navy/50">
-                              {fmtDate(a.billDate)}
+                              {fmtCalendarDate(a.billDate)}
                             </div>
                           </td>
                           <td className="px-3 py-2 text-right text-navy">{fmt(a.amountDue)}</td>

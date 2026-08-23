@@ -23,7 +23,7 @@ import {
   useConvertEstimateToInvoice,
   useVoidEstimate,
 } from "@/lib/api/estimates";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { DocumentLetterhead } from "@/components/DocumentLetterhead";
 
 // ─── Void confirm modal ───────────────────────────────────────────────────────
@@ -351,11 +351,11 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
                 </p>
                 <p className="text-sm text-navy/70">
                   <span className="font-medium text-navy">Issue Date:</span>{" "}
-                  {fmtDate((estimate as any).issueDate ?? estimate.createdAt)}
+                  {fmtCalendarDate((estimate as any).issueDate ?? estimate.createdAt)}
                 </p>
                 <p className="text-sm text-navy/70">
                   <span className="font-medium text-navy">Valid Until:</span>{" "}
-                  {fmtDate((estimate as any).expiresAt ?? (estimate as any).expiryDate)}
+                  {fmtCalendarDate((estimate as any).expiresAt ?? (estimate as any).expiryDate)}
                 </p>
               </div>
             </div>
@@ -494,13 +494,13 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
               <div className="flex justify-between">
                 <dt className="text-navy/70">Issue Date</dt>
                 <dd className="text-navy">
-                  {fmtDate((estimate as any).issueDate ?? estimate.createdAt)}
+                  {fmtCalendarDate((estimate as any).issueDate ?? estimate.createdAt)}
                 </dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-navy/70">Valid Until</dt>
                 <dd className="text-navy">
-                  {fmtDate((estimate as any).expiresAt ?? (estimate as any).expiryDate)}
+                  {fmtCalendarDate((estimate as any).expiresAt ?? (estimate as any).expiryDate)}
                 </dd>
               </div>
             </dl>

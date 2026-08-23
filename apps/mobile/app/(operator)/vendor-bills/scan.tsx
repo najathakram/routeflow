@@ -40,6 +40,7 @@ import {
   type ScannedItemEx,
 } from "../../../lib/vendor-bill-scan";
 import { showToast } from "../../../lib/toast";
+import { fmtCalendarDate } from "../../../lib/format-date";
 import { chooseAction, confirm } from "../../../lib/confirm";
 import { roundMoney } from "../../../lib/pricing";
 import { ProductPickerSheet } from "../../../components/ProductPickerSheet";
@@ -404,7 +405,7 @@ function ReviewStep({
           <DetailRow label="Invoice #" value={result.invoiceNumber ?? "—"} />
           <DetailRow
             label="Date"
-            value={result.invoiceDate ? new Date(result.invoiceDate).toLocaleDateString() : "—"}
+            value={result.invoiceDate ? fmtCalendarDate(result.invoiceDate) : "—"}
           />
           <DetailRow
             label="Total"

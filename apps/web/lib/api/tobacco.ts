@@ -36,7 +36,9 @@ export interface TobaccoInventoryItem {
   sku: string | null;
   unit: string;
   isActive: boolean;
+  /** PIECES (system-wide stock unit) — label it with `unitsLabel`, never with `unit`. */
   currentStock: number;
+  unitsPerBox?: number | null;
   averageCost: number | null;
   totalValue: number | null;
 }

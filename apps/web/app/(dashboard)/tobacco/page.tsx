@@ -17,7 +17,8 @@ import { Download, FileText, Loader2, RefreshCcw, ShieldAlert } from "lucide-rea
 import { Badge, Button, Card, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
+import { unitsLabel } from "@/lib/stock-label";
 import {
   useTenantAddons,
   useTobaccoOverview,
@@ -385,8 +386,10 @@ function InventoryTab() {
                 {!p.isActive && <span className="ml-2 text-xs text-navy/50">(inactive)</span>}
               </td>
               <td className="px-4 py-3 font-mono text-navy/70">{p.sku ?? "—"}</td>
+              {/* Stock is a PIECE count — `p.unit` is the selling-unit noun, so it must
+                  not be printed next to it. */}
               <td className="px-4 py-3 text-right tabular-nums text-navy">
-                {p.currentStock} {p.unit}
+                {unitsLabel(p.currentStock, p.unitsPerBox, p.unit)}
               </td>
               <td className="px-4 py-3 text-right tabular-nums text-navy/70">
                 {p.averageCost != null ? fmt(p.averageCost) : "—"}
@@ -523,7 +526,7 @@ function SalesTab() {
                 const noLicense = !s.customer?.tobaccoLicenseNo;
                 return (
                   <tr key={s.id} className="transition-colors hover:bg-surface-raised/50">
-                    <td className="px-4 py-3 text-navy/70">{fmtDate(s.date)}</td>
+                    <td className="px-4 py-3 text-navy/70">{fmtCalendarDate(s.date)}</td>
                     <td className="px-4 py-3">
                       <Link
                         href={`/invoices/${s.invoiceId}`}

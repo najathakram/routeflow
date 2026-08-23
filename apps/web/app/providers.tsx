@@ -7,6 +7,7 @@ import { BuyerAuthProvider } from "@/lib/buyer-auth-context";
 import { ToastProvider, useToast } from "@routeflow/ui/web";
 import { I18nProvider } from "@/lib/i18n";
 import { ReAuthProvider } from "@/components/ReAuthProvider";
+import { PlanGateNotice } from "@/components/PlanGateNotice";
 
 function QueryProviders({ children }: { children: React.ReactNode }) {
   const { toast } = useToast();
@@ -39,7 +40,11 @@ function QueryProviders({ children }: { children: React.ReactNode }) {
       }),
       defaultOptions: {
         queries: {
-          retry: 1,
+          // A 403 is a decision, not a transient failure: retrying it only
+          // doubles the wasted requests (and, for PLAN_GATE bodies, the
+          // notices the bridge fires). Everything else keeps the one retry.
+          retry: (failureCount, error) =>
+            (error as any)?.response?.status !== 403 && failureCount < 1,
           staleTime: 30_000,
           refetchOnWindowFocus: false,
         },
@@ -59,6 +64,8 @@ function QueryProviders({ children }: { children: React.ReactNode }) {
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <ToastProvider>
+      {/* Renders nothing; turns PLAN_GATE 403s on gated GETs into a toast (lib/api-client.ts). */}
+      <PlanGateNotice />
       <I18nProvider>
         <ReAuthProvider>
           <QueryProviders>{children}</QueryProviders>

@@ -50,7 +50,7 @@ import { SupplierSelect } from "./SupplierSelect";
 import { SearchableProductPicker } from "./SearchableProductPicker";
 import { ProductCreateModal } from "./ProductCreateModal";
 import { displayProductName } from "@/lib/product-display";
-import { fmtDate } from "@/lib/formatting";
+import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { roundMoney } from "@/lib/pricing";
 import { apiClient } from "@/lib/api-client";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
@@ -2944,7 +2944,7 @@ function DuplicateBanner({
             <>
               <span className="font-semibold">
                 Already imported as {duplicate.billNumber}
-                {seenOn ? ` on ${fmtDate(seenOn)}` : ""}.
+                {seenOn ? ` on ${fmtCalendarDate(seenOn)}` : ""}.
               </span>{" "}
               Creating it again would double stock and the amount owed.
             </>

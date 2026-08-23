@@ -55,6 +55,49 @@ const TERM_DAYS: Record<string, number> = {
 };
 
 /**
+ * The tenant's CURRENT calendar day, as the UTC-midnight instant of that day.
+ *
+ * `Invoice.issueDate`/`dueDate` are CALENDAR dates and every consumer (list, detail,
+ * PDF, email) formats them with `timeZone: "UTC"` — so a stored value must be UTC
+ * midnight of the intended day or it prints one day off. A raw `new Date()` breaks
+ * that: a sale keyed at 8:10pm America/New_York is already 00:10Z the NEXT day and
+ * would print (and fall due) one day late. Backdated orders already arrive as UTC
+ * midnight; this gives same-day sales the identical shape.
+ */
+export function startOfCalendarDay(timeZone?: string | null, now: Date = new Date()): Date {
+  let y: string, m: string, d: string;
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timeZone || "UTC",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(now);
+    const at = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+    [y, m, d] = [at("year"), at("month"), at("day")];
+  } catch {
+    // Unknown/invalid IANA zone stored on TenantConfig — fall back to UTC, never throw.
+    [y, m, d] = [
+      String(now.getUTCFullYear()),
+      String(now.getUTCMonth() + 1).padStart(2, "0"),
+      String(now.getUTCDate()).padStart(2, "0"),
+    ];
+  }
+  return new Date(`${y}-${m}-${d}T00:00:00.000Z`);
+}
+
+/**
+ * Payment-term arithmetic on a calendar date, in UTC. `setDate`/`getDate` read LOCAL
+ * components, so on a non-UTC host they shift a UTC-midnight instant by the DST delta
+ * and can land the due date on the previous calendar day.
+ */
+export function addCalendarDays(date: Date, days: number): Date {
+  const out = new Date(date);
+  out.setUTCDate(out.getUTCDate() + days);
+  return out;
+}
+
+/**
  * P5-12: legal FORWARD transitions for the check lifecycle.
  * RECORDED → DEPOSITED → CLEARED (strict sequence); any non-bounced state can
  * go to BOUNCED (a deposited or even cleared check can be returned by the
@@ -114,18 +157,26 @@ export class InvoicesService {
     return { terms, dueDays: TERM_DAYS[terms] ?? 30 };
   }
 
-  /** Resolve the tenant's customer-facing invoice Notes and Terms & Conditions defaults. */
+  /**
+   * Resolve the tenant's customer-facing invoice Notes and Terms & Conditions defaults,
+   * plus its timezone — the calendar day a same-day invoice is dated in.
+   */
   private async resolveTenantInvoiceDefaults(): Promise<{
     notes: string | null;
     terms: string | null;
+    timezone: string | null;
   }> {
     const tenantId = this.prisma.getTenantId();
-    if (!tenantId) return { notes: null, terms: null };
+    if (!tenantId) return { notes: null, terms: null, timezone: null };
     const cfg = await this.prisma.tenantConfig.findUnique({
       where: { tenantId },
-      select: { invoiceNotes: true, invoiceTerms: true },
+      select: { invoiceNotes: true, invoiceTerms: true, timezone: true },
     });
-    return { notes: cfg?.invoiceNotes ?? null, terms: cfg?.invoiceTerms ?? null };
+    return {
+      notes: cfg?.invoiceNotes ?? null,
+      terms: cfg?.invoiceTerms ?? null,
+      timezone: cfg?.timezone ?? null,
+    };
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -342,7 +393,9 @@ export class InvoicesService {
             shippingFee: shipping,
             total,
             dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
-            issueDate: dto.issueDate ? new Date(dto.issueDate) : new Date(),
+            issueDate: dto.issueDate
+              ? new Date(dto.issueDate)
+              : startOfCalendarDay(tenantDefaults.timezone),
             notes: dto.notes ?? tenantDefaults.notes,
             terms: dto.terms ?? tenantDefaults.terms,
             referenceNumber: dto.referenceNumber ?? null,
@@ -402,7 +455,11 @@ export class InvoicesService {
    * the create call omitted it, leaving invoices with tenantId=null which
    * bypassed all tenant-scoped queries.
    */
-  async createInvoiceFromOrder(orderId: string, txClient?: any) {
+  async createInvoiceFromOrder(
+    orderId: string,
+    txClient?: any,
+    overrides?: { dueDate?: string; terms?: string },
+  ) {
     const db = txClient ?? this.prisma;
 
     // Fetch order with non-cancelled line items
@@ -453,19 +510,25 @@ export class InvoicesService {
     });
 
     const tenantId = this.prisma.getTenantId();
-    // Due date from configured payment terms (e.g. "Net 30")
+    // Due date from configured payment terms (e.g. "Net 30"), unless the caller
+    // (e.g. the "New sale" flow) supplied an explicit override.
     const { terms: defaultTerms, dueDays } = await this.resolveDefaultTerms();
-    // A backdated order bills on its business date, and the payment term runs from
-    // that date — not from when the invoice happened to be generated.
-    const issueDate = order.orderDate ?? new Date();
-    const dueDate = new Date(issueDate);
-    dueDate.setDate(dueDate.getDate() + dueDays);
     // Customer-facing invoice Notes and T&C from tenant settings
     const tenantDefaults = await this.resolveTenantInvoiceDefaults();
+    // A backdated order bills on its business date, and the payment term runs from
+    // that date — not from when the invoice happened to be generated.
+    const issueDate = order.orderDate ?? startOfCalendarDay(tenantDefaults.timezone);
+    let dueDate: Date;
+    if (overrides?.dueDate) {
+      dueDate = new Date(overrides.dueDate);
+    } else {
+      dueDate = addCalendarDays(issueDate, dueDays);
+    }
+    const overrideTerms = overrides?.terms?.trim() || undefined;
 
     const extraInvoiceData: Record<string, any> = {
       dueDate,
-      terms: tenantDefaults.terms ?? defaultTerms,
+      terms: overrideTerms ?? tenantDefaults.terms ?? defaultTerms,
       issueDate,
       notes: tenantDefaults.notes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
       // Carry carrier shipment tracking from the order onto the invoice so the
@@ -1842,7 +1905,11 @@ export class InvoicesService {
    * Accepts an explicit tenantId so it doesn't depend on AsyncLocalStorage
    * (which is lost when the call is not awaited in the request lifecycle).
    */
-  async createInvoiceFromOrderWithTenant(orderId: string, tenantId: string | null) {
+  async createInvoiceFromOrderWithTenant(
+    orderId: string,
+    tenantId: string | null,
+    overrides?: { dueDate?: string; terms?: string },
+  ) {
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, ...(tenantId ? { tenantId } : {}) },
       include: {
@@ -1901,27 +1968,34 @@ export class InvoicesService {
       }
     }
 
-    // A backdated order bills on its business date, and the payment term runs from
-    // that date — not from when the invoice happened to be generated.
-    const issueDate = order.orderDate ?? new Date();
-    const dueDate = new Date(issueDate);
-    dueDate.setDate(dueDate.getDate() + dueDays);
-
     // Customer-facing invoice Notes and T&C from tenant settings
     let tenantNotes: string | null = null;
     let tenantTerms: string | null = null;
+    let tenantTimezone: string | null = null;
     if (tenantId) {
       const cfg = await this.prisma.tenantConfig.findUnique({
         where: { tenantId },
-        select: { invoiceNotes: true, invoiceTerms: true },
+        select: { invoiceNotes: true, invoiceTerms: true, timezone: true },
       });
       tenantNotes = cfg?.invoiceNotes ?? null;
       tenantTerms = cfg?.invoiceTerms ?? null;
+      tenantTimezone = cfg?.timezone ?? null;
     }
 
+    // A backdated order bills on its business date, and the payment term runs from
+    // that date — not from when the invoice happened to be generated.
+    const issueDate = order.orderDate ?? startOfCalendarDay(tenantTimezone);
+    let dueDate: Date;
+    if (overrides?.dueDate) {
+      dueDate = new Date(overrides.dueDate);
+    } else {
+      dueDate = addCalendarDays(issueDate, dueDays);
+    }
+
+    const overrideTerms = overrides?.terms?.trim() || undefined;
     const extraInvoiceData: Record<string, any> = {
       dueDate,
-      terms: tenantTerms ?? defaultTerms,
+      terms: overrideTerms ?? tenantTerms ?? defaultTerms,
       issueDate,
       notes: tenantNotes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
     };
@@ -1950,7 +2024,11 @@ export class InvoicesService {
    * (and how many of each) go on this invoice + a due date. Each call increments
    * OrderItem.invoicedQty so we never over-bill.
    */
-  async createPartialFromOrder(orderId: string, dto: CreatePartialInvoiceDto) {
+  async createPartialFromOrder(
+    orderId: string,
+    dto: CreatePartialInvoiceDto,
+    overrides?: { dueDate?: string; terms?: string },
+  ) {
     const order = await this.prisma.forTenant().order.findUnique({
       where: { id: orderId },
       include: {
@@ -2024,20 +2102,22 @@ export class InvoicesService {
     }
     const total = roundMoney(subtotal + taxAmount + feeRemaining);
 
-    // Resolve due date: explicit dto.dueDate wins, else default term from the issue date.
+    // Resolve due date: explicit dto.dueDate wins, then a caller-supplied override,
+    // else default term from the issue date.
     const { terms: defaultTerms, dueDays } = await this.resolveDefaultTerms();
+    const tenantDefaults = await this.resolveTenantInvoiceDefaults();
     // A backdated order bills on its business date, and the payment term runs from
     // that date — not from when the invoice happened to be generated.
-    const issueDate = order.orderDate ?? new Date();
+    const issueDate = order.orderDate ?? startOfCalendarDay(tenantDefaults.timezone);
     let dueDate: Date;
     if (dto.dueDate) {
       dueDate = new Date(dto.dueDate);
+    } else if (overrides?.dueDate) {
+      dueDate = new Date(overrides.dueDate);
     } else {
-      dueDate = new Date(issueDate);
-      dueDate.setDate(dueDate.getDate() + dueDays);
+      dueDate = addCalendarDays(issueDate, dueDays);
     }
-
-    const tenantDefaults = await this.resolveTenantInvoiceDefaults();
+    const overrideTerms = overrides?.terms?.trim() || undefined;
     const tenantId = this.prisma.getTenantId();
     const invoiceNumber = await this.generateInvoiceNumber();
 
@@ -2055,7 +2135,7 @@ export class InvoicesService {
           shippingFee: feeRemaining,
           total,
           dueDate,
-          terms: dto.terms ?? tenantDefaults.terms ?? defaultTerms,
+          terms: dto.terms ?? overrideTerms ?? tenantDefaults.terms ?? defaultTerms,
           issueDate,
           notes:
             dto.notes ??
@@ -2725,20 +2805,8 @@ export class InvoicesService {
       customerName: inv.customer?.businessName ?? "Customer",
       invoiceNumber: inv.invoiceNumber,
       invoiceId: inv.id,
-      issueDate: inv.issueDate
-        ? new Date(inv.issueDate).toLocaleDateString("en-US", {
-            year: "numeric",
-            month: "long",
-            day: "numeric",
-          })
-        : "",
-      dueDate: inv.dueDate
-        ? new Date(inv.dueDate).toLocaleDateString("en-US", {
-            year: "numeric",
-            month: "long",
-            day: "numeric",
-          })
-        : "",
+      issueDate: formatDate(inv.issueDate),
+      dueDate: formatDate(inv.dueDate),
       total: Number(inv.total),
       items: inv.items.map((it: any) => ({
         description: it.description,
@@ -2897,20 +2965,8 @@ export class InvoicesService {
       customerName: inv.customer?.businessName ?? "Customer",
       invoiceNumber: inv.invoiceNumber,
       invoiceId: inv.id,
-      issueDate: inv.issueDate
-        ? new Date(inv.issueDate).toLocaleDateString("en-US", {
-            year: "numeric",
-            month: "long",
-            day: "numeric",
-          })
-        : "",
-      dueDate: inv.dueDate
-        ? new Date(inv.dueDate).toLocaleDateString("en-US", {
-            year: "numeric",
-            month: "long",
-            day: "numeric",
-          })
-        : "",
+      issueDate: formatDate(inv.issueDate),
+      dueDate: formatDate(inv.dueDate),
       total: Number(inv.total),
       items: inv.items.map((it: any) => ({
         description: it.description,

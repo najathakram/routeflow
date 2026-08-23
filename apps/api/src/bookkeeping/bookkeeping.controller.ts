@@ -34,6 +34,8 @@ import {
 import { BulkMarkPaidDto } from "../vendor-bills/dto/bulk-mark-paid.dto";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { PlanFlagGuard } from "../billing/plan-flag.guard";
+import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 
 @ApiTags("bookkeeping")
 @ApiBearerAuth()
@@ -43,6 +45,8 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 export class BookkeepingController {
   constructor(private readonly bookkeepingService: BookkeepingService) {}
 
+  // Core money endpoints (summary, dashboard, transactions, expenses,
+  // bills/bulk-mark-paid) stay UNGATED — only reports/* is behind flag.reports.
   @Get("summary")
   getSummary() {
     return this.bookkeepingService.getSummary();
@@ -185,50 +189,67 @@ export class BookkeepingController {
     return this.bookkeepingService.extractExpenseItems(id);
   }
 
-  // ── Reports ──
+  // ── Reports ── every reports/* route is gated on flag.reports.
   @Get("reports/pl")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.reports")
   getPL(@Query("from") from?: string, @Query("to") to?: string) {
     return this.bookkeepingService.getProfitAndLoss(from, to);
   }
 
   @Get("reports/aging")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.reports")
   getAging() {
     return this.bookkeepingService.getArAging();
   }
 
   @Get("reports/cashflow")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.reports")
   getCashFlow(@Query("from") from?: string, @Query("to") to?: string) {
     return this.bookkeepingService.getCashFlow(from, to);
   }
 
+  // Core money endpoint — stays UNGATED (owner decision pending). Not reports/*.
   @Get("finance-dashboard")
   getFinanceDashboard() {
     return this.bookkeepingService.getFinanceDashboard();
   }
 
-  // ── Extended Reports ──
+  // ── Extended Reports ── every reports/* route is gated on flag.reports.
   @Get("reports/ar-aging-invoices")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.reports")
   getArAgingInvoices(@Query("intervalDays") intervalDays?: string) {
     const interval = intervalDays ? parseInt(intervalDays, 10) : 30;
     return this.bookkeepingService.getArAgingInvoices(interval);
   }
 
   @Get("reports/sales-by-customer")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.reports")
   getSalesByCustomer(@Query("from") from?: string, @Query("to") to?: string) {
     return this.bookkeepingService.getSalesByCustomer(from, to);
   }
 
   @Get("reports/sales-by-item")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.reports")
   getSalesByItem(@Query("from") from?: string, @Query("to") to?: string) {
     return this.bookkeepingService.getSalesByItem(from, to);
   }
 
   @Get("reports/customer-balance")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.reports")
   getCustomerBalanceSummary() {
     return this.bookkeepingService.getCustomerBalanceSummary();
   }
 
   @Get("reports/invoice-details")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.reports")
   getInvoiceDetailsReport(
     @Query("from") from?: string,
     @Query("to") to?: string,
@@ -239,21 +260,29 @@ export class BookkeepingController {
   }
 
   @Get("reports/bad-debts")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.reports")
   getBadDebtsReport() {
     return this.bookkeepingService.getBadDebtsReport();
   }
 
   @Get("reports/payments-received")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.reports")
   getPaymentsReceivedReport(@Query("from") from?: string, @Query("to") to?: string) {
     return this.bookkeepingService.getPaymentsReceivedReport(from, to);
   }
 
   @Get("reports/time-to-get-paid")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.reports")
   getTimeToGetPaid(@Query("from") from?: string, @Query("to") to?: string) {
     return this.bookkeepingService.getTimeToGetPaid(from, to);
   }
 
   @Get("reports/expense-details")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.reports")
   getExpenseDetailsReport(
     @Query("from") from?: string,
     @Query("to") to?: string,
@@ -263,21 +292,29 @@ export class BookkeepingController {
   }
 
   @Get("reports/expenses-by-category")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.reports")
   getExpensesByCategoryReport(@Query("from") from?: string, @Query("to") to?: string) {
     return this.bookkeepingService.getExpensesByCategoryReport(from, to);
   }
 
   @Get("reports/expenses-by-customer")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.reports")
   getExpensesByCustomerReport(@Query("from") from?: string, @Query("to") to?: string) {
     return this.bookkeepingService.getExpensesByCustomerReport(from, to);
   }
 
   @Get("reports/sales-by-driver")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.reports")
   getSalesByDriver(@Query("from") from?: string, @Query("to") to?: string) {
     return this.bookkeepingService.getSalesByDriver(from, to);
   }
 
   @Get("reports/ar-aging-details")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.reports")
   getArAgingDetails(
     @Query("from") from?: string,
     @Query("to") to?: string,
@@ -287,6 +324,8 @@ export class BookkeepingController {
   }
 
   @Get("reports/estimate-details")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.reports")
   getEstimateDetails(
     @Query("from") from?: string,
     @Query("to") to?: string,
@@ -296,11 +335,15 @@ export class BookkeepingController {
   }
 
   @Get("reports/refund-history")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.reports")
   getRefundHistory(@Query("from") from?: string, @Query("to") to?: string) {
     return this.bookkeepingService.getRefundHistory(from, to);
   }
 
   @Get("reports/receivable-summary")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.reports")
   getReceivableSummary(@Query("from") from?: string, @Query("to") to?: string) {
     return this.bookkeepingService.getReceivableSummary(from, to);
   }

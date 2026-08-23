@@ -63,6 +63,11 @@ export class CreateSaleDto {
   /** Only used when deliveredNow=false: issue (send) the draft invoice now instead of leaving it DRAFT. */
   @IsOptional() @IsBoolean() send?: boolean;
 
+  /** Explicit invoice due date (ISO). Omitted → tenant default term (e.g. Net 30) applies. */
+  @IsOptional() @IsDateString() dueDate?: string;
+  /** Long-form Terms & Conditions text for the invoice. Omitted → tenant default applies. */
+  @IsOptional() @IsString() @MaxLength(5000) terms?: string;
+
   /** Credit notes to apply to this order's invoice(s). undefined = leave untouched;
    *  [] = remove all; otherwise the FULL desired set (server diffs). */
   @IsOptional()

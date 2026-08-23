@@ -18,6 +18,7 @@ import {
   type POStatus,
   type PurchaseOrder,
 } from "../../../lib/api/purchase-orders";
+import { fmtCalendarDate } from "../../../lib/format-date";
 
 const FILTERS = [
   { id: "ALL", label: "All" },
@@ -114,9 +115,7 @@ export default function PurchaseOrdersListScreen() {
 
 function PORow({ po, onPress }: { po: PurchaseOrder; onPress: () => void }) {
   const s = statusPill(po.status);
-  const expectedLabel = po.expectedDate
-    ? `Expected ${new Date(po.expectedDate).toLocaleDateString()}`
-    : null;
+  const expectedLabel = po.expectedDate ? `Expected ${fmtCalendarDate(po.expectedDate)}` : null;
 
   return (
     <Pressable style={styles.row} onPress={onPress}>

@@ -20,6 +20,9 @@ function formatDateInput(raw: string): string {
   return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
 }
 
+// Not `fmtCalendarDate`: this preview keeps the weekday (buyers pick delivery
+// days by weekday), and parsing the typed YYYY-MM-DD as LOCAL midnight already
+// renders the same calendar day in every timezone.
 function formatDisplayDate(iso: string): string {
   if (!iso || iso.length < 10) return "";
   try {
