@@ -30,7 +30,7 @@ import {
   type VendorBill,
   type CreateVendorBillItem,
 } from "@/lib/api/vendor-bills";
-import { fmt, fmtDate, todayIso } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, todayIso } from "@/lib/formatting";
 import { roundMoney } from "@/lib/pricing";
 
 // ─── Client-computed sections ───────────────────────────────────────────────
@@ -409,7 +409,7 @@ export function StatementReviewGrid({ result, onApplied }: Props) {
           const dates = impliedPaidBills.map((b) => b.billDate).filter(Boolean) as string[];
           if (dates.length === 0) return null;
           const sorted = [...dates].sort();
-          return `${fmtDate(sorted[0])} – ${fmtDate(sorted[sorted.length - 1])}`;
+          return `${fmtCalendarDate(sorted[0])} – ${fmtCalendarDate(sorted[sorted.length - 1])}`;
         })()
       : null;
 
@@ -526,7 +526,7 @@ export function StatementReviewGrid({ result, onApplied }: Props) {
             </h3>
             <p className="mt-1 text-sm text-navy/70">
               {result.periodStart && result.periodEnd
-                ? `${fmtDate(result.periodStart)} – ${fmtDate(result.periodEnd)}`
+                ? `${fmtCalendarDate(result.periodStart)} – ${fmtCalendarDate(result.periodEnd)}`
                 : "Statement period not read"}
               {result.fileName ? ` · ${result.fileName}` : ""}
             </p>
@@ -620,13 +620,13 @@ export function StatementReviewGrid({ result, onApplied }: Props) {
                       <td className="px-3 py-2 align-top">
                         <p className="font-medium text-navy">{m.line.refNumber ?? "—"}</p>
                         <p className="text-xs text-navy/50">
-                          {fmtDate(m.line.date)} · {fmt(m.line.amount)}
+                          {fmtCalendarDate(m.line.date)} · {fmt(m.line.amount)}
                         </p>
                       </td>
                       <td className="px-3 py-2 align-top">
                         <p className="font-medium text-brand-600">{candidate?.billNumber ?? "—"}</p>
                         <p className="text-xs text-navy/50">
-                          {fmtDate(candidate?.date ?? null)} · owed{" "}
+                          {fmtCalendarDate(candidate?.date ?? null)} · owed{" "}
                           {candidate ? fmt(candidate.total) : "—"} · outstanding{" "}
                           {outstanding != null ? fmt(outstanding) : "—"}
                         </p>
@@ -683,7 +683,7 @@ export function StatementReviewGrid({ result, onApplied }: Props) {
                       <p className="text-sm font-medium text-navy">
                         {m.line.refNumber ?? "No reference"}
                         <span className="ml-2 font-normal text-navy/60">
-                          {fmtDate(m.line.date)} · {fmt(m.line.amount)}
+                          {fmtCalendarDate(m.line.date)} · {fmt(m.line.amount)}
                         </span>
                       </p>
                       <p className="mt-0.5 text-xs text-navy/60">{mismatchNote}</p>
@@ -723,7 +723,7 @@ export function StatementReviewGrid({ result, onApplied }: Props) {
                             )}
                           >
                             {c.billNumber} · {fmt(c.total)} · outstanding {fmt(cOutstanding)}
-                            {c.date ? ` · ${fmtDate(c.date)}` : ""}
+                            {c.date ? ` · ${fmtCalendarDate(c.date)}` : ""}
                             {isSuggested ? " (suggested)" : ""}
                           </button>
                         );
@@ -786,7 +786,8 @@ export function StatementReviewGrid({ result, onApplied }: Props) {
                   <p className="text-sm font-medium text-navy">
                     {m.line.refNumber ?? "No reference"}
                     <span className="ml-2 font-normal text-navy/60">
-                      {fmtDate(m.line.date)} · {fmt(m.line.amount)} · {kindLabel(m.line.kind)}
+                      {fmtCalendarDate(m.line.date)} · {fmt(m.line.amount)} ·{" "}
+                      {kindLabel(m.line.kind)}
                     </span>
                   </p>
                   {created ? (
@@ -850,7 +851,7 @@ export function StatementReviewGrid({ result, onApplied }: Props) {
                         {b.billNumber}
                       </Link>
                     </td>
-                    <td className="px-3 py-2 text-navy/70">{fmtDate(b.billDate)}</td>
+                    <td className="px-3 py-2 text-navy/70">{fmtCalendarDate(b.billDate)}</td>
                     <td className="px-3 py-2 text-right text-navy/70">{fmt(b.totalOwed)}</td>
                     <td className="px-3 py-2 text-right font-medium text-navy">
                       {fmt(b.outstanding)}
@@ -992,7 +993,7 @@ function ImpliedPaidConfirmOverlay({
                 {bills.map((b) => (
                   <tr key={b.billId}>
                     <td className="px-3 py-2 font-medium text-navy">{b.billNumber}</td>
-                    <td className="px-3 py-2 text-navy/70">{fmtDate(b.billDate)}</td>
+                    <td className="px-3 py-2 text-navy/70">{fmtCalendarDate(b.billDate)}</td>
                     <td className="px-3 py-2 text-right text-navy">{fmt(b.outstanding)}</td>
                   </tr>
                 ))}

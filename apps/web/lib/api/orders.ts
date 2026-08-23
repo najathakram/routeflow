@@ -292,6 +292,10 @@ export interface CreateSaleDto {
   orderDate?: string;
   /** Only when deliveredNow=false: send (issue) the draft invoice now instead of leaving it a draft. */
   send?: boolean;
+  /** Due date (YYYY-MM-DD) for the created invoice. Omit to fall back to the tenant's default terms. */
+  dueDate?: string;
+  /** Long-form Terms & Conditions text for the created invoice. Omit to fall back to the tenant default. */
+  terms?: string;
   /** Customer credit notes to apply to this order's invoice(s) at creation
    *  time — undefined/omitted leaves credits untouched. */
   appliedCreditNotes?: { creditNoteId: string; amount?: number }[];

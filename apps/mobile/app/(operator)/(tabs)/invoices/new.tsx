@@ -1167,6 +1167,12 @@ function InvoiceComposer({
           // Only a genuinely backdated sale carries orderDate — a same-day sale
           // stays unsent so deliveredAt lands at the full current timestamp.
           ...(issueTrim && issueTrim !== todayPlusDays(0) ? { orderDate: issueTrim } : {}),
+          // No dueDate: gate rule 4 (lib/sale-mode.ts) makes sale mode
+          // ineligible the moment the operator touches Due date or Terms, so an
+          // eligible sale's `dueDate` is always this screen's hardcoded Net-30
+          // default. Sending it would override the tenant's configured
+          // `invoice.defaultTerms` with a date nobody chose (and put a free-text
+          // field on the wire ahead of this path's ISO_DATE check).
         },
         {
           // POST /orders/sell resolves to the created INVOICE (not the order) —

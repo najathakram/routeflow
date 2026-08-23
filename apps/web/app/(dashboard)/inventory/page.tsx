@@ -58,6 +58,7 @@ import { VariantSplitModal } from "@/components/VariantSplitModal";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import { useSortableData } from "@/lib/use-sortable-data";
 import { SortableTh } from "@/components/SortableTh";
+import { fmtCalendarDate } from "@/lib/formatting";
 
 const DECIMAL_UNITS = ["kg", "g", "liter", "litre", "l", "oz", "lb", "pound", "ml"];
 function isDecimalUnit(unit: string) {
@@ -1712,7 +1713,7 @@ function PurchaseOrdersTab({
                       ${Number(po.total ?? 0).toFixed(2)}
                     </td>
                     <td className="px-4 py-3 text-navy/70">
-                      {po.expectedDate ? new Date(po.expectedDate).toLocaleDateString() : "—"}
+                      {po.expectedDate ? fmtCalendarDate(po.expectedDate) : "—"}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
