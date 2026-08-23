@@ -117,6 +117,8 @@ import {
 } from "@/lib/api/customers";
 import { useUndo } from "@/lib/undo";
 import { useProducts } from "@/lib/api/products";
+import { useHasAddon } from "@/lib/api/tobacco";
+import { MSRP_ADDON } from "@/lib/api/addons";
 import { useInvoices } from "@/lib/api/invoices";
 import { useRoutes, useAddStopToRoute } from "@/lib/api/routes";
 import {
@@ -764,6 +766,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   const { data: prices, isLoading } = useCustomerPrices(customerId);
   const upsertPrice = useUpsertCustomerPrice();
   const deletePrice = useDeleteCustomerPrice();
+  const hasMsrpAddon = useHasAddon(MSRP_ADDON);
   // Their price vs cost now — the Price Memory margin column (pos-cost-roles §1).
   const { data: marginConfig } = useMarginConfig();
   const marginFloor = marginConfig?.defaultMarginFloor ?? 0.15;
@@ -775,7 +778,10 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   const [deletingPriceId, setDeletingPriceId] = React.useState<string | null>(null);
   const [productSearch, setProductSearch] = React.useState("");
   const [selectedProductId, setSelectedProductId] = React.useState("");
-  const [selectedTier, setSelectedTier] = React.useState(1);
+  // null = "no tier override" (row is MSRP-only, or unset while adding) — a
+  // CustomerPrice row may now be tier-only, MSRP-only, or both.
+  const [selectedTier, setSelectedTier] = React.useState<number | null>(null);
+  const [msrpInput, setMsrpInput] = React.useState("");
   const [notes, setNotes] = React.useState("");
   const [productDropdownOpen, setProductDropdownOpen] = React.useState(false);
 
@@ -796,7 +802,8 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
     setEditingPrice(null);
     setSelectedProductId("");
     setProductSearch("");
-    setSelectedTier(1);
+    setSelectedTier(null);
+    setMsrpInput("");
     setNotes("");
     setIsModalOpen(true);
   };
@@ -805,18 +812,24 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
     setEditingPrice(cp);
     setSelectedProductId(cp.productId);
     setProductSearch(cp.product?.name ?? "");
-    setSelectedTier(cp.pricingTier);
+    setSelectedTier(cp.pricingTier ?? null);
+    setMsrpInput(cp.msrp != null ? String(cp.msrp) : "");
     setNotes(cp.notes ?? "");
     setIsModalOpen(true);
   };
 
   const handleSave = () => {
-    if (!selectedProductId || !selectedTier) return;
+    const msrpTrimmed = msrpInput.trim();
+    if (!selectedProductId || (selectedTier == null && !msrpTrimmed)) return;
     upsertPrice.mutate(
       {
         customerId,
         productId: selectedProductId,
         pricingTier: selectedTier,
+        // Only ever include msrp when the tenant has the addon — the server
+        // 403s any *present* msrp key (even unchanged) for a tenant without
+        // flag.msrp, which would otherwise block plain tier-override saves.
+        ...(hasMsrpAddon ? { msrp: msrpTrimmed ? parseFloat(msrpTrimmed) : null } : {}),
         notes: notes || undefined,
       },
       {
@@ -875,10 +888,11 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
       <Card>
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <h3 className="text-base font-semibold text-navy">Product Tier Overrides</h3>
+            <h3 className="text-base font-semibold text-navy">Product Overrides</h3>
             <p className="mt-0.5 text-xs text-navy/70">
-              Override the pricing tier for specific products. These override the customer&apos;s
-              default tier.
+              {hasMsrpAddon
+                ? "Override the pricing tier and/or MSRP for specific products. These override the customer's default tier and the product's default MSRP."
+                : "Override the pricing tier for specific products. These override the customer's default tier."}
             </p>
           </div>
           <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={openAdd}>
@@ -890,7 +904,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
           <p className="text-sm text-navy/70">Loading…</p>
         ) : priceList.length === 0 ? (
           <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-10 text-center">
-            <p className="text-sm text-navy/70">No tier overrides set.</p>
+            <p className="text-sm text-navy/70">No product overrides set.</p>
             <button className="mt-2 text-sm text-brand-500 hover:underline" onClick={openAdd}>
               Add the first one &rarr;
             </button>
@@ -912,6 +926,11 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                   <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Override Tier
                   </th>
+                  {hasMsrpAddon && (
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
+                      MSRP Override
+                    </th>
+                  )}
                   <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Tier Price
                   </th>
@@ -928,7 +947,10 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
               </thead>
               <tbody className="divide-y divide-surface-border">
                 {priceList.map((cp) => {
-                  const tierPrice = cp.product ? getTierPrice(cp.product, cp.pricingTier) : 0;
+                  // No tier override on this row (MSRP-only) \u2192 price at the
+                  // customer's default tier, same as an ordinary order would.
+                  const effectiveTier = cp.pricingTier ?? customer?.pricingTier ?? 1;
+                  const tierPrice = cp.product ? getTierPrice(cp.product, effectiveTier) : 0;
                   return (
                     <tr key={cp.id} className="hover:bg-gray-50/60">
                       <td className="px-6 py-3 text-sm font-medium text-navy">
@@ -943,11 +965,27 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                           : "\u2014"}
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <Badge variant="neutral">Tier {cp.pricingTier}</Badge>
+                        {cp.pricingTier != null ? (
+                          <Badge variant="neutral">Tier {cp.pricingTier}</Badge>
+                        ) : (
+                          <span className="text-xs italic text-navy/50">Default tier</span>
+                        )}
                       </td>
+                      {hasMsrpAddon && (
+                        <td className="px-4 py-3 text-right text-sm text-navy/70">
+                          {cp.msrp != null ? (
+                            <span className="font-mono tabular-nums text-navy">
+                              {fmt(Number(cp.msrp))}
+                              <span className="ml-1 text-[10px] text-navy/50">/pc</span>
+                            </span>
+                          ) : (
+                            <span className="text-navy/30">\u2014</span>
+                          )}
+                        </td>
+                      )}
                       <td className="px-4 py-3 text-right text-sm font-semibold text-brand-600">
                         {fmt(tierPrice)}
-                        {tierUnset(cp.product, cp.pricingTier) && (
+                        {cp.pricingTier != null && tierUnset(cp.product, cp.pricingTier) && (
                           <span className="ml-1 text-xs font-normal text-navy/50">(list)</span>
                         )}
                       </td>
@@ -1002,7 +1040,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
       <Modal
         open={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title={editingPrice ? "Edit Tier Override" : "Add Tier Override"}
+        title={editingPrice ? "Edit Price Override" : "Add Price Override"}
         footer={
           <>
             <Button
@@ -1015,7 +1053,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             <Button
               loading={upsertPrice.isPending}
               onClick={handleSave}
-              disabled={!selectedProductId || !selectedTier}
+              disabled={!selectedProductId || (selectedTier == null && !msrpInput.trim())}
             >
               Save
             </Button>
@@ -1061,12 +1099,17 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             </div>
           </div>
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-navy/80">Pricing Tier</label>
+            <label className="mb-1.5 block text-sm font-medium text-navy/80">
+              Pricing Tier (optional)
+            </label>
             <select
-              value={selectedTier}
-              onChange={(e) => setSelectedTier(Number(e.target.value))}
+              value={selectedTier ?? ""}
+              onChange={(e) =>
+                setSelectedTier(e.target.value === "" ? null : Number(e.target.value))
+              }
               className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             >
+              <option value="">No override (use customer default)</option>
               {[1, 2, 3, 4, 5].map((t) => (
                 <option key={t} value={t}>
                   Tier {t}
@@ -1076,7 +1119,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                 </option>
               ))}
             </select>
-            {selectedProduct && (
+            {selectedProduct && selectedTier != null && (
               <p className="mt-1 text-xs text-navy/70">
                 Price at Tier {selectedTier}:{" "}
                 <span className="font-semibold text-brand-600">
@@ -1088,6 +1131,22 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
               </p>
             )}
           </div>
+          {hasMsrpAddon && (
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                MSRP Override (optional, per piece)
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="Leave blank to use the product's default MSRP"
+                value={msrpInput}
+                onChange={(e) => setMsrpInput(e.target.value)}
+                className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+          )}
           <div>
             <label className="mb-1.5 block text-sm font-medium text-navy/80">
               Notes (optional)
@@ -1109,8 +1168,8 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
         onConfirm={() => {
           if (deletingPriceId) handleDelete(deletingPriceId);
         }}
-        title="Delete tier override?"
-        description="This will remove the tier override for this product. The customer will get their default tier price."
+        title="Delete price override?"
+        description="This will remove the tier and/or MSRP override for this product. The customer will get their default tier price and the product's default MSRP."
         confirmLabel="Yes, delete"
         variant="danger"
         loading={deletePrice.isPending}

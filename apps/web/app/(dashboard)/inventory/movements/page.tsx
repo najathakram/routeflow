@@ -111,7 +111,7 @@ export default function MovementsPage() {
       </Link>
 
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-navy">Stock Movements</h1>
+        <h2 className="text-2xl font-bold text-navy">Stock Movements</h2>
         {meta ? (
           <p className="text-sm text-navy/70">
             {meta.total} record{meta.total !== 1 ? "s" : ""}

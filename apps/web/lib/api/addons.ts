@@ -17,3 +17,11 @@ export function useDeveloperMode(): { enabled: boolean; isLoading: boolean; reso
   const enabled = data?.addons?.includes(DEVELOPER_MODE_ADDON) ?? false;
   return { enabled, isLoading, resolved: isSuccess };
 }
+
+// ─── MSRP on invoices (display-only suggested retail price) ───────────────────
+//
+// Naming precedent: TOBACCO_ADDON in apps/web/lib/api/tobacco.ts. Read with
+// `useHasAddon(MSRP_ADDON)` (also exported from tobacco.ts) to gate MSRP inputs —
+// the server independently re-checks flag.msrp on every write, so this is a UX
+// gate only, never the source of truth.
+export const MSRP_ADDON = "msrp";

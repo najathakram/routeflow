@@ -59,6 +59,7 @@ import { VariantSplitModal } from "@/components/VariantSplitModal";
 import { PackSizePrompt } from "@/components/PackSizePrompt";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
+import { MSRP_ADDON } from "@/lib/api/addons";
 import { CropModal } from "./CropModal";
 import { DemandCard } from "./DemandCard";
 import { SalesHistoryCard } from "./SalesHistoryCard";
@@ -388,6 +389,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const { user } = useAuth();
   const isOperator = user?.role === "OPERATOR";
   const hasTobaccoAddon = useHasAddon(TOBACCO_ADDON);
+  const hasMsrpAddon = useHasAddon(MSRP_ADDON);
 
   // ── Lightbox state ────────────────────────────────────────────────────────
   const [lightboxOpen, setLightboxOpen] = React.useState(false);
@@ -451,6 +453,27 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const currentStock = Number(product.currentStock ?? 0);
   const stockStatus = getStockStatus(currentStock, product.isActive);
 
+  // MSRP — display-only, never money math. Warn (non-blocking) when it undercuts
+  // the wholesale price expressed per PIECE (pricePerUnit / unitsPerBox), which is
+  // the same comparison basis MSRP is always displayed in.
+  const msrpNumber = isEditing
+    ? (editDraft.msrp as string)?.trim()
+      ? parseFloat(editDraft.msrp as string)
+      : null
+    : product.msrp != null
+      ? Number(product.msrp)
+      : null;
+  const wholesaleListPrice = isEditing
+    ? parseFloat(String(editDraft.pricePerUnit ?? priceNumber))
+    : priceNumber;
+  const wholesaleUnitsPerBox = isEditing
+    ? parseFloat((editDraft.unitsPerBox as string) || "0") || 0
+    : Number(product.unitsPerBox ?? 0);
+  const wholesalePerPiece =
+    wholesaleUnitsPerBox > 1 ? wholesaleListPrice / wholesaleUnitsPerBox : wholesaleListPrice;
+  const msrpBelowWholesale =
+    msrpNumber != null && wholesalePerPiece > 0 && msrpNumber < wholesalePerPiece;
+
   const startEdit = () => {
     setEditDraft({
       name: product.name,
@@ -462,6 +485,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
       priceTier3: String(parseFloat(String(product.priceTier3 ?? priceNumber))),
       priceTier4: String(parseFloat(String(product.priceTier4 ?? priceNumber))),
       priceTier5: String(parseFloat(String(product.priceTier5 ?? priceNumber))),
+      msrp: product.msrp != null ? String(parseFloat(String(product.msrp))) : "",
       category: product.category ?? "",
       description: product.description ?? "",
       parentProductId: product.parentProductId ?? "",
@@ -521,6 +545,14 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
         regItemType: draft.regItemType || null,
         regUomCase: draft.regUomCase || null,
         regUomUnit: draft.regUomUnit || null,
+        // MSRP: only ever include the key when the tenant has the addon — the
+        // server 403s any PATCH where `msrp` is *present* (even unchanged) for a
+        // tenant without flag.msrp, which would otherwise block ordinary product
+        // edits for a product that carries a stale MSRP from before the addon
+        // was disabled. Explicit null clears (same "" → null convention as sku).
+        ...(hasMsrpAddon
+          ? { msrp: draft.msrp?.trim() ? String(parseFloat(draft.msrp)) : null }
+          : {}),
         ...(draft.parentProductId
           ? {
               parentProductId: draft.parentProductId,
@@ -2000,6 +2032,57 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     <p className="mt-1.5 text-xs text-navy/50">
                       Tiers left at 0 inherit the list price at checkout.
                     </p>
+                  )}
+                </div>
+
+                {/* MSRP — suggested retail, per PIECE (even for boxed products).
+                    Display-only: never feeds pricing/tax/margin math. Flag-gated
+                    (flag.msrp) on write; the warning below is advisory only. */}
+                <div className="mt-5 border-t border-surface-border pt-4">
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                    MSRP (Suggested Retail)
+                  </p>
+                  {isEditing ? (
+                    hasMsrpAddon ? (
+                      <>
+                        <DecimalInput
+                          min={0}
+                          value={
+                            (editDraft.msrp as string)?.trim()
+                              ? parseFloat(editDraft.msrp as string)
+                              : null
+                          }
+                          onChange={(v) =>
+                            setEditDraft((d) => ({ ...d, msrp: v == null ? "" : String(v) }))
+                          }
+                          className="w-32 rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                        <p className="mt-1 text-xs text-navy/50">
+                          per piece — even for boxed products
+                        </p>
+                        {msrpBelowWholesale && (
+                          <p className="mt-1 text-xs text-warning">
+                            Below wholesale price (${wholesalePerPiece.toFixed(2)}/pc)
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-xs italic text-navy/50">Requires the MSRP add-on.</p>
+                    )
+                  ) : msrpNumber != null ? (
+                    <>
+                      <p className="font-mono text-sm font-medium tabular-nums text-navy">
+                        ${msrpNumber.toFixed(2)}
+                        <span className="ml-1 text-[10px] text-navy/50">/pc</span>
+                      </p>
+                      {msrpBelowWholesale && (
+                        <p className="mt-1 text-xs text-warning">
+                          Below wholesale price (${wholesalePerPiece.toFixed(2)}/pc)
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-sm text-navy/30">—</p>
                   )}
                 </div>
 

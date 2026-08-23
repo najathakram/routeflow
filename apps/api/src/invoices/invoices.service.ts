@@ -20,6 +20,8 @@ import {
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
+import { loadMsrpMap } from "../common/msrp";
+import { EntitlementsService } from "../billing/entitlements.service";
 import { CheckStatus, InvoiceStatus, NotificationEvent, UserRole } from "@prisma/client";
 import {
   CreateInvoiceDto,
@@ -79,7 +81,29 @@ export class InvoicesService {
     private readonly creditNotes: CreditNotesService,
     private readonly messaging: MessagingService,
     private readonly storage: StorageService,
+    private readonly entitlements: EntitlementsService,
   ) {}
+
+  /**
+   * Stamp each line's MSRP at creation time. Snapshot, not a live read: an issued invoice
+   * must never change because someone later edited the product's MSRP. No-ops (leaving
+   * msrp null) when the tenant does not have flag.msrp, so a tenant that turns the feature
+   * off simply stops emitting MSRP on NEW invoices while old ones keep what they printed.
+   */
+  private async applyMsrpSnapshots<T extends { productId?: string | null; msrp?: number | null }>(
+    db: any,
+    customerId: string,
+    itemsData: T[],
+  ): Promise<void> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId || !(await this.entitlements.hasFlag(tenantId, "flag.msrp"))) return;
+    const ids = [...new Set(itemsData.map((i) => i.productId).filter(Boolean))] as string[];
+    if (ids.length === 0) return;
+    const map = await loadMsrpMap(db, customerId, ids);
+    for (const it of itemsData) {
+      if (it.productId) it.msrp = map.get(it.productId) ?? null;
+    }
+  }
 
   /** Resolve the tenant's default invoice terms and corresponding due-days offset. */
   async resolveDefaultTerms(): Promise<{ terms: string; dueDays: number }> {
@@ -253,10 +277,13 @@ export class InvoicesService {
         // RF-4: per-line category tax snapshot (folded into taxTotal below).
         categoryTaxAmount,
         notes: item.notes ?? null,
+        // MSRP snapshot — set below by applyMsrpSnapshots (null when flag.msrp is off).
+        msrp: null as number | null,
         tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
       };
     });
     subtotal = roundMoney(subtotal);
+    await this.applyMsrpSnapshots(this.prisma.forTenant(), dto.customerId, itemsData);
 
     // Validate no line item has a negative subtotal (discount > line total)
     for (const item of itemsData) {
@@ -632,6 +659,9 @@ export class InvoicesService {
       pieces: split.pieces,
       unitsPerBox: unitsPerBox > 0 ? unitsPerBox : null,
       promoFreeUnits: promoFreeUnits > 0 ? promoFreeUnits : null,
+      // MSRP snapshot — set below by the caller's applyMsrpSnapshots (null when
+      // flag.msrp is off for the tenant).
+      msrp: null as number | null,
       // Per-line note travels verbatim from the order line (buyer-visible).
       notes: li.notes ?? null,
       unitPrice,
@@ -793,6 +823,11 @@ export class InvoicesService {
         total: 0,
       };
     });
+    // Snapshot MSRP on every group's lines (each sibling invoice bills the same
+    // customer, so one map lookup set per group).
+    for (const gd of groupData) {
+      await this.applyMsrpSnapshots(db, order.customerId, gd.itemsData);
+    }
 
     const totalSubtotal = roundMoney(groupData.reduce((s, gd) => s + gd.subtotal, 0));
     const totalRegularTax = isTaxExempt
@@ -995,6 +1030,7 @@ export class InvoicesService {
     const itemsData = billable.map(({ li, billQty }: any) =>
       this.buildInvoiceItemData(li, billQty, tenantId),
     );
+    await this.applyMsrpSnapshots(db, order.customerId, itemsData);
     const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
 
     const customer = await db.customer.findUnique({
@@ -1272,6 +1308,10 @@ export class InvoicesService {
         total: 0,
       };
     });
+    // Snapshot MSRP on every sibling draft's rebuilt lines.
+    for (const pd of perDraft) {
+      await this.applyMsrpSnapshots(db, order.customerId, pd.itemsData);
+    }
 
     if (!isTaxExempt && orderTax !== 0) {
       const totalSubtotal = roundMoney(perDraft.reduce((s, pd) => s + pd.subtotal, 0));
@@ -1951,6 +1991,7 @@ export class InvoicesService {
       itemsData.push(itemData);
     }
     subtotal = roundMoney(subtotal);
+    await this.applyMsrpSnapshots(this.prisma.forTenant(), order.customerId, itemsData);
 
     const customer = await this.prisma
       .forTenant()
@@ -2379,10 +2420,13 @@ export class InvoicesService {
           // Preserve per-line notes across the delete-and-recreate edit — dropping
           // this silently wipes notes the order carried onto the invoice.
           notes: item.notes ?? null,
+          // MSRP snapshot — set below by applyMsrpSnapshots (null when flag.msrp is off).
+          msrp: null as number | null,
           tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
         };
       });
       subtotal = roundMoney(subtotal);
+      await this.applyMsrpSnapshots(this.prisma.forTenant(), inv.customerId, itemsData);
       const customerForTax = await this.prisma
         .forTenant()
         .customer.findUnique({ where: { id: inv.customerId }, select: { isTaxExempt: true } });
@@ -2689,6 +2733,7 @@ export class InvoicesService {
         qty: Number(it.qty),
         unitPrice: Number(it.unitPrice),
         subtotal: Number(it.subtotal),
+        msrp: it.msrp != null ? Number(it.msrp) : null,
       })),
       pdfUrl,
       isReminder: false,
@@ -2857,6 +2902,7 @@ export class InvoicesService {
         qty: Number(it.qty),
         unitPrice: Number(it.unitPrice),
         subtotal: Number(it.subtotal),
+        msrp: it.msrp != null ? Number(it.msrp) : null,
       })),
       pdfUrl,
       isReminder: true,
@@ -3173,6 +3219,10 @@ export class InvoicesService {
       // BUY_N_GET_M snapshot travels with the copy — the subtotal is verbatim, and
       // without the snapshot the copy's first edit would re-price the line to full.
       promoFreeUnits: (i as any).promoFreeUnits ?? null,
+      // MSRP is copied VERBATIM, not re-resolved — a duplicate must show what the
+      // source line showed, never a live re-read of the (possibly since-changed)
+      // product/customer MSRP.
+      msrp: (i as any).msrp != null ? Number((i as any).msrp) : null,
       subtotal: roundMoney(Number(i.subtotal)),
       // RF-4: carry each line's category tax + regulated snapshots onto the copy.
       trackedCategoryId: (i as any).trackedCategoryId ?? null,

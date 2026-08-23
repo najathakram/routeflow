@@ -29,6 +29,8 @@ import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useU
 import { useProducts, useUpdateProduct, useBulkDeleteProducts } from "@/lib/api/products";
 import { cascadeTierPrices, type TierField } from "@/lib/pricing";
 import { useTrackedCategories, type TrackedCategory } from "@/lib/api/tracked-categories";
+import { useHasAddon } from "@/lib/api/tobacco";
+import { MSRP_ADDON } from "@/lib/api/addons";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { GroupAsVariantsModal } from "@/components/GroupAsVariantsModal";
 import { ProductCreateModal } from "@/components/ProductCreateModal";
@@ -54,6 +56,8 @@ interface ApiProduct {
   priceTier3?: string;
   priceTier4?: string;
   priceTier5?: string;
+  /** Suggested retail price, per PIECE (even for boxed products). Flag-gated (flag.msrp). */
+  msrp?: string | null;
   isActive: boolean;
   currentStock: number;
   averageCost?: string;
@@ -295,6 +299,7 @@ function makeTableColumns(
     patch: { trackedCategoryId: string | null; trackedSubcategoryId: string | null },
     prior: { trackedCategoryId: string | null; trackedSubcategoryId: string | null },
   ) => void,
+  hasMsrpAddon: boolean,
 ): ColumnDef<ApiProduct, unknown>[] {
   const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
   const someSelected = !allSelected && allIds.some((id) => selected.has(id));
@@ -334,6 +339,41 @@ function makeTableColumns(
           className="inline-flex items-center rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] text-brand-700"
         >
           {sectionName}
+        </span>
+      );
+    },
+  };
+
+  // MSRP column — flag-gated (flag.msrp); the primary bulk-edit surface for it.
+  const msrpCol: ColumnDef<ApiProduct, unknown> = {
+    id: "msrp",
+    header: "MSRP",
+    enableSorting: false,
+    cell: ({ row }) => {
+      const p = row.original;
+      if (quickEditMode) {
+        return (
+          <QuickEditCell
+            productId={p.id}
+            productName={p.name}
+            field="msrp"
+            type="number"
+            value={p.msrp != null ? parseFloat(String(p.msrp)).toFixed(2) : ""}
+            quickEditMode={quickEditMode}
+            onSave={(newVal, rec) => onQuickSave(p, "msrp", newVal, rec)}
+          />
+        );
+      }
+      return (
+        <span className="font-mono tabular-nums text-sm text-navy/70">
+          {p.msrp != null && parseFloat(String(p.msrp)) > 0 ? (
+            <>
+              ${parseFloat(String(p.msrp)).toFixed(2)}
+              <span className="ml-0.5 text-[10px] text-navy/40">/pc</span>
+            </>
+          ) : (
+            <span className="text-navy/30">—</span>
+          )}
         </span>
       );
     },
@@ -626,6 +666,7 @@ function makeTableColumns(
         );
       },
     })),
+    ...(hasMsrpAddon ? [msrpCol] : []),
     {
       accessorKey: "currentStock",
       header: "Stock",
@@ -689,6 +730,7 @@ export default function ProductsPage() {
   const [showAssignToSection, setShowAssignToSection] = React.useState(false);
   const [page, setPage] = useUrlPage();
   const [pageSize, setPageSize] = React.useState(50);
+  const hasMsrpAddon = useHasAddon(MSRP_ADDON);
   const updateProduct = useUpdateProduct();
   const bulkDelete = useBulkDeleteProducts();
 
@@ -1060,6 +1102,7 @@ export default function ProductsPage() {
         activeSections,
         hasSections,
         handleSectionSave,
+        hasMsrpAddon,
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -1076,6 +1119,7 @@ export default function ProductsPage() {
       activeSections,
       hasSections,
       handleSectionSave,
+      hasMsrpAddon,
     ],
   );
 

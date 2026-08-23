@@ -6,6 +6,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { MeterService } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
+import { EntitlementsService } from "../billing/entitlements.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 const MOCK_CUSTOMER = {
@@ -81,6 +82,11 @@ describe("CustomersService", () => {
         },
         { provide: MeterService, useValue: meter },
         { provide: PlanCatalogService, useValue: catalog },
+        // flag.msrp defaults OFF — msrp-free upserts never consult the flag.
+        {
+          provide: EntitlementsService,
+          useValue: { hasFlag: jest.fn().mockResolvedValue(false) },
+        },
       ],
     }).compile();
 
@@ -808,6 +814,80 @@ describe("CustomersService", () => {
       expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ status: { not: "VOID" } }),
+        }),
+      );
+    });
+  });
+
+  // ─── upsertCustomerPrice — MSRP-era partial-update + role-gated implicit delete ───
+
+  describe("upsertCustomerPrice", () => {
+    const driverPayload = { ...operatorPayload, role: "DRIVER" as const };
+
+    it("400s when neither pricingTier nor msrp is present", async () => {
+      await expect(
+        service.upsertCustomerPrice("cust-1", { productId: "p1" }, operatorPayload),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("a tier-only update preserves an existing MSRP override (partial update)", async () => {
+      prisma.customerPrice.findUnique.mockResolvedValue({ id: "cp-1", pricingTier: 2, msrp: 5 });
+      prisma.customerPrice.upsert.mockResolvedValue({ id: "cp-1" });
+
+      await service.upsertCustomerPrice(
+        "cust-1",
+        { productId: "p1", pricingTier: 4 },
+        operatorPayload,
+      );
+
+      expect(prisma.customerPrice.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ pricingTier: 4, msrp: 5 }),
+        }),
+      );
+    });
+
+    it("clearing the last remaining field deletes the row — for an OPERATOR", async () => {
+      prisma.customerPrice.findUnique.mockResolvedValue({ id: "cp-1", pricingTier: 3, msrp: null });
+      prisma.customerPrice.delete.mockResolvedValue({ id: "cp-1" });
+
+      const result = await service.upsertCustomerPrice(
+        "cust-1",
+        { productId: "p1", pricingTier: null },
+        operatorPayload,
+      );
+
+      expect(result).toBeNull();
+      expect(prisma.customerPrice.delete).toHaveBeenCalledWith({ where: { id: "cp-1" } });
+    });
+
+    it("a DRIVER cannot use {pricingTier: null} as a delete primitive (DELETE route is OPERATOR-only)", async () => {
+      prisma.customerPrice.findUnique.mockResolvedValue({ id: "cp-1", pricingTier: 3, msrp: null });
+
+      await expect(
+        service.upsertCustomerPrice(
+          "cust-1",
+          { productId: "p1", pricingTier: null },
+          driverPayload,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.customerPrice.delete).not.toHaveBeenCalled();
+    });
+
+    it("a DRIVER may still null the tier on a row that keeps its MSRP (no delete involved)", async () => {
+      prisma.customerPrice.findUnique.mockResolvedValue({ id: "cp-1", pricingTier: 3, msrp: 5 });
+      prisma.customerPrice.upsert.mockResolvedValue({ id: "cp-1" });
+
+      await service.upsertCustomerPrice(
+        "cust-1",
+        { productId: "p1", pricingTier: null },
+        driverPayload,
+      );
+
+      expect(prisma.customerPrice.delete).not.toHaveBeenCalled();
+      expect(prisma.customerPrice.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ pricingTier: null, msrp: 5 }),
         }),
       );
     });

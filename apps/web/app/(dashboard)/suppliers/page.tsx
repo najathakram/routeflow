@@ -1004,37 +1004,39 @@ export default function SuppliersPage() {
       ) : viewMode === "list" ? (
         /* ── List view ── */
         <div className="overflow-hidden rounded-xl border border-surface-border bg-white">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-surface-border bg-surface-raised/60">
-                {selectMode && <th className="w-10 px-4 py-2.5" />}
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
-                  Supplier
-                </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
-                  Contact
-                </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
-                  Location
-                </th>
-                <th className="px-4 py-2.5 text-center text-xs font-semibold text-navy/70 uppercase tracking-wide">
-                  Lead
-                </th>
-                <th className="px-4 py-2.5 text-right text-xs font-semibold text-navy/70 uppercase tracking-wide">
-                  Outstanding
-                </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
-                  Status
-                </th>
-                <th className="w-20 px-4 py-2.5" />
-              </tr>
-            </thead>
-            <tbody>
-              {suppliers.map((s) => (
-                <SupplierRow key={s.id} {...sharedRowProps(s)} />
-              ))}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-surface-border bg-surface-raised/60">
+                  {selectMode && <th className="w-10 px-4 py-2.5" />}
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                    Supplier
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                    Contact
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                    Location
+                  </th>
+                  <th className="px-4 py-2.5 text-center text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                    Lead
+                  </th>
+                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                    Outstanding
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                    Status
+                  </th>
+                  <th className="w-20 px-4 py-2.5" />
+                </tr>
+              </thead>
+              <tbody>
+                {suppliers.map((s) => (
+                  <SupplierRow key={s.id} {...sharedRowProps(s)} />
+                ))}
+              </tbody>
+            </table>
+          </div>
 
           {/* Total outstanding footer */}
           {totalOutstanding > 0 && (

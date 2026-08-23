@@ -901,7 +901,7 @@ export default function NewExpensePage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
       <div>
-        <h1 className="text-xl font-semibold text-navy">New Expense</h1>
+        <h2 className="text-xl font-semibold text-navy">New Expense</h2>
         <p className="text-sm text-navy/70">Record a business expense</p>
       </div>
 

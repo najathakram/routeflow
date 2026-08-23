@@ -900,6 +900,11 @@ model Product {
   priceTier3           Decimal       @default(0) @db.Decimal(10, 2)
   priceTier4           Decimal       @default(0) @db.Decimal(10, 2)
   priceTier5           Decimal       @default(0) @db.Decimal(10, 2)
+  // Suggested retail price (MSRP), per PIECE — the retail selling unit — even when this
+  // product is sold wholesale by the box. Display-only: NEVER feed into money math
+  // (computeLineSubtotal, totals, tax, margin, promotions). Null = no MSRP set, renders
+  // blank, never $0.00. Universal default; CustomerPrice.msrp overrides it per customer.
+  msrp                 Decimal?      @db.Decimal(10, 2)
   category             String?
   imageKeys            String[]      @default([])
   isActive             Boolean       @default(true)
@@ -1828,6 +1833,11 @@ model InvoiceItem {
   unitPrice            Decimal   @db.Decimal(10, 2)
   discount             Decimal   @default(0) @db.Decimal(10, 2)
   originalPrice        Decimal?  @db.Decimal(10, 2)
+  // MSRP snapshot taken at line-creation time (customer override, else product default —
+  // see common/msrp.ts resolveMsrp). Display-only, never money math. An issued invoice
+  // must never change when the product's MSRP is later edited, so this is never re-read
+  // from the live product at render time. Null when unset or flag.msrp is off.
+  msrp                 Decimal?  @db.Decimal(10, 2)
   priceType            PriceType @default(STANDARD)
   taxRate              Decimal   @default(0) @db.Decimal(5, 4)
   subtotal             Decimal   @db.Decimal(10, 2)
@@ -2886,7 +2896,13 @@ model CustomerPrice {
   id          String   @id @default(uuid())
   customerId  String
   productId   String
-  pricingTier Int
+  // Nullable: a row may now carry an MSRP override only, with no tier override. Every
+  // reader already falls back (`?? customer default tier`), so null here is safe — see
+  // common/msrp.ts and the plan at .claude/pipeline/plans/2026-08-22-msrp-on-invoices.md.
+  pricingTier Int?
+  // Per-customer MSRP override — highest precedence in resolveMsrp. Display-only, never
+  // money math. Null = no override, falls back to Product.msrp.
+  msrp        Decimal? @db.Decimal(10, 2)
   notes       String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

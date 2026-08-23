@@ -103,6 +103,12 @@ export interface ApiProduct {
   category?: string;
   unit: string;
   pricePerUnit: string;
+  /**
+   * Suggested retail price, per PIECE (the retail selling unit) even when this
+   * product sells wholesale by the box. Display-only — never feed into money
+   * math. null/absent = no MSRP set (render blank, never $0.00).
+   */
+  msrp?: string | null;
   isActive: boolean;
   currentStock: number;
   averageCost?: string;

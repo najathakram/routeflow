@@ -1413,8 +1413,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const { data: customerDetail } = useCustomer(order?.customerId ?? "");
   const { data: customerPrices } = useCustomerPrices(order?.customerId);
   const cpMap = React.useMemo(() => {
-    const m = new Map<string, number>();
-    for (const cp of (customerPrices ?? []) as Array<{ productId: string; pricingTier: number }>) {
+    const m = new Map<string, number | null>();
+    for (const cp of (customerPrices ?? []) as Array<{
+      productId: string;
+      pricingTier: number | null;
+    }>) {
       m.set(cp.productId, cp.pricingTier);
     }
     return m;
@@ -1978,9 +1981,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="mono text-2xl font-bold tracking-[-0.01em] text-navy">
+            <h2 className="mono text-2xl font-bold tracking-[-0.01em] text-navy">
               {order.orderNumber}
-            </h1>
+            </h2>
             {order.urgent && (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-danger-bg px-2.5 py-1 text-xs font-semibold text-danger">
                 <AlertTriangle className="h-3.5 w-3.5" />

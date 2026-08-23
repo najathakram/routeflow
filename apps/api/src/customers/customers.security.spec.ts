@@ -13,6 +13,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { MeterService } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
+import { EntitlementsService } from "../billing/entitlements.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { ListCustomersDto } from "./dto/list-customers.dto";
 
@@ -35,6 +36,10 @@ describe("CustomersService — F4-002 sort-field allowlist", () => {
         // CustomersService now depends on them.
         { provide: MeterService, useValue: { read: jest.fn() } },
         { provide: PlanCatalogService, useValue: { getPublishedVersion: jest.fn() } },
+        {
+          provide: EntitlementsService,
+          useValue: { hasFlag: jest.fn().mockResolvedValue(false) },
+        },
       ],
     }).compile();
     service = mod.get(CustomersService);

@@ -730,11 +730,12 @@ export default function NewInvoicePage() {
     const map: Record<string, number> = {};
     for (const cp of (customerPricesData ?? []) as CustomerPrice[]) {
       if (!cp.product) continue;
-      const price = getTierPrice(cp.product, cp.pricingTier);
+      // An msrp-only override row has pricingTier null — price at the customer's default tier.
+      const price = getTierPrice(cp.product, cp.pricingTier ?? customer?.pricingTier ?? 1);
       if (Number.isFinite(price)) map[cp.productId] = price;
     }
     return map;
-  }, [customerPricesData]);
+  }, [customerPricesData, customer]);
 
   // ── Auto-update due date when terms change ────────────────────────────────
 

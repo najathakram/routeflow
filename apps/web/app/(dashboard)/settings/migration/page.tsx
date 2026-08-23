@@ -223,7 +223,7 @@ export default function MigrationHubPage() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-xl font-semibold text-navy">Move to RouteFlow</h1>
+        <h2 className="text-xl font-semibold text-navy">Move to RouteFlow</h2>
         <p className="mt-1 text-sm text-navy/70">
           Bring your history over. Nothing goes live until you review and confirm, and every
           migration can be undone for 24 hours.

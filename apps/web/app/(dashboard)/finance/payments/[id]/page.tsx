@@ -109,9 +109,9 @@ export default function PaymentDetailPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="font-mono text-2xl font-bold text-navy">
+            <h2 className="font-mono text-2xl font-bold text-navy">
               {payment.paymentNumber ?? "Payment"}
-            </h1>
+            </h2>
             <Badge status={status as "PAID" | "DRAFT" | "VOID"} />
           </div>
           <p className="mt-1 text-sm text-navy/70">

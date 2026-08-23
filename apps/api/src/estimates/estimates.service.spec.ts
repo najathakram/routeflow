@@ -2,6 +2,7 @@ import { BadRequestException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { EstimatesService } from "./estimates.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { EntitlementsService } from "../billing/entitlements.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 // B8: accept() had no status guard and convertToInvoice() was a read-then-write
@@ -16,7 +17,15 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
   beforeEach(async () => {
     prisma = createMockPrisma();
     const mod = await Test.createTestingModule({
-      providers: [EstimatesService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        EstimatesService,
+        { provide: PrismaService, useValue: prisma },
+        // flag.msrp defaults OFF so convertToInvoice's MSRP snapshot is a no-op.
+        {
+          provide: EntitlementsService,
+          useValue: { hasFlag: jest.fn().mockResolvedValue(false) },
+        },
+      ],
     }).compile();
     service = mod.get(EstimatesService);
   });

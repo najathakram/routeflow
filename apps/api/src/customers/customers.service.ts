@@ -26,6 +26,7 @@ import { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole } from "@prisma/client";
 import { MeterService, MeterReading } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
+import { EntitlementsService } from "../billing/entitlements.service";
 import { buildPlanGateBody, PlanGateUpgrade } from "../billing/plan-gate";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
@@ -43,7 +44,26 @@ export class CustomersService {
     private readonly storage: StorageService,
     private readonly meter: MeterService,
     private readonly catalog: PlanCatalogService,
+    private readonly entitlements: EntitlementsService,
   ) {}
+
+  /**
+   * MSRP writes are flag-gated INSIDE the service, not on the whole route —
+   * mirrors ProductsService.assertMsrpAllowed. Callers only invoke this when
+   * the DTO actually carries an `msrp` key.
+   */
+  private async assertMsrpAllowed(): Promise<void> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return; // no tenant context (e.g. SUPER_ADMIN) — nothing to gate
+    if (await this.entitlements.hasFlag(tenantId, "flag.msrp")) return;
+    const upgrade = await this.catalog.upgradeTargetForFlag("flag.msrp").catch(() => ({
+      planKey: null,
+      planMonthlyPrice: null,
+      addonSku: null,
+      addonMonthlyPrice: null,
+    }));
+    throw new ForbiddenException(buildPlanGateBody("flag.msrp", upgrade));
+  }
 
   /** Geocode an address string using Google Maps API. Returns null if key missing or call fails. */
   private async geocodeAddress(addr: {
@@ -964,6 +984,8 @@ export class CustomersService {
             // For the Price Memory margin column (their price vs cost now).
             averageCost: true,
             unitsPerBox: true,
+            // Product-level MSRP default, rendered beside the per-customer override.
+            msrp: true,
           },
         },
       },
@@ -971,7 +993,55 @@ export class CustomersService {
     });
   }
 
-  async upsertCustomerPrice(customerId: string, dto: UpsertCustomerPriceDto) {
+  /**
+   * Partial update: only touches the field(s) the caller actually sent, so a
+   * tier-only PATCH never clobbers an existing MSRP override and vice versa. A
+   * row cleared of BOTH fields has nothing left to say and is deleted instead
+   * of left behind empty (frees the customerId_productId unique slot).
+   */
+  async upsertCustomerPrice(customerId: string, dto: UpsertCustomerPriceDto, user?: JwtPayload) {
+    if (dto.pricingTier === undefined && dto.msrp === undefined) {
+      throw new BadRequestException("Provide a pricing tier, an MSRP override, or both");
+    }
+    if (dto.msrp !== undefined) {
+      await this.assertMsrpAllowed();
+    }
+
+    const existing = await this.prisma.forTenant().customerPrice.findUnique({
+      where: { customerId_productId: { customerId, productId: dto.productId } },
+    });
+
+    const nextPricingTier =
+      dto.pricingTier !== undefined ? dto.pricingTier : (existing?.pricingTier ?? null);
+    const nextMsrp =
+      dto.msrp !== undefined
+        ? dto.msrp === null
+          ? null
+          : roundMoney(dto.msrp)
+        : existing?.msrp != null
+          ? Number(existing.msrp)
+          : null;
+
+    if (nextPricingTier == null && nextMsrp == null) {
+      if (existing) {
+        // Clearing both fields removes the row — that is a DELETE, and the
+        // dedicated DELETE /:id/prices/:priceId route is OPERATOR-only while
+        // this POST also admits DRIVER. Hold the implicit delete to the same
+        // bar, or a driver could erase a negotiated override by posting
+        // {pricingTier: null}.
+        const role = user?.role as UserRole | undefined;
+        const operatorLevel =
+          role === UserRole.OPERATOR ||
+          role === UserRole.TENANT_ADMIN ||
+          role === UserRole.SUPER_ADMIN;
+        if (!operatorLevel) {
+          throw new ForbiddenException("Only operators can remove a price override");
+        }
+        await this.prisma.forTenant().customerPrice.delete({ where: { id: existing.id } });
+      }
+      return null;
+    }
+
     return this.prisma.forTenant().customerPrice.upsert({
       where: {
         customerId_productId: { customerId, productId: dto.productId },
@@ -979,11 +1049,13 @@ export class CustomersService {
       create: {
         customerId,
         productId: dto.productId,
-        pricingTier: dto.pricingTier,
+        pricingTier: nextPricingTier,
+        msrp: nextMsrp,
         notes: dto.notes,
       },
       update: {
-        pricingTier: dto.pricingTier,
+        pricingTier: nextPricingTier,
+        msrp: nextMsrp,
         notes: dto.notes,
       },
       include: {

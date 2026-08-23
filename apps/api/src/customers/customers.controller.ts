@@ -233,8 +233,12 @@ export class CustomersController {
 
   @Post(":id/prices")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
-  upsertCustomerPrice(@Param("id") id: string, @Body() dto: UpsertCustomerPriceDto) {
-    return this.customersService.upsertCustomerPrice(id, dto);
+  upsertCustomerPrice(
+    @Param("id") id: string,
+    @Body() dto: UpsertCustomerPriceDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.customersService.upsertCustomerPrice(id, dto, user);
   }
 
   @Delete(":id/prices/:priceId")

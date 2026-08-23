@@ -11,6 +11,7 @@ import { RegulatedModule } from "../regulated/regulated.module";
 import { AuthorizationsModule } from "../authorizations/authorizations.module";
 import { CreditNotesModule } from "../credit-notes/credit-notes.module";
 import { MessagingModule } from "../messaging/messaging.module";
+import { EntitlementsModule } from "../billing/entitlements.module";
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { MessagingModule } from "../messaging/messaging.module";
     AuthorizationsModule,
     CreditNotesModule,
     MessagingModule,
+    EntitlementsModule,
   ],
   controllers: [InvoicesController],
   providers: [InvoicesService, InvoicePdfService],
