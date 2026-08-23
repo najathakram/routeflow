@@ -3,12 +3,16 @@ import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { PlanFlagGuard } from "../billing/plan-flag.guard";
+import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { AnalyticsService } from "./analytics.service";
 import { DEMAND_RANGES, isDemandRange } from "./demand-range";
 
+// All 16 endpoints on this controller are analytics-only (no DRIVER/CUSTOMER traffic).
 @Controller("analytics")
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @Roles(UserRole.OPERATOR)
+@RequirePlanFlag("flag.analytics")
 export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 

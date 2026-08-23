@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   BadRequestException,
   ConflictException,
+  Logger,
 } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
@@ -42,6 +43,7 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { EntitlementsService } from "../billing/entitlements.service";
 import { OrderStatus, UserRole, Prisma } from "@prisma/client";
 
 const MOCK_PRODUCT = {
@@ -113,6 +115,9 @@ describe("OrdersService", () => {
     releaseOrderCreditsInTx: jest.Mock;
     previewOrderCreditRelease: jest.Mock;
   };
+  // WP3: captured so the credit-limit plan-flag tests can assert whether/how
+  // hasFlag is consulted under each PLAN_FLAG_ENFORCEMENT state.
+  let entitlementsService: { hasFlag: jest.Mock };
   let mockQueue: { add: jest.Mock };
   let mockGateway: {
     emitStopCompleted: jest.Mock;
@@ -214,6 +219,10 @@ describe("OrdersService", () => {
             previewOrderCreditRelease: jest.fn().mockResolvedValue([]),
           },
         },
+        {
+          provide: EntitlementsService,
+          useValue: { hasFlag: jest.fn().mockResolvedValue(true) },
+        },
       ],
     }).compile();
 
@@ -222,6 +231,7 @@ describe("OrdersService", () => {
     invoicesService = module.get(InvoicesService);
     messagingService = module.get(MessagingService);
     creditNotesService = module.get(CreditNotesService);
+    entitlementsService = module.get(EntitlementsService);
   });
 
   // ─── findAll ──────────────────────────────────────────────────────────────
@@ -4288,6 +4298,111 @@ describe("OrdersService", () => {
 
       expect(prisma.invoice.findMany).not.toHaveBeenCalled();
       expect(prisma.order.update).toHaveBeenCalled();
+    });
+  });
+
+  describe("assertWithinCreditLimit — flag.credit_limits plan-flag gate (WP3)", () => {
+    const ORIGINAL_ENV = process.env;
+
+    // Same PENDING/qty-3/$5 fixture as the P5-08b block above, primed to land
+    // OVER a $100 limit: exposure = 120 (open invoice balance) + 15 (projected) = 135.
+    const editableOrder = () => ({
+      ...MOCK_ORDER,
+      status: "PENDING" as const,
+      routeRun: null,
+      lineItems: [
+        {
+          id: "li-1",
+          orderId: "ord-1",
+          productId: "prod-1",
+          qty: 2,
+          unitPrice: 5,
+          subtotal: 10,
+          status: "PENDING",
+          boxes: null,
+          pieces: null,
+        },
+      ],
+    });
+    const editDto = { items: [{ id: "li-1", action: "UPDATE" as const, qty: 3, unitPrice: 5 }] };
+    const postEditItems = [
+      { id: "li-1", productId: "prod-1", qty: 3, unitPrice: 5, subtotal: 15, status: "PENDING" },
+    ];
+
+    let loggerError: jest.SpyInstance;
+
+    beforeEach(() => {
+      process.env = { ...ORIGINAL_ENV };
+      delete process.env.PLAN_FLAG_ENFORCEMENT;
+      // the resolution-failure case logs; keep the suite output clean
+      loggerError = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+      prisma.order.findUnique.mockResolvedValue(editableOrder());
+      prisma.orderItem.findMany.mockResolvedValue(postEditItems);
+      prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
+      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.invoice.findMany.mockResolvedValue([
+        { total: 200, orderId: null, payments: [{ amount: 80 }] }, // balance 120
+      ]);
+      prisma.order.findMany.mockResolvedValue([]);
+    });
+
+    afterEach(() => {
+      process.env = ORIGINAL_ENV;
+      loggerError.mockRestore();
+    });
+
+    it("PLAN_FLAG_ENFORCEMENT off (kill switch dark) → legacy behavior: check always runs, over-limit order rejected", async () => {
+      // Even a mock configured to deny must never be consulted — off short-circuits first.
+      entitlementsService.hasFlag.mockResolvedValue(false);
+
+      await expect(
+        service.updateOrderItems("ord-1", editDto, operatorPayload),
+      ).rejects.toMatchObject({
+        response: { code: "CREDIT_LIMIT_EXCEEDED", limit: 100, exposure: 135 },
+      });
+      expect(entitlementsService.hasFlag).not.toHaveBeenCalled();
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it("PLAN_FLAG_ENFORCEMENT on + flag absent → check is skipped: over-limit order passes", async () => {
+      process.env.PLAN_FLAG_ENFORCEMENT = "on";
+      entitlementsService.hasFlag.mockResolvedValue(false);
+
+      await service.updateOrderItems("ord-1", editDto, operatorPayload);
+
+      expect(entitlementsService.hasFlag).toHaveBeenCalledWith("test-tenant", "flag.credit_limits");
+      expect(prisma.order.update).toHaveBeenCalled();
+    });
+
+    it("PLAN_FLAG_ENFORCEMENT on + flag present → check still runs: over-limit order rejected", async () => {
+      process.env.PLAN_FLAG_ENFORCEMENT = "on";
+      entitlementsService.hasFlag.mockResolvedValue(true);
+
+      await expect(
+        service.updateOrderItems("ord-1", editDto, operatorPayload),
+      ).rejects.toMatchObject({
+        response: { code: "CREDIT_LIMIT_EXCEEDED", limit: 100, exposure: 135 },
+      });
+      expect(entitlementsService.hasFlag).toHaveBeenCalledWith("test-tenant", "flag.credit_limits");
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it("PLAN_FLAG_ENFORCEMENT on + entitlement resolution THROWS → degrades to the legacy check, not a failed edit", async () => {
+      // EntitlementsService.compute throws on a missing tenant row, and
+      // PlanCatalogService.getVersionForTenant throws when no catalog is published.
+      // The credit guard runs inside the edit transaction, so that must NOT
+      // surface as a rolled-back edit reporting a billing-catalog error.
+      process.env.PLAN_FLAG_ENFORCEMENT = "on";
+      entitlementsService.hasFlag.mockRejectedValue(
+        new NotFoundException("No published plan catalog exists. Seed the billing catalog first."),
+      );
+
+      await expect(
+        service.updateOrderItems("ord-1", editDto, operatorPayload),
+      ).rejects.toMatchObject({
+        response: { code: "CREDIT_LIMIT_EXCEEDED", limit: 100, exposure: 135 },
+      });
+      expect(prisma.order.update).not.toHaveBeenCalled();
     });
   });
 

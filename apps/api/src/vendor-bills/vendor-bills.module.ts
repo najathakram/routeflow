@@ -8,6 +8,9 @@ import { DuplicateMatchModule } from "../import/duplicate-match.module";
 import { ProductAliasModule } from "../import/product-alias.module";
 import { StorageModule } from "../storage/storage.module";
 import { InventoryModule } from "../inventory/inventory.module";
+// EntitlementsModule depends only on the global PrismaService — it supplies
+// PlanFlagGuard for the controller's @RequirePlanFlag("flag.ap_bills") gate.
+import { EntitlementsModule } from "../billing/entitlements.module";
 
 @Module({
   imports: [
@@ -18,6 +21,7 @@ import { InventoryModule } from "../inventory/inventory.module";
     ProductAliasModule,
     StorageModule,
     InventoryModule,
+    EntitlementsModule,
   ],
   controllers: [VendorBillsController],
   providers: [VendorBillsService],

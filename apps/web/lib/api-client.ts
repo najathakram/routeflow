@@ -9,6 +9,7 @@ import axios from "axios";
 import { OP_KEYS, BUYER_KEYS } from "./auth-keys";
 import { setOpPresenceCookie, clearOpPresenceCookie } from "./presence-cookies";
 import { hasReauthHandler, requestReauth } from "./session-expiry";
+import { parsePlanGate, type PlanGateBody } from "./plan-gate";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
 
@@ -89,6 +90,30 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+// ─── PLAN_GATE notice bridge ──────────────────────────────────────────────────
+
+/**
+ * `PlanGateNotice` (components/PlanGateNotice.tsx) registers itself here on
+ * mount, mirroring the reauth bridge in session-expiry.ts. When a gated GET
+ * 403s with a PLAN_GATE body, the response interceptor below notifies the
+ * listener so it can surface a friendly toast (message + upgrade hint)
+ * instead of the query failing silently. No-op if nothing is mounted.
+ *
+ * Mutations are NOT routed through this bridge: `MutationCache.onError` in
+ * app/providers.tsx already toasts every mutation error's `message` (PLAN_GATE
+ * bodies included) — notifying here too would double-toast the same failure.
+ * That existing toast doesn't include the upgrade hint; extending it is out of
+ * scope for this file (see WP5 notes).
+ */
+let planGateListener: ((gate: PlanGateBody) => void) | null = null;
+
+export function registerPlanGateListener(fn: (gate: PlanGateBody) => void): () => void {
+  planGateListener = fn;
+  return () => {
+    if (planGateListener === fn) planGateListener = null;
+  };
+}
+
 // ─── Response interceptor: refresh on 401 ────────────────────────────────────
 
 let isRefreshing = false;
@@ -108,6 +133,14 @@ function processQueue(error: unknown, token: string | null = null) {
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
+    // PLAN_FLAG_ENFORCEMENT gate 403s (GET only — see the bridge comment above
+    // for why mutations are excluded). Fire-and-continue: this never changes
+    // the rejection below, it only surfaces a notice alongside it.
+    const gate = parsePlanGate(error);
+    if (gate && error.config?.method?.toLowerCase() === "get") {
+      planGateListener?.(gate);
+    }
+
     const original = error.config as typeof error.config & {
       _retry?: boolean;
     };
