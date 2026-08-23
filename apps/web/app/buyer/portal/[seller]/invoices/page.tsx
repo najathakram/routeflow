@@ -6,6 +6,7 @@ import { ChevronLeft, ChevronRight, FileText } from "lucide-react";
 import { Badge } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { buyerApiClient } from "@/lib/buyer-api-client";
+import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -55,19 +56,6 @@ function formatStatus(status: string): string {
     .replace(/_/g, " ")
     .toLowerCase()
     .replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function formatDate(dateStr?: string): string {
-  if (!dateStr) return "N/A";
-  try {
-    return new Date(dateStr).toLocaleDateString("en-GB", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
-  } catch {
-    return dateStr;
-  }
 }
 
 function formatCurrency(amount?: number): string {
@@ -202,10 +190,10 @@ export default function BuyerInvoicesPage() {
                         {invoice.invoiceNumber ?? invoice.id.slice(0, 8).toUpperCase()}
                       </td>
                       <td className="px-4 py-3 text-sm text-navy/70">
-                        {formatDate(invoice.createdAt)}
+                        {fmtDate(invoice.createdAt)}
                       </td>
                       <td className="px-4 py-3 text-sm text-navy/70">
-                        {formatDate(invoice.dueDate)}
+                        {fmtCalendarDate(invoice.dueDate)}
                       </td>
                       <td className="px-4 py-3">
                         <Badge variant={getStatusVariant(invoice.status)}>

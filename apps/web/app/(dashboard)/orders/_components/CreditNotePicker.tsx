@@ -8,6 +8,7 @@ import {
   type CreditNote,
 } from "@/lib/api/credit-notes";
 import { MoneyInput } from "@/components/MoneyInput";
+import { fmtCalendarDate } from "@/lib/formatting";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -267,7 +268,7 @@ export function CreditNotePicker({
                 ) : (
                   cn.expiresAt && (
                     <span className="ml-6 text-[11px] text-navy/50">
-                      Expires {new Date(cn.expiresAt).toLocaleDateString()}
+                      Expires {fmtCalendarDate(cn.expiresAt)}
                     </span>
                   )
                 )}

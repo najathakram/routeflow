@@ -63,7 +63,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
-import { fmt, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { formatQtySplit } from "@/lib/pricing";
 import {
   SELECTABLE_PAYMENT_METHODS,
@@ -1853,8 +1853,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           <p className="mt-1 text-sm text-navy/70">
             {invoice.customer?.businessName ?? "—"}
             {(invoice as any).orderNumber ? ` · from ${(invoice as any).orderNumber}` : ""} · issued{" "}
-            {fmtDate(invoice.issueDate ?? invoice.createdAt)}
-            {invoice.dueDate ? ` · due ${fmtDate(invoice.dueDate)}` : ""}
+            {fmtCalendarDate(invoice.issueDate ?? invoice.createdAt)}
+            {invoice.dueDate ? ` · due ${fmtCalendarDate(invoice.dueDate)}` : ""}
           </p>
         </div>
 
@@ -2084,7 +2084,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
               <div>
                 <p className="font-display text-2xl text-navy">Invoice</p>
                 <p className="mt-1 font-mono text-xs text-navy/70">
-                  {invoice.invoiceNumber} · {fmtDate(invoice.issueDate ?? invoice.createdAt)}
+                  {invoice.invoiceNumber} ·{" "}
+                  {fmtCalendarDate(invoice.issueDate ?? invoice.createdAt)}
                 </p>
               </div>
               <div className="flex flex-col items-end gap-2">
@@ -2125,13 +2126,13 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                 <p className="overline mb-1.5">Invoice Details</p>
                 <p className="text-sm text-navy/70">
                   <span className="font-medium text-navy">Issue Date:</span>{" "}
-                  {fmtDate(invoice.issueDate ?? invoice.createdAt)}
+                  {fmtCalendarDate(invoice.issueDate ?? invoice.createdAt)}
                 </p>
                 {invoice.dueDate && (
                   <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Due Date:</span>{" "}
                     <span className={cn(status === "OVERDUE" && "font-medium text-danger")}>
-                      {fmtDate(invoice.dueDate)}
+                      {fmtCalendarDate(invoice.dueDate)}
                     </span>
                   </p>
                 )}
