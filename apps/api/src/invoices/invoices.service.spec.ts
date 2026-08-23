@@ -19,7 +19,7 @@ jest.mock("../storage/compress.util", () => ({
 
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
-import { InvoicesService } from "./invoices.service";
+import { InvoicesService, startOfCalendarDay, addCalendarDays } from "./invoices.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -1410,7 +1410,7 @@ describe("InvoicesService", () => {
         .mockResolvedValue({ terms: "Net 30", dueDays: 30 });
       jest
         .spyOn(service as any, "resolveTenantInvoiceDefaults")
-        .mockResolvedValue({ notes: null, terms: null });
+        .mockResolvedValue({ notes: null, terms: null, timezone: null });
       jest.spyOn(service as any, "generateInvoiceNumber").mockResolvedValue("INV-1");
 
       prisma.order.findUnique.mockResolvedValue({
@@ -1476,7 +1476,7 @@ describe("InvoicesService", () => {
         .mockResolvedValue({ terms: "Net 30", dueDays: 30 });
       jest
         .spyOn(service as any, "resolveTenantInvoiceDefaults")
-        .mockResolvedValue({ notes: null, terms: null });
+        .mockResolvedValue({ notes: null, terms: null, timezone: null });
       jest.spyOn(service as any, "generateInvoiceNumber").mockResolvedValue("INV-1");
 
       prisma.order.findUnique.mockResolvedValue({
@@ -1524,7 +1524,7 @@ describe("InvoicesService", () => {
         .mockResolvedValue({ terms: "Net 30", dueDays: 30 });
       jest
         .spyOn(service as any, "resolveTenantInvoiceDefaults")
-        .mockResolvedValue({ notes: null, terms: null });
+        .mockResolvedValue({ notes: null, terms: null, timezone: null });
       jest.spyOn(service as any, "generateInvoiceNumber").mockResolvedValue("INV-2026-0042");
       prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
       // Echo the create data back so we can assert numbers / numbering / groupId.
@@ -3912,7 +3912,7 @@ describe("InvoicesService", () => {
         .mockResolvedValue({ terms: "Net 30", dueDays: 30 });
       jest
         .spyOn(service as any, "resolveTenantInvoiceDefaults")
-        .mockResolvedValue({ notes: null, terms: null });
+        .mockResolvedValue({ notes: null, terms: null, timezone: null });
       jest.spyOn(service as any, "generateInvoiceNumber").mockResolvedValue("INV-1");
       prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
       prisma.orderItem.update.mockResolvedValue({});
@@ -3951,6 +3951,17 @@ describe("InvoicesService", () => {
     /** Whole days between two invoice dates, tolerant of a DST hour. */
     const daysBetween = (a: Date, b: Date) => Math.round((b.getTime() - a.getTime()) / 86_400_000);
 
+    /**
+     * A same-day sale is dated at UTC MIDNIGHT of the current calendar day (tenant
+     * timezone; UTC here, since the mocked config carries none) — not at the wall-clock
+     * instant. Every render surface formats these with timeZone: "UTC", so a raw
+     * new Date() after 8pm US-Eastern would print the invoice one day late.
+     */
+    const expectDatedToday = (issueDate: Date) => {
+      expect(issueDate.toISOString()).toMatch(/T00:00:00\.000Z$/);
+      expect(issueDate.toISOString().slice(0, 10)).toBe(new Date().toISOString().slice(0, 10));
+    };
+
     it("createInvoiceFromOrder issues on the order date and runs the term from it", async () => {
       seedDatingSpies();
       prisma.order.findUnique.mockResolvedValue(orderWith({ orderDate: backdated }));
@@ -3964,14 +3975,32 @@ describe("InvoicesService", () => {
 
     it("createInvoiceFromOrder falls back to today when the order has no business date", async () => {
       seedDatingSpies();
-      const before = Date.now();
       prisma.order.findUnique.mockResolvedValue(orderWith({ orderDate: null }));
 
       await service.createInvoiceFromOrder("ord-1");
 
       const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
-      expect(data.issueDate.getTime()).toBeGreaterThanOrEqual(before);
+      expectDatedToday(data.issueDate);
       expect(daysBetween(data.issueDate, data.dueDate)).toBe(30);
+      // No override, so the persisted T&C falls back to the tenant default, then the term.
+      expect(data.terms).toBe("Net 30");
+    });
+
+    it("createInvoiceFromOrder honors an explicit dueDate/terms override", async () => {
+      seedDatingSpies();
+      prisma.order.findUnique.mockResolvedValue(orderWith({ orderDate: backdated }));
+
+      await service.createInvoiceFromOrder("ord-1", undefined, {
+        dueDate: "2026-10-03",
+        terms: "  Payment due in 60 days.  ",
+      });
+
+      const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+      // The operator's chosen due date is stored verbatim, NOT recomputed from the term.
+      expect(data.dueDate).toEqual(new Date("2026-10-03T00:00:00.000Z"));
+      expect(data.terms).toBe("Payment due in 60 days.");
+      // The override moves the due date only; the invoice still bills on its business date.
+      expect(data.issueDate).toEqual(backdated);
     });
 
     it("createInvoiceFromOrderWithTenant issues on the order date", async () => {
@@ -4019,7 +4048,6 @@ describe("InvoicesService", () => {
 
     it("createPartialFromOrder falls back to today without a business date", async () => {
       seedDatingSpies();
-      const before = Date.now();
       prisma.order.findUnique.mockResolvedValue(
         orderWith({ orderDate: null, lineItems: [{ ...orderWith().lineItems[0], id: "oi-1" }] }),
       );
@@ -4028,7 +4056,7 @@ describe("InvoicesService", () => {
         items: [{ orderItemId: "oi-1", qty: 2 }],
       } as any)) as any;
 
-      expect(invoice.issueDate.getTime()).toBeGreaterThanOrEqual(before);
+      expectDatedToday(invoice.issueDate);
     });
   });
 
@@ -4350,5 +4378,39 @@ describe("InvoicesService", () => {
         }),
       );
     });
+  });
+});
+
+/**
+ * Invoice issue/due dates are CALENDAR dates: they are stored as UTC-midnight instants
+ * and every render surface (list, detail, PDF, email) formats them with timeZone: "UTC".
+ * These guard the write side of that invariant.
+ */
+describe("calendar-date helpers", () => {
+  it("dates a same-day sale in the TENANT's calendar day, at UTC midnight", () => {
+    // 8:10pm America/New_York on Aug 22 is already Aug 23 in UTC. Storing raw
+    // new Date() would print the invoice as Aug 23 — a day after the sale happened.
+    const at810pmEdt = new Date("2026-08-23T00:10:00.000Z");
+    expect(startOfCalendarDay("America/New_York", at810pmEdt).toISOString()).toBe(
+      "2026-08-22T00:00:00.000Z",
+    );
+  });
+
+  it("falls back to the UTC day when the tenant timezone is missing or invalid", () => {
+    const now = new Date("2026-08-23T00:10:00.000Z");
+    expect(startOfCalendarDay(null, now).toISOString()).toBe("2026-08-23T00:00:00.000Z");
+    expect(startOfCalendarDay("Not/AZone", now).toISOString()).toBe("2026-08-23T00:00:00.000Z");
+  });
+
+  it("adds payment terms in UTC so the due date never drifts across a DST change", () => {
+    // Net 30 from Mar 1: local setDate() on a UTC-midnight instant lands on
+    // 2026-03-30T23:00Z after spring-forward, which prints as Mar 30 — one day early.
+    expect(addCalendarDays(new Date("2026-03-01T00:00:00.000Z"), 30).toISOString()).toBe(
+      "2026-03-31T00:00:00.000Z",
+    );
+    // Plan acceptance criterion: Aug 4 + Net 60 = Oct 3.
+    expect(addCalendarDays(new Date("2026-08-04T00:00:00.000Z"), 60).toISOString()).toBe(
+      "2026-10-03T00:00:00.000Z",
+    );
   });
 });

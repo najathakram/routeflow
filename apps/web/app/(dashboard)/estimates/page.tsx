@@ -27,7 +27,7 @@ import { useProducts } from "@/lib/api/products";
 import { computeLineSubtotal } from "@/lib/pricing";
 import { apiClient } from "@/lib/api-client";
 import { getTierPrice } from "@/lib/pricing";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { fmt, fmtCalendarDate } from "@/lib/formatting";
 
 // ─── KPI chip ─────────────────────────────────────────────────────────────────
 
@@ -928,10 +928,10 @@ export default function EstimatesPage() {
                     {est.customer?.businessName ?? "—"}
                   </td>
                   <td className="px-4 py-3 text-navy">
-                    {fmtDate((est as any).issueDate ?? est.createdAt)}
+                    {fmtCalendarDate((est as any).issueDate ?? est.createdAt)}
                   </td>
                   <td className="px-4 py-3 text-navy">
-                    {fmtDate((est as any).expiresAt ?? (est as any).expiryDate)}
+                    {fmtCalendarDate((est as any).expiresAt ?? (est as any).expiryDate)}
                   </td>
                   <td className="px-4 py-3 text-right font-medium text-navy">
                     {fmt(Number(est.total))}

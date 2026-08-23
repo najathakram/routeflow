@@ -43,7 +43,7 @@ import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { VariantSplitModal } from "@/components/VariantSplitModal";
 import { useProduct } from "@/lib/api/products";
 import { roundMoney } from "@/lib/pricing";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { usePreferences, useSavePreferences } from "@/lib/api/users";
 import {
   SELECTABLE_PAYMENT_METHODS,
@@ -998,8 +998,8 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
             )}
           </div>
           <p className="mt-1.5 text-sm text-navy/70">
-            {bill.supplier?.name ?? "—"} · billed {fmtDate(bill.billDate ?? bill.createdAt)}
-            {bill.dueDate && ` · due ${fmtDate(bill.dueDate)}`}
+            {bill.supplier?.name ?? "—"} · billed {fmtCalendarDate(bill.billDate ?? bill.createdAt)}
+            {bill.dueDate && ` · due ${fmtCalendarDate(bill.dueDate)}`}
           </p>
         </div>
 
@@ -1211,7 +1211,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                   )}
                   <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Bill Date:</span>{" "}
-                    {fmtDate(bill.billDate ?? bill.createdAt)}
+                    {fmtCalendarDate(bill.billDate ?? bill.createdAt)}
                   </p>
                   <p
                     className={cn(
@@ -1219,7 +1219,8 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                       isOverdue ? "text-red-600 font-semibold" : "text-navy/70",
                     )}
                   >
-                    <span className="font-medium text-navy">Due Date:</span> {fmtDate(bill.dueDate)}
+                    <span className="font-medium text-navy">Due Date:</span>{" "}
+                    {fmtCalendarDate(bill.dueDate)}
                     {isOverdue && " (Overdue)"}
                   </p>
                 </div>
@@ -1463,7 +1464,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
               <div className="flex justify-between gap-3 border-b border-surface-border py-2">
                 <dt className="text-navy/70">Bill date</dt>
                 <dd className="text-right font-medium text-navy">
-                  {fmtDate(bill.billDate ?? bill.createdAt)}
+                  {fmtCalendarDate(bill.billDate ?? bill.createdAt)}
                 </dd>
               </div>
               <div className="flex justify-between gap-3 border-b border-surface-border py-2">
@@ -1471,7 +1472,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                 <dd
                   className={cn("text-right font-medium", isOverdue ? "text-danger" : "text-navy")}
                 >
-                  {fmtDate(bill.dueDate)}
+                  {fmtCalendarDate(bill.dueDate)}
                 </dd>
               </div>
               <div className="flex justify-between gap-3 border-b border-surface-border py-2">

@@ -26,6 +26,7 @@ import {
 } from "../../../../lib/api/orders";
 import { describeCancelImpact } from "../../../../lib/cancel-impact";
 import { isInternalEmail } from "../../../../lib/internal-email";
+import { fmtCalendarDate } from "../../../../lib/format-date";
 import {
   useCreateInvoiceFromOrder,
   useInvoicePdf,
@@ -725,7 +726,7 @@ export default function OrderDetailScreen() {
             ) : null}
             {order.requestedDeliveryDate ? (
               <Text style={styles.customerSub}>
-                Requested {new Date(order.requestedDeliveryDate).toLocaleDateString()}
+                Requested {fmtCalendarDate(order.requestedDeliveryDate)}
               </Text>
             ) : null}
             {order.deliveredAt ? (

@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { Skeleton } from "@routeflow/ui/web";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { formatQtySplit } from "@/lib/pricing";
 import { SortableTh } from "@/components/SortableTh";
 import { useSortableData } from "@/lib/use-sortable-data";
@@ -176,7 +176,7 @@ export function SalesHistoryCard({ productId }: { productId: string }) {
                   <tbody className="divide-y divide-surface-border bg-white">
                     {sorted.map((l, i) => (
                       <tr key={`${l.invoiceId}-${i}`}>
-                        <td className="px-3 py-2 text-navy/70">{fmtDate(l.date)}</td>
+                        <td className="px-3 py-2 text-navy/70">{fmtCalendarDate(l.date)}</td>
                         <td className="px-3 py-2">
                           {l.orderId ? (
                             <Link

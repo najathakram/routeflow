@@ -14,6 +14,7 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import { useExpenses, type Expense, type ExpenseStatus } from "../../../lib/api/expenses";
+import { fmtCalendarDate } from "../../../lib/format-date";
 
 const FILTERS = [
   { id: "ALL", label: "All" },
@@ -111,11 +112,7 @@ export default function ExpensesScreen() {
 
 function ExpenseRow({ expense, onPress }: { expense: Expense; onPress: () => void }) {
   const p = statusPill(expense.status);
-  const dateLabel = new Date(expense.date).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  const dateLabel = fmtCalendarDate(expense.date, "short");
 
   return (
     <Pressable style={styles.row} onPress={onPress}>

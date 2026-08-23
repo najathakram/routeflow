@@ -146,7 +146,10 @@ export default function ExpenseDetailScreen() {
   const pickSupplier = () => setSupPickerOpen(true);
   const pickPaymentMethod = () => setPmPickerOpen(true);
 
+  // `expense.date` is a UTC-midnight calendar date — formatting it in local time
+  // renders the PREVIOUS day for negative-UTC-offset viewers (see lib/format-date).
   const dateLabel = new Date(expense.date).toLocaleDateString(undefined, {
+    timeZone: "UTC",
     month: "long",
     day: "numeric",
     year: "numeric",

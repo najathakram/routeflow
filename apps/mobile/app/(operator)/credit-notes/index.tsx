@@ -14,6 +14,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavAction, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useCreditNotes, type CreditNote } from "../../../lib/api/credit-notes";
 import { creditNotePillFor, openCreditBalance } from "../../../lib/credit-notes-logic";
+import { fmtCalendarDate } from "../../../lib/format-date";
 
 // Mirrors the web credit-notes status chips.
 const FILTERS = [
@@ -97,7 +98,12 @@ export default function CreditNotesListScreen() {
 
 function Row({ note, onPress }: { note: CreditNote; onPress: () => void }) {
   const s = creditNotePillFor(note.status);
+  // issueDate is a calendar date (UTC-safe helper); the createdAt fallback is
+  // a real timestamp and must keep rendering in the viewer's local time.
   const issued = note.issueDate ?? note.createdAt;
+  const issuedLabel = note.issueDate
+    ? fmtCalendarDate(note.issueDate)
+    : new Date(note.createdAt).toLocaleDateString();
   return (
     <Pressable style={styles.row} onPress={onPress}>
       <View style={styles.rowHead}>
@@ -120,9 +126,7 @@ function Row({ note, onPress }: { note: CreditNote; onPress: () => void }) {
         {Number(note.amountUsed ?? 0) > 0 && openCreditBalance(note) > 0 ? (
           <Text style={styles.remaining}>{fmtCurrency(openCreditBalance(note))} left</Text>
         ) : null}
-        {issued ? (
-          <Text style={styles.totalText}>Issued {new Date(issued).toLocaleDateString()}</Text>
-        ) : null}
+        {issued ? <Text style={styles.totalText}>Issued {issuedLabel}</Text> : null}
       </View>
     </Pressable>
   );

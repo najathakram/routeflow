@@ -15,6 +15,7 @@ import { showToast } from "../../../lib/toast";
 import { checkBadgeFor } from "../../../lib/check-badge";
 import { formatPaymentMethod, paymentRowFlags } from "../../../lib/buyer-payments-logic";
 import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
+import { fmtCalendarDate } from "../../../lib/format-date";
 
 // buyer.ts's BuyerInvoiceItem doesn't declare `msrp` yet even though the
 // server now snapshots it onto every InvoiceItem (display-only, per PIECE)
@@ -39,6 +40,9 @@ function invoicePill(status: string, isOverdue?: boolean) {
   }
 }
 
+// Real timestamp (has a meaningful time-of-day) — kept in the viewer's local
+// time, unlike the invoice issue/due dates below which are UTC-midnight
+// calendar dates routed through the shared fmtCalendarDate helper.
 function fmtDate(s?: string | null) {
   if (!s) return null;
   return new Date(s).toLocaleDateString(undefined, {
@@ -104,7 +108,9 @@ export default function CustomerInvoiceDetailScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.invoiceNum}>#{invoice.invoiceNumber}</Text>
               {invoice.issueDate ? (
-                <Text style={styles.issuedDate}>Issued: {fmtDate(invoice.issueDate)}</Text>
+                <Text style={styles.issuedDate}>
+                  Issued: {fmtCalendarDate(invoice.issueDate, "short")}
+                </Text>
               ) : null}
             </View>
             <Pill variant={p.variant} dot>
@@ -122,7 +128,7 @@ export default function CustomerInvoiceDetailScreen() {
           <Text style={styles.total}>${Number(invoice.total).toFixed(2)}</Text>
 
           {invoice.dueDate ? (
-            <Text style={styles.dueDate}>Due: {fmtDate(invoice.dueDate)}</Text>
+            <Text style={styles.dueDate}>Due: {fmtCalendarDate(invoice.dueDate, "short")}</Text>
           ) : null}
         </View>
 
