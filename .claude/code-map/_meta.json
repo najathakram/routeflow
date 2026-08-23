@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "mappedSha": "ec67881e",
-  "generatedAt": "2026-08-23T10:00:00.000Z",
+  "generatedAt": "2026-08-23T21:34:46.858Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 888,
-  "notes": "INVOICE DATES + TERMS BUGFIX (2026-08-23, branch fix/invoice-dates-terms): UTC-safe calendar-date formatting (web lib/formatting.ts fmtCalendarDate, NEW mobile lib/format-date.ts, api messaging.helpers + invoice-pdf-template — calendar fields only, timestamps stay local) + CreateSaleDto dueDate/terms threaded through createInvoiceFromOrder/WithTenant/createPartialFromOrder overrides (3rd param; txClient stays 2nd). ~20 more calendar-date sites catalogued for a follow-up sweep. || History in CHANGELOG.md (this directory; one dated bullet per session, newest first). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "**2026-08-23** — CALENDAR-DATE SWEEP COMPLETION (branch fix/calendar-date-sweep STACKED on fix/invoice-dates-terms; no migration): the ~20 leftover −1-day sites from PR #416 review — mobile credit-notes (issueDate via helper, createdAt fallback stays LOCAL — timestamps never switch to UTC), customer/operator order requestedDeliveryDate, vendor-bills index, cart preview; several plan-listed sites verified ALREADY fixed by the #416 base rather than re-edited. mobile lib/format-date.ts gained a monthDay style so compact renders stay compact. Cart delivery preview deliberately stays on its local-midnight parse (was never buggy; weekday display matters) with a comment so later sweeps do not re-break it. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
