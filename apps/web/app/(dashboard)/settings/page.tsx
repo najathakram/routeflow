@@ -77,6 +77,7 @@ import {
   useUpdateRemittanceConfig,
   type RemittanceConfig,
 } from "@/lib/api/remittance";
+import { useTierLabels, useUpdateTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { useAuth } from "@/lib/auth-context";
 import { changePassword, setPassword } from "@/lib/auth";
 import { RegulatedSettingsTab } from "./_components/RegulatedSettingsTab";
@@ -2319,6 +2320,78 @@ function RemittanceTab() {
   );
 }
 
+// ─── CARD: Pricing tier names ──────────────────────────────────────────────────
+// A tenant can rename price tiers to match how their business talks about them
+// (e.g. "Wholesaler" instead of "Tier 2"). Mounted directly on the settings hub
+// (not behind a `?tab=`) the same way StripeConnectCard is — five inputs is too
+// small to earn its own screen. Everyone on Settings can see the configured
+// names (GET is OPERATOR + DRIVER server-side); only TENANT_ADMIN can edit,
+// mirroring RemittanceTab's gate.
+const TIER_KEYS = ["1", "2", "3", "4", "5"] as const;
+
+function TierLabelsCard() {
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "TENANT_ADMIN";
+  const { data: labels, isLoading } = useTierLabels();
+  const update = useUpdateTierLabels();
+
+  const [form, setForm] = React.useState<TierLabelsConfig>({});
+
+  React.useEffect(() => {
+    if (labels) setForm(labels);
+  }, [labels]);
+
+  const set = (key: (typeof TIER_KEYS)[number]) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const save = () => {
+    update.mutate(form, {
+      onSuccess: () => toast({ title: "Tier names saved", variant: "success" }),
+      onError: (err: any) =>
+        toast({
+          title: "Could not save",
+          description: err?.response?.data?.message ?? "Please try again.",
+          variant: "error",
+        }),
+    });
+  };
+
+  if (isLoading) return null;
+
+  return (
+    <Card className="space-y-5 p-5">
+      <div>
+        <h3 className="text-sm font-semibold text-navy">Pricing tier names</h3>
+        <p className="mt-1 text-xs text-navy/70">
+          Rename price tiers to match your business (e.g. &quot;Wholesaler&quot; instead of
+          &quot;Tier 2&quot;). Leave a field blank to use the default.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {TIER_KEYS.map((key) => (
+          <Input
+            key={key}
+            label={`Tier ${key}`}
+            placeholder={`Tier ${key}`}
+            maxLength={24}
+            value={form[key] ?? ""}
+            onChange={set(key)}
+            disabled={!isAdmin}
+          />
+        ))}
+      </div>
+      {isAdmin ? (
+        <Button variant="primary" loading={update.isPending} onClick={save}>
+          Save changes
+        </Button>
+      ) : (
+        <p className="text-xs text-navy/50">Only admins can rename pricing tiers.</p>
+      )}
+    </Card>
+  );
+}
+
 // ─── TAB: Invoicing ──────────────────────────────────────────────────────────
 
 const TERMS_OPTIONS = [
@@ -2592,6 +2665,10 @@ function SettingsPageInner() {
               card renders that banner. */}
           <div className="mt-5 max-w-3xl">
             <StripeConnectCard />
+          </div>
+          {/* Pricing tier names — a small card, not worth its own `?tab=` screen. */}
+          <div className="mt-5 max-w-3xl">
+            <TierLabelsCard />
           </div>
         </>
       ) : (

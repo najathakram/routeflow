@@ -27,6 +27,8 @@ import { useProducts } from "@/lib/api/products";
 import { computeLineSubtotal } from "@/lib/pricing";
 import { apiClient } from "@/lib/api-client";
 import { getTierPrice } from "@/lib/pricing";
+import { useTierLabels } from "@/lib/api/tier-labels";
+import { tierLabel } from "@/lib/tier-label";
 import { fmt, fmtDate } from "@/lib/formatting";
 
 // ─── KPI chip ─────────────────────────────────────────────────────────────────
@@ -128,6 +130,7 @@ function CreateEstimateModal({
 }) {
   const { toast } = useToast();
   const createEstimate = useCreateEstimate();
+  const { data: tierLabels } = useTierLabels();
 
   // Customer search
   const [customerSearch, setCustomerSearch] = React.useState("");
@@ -401,7 +404,7 @@ function CreateEstimateModal({
                   <span className="ml-2 text-xs text-navy/70">{selectedCustomer.contactName}</span>
                 )}
                 <span className="ml-2 text-xs text-navy/70">
-                  Tier {selectedCustomer.pricingTier ?? 1}
+                  {tierLabel(tierLabels, selectedCustomer.pricingTier ?? 1)}
                 </span>
               </div>
               <button
@@ -448,7 +451,7 @@ function CreateEstimateModal({
                           <span className="text-xs text-navy/70">{c.contactName}</span>
                         )}
                         <span className="ml-auto text-xs text-navy/70">
-                          Tier {c.pricingTier ?? 1}
+                          {tierLabel(tierLabels, c.pricingTier ?? 1)}
                         </span>
                       </button>
                     </li>

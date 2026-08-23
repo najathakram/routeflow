@@ -23,6 +23,7 @@ import { EmailService } from "../email/email.service";
 import { UpdateRouteSettingsDto } from "./dto/update-route-settings.dto";
 import { UpdateInvoiceSettingsDto } from "./dto/update-invoice-settings.dto";
 import { RemittanceConfigDto } from "./dto/remittance-config.dto";
+import { PricingTierLabelsDto } from "./dto/pricing-tier-labels.dto";
 
 // RF-213: serve under both /settings and /tenant/settings so the frontend
 // calling the latter doesn't get a 404 while the operator app uses /settings.
@@ -498,5 +499,22 @@ export class SettingsController {
   async updateRemittanceConfig(@Body() dto: RemittanceConfigDto) {
     await this.svc.setRemittanceConfig(dto);
     return this.svc.getRemittanceConfig();
+  }
+
+  // ─── Pricing tier labels (rung-2 config) ───────────────────────────────────
+  // Read: any operator/driver (drivers see priced lines too). Write: admin
+  // only — mirrors margin/remittance's read/write split.
+
+  @Get("pricing-tier-labels")
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  getPricingTierLabels() {
+    return this.svc.getPricingTierLabels();
+  }
+
+  @Patch("pricing-tier-labels")
+  @Roles(UserRole.TENANT_ADMIN)
+  async updatePricingTierLabels(@Body() dto: PricingTierLabelsDto) {
+    await this.svc.setPricingTierLabels(dto);
+    return this.svc.getPricingTierLabels();
   }
 }
