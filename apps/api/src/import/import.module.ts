@@ -20,9 +20,19 @@ import { ProductsModule } from "../products/products.module";
 // ImportService.importContacts() reuses CustomersService's CUSTOMERS soft-cap
 // gate so bulk import obeys the same plan cap as the single-create path.
 import { CustomersModule } from "../customers/customers.module";
+// EntitlementsModule depends only on the global PrismaService — it supplies
+// PlanFlagGuard for MigrationController's @RequirePlanFlag("flag.import_integrations") gate.
+import { EntitlementsModule } from "../billing/entitlements.module";
 
 @Module({
-  imports: [PrismaModule, VendorBillsModule, ProductsModule, DuplicateMatchModule, CustomersModule],
+  imports: [
+    PrismaModule,
+    VendorBillsModule,
+    ProductsModule,
+    DuplicateMatchModule,
+    CustomersModule,
+    EntitlementsModule,
+  ],
   controllers: [
     ImportController,
     NumberingController,

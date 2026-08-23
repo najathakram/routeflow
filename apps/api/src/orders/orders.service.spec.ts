@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   BadRequestException,
   ConflictException,
+  Logger,
 } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
@@ -42,6 +43,8 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import { EntitlementsService } from "../billing/entitlements.service";
 import { OrderStatus, UserRole, Prisma } from "@prisma/client";
 
 const MOCK_PRODUCT = {
@@ -113,6 +116,9 @@ describe("OrdersService", () => {
     releaseOrderCreditsInTx: jest.Mock;
     previewOrderCreditRelease: jest.Mock;
   };
+  // WP3: captured so the credit-limit plan-flag tests can assert whether/how
+  // hasFlag is consulted under each PLAN_FLAG_ENFORCEMENT state.
+  let entitlementsService: { hasFlag: jest.Mock };
   let mockQueue: { add: jest.Mock };
   let mockGateway: {
     emitStopCompleted: jest.Mock;
@@ -214,6 +220,16 @@ describe("OrdersService", () => {
             previewOrderCreditRelease: jest.fn().mockResolvedValue([]),
           },
         },
+        {
+          provide: CommissionEngineService,
+          useValue: {
+            syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
+            syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
+            removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
+          },
+          provide: EntitlementsService,
+          useValue: { hasFlag: jest.fn().mockResolvedValue(true) },
+        },
       ],
     }).compile();
 
@@ -222,6 +238,7 @@ describe("OrdersService", () => {
     invoicesService = module.get(InvoicesService);
     messagingService = module.get(MessagingService);
     creditNotesService = module.get(CreditNotesService);
+    entitlementsService = module.get(EntitlementsService);
   });
 
   // ─── findAll ──────────────────────────────────────────────────────────────
@@ -2731,6 +2748,191 @@ describe("OrdersService", () => {
     });
   });
 
+  // ─── updateOrderItems — operator/admin tier pricing (WP1) ───────────────────
+  // The operator/admin branch used to price every new/replaced line at flat
+  // `product.pricePerUnit`, ignoring the customer's tier entirely (create() and
+  // the buyer-edit branch of this same function already resolved it). Both
+  // sub-branches — replace-all and the individual-item "new line" case — now
+  // load Customer.pricingTier + CustomerPrice once per call and resolve an
+  // un-priced (or list-price-equal) line through resolveBuyerLinePrice, the
+  // same helper create() uses. A genuinely different explicit price is still a
+  // MANUAL override — tier resolution never overrides operator intent.
+
+  describe("updateOrderItems — operator/admin tier pricing (WP1)", () => {
+    const TIERED_PRODUCT = {
+      id: "prod-1",
+      pricePerUnit: 10,
+      priceTier3: 8,
+      unitsPerBox: null,
+      category: null,
+      trackedCategoryId: null,
+    };
+
+    it("(a) operator adds a line for a tier-3 customer with no explicit price — tier-3 price, SPECIAL", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [],
+      });
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findUnique.mockResolvedValue(TIERED_PRODUCT);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-1", qty: 2 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            unitPrice: 8,
+            originalPrice: 10,
+            priceType: "SPECIAL",
+            subtotal: 16,
+          }),
+        }),
+      );
+    });
+
+    it("(b) operator supplies an explicit different price on a new line — that price, MANUAL (not tier-resolved)", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [],
+      });
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findUnique.mockResolvedValue(TIERED_PRODUCT);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 12, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ productId: "prod-1", qty: 2, unitPrice: 6, overrideReason: "loyalty" }],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            unitPrice: 6,
+            originalPrice: 10,
+            priceType: "MANUAL",
+            overrideReason: "loyalty",
+            overriddenBy: "user-op",
+            subtotal: 12,
+          }),
+        }),
+      );
+    });
+
+    it("(c) an msrp-only CustomerPrice row ({pricingTier: null}) still prices a new line at the customer's default tier", async () => {
+      // MSRP made CustomerPrice.pricingTier nullable: a row may carry ONLY an
+      // MSRP override. That row must be pricing-inert — the customer's default
+      // tier keeps winning here too, mirroring create()'s same fallback.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [],
+      });
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 }); // default tier 3 → tier price 8
+      prisma.customerPrice.findMany.mockResolvedValue([
+        { productId: "prod-1", pricingTier: null, msrp: 5 },
+      ]);
+      prisma.product.findUnique.mockResolvedValue(TIERED_PRODUCT);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-1", qty: 2 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            unitPrice: 8,
+            originalPrice: 10,
+            priceType: "SPECIAL",
+            subtotal: 16,
+          }),
+        }),
+      );
+    });
+
+    it("(d) buyer-edit branch still resolves a new line through the customer's tier (regression pin, unchanged by WP1)", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        customerId: "cust-1",
+        lineItems: [],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
+
+      await service.updateOrderItems("ord-1", { items: [{ productId: "prod-1", qty: 2 }] }, {
+        ...customerPayload,
+        sub: "user-cust",
+      } as any);
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            unitPrice: 8,
+            originalPrice: 10,
+            priceType: "SPECIAL",
+            subtotal: 16,
+          }),
+        }),
+      );
+    });
+
+    it("(e) an explicit price EQUAL to list is stored verbatim — STANDARD, never tier-resolved", async () => {
+      // The operator line editors pre-fill the price field, so a typed $10.00
+      // (== list) for a tier-3 customer is a deliberate sell-at-list for this one
+      // order. Tier resolution must never quietly rewrite it down to $8.00.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [],
+      });
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findUnique.mockResolvedValue(TIERED_PRODUCT);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 20, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-1", qty: 2, unitPrice: 10 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            unitPrice: 10,
+            originalPrice: null,
+            priceType: "STANDARD",
+            subtotal: 20,
+          }),
+        }),
+      );
+    });
+  });
+
   // ─── updateOrderItems — driver diff routing (A4) ────────────────────────────
   // The mobile item editor is shared between the operator and driver screens and
   // sends an incremental diff ({id, action} entries, replaceAll:false). The
@@ -2856,6 +3058,46 @@ describe("OrdersService", () => {
             productId: "prod-C",
             unitPrice: 9,
             priceType: "STANDARD",
+          }),
+        }),
+      );
+    });
+
+    it("a driver diff fresh add bills LIST even for a tiered customer — tier resolution is staff-only", async () => {
+      // WP1 gave the operator/admin branch a tier ladder, and a DRIVER diff is
+      // routed through that same branch (A4). Driver edits keep the legacy list
+      // pricing, so the customer's tier 3 ($6) must not touch this line.
+      prisma.order.findUnique.mockResolvedValue(twoLineOrder);
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([
+        { productId: "prod-C", pricingTier: 3, msrp: null },
+      ]);
+      prisma.product.findUnique.mockResolvedValue({
+        id: "prod-C",
+        pricePerUnit: 9,
+        priceTier3: 6,
+        unitsPerBox: null,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([
+        { subtotal: 10, status: "PENDING" },
+        { subtotal: 7, status: "PENDING" },
+        { subtotal: 18, status: "PENDING" },
+      ]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-C", qty: 2 }], replaceAll: false },
+        driverPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-C",
+            unitPrice: 9,
+            originalPrice: null,
+            priceType: "STANDARD",
+            subtotal: 18,
           }),
         }),
       );
@@ -4063,6 +4305,111 @@ describe("OrdersService", () => {
 
       expect(prisma.invoice.findMany).not.toHaveBeenCalled();
       expect(prisma.order.update).toHaveBeenCalled();
+    });
+  });
+
+  describe("assertWithinCreditLimit — flag.credit_limits plan-flag gate (WP3)", () => {
+    const ORIGINAL_ENV = process.env;
+
+    // Same PENDING/qty-3/$5 fixture as the P5-08b block above, primed to land
+    // OVER a $100 limit: exposure = 120 (open invoice balance) + 15 (projected) = 135.
+    const editableOrder = () => ({
+      ...MOCK_ORDER,
+      status: "PENDING" as const,
+      routeRun: null,
+      lineItems: [
+        {
+          id: "li-1",
+          orderId: "ord-1",
+          productId: "prod-1",
+          qty: 2,
+          unitPrice: 5,
+          subtotal: 10,
+          status: "PENDING",
+          boxes: null,
+          pieces: null,
+        },
+      ],
+    });
+    const editDto = { items: [{ id: "li-1", action: "UPDATE" as const, qty: 3, unitPrice: 5 }] };
+    const postEditItems = [
+      { id: "li-1", productId: "prod-1", qty: 3, unitPrice: 5, subtotal: 15, status: "PENDING" },
+    ];
+
+    let loggerError: jest.SpyInstance;
+
+    beforeEach(() => {
+      process.env = { ...ORIGINAL_ENV };
+      delete process.env.PLAN_FLAG_ENFORCEMENT;
+      // the resolution-failure case logs; keep the suite output clean
+      loggerError = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+      prisma.order.findUnique.mockResolvedValue(editableOrder());
+      prisma.orderItem.findMany.mockResolvedValue(postEditItems);
+      prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
+      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.invoice.findMany.mockResolvedValue([
+        { total: 200, orderId: null, payments: [{ amount: 80 }] }, // balance 120
+      ]);
+      prisma.order.findMany.mockResolvedValue([]);
+    });
+
+    afterEach(() => {
+      process.env = ORIGINAL_ENV;
+      loggerError.mockRestore();
+    });
+
+    it("PLAN_FLAG_ENFORCEMENT off (kill switch dark) → legacy behavior: check always runs, over-limit order rejected", async () => {
+      // Even a mock configured to deny must never be consulted — off short-circuits first.
+      entitlementsService.hasFlag.mockResolvedValue(false);
+
+      await expect(
+        service.updateOrderItems("ord-1", editDto, operatorPayload),
+      ).rejects.toMatchObject({
+        response: { code: "CREDIT_LIMIT_EXCEEDED", limit: 100, exposure: 135 },
+      });
+      expect(entitlementsService.hasFlag).not.toHaveBeenCalled();
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it("PLAN_FLAG_ENFORCEMENT on + flag absent → check is skipped: over-limit order passes", async () => {
+      process.env.PLAN_FLAG_ENFORCEMENT = "on";
+      entitlementsService.hasFlag.mockResolvedValue(false);
+
+      await service.updateOrderItems("ord-1", editDto, operatorPayload);
+
+      expect(entitlementsService.hasFlag).toHaveBeenCalledWith("test-tenant", "flag.credit_limits");
+      expect(prisma.order.update).toHaveBeenCalled();
+    });
+
+    it("PLAN_FLAG_ENFORCEMENT on + flag present → check still runs: over-limit order rejected", async () => {
+      process.env.PLAN_FLAG_ENFORCEMENT = "on";
+      entitlementsService.hasFlag.mockResolvedValue(true);
+
+      await expect(
+        service.updateOrderItems("ord-1", editDto, operatorPayload),
+      ).rejects.toMatchObject({
+        response: { code: "CREDIT_LIMIT_EXCEEDED", limit: 100, exposure: 135 },
+      });
+      expect(entitlementsService.hasFlag).toHaveBeenCalledWith("test-tenant", "flag.credit_limits");
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it("PLAN_FLAG_ENFORCEMENT on + entitlement resolution THROWS → degrades to the legacy check, not a failed edit", async () => {
+      // EntitlementsService.compute throws on a missing tenant row, and
+      // PlanCatalogService.getVersionForTenant throws when no catalog is published.
+      // The credit guard runs inside the edit transaction, so that must NOT
+      // surface as a rolled-back edit reporting a billing-catalog error.
+      process.env.PLAN_FLAG_ENFORCEMENT = "on";
+      entitlementsService.hasFlag.mockRejectedValue(
+        new NotFoundException("No published plan catalog exists. Seed the billing catalog first."),
+      );
+
+      await expect(
+        service.updateOrderItems("ord-1", editDto, operatorPayload),
+      ).rejects.toMatchObject({
+        response: { code: "CREDIT_LIMIT_EXCEEDED", limit: 100, exposure: 135 },
+      });
+      expect(prisma.order.update).not.toHaveBeenCalled();
     });
   });
 

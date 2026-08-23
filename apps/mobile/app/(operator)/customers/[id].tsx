@@ -21,6 +21,7 @@ import {
   useCustomerStatement,
   useDeleteCustomer,
 } from "../../../lib/api/customers";
+import { useTierLabels } from "../../../lib/api/tier-labels";
 import { MoneyTextInput } from "../../../components/MoneyTextInput";
 import { openInMaps } from "../../../components/openInMaps";
 import {
@@ -28,6 +29,7 @@ import {
   type SelectablePaymentMethod,
 } from "../../../lib/payment-methods";
 import { roundMoney } from "../../../lib/pricing";
+import { tierLabel } from "../../../lib/tier-label";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 
@@ -51,6 +53,7 @@ export default function CustomerDetailScreen() {
   const { data: customer, isLoading } = useCustomer(isCreateAlias ? "" : (id ?? ""));
   const { data: statement } = useCustomerStatement(isCreateAlias ? "" : (id ?? ""));
   const deleteMut = useDeleteCustomer();
+  const { data: tierLabels } = useTierLabels();
   const [advanceOpen, setAdvanceOpen] = useState(false);
 
   if (isLoading || !customer) {
@@ -250,7 +253,7 @@ export default function CustomerDetailScreen() {
               label="Pricing tier"
               value={
                 <Pill variant={tier === 1 ? "gray" : "brand"} dot={false}>
-                  {`Tier ${tier}`}
+                  {tierLabel(tierLabels, tier)}
                 </Pill>
               }
             />

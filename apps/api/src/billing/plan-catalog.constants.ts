@@ -10,6 +10,51 @@
 export const PLAN_KEYS = ["STARTER", "GROWTH", "SCALE", "ENTERPRISE"] as const;
 export type PlanKey = (typeof PLAN_KEYS)[number];
 
+/**
+ * Enforcement status of these flags, as of the WP1-WP3 kill-switch rollout
+ * (`PLAN_FLAG_ENFORCEMENT` env, default off — see plan-flag.guard.ts). This
+ * lists what the guard/decorator wiring covers once the switch flips on; it
+ * does not itself gate anything.
+ *
+ * ENFORCED — `@RequirePlanFlag` (guard/decorator) or an equivalent
+ * service-level check:
+ *   - flag.analytics — AnalyticsController (class-level)
+ *   - flag.ap_bills — VendorBillsController (class-level)
+ *   - flag.import_integrations — MigrationController only; the CSV import
+ *     controllers (import/batch/alias/numbering/resolution) stay ungated —
+ *     core onboarding.
+ *   - flag.forecasting — InventoryController: GET forecasting,
+ *     PATCH products/:id/reorder-settings
+ *   - flag.pricing_tiers — CustomersController: the three
+ *     /customers/:id/prices* handlers
+ *   - flag.reports — BookkeepingController: every reports/* GET (summary,
+ *     dashboard, transactions, expenses, bills/bulk-mark-paid, and
+ *     finance-dashboard stay ungated — core money endpoints)
+ *   - flag.returns — ReturnsController (class-level; also serves
+ *     CUSTOMER/DRIVER roles, so stays behind the kill switch until the
+ *     v7-STARTER question in the WP4 audit is answered)
+ *   - flag.credit_limits — OrdersService.assertWithinCreditLimit
+ *     (service-level, no route of its own; gates the CHECK only — an
+ *     unflagged tenant's stored creditLimit values stay inert, not deleted)
+ *
+ * RESERVED — no code exists yet to gate, so no decorator:
+ *   - flag.api_sso — no SSO implementation exists.
+ *   - flag.settlement — no driver run-settlement feature exists (distinct
+ *     from Stripe Connect payment settlement, which is unrelated and
+ *     already live).
+ *
+ * DELIBERATELY UNENFORCED:
+ *   - flag.dispatch_live — v8 grants this to no plan tier. Dispatch is
+ *     already UI-gated by the `developer_mode` addon; enforcing it
+ *     server-side too would break the e2e canary and the sales demo
+ *     tenant, which rely on that UI gate rather than a plan entitlement.
+ *
+ * All other keys below (addon.buyer_portal, addon.regulated_items,
+ * addon.ocr, flag.msrp) are untouched by this rollout. flag.msrp in particular
+ * was already enforced on POST /products/msrp/bulk (#411) and sits OUTSIDE the
+ * kill switch (see DARK_PLAN_FLAGS in plan-flag.guard.ts) — it keeps enforcing
+ * whatever PLAN_FLAG_ENFORCEMENT is set to.
+ */
 /** The 16 feature-flag / addon keys enforced server-side (pricing-plans.md §Feature-flag keys). */
 export const FLAG_KEYS = [
   "flag.dispatch_live",
@@ -27,6 +72,7 @@ export const FLAG_KEYS = [
   "addon.regulated_items",
   "addon.ocr",
   "flag.msrp",
+  "flag.sales_agents",
 ] as const;
 export type FlagKey = (typeof FLAG_KEYS)[number];
 
@@ -84,6 +130,7 @@ export const ADDON_SKUS = [
   "MSG_BUNDLE_500",
   "CUSTOMER_PACK_100",
   "MSRP",
+  "SALES_AGENTS",
 ] as const;
 export type AddonSkuCode = (typeof ADDON_SKUS)[number];
 
@@ -174,6 +221,7 @@ export const FLAG_TO_ADDON_SKU: Record<string, AddonSkuCode> = {
   "flag.forecasting": "FORECASTING",
   "flag.analytics": "FORECASTING",
   "flag.msrp": "MSRP",
+  "flag.sales_agents": "SALES_AGENTS",
 };
 
 /**
@@ -191,6 +239,7 @@ export const FLAG_TO_ADDON_SKU: Record<string, AddonSkuCode> = {
 export const LEGACY_ADDON_KEY_TO_SKU: Record<string, AddonSkuCode> = {
   tobacco_dealer: "REGULATED_ITEMS",
   msrp: "MSRP",
+  sales_agents: "SALES_AGENTS",
 };
 
 /** Resolve an active TenantAddon row to its canonical SKU code (or null if unknown). */

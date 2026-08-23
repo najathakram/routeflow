@@ -24,6 +24,8 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { PlanFlagGuard } from "../billing/plan-flag.guard";
+import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { CustomersService } from "./customers.service";
 import { StatementService } from "../buyer/statement.service";
 import { StatementPdfService } from "../buyer/statement-pdf.service";
@@ -227,12 +229,16 @@ export class CustomersController {
 
   @Get(":id/prices")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.pricing_tiers")
   getCustomerPrices(@Param("id") id: string) {
     return this.customersService.getCustomerPrices(id);
   }
 
   @Post(":id/prices")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.pricing_tiers")
   upsertCustomerPrice(
     @Param("id") id: string,
     @Body() dto: UpsertCustomerPriceDto,
@@ -243,6 +249,8 @@ export class CustomersController {
 
   @Delete(":id/prices/:priceId")
   @Roles(UserRole.OPERATOR)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.pricing_tiers")
   deleteCustomerPrice(@Param("id") id: string, @Param("priceId") priceId: string) {
     return this.customersService.deleteCustomerPrice(id, priceId);
   }

@@ -9,6 +9,10 @@ import { AuthModule } from "../auth/auth.module";
 import { StorageModule } from "../storage/storage.module";
 import { VendorBillsModule } from "../vendor-bills/vendor-bills.module";
 import { SystemConfigModule } from "../system-config/system-config.module";
+import { CommissionsModule } from "../sales-agents/commissions.module";
+// EntitlementsModule depends only on the global PrismaService — it supplies
+// PlanFlagGuard for the reports/* handlers' @RequirePlanFlag("flag.reports") gate.
+import { EntitlementsModule } from "../billing/entitlements.module";
 
 @Module({
   imports: [
@@ -17,6 +21,8 @@ import { SystemConfigModule } from "../system-config/system-config.module";
     StorageModule,
     VendorBillsModule,
     SystemConfigModule,
+    CommissionsModule,
+    EntitlementsModule,
     BullModule.registerQueue({ name: "invoices" }),
   ],
   controllers: [BookkeepingController],

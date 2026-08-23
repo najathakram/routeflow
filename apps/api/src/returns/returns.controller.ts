@@ -5,13 +5,19 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { PlanFlagGuard } from "../billing/plan-flag.guard";
+import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { ReturnsService } from "./returns.service";
 import { ReceiveReturnDto } from "./dto/receive-return.dto";
 import { ProcessRefundDto } from "./dto/process-refund.dto";
 
+// This controller also serves CUSTOMER and DRIVER roles (not just OPERATOR), so
+// gating it must stay behind the kill switch until the v7-STARTER audit question
+// (flag.returns is granted to v8 STARTER but not v7 STARTER) is answered.
 @Controller("returns")
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @Roles(UserRole.OPERATOR)
+@RequirePlanFlag("flag.returns")
 export class ReturnsController {
   constructor(private readonly returnsService: ReturnsService) {}
 

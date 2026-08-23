@@ -1,4 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
@@ -64,6 +65,14 @@ describe("BookkeepingService", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        {
+          provide: CommissionEngineService,
+          useValue: {
+            syncInvoiceCommissionSafe: jest.fn(),
+            syncOrderInvoices: jest.fn(),
+            syncInvoiceCommission: jest.fn(),
+          },
+        },
         BookkeepingService,
         { provide: PrismaService, useValue: prisma },
         { provide: InvoiceService, useValue: invoiceService },

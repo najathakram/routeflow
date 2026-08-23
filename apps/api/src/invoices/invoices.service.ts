@@ -44,6 +44,7 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -125,6 +126,7 @@ export class InvoicesService {
     private readonly messaging: MessagingService,
     private readonly storage: StorageService,
     private readonly entitlements: EntitlementsService,
+    private readonly commissionEngine: CommissionEngineService,
   ) {}
 
   /**
@@ -1525,6 +1527,13 @@ export class InvoicesService {
       updated.push(inv);
       // Re-sync the regulated-sales ledger to the rebuilt qty (no-op for non-regulated).
       await this.resyncInvoiceLedger(pd.draft.id, order.id, inv.items ?? [], db);
+      // Sales agents & commissions: only an ISSUED invoice (not the freshly
+      // rebuilt open DRAFT pending-mirror) can carry commission — this is
+      // what fires when a post-delivery order edit rewrites the money of an
+      // already-issued invoice via resyncOrderInvoicesForEdit(preserveStatus:true).
+      if (nextStatus !== InvoiceStatus.DRAFT) {
+        await this.commissionEngine.syncInvoiceCommissionSafe(pd.draft.id, db);
+      }
       // SET each of this draft's lines' invoicedQty to what it now bills (0 for a
       // line billed 0 — refused/short). Each line belongs to one draft → SET, not add.
       const billMap = new Map<string, number>(
@@ -2907,6 +2916,9 @@ export class InvoicesService {
             }
           }
         }
+        // Sales agents & commissions (flag-gated, no-op when off): the invoice
+        // just flipped DRAFT→SENT (or was re-sent) — accrue/re-sync commission.
+        await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
         return { updated, auto };
       },
       { isolationLevel: "Serializable" },
@@ -3066,6 +3078,9 @@ export class InvoicesService {
             }
           }
         }
+        // Sales agents & commissions (flag-gated, no-op when off): the invoice
+        // just flipped DRAFT→SENT (or was re-sent) — accrue/re-sync commission.
+        await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
         return { updated, auto };
       },
       { isolationLevel: "Serializable" },
@@ -3250,6 +3265,9 @@ export class InvoicesService {
     });
     await this.adjustInvoicedQtyForInvoice(tx, id, orderId, -1);
     await this.ledger.reverseInvoiceEntries({ invoiceId: id, db: tx });
+    // Sales agents & commissions: a voided invoice targets zero — this
+    // emits the compensating CLAWBACK adjustment when commission was claimed.
+    await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
     return voided;
   }
 
@@ -3357,9 +3375,15 @@ export class InvoicesService {
         "Cannot revert to Draft: this invoice has payments recorded. Void it instead.",
       );
     }
-    return this.prisma.forTenant().invoice.update({
-      where: { id },
-      data: { status: InvoiceStatus.DRAFT, sentAt: null, pdfUrl: null },
+    // Sales agents & commissions: revert + resync are one atomic unit — a
+    // DRAFT invoice targets zero commission.
+    return this.prisma.tenantTransaction(async (tx) => {
+      const reverted = await tx.invoice.update({
+        where: { id },
+        data: { status: InvoiceStatus.DRAFT, sentAt: null, pdfUrl: null },
+      });
+      await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
+      return reverted;
     });
   }
 
@@ -3436,14 +3460,21 @@ export class InvoicesService {
     if (inv.status !== InvoiceStatus.PAID)
       throw new BadRequestException("Only PAID invoices can be reopened");
 
-    return this.prisma.forTenant().invoice.update({
-      where: { id },
-      data: { status: InvoiceStatus.DRAFT, paidAt: null },
-      include: {
-        customer: { select: { id: true, businessName: true } },
-        items: true,
-        payments: { orderBy: { createdAt: "desc" } },
-      },
+    // Sales agents & commissions: PAID→DRAFT is the nastiest clawback path —
+    // if commission was already claimed, sync emits the negative adjustment
+    // atomically with the status flip.
+    return this.prisma.tenantTransaction(async (tx) => {
+      const reopened = await tx.invoice.update({
+        where: { id },
+        data: { status: InvoiceStatus.DRAFT, paidAt: null },
+        include: {
+          customer: { select: { id: true, businessName: true } },
+          items: true,
+          payments: { orderBy: { createdAt: "desc" } },
+        },
+      });
+      await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
+      return reopened;
     });
   }
 
@@ -3806,6 +3837,7 @@ export class InvoicesService {
         status: newStatus,
         total: Number(paid.total),
       });
+      await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
       return { ...paid, createdPaymentId: createdPayment.id };
     });
   }
@@ -3965,6 +3997,7 @@ export class InvoicesService {
           ...(wasDraft ? { sentAt: new Date() } : {}),
         },
       });
+      await this.commissionEngine.syncInvoiceCommissionSafe(inv.id, tx);
       this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: inv.id,
         invoiceNumber: inv.invoiceNumber,
@@ -4059,6 +4092,7 @@ export class InvoicesService {
         status: newStatus,
         total: Number(updated.total),
       });
+      await this.commissionEngine.syncInvoiceCommissionSafe(invoiceId, tx);
       return updated;
     });
   }
@@ -4127,6 +4161,7 @@ export class InvoicesService {
         status: newStatus,
         total: Number(updated.total),
       });
+      await this.commissionEngine.syncInvoiceCommissionSafe(invoiceId, tx);
       return updated;
     });
     // Best-effort storage cleanup AFTER the money tx commits — never do storage
@@ -4153,18 +4188,26 @@ export class InvoicesService {
     if (!allowedStatuses.includes(inv.status)) {
       throw new BadRequestException(`Cannot write off an invoice with status ${inv.status}`);
     }
-    return this.prisma.forTenant().invoice.update({
-      where: { id },
-      data: {
-        status: InvoiceStatus.WRITTEN_OFF,
-        writeOffReason: dto.reason,
-        writtenOffAt: new Date(),
-      },
-      include: {
-        customer: { select: { id: true, businessName: true } },
-        items: true,
-        payments: { orderBy: { createdAt: "desc" } },
-      },
+    // Sales agents & commissions: materially a no-op for money (payable
+    // derives from payments, and WRITTEN_OFF releases nothing beyond cash
+    // already collected) but wrapped atomically to refresh the accrual's
+    // display status alongside the write-off.
+    return this.prisma.tenantTransaction(async (tx) => {
+      const written = await tx.invoice.update({
+        where: { id },
+        data: {
+          status: InvoiceStatus.WRITTEN_OFF,
+          writeOffReason: dto.reason,
+          writtenOffAt: new Date(),
+        },
+        include: {
+          customer: { select: { id: true, businessName: true } },
+          items: true,
+          payments: { orderBy: { createdAt: "desc" } },
+        },
+      });
+      await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
+      return written;
     });
   }
 
@@ -4202,6 +4245,12 @@ export class InvoicesService {
 
       // Delete line items
       await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
+
+      // Sales agents & commissions: throws ConflictException (409) if any
+      // accrual on this invoice has claimedAmount > 0 — a zero-payment SENT
+      // invoice can still carry claimed commission, so the delete must be
+      // guarded, not silently strand/destroy the accrual.
+      await this.commissionEngine.removeInvoiceCommission(id, tx);
 
       // Delete the invoice (also detaches orderId reference)
       await tx.invoice.delete({ where: { id } });
@@ -4313,6 +4362,13 @@ export class InvoicesService {
         }
       }
 
+      // Commission hook: the payments-modal / buyer-allocation path creates PAID
+      // payments across many invoices — each one's payable must move with the
+      // cash in the SAME tx (otherwise it lags until the reconciliation cron).
+      for (const alloc of dto.allocations) {
+        await this.commissionEngine.syncInvoiceCommissionSafe(alloc.invoiceId, tx);
+      }
+
       // Handle excess amount → create AdvancePayment
       const allocatedTotal = dto.allocations.reduce((s, a) => s + a.amount, 0);
       const excess = dto.totalAmount - allocatedTotal;
@@ -4398,6 +4454,7 @@ export class InvoicesService {
         status: newStatus,
         total: Number(invoice.total),
       });
+      await this.commissionEngine.syncInvoiceCommissionSafe(invoiceId, tx);
       return { success: true };
     });
   }
@@ -4534,6 +4591,10 @@ export class InvoicesService {
           ...(fee > 0 ? { subtotal: newSubtotal, total: newTotal } : {}),
         },
       });
+      // Sales agents & commissions: BOUNCED flips the payment to VOID, which
+      // drops the collection ratio — sync releases less (or no) payable. The
+      // DEPOSITED/CLEARED branches above change no balances, so no hook there.
+      await this.commissionEngine.syncInvoiceCommissionSafe(invoiceId, tx);
 
       this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId,
@@ -4728,6 +4789,11 @@ export class InvoicesService {
           internalNotes: existingInternal ? `${existingInternal}\n${auditLine}` : auditLine,
         },
       });
+      // Sales agents & commissions: this method is pre-existingly non-atomic
+      // (no surrounding tenantTransaction) — do NOT refactor that here. Pass
+      // no tx; the Safe wrapper opens its own transaction, and the hourly
+      // reconciliation cron heals the gap if the process dies mid-loop.
+      await this.commissionEngine.syncInvoiceCommissionSafe(inv.id);
       // Backward sync: a re-priced invoice updates its linked order's totals.
       if ((inv as any).orderId) await this.recomputeOrderFromInvoices((inv as any).orderId);
     };

@@ -6,6 +6,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Max,
   MaxLength,
   Min,
@@ -64,4 +65,9 @@ export class CreateCustomerDto {
     message: "defaultPaymentTerms must be one of: " + VALID_CUSTOMER_TERMS.join(", "),
   })
   defaultPaymentTerms?: string;
+  /**
+   * Sales agents & commissions: opens the customer's first attribution window
+   * (AgentAssignment, effectiveFrom = now) inside the create tx.
+   */
+  @IsOptional() @IsUUID() salesAgentId?: string;
 }

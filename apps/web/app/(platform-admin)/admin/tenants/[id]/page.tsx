@@ -137,6 +137,12 @@ const AVAILABLE_ADDONS = [
       "Suggested retail price (per piece) on product, customer, and invoice pricing — display-only, never enters money math",
   },
   {
+    key: "sales_agents",
+    name: "Sales agents & commissions",
+    description:
+      "Agent records, customer attribution, commission accrual on invoices, statements and payouts",
+  },
+  {
     key: DEVELOPER_MODE_ADDON,
     name: "Developer Mode",
     description: "Unlock in-development features (dispatch, routes, drivers) for this tenant",

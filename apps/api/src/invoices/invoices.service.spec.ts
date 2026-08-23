@@ -33,6 +33,7 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { CheckStatus, InvoiceStatus, NotificationEvent } from "@prisma/client";
 import { computeLineSubtotal, roundMoney } from "../common/pricing";
 
@@ -82,10 +83,19 @@ describe("InvoicesService", () => {
     hasFlag: jest.fn().mockResolvedValue(false),
   };
 
+  const mockCommissionEngine = {
+    syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
+    syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
+    removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
+  };
+
   beforeEach(async () => {
     prisma = createMockPrisma();
     mockEntitlements.hasFlag.mockReset();
     mockEntitlements.hasFlag.mockResolvedValue(false);
+    mockCommissionEngine.syncInvoiceCommissionSafe.mockClear();
+    mockCommissionEngine.syncOrderInvoices.mockClear();
+    mockCommissionEngine.removeInvoiceCommission.mockClear();
     mockMessaging.notify.mockClear();
     mockMessaging.notifyEvent.mockClear();
     mockCreditNotes.autoApplyOldestCreditsInTx.mockClear();
@@ -133,6 +143,7 @@ describe("InvoicesService", () => {
         // flag.msrp defaults OFF so applyMsrpSnapshots is a no-op — the
         // pre-MSRP tests keep their exact write shapes (msrp stays null).
         { provide: EntitlementsService, useValue: mockEntitlements },
+        { provide: CommissionEngineService, useValue: mockCommissionEngine },
       ],
     }).compile();
 
@@ -1031,6 +1042,30 @@ describe("InvoicesService", () => {
       });
       await service.send("i1");
       expect(mockMessaging.notifyEvent).not.toHaveBeenCalled();
+    });
+
+    // WP4 — sales agents & commissions: send() is a hook site (accrual on issue).
+    it("calls syncInvoiceCommissionSafe once with the invoice id", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "i1",
+        orderId: null,
+        status: InvoiceStatus.DRAFT,
+        deliveryBatchId: null,
+      });
+      prisma.invoice.update.mockResolvedValue({
+        id: "i1",
+        invoiceNumber: "INV-1",
+        customerId: "c1",
+        status: InvoiceStatus.SENT,
+        total: 10,
+        dueDate: null,
+      });
+      await service.send("i1");
+      expect(mockCommissionEngine.syncInvoiceCommissionSafe).toHaveBeenCalledTimes(1);
+      expect(mockCommissionEngine.syncInvoiceCommissionSafe).toHaveBeenCalledWith(
+        "i1",
+        expect.anything(),
+      );
     });
   });
 
@@ -4803,6 +4838,40 @@ describe("InvoicesService", () => {
         expect(data.subject).toBeNull();
       });
     });
+  });
+});
+
+/**
+ * Invoice issue/due dates are CALENDAR dates: they are stored as UTC-midnight instants
+ * and every render surface (list, detail, PDF, email) formats them with timeZone: "UTC".
+ * These guard the write side of that invariant.
+ */
+describe("calendar-date helpers", () => {
+  it("dates a same-day sale in the TENANT's calendar day, at UTC midnight", () => {
+    // 8:10pm America/New_York on Aug 22 is already Aug 23 in UTC. Storing raw
+    // new Date() would print the invoice as Aug 23 — a day after the sale happened.
+    const at810pmEdt = new Date("2026-08-23T00:10:00.000Z");
+    expect(startOfCalendarDay("America/New_York", at810pmEdt).toISOString()).toBe(
+      "2026-08-22T00:00:00.000Z",
+    );
+  });
+
+  it("falls back to the UTC day when the tenant timezone is missing or invalid", () => {
+    const now = new Date("2026-08-23T00:10:00.000Z");
+    expect(startOfCalendarDay(null, now).toISOString()).toBe("2026-08-23T00:00:00.000Z");
+    expect(startOfCalendarDay("Not/AZone", now).toISOString()).toBe("2026-08-23T00:00:00.000Z");
+  });
+
+  it("adds payment terms in UTC so the due date never drifts across a DST change", () => {
+    // Net 30 from Mar 1: local setDate() on a UTC-midnight instant lands on
+    // 2026-03-30T23:00Z after spring-forward, which prints as Mar 30 — one day early.
+    expect(addCalendarDays(new Date("2026-03-01T00:00:00.000Z"), 30).toISOString()).toBe(
+      "2026-03-31T00:00:00.000Z",
+    );
+    // Plan acceptance criterion: Aug 4 + Net 60 = Oct 3.
+    expect(addCalendarDays(new Date("2026-08-04T00:00:00.000Z"), 60).toISOString()).toBe(
+      "2026-10-03T00:00:00.000Z",
+    );
   });
 });
 

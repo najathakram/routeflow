@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   CheckStatus,
@@ -44,6 +45,7 @@ export class BookkeepingService implements OnModuleInit {
     private readonly vendorBillsService: VendorBillsService,
     private readonly configService: ConfigService,
     private readonly systemConfig: SystemConfigService,
+    private readonly commissionEngine: CommissionEngineService,
   ) {}
 
   async onModuleInit() {
@@ -209,6 +211,10 @@ export class BookkeepingService implements OnModuleInit {
           order: { select: { id: true, orderNumber: true, status: true } },
         },
       });
+
+      // Commission hook: this ledger path creates a PAID payment directly —
+      // the accrual's payable must move with the cash in the same tx.
+      await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
 
       let ledgerStatus: TxnStatus;
       if (updated.status === InvoiceStatus.PAID) ledgerStatus = TxnStatus.PAID;

@@ -7,14 +7,23 @@ import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "../../../components/FormSheet";
 import { OptionPickerSheet } from "../../../components/OptionPickerSheet";
 import { useCreatePO, useSuppliers } from "../../../lib/api/purchase-orders";
-import { useProductPickerStore } from "../../../store/productPickerStore";
+import { normalizeBoxesPieces, roundUnitCost } from "../../../lib/pricing";
+import { useProductPickerStore, type PickedProduct } from "../../../store/productPickerStore";
 import { showToast } from "../../../lib/toast";
 
 interface LineItem {
   productId: string;
   productName: string;
+  /** Base units (pieces) ordered — only used when `unitsPerBox` <= 1. */
   qtyOrdered: string;
+  /** Whole boxes ordered — only used when `unitsPerBox` > 1. */
+  boxes: string;
+  /** Loose pieces beyond whole boxes — pairs with `boxes`. */
+  pieces: string;
+  /** Cost per SELLING UNIT: per box on a boxed line, per piece otherwise. */
   unitCost: string;
+  unitsPerBox: number;
+  unit: string;
   pickerKey: string;
 }
 
@@ -26,9 +35,35 @@ const EMPTY_ITEM = (index: number): LineItem => ({
   productId: "",
   productName: "",
   qtyOrdered: "",
+  boxes: "",
+  pieces: "",
   unitCost: "",
+  unitsPerBox: 0,
+  unit: "",
   pickerKey: makeKey(index),
 });
+
+/** The operator-editable (free-text) line fields. */
+type LineTextField = "qtyOrdered" | "boxes" | "pieces" | "unitCost";
+
+/**
+ * Mirror of web's `resolvePOLine` (apps/web/app/(dashboard)/inventory/page.tsx).
+ * A boxed line is entered as boxes + loose pieces at a cost per BOX, but
+ * `PurchaseOrderItem.qtyOrdered`/`unitCost` are stored in PIECES and per PIECE
+ * — receivePurchaseOrder takes the stored line at face value — so the
+ * conversion has to happen before the PO is posted.
+ */
+function resolvePOLine(item: LineItem): { qty: number; unitCost: number } {
+  const upb = item.unitsPerBox;
+  if (upb > 1) {
+    const boxes = Math.max(0, Math.trunc(Number(item.boxes) || 0));
+    const pieces = Math.max(0, Math.trunc(Number(item.pieces) || 0));
+    const qty = normalizeBoxesPieces({ boxes, pieces, unitsPerBox: upb }).qty;
+    const costPerBox = Number(item.unitCost) || 0;
+    return { qty, unitCost: roundUnitCost(costPerBox / upb) };
+  }
+  return { qty: Number(item.qtyOrdered) || 0, unitCost: Number(item.unitCost) || 0 };
+}
 
 export default function NewPurchaseOrderScreen() {
   const router = useRouter();
@@ -44,9 +79,7 @@ export default function NewPurchaseOrderScreen() {
 
   const getSelection = useProductPickerStore((s) => s.selections);
   const clearSelection = useProductPickerStore((s) => s.clearSelection);
-  const prevSelectionsRef = useRef<
-    Record<string, { id: string; name: string; standardCost?: number }>
-  >({});
+  const prevSelectionsRef = useRef<Record<string, PickedProduct>>({});
 
   // When navigating back from supplier/product pickers, refresh data and
   // apply any pending product selections.
@@ -80,11 +113,17 @@ export default function NewPurchaseOrderScreen() {
         const prevSel = prev[item.pickerKey];
         if (sel && sel !== prevSel) {
           clearSelection(item.pickerKey);
+          const upb = Math.max(0, Math.trunc(Number(sel.unitsPerBox ?? 0)));
+          // `standardCost` is per PIECE; scale it up when the cost field
+          // collects a per-BOX price (same convention as Quick Receive).
+          const prefill = sel.standardCost != null ? sel.standardCost * (upb > 1 ? upb : 1) : null;
           return {
             ...item,
             productId: sel.id,
             productName: sel.name,
-            unitCost: sel.standardCost != null ? String(sel.standardCost) : item.unitCost,
+            unitsPerBox: upb,
+            unit: sel.unit ?? "",
+            unitCost: prefill != null ? String(roundUnitCost(prefill)) : item.unitCost,
           };
         }
         return item;
@@ -102,7 +141,9 @@ export default function NewPurchaseOrderScreen() {
     });
   };
 
-  const updateItem = (index: number, field: keyof LineItem, value: string) => {
+  // Only the free-text fields are operator-editable; `unitsPerBox`/`unit` come
+  // from the picked product and must never take a raw string.
+  const updateItem = (index: number, field: LineTextField, value: string) => {
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, [field]: value } : it)));
   };
 
@@ -115,13 +156,15 @@ export default function NewPurchaseOrderScreen() {
       return;
     }
 
+    // Boxed lines convert to a piece total + per-piece cost here: the PO row is
+    // stored in PIECES and receiving trusts it at face value (an over-receipt is
+    // now rejected, not clamped — a box-denominated PO cannot be received).
     const parsedItems = items
       .filter((it) => it.productId)
-      .map((it) => ({
-        productId: it.productId,
-        qtyOrdered: Number(it.qtyOrdered) || 0,
-        unitCost: Number(it.unitCost) || 0,
-      }));
+      .map((it) => {
+        const { qty, unitCost } = resolvePOLine(it);
+        return { productId: it.productId, qtyOrdered: qty, unitCost };
+      });
 
     if (parsedItems.length === 0) {
       showToast("Add at least one product.");
@@ -206,19 +249,36 @@ export default function NewPurchaseOrderScreen() {
                 </View>
               </Pressable>
             </FormField>
-            <View style={styles.row2}>
-              <View style={{ flex: 1 }}>
-                <FormField label="Qty ordered">
-                  <FormTextInput
-                    value={item.qtyOrdered}
-                    onChangeText={(v) => updateItem(index, "qtyOrdered", v)}
-                    placeholder="0"
-                    keyboardType="number-pad"
-                  />
-                </FormField>
-              </View>
-              <View style={{ flex: 1 }}>
-                <FormField label="Unit cost ($)">
+            {item.unitsPerBox > 1 ? (
+              <>
+                <View style={styles.row2}>
+                  <View style={{ flex: 1 }}>
+                    <FormField label="Boxes ordered">
+                      <FormTextInput
+                        value={item.boxes}
+                        onChangeText={(v) => updateItem(index, "boxes", v)}
+                        placeholder="0"
+                        keyboardType="number-pad"
+                      />
+                    </FormField>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <FormField label="+ Pieces">
+                      <FormTextInput
+                        value={item.pieces}
+                        onChangeText={(v) => updateItem(index, "pieces", v)}
+                        placeholder="0"
+                        keyboardType="number-pad"
+                      />
+                    </FormField>
+                  </View>
+                </View>
+                <FormField
+                  label="Cost per box ($)"
+                  hint={`1 box = ${item.unitsPerBox} ${item.unit || "units"} · ${
+                    resolvePOLine(item).qty
+                  } pcs total`}
+                >
                   <FormTextInput
                     value={item.unitCost}
                     onChangeText={(v) => updateItem(index, "unitCost", v)}
@@ -226,8 +286,31 @@ export default function NewPurchaseOrderScreen() {
                     keyboardType="decimal-pad"
                   />
                 </FormField>
+              </>
+            ) : (
+              <View style={styles.row2}>
+                <View style={{ flex: 1 }}>
+                  <FormField label="Qty ordered">
+                    <FormTextInput
+                      value={item.qtyOrdered}
+                      onChangeText={(v) => updateItem(index, "qtyOrdered", v)}
+                      placeholder="0"
+                      keyboardType="number-pad"
+                    />
+                  </FormField>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <FormField label="Unit cost ($)">
+                    <FormTextInput
+                      value={item.unitCost}
+                      onChangeText={(v) => updateItem(index, "unitCost", v)}
+                      placeholder="0.00"
+                      keyboardType="decimal-pad"
+                    />
+                  </FormField>
+                </View>
               </View>
-            </View>
+            )}
           </View>
         ))}
 

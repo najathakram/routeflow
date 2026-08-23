@@ -12,6 +12,7 @@ import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { roundMoney } from "../common/pricing";
 import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
@@ -45,6 +46,7 @@ export class CustomersService {
     private readonly meter: MeterService,
     private readonly catalog: PlanCatalogService,
     private readonly entitlements: EntitlementsService,
+    private readonly commissionEngine: CommissionEngineService,
   ) {}
 
   /**
@@ -452,6 +454,23 @@ export class CustomersService {
           }),
         },
       });
+
+      // Sales agents & commissions: opens the customer's first attribution
+      // window inside this same create tx. No entitlement check here —
+      // writing an assignment for an un-flagged tenant is inert (the engine
+      // never reads it while flag.sales_agents is off) and the field is only
+      // surfaced in UI in PR-D. No CommissionEngineService injection needed —
+      // this is a plain tx insert, not an engine call.
+      if (dto.salesAgentId) {
+        const agent = await tx.salesAgent.findFirst({
+          where: { id: dto.salesAgentId, deletedAt: null },
+          select: { id: true },
+        });
+        if (!agent) throw new BadRequestException("Unknown sales agent");
+        await tx.agentAssignment.create({
+          data: { customerId: customer.id, agentId: agent.id, effectiveFrom: new Date() },
+        });
+      }
 
       if (dto.addresses && dto.addresses.length > 0) {
         await tx.customerAddress.createMany({
@@ -1145,7 +1164,7 @@ export class CustomersService {
       else if (newPaid > 0) newStatus = "PARTIAL";
       else if (inv.dueDate && new Date(inv.dueDate) < new Date()) newStatus = "OVERDUE";
 
-      return tx.invoice.update({
+      const updatedInvoice = await tx.invoice.update({
         where: { id: dto.invoiceId },
         data: { status: newStatus, paidAt: newStatus === "PAID" ? new Date() : null },
         include: {
@@ -1154,6 +1173,12 @@ export class CustomersService {
           payments: { orderBy: { createdAt: "desc" } },
         },
       });
+
+      // Commission hook: applying an advance IS cash hitting the invoice —
+      // the accrual's payable must move with it in the same tx.
+      await this.commissionEngine.syncInvoiceCommissionSafe(dto.invoiceId, tx);
+
+      return updatedInvoice;
     });
   }
 

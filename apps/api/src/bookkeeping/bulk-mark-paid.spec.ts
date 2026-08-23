@@ -1,4 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { ConfigService } from "@nestjs/config";
 
 // Mock invoice.service.ts to avoid loading @react-pdf/renderer (ESM-only)
@@ -33,6 +34,14 @@ describe("BookkeepingService.bulkMarkPaid", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        {
+          provide: CommissionEngineService,
+          useValue: {
+            syncInvoiceCommissionSafe: jest.fn(),
+            syncOrderInvoices: jest.fn(),
+            syncInvoiceCommission: jest.fn(),
+          },
+        },
         BookkeepingService,
         { provide: PrismaService, useValue: prisma },
         { provide: InvoiceService, useValue: { getPresignedUrl: jest.fn() } },
