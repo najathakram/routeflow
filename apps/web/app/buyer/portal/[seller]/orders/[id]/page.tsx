@@ -31,6 +31,7 @@ import {
 } from "@/lib/api/buyer";
 import { computeLineSubtotal, normalizeBoxesPieces } from "@/lib/pricing";
 import { describeChangeRequest, describeResolution } from "@/lib/change-requests";
+import { fmtCalendarDate } from "@/lib/formatting";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -646,7 +647,7 @@ export default function BuyerOrderDetailPage() {
           <p className="text-sm text-navy/70 mt-0.5">
             Placed {formatDate(order.createdAt)}
             {order.requestedDeliveryDate && (
-              <> · Delivery requested {formatDate(order.requestedDeliveryDate)}</>
+              <> · Delivery requested {fmtCalendarDate(order.requestedDeliveryDate)}</>
             )}
           </p>
         </div>

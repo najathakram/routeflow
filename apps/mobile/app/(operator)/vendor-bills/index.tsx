@@ -141,9 +141,7 @@ function BillRow({ bill, onPress }: { bill: VendorBill; onPress: () => void }) {
           ) : null}
           <Text style={styles.rowSub} numberOfLines={1}>
             {bill.billDate ? fmtCalendarDate(bill.billDate, "short") : "No date"}
-            {bill.dueDate
-              ? ` · Due ${new Date(bill.dueDate).toLocaleDateString(undefined, { timeZone: "UTC", month: "short", day: "numeric" })}`
-              : ""}
+            {bill.dueDate ? ` · Due ${fmtCalendarDate(bill.dueDate, "monthDay")}` : ""}
           </Text>
         </View>
         <Pill variant={p.variant} dot>
