@@ -26,6 +26,8 @@ import { resolveProductByCode } from "@/lib/barcode-resolve";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { normalizeBoxesPieces, roundUnitCost } from "@/lib/pricing";
+import { unitsLabel } from "@/lib/stock-label";
 import {
   useStockOverview,
   useSuppliers,
@@ -105,13 +107,22 @@ interface Supplier {
 
 type POStatus = "DRAFT" | "SENT" | "PARTIAL" | "RECEIVED" | "CLOSED";
 
+/**
+ * A line as `GET /inventory/purchase-orders[/:id]` actually returns it — the raw
+ * Prisma `PurchaseOrderItem` row (no controller/serializer mapping exists), so
+ * the quantity fields are `qtyOrdered`/`qtyReceived` (never `qty`/`receivedQty`)
+ * and the name comes from the included `product` relation, which the LIST
+ * endpoint does NOT include. Every Decimal column arrives as a numeric STRING —
+ * always `Number()` before arithmetic or `unitsLabel`.
+ */
 interface POItem {
   id: string;
   productId: string;
-  productName: string;
-  qty: number;
-  unitCost: number;
-  receivedQty?: number;
+  product?: { id: string; name: string; unit: string } | null;
+  qtyOrdered: number | string;
+  qtyReceived: number | string;
+  unitCost: number | string;
+  totalCost?: number | string;
 }
 
 interface PurchaseOrder {
@@ -175,7 +186,14 @@ function QuickRestockModal({
   onClose,
 }: {
   suppliers: Supplier[];
-  products: { id: string; name: string; sku?: string; unit: string; currentStock: number }[];
+  products: {
+    id: string;
+    name: string;
+    sku?: string;
+    unit: string;
+    currentStock: number;
+    unitsPerBox?: number | null;
+  }[];
   onClose: () => void;
 }) {
   const restock = useRecordPurchase();
@@ -183,6 +201,8 @@ function QuickRestockModal({
     productId: "",
     supplierId: "",
     quantity: "",
+    boxes: "",
+    pieces: "",
     unitCost: "",
     reference: "",
     notes: "",
@@ -192,6 +212,11 @@ function QuickRestockModal({
 
   const selectedProduct = products.find((p) => p.id === form.productId);
   const decimalQty = selectedProduct ? isDecimalUnit(selectedProduct.unit) : true;
+  // Boxed products (unitsPerBox > 1) collect boxes + loose pieces instead of a
+  // single ambiguous quantity — the root cause of the stock-corruption bug was
+  // an operator typing a box count into a field the server read as pieces.
+  const unitsPerBox = Number(selectedProduct?.unitsPerBox ?? 0);
+  const isBoxed = unitsPerBox > 1;
 
   // Scan-to-pick: USB wedge (listens on the picker's search input) or webcam.
   const pickerInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -259,23 +284,41 @@ function QuickRestockModal({
       scanToast({ title: "Pick a product first", variant: "error" });
       return;
     }
+
+    const base = {
+      productId: form.productId,
+      supplierId: form.supplierId || undefined,
+      unitCost: Number(form.unitCost),
+      reference: form.reference || undefined,
+      notes: form.notes || undefined,
+      effectiveDate: form.backdate && form.effectiveDate ? form.effectiveDate : undefined,
+    };
+
+    if (isBoxed) {
+      const boxes = Math.max(0, Math.trunc(Number(form.boxes) || 0));
+      const pieces = Math.max(0, Math.trunc(Number(form.pieces) || 0));
+      const totalPieces = normalizeBoxesPieces({ boxes, pieces, unitsPerBox }).qty;
+      if (totalPieces <= 0) {
+        alert("Enter at least one box or piece to receive");
+        return;
+      }
+      // `boxes`/`pieces` — never `quantity` — for a boxed receive; the API
+      // resolves the received piece total from the split and ignores a bare
+      // `quantity` when either is present (InventoryService.recordPurchase).
+      restock.mutate({ ...base, boxes, pieces }, { onSuccess: onClose });
+      return;
+    }
+
     const qty = Number(form.quantity);
     if (!decimalQty && !Number.isInteger(qty)) {
       alert(`Quantity must be a whole number for unit "${selectedProduct?.unit}"`);
       return;
     }
-    restock.mutate(
-      {
-        productId: form.productId,
-        supplierId: form.supplierId || undefined,
-        quantity: qty,
-        unitCost: Number(form.unitCost),
-        reference: form.reference || undefined,
-        notes: form.notes || undefined,
-        effectiveDate: form.backdate && form.effectiveDate ? form.effectiveDate : undefined,
-      },
-      { onSuccess: onClose },
-    );
+    if (!(qty > 0)) {
+      alert("Quantity must be greater than zero");
+      return;
+    }
+    restock.mutate({ ...base, quantity: qty }, { onSuccess: onClose });
   };
 
   return (
@@ -321,43 +364,113 @@ function QuickRestockModal({
             {scanLoading && <p className="mt-1 text-xs text-navy/70">Looking up product…</p>}
             {selectedProduct && (
               <p className="mt-1 text-xs text-navy/70">
-                Current stock: {selectedProduct.currentStock} {selectedProduct.unit}
-                {!decimalQty && <span className="ml-2 text-navy/70">(whole numbers only)</span>}
+                Current stock:{" "}
+                {unitsLabel(
+                  Number(selectedProduct.currentStock),
+                  unitsPerBox,
+                  selectedProduct.unit,
+                )}
+                {!decimalQty && !isBoxed && (
+                  <span className="ml-2 text-navy/70">(whole numbers only)</span>
+                )}
               </p>
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs text-navy">
-                Quantity ({selectedProduct?.unit ?? "units"}) *
-              </label>
-              <input
-                required
-                ref={qtyInputRef}
-                type="number"
-                min={decimalQty ? 0.001 : 1}
-                step={decimalQty ? 0.001 : 1}
-                inputMode={decimalQty ? "decimal" : "numeric"}
-                value={form.quantity}
-                onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                placeholder={decimalQty ? "0.000" : "0"}
-              />
+          {isBoxed ? (
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="mb-1 block text-xs text-navy">Boxes *</label>
+                <input
+                  required={!form.pieces}
+                  ref={qtyInputRef}
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={form.boxes}
+                  onChange={(e) => setForm((f) => ({ ...f, boxes: e.target.value }))}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  placeholder="0"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-navy">+ Pieces</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={unitsPerBox - 1}
+                  step={1}
+                  value={form.pieces}
+                  onChange={(e) => setForm((f) => ({ ...f, pieces: e.target.value }))}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  placeholder="0"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-navy">Cost per Box ($) *</label>
+                <input
+                  required
+                  type="number"
+                  min={0}
+                  step={0.0001}
+                  value={form.unitCost}
+                  onChange={(e) => setForm((f) => ({ ...f, unitCost: e.target.value }))}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+              <p className="col-span-3 -mt-1 text-[11px] text-navy/50">
+                1 box = {unitsPerBox} {selectedProduct?.unit ?? "units"}
+                {(Number(form.boxes) > 0 || Number(form.pieces) > 0) && (
+                  <>
+                    {" "}
+                    ·{" "}
+                    <span className="font-medium text-navy/70">
+                      {
+                        normalizeBoxesPieces({
+                          boxes: Number(form.boxes) || 0,
+                          pieces: Number(form.pieces) || 0,
+                          unitsPerBox,
+                        }).qty
+                      }{" "}
+                      pcs total
+                    </span>
+                  </>
+                )}
+              </p>
             </div>
-            <div>
-              <label className="mb-1 block text-xs text-navy">Unit Cost ($) *</label>
-              <input
-                required
-                type="number"
-                min={0}
-                step={0.0001}
-                value={form.unitCost}
-                onChange={(e) => setForm((f) => ({ ...f, unitCost: e.target.value }))}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs text-navy">
+                  Quantity ({selectedProduct?.unit ?? "units"}) *
+                </label>
+                <input
+                  required
+                  ref={qtyInputRef}
+                  type="number"
+                  min={decimalQty ? 0.001 : 1}
+                  step={decimalQty ? 0.001 : 1}
+                  inputMode={decimalQty ? "decimal" : "numeric"}
+                  value={form.quantity}
+                  onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  placeholder={decimalQty ? "0.000" : "0"}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-navy">Unit Cost ($) *</label>
+                <input
+                  required
+                  type="number"
+                  min={0}
+                  step={0.0001}
+                  value={form.unitCost}
+                  onChange={(e) => setForm((f) => ({ ...f, unitCost: e.target.value }))}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Reference combobox */}
           <div ref={refContainerRef} className="relative">
@@ -669,10 +782,11 @@ function StockTable({
                         : "text-navy",
                   )}
                 >
-                  {Number(item.currentStock) % 1 === 0
-                    ? Number(item.currentStock).toFixed(0)
-                    : Number(item.currentStock).toFixed(2)}{" "}
-                  {item.unit}
+                  {/* currentStock is stored in PIECES system-wide, so for a BOXED product
+                      it must never be rendered next to `item.unit` (a box/case noun) —
+                      `unitsLabel` shows the piece count plus a parenthetical box
+                      breakdown, and keeps the product's own unit noun when unboxed. */}
+                  {unitsLabel(Number(item.currentStock), item.unitsPerBox, item.unit)}
                 </span>
               </td>
               <td className="px-4 py-3 text-navy/70">
@@ -756,7 +870,14 @@ function AdjustStockModal({
   defaultProductId,
   onClose,
 }: {
-  products: { id: string; name: string; sku?: string; unit: string; currentStock: number }[];
+  products: {
+    id: string;
+    name: string;
+    sku?: string;
+    unit: string;
+    currentStock: number;
+    unitsPerBox?: number | null;
+  }[];
   /** Pre-select a product when opened from an inline "Adjust" row action */
   defaultProductId?: string;
   onClose: () => void;
@@ -885,14 +1006,25 @@ function AdjustStockModal({
             )}
             {selectedProduct && (
               <p className="mt-1 text-xs text-navy/70">
-                Current stock: {selectedProduct.currentStock} {selectedProduct.unit}
+                {/* Stock is stored in PIECES — a boxed product must never be labelled
+                    with `product.unit` (the SELLING unit noun), or the operator adjusts
+                    in cases; `unitsLabel` keeps that noun only for unboxed products. */}
+                Current stock:{" "}
+                {unitsLabel(
+                  selectedProduct.currentStock,
+                  selectedProduct.unitsPerBox,
+                  selectedProduct.unit,
+                )}
                 {form.quantity !== "" && !isNaN(qty) && (
                   <>
                     {" "}
                     →{" "}
                     <strong>
-                      {Number((selectedProduct.currentStock + qty).toFixed(2))}{" "}
-                      {selectedProduct.unit}
+                      {unitsLabel(
+                        Number((selectedProduct.currentStock + qty).toFixed(2)),
+                        selectedProduct.unitsPerBox,
+                        selectedProduct.unit,
+                      )}
                     </strong>
                   </>
                 )}
@@ -1052,6 +1184,37 @@ interface POLineItem {
   productId: string;
   qty: string;
   unitCost: string;
+  /** Whole boxes/cases — only used when the selected product's `unitsPerBox > 1`. */
+  boxes: string;
+  /** Loose pieces beyond whole boxes — only used when boxed. */
+  pieces: string;
+}
+
+const emptyPOLine = (): POLineItem => ({
+  productId: "",
+  qty: "",
+  unitCost: "",
+  boxes: "",
+  pieces: "",
+});
+
+/**
+ * Resolve one line to what actually gets submitted/priced: a piece-total `qty`
+ * and a per-piece `unitCost`. Boxed lines are typed as Boxes+Pieces and a
+ * Cost-per-Box — converted here so `qty * unitCost` (both display and what
+ * `createPurchaseOrder` stores as `totalCost`) is correct, and so `qtyOrdered`
+ * lands in PIECES to match `qtyReceived` after a receive (ReceivePOModal,
+ * below, keeps that same piece contract). Non-boxed lines pass through as-is.
+ */
+function resolvePOLine(line: POLineItem, unitsPerBox: number): { qty: number; unitCost: number } {
+  if (unitsPerBox > 1) {
+    const boxes = Math.max(0, Math.trunc(Number(line.boxes) || 0));
+    const pieces = Math.max(0, Math.trunc(Number(line.pieces) || 0));
+    const qty = normalizeBoxesPieces({ boxes, pieces, unitsPerBox }).qty;
+    const costPerBox = Number(line.unitCost) || 0;
+    return { qty, unitCost: roundUnitCost(costPerBox / unitsPerBox) };
+  }
+  return { qty: Number(line.qty) || 0, unitCost: Number(line.unitCost) || 0 };
 }
 
 function CreatePOModal({
@@ -1061,7 +1224,7 @@ function CreatePOModal({
   defaultSupplierId,
 }: {
   suppliers: Supplier[];
-  products: { id: string; name: string; sku?: string }[];
+  products: { id: string; name: string; sku?: string; unitsPerBox?: number | null }[];
   onClose: () => void;
   defaultSupplierId?: string;
 }) {
@@ -1070,30 +1233,34 @@ function CreatePOModal({
   const [supplierId, setSupplierId] = React.useState(defaultSupplierId ?? "");
   const [expectedDate, setExpectedDate] = React.useState("");
   const [notes, setNotes] = React.useState("");
-  const [lines, setLines] = React.useState<POLineItem[]>([
-    { productId: "", qty: "", unitCost: "" },
-  ]);
+  const [lines, setLines] = React.useState<POLineItem[]>([emptyPOLine()]);
 
-  const addLine = () => setLines((l) => [...l, { productId: "", qty: "", unitCost: "" }]);
+  const productById = React.useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
+  const unitsPerBoxFor = (productId: string) =>
+    Number(productById.get(productId)?.unitsPerBox ?? 0);
+
+  const addLine = () => setLines((l) => [...l, emptyPOLine()]);
   const removeLine = (i: number) => setLines((l) => l.filter((_, idx) => idx !== i));
   const updateLine = (i: number, field: keyof POLineItem, val: string) =>
     setLines((l) => l.map((line, idx) => (idx === i ? { ...line, [field]: val } : line)));
 
   const total = lines.reduce((sum, l) => {
-    const q = parseFloat(l.qty) || 0;
-    const c = parseFloat(l.unitCost) || 0;
-    return sum + q * c;
+    const { qty, unitCost } = resolvePOLine(l, unitsPerBoxFor(l.productId));
+    return sum + qty * unitCost;
   }, 0);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const items = lines
-      .filter((l) => l.productId && l.qty && l.unitCost)
-      .map((l) => ({
-        productId: l.productId,
-        qty: Number(l.qty),
-        unitCost: Number(l.unitCost),
-      }));
+      .filter((l) => {
+        if (!l.productId || !l.unitCost) return false;
+        const upb = unitsPerBoxFor(l.productId);
+        return upb > 1 ? Number(l.boxes) > 0 || Number(l.pieces) > 0 : !!l.qty;
+      })
+      .map((l) => {
+        const { qty, unitCost } = resolvePOLine(l, unitsPerBoxFor(l.productId));
+        return { productId: l.productId, qty, unitCost };
+      });
 
     if (items.length === 0) {
       toast({
@@ -1193,7 +1360,10 @@ function CreatePOModal({
                 </thead>
                 <tbody className="divide-y divide-surface-border">
                   {lines.map((line, i) => {
-                    const subtotal = (parseFloat(line.qty) || 0) * (parseFloat(line.unitCost) || 0);
+                    const upb = unitsPerBoxFor(line.productId);
+                    const isBoxed = upb > 1;
+                    const { qty, unitCost } = resolvePOLine(line, upb);
+                    const subtotal = qty * unitCost;
                     return (
                       <tr key={i}>
                         <td className="px-3 py-2">
@@ -1212,15 +1382,47 @@ function CreatePOModal({
                           </select>
                         </td>
                         <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            min={0.001}
-                            step={0.001}
-                            placeholder="0"
-                            value={line.qty}
-                            onChange={(e) => updateLine(i, "qty", e.target.value)}
-                            className="w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                          />
+                          {isBoxed ? (
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                min={0}
+                                step={1}
+                                placeholder="0"
+                                title="Boxes"
+                                value={line.boxes}
+                                onChange={(e) => updateLine(i, "boxes", e.target.value)}
+                                className="w-full min-w-0 rounded border border-surface-border px-1.5 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                              />
+                              <span className="text-navy/30">+</span>
+                              <input
+                                type="number"
+                                min={0}
+                                max={upb - 1}
+                                step={1}
+                                placeholder="0"
+                                title="Extra pieces"
+                                value={line.pieces}
+                                onChange={(e) => updateLine(i, "pieces", e.target.value)}
+                                className="w-full min-w-0 rounded border border-surface-border px-1.5 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                              />
+                            </div>
+                          ) : (
+                            <input
+                              type="number"
+                              min={0.001}
+                              step={0.001}
+                              placeholder="0"
+                              value={line.qty}
+                              onChange={(e) => updateLine(i, "qty", e.target.value)}
+                              className="w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                            />
+                          )}
+                          {isBoxed && (
+                            <p className="mt-0.5 text-[10px] text-navy/50">
+                              boxes + pcs · {qty} pcs total
+                            </p>
+                          )}
                         </td>
                         <td className="px-3 py-2">
                           <input
@@ -1228,10 +1430,14 @@ function CreatePOModal({
                             min={0}
                             step={0.0001}
                             placeholder="0.00"
+                            title={isBoxed ? "Cost per box" : "Cost per unit"}
                             value={line.unitCost}
                             onChange={(e) => updateLine(i, "unitCost", e.target.value)}
                             className="w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                           />
+                          <p className="mt-0.5 text-[10px] text-navy/50">
+                            {isBoxed ? "per box" : "per unit"}
+                          </p>
                         </td>
                         <td className="px-3 py-2 text-right text-navy/70">
                           {subtotal > 0 ? `$${subtotal.toFixed(2)}` : "—"}
@@ -1294,19 +1500,73 @@ function CreatePOModal({
 
 // ─── Receive PO Modal ─────────────────────────────────────────────────────────
 
-function ReceivePOModal({ po, onClose }: { po: PurchaseOrder; onClose: () => void }) {
+function ReceivePOModal({
+  po,
+  products,
+  onClose,
+}: {
+  po: PurchaseOrder;
+  /** Same catalog list threaded through from the page — carries `unitsPerBox`
+   *  (the PO item payload never does) and a name for the LIST endpoint's items,
+   *  which come back without the `product` relation. */
+  products: { id: string; name?: string; unitsPerBox?: number | null }[];
+  onClose: () => void;
+}) {
   const receivePO = useReceivePurchaseOrder();
   const { toast } = useToast();
+
+  const catalogById = React.useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
+  const unitsPerBoxFor = (productId: string) =>
+    Number(catalogById.get(productId)?.unitsPerBox ?? 0);
+  /** Still outstanding on this line — never pre-fill more, the API rejects a
+   *  receipt larger than what remains rather than silently under-receiving.
+   *  Rounded to the column's 3dp: quantities are Decimal(10,3) and the raw
+   *  float subtraction yields artifacts (1.2 − 0.4 = 0.7999999999999999) that
+   *  would both pre-fill and label a 16-digit quantity. */
+  const outstandingOf = (item: POItem) =>
+    Math.max(
+      0,
+      Math.round((Number(item.qtyOrdered ?? 0) - Number(item.qtyReceived ?? 0)) * 1000) / 1000,
+    );
+
+  // Non-boxed items: a single pieces input (unchanged behavior).
   const [receivedQtys, setReceivedQtys] = React.useState<Record<string, string>>(
-    Object.fromEntries(po.items.map((item) => [item.id, String(item.qty)])),
+    Object.fromEntries(po.items.map((item) => [item.id, String(outstandingOf(item))])),
+  );
+  // Boxed items: Boxes + Pieces, defaulting to the outstanding qty's own
+  // breakdown (qtyOrdered is a piece total — see resolvePOLine in CreatePOModal).
+  const [receivedSplits, setReceivedSplits] = React.useState<
+    Record<string, { boxes: string; pieces: string }>
+  >(
+    Object.fromEntries(
+      po.items.map((item) => {
+        const upb = unitsPerBoxFor(item.productId);
+        const split = normalizeBoxesPieces({ qty: outstandingOf(item), unitsPerBox: upb });
+        return [item.id, { boxes: String(split.boxes ?? 0), pieces: String(split.pieces ?? 0) }];
+      }),
+    ),
   );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const items = po.items.map((item) => ({
-      id: item.id,
-      receivedQty: Number(receivedQtys[item.id] ?? 0),
-    }));
+    const items = po.items.map((item) => {
+      const upb = unitsPerBoxFor(item.productId);
+      if (upb > 1) {
+        const split = receivedSplits[item.id] ?? { boxes: "0", pieces: "0" };
+        const boxes = Math.max(0, Math.trunc(Number(split.boxes) || 0));
+        const pieces = Math.max(0, Math.trunc(Number(split.pieces) || 0));
+        // Sent as a piece total via `receivedQty` (the API accepts an
+        // equivalent `boxes`/`pieces` split too). Quantity is the only thing
+        // that converts: this line's `unitCost` is already per piece from
+        // creation (CreatePOModal's resolvePOLine) and receiving never
+        // re-scales it.
+        return {
+          id: item.id,
+          receivedQty: normalizeBoxesPieces({ boxes, pieces, unitsPerBox: upb }).qty,
+        };
+      }
+      return { id: item.id, receivedQty: Number(receivedQtys[item.id] ?? 0) };
+    });
     receivePO.mutate(
       { id: po.id, items },
       {
@@ -1345,24 +1605,75 @@ function ReceivePOModal({ po, onClose }: { po: PurchaseOrder; onClose: () => voi
                 </tr>
               </thead>
               <tbody className="divide-y divide-surface-border">
-                {po.items.map((item) => (
-                  <tr key={item.id}>
-                    <td className="px-3 py-2 font-medium text-navy">{item.productName}</td>
-                    <td className="px-3 py-2 text-center text-navy">{item.qty}</td>
-                    <td className="px-3 py-2">
-                      <input
-                        type="number"
-                        min={0}
-                        step={0.001}
-                        value={receivedQtys[item.id] ?? ""}
-                        onChange={(e) =>
-                          setReceivedQtys((prev) => ({ ...prev, [item.id]: e.target.value }))
-                        }
-                        className="w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy text-center focus:outline-none focus:ring-2 focus:ring-brand-500"
-                      />
-                    </td>
-                  </tr>
-                ))}
+                {po.items.map((item) => {
+                  const upb = unitsPerBoxFor(item.productId);
+                  const isBoxed = upb > 1;
+                  const split = receivedSplits[item.id] ?? { boxes: "0", pieces: "0" };
+                  const ordered = Number(item.qtyOrdered ?? 0);
+                  const outstanding = outstandingOf(item);
+                  return (
+                    <tr key={item.id}>
+                      <td className="px-3 py-2 font-medium text-navy">
+                        {item.product?.name ?? catalogById.get(item.productId)?.name ?? "—"}
+                      </td>
+                      <td className="px-3 py-2 text-center text-navy">
+                        {isBoxed ? unitsLabel(ordered, upb) : ordered}
+                        {outstanding !== ordered && (
+                          <span className="block text-[11px] text-navy/50">
+                            {isBoxed ? unitsLabel(outstanding, upb) : outstanding} left
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        {isBoxed ? (
+                          <div className="flex items-center justify-center gap-1">
+                            <input
+                              type="number"
+                              min={0}
+                              step={1}
+                              title="Boxes"
+                              value={split.boxes}
+                              onChange={(e) =>
+                                setReceivedSplits((prev) => ({
+                                  ...prev,
+                                  [item.id]: { ...split, boxes: e.target.value },
+                                }))
+                              }
+                              className="w-14 rounded border border-surface-border px-1.5 py-1.5 text-sm text-navy text-center focus:outline-none focus:ring-2 focus:ring-brand-500"
+                            />
+                            <span className="text-navy/30">+</span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={upb - 1}
+                              step={1}
+                              title="Extra pieces"
+                              value={split.pieces}
+                              onChange={(e) =>
+                                setReceivedSplits((prev) => ({
+                                  ...prev,
+                                  [item.id]: { ...split, pieces: e.target.value },
+                                }))
+                              }
+                              className="w-14 rounded border border-surface-border px-1.5 py-1.5 text-sm text-navy text-center focus:outline-none focus:ring-2 focus:ring-brand-500"
+                            />
+                          </div>
+                        ) : (
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.001}
+                            value={receivedQtys[item.id] ?? ""}
+                            onChange={(e) =>
+                              setReceivedQtys((prev) => ({ ...prev, [item.id]: e.target.value }))
+                            }
+                            className="w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy text-center focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          />
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1384,15 +1695,19 @@ function ReceivePOModal({ po, onClose }: { po: PurchaseOrder; onClose: () => voi
 
 function PODetailRow({
   poId,
+  products,
   onReceive,
 }: {
   poId: string;
+  /** Same catalog list threaded through from the page — see ReceivePOModal. */
+  products: { id: string; name?: string; unitsPerBox?: number | null }[];
   onReceive: (po: PurchaseOrder) => void;
 }) {
   const { data: po, isLoading } = usePurchaseOrder(poId);
   const sendPO = useSendPurchaseOrder();
   const closePO = useClosePurchaseOrder();
   const { toast } = useToast();
+  const catalogById = React.useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
 
   if (isLoading) {
     return (
@@ -1423,21 +1738,40 @@ function PODetailRow({
                 </tr>
               </thead>
               <tbody className="divide-y divide-surface-border">
-                {(po.items ?? []).map((item: POItem) => (
-                  <tr key={item.id}>
-                    <td className="px-3 py-2 font-medium text-navy">{item.productName}</td>
-                    <td className="px-3 py-2 text-right text-navy/70">{item.qty}</td>
-                    <td className="px-3 py-2 text-right text-navy/70">
-                      ${Number(item.unitCost).toFixed(2)}
-                    </td>
-                    <td className="px-3 py-2 text-right text-navy/70">
-                      {item.receivedQty ?? <span className="text-navy/30">—</span>}
-                    </td>
-                    <td className="px-3 py-2 text-right text-navy/70">
-                      ${(item.qty * item.unitCost).toFixed(2)}
-                    </td>
-                  </tr>
-                ))}
+                {(po.items ?? []).map((item: POItem) => {
+                  const upb = Number(catalogById.get(item.productId)?.unitsPerBox ?? 0);
+                  const isBoxed = upb > 1;
+                  const ordered = Number(item.qtyOrdered ?? 0);
+                  const received = Number(item.qtyReceived ?? 0);
+                  return (
+                    <tr key={item.id}>
+                      <td className="px-3 py-2 font-medium text-navy">
+                        {item.product?.name ?? catalogById.get(item.productId)?.name ?? "—"}
+                      </td>
+                      <td className="px-3 py-2 text-right text-navy/70">
+                        {isBoxed ? unitsLabel(ordered, upb) : ordered}
+                      </td>
+                      <td className="px-3 py-2 text-right text-navy/70">
+                        ${Number(item.unitCost).toFixed(isBoxed ? 4 : 2)}
+                        {isBoxed && <span className="text-navy/30"> /pc</span>}
+                      </td>
+                      <td className="px-3 py-2 text-right text-navy/70">
+                        {item.qtyReceived != null ? (
+                          isBoxed ? (
+                            unitsLabel(received, upb)
+                          ) : (
+                            received
+                          )
+                        ) : (
+                          <span className="text-navy/30">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right text-navy/70">
+                        ${(ordered * Number(item.unitCost ?? 0)).toFixed(2)}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1578,7 +1912,7 @@ function PurchaseOrdersTab({
   products,
 }: {
   suppliers: Supplier[];
-  products: { id: string; name: string; sku?: string }[];
+  products: { id: string; name: string; sku?: string; unitsPerBox?: number | null }[];
 }) {
   const [statusFilter, setStatusFilter] = React.useState("");
   const [supplierFilter, setSupplierFilter] = React.useState("");
@@ -1748,7 +2082,9 @@ function PurchaseOrdersTab({
                       </button>
                     </td>
                   </tr>
-                  {expandedId === po.id && <PODetailRow poId={po.id} onReceive={setReceivePO} />}
+                  {expandedId === po.id && (
+                    <PODetailRow poId={po.id} products={products} onReceive={setReceivePO} />
+                  )}
                 </React.Fragment>
               ))}
               {orders.length === 0 && (
@@ -1770,7 +2106,9 @@ function PurchaseOrdersTab({
           onClose={() => setShowCreateModal(false)}
         />
       )}
-      {receivePO && <ReceivePOModal po={receivePO} onClose={() => setReceivePO(null)} />}
+      {receivePO && (
+        <ReceivePOModal po={receivePO} products={products} onClose={() => setReceivePO(null)} />
+      )}
     </>
   );
 }
@@ -1863,7 +2201,7 @@ function ForecastingTab({
   products,
 }: {
   suppliers: Supplier[];
-  products: { id: string; name: string; sku?: string }[];
+  products: { id: string; name: string; sku?: string; unitsPerBox?: number | null }[];
 }) {
   const { data: forecastData, isLoading } = useForecasting();
   const updateSettings = useUpdateReorderSettings();
@@ -2852,7 +3190,12 @@ export default function InventoryPage() {
         <Tabs.Content value="purchase-orders" className="pt-4">
           <PurchaseOrdersTab
             suppliers={suppliers as Supplier[]}
-            products={products.map((p: any) => ({ id: p.id, name: p.name, sku: p.sku }))}
+            products={products.map((p: any) => ({
+              id: p.id,
+              name: p.name,
+              sku: p.sku,
+              unitsPerBox: p.unitsPerBox ?? null,
+            }))}
           />
         </Tabs.Content>
 
@@ -2860,7 +3203,12 @@ export default function InventoryPage() {
         <Tabs.Content value="forecasting" className="pt-4">
           <ForecastingTab
             suppliers={suppliers as Supplier[]}
-            products={products.map((p: any) => ({ id: p.id, name: p.name, sku: p.sku }))}
+            products={products.map((p: any) => ({
+              id: p.id,
+              name: p.name,
+              sku: p.sku,
+              unitsPerBox: p.unitsPerBox ?? null,
+            }))}
           />
         </Tabs.Content>
       </Tabs.Root>
@@ -2874,6 +3222,7 @@ export default function InventoryPage() {
             sku: p.sku,
             unit: p.unit,
             currentStock: Number(p.currentStock ?? 0),
+            unitsPerBox: p.unitsPerBox ?? null,
           }))}
           onClose={() => setShowPurchaseModal(false)}
         />
@@ -2886,6 +3235,7 @@ export default function InventoryPage() {
             sku: p.sku,
             unit: p.unit,
             currentStock: Number(p.currentStock ?? 0),
+            unitsPerBox: p.unitsPerBox ?? null,
           }))}
           defaultProductId={adjustPreselectId}
           onClose={() => {

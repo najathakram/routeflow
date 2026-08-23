@@ -11,6 +11,7 @@ import { InlineCreateProductModal } from "@/components/InlineCreateProductModal"
 import { resolveProductByCode } from "@/lib/barcode-resolve";
 import { useAuth } from "@/lib/auth-context";
 import { fmtDate } from "@/lib/formatting";
+import { unitsLabel } from "@/lib/stock-label";
 import { useStockOverview } from "@/lib/api/inventory";
 import {
   computeQtyVariance,
@@ -372,6 +373,7 @@ export function StockCountTab() {
         sku?: string | null;
         unit: string;
         currentStock: number;
+        unitsPerBox?: number | null;
         category?: string | null;
         averageCost?: number | null;
       }>;
@@ -381,6 +383,7 @@ export function StockCountTab() {
       sku?: string | null;
       unit: string;
       currentStock: number;
+      unitsPerBox?: number | null;
       category?: string | null;
       averageCost?: number | null;
       isActive?: boolean;
@@ -804,9 +807,8 @@ export function StockCountTab() {
                     <div className="flex items-center gap-2 text-xs text-navy/70">
                       {p.sku && <span>SKU {p.sku}</span>}
                       <span>·</span>
-                      <span>
-                        {p.currentStock} {p.unit}
-                      </span>
+                      {/* PIECE count — never labelled with `p.unit` (the box noun). */}
+                      <span>{unitsLabel(p.currentStock, p.unitsPerBox, p.unit)}</span>
                       {p.category && (
                         <>
                           <span>·</span>

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Button, Modal, useToast } from "@routeflow/ui/web";
 import { useSetCostBasis } from "@/lib/api/inventory";
+import { unitsLabel } from "@/lib/stock-label";
 
 /**
  * Minimal shape `SetCostModal` needs to render and submit. Satisfied
@@ -13,7 +14,9 @@ export interface CostBasisTarget {
   id: string;
   name: string;
   unit: string;
+  /** PIECES (system-wide stock unit) — render via `unitsLabel`, never next to `unit`. */
   currentStock: number;
+  unitsPerBox?: number | null;
   averageCost: number | null;
 }
 
@@ -84,7 +87,7 @@ export function SetCostModal({ item, onClose }: { item: CostBasisTarget; onClose
           />
           <p className="mt-1 text-xs text-navy/70">
             Current: {item.averageCost != null ? `$${Number(item.averageCost).toFixed(4)}` : "none"}{" "}
-            · Stock: {item.currentStock} {item.unit}
+            · Stock: {unitsLabel(item.currentStock, item.unitsPerBox, item.unit)}
           </p>
         </div>
         <div>

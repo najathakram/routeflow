@@ -29,6 +29,7 @@ import { useOrders, type Order } from "@/lib/api/orders";
 import { useRouteRuns, type RouteRun } from "@/lib/api/routes";
 import { useDrivers, type Driver } from "@/lib/api/drivers";
 import { useProducts } from "@/lib/api/products";
+import { unitsLabel } from "@/lib/stock-label";
 import { useFinanceDashboard } from "@/lib/api/finance";
 import { useInvoices, type Invoice } from "@/lib/api/invoices";
 import { useDeveloperMode } from "@/lib/api/addons";
@@ -359,9 +360,11 @@ function OverdueInvoicesPanel({
 interface Product {
   id: string;
   name: string;
+  /** PIECES (system-wide stock unit) — label via `unitsLabel`, never next to `unit`. */
   currentStock?: number | null;
   lowStockThreshold?: number | null;
   unit?: string;
+  unitsPerBox?: number | null;
 }
 
 function LowStockPanel({
@@ -425,7 +428,7 @@ function LowStockPanel({
                       stockUnset ? "text-navy/70" : qty === 0 ? "text-danger" : "text-warning",
                     )}
                   >
-                    {stockUnset ? "Not set" : `${qty} ${p.unit ?? "units"}`}
+                    {stockUnset ? "Not set" : unitsLabel(qty, p.unitsPerBox, p.unit ?? "units")}
                   </span>
                   {!stockUnset && (
                     <span className="mono text-navy/70">
