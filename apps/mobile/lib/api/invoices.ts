@@ -26,6 +26,12 @@ export interface InvoiceItem {
   /** STANDARD | SPECIAL | DISCOUNTED | MANUAL | PROMO. */
   priceType?: string;
   subtotal: number;
+  /**
+   * Suggested retail price, per PIECE, snapshotted onto the line when it was
+   * created — display-only, never re-read from the live product. Null/undefined
+   * = nothing to show.
+   */
+  msrp?: number | null;
 }
 
 export type PaymentMethod = AnyPaymentMethod;

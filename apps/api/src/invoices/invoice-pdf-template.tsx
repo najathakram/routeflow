@@ -54,6 +54,12 @@ export interface InvoicePdfData {
     boxes?: number | null;
     pieces?: number | null;
     unitsPerBox?: number | null;
+    /**
+     * Suggested retail price snapshot, per PIECE, taken when this line was
+     * created — display-only, never re-read from the live product. Null/undefined
+     * renders nothing.
+     */
+    msrp?: DecimalLike | null;
     /** Per-line note (buyer-visible) — italic line under the description. */
     notes?: string | null;
     product?: { name: string } | null;
@@ -505,7 +511,14 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
               <Text style={[styles.cellTextRight, styles.colQty]}>
                 {formatQtySplit({ qty: toNum(item.qty), boxes: item.boxes, pieces: item.pieces })}
               </Text>
-              <Text style={[styles.cellTextRight, styles.colUnit]}>{fmt(item.unitPrice)}</Text>
+              <View style={styles.colUnit}>
+                <Text style={styles.cellTextRight}>{fmt(item.unitPrice)}</Text>
+                {item.msrp != null ? (
+                  <Text style={{ fontSize: 6.5, color: GRAY, textAlign: "right", marginTop: 1 }}>
+                    MSRP {fmt(item.msrp)}/pc
+                  </Text>
+                ) : null}
+              </View>
               <Text style={[styles.cellTextRight, styles.colSubtotal]}>{fmt(item.subtotal)}</Text>
             </View>
           ))}

@@ -24,6 +24,18 @@ function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 }
 
+/**
+ * `msrp` was snapshotted onto InvoiceItem (apps/api/src/invoices) after
+ * `BuyerInvoiceDetail.items` (lib/api/buyer.ts) was typed — that file isn't
+ * part of this package's file set, so read it via a narrow cast rather than
+ * widening that shared interface here (same pattern as `creditNoteOf` in
+ * app/(dashboard)/invoices/[id]/page.tsx).
+ */
+function itemMsrp(item: { id: string }): number | null {
+  const v = (item as unknown as { msrp?: number | string | null }).msrp;
+  return v != null ? Number(v) : null;
+}
+
 function formatDate(d: string | null) {
   if (!d) return "N/A";
   return new Date(d).toLocaleDateString("en-GB", {
@@ -220,27 +232,36 @@ export default function BuyerInvoiceDetailPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-surface-border">
-            {(invoice.items ?? []).map((item) => (
-              <tr key={item.id} className="hover:bg-surface-raised/50">
-                <td className="px-4 py-3 text-sm font-medium text-navy">{item.description}</td>
-                <td className="px-4 py-3 text-right text-sm text-navy">
-                  {Number(item.qty)}
-                  {/* BUY_N_GET_M: name the free units, or the reduced subtotal
-                      reads as a pricing error. */}
-                  {Number(item.promoFreeUnits ?? 0) > 0 && (
-                    <p className="mt-0.5 inline-flex items-center rounded-full bg-buyer-50 px-1.5 py-0.5 text-[10px] font-semibold text-buyer-700">
-                      {Number(item.promoFreeUnits)} free
-                    </p>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-right text-sm text-navy/70">
-                  {fmt(Number(item.unitPrice))}
-                </td>
-                <td className="px-4 py-3 text-right text-sm font-medium text-navy">
-                  {fmt(Number(item.subtotal))}
-                </td>
-              </tr>
-            ))}
+            {(invoice.items ?? []).map((item) => {
+              const msrp = itemMsrp(item);
+              return (
+                <tr key={item.id} className="hover:bg-surface-raised/50">
+                  <td className="px-4 py-3 text-sm font-medium text-navy">{item.description}</td>
+                  <td className="px-4 py-3 text-right text-sm text-navy">
+                    {Number(item.qty)}
+                    {/* BUY_N_GET_M: name the free units, or the reduced subtotal
+                        reads as a pricing error. */}
+                    {Number(item.promoFreeUnits ?? 0) > 0 && (
+                      <p className="mt-0.5 inline-flex items-center rounded-full bg-buyer-50 px-1.5 py-0.5 text-[10px] font-semibold text-buyer-700">
+                        {Number(item.promoFreeUnits)} free
+                      </p>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right text-sm text-navy/70">
+                    {fmt(Number(item.unitPrice))}
+                    {/* Suggested retail price, snapshotted at line creation. Keyed off
+                        data presence, not the addon flag, so an issued invoice keeps
+                        rendering it even if the seller later loses the MSRP addon. */}
+                    {msrp != null && (
+                      <p className="mt-0.5 text-[10px] text-navy/50">MSRP {fmt(msrp)}/pc</p>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right text-sm font-medium text-navy">
+                    {fmt(Number(item.subtotal))}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

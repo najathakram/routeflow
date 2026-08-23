@@ -721,6 +721,30 @@ describe("OrdersService", () => {
       );
     });
 
+    it("an msrp-only CustomerPrice row ({pricingTier: null}) still prices at the customer's default tier", async () => {
+      // MSRP made CustomerPrice.pricingTier nullable: a row may carry ONLY an
+      // MSRP override. That row must be pricing-inert — the customer's default
+      // tier keeps winning, and the display-only msrp value never touches money.
+      seedBuyerTierMocks(3); // default tier 3 → tier price 8
+      prisma.customerPrice.findMany.mockResolvedValue([
+        { productId: "prod-1", pricingTier: null, msrp: 5 },
+      ]);
+
+      await service.create({ items: [{ productId: "prod-1", qty: 1 }] }, customerPayload);
+
+      expect(prisma.order.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            lineItems: {
+              create: expect.arrayContaining([
+                expect.objectContaining({ unitPrice: 8, originalPrice: 10, priceType: "SPECIAL" }),
+              ]),
+            },
+          }),
+        }),
+      );
+    });
+
     it("an unset tier column (DB default 0) falls back to the list price — never $0.00", async () => {
       seedBuyerTierMocks(4); // priceTier4 is 0 → inherit list
 

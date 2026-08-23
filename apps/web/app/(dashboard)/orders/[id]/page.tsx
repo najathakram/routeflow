@@ -1413,8 +1413,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const { data: customerDetail } = useCustomer(order?.customerId ?? "");
   const { data: customerPrices } = useCustomerPrices(order?.customerId);
   const cpMap = React.useMemo(() => {
-    const m = new Map<string, number>();
-    for (const cp of (customerPrices ?? []) as Array<{ productId: string; pricingTier: number }>) {
+    const m = new Map<string, number | null>();
+    for (const cp of (customerPrices ?? []) as Array<{
+      productId: string;
+      pricingTier: number | null;
+    }>) {
       m.set(cp.productId, cp.pricingTier);
     }
     return m;

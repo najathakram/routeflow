@@ -131,6 +131,12 @@ const AVAILABLE_ADDONS = [
       "Tobacco product tracking, optional exclusion from main analytics, and monthly compliance reports",
   },
   {
+    key: "msrp",
+    name: "MSRP on invoices",
+    description:
+      "Suggested retail price (per piece) on product, customer, and invoice pricing — display-only, never enters money math",
+  },
+  {
     key: DEVELOPER_MODE_ADDON,
     name: "Developer Mode",
     description: "Unlock in-development features (dispatch, routes, drivers) for this tenant",

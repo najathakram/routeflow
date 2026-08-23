@@ -187,7 +187,10 @@ export interface CustomerPrice {
   id: string;
   customerId: string;
   productId: string;
-  pricingTier: number;
+  /** Null = msrp-only override row; price at the customer's default tier. */
+  pricingTier: number | null;
+  /** Per-customer MSRP override (display-only, per PIECE). Mobile never edits it. */
+  msrp?: number | string | null;
   notes?: string;
   product?: {
     id: string;
@@ -216,7 +219,10 @@ export function useUpsertCustomerPrice() {
   return useMutation<
     CustomerPrice,
     Error,
-    { customerId: string; productId: string; pricingTier: number; notes?: string }
+    // pricingTier null = "no tier override" — only valid on a row that keeps its
+    // MSRP override (the server deletes a row cleared of both fields, and holds
+    // that delete to OPERATOR level).
+    { customerId: string; productId: string; pricingTier: number | null; notes?: string }
   >({
     mutationFn: ({ customerId, ...body }) =>
       apiClient.post(`/customers/${customerId}/prices`, body).then((r) => r.data),

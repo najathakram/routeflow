@@ -68,6 +68,12 @@ import { ShipmentSection, ShipmentEditModal } from "../../../../components/Shipm
 // locally rather than touching admin.ts's canonical type (out of scope here).
 type PaymentImageFields = { imageKey?: string | null };
 
+// Same situation for MSRP: the server snapshots `msrp` onto every InvoiceItem
+// (display-only, per PIECE) and findOne's `items` include returns it already,
+// but admin.ts's AdminInvoice.items doesn't declare it yet. Widen locally
+// rather than touching admin.ts (out of scope for this change).
+type ItemMsrpField = { msrp?: number | null };
+
 function fmtCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
   return `$${(Number.isFinite(v) ? v : 0).toFixed(2)}`;
@@ -767,54 +773,67 @@ export default function InvoiceDetailScreen() {
           {invoice.items && invoice.items.length > 0 ? (
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Items</Text>
-              {invoice.items.map((it, i) => (
-                <View
-                  key={it.id}
-                  style={[
-                    styles.itemRow,
-                    i > 0 && {
-                      borderTopWidth: StyleSheet.hairlineWidth,
-                      borderTopColor: ios.separator,
-                    },
-                  ]}
-                >
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={styles.itemName} numberOfLines={1}>
-                      {it.description}
-                    </Text>
-                    <Text style={styles.itemSub}>
-                      {it.boxes != null || it.pieces != null
-                        ? // Boxed line: unitPrice is the BOX price — "qty × price"
-                          // would read as pieces × box-price (visually wrong).
-                          `${formatQtySplit({ qty: it.qty, boxes: it.boxes, pieces: it.pieces })} @ ${fmtCurrency(it.unitPrice)}/box`
-                        : `${it.qty} × ${fmtCurrency(it.unitPrice)}`}
-                    </Text>
-                    {/* BUY_N_GET_M: name the free units, or the reduced line
-                        subtotal reads as a pricing error (web parity). */}
-                    {freeUnitsLabel(it.promoFreeUnits) ? (
-                      <Text style={styles.itemFreeLabel}>{freeUnitsLabel(it.promoFreeUnits)}</Text>
-                    ) : null}
-                    {Number(it.discount ?? 0) > 0 ? (
-                      // The shown subtotal is already post-discount; this line
-                      // explains why it's less than qty × price.
-                      <Text style={styles.itemSub}>−{fmtCurrency(it.discount ?? 0)} discount</Text>
-                    ) : null}
-                    {it.notes?.trim() ? (
-                      <Text style={[styles.itemSub, { fontStyle: "italic" }]} numberOfLines={2}>
-                        {it.notes}
+              {invoice.items.map((it, i) => {
+                const itemMsrp = (it as typeof it & ItemMsrpField).msrp;
+                return (
+                  <View
+                    key={it.id}
+                    style={[
+                      styles.itemRow,
+                      i > 0 && {
+                        borderTopWidth: StyleSheet.hairlineWidth,
+                        borderTopColor: ios.separator,
+                      },
+                    ]}
+                  >
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.itemName} numberOfLines={1}>
+                        {it.description}
                       </Text>
-                    ) : null}
-                    {it.priceType === "MANUAL" &&
-                    it.originalPrice != null &&
-                    Number(it.unitPrice) > Number(it.originalPrice) ? (
-                      <Text style={{ color: ios.system.greenInk, fontSize: 12, fontWeight: "600" }}>
-                        Upsell
+                      <Text style={styles.itemSub}>
+                        {it.boxes != null || it.pieces != null
+                          ? // Boxed line: unitPrice is the BOX price — "qty × price"
+                            // would read as pieces × box-price (visually wrong).
+                            `${formatQtySplit({ qty: it.qty, boxes: it.boxes, pieces: it.pieces })} @ ${fmtCurrency(it.unitPrice)}/box`
+                          : `${it.qty} × ${fmtCurrency(it.unitPrice)}`}
                       </Text>
-                    ) : null}
+                      {/* Suggested retail price snapshot — per PIECE, display-only. */}
+                      {itemMsrp != null ? (
+                        <Text style={styles.itemMsrp}>MSRP {fmtCurrency(itemMsrp)}/pc</Text>
+                      ) : null}
+                      {/* BUY_N_GET_M: name the free units, or the reduced line
+                          subtotal reads as a pricing error (web parity). */}
+                      {freeUnitsLabel(it.promoFreeUnits) ? (
+                        <Text style={styles.itemFreeLabel}>
+                          {freeUnitsLabel(it.promoFreeUnits)}
+                        </Text>
+                      ) : null}
+                      {Number(it.discount ?? 0) > 0 ? (
+                        // The shown subtotal is already post-discount; this line
+                        // explains why it's less than qty × price.
+                        <Text style={styles.itemSub}>
+                          −{fmtCurrency(it.discount ?? 0)} discount
+                        </Text>
+                      ) : null}
+                      {it.notes?.trim() ? (
+                        <Text style={[styles.itemSub, { fontStyle: "italic" }]} numberOfLines={2}>
+                          {it.notes}
+                        </Text>
+                      ) : null}
+                      {it.priceType === "MANUAL" &&
+                      it.originalPrice != null &&
+                      Number(it.unitPrice) > Number(it.originalPrice) ? (
+                        <Text
+                          style={{ color: ios.system.greenInk, fontSize: 12, fontWeight: "600" }}
+                        >
+                          Upsell
+                        </Text>
+                      ) : null}
+                    </View>
+                    <Text style={styles.itemTotal}>{fmtCurrency(it.subtotal)}</Text>
                   </View>
-                  <Text style={styles.itemTotal}>{fmtCurrency(it.subtotal)}</Text>
-                </View>
-              ))}
+                );
+              })}
               <View style={styles.totalRow}>
                 <Text style={styles.totalLabel}>Subtotal</Text>
                 <Text style={styles.totalValue}>{fmtCurrency(invoice.subtotal)}</Text>
@@ -1380,6 +1399,7 @@ const styles = StyleSheet.create({
   itemRow: { flexDirection: "row", alignItems: "center", paddingVertical: 8, gap: 10 },
   itemName: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
   itemSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  itemMsrp: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label3, marginTop: 2 },
   itemFreeLabel: {
     fontSize: 11,
     fontFamily: "Inter_600SemiBold",

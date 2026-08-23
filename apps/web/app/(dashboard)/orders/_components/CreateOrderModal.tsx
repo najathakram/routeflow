@@ -133,8 +133,8 @@ export function CreateOrderModal({
   // Customer per-product tier overrides
   const { data: customerPricesData } = useCustomerPrices(selectedCustomer?.id);
   const cpMap = React.useMemo(() => {
-    const map = new Map<string, number>();
-    (customerPricesData ?? []).forEach((cp: any) => map.set(cp.productId, cp.pricingTier));
+    const map = new Map<string, number | null>();
+    (customerPricesData ?? []).forEach((cp: any) => map.set(cp.productId, cp.pricingTier ?? null));
     return map;
   }, [customerPricesData]);
 

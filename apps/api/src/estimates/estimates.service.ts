@@ -3,10 +3,15 @@ import { PriceType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { getTierPrice } from "../utils/pricing";
 import { computeLineSubtotal, roundMoney } from "../common/pricing";
+import { loadMsrpMap } from "../common/msrp";
+import { EntitlementsService } from "../billing/entitlements.service";
 
 @Injectable()
 export class EstimatesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly entitlements: EntitlementsService,
+  ) {}
 
   private async nextEstNumber() {
     const year = new Date().getFullYear();
@@ -227,6 +232,17 @@ export class EstimatesService {
       const est = await tx.estimate.findUnique({ where: { id }, include: { items: true } });
       if (!est) throw new NotFoundException("Estimate not found");
 
+      // MSRP snapshot at conversion time — same contract as
+      // InvoicesService.applyMsrpSnapshots: no-op (every line stays null) when the
+      // tenant lacks flag.msrp.
+      const tenantId = this.prisma.getTenantId();
+      const msrpMap =
+        tenantId && (await this.entitlements.hasFlag(tenantId, "flag.msrp"))
+          ? await loadMsrpMap(tx, est.customerId, [
+              ...new Set(est.items.map((i) => i.productId).filter(Boolean)),
+            ] as string[])
+          : new Map<string, number | null>();
+
       const year = new Date().getFullYear();
       const prefix = `INV-${year}-`;
       const last = await tx.invoice.findFirst({
@@ -257,6 +273,7 @@ export class EstimatesService {
               discount: 0,
               taxRate: 0,
               subtotal: i.subtotal,
+              msrp: i.productId ? (msrpMap.get(i.productId) ?? null) : null,
               tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
             })),
           },

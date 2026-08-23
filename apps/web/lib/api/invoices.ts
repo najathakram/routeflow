@@ -49,6 +49,12 @@ export interface InvoiceItem {
   orderItemId?: string | null;
   taxable?: boolean;
   total?: number;
+  /**
+   * Suggested retail price snapshotted at line-creation time (per PIECE, even
+   * on a boxed line) — never re-read from the live product, so an issued
+   * invoice's MSRP never changes. null/absent = render nothing.
+   */
+  msrp?: number | null;
 }
 
 export interface InvoicePayment {
