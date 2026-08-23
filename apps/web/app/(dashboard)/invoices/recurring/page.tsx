@@ -96,7 +96,7 @@ export default function RecurringInvoicesPage() {
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-navy">Recurring Invoices</h1>
+          <h2 className="text-2xl font-bold text-navy">Recurring Invoices</h2>
           <p className="mt-1 text-sm text-navy/70">
             Automatically generate invoices on a schedule.
           </p>

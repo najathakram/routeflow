@@ -37,7 +37,7 @@ export default function CompliancePage() {
     <div className="space-y-5 p-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-navy">Regulated Items</h1>
+          <h2 className="text-2xl font-bold text-navy">Regulated Items</h2>
           <p className="text-sm text-navy/70">
             Separately-handled sections · per-section tax, invoicing and filings
           </p>

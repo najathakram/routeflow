@@ -313,7 +313,7 @@ export default function NewRecurringInvoicePage() {
         Recurring Invoices
       </Link>
 
-      <h1 className="text-2xl font-bold text-navy">New Recurring Template</h1>
+      <h2 className="text-2xl font-bold text-navy">New Recurring Template</h2>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
         {/* ── Left (3/5) ── */}

@@ -269,7 +269,7 @@ export default function PaymentRequestsPage() {
 
       {/* Header */}
       <div>
-        <h1 className="text-xl font-semibold text-navy">Payment Requests</h1>
+        <h2 className="text-xl font-semibold text-navy">Payment Requests</h2>
         <p className="text-sm text-navy/70">
           Buyer-declared cash payments awaiting approval, plus card payment history.
         </p>

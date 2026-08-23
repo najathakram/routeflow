@@ -641,7 +641,7 @@ export default function SettingsImportPage() {
     <div className="space-y-6 p-6">
       {/* Header */}
       <div>
-        <h1 className="text-xl font-semibold text-navy">Import from Zoho</h1>
+        <h2 className="text-xl font-semibold text-navy">Import from Zoho</h2>
         <p className="mt-1 text-sm text-navy/70">
           Upload CSV exports from Zoho to migrate your data into RouteFlow.
         </p>

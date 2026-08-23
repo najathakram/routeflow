@@ -74,7 +74,7 @@ export default function ShipmentsPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Truck className="h-5 w-5 text-navy/70" />
-          <h1 className="text-xl font-bold text-navy">Shipments</h1>
+          <h2 className="text-xl font-bold text-navy">Shipments</h2>
         </div>
       </div>
 

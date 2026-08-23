@@ -20,7 +20,9 @@ the repo. Use it INSTEAD of re-reading the codebase.
 - `api.md`, `web.md`, `mobile.md`, `packages.md` — one per workspace; each has a local
   "Where to find" table and terse per-file entries (purpose, exports/signatures, cross-refs).
 - `_meta.json` — `mappedSha` (the commit the map was last reconciled to), `generatedAt`, and a
-  freeform `notes` field carrying the latest in-flight state.
+  `notes` field carrying ONLY the latest session note (plus a pointer to `CHANGELOG.md`).
+- `CHANGELOG.md` — session-by-session history of map updates: one dated bullet per session
+  note, newest first.
 
 ## When understanding / navigating (before grepping broadly or reading source)
 
@@ -35,9 +37,11 @@ Consult the map to scope which files are involved and where a change ripples —
 ## After EVERY change (surgical, not a regen)
 
 Update the touched entries (purpose, exports/signatures, cross-refs) in the area file, and bump
-`_meta.json` (`mappedSha` → new HEAD, `generatedAt`, and the `notes` state). A small code change
-is a few-line map edit — never regenerate the whole map. Trust the code over the map when they
-disagree, and fix the map.
+`_meta.json` (`mappedSha` → new HEAD, `generatedAt`). Record your session note by adding a dated
+bullet at the TOP of `CHANGELOG.md` and REPLACING `_meta.json` `notes` with that same note + the
+CHANGELOG pointer — never prepend/accumulate history in `notes` (it once grew to ~90K chars and
+cost ~38K tokens per read). A small code change is a few-line map edit — never regenerate the
+whole map. Trust the code over the map when they disagree, and fix the map.
 
 ## Staleness
 
