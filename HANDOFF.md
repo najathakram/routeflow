@@ -1,6 +1,6 @@
 # HANDOFF — current state & what to pick up next
 
-**Written:** 2026-08-22 · **Branch:** `feat/msrp-on-invoices` (worktree `.claude/worktrees/msrp`) · **Visibility:** private (CI runs private — no flips) · **Open PRs:** [#407](https://github.com/najathakram/routeflow/pull/407) (parallel session, SMTP instructions — MERGEABLE) · [#408](https://github.com/najathakram/routeflow/pull/408) **MERGED 05:34 UTC**
+**Written:** 2026-08-22 · **Updated:** 2026-08-23 (ship session: #409 #410 #411 #412 #413 all merged) · **Visibility:** private (CI runs private — no flips) · **Open PRs:** none — [#407](https://github.com/najathakram/routeflow/pull/407), [#408](https://github.com/najathakram/routeflow/pull/408), [#410](https://github.com/najathakram/routeflow/pull/410), [#411](https://github.com/najathakram/routeflow/pull/411) **SHIPPED + LIVE**; docs #409/#412/#413 merged
 
 > **THREE independent workstreams are live in this document.** They do not interact — pick up any
 > one without touching the others.
@@ -8,16 +8,15 @@
 > 1. **MSRP · Sales Agents · quick wins** — the PR sequence immediately below. Code and branches.
 > 2. **§1b product-image / description pipeline** — no repo code, writes to prod through the public
 >    API, waiting on the owner's review of 600 images.
-> 3. **🎨 Web layout audit — COMPLETE, awaiting the owner's batch ticks.** Jump to
+> 3. **🎨 Web layout audit — opener batch L0+L1 SHIPPED as [PR #410](https://github.com/najathakram/routeflow/pull/410) (2026-08-23); remaining batches await the owner's ticks.** Jump to
 >    _"✅ AUDIT COMPLETE — operator-dashboard layout"_. **Everything you need is under
 >    [`docs/audit/2026-08-22-web-layout/`](docs/audit/2026-08-22-web-layout/) — read
 >    `AUDIT-LAYOUT.md` first, it is the approval doc.** 46 findings over 61 screens, 6 of them
->    S0 (content clipped/unreachable at 1024px). **Do not start fixing** — the owner chose
->    findings-first approval and has not yet picked batches. Once they do: run each batch through
->    `dev-pipeline`, one PR per batch, `style(web):`. Recommended opener is **L0 + L1** (27
->    findings, 27 files, near-zero risk, clears 4 of the 6 S0s). Also open on this workstream:
->    [PR #407](https://github.com/najathakram/routeflow/pull/407) (SMTP setup instructions,
->    MERGEABLE, deliberately unmerged because merging **is** the Railway deploy trigger) and the
+>    S0 (content clipped/unreachable at 1024px). **L0 + L1** (27 findings, 27 files, cleared
+>    4 of the 6 S0s) is merged and live; for the remaining batches the owner still picks —
+>    then run each through `dev-pipeline`, one PR per batch, `style(web):`.
+>    [PR #407](https://github.com/najathakram/routeflow/pull/407) (SMTP setup instructions)
+>    also SHIPPED (merged `22bc672e`, 2026-08-22). Still open on this workstream: the
 >    `routeflow-demo` email blocker (owner-only Google App Password).
 
 ## 🚧 IN FLIGHT — MSRP · Sales Agents · feature gating · quick wins (2026-08-21/22)
@@ -36,15 +35,20 @@ Feature gating answer: **no per-tenant branches** — one trunk, entitlement fla
 1. **PR-A [#408](https://github.com/najathakram/routeflow/pull/408) is DONE** — merged,
    deployed, prod migration applied, post-deploy check green. Nothing left. **Do NOT
    re-apply its migration.**
-2. **PR-B (MSRP) is the active task and is PART-IMPLEMENTED — uncommitted.** Work in the
-   worktree **`.claude/worktrees/msrp`** on branch **`feat/msrp-on-invoices`** (branched off
-   merged master `de557140`, has its own `node_modules` from `npm ci`). The full work-package
-   plan is committed at **`.claude/pipeline/plans/2026-08-22-msrp-on-invoices.md`** — hand
-   that path to the implementers. **See "PR-B status" below before continuing: there is
-   uncommitted work in that worktree that has NOT been typechecked, tested or reviewed yet.**
-3. **Do not work in the main checkout** (`C:\ClaudeCode\routeflow`): a parallel session owns
-   it, is on the merged-and-deleted `feat/zelle-tier-quickwins`, and has **uncommitted**
-   HANDOFF edits there. Leave it alone.
+2. **PR-B (MSRP) [#411](https://github.com/najathakram/routeflow/pull/411) is DONE** —
+   merged `7e49b993` (2026-08-23), both Railway services deployed SUCCESS, prod migration
+   `20260831000000_add_msrp_pricing` applied and column-verified, **catalog v9 published**
+   (MSRP addon SKU live, prior version SUPERSEDED, no tenant re-pinned), post-deploy check
+   green. Remaining human steps: enable the `msrp` addon per tenant in platform-admin
+   (safe now that v9 is published) and exercise the flow on `routeflow-demo`.
+3. **PR-C (sales-agents engine) is NEXT and now UNBLOCKED** — plan at
+   **`.claude/pipeline/plans/2026-08-22-sales-agents-engine.md`**, committed `3dc23c5d` on
+   local branch `docs/plan-sales-agents-engine` (worktree `.claude/worktrees/pr-c-plan`,
+   unpushed). Its anchors are post-PR-B and are now on master; implement via dev-pipeline.
+4. **Client-2 feedback batch is IN FLIGHT** — recon complete, all 13 items root-caused and
+   verified; the map lives in memory `project_client2_feedback_batch_2026-08-22`
+   (doctrine = PR #413, merged 2026-08-23). Reserved migration slots: 0902 terms ·
+   0903 supplier-geocode.
 
 > 📌 **The parallel session's HANDOFF sections were rescued into git by this session
 > (2026-08-22).** Their §"IN FLIGHT (parallel session)" and §1b were living ONLY as an
@@ -109,7 +113,7 @@ Two fixes made by hand after the pipeline (it had deferred to the plan's "no API
 tests pass** · prettier clean. (2562 not 2568 — the extra 6 were the peer's
 `email-smtp-verify.spec.ts`, correctly no longer on this branch.)
 
-### PR-B (MSRP) — ✅ IMPLEMENTED + REVIEWED — [PR #411](https://github.com/najathakram/routeflow/pull/411) OPEN, NOT MERGED (2026-08-22)
+### PR-B (MSRP) — ✅ SHIPPED + LIVE — [PR #411](https://github.com/najathakram/routeflow/pull/411) merged `7e49b993` (2026-08-23)
 
 Branch `feat/msrp-on-invoices` in worktree `.claude/worktrees/msrp`. **Full work-package
 plan (5 WPs, with the exact resolver code and migration SQL):
@@ -140,15 +144,17 @@ empty scratch DB** in `routeflow_postgres` (3× `msrp numeric(10,2)` + nullable
 `pricingTier` verified; scratch dropped; stale `routeflow_dev` untouched). One flaky full-run
 had 4 uploads/compress failures under CPU contention — re-run green twice; not MSRP-related.
 
-> **Prod is untouched by PR-B.** The migration exists only as a file. Deploy runbook, in
-> order: (1) backup → `20260831000000_add_msrp_pricing` to prod via the standard
-> `prod-migrate.mjs` route **BEFORE the merge**; (2) `npm run db:publish:catalog:v9`
-> (idempotent, grandfathering-safe) **BEFORE enabling the msrp addon on any tenant** — the
-> addon-enabled-while-no-catalog-has-the-SKU window still 403s MSRP saves (verified: only
-> MSRP saves; ordinary edits omit the key); (3) merge → Railway deploy; (4) enable the
-> `msrp` addon per tenant in platform-admin. Browser exercise deferred: local dev DB is the
-> known-stale one, and preview tools can't target this worktree — covered instead by unit
-> specs + the review round; exercise on prod/demo after deploy.
+> **Deploy runbook EXECUTED 2026-08-23 (ship session):** (1) backup
+> `backups/pre-msrp-migration-2026-08-22.sql` via `railway ssh` pg_dump, validated
+> (11.7MB; 117 CREATE TABLE == 117 COPY == 117 `\.` terminators; "dump complete" marker);
+> (2) `20260831000000_add_msrp_pricing` applied via `prod-migrate.mjs` — 3× `msrp` columns
+>
+> - nullable `pricingTier` verified live; (3) `db:publish:catalog:v9` published — 9 addon
+>   SKUs incl. MSRP $0/mo, prior version SUPERSEDED, no tenant re-pinned; (4) merge → both
+>   Railway services SUCCESS → post-deploy check green. **Remaining:** (5) enable the `msrp`
+>   addon per tenant in platform-admin (safe now that v9 is published), then exercise on
+>   `routeflow-demo` — browser exercise was deferred at implementation time (stale local dev
+>   DB; preview tools can't target a worktree), covered so far by unit specs + review round.
 
 **Verified facts (already checked against the code — do not re-research):**
 
@@ -224,16 +230,16 @@ had 4 uploads/compress failures under CPU contention — re-run green twice; not
 > `prisma migrate dev` also HANGS in a non-interactive shell (it prompts); write the migration
 > SQL by hand and use `migrate deploy`.
 
-## 🚧 IN FLIGHT (parallel session, 2026-08-21/22) — SMTP instructions PR + web layout audit
+## ✅ LANDED (parallel session, 2026-08-21/22) — SMTP instructions PR + web layout audit
 
 > Separate session, separate branch. Does **not** touch the MSRP / sales-agents work above.
 > ⚠️ That session and this one share one checkout; branch switches under a running session are
 > the norm here, not a bug. Commit early, and read `git branch --show-current` before trusting
 > the working tree.
 
-### ✅ Done — PR #407, OPEN and unmerged on purpose
+### ✅ Done — PR #407, MERGED to master as `22bc672e` (2026-08-22)
 
-`fix/smtp-provider-instructions` (head `15c55301`) — **[PR #407](https://github.com/najathakram/routeflow/pull/407)**. CI was all green on `3a35722b`; re-running after the merge below.
+`fix/smtp-provider-instructions` (head `15c55301`) — **[PR #407](https://github.com/najathakram/routeflow/pull/407)**, shipped and live.
 
 > **Conflict with #408 — already resolved (2026-08-22).** #408 merged to master at 05:34 and #407
 > went `CONFLICTING`. **My fault, and worth learning from:** I staged `.claude/code-map/{api,web}.md`
