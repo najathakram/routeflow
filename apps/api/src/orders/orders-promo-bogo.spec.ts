@@ -55,6 +55,7 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 
 const customerPayload = {
   sub: "user-cust",
@@ -197,6 +198,14 @@ describe("OrdersService — BUY_N_GET_M (BOGO)", () => {
             settleOrderCreditsInTx: jest.fn().mockResolvedValue({ applied: 0, unapplied: 0 }),
             releaseOrderCreditsInTx: jest.fn().mockResolvedValue([]),
             previewOrderCreditRelease: jest.fn().mockResolvedValue([]),
+          },
+        },
+        {
+          provide: CommissionEngineService,
+          useValue: {
+            syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
+            syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
+            removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],

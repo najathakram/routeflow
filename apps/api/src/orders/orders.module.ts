@@ -13,6 +13,7 @@ import { AuthorizationsModule } from "../authorizations/authorizations.module";
 import { PromotionsModule } from "../promotions/promotions.module";
 import { MessagingModule } from "../messaging/messaging.module";
 import { CreditNotesModule } from "../credit-notes/credit-notes.module";
+import { CommissionsModule } from "../sales-agents/commissions.module";
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { CreditNotesModule } from "../credit-notes/credit-notes.module";
     PromotionsModule,
     MessagingModule,
     CreditNotesModule,
+    CommissionsModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService, ChangeRequestsService],

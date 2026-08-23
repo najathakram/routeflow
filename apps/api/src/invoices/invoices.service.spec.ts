@@ -33,6 +33,7 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { CheckStatus, InvoiceStatus, NotificationEvent } from "@prisma/client";
 import { computeLineSubtotal, roundMoney } from "../common/pricing";
 
@@ -82,10 +83,19 @@ describe("InvoicesService", () => {
     hasFlag: jest.fn().mockResolvedValue(false),
   };
 
+  const mockCommissionEngine = {
+    syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
+    syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
+    removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
+  };
+
   beforeEach(async () => {
     prisma = createMockPrisma();
     mockEntitlements.hasFlag.mockReset();
     mockEntitlements.hasFlag.mockResolvedValue(false);
+    mockCommissionEngine.syncInvoiceCommissionSafe.mockClear();
+    mockCommissionEngine.syncOrderInvoices.mockClear();
+    mockCommissionEngine.removeInvoiceCommission.mockClear();
     mockMessaging.notify.mockClear();
     mockMessaging.notifyEvent.mockClear();
     mockCreditNotes.autoApplyOldestCreditsInTx.mockClear();
@@ -133,6 +143,7 @@ describe("InvoicesService", () => {
         // flag.msrp defaults OFF so applyMsrpSnapshots is a no-op — the
         // pre-MSRP tests keep their exact write shapes (msrp stays null).
         { provide: EntitlementsService, useValue: mockEntitlements },
+        { provide: CommissionEngineService, useValue: mockCommissionEngine },
       ],
     }).compile();
 
@@ -1031,6 +1042,30 @@ describe("InvoicesService", () => {
       });
       await service.send("i1");
       expect(mockMessaging.notifyEvent).not.toHaveBeenCalled();
+    });
+
+    // WP4 — sales agents & commissions: send() is a hook site (accrual on issue).
+    it("calls syncInvoiceCommissionSafe once with the invoice id", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "i1",
+        orderId: null,
+        status: InvoiceStatus.DRAFT,
+        deliveryBatchId: null,
+      });
+      prisma.invoice.update.mockResolvedValue({
+        id: "i1",
+        invoiceNumber: "INV-1",
+        customerId: "c1",
+        status: InvoiceStatus.SENT,
+        total: 10,
+        dueDate: null,
+      });
+      await service.send("i1");
+      expect(mockCommissionEngine.syncInvoiceCommissionSafe).toHaveBeenCalledTimes(1);
+      expect(mockCommissionEngine.syncInvoiceCommissionSafe).toHaveBeenCalledWith(
+        "i1",
+        expect.anything(),
+      );
     });
   });
 

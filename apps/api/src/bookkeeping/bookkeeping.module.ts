@@ -9,6 +9,7 @@ import { AuthModule } from "../auth/auth.module";
 import { StorageModule } from "../storage/storage.module";
 import { VendorBillsModule } from "../vendor-bills/vendor-bills.module";
 import { SystemConfigModule } from "../system-config/system-config.module";
+import { CommissionsModule } from "../sales-agents/commissions.module";
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { SystemConfigModule } from "../system-config/system-config.module";
     StorageModule,
     VendorBillsModule,
     SystemConfigModule,
+    CommissionsModule,
     BullModule.registerQueue({ name: "invoices" }),
   ],
   controllers: [BookkeepingController],
