@@ -49,6 +49,7 @@ import {
 } from "@/lib/api/tracked-categories";
 import { sectionPickerOptions } from "@/lib/regulated-format";
 import { getTierPrice, cascadeTierPrices, perUnitPrice, type TierField } from "@/lib/pricing";
+import { unitsLabel } from "@/lib/stock-label";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { DecimalInput } from "@/components/MoneyInput";
@@ -991,6 +992,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
             name: product.name,
             unit: product.unit,
             currentStock,
+            unitsPerBox: product.unitsPerBox,
             averageCost: product.averageCost != null ? Number(product.averageCost) : null,
           }}
           onClose={() => setShowCostModal(false)}
@@ -1393,7 +1395,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                 <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
                   <span className="text-navy/70">On hand</span>
                   <span className="font-mono font-medium tabular-nums text-navy">
-                    {currentStock.toFixed(2)} {product.unit}
+                    {unitsLabel(currentStock, product.unitsPerBox, product.unit)}
                   </span>
                 </div>
                 {!product.parentProductId && (product.variants?.length ?? 0) > 0 && (
@@ -1405,7 +1407,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                       Unassigned stock
                     </span>
                     <span className="font-mono font-medium tabular-nums text-navy">
-                      {currentStock.toFixed(2)} {product.unit}
+                      {unitsLabel(currentStock, product.unitsPerBox, product.unit)}
                     </span>
                   </div>
                 )}

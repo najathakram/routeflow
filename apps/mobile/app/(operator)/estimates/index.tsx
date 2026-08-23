@@ -14,6 +14,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useEstimates, type Estimate } from "../../../lib/api/estimates";
 import { estimatePillFor } from "../../../lib/estimates-logic";
+import { fmtCalendarDate } from "../../../lib/format-date";
 
 // Mirrors the web estimates status filter (CONVERTED omitted, like web STATUS_OPTIONS).
 const FILTERS = [
@@ -109,9 +110,7 @@ function Row({ estimate, onPress }: { estimate: Estimate; onPress: () => void })
       <View style={styles.rowFoot}>
         <Text style={styles.total}>{fmtCurrency(estimate.total)}</Text>
         {estimate.expiresAt ? (
-          <Text style={styles.totalText}>
-            Valid to {new Date(estimate.expiresAt).toLocaleDateString()}
-          </Text>
+          <Text style={styles.totalText}>Valid to {fmtCalendarDate(estimate.expiresAt)}</Text>
         ) : null}
       </View>
     </Pressable>

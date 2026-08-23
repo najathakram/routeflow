@@ -67,7 +67,7 @@ import { InlineCreateProductModal } from "@/components/InlineCreateProductModal"
 import { ScanInvoiceModal } from "@/components/ScanInvoiceModal";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import Link from "next/link";
-import { fmt, fmtDate, todayIso } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, fmtDate, todayIso } from "@/lib/formatting";
 import { apiClient } from "@/lib/api-client";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 
@@ -364,7 +364,7 @@ function DuplicateBillBanner({
             <>
               <span className="font-semibold">
                 Already recorded as {duplicate.billNumber}
-                {seenOn ? ` on ${fmtDate(seenOn)}` : ""}.
+                {seenOn ? ` on ${fmtCalendarDate(seenOn)}` : ""}.
               </span>{" "}
               Creating it again would double stock and the amount owed.
             </>
@@ -1343,7 +1343,7 @@ function InventoryPurchasesTab() {
                         {(bill as any).purchaseOrder?.poNumber ?? "—"}
                       </td>
                       <td className="px-4 py-3 text-navy">
-                        {fmtDate(bill.billDate ?? bill.createdAt)}
+                        {fmtCalendarDate(bill.billDate ?? bill.createdAt)}
                       </td>
                       <td
                         className={cn(
@@ -1351,7 +1351,7 @@ function InventoryPurchasesTab() {
                           overdue ? "text-red-600 font-medium" : "text-navy",
                         )}
                       >
-                        {fmtDate(bill.dueDate)}
+                        {fmtCalendarDate(bill.dueDate)}
                         {overdue && (
                           <span className="ml-1.5 text-xs font-semibold text-red-500">Overdue</span>
                         )}
@@ -1919,7 +1919,7 @@ function OtherExpensesTab() {
                       />
                     </td>
                   )}
-                  <td className="px-5 py-3 text-navy/70">{fmtDate(e.date)}</td>
+                  <td className="px-5 py-3 text-navy/70">{fmtCalendarDate(e.date)}</td>
                   <td className="px-5 py-3 font-medium text-brand-600">
                     {e.category?.name ?? "—"}
                   </td>
@@ -2089,7 +2089,7 @@ function ExpenseDetailModal({
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-2xl font-semibold text-navy">{fmt(Number(expense.amount))}</p>
-            <p className="text-sm text-navy/70">{fmtDate(expense.date)}</p>
+            <p className="text-sm text-navy/70">{fmtCalendarDate(expense.date)}</p>
           </div>
           <Badge status={expense.status ?? "PENDING"} />
         </div>

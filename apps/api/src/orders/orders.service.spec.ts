@@ -1365,7 +1365,10 @@ describe("OrdersService", () => {
         }),
       );
       expect(invoices.createInvoiceFromOrder).toHaveBeenCalledTimes(1);
-      expect(invoices.createInvoiceFromOrder).toHaveBeenCalledWith("ord-1");
+      expect(invoices.createInvoiceFromOrder).toHaveBeenCalledWith("ord-1", undefined, {
+        dueDate: undefined,
+        terms: undefined,
+      });
       expect(invoices.send).toHaveBeenCalledWith("inv-1");
       expect(result).toEqual(expect.objectContaining({ id: "inv-1" }));
     });
@@ -1402,6 +1405,28 @@ describe("OrdersService", () => {
           }),
         }),
       );
+    });
+
+    // WP4 — the "New sale" screen's chosen Terms/Due Date must reach the invoice
+    // instead of silently being discarded in favor of the tenant default.
+    it("sale with an explicit dueDate threads it through to the created invoice", async () => {
+      const invoices = (service as any).invoicesService;
+      await service.createSale({ ...baseDto, dueDate: "2026-10-03", terms: "Net 60" }, user);
+
+      expect(invoices.createInvoiceFromOrder).toHaveBeenCalledWith("ord-1", undefined, {
+        dueDate: "2026-10-03",
+        terms: "Net 60",
+      });
+    });
+
+    it("sale without a dueDate leaves the tenant-default (+30) path unchanged", async () => {
+      const invoices = (service as any).invoicesService;
+      await service.createSale({ ...baseDto }, user);
+
+      expect(invoices.createInvoiceFromOrder).toHaveBeenCalledWith("ord-1", undefined, {
+        dueDate: undefined,
+        terms: undefined,
+      });
     });
   });
 

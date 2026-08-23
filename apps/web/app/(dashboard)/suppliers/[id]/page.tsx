@@ -32,6 +32,7 @@ import {
   type SupplierStatementRowType,
 } from "@/lib/api/supplier-payments";
 import { RecordSupplierPaymentModal } from "@/components/RecordSupplierPaymentModal";
+import { fmtCalendarDate } from "@/lib/formatting";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -40,6 +41,7 @@ function fmt(n?: number | null) {
   return `$${Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+/** Timeline timestamps (payments, credits). Calendar dates use `fmtCalendarDate`. */
 function fmtDate(s?: string | null) {
   if (!s) return "—";
   return new Date(s).toLocaleDateString("en-US", {
@@ -292,7 +294,7 @@ function BillRow({ bill }: { bill: VendorBill }) {
       <td className="px-5 py-3">
         <span className="font-mono text-sm text-navy">{bill.billNumber}</span>
       </td>
-      <td className="px-5 py-3 text-sm text-navy/70">{fmtDate(bill.billDate)}</td>
+      <td className="px-5 py-3 text-sm text-navy/70">{fmtCalendarDate(bill.billDate)}</td>
       <td className="px-5 py-3">
         <Badge variant={STATUS_VARIANTS[bill.status]} label={STATUS_LABELS[bill.status]} />
       </td>
@@ -335,7 +337,10 @@ function StatementRow({
         highlighted ? "bg-brand-50" : "hover:bg-surface-raised/40",
       )}
     >
-      <td className="px-5 py-3 text-sm text-navy/70">{fmtDate(row.date)}</td>
+      {/* BILL rows carry a calendar billDate (UTC midnight); payments/credits are real timestamps. */}
+      <td className="px-5 py-3 text-sm text-navy/70">
+        {row.type === "BILL" ? fmtCalendarDate(row.date) : fmtDate(row.date)}
+      </td>
       <td className="px-5 py-3">
         <Badge variant={STATEMENT_ROW_VARIANTS[row.type]} label={STATEMENT_ROW_LABELS[row.type]} />
       </td>

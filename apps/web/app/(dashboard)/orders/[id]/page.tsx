@@ -43,7 +43,7 @@ import {
   type CustomerPriceHistory,
 } from "@/lib/api/orders";
 import { describeCancelImpact } from "@/lib/cancel-impact";
-import { isInternalEmail } from "@/lib/formatting";
+import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import {
   describeChangeRequest,
   describeResolution,
@@ -3023,7 +3023,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                         <Badge status={inv.status as BadgeStatus} />
                         {inv.dueDate && (
                           <span className="text-xs text-navy/70">
-                            Due {new Date(inv.dueDate).toLocaleDateString()}
+                            Due {fmtCalendarDate(inv.dueDate)}
                           </span>
                         )}
                       </div>

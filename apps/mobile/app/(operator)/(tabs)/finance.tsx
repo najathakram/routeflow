@@ -17,6 +17,7 @@ import {
   type VendorBill,
   type VendorBillStatus,
 } from "../../../lib/api/vendor-bills";
+import { fmtCalendarDate } from "../../../lib/format-date";
 
 function formatCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -175,13 +176,7 @@ function BillRow({ bill, onPress }: { bill: VendorBill; onPress: () => void }) {
           {bill.supplier?.name ?? "Supplier"} {bill.billNumber ? `· ${bill.billNumber}` : ""}
         </Text>
         <Text style={styles.billSub} numberOfLines={1}>
-          {bill.billDate
-            ? new Date(bill.billDate).toLocaleDateString(undefined, {
-                month: "short",
-                day: "numeric",
-                year: "numeric",
-              })
-            : "No date"}
+          {bill.billDate ? fmtCalendarDate(bill.billDate, "short") : "No date"}
         </Text>
       </View>
       <View style={{ alignItems: "flex-end", gap: 4 }}>

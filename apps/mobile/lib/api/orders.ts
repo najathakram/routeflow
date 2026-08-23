@@ -302,6 +302,12 @@ export type CreateSaleItemInput =
  *    allows this path when the invoice-level discount is 0 (an invoice
  *    discount is silently dropped by `createInvoiceFromOrder`), so there is
  *    never a non-zero value to send.
+ *  - NO `terms` / `dueDate`: this screen's sale mode has no long-form Terms &
+ *    Conditions textarea (unlike web), and `saleModeGate` rule 4 makes the sale
+ *    path ineligible as soon as the operator touches Due date or Terms — so the
+ *    only due date there would ever be to send is the builder's hardcoded
+ *    Net-30 default, which would override the tenant's configured
+ *    `invoice.defaultTerms`. The server's default stays authoritative here.
  */
 export interface CreateSaleDto {
   customerId: string;

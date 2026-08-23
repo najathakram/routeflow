@@ -38,6 +38,7 @@ import {
 import { useApplyAdvancePayment, useCustomerAdvancePayments } from "../../../../lib/api/customers";
 import { useGetPaymentImageUrl } from "../../../../lib/api/payments";
 import { deriveInvoiceVariant } from "../../../../lib/invoice-pdf-variant";
+import { fmtCalendarDate } from "../../../../lib/format-date";
 import { isInternalEmail } from "../../../../lib/internal-email";
 import {
   canRecordPayment,
@@ -597,9 +598,7 @@ export default function InvoiceDetailScreen() {
               hitSlop={4}
             >
               <Text style={styles.due}>
-                {invoice.dueDate
-                  ? `Due ${new Date(invoice.dueDate).toLocaleDateString()}`
-                  : "Set due date"}
+                {invoice.dueDate ? `Due ${fmtCalendarDate(invoice.dueDate)}` : "Set due date"}
               </Text>
               <Ionicons name="pencil-outline" size={12} color={ios.label3} />
             </Pressable>
@@ -1243,7 +1242,7 @@ function ApplyCreditSheet({
                       </Text>
                       {cn.expiresAt ? (
                         <Text style={styles.creditMeta}>
-                          Expires {new Date(cn.expiresAt).toLocaleDateString()}
+                          Expires {fmtCalendarDate(cn.expiresAt)}
                         </Text>
                       ) : null}
                     </View>

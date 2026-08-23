@@ -25,6 +25,7 @@ import {
   useCreateInvoice,
   useUpdateInvoice,
   useCreateInvoiceFromOrder,
+  useInvoiceSettings,
   type CreateInvoiceItem,
 } from "@/lib/api/invoices";
 import { useCreateSale, useUninvoicedOrders } from "@/lib/api/orders";
@@ -83,6 +84,18 @@ function getDaysForTerms(terms: string): number | null {
 /** Current UTC calendar day — the bound the API applies to a backdated sale. */
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/** Add calendar days to a YYYY-MM-DD date, in UTC end to end. `new Date(iso)`
+ *  parses to UTC midnight, so shifting it with the LOCAL getters/setters loses
+ *  a day whenever the window crosses a DST start: in America/New_York
+ *  2026-03-01 + Net 30 came back as 2026-03-30 instead of 2026-03-31. Mirrors
+ *  mobile's `dueDateFor` (apps/mobile/lib/invoice-terms.ts). */
+function addDaysIso(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return iso;
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
 // ─── Customer search dropdown ─────────────────────────────────────────────────
@@ -668,11 +681,13 @@ export default function NewInvoicePage() {
   const [subject, setSubject] = React.useState("");
   const [terms, setTerms] = React.useState("");
   const [issueDate, setIssueDate] = React.useState(todayIso);
-  const [dueDate, setDueDate] = React.useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 30);
-    return d.toISOString().slice(0, 10);
-  });
+  // Provisional only — the seeding effect below replaces it with the tenant's
+  // configured default term as soon as /settings/invoice resolves, and submit
+  // refuses to post a due date that no term ever backed.
+  const [dueDate, setDueDate] = React.useState(() => addDaysIso(todayIso(), 30));
+  // Set when the operator types straight into the Due Date field: their exact
+  // date then wins over the tenant-default seed and over an issue-date change.
+  const dueDateEditedRef = React.useRef(false);
   const [items, setItems] = React.useState<LineItemState[]>([createEmptyItem()]);
   // Live cost/margin — the negotiation floor (pos-cost-roles-spec §1).
   const { data: marginConfig } = useMarginConfig();
@@ -721,6 +736,26 @@ export default function NewInvoicePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings]);
 
+  // Seed the Payment Terms dropdown — and the due date it drives — from the
+  // tenant's configured default (Settings → Invoicing, the same value the
+  // server's resolveDefaultTerms() applies). The composer posts its due date,
+  // so leaving this at the page's hardcoded +30 silently overrode a tenant
+  // configured for Net 15 / Due on Receipt on every sale. Seeds once, and
+  // never over a choice the operator already made.
+  const { data: invoiceSettings } = useInvoiceSettings();
+  const didSeedTermsRef = React.useRef(false);
+  React.useEffect(() => {
+    const configured = invoiceSettings?.defaultTerms;
+    if (didSeedTermsRef.current || !configured) return;
+    didSeedTermsRef.current = true;
+    if (terms || dueDateEditedRef.current) return;
+    const days = getDaysForTerms(configured);
+    if (days === null) return; // a term this page can't price — leave it to the server
+    setTerms(configured);
+    setDueDate(addDaysIso(issueDate, days));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoiceSettings]);
+
   const { data: customerPricesData } = useCustomerPrices(customer?.id);
   // Per-product PRICE resolved from the CustomerPrice TIER override through
   // the product's tier ladder. The old code read a nonexistent `specialPrice`
@@ -740,25 +775,34 @@ export default function NewInvoicePage() {
   // ── Auto-update due date when terms change ────────────────────────────────
 
   function handleTermsChange(t: string) {
+    // Picking a REAL term re-derives the due date, superseding any hand-typed
+    // one. Reverting to the "Select terms…" placeholder (value "") must keep
+    // the screen honest about what will be SAVED: a hand-typed date (edited
+    // ref) stays and keeps being posted; otherwise the display re-syncs to the
+    // tenant default the server will apply (`?? 30` mirrors the server's
+    // TERM_DAYS fallback), instead of showing a stale date from the previous
+    // pick that would silently not be saved.
     setTerms(t);
     const days = getDaysForTerms(t);
-    if (days !== null && issueDate) {
-      const d = new Date(issueDate);
-      d.setDate(d.getDate() + days);
-      setDueDate(d.toISOString().slice(0, 10));
+    if (days !== null) {
+      dueDateEditedRef.current = false;
+      if (issueDate) setDueDate(addDaysIso(issueDate, days));
+    } else if (!dueDateEditedRef.current && issueDate) {
+      const defaultDays = getDaysForTerms(invoiceSettings?.defaultTerms ?? "") ?? 30;
+      setDueDate(addDaysIso(issueDate, defaultDays));
     }
   }
 
   function handleIssueDateChange(d: string) {
     setIssueDate(d);
-    if (terms) {
-      const days = getDaysForTerms(terms);
-      if (days !== null && d) {
-        const due = new Date(d);
-        due.setDate(due.getDate() + days);
-        setDueDate(due.toISOString().slice(0, 10));
-      }
-    }
+    // Keep the due date anchored to the ISSUE date — a backdated sale runs its
+    // payment term from the sale date, not from today. A hand-typed due date is
+    // the operator's explicit choice, so it survives an issue-date change; when
+    // the dropdown is untouched, fall back to the tenant's configured default so
+    // a backdate still moves the due date (it used to keep the mount-time today+30).
+    if (dueDateEditedRef.current) return;
+    const days = getDaysForTerms(terms || (invoiceSettings?.defaultTerms ?? ""));
+    if (days !== null && d) setDueDate(addDaysIso(d, days));
   }
 
   // ── Calculations ────────────────────────────────────────────────────────────
@@ -1198,6 +1242,12 @@ export default function NewInvoicePage() {
         notes: notes.trim() || undefined,
         ...(adjustment < 0 ? { discountAmount: Math.abs(adjustment) } : {}),
         ...(backdatedTo ? { orderDate: backdatedTo } : {}),
+        // Only post a due date some term actually produced: the operator's
+        // pick, their hand-typed date, or the tenant default once it seeded.
+        // Otherwise this page's provisional +30 would override the server's
+        // resolveDefaultTerms() with a date nobody chose.
+        ...((terms || dueDateEditedRef.current) && dueDate ? { dueDate } : {}),
+        ...(termsText.trim() ? { terms: termsText.trim() } : {}),
         send,
       },
       {
@@ -1425,7 +1475,10 @@ export default function NewInvoicePage() {
                       type="date"
                       value={dueDate}
                       min={issueDate || undefined}
-                      onChange={(e) => setDueDate(e.target.value)}
+                      onChange={(e) => {
+                        dueDateEditedRef.current = true;
+                        setDueDate(e.target.value);
+                      }}
                       className={cn(
                         "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
                         errors.dueDate ? "border-danger" : "border-surface-border",
