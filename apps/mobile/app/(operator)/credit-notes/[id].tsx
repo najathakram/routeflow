@@ -28,6 +28,7 @@ import {
 } from "../../../lib/credit-notes-logic";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import { fmtCalendarDate } from "../../../lib/format-date";
 
 const OPEN_INVOICE_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
 
@@ -136,7 +137,7 @@ export default function CreditNoteDetailScreen() {
             ) : null}
             <Text style={styles.total}>{fmtCurrency(cn.amount)}</Text>
             <Text style={styles.dates}>
-              Issued {new Date(issued).toLocaleDateString()}
+              Issued {fmtCalendarDate(issued)}
               {cn.invoiceId ? " · Applies to invoice" : " · Applies to next invoice (auto)"}
             </Text>
             {/* The face amount alone reads as "untouched" after a partial
@@ -157,7 +158,7 @@ export default function CreditNoteDetailScreen() {
                 <View style={styles.balanceCell}>
                   <Text style={styles.balanceLabel}>{expired ? "Expired" : "Expires"}</Text>
                   <Text style={[styles.balanceValue, expired && styles.balanceExpired]}>
-                    {new Date(cn.expiresAt).toLocaleDateString()}
+                    {fmtCalendarDate(cn.expiresAt)}
                   </Text>
                 </View>
               ) : null}

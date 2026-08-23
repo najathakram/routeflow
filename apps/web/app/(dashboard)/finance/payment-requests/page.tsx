@@ -9,7 +9,7 @@ import {
   type PaymentRequest,
 } from "@/lib/api/payment-requests";
 import { useToast, EmptyState, Button, Badge, Modal, Textarea } from "@routeflow/ui/web";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -68,7 +68,7 @@ function AllocationPreview({ lines }: { lines: PaymentRequest["allocationPreview
           {lines.map((l) => (
             <tr key={l.invoiceId}>
               <td className="px-3 py-2 font-medium text-brand-600">{l.invoiceNumber}</td>
-              <td className="px-3 py-2 text-navy/70">{fmtDate(l.issueDate)}</td>
+              <td className="px-3 py-2 text-navy/70">{fmtCalendarDate(l.issueDate)}</td>
               <td className="px-3 py-2 text-right text-navy">{fmt(l.balanceDue)}</td>
               <td className="px-3 py-2 text-right font-medium text-navy">
                 {fmt(l.applied)}

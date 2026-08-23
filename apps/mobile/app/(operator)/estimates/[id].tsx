@@ -19,6 +19,7 @@ import {
 } from "../../../lib/estimates-logic";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import { fmtCalendarDate } from "../../../lib/format-date";
 
 function fmtCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -141,9 +142,7 @@ export default function EstimateDetailScreen() {
             <Text style={styles.total}>{fmtCurrency(estimate.total)}</Text>
             <Text style={styles.dates}>
               Issued {new Date(estimate.createdAt).toLocaleDateString()}
-              {estimate.expiresAt
-                ? ` · Valid to ${new Date(estimate.expiresAt).toLocaleDateString()}`
-                : ""}
+              {estimate.expiresAt ? ` · Valid to ${fmtCalendarDate(estimate.expiresAt)}` : ""}
             </Text>
           </View>
 

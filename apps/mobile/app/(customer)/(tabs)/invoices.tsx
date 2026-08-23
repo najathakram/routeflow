@@ -14,6 +14,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import { useState } from "react";
 import { useBuyerInvoices, type BuyerInvoice } from "../../../lib/api/buyer";
+import { fmtCalendarDate } from "../../../lib/format-date";
 
 const FILTERS = [
   { id: "ALL", label: "All" },
@@ -98,13 +99,7 @@ export default function CustomerInvoicesScreen() {
 
 function InvoiceRow({ invoice, onPress }: { invoice: BuyerInvoice; onPress: () => void }) {
   const p = invoicePill(invoice.status);
-  const dateLabel = invoice.issueDate
-    ? new Date(invoice.issueDate).toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      })
-    : "";
+  const dateLabel = invoice.issueDate ? fmtCalendarDate(invoice.issueDate, "short") : "";
   const amountDue = Number(invoice.amountDue ?? invoice.total) || 0;
 
   return (

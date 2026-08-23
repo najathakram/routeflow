@@ -108,10 +108,23 @@ export function formatMoney(value: unknown): string {
   return USD_FORMAT.format(Number.isFinite(n) ? n : 0);
 }
 
-/** Format a date as "July 14, 2026" (invoice-email style); "" when absent/invalid. */
+/**
+ * Format a date as "July 14, 2026" (invoice-email style); "" when absent/invalid.
+ *
+ * Invoice calendar dates (issueDate/dueDate/etc.) are stored as UTC-midnight
+ * instants. `toLocaleDateString` without an explicit `timeZone` reads the
+ * *local* calendar components — which renders UTC midnight of day D as D-1 for
+ * any negative-UTC-offset server/reader. Format the UTC components directly so
+ * the printed day never shifts with process/reader timezone.
+ */
 export function formatDate(value: Date | string | null | undefined): string {
   if (!value) return "";
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  return d.toLocaleDateString("en-US", {
+    timeZone: "UTC",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
 }

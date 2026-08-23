@@ -19,12 +19,45 @@ export function fmtShort(n: number): string {
   return fmt(n);
 }
 
-/** Format an ISO date string as "Mar 30, 2026". Returns "\u2014" for null/invalid. */
+/**
+ * Format a real timestamp (`createdAt`, `paidAt`, `settledAt`, …) as "Mar 30, 2026"
+ * in the VIEWER'S LOCAL timezone. Returns "\u2014" for null/invalid.
+ *
+ * For a calendar date stored at UTC midnight (`issueDate`, `dueDate`, `billDate`,
+ * `expiresAt`, …) use `fmtCalendarDate` instead — local formatting renders UTC
+ * midnight as the PREVIOUS day for any negative-UTC-offset viewer.
+ */
 export function fmtDate(d?: string | null): string {
   if (!d) return "\u2014";
   const dt = new Date(d);
   if (isNaN(dt.getTime())) return "\u2014";
   return dt.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+/**
+ * Format a CALENDAR date as "Mar 30, 2026". Returns "\u2014" for null/invalid.
+ *
+ * Calendar dates (issueDate, dueDate, billDate, expiresAt, …) are stored at UTC
+ * midnight — the meaningful part is the YYYY-MM-DD, not a moment in time. Formatting
+ * them in the viewer's local timezone would render UTC midnight as the PREVIOUS day
+ * for any negative-UTC-offset viewer (all of the Americas), so we format the UTC
+ * calendar components directly via `timeZone: "UTC"`.
+ *
+ * Do NOT use this for real timestamps (`createdAt`, `paidAt`, `settledAt`, `startedAt`,
+ * …) — those carry a meaningful time-of-day and must keep rendering in local time,
+ * otherwise an evening event lands on the next calendar day. Mirrors `fmtCalendarDate`
+ * in apps/mobile/lib/format-date.ts.
+ */
+export function fmtCalendarDate(d?: string | null): string {
+  if (!d) return "\u2014";
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return "\u2014";
+  return dt.toLocaleDateString("en-US", {
+    timeZone: "UTC",
     month: "short",
     day: "numeric",
     year: "numeric",

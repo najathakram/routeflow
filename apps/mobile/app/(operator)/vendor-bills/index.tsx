@@ -19,6 +19,7 @@ import {
   type VendorBill,
   type VendorBillStatus,
 } from "../../../lib/api/vendor-bills";
+import { fmtCalendarDate } from "../../../lib/format-date";
 
 const FILTERS = [
   { id: "ALL", label: "All" },
@@ -139,15 +140,9 @@ function BillRow({ bill, onPress }: { bill: VendorBill; onPress: () => void }) {
             </Text>
           ) : null}
           <Text style={styles.rowSub} numberOfLines={1}>
-            {bill.billDate
-              ? new Date(bill.billDate).toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })
-              : "No date"}
+            {bill.billDate ? fmtCalendarDate(bill.billDate, "short") : "No date"}
             {bill.dueDate
-              ? ` · Due ${new Date(bill.dueDate).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
+              ? ` · Due ${new Date(bill.dueDate).toLocaleDateString(undefined, { timeZone: "UTC", month: "short", day: "numeric" })}`
               : ""}
           </Text>
         </View>

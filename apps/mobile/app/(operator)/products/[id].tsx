@@ -31,6 +31,7 @@ import { productSalesSummaryLine, productSaleRowTarget } from "../../../lib/prod
 import { useHasAddon, TOBACCO_ADDON } from "../../../lib/api/tobacco";
 import { showToast } from "../../../lib/toast";
 import { confirm, chooseAction } from "../../../lib/confirm";
+import { fmtCalendarDate } from "../../../lib/format-date";
 import { VariantSplitSheet } from "../../../components/VariantSplitSheet";
 
 function fmtCurrency(n: number | string | undefined | null): string {
@@ -528,11 +529,7 @@ function SaleRow({
   bordered?: boolean;
   onPress: () => void;
 }) {
-  const date = new Date(line.date).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  const date = fmtCalendarDate(line.date, "short");
   // Never re-derive money — qty/unitPrice/lineTotal render exactly as the
   // server sent them; only the boxes+pieces split goes through the shared
   // formatter (mobile mirror of computeLineSubtotal's proration).

@@ -57,7 +57,7 @@ import {
 import { cn, useToast, type ToastVariant } from "@routeflow/ui/web";
 import Link from "next/link";
 import { useTransactions, useRecordPayment, type Transaction } from "@/lib/api/bookkeeping";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 
 const CHART_COLORS = [
@@ -718,7 +718,7 @@ function InvoiceDetailsReport({
           ) : (
             rows.map((r) => (
               <tr key={r.id} className="hover:bg-surface-raised/50">
-                <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.issueDate)}</td>
+                <td className="px-4 py-2.5 text-navy/70">{fmtCalendarDate(r.issueDate)}</td>
                 <td className="px-4 py-2.5">
                   <Link
                     href={`/invoices/${r.id}`}
@@ -993,8 +993,8 @@ function ArAgingDetailsReport({
         ) : (
           rows.map((r) => (
             <tr key={r.id} className="cursor-pointer hover:bg-surface-raised/50">
-              <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.date)}</td>
-              <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.dueDate)}</td>
+              <td className="px-4 py-2.5 text-navy/70">{fmtCalendarDate(r.date)}</td>
+              <td className="px-4 py-2.5 text-navy/70">{fmtCalendarDate(r.dueDate)}</td>
               <td className="px-4 py-2.5">
                 <Link
                   href={`/invoices/${r.id}`}
@@ -1094,7 +1094,7 @@ function EstimateDetailsReport({ from, to }: { from?: string; to?: string }) {
                 <td className="px-4 py-2.5">
                   <StatusBadge status={r.status} />
                 </td>
-                <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.date)}</td>
+                <td className="px-4 py-2.5 text-navy/70">{fmtCalendarDate(r.date)}</td>
                 <td
                   className={cn(
                     "px-4 py-2.5 text-sm",
@@ -1103,7 +1103,7 @@ function EstimateDetailsReport({ from, to }: { from?: string; to?: string }) {
                       : "text-navy",
                   )}
                 >
-                  {fmtDate(r.expiresAt)}
+                  {fmtCalendarDate(r.expiresAt)}
                 </td>
                 <td className="px-4 py-2.5 font-medium text-brand-600">{r.estimateNumber}</td>
                 <td className="px-4 py-2.5 text-navy">{r.customerName}</td>
@@ -1443,7 +1443,7 @@ function TimeToGetPaidReport({ from, to }: { from?: string; to?: string }) {
                   </Link>
                 </td>
                 <td className="px-4 py-2.5 text-navy">{r.customer?.businessName}</td>
-                <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.issueDate)}</td>
+                <td className="px-4 py-2.5 text-navy/70">{fmtCalendarDate(r.issueDate)}</td>
                 <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.paidAt)}</td>
                 <td className="px-4 py-2.5 text-right text-navy">{r.daysToPayment ?? "\u2014"}</td>
                 <td className="px-4 py-2.5 text-right font-semibold text-navy">{fmt(r.total)}</td>
@@ -1509,7 +1509,7 @@ function ExpenseDetailsReport({
           ) : (
             rows.map((r) => (
               <tr key={r.id} className="hover:bg-surface-raised/50">
-                <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.date)}</td>
+                <td className="px-4 py-2.5 text-navy/70">{fmtCalendarDate(r.date)}</td>
                 <td className="px-4 py-2.5 font-medium text-navy">{r.category?.name}</td>
                 <td className="px-4 py-2.5 text-navy/70">{r.supplier?.name ?? "\u2014"}</td>
                 <td className="px-4 py-2.5 text-navy/70 max-w-xs truncate">
