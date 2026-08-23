@@ -166,7 +166,7 @@ export default function FinanceDashboardPage() {
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
         <div className="shrink">
-          <h1 className="text-2xl font-bold text-navy">Receivables Overview</h1>
+          <h2 className="text-2xl font-bold text-navy">Receivables Overview</h2>
           <p className="mt-1 text-sm text-navy/70">
             One finance home, AR position, aging and collections.
           </p>

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "mappedSha": "22bc672e",
-  "generatedAt": "2026-08-23T00:00:00.000Z",
+  "mappedSha": "80e16da8",
+  "generatedAt": "2026-08-23T00:20:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 888,
   "notes": "BUYER EMAIL VERIFICATION (2026-08-20, shipped as PR #386): closed the #378 residual exposure - requestSeller auto-connect now ALSO requires BuyerAccount.emailVerified (attacker registering under a victim email lands in seller review). New model BuyerEmailVerificationToken + migration 20260824000000_add_buyer_email_verification (grandfathers ALL pre-existing accounts to verified - flag was write-only before). verify-email/resend-verification endpoints, web /buyer/verify-email page (explicit click, anti-scanner) + portal VerifyEmailBanner, Google sign-in attests its own mailbox, mobile connect toast shows server message. || History in CHANGELOG.md (this directory; one dated bullet per session, newest first). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."

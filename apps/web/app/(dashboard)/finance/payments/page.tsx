@@ -559,7 +559,7 @@ export default function FinancePaymentsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-navy">Payments Received</h1>
+          <h2 className="text-xl font-semibold text-navy">Payments Received</h2>
           <p className="text-sm text-navy/70">All payments recorded against invoices</p>
         </div>
         <button
@@ -691,169 +691,177 @@ export default function FinancePaymentsPage() {
             <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-500 border-t-transparent" />
           </div>
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-surface-border bg-surface-raised">
-                <th
-                  onClick={() => toggleSort("paidAt")}
-                  className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
-                >
-                  Date <SortIcon col="paidAt" sortBy={sortBy} sortDir={sortDir} />
-                </th>
-                <th
-                  onClick={() => toggleSort("settledAt")}
-                  title={BANK_DATE_HELP}
-                  className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
-                >
-                  Bank date <SortIcon col="settledAt" sortBy={sortBy} sortDir={sortDir} />
-                </th>
-                <th
-                  onClick={() => toggleSort("paymentNumber")}
-                  className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
-                >
-                  Payment # <SortIcon col="paymentNumber" sortBy={sortBy} sortDir={sortDir} />
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Invoice(s)</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
-                <th
-                  onClick={() => toggleSort("method")}
-                  className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
-                >
-                  Mode <SortIcon col="method" sortBy={sortBy} sortDir={sortDir} />
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Reference</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
-                <th
-                  onClick={() => toggleSort("amount")}
-                  className="px-4 py-3 text-right text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
-                >
-                  Amount <SortIcon col="amount" sortBy={sortBy} sortDir={sortDir} />
-                </th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-surface-border">
-              {payments.length === 0 && (
-                <tr>
-                  <td colSpan={10} className="p-0">
-                    {search || method || status || dateFrom || dateTo || customerId ? (
-                      <EmptyState
-                        variant="invoices"
-                        title="No matching payments"
-                        description="No payments match your current search and filters."
-                        action={
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => {
-                              setSearch("");
-                              setMethod("");
-                              setStatus("");
-                              setDateFrom("");
-                              setDateTo("");
-                              setCustomerId("");
-                            }}
-                          >
-                            Clear filters
-                          </Button>
-                        }
-                      />
-                    ) : (
-                      <EmptyState
-                        variant="invoices"
-                        title="No payments yet"
-                        description="Record a payment to mark invoices as paid and track receipts."
-                        action={
-                          <Button size="sm" onClick={() => setShowModal(true)}>
-                            Record payment
-                          </Button>
-                        }
-                      />
-                    )}
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-surface-border bg-surface-raised">
+                  <th
+                    onClick={() => toggleSort("paidAt")}
+                    className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                  >
+                    Date <SortIcon col="paidAt" sortBy={sortBy} sortDir={sortDir} />
+                  </th>
+                  <th
+                    onClick={() => toggleSort("settledAt")}
+                    title={BANK_DATE_HELP}
+                    className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                  >
+                    Bank date <SortIcon col="settledAt" sortBy={sortBy} sortDir={sortDir} />
+                  </th>
+                  <th
+                    onClick={() => toggleSort("paymentNumber")}
+                    className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                  >
+                    Payment # <SortIcon col="paymentNumber" sortBy={sortBy} sortDir={sortDir} />
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">
+                    Invoice(s)
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
+                  <th
+                    onClick={() => toggleSort("method")}
+                    className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                  >
+                    Mode <SortIcon col="method" sortBy={sortBy} sortDir={sortDir} />
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">
+                    Reference
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
+                  <th
+                    onClick={() => toggleSort("amount")}
+                    className="px-4 py-3 text-right text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                  >
+                    Amount <SortIcon col="amount" sortBy={sortBy} sortDir={sortDir} />
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Actions</th>
                 </tr>
-              )}
-              {payments.map((p) => (
-                <tr
-                  key={p.id}
-                  onClick={() => router.push(`/finance/payments/${p.id}`)}
-                  className={`cursor-pointer hover:bg-surface-raised/50 transition-colors ${p.status === "VOID" ? "opacity-50" : ""}`}
-                >
-                  <td className="px-4 py-3 text-navy">{fmtDate(p.paidAt ?? p.createdAt)}</td>
-                  <td className="px-4 py-3 text-navy/70">
-                    {p.settledAt ? fmtDate(p.settledAt) : "—"}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-navy">
-                    {p.paymentNumber ?? "—"}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/invoices/${p.invoice.id}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="font-medium text-brand-600 hover:underline"
-                    >
-                      {p.invoice.invoiceNumber}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-navy">{p.invoice.customer?.businessName ?? "—"}</td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${METHOD_COLORS[p.method] ?? "bg-surface-raised text-navy/70"}`}
-                    >
-                      {METHOD_LABELS[p.method] ?? p.method}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-navy/70">
-                    <div className="flex items-center gap-1.5">
-                      {p.imageKey && (
-                        <span title="Has receipt image" className="inline-flex shrink-0">
-                          <Paperclip className="h-3.5 w-3.5 text-navy/50" />
-                        </span>
+              </thead>
+              <tbody className="divide-y divide-surface-border">
+                {payments.length === 0 && (
+                  <tr>
+                    <td colSpan={10} className="p-0">
+                      {search || method || status || dateFrom || dateTo || customerId ? (
+                        <EmptyState
+                          variant="invoices"
+                          title="No matching payments"
+                          description="No payments match your current search and filters."
+                          action={
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => {
+                                setSearch("");
+                                setMethod("");
+                                setStatus("");
+                                setDateFrom("");
+                                setDateTo("");
+                                setCustomerId("");
+                              }}
+                            >
+                              Clear filters
+                            </Button>
+                          }
+                        />
+                      ) : (
+                        <EmptyState
+                          variant="invoices"
+                          title="No payments yet"
+                          description="Record a payment to mark invoices as paid and track receipts."
+                          action={
+                            <Button size="sm" onClick={() => setShowModal(true)}>
+                              Record payment
+                            </Button>
+                          }
+                        />
                       )}
-                      <span>{p.reference ?? "—"}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge status={(p.status ?? "PAID") as "PAID" | "DRAFT" | "VOID"} />
-                  </td>
-                  <td className="px-4 py-3 text-right font-semibold text-success">
-                    {fmt(p.amount)}
-                  </td>
-                  <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
-                    <div className="relative group inline-block">
-                      <button className="rounded-lg border border-surface-border px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised">
-                        ⋮
-                      </button>
-                      <div className="absolute right-0 top-7 z-10 hidden group-focus-within:block bg-white border border-surface-border rounded-lg shadow-dropdown min-w-[140px] py-1">
-                        <button
-                          onClick={() => router.push(`/finance/payments/${p.id}`)}
-                          className="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface-raised"
-                        >
-                          View Receipt
-                        </button>
-                        <Link
-                          href={`/invoices/${p.invoice.id}`}
-                          className="block px-3 py-1.5 text-sm hover:bg-surface-raised"
-                        >
-                          View Invoice
-                        </Link>
-                        {p.status !== "VOID" && (
-                          <button
-                            onClick={() =>
-                              setVoidConfirm({ invoiceId: p.invoice.id, paymentId: p.id })
-                            }
-                            className="block w-full px-3 py-1.5 text-left text-sm text-danger hover:bg-danger-bg"
-                          >
-                            Void
-                          </button>
+                    </td>
+                  </tr>
+                )}
+                {payments.map((p) => (
+                  <tr
+                    key={p.id}
+                    onClick={() => router.push(`/finance/payments/${p.id}`)}
+                    className={`cursor-pointer hover:bg-surface-raised/50 transition-colors ${p.status === "VOID" ? "opacity-50" : ""}`}
+                  >
+                    <td className="px-4 py-3 text-navy">{fmtDate(p.paidAt ?? p.createdAt)}</td>
+                    <td className="px-4 py-3 text-navy/70">
+                      {p.settledAt ? fmtDate(p.settledAt) : "—"}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-navy">
+                      {p.paymentNumber ?? "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Link
+                        href={`/invoices/${p.invoice.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="font-medium text-brand-600 hover:underline"
+                      >
+                        {p.invoice.invoiceNumber}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3 text-navy">
+                      {p.invoice.customer?.businessName ?? "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${METHOD_COLORS[p.method] ?? "bg-surface-raised text-navy/70"}`}
+                      >
+                        {METHOD_LABELS[p.method] ?? p.method}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-navy/70">
+                      <div className="flex items-center gap-1.5">
+                        {p.imageKey && (
+                          <span title="Has receipt image" className="inline-flex shrink-0">
+                            <Paperclip className="h-3.5 w-3.5 text-navy/50" />
+                          </span>
                         )}
+                        <span>{p.reference ?? "—"}</span>
                       </div>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge status={(p.status ?? "PAID") as "PAID" | "DRAFT" | "VOID"} />
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold text-success">
+                      {fmt(p.amount)}
+                    </td>
+                    <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                      <div className="relative group inline-block">
+                        <button className="rounded-lg border border-surface-border px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised">
+                          ⋮
+                        </button>
+                        <div className="absolute right-0 top-7 z-10 hidden group-focus-within:block bg-white border border-surface-border rounded-lg shadow-dropdown min-w-[140px] py-1">
+                          <button
+                            onClick={() => router.push(`/finance/payments/${p.id}`)}
+                            className="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface-raised"
+                          >
+                            View Receipt
+                          </button>
+                          <Link
+                            href={`/invoices/${p.invoice.id}`}
+                            className="block px-3 py-1.5 text-sm hover:bg-surface-raised"
+                          >
+                            View Invoice
+                          </Link>
+                          {p.status !== "VOID" && (
+                            <button
+                              onClick={() =>
+                                setVoidConfirm({ invoiceId: p.invoice.id, paymentId: p.id })
+                              }
+                              className="block w-full px-3 py-1.5 text-left text-sm text-danger hover:bg-danger-bg"
+                            >
+                              Void
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 

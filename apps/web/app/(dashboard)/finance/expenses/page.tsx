@@ -1202,198 +1202,200 @@ function InventoryPurchasesTab() {
 
       {/* Table */}
       <div className="overflow-hidden rounded-lg border border-surface-border">
-        <table className="w-full text-sm">
-          <thead className="border-b border-surface-border bg-surface-raised">
-            <tr>
-              <th className="w-10 px-4 py-3">
-                <input
-                  type="checkbox"
-                  checked={allOnPageSelected}
-                  onChange={toggleSelectAll}
-                  className="h-4 w-4 rounded border-surface-border text-brand-500 accent-brand-500"
-                />
-              </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Bill #</th>
-              <th
-                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
-                onClick={() => toggleSort("supplier")}
-              >
-                Supplier <SortIcon col="supplier" />
-              </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">PO #</th>
-              <th
-                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
-                onClick={() => toggleSort("billDate")}
-              >
-                Bill Date <SortIcon col="billDate" />
-              </th>
-              <th
-                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
-                onClick={() => toggleSort("dueDate")}
-              >
-                Due Date <SortIcon col="dueDate" />
-              </th>
-              <th
-                className="px-4 py-3 text-right text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
-                onClick={() => toggleSort("total")}
-              >
-                Total <SortIcon col="total" />
-              </th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Paid</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Balance</th>
-              <th
-                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
-                onClick={() => toggleSort("status")}
-              >
-                Status <SortIcon col="status" />
-              </th>
-              <th className="w-10 px-3 py-3" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-surface-border bg-white">
-            {isLoading ? (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b border-surface-border bg-surface-raised">
               <tr>
-                <td colSpan={11} className="px-4 py-12 text-center">
-                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
-                </td>
+                <th className="w-10 px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={allOnPageSelected}
+                    onChange={toggleSelectAll}
+                    className="h-4 w-4 rounded border-surface-border text-brand-500 accent-brand-500"
+                  />
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Bill #</th>
+                <th
+                  className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                  onClick={() => toggleSort("supplier")}
+                >
+                  Supplier <SortIcon col="supplier" />
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">PO #</th>
+                <th
+                  className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                  onClick={() => toggleSort("billDate")}
+                >
+                  Bill Date <SortIcon col="billDate" />
+                </th>
+                <th
+                  className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                  onClick={() => toggleSort("dueDate")}
+                >
+                  Due Date <SortIcon col="dueDate" />
+                </th>
+                <th
+                  className="px-4 py-3 text-right text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                  onClick={() => toggleSort("total")}
+                >
+                  Total <SortIcon col="total" />
+                </th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Paid</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Balance</th>
+                <th
+                  className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                  onClick={() => toggleSort("status")}
+                >
+                  Status <SortIcon col="status" />
+                </th>
+                <th className="w-10 px-3 py-3" />
               </tr>
-            ) : isError ? (
-              <tr>
-                <td colSpan={11} className="px-4 py-12 text-center text-sm text-danger">
-                  Failed to load. Please try again.
-                </td>
-              </tr>
-            ) : bills.length === 0 ? (
-              <tr>
-                <td colSpan={11} className="p-0">
-                  {search || statusFilter || dateFrom || dateTo ? (
-                    <EmptyState
-                      variant="data"
-                      title="No matching purchases"
-                      description="No inventory purchases match your current search and filters."
-                      action={
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => {
-                            setSearch("");
-                            setStatusFilter("");
-                            setDateFrom("");
-                            setDateTo("");
-                            setPage(1);
-                          }}
-                        >
-                          Clear filters
-                        </Button>
-                      }
-                    />
-                  ) : (
-                    <EmptyState
-                      variant="data"
-                      title="No purchases yet"
-                      description="Record an inventory purchase to track supplier bills and expenses."
-                      action={
-                        <Button size="sm" onClick={() => setIsCreateOpen(true)}>
-                          New purchase
-                        </Button>
-                      }
-                    />
-                  )}
-                </td>
-              </tr>
-            ) : (
-              sortedBills.map((bill: VendorBill) => {
-                const overdue = isOverdue(bill);
-                return (
-                  <tr
-                    key={bill.id}
-                    onClick={() => router.push(`/vendor-bills/${bill.id}`)}
-                    className={cn(
-                      "cursor-pointer transition-colors hover:bg-surface-raised",
-                      overdue && "border-l-4 border-l-red-400",
-                      selectedBills.has(bill.id) && "bg-brand-50",
-                    )}
-                  >
-                    <td className="w-10 px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={selectedBills.has(bill.id)}
-                        onChange={() => toggleSelect(bill)}
-                        className="h-4 w-4 rounded border-surface-border text-brand-500 accent-brand-500"
-                      />
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">
-                      {bill.billNumber}
-                      {bill.status === "DRAFT" &&
-                        ((bill.items ?? []).length === 0 ||
-                          (bill.items ?? []).some((i) => !i.productId)) && (
-                          <span
-                            title="No items or unmapped lines — receiving won't update inventory costs"
-                            className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
+            </thead>
+            <tbody className="divide-y divide-surface-border bg-white">
+              {isLoading ? (
+                <tr>
+                  <td colSpan={11} className="px-4 py-12 text-center">
+                    <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
+                  </td>
+                </tr>
+              ) : isError ? (
+                <tr>
+                  <td colSpan={11} className="px-4 py-12 text-center text-sm text-danger">
+                    Failed to load. Please try again.
+                  </td>
+                </tr>
+              ) : bills.length === 0 ? (
+                <tr>
+                  <td colSpan={11} className="p-0">
+                    {search || statusFilter || dateFrom || dateTo ? (
+                      <EmptyState
+                        variant="data"
+                        title="No matching purchases"
+                        description="No inventory purchases match your current search and filters."
+                        action={
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => {
+                              setSearch("");
+                              setStatusFilter("");
+                              setDateFrom("");
+                              setDateTo("");
+                              setPage(1);
+                            }}
                           >
-                            needs items
-                          </span>
-                        )}
-                    </td>
-                    <td className="px-4 py-3 font-medium text-navy">
-                      {bill.supplier?.name ?? "—"}
-                    </td>
-                    <td className="px-4 py-3 text-navy font-mono text-xs">
-                      {(bill as any).purchaseOrder?.poNumber ?? "—"}
-                    </td>
-                    <td className="px-4 py-3 text-navy">
-                      {fmtDate(bill.billDate ?? bill.createdAt)}
-                    </td>
-                    <td
+                            Clear filters
+                          </Button>
+                        }
+                      />
+                    ) : (
+                      <EmptyState
+                        variant="data"
+                        title="No purchases yet"
+                        description="Record an inventory purchase to track supplier bills and expenses."
+                        action={
+                          <Button size="sm" onClick={() => setIsCreateOpen(true)}>
+                            New purchase
+                          </Button>
+                        }
+                      />
+                    )}
+                  </td>
+                </tr>
+              ) : (
+                sortedBills.map((bill: VendorBill) => {
+                  const overdue = isOverdue(bill);
+                  return (
+                    <tr
+                      key={bill.id}
+                      onClick={() => router.push(`/vendor-bills/${bill.id}`)}
                       className={cn(
-                        "px-4 py-3",
-                        overdue ? "text-red-600 font-medium" : "text-navy",
+                        "cursor-pointer transition-colors hover:bg-surface-raised",
+                        overdue && "border-l-4 border-l-red-400",
+                        selectedBills.has(bill.id) && "bg-brand-50",
                       )}
                     >
-                      {fmtDate(bill.dueDate)}
-                      {overdue && (
-                        <span className="ml-1.5 text-xs font-semibold text-red-500">Overdue</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-right font-medium text-navy">
-                      {fmt(Number(bill.totalOwed ?? 0))}
-                    </td>
-                    <td className="px-4 py-3 text-right text-navy">
-                      {fmt(Number(bill.totalPaid ?? 0))}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {(() => {
-                        const bal = Math.max(
-                          0,
-                          Number(bill.totalOwed ?? 0) - Number(bill.totalPaid ?? 0),
-                        );
-                        return (
-                          <span
-                            className={cn("font-medium", bal > 0 ? "text-danger" : "text-navy")}
-                          >
-                            {fmt(bal)}
-                          </span>
-                        );
-                      })()}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge status={bill.status} />
-                    </td>
-                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        title="View bill"
-                        onClick={() => router.push(`/vendor-bills/${bill.id}`)}
-                        className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                      <td className="w-10 px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedBills.has(bill.id)}
+                          onChange={() => toggleSelect(bill)}
+                          className="h-4 w-4 rounded border-surface-border text-brand-500 accent-brand-500"
+                        />
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">
+                        {bill.billNumber}
+                        {bill.status === "DRAFT" &&
+                          ((bill.items ?? []).length === 0 ||
+                            (bill.items ?? []).some((i) => !i.productId)) && (
+                            <span
+                              title="No items or unmapped lines — receiving won't update inventory costs"
+                              className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
+                            >
+                              needs items
+                            </span>
+                          )}
+                      </td>
+                      <td className="px-4 py-3 font-medium text-navy">
+                        {bill.supplier?.name ?? "—"}
+                      </td>
+                      <td className="px-4 py-3 text-navy font-mono text-xs">
+                        {(bill as any).purchaseOrder?.poNumber ?? "—"}
+                      </td>
+                      <td className="px-4 py-3 text-navy">
+                        {fmtDate(bill.billDate ?? bill.createdAt)}
+                      </td>
+                      <td
+                        className={cn(
+                          "px-4 py-3",
+                          overdue ? "text-red-600 font-medium" : "text-navy",
+                        )}
                       >
-                        <Eye className="h-4 w-4" />
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+                        {fmtDate(bill.dueDate)}
+                        {overdue && (
+                          <span className="ml-1.5 text-xs font-semibold text-red-500">Overdue</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right font-medium text-navy">
+                        {fmt(Number(bill.totalOwed ?? 0))}
+                      </td>
+                      <td className="px-4 py-3 text-right text-navy">
+                        {fmt(Number(bill.totalPaid ?? 0))}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {(() => {
+                          const bal = Math.max(
+                            0,
+                            Number(bill.totalOwed ?? 0) - Number(bill.totalPaid ?? 0),
+                          );
+                          return (
+                            <span
+                              className={cn("font-medium", bal > 0 ? "text-danger" : "text-navy")}
+                            >
+                              {fmt(bal)}
+                            </span>
+                          );
+                        })()}
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge status={bill.status} />
+                      </td>
+                      <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          title="View bill"
+                          onClick={() => router.push(`/vendor-bills/${bill.id}`)}
+                          className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Pagination */}

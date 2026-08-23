@@ -1978,9 +1978,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="mono text-2xl font-bold tracking-[-0.01em] text-navy">
+            <h2 className="mono text-2xl font-bold tracking-[-0.01em] text-navy">
               {order.orderNumber}
-            </h1>
+            </h2>
             {order.urgent && (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-danger-bg px-2.5 py-1 text-xs font-semibold text-danger">
                 <AlertTriangle className="h-3.5 w-3.5" />

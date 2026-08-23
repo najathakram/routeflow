@@ -391,7 +391,7 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-bold text-navy">{cn.creditNoteNumber}</h1>
+          <h2 className="text-2xl font-bold text-navy">{cn.creditNoteNumber}</h2>
           <Badge status={status} />
           {cn.autoApplied && (
             <span className="inline-flex items-center gap-1 rounded-full bg-brand-500/10 px-2 py-0.5 text-[11px] font-medium text-brand-600">
