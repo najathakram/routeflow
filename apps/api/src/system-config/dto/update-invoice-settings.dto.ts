@@ -1,6 +1,10 @@
 import { IsOptional, IsString, IsIn } from "class-validator";
 
-const VALID_TERMS = ["Due on Receipt", "Net 15", "Net 30", "Net 45", "Net 60"];
+// Canonical payment-terms allow-list. Imported by the customer/supplier
+// default-terms DTOs (which append "" for "clear the override"), so adding a
+// term here widens every surface at once instead of leaving a stale copy
+// rejecting it with a 400.
+export const VALID_TERMS = ["Due on Receipt", "Net 15", "Net 30", "Net 45", "Net 60"];
 
 export class UpdateInvoiceSettingsDto {
   @IsOptional()

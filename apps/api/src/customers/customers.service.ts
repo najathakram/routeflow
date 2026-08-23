@@ -446,6 +446,10 @@ export class CustomersService {
           ...(dto.creditLimit !== undefined && { creditLimit: dto.creditLimit }),
           ...(dto.currency !== undefined && { currency: dto.currency }),
           ...(dto.pricingTier !== undefined && { pricingTier: dto.pricingTier }),
+          // "" clears to null ("use the tenant default"); a real label is stored verbatim.
+          ...(dto.defaultPaymentTerms !== undefined && {
+            defaultPaymentTerms: dto.defaultPaymentTerms || null,
+          }),
         },
       });
 
@@ -643,6 +647,10 @@ export class CustomersService {
         ...(dto.creditLimit !== undefined && { creditLimit: dto.creditLimit }),
         ...(dto.currency !== undefined && { currency: dto.currency }),
         ...(dto.pricingTier !== undefined && { pricingTier: dto.pricingTier }),
+        // "" clears to null ("use the tenant default"); a real label is stored verbatim.
+        ...(dto.defaultPaymentTerms !== undefined && {
+          defaultPaymentTerms: dto.defaultPaymentTerms || null,
+        }),
       },
     });
   }

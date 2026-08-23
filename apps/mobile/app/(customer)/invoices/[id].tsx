@@ -23,6 +23,12 @@ import { fmtCalendarDate } from "../../../lib/format-date";
 // touching buyer.ts's canonical type (out of scope for this change).
 type ItemMsrpField = { msrp?: number | null };
 
+// Same reason as ItemMsrpField above: buyer.ts's BuyerInvoice doesn't declare
+// `paymentTermsLabel` yet even though the server now persists it on every
+// Invoice and GET /buyer/invoices/:id returns it already. Null/undefined
+// (historical invoices predating this field) renders nothing.
+type InvoiceTermsLabelField = { paymentTermsLabel?: string | null };
+
 function invoicePill(status: string, isOverdue?: boolean) {
   if (isOverdue) return { variant: "gray" as const, label: "Overdue" };
   switch (status) {
@@ -75,6 +81,7 @@ export default function CustomerInvoiceDetailScreen() {
   const balanceDue = Number(invoice.balanceDue ?? invoice.amountDue ?? 0);
   const paidAmount = Number(invoice.paidAmount ?? invoice.amountPaid ?? 0);
   const pdfUrl = (invoice as any).pdfUrl as string | undefined;
+  const paymentTermsLabel = (invoice as typeof invoice & InvoiceTermsLabelField).paymentTermsLabel;
 
   const handleSharePdf = async () => {
     if (!pdfUrl) return;
@@ -129,6 +136,9 @@ export default function CustomerInvoiceDetailScreen() {
 
           {invoice.dueDate ? (
             <Text style={styles.dueDate}>Due: {fmtCalendarDate(invoice.dueDate, "short")}</Text>
+          ) : null}
+          {paymentTermsLabel ? (
+            <Text style={styles.dueDate}>Terms: {paymentTermsLabel}</Text>
           ) : null}
         </View>
 

@@ -18,6 +18,12 @@ export interface Supplier {
   state?: string;
   zip?: string;
   country?: string;
+  /**
+   * Net-terms label seeded onto a new vendor bill for this supplier ("Net 30",
+   * "Due on Receipt", …), same VALID_TERMS list as Customer.defaultPaymentTerms.
+   * "" clears it back to "no default".
+   */
+  defaultTerms?: string;
   createdAt: string;
   updatedAt: string;
   // Aggregated from vendor bills

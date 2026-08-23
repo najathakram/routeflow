@@ -38,6 +38,18 @@ function itemMsrp(item: { id: string }): number | null {
 }
 
 /**
+ * `paymentTermsLabel` (the structured "Net 30"-style label, persisted so it can
+ * never disagree with `dueDate`) was added to `Invoice` after `BuyerInvoiceDetail`
+ * (lib/api/buyer.ts) was typed — that file isn't part of this package's file set,
+ * so read it via a narrow cast rather than widening that shared interface here
+ * (same pattern as `itemMsrp` above). Null/undefined (historical invoices) → null.
+ */
+function invoicePaymentTermsLabel(invoice: { id: string }): string | null {
+  const v = (invoice as unknown as { paymentTermsLabel?: string | null }).paymentTermsLabel;
+  return v ?? null;
+}
+
+/**
  * Payment `paidAt`/`createdAt` are real timestamps (default `now()`, meaningful
  * time-of-day) rather than UTC-midnight calendar dates, so displaying them in the
  * viewer's local timezone is correct as-is — unlike `invoice.issueDate`/`dueDate`
@@ -146,6 +158,7 @@ export default function BuyerInvoiceDetailPage() {
       ?.filter((p) => p.status !== "VOID")
       .reduce((s, p) => s + Number(p.amount), 0) ?? 0;
   const balanceDue = Number(invoice.total) - totalPaid;
+  const paymentTermsLabel = invoicePaymentTermsLabel(invoice);
 
   return (
     <div className="p-6 max-w-4xl">
@@ -162,6 +175,7 @@ export default function BuyerInvoiceDetailPage() {
           <h1 className="text-2xl font-bold text-navy">{invoice.invoiceNumber}</h1>
           <p className="text-sm text-navy/70 mt-1">
             Issued {fmtCalendarDate(invoice.issueDate)} · Due {fmtCalendarDate(invoice.dueDate)}
+            {paymentTermsLabel ? ` · Terms: ${paymentTermsLabel}` : ""}
           </p>
         </div>
         <div className="flex items-center gap-3">

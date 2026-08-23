@@ -61,6 +61,14 @@ export class CreateSaleDto {
   @IsOptional() @IsDateString() dueDate?: string;
   /** Long-form Terms & Conditions text for the invoice. Omitted → tenant default applies. */
   @IsOptional() @IsString() @MaxLength(5000) terms?: string;
+  /**
+   * Structured "Net 30"-style label shown alongside dueDate — distinct from
+   * `terms` above (the long-form T&C text). Whatever term the operator picked to
+   * compute `dueDate` on the New Sale screen belongs here, so label and math can
+   * never disagree. Omitted → the invoice is labeled with the resolved default
+   * term (customer override, else tenant default).
+   */
+  @IsOptional() @IsString() @MaxLength(40) paymentTermsLabel?: string;
 
   /** Credit notes to apply to this order's invoice(s). undefined = leave untouched;
    *  [] = remove all; otherwise the FULL desired set (server diffs). */

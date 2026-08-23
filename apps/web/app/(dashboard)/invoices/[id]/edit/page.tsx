@@ -20,6 +20,44 @@ import { computeLineSubtotal, normalizeBoxesPieces, roundMoney } from "@/lib/pri
 
 const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
+// Same values as invoices/new/page.tsx's TERMS_OPTIONS — kept local rather than
+// shared since that page doesn't export them.
+const TERMS_OPTIONS = [
+  { value: "", label: "Select terms…" },
+  { value: "Due on Receipt", label: "Due on Receipt" },
+  { value: "Net 15", label: "Net 15" },
+  { value: "Net 30", label: "Net 30" },
+  { value: "Net 45", label: "Net 45" },
+  { value: "Net 60", label: "Net 60" },
+];
+
+function getDaysForTerms(terms: string): number | null {
+  switch (terms) {
+    case "Due on Receipt":
+      return 0;
+    case "Net 15":
+      return 15;
+    case "Net 30":
+      return 30;
+    case "Net 45":
+      return 45;
+    case "Net 60":
+      return 60;
+    default:
+      return null;
+  }
+}
+
+/** Add calendar days to a YYYY-MM-DD date, in UTC end to end — mirrors
+ *  invoices/new/page.tsx's addDaysIso (local-getter math loses a day across a
+ *  DST boundary). */
+function addDaysIso(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return iso;
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 // ─── Product search dropdown (inline) ────────────────────────────────────────
 
 function ProductSearchInput({
@@ -253,6 +291,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
   const [shippingFee, setShippingFee] = React.useState("0");
   const [notes, setNotes] = React.useState("");
   const [terms, setTerms] = React.useState("");
+  const [paymentTermsLabel, setPaymentTermsLabel] = React.useState("");
   const [referenceNumber, setReferenceNumber] = React.useState("");
   const [subject, setSubject] = React.useState("");
   const [items, setItems] = React.useState<LineItemState[]>([createEmptyItem()]);
@@ -275,6 +314,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
       setShippingFee(String(Number(invoice.shippingFee ?? 0)));
       setNotes(invoice.notes ?? "");
       setTerms(invoice.terms ?? "");
+      setPaymentTermsLabel(invoice.paymentTermsLabel ?? "");
       setReferenceNumber(invoice.referenceNumber ?? "");
       setSubject(invoice.subject ?? "");
       setItems(
@@ -334,6 +374,14 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
     setItems((prev) => [...prev, createEmptyItem()]);
   }
 
+  // ── Payment Terms → Due Date recompute (mirrors invoices/new/page.tsx) ───────
+
+  function handleTermsChange(t: string) {
+    setPaymentTermsLabel(t);
+    const days = getDaysForTerms(t);
+    if (days !== null && issueDate) setDueDate(addDaysIso(issueDate, days));
+  }
+
   // ── Validation ────────────────────────────────────────────────────────────────
 
   function validate() {
@@ -367,8 +415,13 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
       shippingFee: shipping,
       notes: notes.trim() || undefined,
       terms: terms.trim() || undefined,
-      referenceNumber: referenceNumber.trim() || undefined,
-      subject: subject.trim() || undefined,
+      // Sent even when empty: "" is how this form CLEARS a stale label /
+      // reference / subject (the server maps it to null). Collapsing them to
+      // undefined would leave the old "Net 30" on an invoice whose due date the
+      // operator just hand-typed, and make a blanked PO number reappear.
+      paymentTermsLabel,
+      referenceNumber: referenceNumber.trim(),
+      subject: subject.trim(),
       items: items.map((it): CreateInvoiceItem => {
         // Send the boxed split so the server prorates (unitPrice is the BOX price).
         // Without boxes/pieces the server falls back to unitPrice*qty and over-charges.
@@ -459,7 +512,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
         <div className="space-y-5 lg:col-span-3">
           {/* Dates */}
           <Card title="Invoice Dates">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">Issue Date</label>
                 <input
@@ -474,12 +527,34 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
                 {errors.issueDate && <p className="mt-1 text-xs text-danger">{errors.issueDate}</p>}
               </div>
               <div>
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                  Payment Terms
+                </label>
+                <select
+                  value={paymentTermsLabel}
+                  onChange={(e) => handleTermsChange(e.target.value)}
+                  className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                >
+                  {TERMS_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">Due Date</label>
                 <input
                   type="date"
                   value={dueDate}
                   min={issueDate || undefined}
-                  onChange={(e) => setDueDate(e.target.value)}
+                  onChange={(e) => {
+                    // A hand-typed due date supersedes the term that derived it — clear
+                    // the label so we never save "Net 30" next to a date that isn't
+                    // issue+30 (mirrors invoices/new/page.tsx).
+                    setPaymentTermsLabel("");
+                    setDueDate(e.target.value);
+                  }}
                   className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
@@ -624,7 +699,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                  Payment Terms
+                  Terms &amp; Conditions
                 </label>
                 <textarea
                   rows={2}

@@ -755,6 +755,18 @@ function ContactPersonModal({
 
 // ── Special Prices Tab ────────────────────────────────────────────────────────
 
+// Same VALID_TERMS list as the API DTO (update-customer.dto.ts) and the invoice
+// pages' TERMS_OPTIONS — "" clears the override and falls back to the tenant
+// default from Settings → Invoicing.
+const CUSTOMER_TERMS_OPTIONS = [
+  { value: "", label: "Use tenant default" },
+  { value: "Due on Receipt", label: "Due on Receipt" },
+  { value: "Net 15", label: "Net 15" },
+  { value: "Net 30", label: "Net 30" },
+  { value: "Net 45", label: "Net 45" },
+  { value: "Net 60", label: "Net 60" },
+];
+
 function SpecialPricesTab({ customerId }: { customerId: string }) {
   const { data: customer } = useCustomer(customerId);
   const updateCustomer = useUpdateCustomer();
@@ -883,6 +895,37 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             override and will keep {priceList.length === 1 ? "its" : "their"} own tier.
           </p>
         )}
+      </Card>
+
+      <Card className="mb-5">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h3 className="text-base font-semibold text-navy">Default Payment Terms</h3>
+            <p className="mt-0.5 text-xs text-navy/70">
+              Seeds the terms and due date on this customer&apos;s new invoices. Wins over the
+              tenant default in Settings &rarr; Invoicing.
+            </p>
+          </div>
+          {isOperator ? (
+            <select
+              value={customer?.defaultPaymentTerms ?? ""}
+              onChange={(e) => {
+                updateCustomer.mutate({ id: customerId, defaultPaymentTerms: e.target.value });
+              }}
+              className="rounded border border-surface-border bg-white px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            >
+              {CUSTOMER_TERMS_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <p className="text-sm font-semibold text-navy">
+              {customer?.defaultPaymentTerms || "Tenant default"}
+            </p>
+          )}
+        </div>
       </Card>
 
       <Card>

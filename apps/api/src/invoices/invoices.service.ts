@@ -148,8 +148,25 @@ export class InvoicesService {
     }
   }
 
-  /** Resolve the tenant's default invoice terms and corresponding due-days offset. */
-  async resolveDefaultTerms(): Promise<{ terms: string; dueDays: number }> {
+  /**
+   * Resolve the effective default invoice terms and corresponding due-days offset.
+   *
+   * A per-customer `defaultPaymentTerms` override ("this customer is always Net
+   * 60") wins over the tenant SystemConfig default when one is set; otherwise
+   * falls back to the existing tenant-only behavior. Callers that generate an
+   * invoice FROM an order should pass the order's customerId so the customer's
+   * override is honored.
+   */
+  async resolveDefaultTerms(customerId?: string): Promise<{ terms: string; dueDays: number }> {
+    if (customerId) {
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findUnique({ where: { id: customerId }, select: { defaultPaymentTerms: true } });
+      if (customer?.defaultPaymentTerms) {
+        const terms = customer.defaultPaymentTerms;
+        return { terms, dueDays: TERM_DAYS[terms] ?? 30 };
+      }
+    }
     const stored = await this.systemConfig.get("invoice.defaultTerms");
     const terms = stored || "Net 30";
     return { terms, dueDays: TERM_DAYS[terms] ?? 30 };
@@ -202,6 +219,37 @@ export class InvoicesService {
     if (totalPaid > 0) return InvoiceStatus.PARTIAL;
     if (dueDate && new Date(dueDate) < new Date()) return InvoiceStatus.OVERDUE;
     return InvoiceStatus.SENT;
+  }
+
+  /**
+   * Deliberately minimal deposit schedule (Tier 1): the deposit dollar amount is
+   * ALWAYS derived from depositPercent * total at read time — never stored — and
+   * depositOverdue is a computed filter, never a status flip. No InvoiceInstallment
+   * table / deposit-aware statuses in this phase; recomputeStatus/AR aging are
+   * completely untouched by this.
+   */
+  private computeDepositFields(
+    inv: {
+      total: number | string;
+      depositPercent: number | string | null;
+      depositDueDate: Date | null;
+    },
+    totalPaid: number,
+  ): { depositAmount: number | null; depositOverdue: boolean } {
+    if (inv.depositPercent == null) return { depositAmount: null, depositOverdue: false };
+    const depositAmount = roundMoney((Number(inv.total) * Number(inv.depositPercent)) / 100);
+    // RF-202 convention (see findAll): compare ISO date strings so a deposit due
+    // TODAY is never flagged overdue. A raw Date compare treats the UTC-midnight
+    // depositDueDate as past the instant UTC rolls over — i.e. the evening before
+    // it is actually due for every tenant behind UTC.
+    const depositDueIso = inv.depositDueDate
+      ? new Date(inv.depositDueDate).toISOString().slice(0, 10)
+      : null;
+    const depositOverdue =
+      depositDueIso != null &&
+      depositDueIso < new Date().toISOString().slice(0, 10) &&
+      totalPaid < depositAmount;
+    return { depositAmount, depositOverdue };
   }
 
   private async findOneOrThrow(id: string) {
@@ -396,6 +444,9 @@ export class InvoicesService {
               : startOfCalendarDay(tenantDefaults.timezone),
             notes: dto.notes ?? tenantDefaults.notes,
             terms: dto.terms ?? tenantDefaults.terms,
+            paymentTermsLabel: dto.paymentTermsLabel ?? null,
+            depositPercent: dto.depositPercent ?? null,
+            depositDueDate: dto.depositDueDate ? new Date(dto.depositDueDate) : null,
             referenceNumber: dto.referenceNumber ?? null,
             subject: dto.subject ?? null,
             shippingCarrier: dto.shippingCarrier?.trim() || null,
@@ -456,7 +507,7 @@ export class InvoicesService {
   async createInvoiceFromOrder(
     orderId: string,
     txClient?: any,
-    overrides?: { dueDate?: string; terms?: string },
+    overrides?: { dueDate?: string; terms?: string; paymentTermsLabel?: string },
   ) {
     const db = txClient ?? this.prisma;
 
@@ -509,8 +560,9 @@ export class InvoicesService {
 
     const tenantId = this.prisma.getTenantId();
     // Due date from configured payment terms (e.g. "Net 30"), unless the caller
-    // (e.g. the "New sale" flow) supplied an explicit override.
-    const { terms: defaultTerms, dueDays } = await this.resolveDefaultTerms();
+    // (e.g. the "New sale" flow) supplied an explicit override. Customer-aware:
+    // the customer's own defaultPaymentTerms (when set) wins over the tenant default.
+    const { terms: defaultTerms, dueDays } = await this.resolveDefaultTerms(order.customerId);
     // Customer-facing invoice Notes and T&C from tenant settings
     const tenantDefaults = await this.resolveTenantInvoiceDefaults();
     // A backdated order bills on its business date, and the payment term runs from
@@ -523,10 +575,21 @@ export class InvoicesService {
       dueDate = addCalendarDays(issueDate, dueDays);
     }
     const overrideTerms = overrides?.terms?.trim() || undefined;
+    // INVARIANT: whatever string drove the dueDate math above is what gets
+    // persisted here — an explicit caller-supplied label when given, else the
+    // resolved default-terms label, so the label and the arithmetic can never
+    // disagree. An explicit dueDate override with NO label means no term string
+    // drove that date, so the label stays null (renders as nothing, exactly like
+    // a historical row) rather than claiming arithmetic that never ran.
+    // (overrideTerms above is the separate long-form T&C override and never
+    // participates in the dueDate computation, so it is not a candidate.)
+    const paymentTermsLabel =
+      overrides?.paymentTermsLabel?.trim() || (overrides?.dueDate ? null : defaultTerms);
 
     const extraInvoiceData: Record<string, any> = {
       dueDate,
       terms: overrideTerms ?? tenantDefaults.terms ?? defaultTerms,
+      paymentTermsLabel,
       issueDate,
       notes: tenantDefaults.notes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
       // Carry carrier shipment tracking from the order onto the invoice so the
@@ -1899,7 +1962,7 @@ export class InvoicesService {
   async createInvoiceFromOrderWithTenant(
     orderId: string,
     tenantId: string | null,
-    overrides?: { dueDate?: string; terms?: string },
+    overrides?: { dueDate?: string; terms?: string; paymentTermsLabel?: string },
   ) {
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, ...(tenantId ? { tenantId } : {}) },
@@ -1936,11 +1999,14 @@ export class InvoicesService {
       });
     }
 
-    // RF-079: apply tax-exempt check in the fire-and-forget path too.
+    // RF-079: apply tax-exempt check in the fire-and-forget path too. Also carries
+    // the customer's own defaultPaymentTerms, which (when set) wins over the
+    // tenant default below — mirrors resolveDefaultTerms(customerId) used by the
+    // awaited paths, adapted for this explicit-tenantId (no AsyncLocalStorage) call.
     const customerForTax = tenantId
       ? await this.prisma.customer.findFirst({
           where: { id: order.customerId, ...(tenantId ? { tenantId } : {}) },
-          select: { isTaxExempt: true },
+          select: { isTaxExempt: true, defaultPaymentTerms: true },
         })
       : null;
 
@@ -1948,7 +2014,10 @@ export class InvoicesService {
     // outside the normal request context (fire-and-forget, no AsyncLocalStorage).
     let defaultTerms = "Net 30";
     let dueDays = 30;
-    if (tenantId) {
+    if ((customerForTax as any)?.defaultPaymentTerms) {
+      defaultTerms = (customerForTax as any).defaultPaymentTerms;
+      dueDays = TERM_DAYS[defaultTerms] ?? 30;
+    } else if (tenantId) {
       const cfg = await this.prisma.systemConfig.findFirst({
         where: { tenantId, key: "invoice.defaultTerms" },
         select: { value: true },
@@ -1984,9 +2053,15 @@ export class InvoicesService {
     }
 
     const overrideTerms = overrides?.terms?.trim() || undefined;
+    // INVARIANT: see createInvoiceFromOrder — persist whichever string drove the
+    // dueDate math (an explicit override label, else the resolved default), and
+    // null when an explicit dueDate override means no term string drove it.
+    const paymentTermsLabel =
+      overrides?.paymentTermsLabel?.trim() || (overrides?.dueDate ? null : defaultTerms);
     const extraInvoiceData: Record<string, any> = {
       dueDate,
       terms: overrideTerms ?? tenantTerms ?? defaultTerms,
+      paymentTermsLabel,
       issueDate,
       notes: tenantNotes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
     };
@@ -2018,7 +2093,7 @@ export class InvoicesService {
   async createPartialFromOrder(
     orderId: string,
     dto: CreatePartialInvoiceDto,
-    overrides?: { dueDate?: string; terms?: string },
+    overrides?: { dueDate?: string; terms?: string; paymentTermsLabel?: string },
   ) {
     const order = await this.prisma.forTenant().order.findUnique({
       where: { id: orderId },
@@ -2094,8 +2169,9 @@ export class InvoicesService {
     const total = roundMoney(subtotal + taxAmount + feeRemaining);
 
     // Resolve due date: explicit dto.dueDate wins, then a caller-supplied override,
-    // else default term from the issue date.
-    const { terms: defaultTerms, dueDays } = await this.resolveDefaultTerms();
+    // else default term from the issue date. Customer-aware: the customer's own
+    // defaultPaymentTerms (when set) wins over the tenant default.
+    const { terms: defaultTerms, dueDays } = await this.resolveDefaultTerms(order.customerId);
     const tenantDefaults = await this.resolveTenantInvoiceDefaults();
     // A backdated order bills on its business date, and the payment term runs from
     // that date — not from when the invoice happened to be generated.
@@ -2109,6 +2185,15 @@ export class InvoicesService {
       dueDate = addCalendarDays(issueDate, dueDays);
     }
     const overrideTerms = overrides?.terms?.trim() || undefined;
+    // INVARIANT: see createInvoiceFromOrder — persist whichever string drove the
+    // dueDate math. The split-invoice UI posts the Net-N it picked as
+    // `paymentTermsLabel` alongside the date it derived from it; only an explicit
+    // dueDate from EITHER source with NO accompanying label persists null, since
+    // the label must never describe arithmetic that never ran.
+    const paymentTermsLabel =
+      dto.paymentTermsLabel?.trim() ||
+      overrides?.paymentTermsLabel?.trim() ||
+      (dto.dueDate || overrides?.dueDate ? null : defaultTerms);
     const tenantId = this.prisma.getTenantId();
     const invoiceNumber = await this.generateInvoiceNumber();
 
@@ -2127,6 +2212,7 @@ export class InvoicesService {
           total,
           dueDate,
           terms: dto.terms ?? overrideTerms ?? tenantDefaults.terms ?? defaultTerms,
+          paymentTermsLabel,
           issueDate,
           notes:
             dto.notes ??
@@ -2305,7 +2391,8 @@ export class InvoicesService {
             .slice(0, 10)
         : null;
       const isOverdue = !isSettled && balanceDue > 0 && dueDateIso != null && dueDateIso < todayIso;
-      return { ...inv, balanceDue, paidAmount, isOverdue };
+      const { depositAmount, depositOverdue } = this.computeDepositFields(inv as any, paidAmount);
+      return { ...inv, balanceDue, paidAmount, isOverdue, depositAmount, depositOverdue };
     });
 
     return {
@@ -2387,7 +2474,8 @@ export class InvoicesService {
       balanceDue > 0 &&
       dueDateIso != null &&
       dueDateIso < new Date().toISOString().slice(0, 10);
-    return { ...inv, balanceDue, paidAmount, isOverdue };
+    const { depositAmount, depositOverdue } = this.computeDepositFields(inv as any, paidAmount);
+    return { ...inv, balanceDue, paidAmount, isOverdue, depositAmount, depositOverdue };
   }
 
   async update(id: string, dto: Partial<CreateInvoiceDto>) {
@@ -2539,8 +2627,19 @@ export class InvoicesService {
             issueDate: dto.issueDate ? new Date(dto.issueDate) : undefined,
             notes: dto.notes,
             terms: dto.terms,
-            ...(dto.referenceNumber !== undefined && { referenceNumber: dto.referenceNumber }),
-            ...(dto.subject !== undefined && { subject: dto.subject }),
+            // "" from the composer's Terms dropdown means "no term" (the operator
+            // hand-typed a due date) — store null, never an empty label.
+            paymentTermsLabel: dto.paymentTermsLabel === "" ? null : dto.paymentTermsLabel,
+            // Same "" → null convention: a blanked reference / subject is a
+            // deliberate clear, not "leave unchanged".
+            ...(dto.referenceNumber !== undefined && {
+              referenceNumber: dto.referenceNumber || null,
+            }),
+            ...(dto.subject !== undefined && { subject: dto.subject || null }),
+            ...(dto.depositPercent !== undefined && { depositPercent: dto.depositPercent }),
+            ...(dto.depositDueDate !== undefined && {
+              depositDueDate: dto.depositDueDate ? new Date(dto.depositDueDate) : null,
+            }),
             pdfUrl: null,
             items: { create: itemsData },
           },
@@ -2592,8 +2691,20 @@ export class InvoicesService {
         ...(dto.issueDate && { issueDate: new Date(dto.issueDate) }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
         ...(dto.terms !== undefined && { terms: dto.terms }),
-        ...(dto.referenceNumber !== undefined && { referenceNumber: dto.referenceNumber }),
-        ...(dto.subject !== undefined && { subject: dto.subject }),
+        // "" clears the label (the composer sends it when the operator hand-typed a
+        // due date and the term no longer applies) — same convention as the supplier
+        // and customer default-terms fields.
+        ...(dto.paymentTermsLabel !== undefined && {
+          paymentTermsLabel: dto.paymentTermsLabel || null,
+        }),
+        ...(dto.referenceNumber !== undefined && {
+          referenceNumber: dto.referenceNumber || null,
+        }),
+        ...(dto.subject !== undefined && { subject: dto.subject || null }),
+        ...(dto.depositPercent !== undefined && { depositPercent: dto.depositPercent }),
+        ...(dto.depositDueDate !== undefined && {
+          depositDueDate: dto.depositDueDate ? new Date(dto.depositDueDate) : null,
+        }),
         ...recalcData,
       },
       include: {
@@ -2628,6 +2739,96 @@ export class InvoicesService {
     return this.prisma.forTenant().invoice.update({
       where: { id },
       data: { shippingCarrier: carrier, shippingTrackingNumber: tracking, shippedAt },
+    });
+  }
+
+  /**
+   * WP3: narrow post-issue correction for exactly `{ dueDate?, paymentTermsLabel?,
+   * referenceNumber?, subject? }` — NEVER items/discount/shipping/deposit, which
+   * still require a credit note (money already sent to the customer) or a DRAFT
+   * edit. Allowed on any status EXCEPT VOID/WRITTEN_OFF — unlike
+   * applyPriceAdjustment, which also blocks PAID; a paid invoice's label/reference
+   * can still be corrected without touching its money.
+   *
+   * A dueDate change can flip SENT↔OVERDUE, so recomputeStatus re-runs on every
+   * call (a no-op when dueDate is unchanged) — the SAME status contract used
+   * everywhere else in this file, byte-identical, never re-derived here.
+   *
+   * Deliberately does NOT call recomputeOrderFromInvoices: this edit never
+   * changes subtotal/tax/fee (the order's total is defined off those), so there
+   * is nothing for the linked order to resync — pinned by a spec.
+   *
+   * Audit trail: an internalNotes breadcrumb (mirrors applyPriceAdjustment's
+   * convention) is the only audit record. Wiring the global AuditService was
+   * considered and IS mechanically easy — it needs no InvoicesModule change
+   * (AuditModule is @Global(), exports AuditService) — but every existing
+   * `audit.log()` call site in this codebase attributes to a real caller
+   * (`userId: user.sub`, never null), and this method's signature is fixed by
+   * the plan at exactly (id, dto) with no user/JwtPayload parameter to supply
+   * one. Logging with a null actor would be a new, weaker kind of audit entry
+   * that breaks that house convention rather than extending it, and the
+   * signature isn't mine to change (the controller — WP3, a different file —
+   * calls exactly this shape). The internalNotes breadcrumb alone is the
+   * reported choice; see this package's report for the full reasoning.
+   */
+  async updateTerms(
+    id: string,
+    dto: {
+      dueDate?: string;
+      paymentTermsLabel?: string;
+      referenceNumber?: string;
+      subject?: string;
+    },
+  ) {
+    const inv = await this.prisma.forTenant().invoice.findUnique({
+      where: { id },
+      include: { payments: true },
+    });
+    if (!inv) throw new NotFoundException("Invoice not found");
+    if (inv.status === InvoiceStatus.VOID || inv.status === InvoiceStatus.WRITTEN_OFF) {
+      throw new BadRequestException(`Cannot edit terms on a ${inv.status} invoice.`);
+    }
+
+    const asDate = (d: unknown): Date | null =>
+      d == null ? null : d instanceof Date ? d : new Date(d as string);
+    const oldDueDate = asDate(inv.dueDate);
+    const oldDueDateStr = oldDueDate ? oldDueDate.toISOString().slice(0, 10) : "none";
+    const newDueDate = dto.dueDate ? new Date(dto.dueDate) : oldDueDate;
+    const newDueDateStr = newDueDate ? newDueDate.toISOString().slice(0, 10) : "none";
+
+    // Same non-VOID payment sum every other status computation in this file uses.
+    const totalPaid = inv.payments
+      .filter((p: any) => p.status !== "VOID")
+      .reduce((s: number, p: any) => s + Number(p.amount), 0);
+    const newStatus = this.recomputeStatus(totalPaid, Number(inv.total), newDueDate, inv.status);
+
+    const auditLine = `[${new Date().toLocaleDateString()} — Terms updated: ${oldDueDateStr} → ${newDueDateStr}]`;
+    const existingInternal = (inv as any).internalNotes ?? "";
+
+    return this.prisma.forTenant().invoice.update({
+      where: { id },
+      data: {
+        ...(dto.dueDate !== undefined && { dueDate: newDueDate }),
+        // "" is how the Edit Terms modal CLEARS a field (an operator who blanks
+        // a mislabeled "Net 45" or a stale PO number) — store null, never an
+        // empty string; same convention as `update()` above and the customer /
+        // supplier default-terms fields. Absent (undefined) still means
+        // "leave unchanged".
+        ...(dto.paymentTermsLabel !== undefined && {
+          paymentTermsLabel: dto.paymentTermsLabel || null,
+        }),
+        ...(dto.referenceNumber !== undefined && {
+          referenceNumber: dto.referenceNumber || null,
+        }),
+        ...(dto.subject !== undefined && { subject: dto.subject || null }),
+        status: newStatus,
+        internalNotes: existingInternal ? `${existingInternal}\n${auditLine}` : auditLine,
+      },
+      include: {
+        customer: { select: { id: true, businessName: true } },
+        items: true,
+        payments: true,
+      },
     });
   }
 
@@ -2795,6 +2996,7 @@ export class InvoicesService {
       invoiceId: inv.id,
       issueDate: formatDate(inv.issueDate),
       dueDate: formatDate(inv.dueDate),
+      paymentTermsLabel: inv.paymentTermsLabel ?? undefined,
       total: Number(inv.total),
       items: inv.items.map((it: any) => ({
         description: it.description,
@@ -2952,6 +3154,7 @@ export class InvoicesService {
       invoiceId: inv.id,
       issueDate: formatDate(inv.issueDate),
       dueDate: formatDate(inv.dueDate),
+      paymentTermsLabel: inv.paymentTermsLabel ?? undefined,
       total: Number(inv.total),
       items: inv.items.map((it: any) => ({
         description: it.description,
@@ -3310,6 +3513,11 @@ export class InvoicesService {
         total,
         notes: inv.notes,
         terms: inv.terms,
+        // Copy the "Net 30"-style label verbatim — it still describes this line-item
+        // set. Deposit fields do NOT travel: a duplicate is a fresh invoice with its
+        // own (unstarted) payment story, not a continuation of the source's deposit
+        // schedule (out of scope: no InvoiceInstallment / deposit-aware statuses).
+        paymentTermsLabel: (inv as any).paymentTermsLabel ?? null,
         referenceNumber: (inv as any).referenceNumber ?? null,
         subject: (inv as any).subject ?? null,
         items: { create: itemsData },

@@ -2012,6 +2012,7 @@ export class OrdersService implements OnApplicationBootstrap {
     const invoices = await this.invoicesService.createInvoiceFromOrder(order.id, undefined, {
       dueDate: dto.dueDate,
       terms: dto.terms,
+      paymentTermsLabel: dto.paymentTermsLabel,
     });
     if (!invoices || invoices.length === 0) {
       // Unreachable for a freshly-created order (nothing is invoiced yet), but keep the

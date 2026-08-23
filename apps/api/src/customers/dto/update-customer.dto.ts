@@ -1,8 +1,13 @@
-import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
+import { IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
 import { Transform } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { emptyToNull } from "../../common/dto-transforms";
+import { VALID_TERMS } from "../../system-config/dto/update-invoice-settings.dto";
+
+// Canonical list plus "" to CLEAR a previously-set override back to "use the
+// tenant default".
+const VALID_CUSTOMER_TERMS = [...VALID_TERMS, ""];
 
 export class UpdateCustomerDto {
   // RF-110: strip HTML to prevent stored XSS via businessName
@@ -28,4 +33,15 @@ export class UpdateCustomerDto {
   @IsOptional() creditLimit?: number;
   @IsOptional() @IsString() currency?: string;
   @IsOptional() @IsInt() @Min(1) @Max(5) pricingTier?: number;
+  /**
+   * Per-customer default payment terms ("this customer is always Net 60") — wins
+   * over the tenant SystemConfig default in resolveDefaultTerms(). "" clears the
+   * override back to "use the tenant default".
+   */
+  @IsOptional()
+  @IsString()
+  @IsIn(VALID_CUSTOMER_TERMS, {
+    message: "defaultPaymentTerms must be one of: " + VALID_CUSTOMER_TERMS.join(", "),
+  })
+  defaultPaymentTerms?: string;
 }

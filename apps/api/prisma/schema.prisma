@@ -741,6 +741,10 @@ model Customer {
   creditLimit           Decimal?    @db.Decimal(10, 2)
   currency              String      @default("USD")
   pricingTier           Int         @default(1)
+  // Per-customer default payment terms label ("this customer is always Net 60").
+  // Empty string clears an override; null means "use the tenant default". Wins
+  // over the tenant SystemConfig default in resolveDefaultTerms().
+  defaultPaymentTerms   String?
   // P6-1 (F0): per-channel messaging consent (only the STOP-gated SMS/WA channels
   // carry consent; EMAIL/PORTAL don't). Additive — existing rows backfill to false.
   smsConsent            Boolean     @default(false)
@@ -1691,6 +1695,10 @@ model Supplier {
   state            String?
   zip              String?
   country          String?
+  // Net-terms label seeded onto a new vendor bill for this supplier ("Net 30",
+  // "Due on Receipt", …). Bills have no due-date-computation machinery server
+  // side; the client computes Due Date = Bill Date + days from this label.
+  defaultTerms     String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   tenantId         String?
@@ -1778,6 +1786,17 @@ model Invoice {
   referenceNumber        String?
   subject                String?
   terms                  String?
+  // Structured "Net 30"-style label that must always agree with `dueDate` — every
+  // code path that derives dueDate from a terms string persists that SAME string
+  // here. Distinct from `terms` above, which is the long-form Terms & Conditions
+  // text; conflating the two was the documented historical bug
+  // (invoices/new/page.tsx ~L995).
+  paymentTermsLabel      String?
+  // Deliberately minimal deposit schedule (Tier 1): the deposit AMOUNT is always
+  // derived from depositPercent * total at read time (see InvoicesService), never
+  // stored. No InvoiceInstallment table / deposit-aware statuses in this phase.
+  depositPercent         Decimal?      @db.Decimal(5, 2)
+  depositDueDate         DateTime?
   issueDate              DateTime      @default(now())
   pdfUrl                 String?
   // Carrier shipment tracking — copied from the linked order on invoice generation,
@@ -2322,6 +2341,10 @@ model VendorBill {
   // block a re-scan — dedup is an app-level guard (VendorBillsService.create).
   // Null on legacy rows the backfill could not parse and on old mobile builds.
   supplierInvoiceNumber String?
+  // Net-terms label as entered on the bill ("Net 30", "Due on Receipt", …),
+  // prefillable from Supplier.defaultTerms. Persisted verbatim; the server does
+  // NOT compute dueDate from it — the client derives Due Date = Bill Date + days.
+  termsLabel            String?
   createdAt             DateTime         @default(now())
   updatedAt             DateTime         @updatedAt
   tenantId              String?

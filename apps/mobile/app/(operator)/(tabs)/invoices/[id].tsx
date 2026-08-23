@@ -80,6 +80,12 @@ function fmtCurrency(n: number | string | undefined): string {
   return `$${(Number.isFinite(v) ? v : 0).toFixed(2)}`;
 }
 
+// admin.ts's AdminInvoice doesn't declare `paymentTermsLabel` yet even though
+// the server now persists it on every Invoice and GET /invoices/:id returns
+// it already. Widen locally rather than touching admin.ts's canonical type
+// (out of scope for this change — same pattern used elsewhere for msrp).
+type InvoiceTermsLabelField = { paymentTermsLabel?: string | null };
+
 function statusPill(status: string) {
   switch (status) {
     case "DRAFT":
@@ -176,6 +182,7 @@ export default function InvoiceDetailScreen() {
 
   const s = statusPill(invoice.status);
   const balance = invoice.balanceDue ?? invoice.total;
+  const paymentTermsLabel = (invoice as typeof invoice & InvoiceTermsLabelField).paymentTermsLabel;
   const isVoid = invoice.status === "VOID";
   // B4: mirrors web's allow-list exactly. The server only rejects VOID, so a
   // bare "not paid, not void" gate used to offer this on DRAFT/WRITTEN_OFF —
@@ -602,6 +609,9 @@ export default function InvoiceDetailScreen() {
               </Text>
               <Ionicons name="pencil-outline" size={12} color={ios.label3} />
             </Pressable>
+            {paymentTermsLabel ? (
+              <Text style={styles.headerMeta}>Terms: {paymentTermsLabel}</Text>
+            ) : null}
           </View>
 
           {siblingInvoices.length > 0 ? (

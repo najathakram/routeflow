@@ -10,6 +10,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
   Min,
   ValidateNested,
@@ -59,6 +60,20 @@ export class CreateInvoiceDto {
   @IsOptional() @IsString() @MaxLength(128) shippingTrackingNumber?: string;
   /** If true, immediately send the invoice after creation (DRAFT → SENT). */
   @IsOptional() @IsBoolean() send?: boolean;
+  /**
+   * Structured "Net 30"-style label, distinct from `terms` above (the long-form
+   * Terms & Conditions text) — conflating the two was the documented historical
+   * bug. Must always agree with `dueDate`: whichever string drove the due-date
+   * math is what belongs here.
+   */
+  @IsOptional() @IsString() @MaxLength(40) paymentTermsLabel?: string;
+  /**
+   * Deliberately minimal deposit schedule (Tier 1): percent of the invoice total
+   * due by depositDueDate. The dollar amount is always DERIVED at read time
+   * (see InvoicesService), never stored.
+   */
+  @IsOptional() @IsNumber() @Min(0.01) @Max(99.99) depositPercent?: number;
+  @IsOptional() @IsDateString() depositDueDate?: string;
 }
 
 export class RecordInvoicePaymentDto {
