@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { invalidateSupplierLists } from "./suppliers";
 
 // ─── Stock overview ───────────────────────────────────────────────────────────
 
@@ -142,7 +143,7 @@ export function useCreateSupplier() {
   return useMutation({
     mutationFn: (data: Record<string, unknown>) =>
       apiClient.post("/inventory/suppliers", data).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["inventory", "suppliers"] }),
+    onSuccess: () => invalidateSupplierLists(qc),
   });
 }
 
@@ -151,7 +152,7 @@ export function useUpdateSupplier() {
   return useMutation({
     mutationFn: ({ id, ...data }: { id: string; [k: string]: unknown }) =>
       apiClient.patch(`/inventory/suppliers/${id}`, data).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["inventory", "suppliers"] }),
+    onSuccess: () => invalidateSupplierLists(qc),
   });
 }
 
