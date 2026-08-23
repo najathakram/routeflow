@@ -13,6 +13,7 @@ import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
 import { roundMoney } from "../common/pricing";
+import { geocodeAddress, GeocodableAddress, GeocodeCoords } from "../common/geocode.util";
 import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
@@ -65,30 +66,14 @@ export class CustomersService {
     throw new ForbiddenException(buildPlanGateBody("flag.msrp", upgrade));
   }
 
-  /** Geocode an address string using Google Maps API. Returns null if key missing or call fails. */
-  private async geocodeAddress(addr: {
-    line1: string;
-    city: string;
-    state: string;
-    zip: string;
-  }): Promise<{ lat: number; lng: number } | null> {
+  /**
+   * Geocode an address, best-effort. Wraps the shared `geocodeAddress` util with this
+   * service's own API key + logger — geocoding failure NEVER fails the caller's write,
+   * it just leaves lat/lng null.
+   */
+  private async geocodeIfPossible(addr: GeocodableAddress): Promise<GeocodeCoords | null> {
     const key = this.config.get<string>("googleMaps.apiKey") ?? "";
-    if (!key) return null;
-    const q = encodeURIComponent(`${addr.line1}, ${addr.city}, ${addr.state} ${addr.zip}`);
-    try {
-      const res = await fetch(
-        `https://maps.googleapis.com/maps/api/geocode/json?address=${q}&key=${key}`,
-      );
-      if (!res.ok) return null;
-      const data = (await res.json()) as {
-        results: Array<{ geometry: { location: { lat: number; lng: number } } }>;
-      };
-      const loc = data.results?.[0]?.geometry?.location;
-      return loc ? { lat: loc.lat, lng: loc.lng } : null;
-    } catch (err) {
-      this.logger.warn("Geocoding failed", err);
-      return null;
-    }
+    return geocodeAddress(addr, key, this.logger);
   }
 
   /** Geocode all CustomerAddress records that are missing lat/lng. Returns counts. */
@@ -99,7 +84,7 @@ export class CustomersService {
     let geocoded = 0;
     let failed = 0;
     for (const addr of addresses) {
-      const coords = await this.geocodeAddress(addr);
+      const coords = await this.geocodeIfPossible(addr);
       if (coords) {
         await this.prisma.forTenant().customerAddress.update({
           where: { id: addr.id },
@@ -415,6 +400,14 @@ export class CustomersService {
     const tempPassword = this.generateTempPassword();
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
+    // Geocode addresses BEFORE opening the transaction — createMany can't carry
+    // per-row computed values conditionally, and an HTTP call must never hold a DB
+    // transaction open. Geocode failure never blocks the create; it just leaves
+    // that row's lat/lng null (same semantics as addAddress).
+    const addressCoords = dto.addresses
+      ? await Promise.all(dto.addresses.map((addr) => this.geocodeIfPossible(addr)))
+      : [];
+
     const result = await this.prisma.tenantTransaction(async (tx) => {
       const user = await tx.user.create({
         data: {
@@ -460,6 +453,7 @@ export class CustomersService {
             state: addr.state,
             zip: addr.zip,
             isDefault: idx === 0,
+            ...(addressCoords[idx] ?? {}),
           })),
         });
       }
@@ -715,7 +709,7 @@ export class CustomersService {
   async addAddress(id: string, dto: CreateAddressDto) {
     await this.findCustomerOrThrow(id);
     // Geocode before creating so lat/lng are set from the start
-    const coords = await this.geocodeAddress(dto);
+    const coords = await this.geocodeIfPossible(dto);
     return this.prisma.tenantTransaction(async (tx) => {
       if (dto.isDefault) {
         await tx.customerAddress.updateMany({
@@ -755,7 +749,7 @@ export class CustomersService {
       });
     });
     // Re-geocode asynchronously (don't block the response)
-    this.geocodeAddress(updated)
+    this.geocodeIfPossible(updated)
       .then((coords) => {
         if (coords) {
           this.prisma

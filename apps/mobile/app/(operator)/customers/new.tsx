@@ -16,7 +16,7 @@ export default function NewCustomerScreen() {
         mut.mutate(payload, {
           onSuccess: (res) => {
             showToast("Customer created");
-            router.replace(`/(operator)/customers/${res.id}`);
+            router.replace(`/(operator)/customers/${res.customer.id}`);
           },
           onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
         })

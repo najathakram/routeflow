@@ -5,11 +5,13 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  StyleProp,
   StyleSheet,
   Text,
   TextInput,
   TextInputProps,
   View,
+  ViewStyle,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -189,9 +191,23 @@ export function FormField({
   );
 }
 
-export function FormSection({ title, children }: { title?: string; children: React.ReactNode }) {
+export function FormSection({
+  title,
+  children,
+  style,
+}: {
+  title?: string;
+  children: React.ReactNode;
+  /**
+   * Escape hatch for a section that must out-rank the sections after it —
+   * e.g. one holding an overlay dropdown. RN orders only siblings of a shared
+   * parent by zIndex, so the lift has to sit on the section itself; a zIndex
+   * on the field inside it is invisible to the later section cards.
+   */
+  style?: StyleProp<ViewStyle>;
+}) {
   return (
-    <View style={styles.section}>
+    <View style={[styles.section, style]}>
       {title ? <Text style={styles.sectionTitle}>{title}</Text> : null}
       <View style={styles.sectionBody}>{children}</View>
     </View>
