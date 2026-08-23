@@ -21,6 +21,7 @@ import {
   PAYMENT_METHOD_LABELS,
   paymentMethodLabel,
 } from "@/lib/payment-methods";
+import { fmtCalendarDate } from "@/lib/formatting";
 
 // ─── Payment status badge ─────────────────────────────────────────────────────
 
@@ -310,11 +311,7 @@ export default function TransactionDetailPage({ params }: { params: { transactio
                 {txn.dueDate && (
                   <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Due:</span>{" "}
-                    {new Date(txn.dueDate).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    })}
+                    {fmtCalendarDate(txn.dueDate)}
                   </p>
                 )}
               </div>

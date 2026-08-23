@@ -62,7 +62,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useApprovePortalRequest, useDeclinePortalRequest } from "@/lib/api/portal-approvals";
 import { CustomerFormModal } from "../_components/CustomerFormModal";
 import { AuthorizationsTab } from "../_components/AuthorizationsTab";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { getTierPrice, computeMarginFraction, classifyMargin } from "@/lib/pricing";
 import {
   SELECTABLE_PAYMENT_METHODS,
@@ -3135,12 +3135,12 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                             </Link>
                           </td>
                           <td className="px-4 py-3 text-navy/70">
-                            {inv.issueDate ? fmtDate(inv.issueDate) : "—"}
+                            {inv.issueDate ? fmtCalendarDate(inv.issueDate) : "—"}
                           </td>
                           <td
                             className={`px-4 py-3 ${isOverdue ? "font-semibold text-danger" : "text-navy/70"}`}
                           >
-                            {inv.dueDate ? fmtDate(inv.dueDate) : "—"}
+                            {inv.dueDate ? fmtCalendarDate(inv.dueDate) : "—"}
                           </td>
                           <td className="px-4 py-3 text-right text-navy">{fmt(inv.total)}</td>
                           <td

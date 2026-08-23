@@ -2006,7 +2006,13 @@ export class OrdersService implements OnApplicationBootstrap {
     //    OrderItem.invoicedQty (so a later delivery of a not-yet-delivered sale won't
     //    create a second invoice).
     // W4: may return >1 sibling invoice for a mixed regulated order (standard + category).
-    const invoices = await this.invoicesService.createInvoiceFromOrder(order.id);
+    // Thread the operator's chosen due date / terms through so the invoice matches what
+    // was shown on the "New sale" screen instead of silently falling back to the
+    // tenant default (client-blocking bug: label said one term, math used another).
+    const invoices = await this.invoicesService.createInvoiceFromOrder(order.id, undefined, {
+      dueDate: dto.dueDate,
+      terms: dto.terms,
+    });
     if (!invoices || invoices.length === 0) {
       // Unreachable for a freshly-created order (nothing is invoiced yet), but keep the
       // order intact and surface a clear error so the operator can retry from the order page.
@@ -2702,6 +2708,38 @@ export class OrdersService implements OnApplicationBootstrap {
           const replaceAll =
             user?.role === UserRole.DRIVER ? false : (dto.replaceAll ?? allNewItems);
 
+          // WP1: tier pricing context for this operator/admin edit — loaded ONCE for
+          // the whole call (not per sub-branch, not per item) so both the replace-all
+          // and individual-item-update sub-branches below can resolve an un-priced
+          // new/replaced line through the customer's tier ladder instead of billing
+          // flat catalog price (mirrors create() + the isBuyerEdit branch above).
+          // Post-MSRP hazard: CustomerPrice.pricingTier is nullable (an MSRP-only
+          // row) — every lookup falls back to the customer's default tier below.
+          // STAFF ONLY, same posture as the substitute branch's isStaffCaller: a
+          // DRIVER also lands in this branch (A4 routes its diff payload here, with
+          // prices stripped) and driver edits keep the legacy list pricing — so no
+          // tier is resolved and no extra query is issued for them.
+          const isStaffEdit =
+            user?.role === UserRole.OPERATOR || user?.role === UserRole.TENANT_ADMIN;
+          const operatorProductIds = isStaffEdit
+            ? ([...new Set(dto.items.map((i) => i.productId).filter(Boolean))] as string[])
+            : [];
+          const operatorTierCtx = isStaffEdit
+            ? await tx.customer.findUnique({
+                where: { id: order.customerId },
+                select: { pricingTier: true },
+              })
+            : null;
+          const operatorDefaultTier = operatorTierCtx?.pricingTier ?? 1;
+          const operatorCustomerPrices = operatorProductIds.length
+            ? await tx.customerPrice.findMany({
+                where: { customerId: order.customerId, productId: { in: operatorProductIds } },
+              })
+            : [];
+          const operatorCpMap = new Map<string, number | null>(
+            operatorCustomerPrices.map((cp: any) => [cp.productId, cp.pricingTier]),
+          );
+
           if (replaceAll) {
             // Replace-all: client sends the full item list. Delete existing items then
             // re-create, honoring any per-line price override and any boxes/pieces
@@ -2760,8 +2798,38 @@ export class OrdersService implements OnApplicationBootstrap {
 
               const catalogPrice = Number(product.pricePerUnit);
               const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
+              // An explicit price DIFFERENT from catalog is a genuine operator override
+              // (MANUAL); one that EQUALS catalog is still an operator-typed price and is
+              // stored verbatim as STANDARD/list — unchanged behavior, and the only way to
+              // sell a tiered customer at list for one order. WP1: ONLY a line carrying no
+              // price at all falls through to the tier ladder, and only for staff.
               const isManualOverride = overridePrice !== null && overridePrice !== catalogPrice;
-              const unitPrice = isManualOverride ? overridePrice : catalogPrice;
+              const upb = Number(product.unitsPerBox ?? 0);
+              const qtyPieces = boxes != null ? qty : upb > 1 ? qty * upb : qty;
+              const qtyUnits = boxes != null ? boxes : qty;
+              const priced =
+                overridePrice !== null
+                  ? {
+                      unitPrice: overridePrice,
+                      originalPrice: isManualOverride ? catalogPrice : null,
+                      priceType: isManualOverride ? PriceType.MANUAL : PriceType.STANDARD,
+                    }
+                  : isStaffEdit
+                    ? this.resolveBuyerLinePrice(
+                        product,
+                        operatorCpMap.get(item.productId) ?? operatorDefaultTier,
+                        buyerPromos,
+                        qtyPieces,
+                        qtyUnits,
+                        null,
+                      )
+                    : {
+                        // Non-staff caller: legacy list pricing, no tier resolution.
+                        unitPrice: catalogPrice,
+                        originalPrice: null as number | null,
+                        priceType: PriceType.STANDARD,
+                      };
+              const unitPrice = priced.unitPrice;
               const subtotal = computeLineSubtotal({
                 unitPrice,
                 qty,
@@ -2785,8 +2853,8 @@ export class OrdersService implements OnApplicationBootstrap {
                   subtotal,
                   status: "PENDING",
                   notes: item.notes,
-                  priceType: isManualOverride ? PriceType.MANUAL : PriceType.STANDARD,
-                  originalPrice: isManualOverride ? catalogPrice : null,
+                  priceType: priced.priceType,
+                  originalPrice: priced.originalPrice,
                   overrideReason: isManualOverride ? (item.overrideReason ?? null) : null,
                   overriddenBy: isManualOverride ? (user?.sub ?? null) : null,
                   // Snapshot the regulated category (spec §7).
@@ -2843,8 +2911,39 @@ export class OrdersService implements OnApplicationBootstrap {
                 if (qty <= 0) continue;
                 const catalogPrice = Number(product.pricePerUnit);
                 const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
+                // An explicit price DIFFERENT from catalog is a genuine operator override
+                // (MANUAL); one that EQUALS catalog is stored verbatim as STANDARD/list
+                // (unchanged behavior — selling at list for one order). WP1: ONLY a line
+                // with no price at all falls through to the tier ladder, and only for
+                // staff — a DRIVER diff add (prices stripped by B13) keeps list pricing.
                 const isManualOverride = overridePrice !== null && overridePrice !== catalogPrice;
-                const unitPrice = isManualOverride ? overridePrice : catalogPrice;
+                const unitsPerBoxNum = Number(product.unitsPerBox ?? 0);
+                const qtyPieces =
+                  item.boxes != null ? qty : unitsPerBoxNum > 1 ? qty * unitsPerBoxNum : qty;
+                const qtyUnits = item.boxes != null ? item.boxes : qty;
+                const priced =
+                  overridePrice !== null
+                    ? {
+                        unitPrice: overridePrice,
+                        originalPrice: isManualOverride ? catalogPrice : null,
+                        priceType: isManualOverride ? PriceType.MANUAL : PriceType.STANDARD,
+                      }
+                    : isStaffEdit
+                      ? this.resolveBuyerLinePrice(
+                          product,
+                          operatorCpMap.get(item.productId) ?? operatorDefaultTier,
+                          buyerPromos,
+                          qtyPieces,
+                          qtyUnits,
+                          null,
+                        )
+                      : {
+                          // Non-staff caller (driver diff add): legacy list pricing.
+                          unitPrice: catalogPrice,
+                          originalPrice: null as number | null,
+                          priceType: PriceType.STANDARD,
+                        };
+                const unitPrice = priced.unitPrice;
                 const subtotal = computeLineSubtotal({
                   unitPrice,
                   qty,
@@ -2868,8 +2967,8 @@ export class OrdersService implements OnApplicationBootstrap {
                     subtotal,
                     status: "PENDING",
                     notes: item.notes,
-                    priceType: isManualOverride ? PriceType.MANUAL : PriceType.STANDARD,
-                    originalPrice: isManualOverride ? catalogPrice : null,
+                    priceType: priced.priceType,
+                    originalPrice: priced.originalPrice,
                     overrideReason: isManualOverride ? (item.overrideReason ?? null) : null,
                     overriddenBy: isManualOverride ? (user?.sub ?? null) : null,
                     // Snapshot the regulated category (spec §7).

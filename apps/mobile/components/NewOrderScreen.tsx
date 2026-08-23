@@ -96,6 +96,7 @@ import {
 import { isCatalogHeader, visibleCatalogRows, type CatalogRow } from "../lib/visible-cart";
 import { unlistedAffordancePlacement } from "../lib/unlisted-affordance";
 import { orderSubmitGate } from "../lib/order-draft-logic";
+import { fmtCalendarDate } from "../lib/format-date";
 // Parked drafts (PR-3): NewOrderScreen resolves ?resumeDraft= and hydrates
 // only the customer; ProductPickView (it owns all other parkable state) binds
 // the autosave hook and drives create/update/delete of the SAME draft.
@@ -2487,9 +2488,7 @@ function ApplyCreditSection({ credits: c }: { credits: CreditPicker }) {
                   {cn.reason ? ` · ${cn.reason}` : ""}
                 </Text>
                 {cn.expiresAt ? (
-                  <Text style={styles.optionsSummary}>
-                    Expires {new Date(cn.expiresAt).toLocaleDateString()}
-                  </Text>
+                  <Text style={styles.optionsSummary}>Expires {fmtCalendarDate(cn.expiresAt)}</Text>
                 ) : null}
               </View>
               <Text style={styles.optionLabel}>${remaining.toFixed(2)}</Text>

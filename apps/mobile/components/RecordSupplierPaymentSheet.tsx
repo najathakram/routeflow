@@ -25,6 +25,7 @@ import {
 } from "../lib/supplier-payment-logic";
 import { roundMoney } from "../lib/pricing";
 import { showToast } from "../lib/toast";
+import { fmtCalendarDate } from "../lib/format-date";
 import { SELECTABLE_METHOD_OPTIONS, type SelectablePaymentMethod } from "../lib/payment-methods";
 
 const METHODS = SELECTABLE_METHOD_OPTIONS;
@@ -271,9 +272,7 @@ export function RecordSupplierPaymentSheet({
                             </Text>
                             <Text style={styles.allocMeta}>
                               Owed ${balance.toFixed(2)}
-                              {bill.billDate
-                                ? ` · ${new Date(bill.billDate).toLocaleDateString()}`
-                                : ""}
+                              {bill.billDate ? ` · ${fmtCalendarDate(bill.billDate)}` : ""}
                             </Text>
                           </View>
                           <View style={styles.allocInputWrap}>
