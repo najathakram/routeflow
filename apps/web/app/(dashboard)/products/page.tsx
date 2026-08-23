@@ -28,6 +28,7 @@ import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { useProducts, useUpdateProduct, useBulkDeleteProducts } from "@/lib/api/products";
 import { cascadeTierPrices, type TierField } from "@/lib/pricing";
+import { unitsLabel } from "@/lib/stock-label";
 import { useTrackedCategories, type TrackedCategory } from "@/lib/api/tracked-categories";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { MSRP_ADDON } from "@/lib/api/addons";
@@ -675,8 +676,11 @@ function makeTableColumns(
         return (
           <div className="flex items-center gap-2">
             <StockBadge status={status} />
+            {/* `currentStock` is a PIECE count system-wide, so it must never be printed
+                next to `unit` (the box/case noun) — `unitsLabel` keeps that noun only
+                for unboxed products and shows a box+piece split otherwise. */}
             <span className="text-xs text-navy/70">
-              {Number(row.original.currentStock).toFixed(0)} {row.original.unit}
+              {unitsLabel(row.original.currentStock, row.original.unitsPerBox, row.original.unit)}
             </span>
           </div>
         );

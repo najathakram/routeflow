@@ -27,10 +27,30 @@ export function useStockMovements(params?: {
   });
 }
 
+/**
+ * Payload for `POST /inventory/movements/purchase` (InventoryService.recordPurchase).
+ * `quantity` is base units (pieces) — omit it and send `boxes`/`pieces` instead
+ * for a boxed product; the server resolves the received piece total from the
+ * split and ignores a bare `quantity` when either is present. `unitCost` is
+ * quoted per SELLING UNIT: a box when `boxes`/`pieces` is sent, a piece
+ * otherwise — the server converts to per-piece before AVCO math.
+ */
+export interface RecordPurchaseInput {
+  productId: string;
+  supplierId?: string;
+  quantity?: number;
+  boxes?: number;
+  pieces?: number;
+  unitCost: number;
+  reference?: string;
+  notes?: string;
+  effectiveDate?: string;
+}
+
 export function useRecordPurchase() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: Record<string, unknown>) =>
+    mutationFn: (data: RecordPurchaseInput) =>
       apiClient.post("/inventory/movements/purchase", data).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["inventory"] });
@@ -180,10 +200,31 @@ export function usePurchaseOrder(id: string | null) {
   });
 }
 
+/**
+ * A PO line for `POST /inventory/purchase-orders`. `qty` is always a base-unit
+ * (piece) total and `unitCost` always per PIECE — for a boxed product the
+ * caller (CreatePOModal's `resolvePOLine`) converts the operator's
+ * Boxes+Pieces and Cost-per-Box entry down to this shape before sending, so
+ * `qty * unitCost` here matches what `qtyReceived`/`item.unitCost` mean later
+ * at receive time (no server-side box conversion exists for PO creation).
+ */
+export interface PurchaseOrderItemInput {
+  productId: string;
+  qty: number;
+  unitCost: number;
+}
+
+export interface CreatePurchaseOrderInput {
+  supplierId?: string;
+  items: PurchaseOrderItemInput[];
+  expectedDate?: string;
+  notes?: string;
+}
+
 export function useCreatePurchaseOrder() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: Record<string, unknown>) =>
+    mutationFn: (data: CreatePurchaseOrderInput) =>
       apiClient.post("/inventory/purchase-orders", data).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["inventory", "purchase-orders"] }),
   });
@@ -198,10 +239,28 @@ export function useSendPurchaseOrder() {
   });
 }
 
+/**
+ * `receivedQty` is always a base-unit (piece) total. For a boxed line the
+ * caller (ReceivePOModal) converts the operator's Boxes+Pieces entry to this
+ * total client-side; the API also accepts `boxes`/`pieces` and resolves the
+ * same total server-side. Either way the cost basis is untouched — the PO
+ * item's `unitCost` is per piece from creation (CreatePurchaseOrderInput) and
+ * the receive shape never re-scales it.
+ *
+ * It must not exceed the line's outstanding quantity (`qtyOrdered -
+ * qtyReceived`): the API rejects an over-receipt rather than silently clamping
+ * it down, which on a box-denominated legacy PO would under-receive by
+ * unitsPerBox and close the PO for good.
+ */
+export interface ReceivePurchaseOrderItemInput {
+  id: string;
+  receivedQty: number;
+}
+
 export function useReceivePurchaseOrder() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, items }: { id: string; items: { id: string; receivedQty: number }[] }) =>
+    mutationFn: ({ id, items }: { id: string; items: ReceivePurchaseOrderItemInput[] }) =>
       apiClient.post(`/inventory/purchase-orders/${id}/receive`, { items }).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["inventory", "purchase-orders"] });
