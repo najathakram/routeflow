@@ -8,6 +8,7 @@ import { OptionPickerSheet } from "../../../components/OptionPickerSheet";
 import { ProductPickerSheet } from "../../../components/ProductPickerSheet";
 import { useRecordPurchase } from "../../../lib/api/inventory";
 import { useSuppliers } from "../../../lib/api/purchase-orders";
+import { normalizeBoxesPieces } from "../../../lib/pricing";
 import { showToast } from "../../../lib/toast";
 
 export default function QuickReceiveScreen() {
@@ -17,7 +18,11 @@ export default function QuickReceiveScreen() {
 
   const [productId, setProductId] = useState("");
   const [productName, setProductName] = useState("");
+  const [productUnit, setProductUnit] = useState("");
+  const [unitsPerBox, setUnitsPerBox] = useState(0);
   const [quantity, setQuantity] = useState("");
+  const [boxes, setBoxes] = useState("");
+  const [pieces, setPieces] = useState("");
   const [unitCost, setUnitCost] = useState("");
   const [supplierId, setSupplierId] = useState("");
   const [supplierName, setSupplierName] = useState("");
@@ -25,6 +30,19 @@ export default function QuickReceiveScreen() {
   const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
+
+  // Boxed products (unitsPerBox > 1) collect boxes + loose pieces instead of a
+  // single ambiguous quantity — mirrors web's Quick Restock modal. An operator
+  // typing a box count into a field the server reads as PIECES is what drove
+  // on-hand stock hugely negative.
+  const isBoxed = unitsPerBox > 1;
+  const totalPieces = isBoxed
+    ? normalizeBoxesPieces({
+        boxes: Number(boxes) || 0,
+        pieces: Number(pieces) || 0,
+        unitsPerBox,
+      }).qty
+    : 0;
 
   const pickProduct = () => setProductPickerOpen(true);
   const pickSupplier = () => setSupplierPickerOpen(true);
@@ -34,29 +52,47 @@ export default function QuickReceiveScreen() {
       showToast("Please select a product.");
       return;
     }
+
+    const base = {
+      productId,
+      unitCost: Number(unitCost) || 0,
+      supplierId: supplierId || undefined,
+      reference: reference.trim() || undefined,
+      notes: notes.trim() || undefined,
+    };
+    const handlers = {
+      onSuccess: () => {
+        showToast("Stock received");
+        router.back();
+      },
+      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+    };
+
+    if (isBoxed) {
+      if (totalPieces <= 0) {
+        showToast("Enter at least one box or piece to receive.");
+        return;
+      }
+      // Send `boxes`/`pieces` — never a bare `quantity` — for a boxed receipt;
+      // the API resolves the piece total from the split, and a bare `quantity`
+      // still means PIECES to it (InventoryService.recordPurchase).
+      mut.mutate(
+        {
+          ...base,
+          boxes: Math.max(0, Math.trunc(Number(boxes) || 0)),
+          pieces: Math.max(0, Math.trunc(Number(pieces) || 0)),
+        },
+        handlers,
+      );
+      return;
+    }
+
     const qty = Number(quantity);
     if (!Number.isFinite(qty) || qty <= 0) {
       showToast("Enter a quantity greater than 0.");
       return;
     }
-
-    mut.mutate(
-      {
-        productId,
-        quantity: qty,
-        unitCost: Number(unitCost) || 0,
-        supplierId: supplierId || undefined,
-        reference: reference.trim() || undefined,
-        notes: notes.trim() || undefined,
-      },
-      {
-        onSuccess: () => {
-          showToast("Stock received");
-          router.back();
-        },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-      },
-    );
+    mut.mutate({ ...base, quantity: qty }, handlers);
   };
 
   return (
@@ -77,19 +113,36 @@ export default function QuickReceiveScreen() {
             </View>
           </Pressable>
         </FormField>
-        <View style={styles.row2}>
-          <View style={{ flex: 1 }}>
-            <FormField label="Qty received">
-              <FormTextInput
-                value={quantity}
-                onChangeText={setQuantity}
-                placeholder="0"
-                keyboardType="number-pad"
-              />
-            </FormField>
-          </View>
-          <View style={{ flex: 1 }}>
-            <FormField label="Unit cost ($)">
+        {isBoxed ? (
+          <>
+            <View style={styles.row2}>
+              <View style={{ flex: 1 }}>
+                <FormField label="Boxes received">
+                  <FormTextInput
+                    value={boxes}
+                    onChangeText={setBoxes}
+                    placeholder="0"
+                    keyboardType="number-pad"
+                  />
+                </FormField>
+              </View>
+              <View style={{ flex: 1 }}>
+                <FormField label="+ Pieces">
+                  <FormTextInput
+                    value={pieces}
+                    onChangeText={setPieces}
+                    placeholder="0"
+                    keyboardType="number-pad"
+                  />
+                </FormField>
+              </View>
+            </View>
+            <FormField
+              label="Cost per box ($)"
+              hint={`1 box = ${unitsPerBox} ${productUnit || "units"}${
+                totalPieces > 0 ? ` · ${totalPieces} pcs total` : ""
+              }`}
+            >
               <FormTextInput
                 value={unitCost}
                 onChangeText={setUnitCost}
@@ -97,8 +150,31 @@ export default function QuickReceiveScreen() {
                 keyboardType="decimal-pad"
               />
             </FormField>
+          </>
+        ) : (
+          <View style={styles.row2}>
+            <View style={{ flex: 1 }}>
+              <FormField label="Qty received">
+                <FormTextInput
+                  value={quantity}
+                  onChangeText={setQuantity}
+                  placeholder="0"
+                  keyboardType="number-pad"
+                />
+              </FormField>
+            </View>
+            <View style={{ flex: 1 }}>
+              <FormField label="Unit cost ($)">
+                <FormTextInput
+                  value={unitCost}
+                  onChangeText={setUnitCost}
+                  placeholder="0.00"
+                  keyboardType="decimal-pad"
+                />
+              </FormField>
+            </View>
           </View>
-        </View>
+        )}
       </FormSection>
 
       <FormSection title="Optional">
@@ -136,10 +212,19 @@ export default function QuickReceiveScreen() {
         onSelect={(p) => {
           setProductId(p.id);
           setProductName(p.parent?.name ? `${p.parent.name} - ${p.name}` : p.name);
+          setProductUnit(p.unit ?? "");
+          const upb = Math.trunc(Number(p.unitsPerBox ?? 0));
+          setUnitsPerBox(Number.isFinite(upb) ? upb : 0);
           // Prefill the cost from the product's standard cost when empty
-          // (same behavior as the PO receive screen).
+          // (same behavior as the PO receive screen). `standardCost` is per
+          // PIECE, so scale it up when the cost field collects a box price.
           const std = p.standardCost != null ? Number(p.standardCost) : NaN;
-          setUnitCost((cur) => (cur.trim() === "" && Number.isFinite(std) ? String(std) : cur));
+          const prefill = upb > 1 ? std * upb : std;
+          setUnitCost((cur) =>
+            cur.trim() === "" && Number.isFinite(prefill)
+              ? String(Number(prefill.toFixed(4)))
+              : cur,
+          );
           setProductPickerOpen(false);
         }}
       />

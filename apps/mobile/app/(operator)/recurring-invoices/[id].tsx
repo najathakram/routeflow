@@ -17,6 +17,7 @@ import {
 } from "../../../lib/recurring-invoices-logic";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import { fmtCalendarDate } from "../../../lib/format-date";
 
 function fmtCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -47,6 +48,9 @@ export default function RecurringInvoiceDetailScreen() {
 
   const s = recurringPillFor(template.isActive);
   const flags = recurringActionFlags(template.isActive);
+  // lastRunAt is a real timestamp (has a meaningful time-of-day) — kept in the
+  // viewer's local time, unlike nextRunAt below which is a UTC-midnight
+  // calendar date routed through the shared fmtCalendarDate helper.
   const fmtDate = (d?: string) => (d ? new Date(d).toLocaleDateString() : "—");
 
   const handleRunNow = () => {
@@ -116,7 +120,7 @@ export default function RecurringInvoiceDetailScreen() {
               {freqLabel(template.frequency, template.dayOfWeek, template.dayOfMonth)}
             </Text>
             <Text style={styles.dates}>
-              Next run {fmtDate(template.nextRunAt)}
+              Next run {fmtCalendarDate(template.nextRunAt)}
               {template.lastRunAt ? ` · Last run ${fmtDate(template.lastRunAt)}` : ""}
               {template.autoSend ? " · Auto-send" : ""}
             </Text>

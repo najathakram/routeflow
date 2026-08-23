@@ -28,7 +28,7 @@ import {
 } from "@/lib/api/invoices";
 import { apiClient } from "@/lib/api-client";
 import { useBookkeepingSummary } from "@/lib/api/bookkeeping";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { useAuth } from "@/lib/auth-context";
 
 // ─── Contextual status display (Zoho-style) ───────────────────────────────────
@@ -667,7 +667,7 @@ export default function InvoicesPage() {
                     className="group cursor-pointer transition-colors hover:bg-blue-50/40"
                   >
                     <td className="px-4 py-3 text-sm text-navy">
-                      {fmtDate((inv as any).issueDate ?? inv.createdAt)}
+                      {fmtCalendarDate((inv as any).issueDate ?? inv.createdAt)}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-col gap-0.5">
@@ -690,7 +690,7 @@ export default function InvoicesPage() {
                       {inv.customer?.businessName ?? "—"}
                     </td>
                     <td className="px-4 py-3">{renderStatus(inv.status, inv.dueDate)}</td>
-                    <td className="px-4 py-3 text-sm text-navy">{fmtDate(inv.dueDate)}</td>
+                    <td className="px-4 py-3 text-sm text-navy">{fmtCalendarDate(inv.dueDate)}</td>
                     <td className="px-4 py-3 text-right text-sm font-medium text-navy">
                       {fmt(Number(inv.total))}
                     </td>

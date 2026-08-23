@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { CreditCard, Banknote, Clock, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
 import { Badge, Button, useToast } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
+import { fmtCalendarDate } from "@/lib/formatting";
 import {
   useBuyerPaymentContext,
   useBuyerPaymentPreview,
@@ -22,6 +23,13 @@ function fmt(n: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 }
 
+/**
+ * Real timestamps only (`createdAt` — meaningful time-of-day), so the viewer's
+ * local timezone is correct here. Calendar dates stored at UTC midnight
+ * (`issueDate`, `dueDate`, …) go through `fmtCalendarDate` from "@/lib/formatting"
+ * instead — local formatting renders UTC midnight as the PREVIOUS day for any
+ * negative-UTC-offset viewer.
+ */
 function fmtDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString("en-GB", {
     day: "2-digit",
@@ -75,7 +83,7 @@ function AllocationPreview({
             {lines.map((l) => (
               <tr key={l.invoiceId}>
                 <td className="px-3 py-2 text-sm font-medium text-navy">{l.invoiceNumber}</td>
-                <td className="px-3 py-2 text-xs text-navy/60">{fmtDate(l.issueDate)}</td>
+                <td className="px-3 py-2 text-xs text-navy/60">{fmtCalendarDate(l.issueDate)}</td>
                 <td className="px-3 py-2 text-right text-sm">
                   <span className="font-medium text-navy">{fmt(l.applied)}</span>
                   {l.applied < l.balanceDue && (

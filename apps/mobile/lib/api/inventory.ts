@@ -25,7 +25,20 @@ export interface StockAdjustmentDto {
 
 export interface StockPurchaseDto {
   productId: string;
-  quantity: number;
+  /**
+   * Base units (PIECES) received. Omit when sending `boxes`/`pieces` — the API
+   * resolves the received piece total from the split and ignores `quantity`
+   * when either is present. A bare `quantity` KEEPS meaning pieces.
+   */
+  quantity?: number;
+  /** Whole boxes received — only for products with `unitsPerBox > 1`. */
+  boxes?: number;
+  /** Loose pieces beyond whole boxes — pairs with `boxes`. */
+  pieces?: number;
+  /**
+   * Cost per SELLING UNIT — a box when `boxes`/`pieces` is sent, a piece
+   * otherwise. The API converts to a per-piece cost before AVCO math.
+   */
   unitCost: number;
   supplierId?: string;
   reference?: string;

@@ -15,6 +15,7 @@ import {
 } from "../../../lib/api/vendor-bills";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import { fmtCalendarDate } from "../../../lib/format-date";
 
 function billPill(status: VendorBillStatus) {
   switch (status) {
@@ -122,24 +123,10 @@ export default function VendorBillDetailScreen() {
           </View>
           <View style={styles.metaRow}>
             {bill.billDate ? (
-              <Text style={styles.meta}>
-                Bill date:{" "}
-                {new Date(bill.billDate).toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
-              </Text>
+              <Text style={styles.meta}>Bill date: {fmtCalendarDate(bill.billDate, "short")}</Text>
             ) : null}
             {bill.dueDate ? (
-              <Text style={styles.meta}>
-                Due:{" "}
-                {new Date(bill.dueDate).toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
-              </Text>
+              <Text style={styles.meta}>Due: {fmtCalendarDate(bill.dueDate, "short")}</Text>
             ) : null}
           </View>
           <Text style={styles.totalAmount}>{formatCurrency(bill.totalOwed)}</Text>

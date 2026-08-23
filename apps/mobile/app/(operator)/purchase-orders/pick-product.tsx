@@ -27,6 +27,8 @@ export default function PickProductScreen() {
     setSelection(callbackKey, {
       id: p.id,
       name: p.name,
+      unit: p.unit,
+      unitsPerBox: p.unitsPerBox ?? null,
       standardCost: p.standardCost != null ? Number(p.standardCost) : undefined,
     });
     router.back();

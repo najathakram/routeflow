@@ -70,6 +70,7 @@ import {
   type CreditLimitExceededInfo,
 } from "../../../../../lib/credit-limit-error";
 import { useAuthStore } from "../../../../../lib/auth-store";
+import { fmtCalendarDate } from "../../../../../lib/format-date";
 
 /**
  * One row of the in-progress edit. `qty` is total pieces (server's source of
@@ -868,7 +869,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                             </Text>
                             {cn.expiresAt ? (
                               <Text style={styles.optionsSummary}>
-                                Expires {new Date(cn.expiresAt).toLocaleDateString()}
+                                Expires {fmtCalendarDate(cn.expiresAt)}
                               </Text>
                             ) : null}
                           </View>

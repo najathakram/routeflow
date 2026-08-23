@@ -29,6 +29,7 @@ import {
 import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import { fmtCalendarDate } from "../../../lib/format-date";
 
 function orderPill(status: string) {
   switch (status) {
@@ -215,12 +216,7 @@ export default function CustomerOrderDetailScreen() {
           <Text style={styles.total}>${total.toFixed(2)}</Text>
           {order.requestedDeliveryDate ? (
             <Text style={styles.deliveryDate}>
-              Delivery:{" "}
-              {new Date(order.requestedDeliveryDate).toLocaleDateString(undefined, {
-                month: "short",
-                day: "numeric",
-                year: "numeric",
-              })}
+              Delivery: {fmtCalendarDate(order.requestedDeliveryDate, "short")}
             </Text>
           ) : null}
           {order.notes ? <Text style={styles.notes}>{order.notes}</Text> : null}

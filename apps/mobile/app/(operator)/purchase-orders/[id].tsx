@@ -12,6 +12,7 @@ import {
 } from "../../../lib/api/purchase-orders";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import { fmtCalendarDate } from "../../../lib/format-date";
 
 function statusPill(status: POStatus): {
   variant: "brand" | "green" | "orange" | "red" | "gray";
@@ -118,14 +119,7 @@ export default function PurchaseOrderDetailScreen() {
             </View>
             <Text style={styles.supplierName}>{po.supplier?.name ?? "Supplier"}</Text>
             {po.expectedDate ? (
-              <Text style={styles.meta}>
-                Expected{" "}
-                {new Date(po.expectedDate).toLocaleDateString(undefined, {
-                  year: "numeric",
-                  month: "short",
-                  day: "numeric",
-                })}
-              </Text>
+              <Text style={styles.meta}>Expected {fmtCalendarDate(po.expectedDate, "short")}</Text>
             ) : null}
             {po.notes ? <Text style={styles.notes}>{po.notes}</Text> : null}
           </View>

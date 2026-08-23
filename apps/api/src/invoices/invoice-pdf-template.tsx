@@ -99,9 +99,13 @@ const toNum = (val: DecimalLike): number => {
   return val.toNumber();
 };
 const fmt = (val: DecimalLike) => `$${toNum(val).toFixed(2)}`;
+// Calendar dates (issueDate/dueDate/paidAt) are stored as UTC-midnight instants.
+// Formatting via local-time components would render them a day early for any
+// negative-UTC-offset viewer, so we read the UTC calendar components directly.
 const fmtDate = (val: Date | string | null | undefined): string => {
   if (!val) return "—";
   return new Date(val).toLocaleDateString("en-US", {
+    timeZone: "UTC",
     month: "short",
     day: "numeric",
     year: "numeric",

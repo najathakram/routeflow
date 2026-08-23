@@ -19,6 +19,7 @@ import { useBuyerInvoice } from "@/lib/api/buyer";
 import { buyerApiClient } from "@/lib/buyer-api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { checkBadgeFor } from "@/lib/check-badge";
+import { fmtCalendarDate } from "@/lib/formatting";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -36,6 +37,12 @@ function itemMsrp(item: { id: string }): number | null {
   return v != null ? Number(v) : null;
 }
 
+/**
+ * Payment `paidAt`/`createdAt` are real timestamps (default `now()`, meaningful
+ * time-of-day) rather than UTC-midnight calendar dates, so displaying them in the
+ * viewer's local timezone is correct as-is — unlike `invoice.issueDate`/`dueDate`
+ * below, which go through the UTC-safe `fmtCalendarDate` from "@/lib/formatting".
+ */
 function formatDate(d: string | null) {
   if (!d) return "N/A";
   return new Date(d).toLocaleDateString("en-GB", {
@@ -154,7 +161,7 @@ export default function BuyerInvoiceDetailPage() {
         <div>
           <h1 className="text-2xl font-bold text-navy">{invoice.invoiceNumber}</h1>
           <p className="text-sm text-navy/70 mt-1">
-            Issued {formatDate(invoice.issueDate)} · Due {formatDate(invoice.dueDate)}
+            Issued {fmtCalendarDate(invoice.issueDate)} · Due {fmtCalendarDate(invoice.dueDate)}
           </p>
         </div>
         <div className="flex items-center gap-3">

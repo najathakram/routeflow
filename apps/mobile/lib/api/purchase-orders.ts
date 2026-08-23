@@ -8,10 +8,11 @@ export type POStatus = "DRAFT" | "SENT" | "PARTIALLY_RECEIVED" | "RECEIVED" | "C
 export interface POItem {
   id: string;
   productId: string;
-  product?: { id: string; name: string; unit: string };
-  qtyOrdered: number;
-  qtyReceived: number;
-  unitCost: number;
+  product?: { id: string; name: string; unit: string; unitsPerBox?: number | null };
+  // Prisma Decimals serialize as numeric strings over JSON — coerce with Number().
+  qtyOrdered: number | string;
+  qtyReceived: number | string;
+  unitCost: number | string;
 }
 
 export interface PurchaseOrder {
@@ -28,7 +29,9 @@ export interface PurchaseOrder {
 }
 
 export interface ReceivePODto {
-  items: { itemId: string; qtyReceived: number }[];
+  // Boxed lines send { boxes, pieces } (server converts to pieces);
+  // a bare qtyReceived KEEPS meaning pieces.
+  items: { itemId: string; qtyReceived?: number; boxes?: number; pieces?: number }[];
   notes?: string;
 }
 
