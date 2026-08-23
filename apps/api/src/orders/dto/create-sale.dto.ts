@@ -54,6 +54,12 @@ export class CreateSaleDto {
    */
   @IsOptional() @IsDateString() orderDate?: string;
 
+  /**
+   * Sales agents & commissions: per-order commission-rate override, threaded to the
+   * backing order. `0` IS a valid value ("exempt"). Staff-only, same gate as orderDate.
+   */
+  @IsOptional() @IsNumber() @Min(0) @Max(100) commissionRatePct?: number;
+
   /** Only used when deliveredNow=false: issue (send) the draft invoice now instead of leaving it DRAFT. */
   @IsOptional() @IsBoolean() send?: boolean;
 

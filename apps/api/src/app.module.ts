@@ -53,6 +53,7 @@ import { DraftsModule } from "./drafts/drafts.module";
 import { TrackedCategoriesModule } from "./tracked-categories/tracked-categories.module";
 import { RegulatedModule } from "./regulated/regulated.module";
 import { AuthorizationsModule } from "./authorizations/authorizations.module";
+import { CommissionsModule } from "./sales-agents/commissions.module";
 
 import { TenantStatusGuard } from "./tenant/tenant-status.guard";
 import { ImpersonationGuard } from "./auth/guards/impersonation.guard";
@@ -164,6 +165,8 @@ import { AppService } from "./app.service";
     TrackedCategoriesModule,
     RegulatedModule,
     AuthorizationsModule,
+    // ─── Sales agents & commissions (flag.sales_agents) ───────────────────────
+    CommissionsModule,
   ],
   controllers: [AppController],
   providers: [

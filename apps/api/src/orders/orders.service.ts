@@ -63,6 +63,7 @@ import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 
 @Injectable()
@@ -81,6 +82,7 @@ export class OrdersService implements OnApplicationBootstrap {
     private readonly promotionsService: PromotionsService,
     private readonly messaging: MessagingService,
     private readonly creditNotes: CreditNotesService,
+    private readonly commissionEngine: CommissionEngineService,
     private readonly entitlements: EntitlementsService,
   ) {}
 
@@ -1411,11 +1413,34 @@ export class OrdersService implements OnApplicationBootstrap {
     return parsed;
   }
 
+  /**
+   * Sales agents & commissions: staff-only per-order commission-rate override.
+   * `0` IS a valid value ("exempt"); `undefined` means "no override given"
+   * (falls back to customer/agent default rates). Gated exactly like
+   * parseOrderDate — CUSTOMER/DRIVER callers may never set this.
+   */
+  private parseCommissionRatePct(
+    raw: number | null | undefined,
+    role: UserRole,
+  ): number | null | undefined {
+    if (raw === undefined) return undefined;
+    if (role !== UserRole.OPERATOR && role !== UserRole.TENANT_ADMIN) {
+      throw new ForbiddenException("Only staff can set a commission rate");
+    }
+    if (raw === null) return null;
+    if (typeof raw !== "number" || Number.isNaN(raw) || raw < 0 || raw > 100) {
+      throw new BadRequestException("commissionRatePct must be between 0 and 100");
+    }
+    return raw;
+  }
+
   async create(dto: CreateOrderDto, user: JwtPayload, options: { skipAutoMerge?: boolean } = {}) {
     // Resolve which customer this order is for
     let customerId: string;
 
     const orderDate = this.parseOrderDate(dto.orderDate, user.role);
+    // Sales agents & commissions: staff-gated per-order rate override.
+    const commissionRatePct = this.parseCommissionRatePct(dto.commissionRatePct, user.role);
 
     const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
     if (isStaffRole) {
@@ -1882,6 +1907,10 @@ export class OrdersService implements OnApplicationBootstrap {
                 ? new Date(dto.requestedDeliveryDate)
                 : undefined,
               orderDate,
+              // Sales agents & commissions: staff-gated per-order rate override
+              // (0 = exempt; null/undefined = no override, fall back to the
+              // customer/agent default). Validated by parseCommissionRatePct above.
+              commissionRatePct,
               lineItems: { create: lineItemsData },
             },
             include: {
@@ -1989,6 +2018,9 @@ export class OrdersService implements OnApplicationBootstrap {
         orderDate: dto.orderDate,
         status: "PENDING",
         appliedCreditNotes: dto.appliedCreditNotes,
+        // Sales agents & commissions: threaded through so a "bill now" sale
+        // honors the same per-order override as a plain order create.
+        commissionRatePct: dto.commissionRatePct,
       },
       user,
       { skipAutoMerge: true },
@@ -4356,6 +4388,11 @@ export class OrdersService implements OnApplicationBootstrap {
       for (const inv of order.invoices) {
         await tx.invoicePayment.deleteMany({ where: { invoiceId: inv.id } });
         await tx.invoiceItem.deleteMany({ where: { invoiceId: inv.id } });
+        // Sales agents & commissions: this loop hard-deletes invoices WITHOUT
+        // going through InvoicesService.deleteInvoice — without this call an
+        // order-cascade delete would strand or silently destroy accruals.
+        // Throws when claimedAmount > 0 (same guard deleteInvoice enforces).
+        await this.commissionEngine.removeInvoiceCommission(inv.id, tx);
         await tx.invoice.delete({ where: { id: inv.id } });
       }
       if (order.transaction) {
@@ -4369,6 +4406,36 @@ export class OrdersService implements OnApplicationBootstrap {
     });
 
     return { success: true };
+  }
+
+  /**
+   * Sales agents & commissions: staff-set (or clear, via `null`) per-order
+   * commission-rate override. `0` is a valid value ("exempt"). Update + engine
+   * resync run in ONE transaction so a resolved-rate change is atomic with the
+   * order write. Does NOT touch updateOrderItems / item money — the existing
+   * rebuildSiblingDrafts hook already covers item-edit money changes.
+   */
+  async setCommissionRate(orderId: string, ratePct: number | null, user: JwtPayload) {
+    if (user.role !== UserRole.OPERATOR && user.role !== UserRole.TENANT_ADMIN) {
+      throw new ForbiddenException("Only staff can set a commission rate");
+    }
+    if (
+      ratePct !== null &&
+      (typeof ratePct !== "number" || Number.isNaN(ratePct) || ratePct < 0 || ratePct > 100)
+    ) {
+      throw new BadRequestException(
+        "commissionRatePct must be between 0 and 100, or null to clear",
+      );
+    }
+    await this.findOneOrThrow(orderId);
+    return this.prisma.tenantTransaction(async (tx) => {
+      const order = await tx.order.update({
+        where: { id: orderId },
+        data: { commissionRatePct: ratePct },
+      });
+      await this.commissionEngine.syncOrderInvoices(orderId, tx);
+      return order;
+    });
   }
 
   async bulkDeleteOrders(ids: string[]) {

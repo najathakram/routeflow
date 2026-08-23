@@ -76,6 +76,12 @@ export class CreateOrderDto {
    * late. Staff-only: the service rejects it from any non-OPERATOR/TENANT_ADMIN caller.
    */
   @IsOptional() @IsDateString() orderDate?: string;
+  /**
+   * Sales agents & commissions: per-order commission-rate override. `0` IS a valid
+   * value ("exempt"); omit for no override (customer/agent default rates apply).
+   * Staff-only: the service rejects it from any non-OPERATOR/TENANT_ADMIN caller.
+   */
+  @IsOptional() @IsNumber() @Min(0) @Max(100) commissionRatePct?: number;
   @IsOptional() @IsString() @MaxLength(64) routeRunId?: string;
   @IsOptional() @IsString() @MaxLength(64) routeRunStopId?: string;
   @IsOptional() @IsBoolean() immediateDelivery?: boolean;

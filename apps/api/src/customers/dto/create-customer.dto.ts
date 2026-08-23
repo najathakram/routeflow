@@ -5,6 +5,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Max,
   MaxLength,
   Min,
@@ -47,4 +48,9 @@ export class CreateCustomerDto {
   @IsOptional() @Min(0) @Max(1_000_000_000) creditLimit?: number;
   @IsOptional() @IsString() @MaxLength(3) currency?: string;
   @IsOptional() @IsInt() @Min(1) @Max(5) pricingTier?: number;
+  /**
+   * Sales agents & commissions: opens the customer's first attribution window
+   * (AgentAssignment, effectiveFrom = now) inside the create tx.
+   */
+  @IsOptional() @IsUUID() salesAgentId?: string;
 }

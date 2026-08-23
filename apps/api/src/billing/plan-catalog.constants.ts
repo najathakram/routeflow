@@ -72,6 +72,7 @@ export const FLAG_KEYS = [
   "addon.regulated_items",
   "addon.ocr",
   "flag.msrp",
+  "flag.sales_agents",
 ] as const;
 export type FlagKey = (typeof FLAG_KEYS)[number];
 
@@ -129,6 +130,7 @@ export const ADDON_SKUS = [
   "MSG_BUNDLE_500",
   "CUSTOMER_PACK_100",
   "MSRP",
+  "SALES_AGENTS",
 ] as const;
 export type AddonSkuCode = (typeof ADDON_SKUS)[number];
 
@@ -219,6 +221,7 @@ export const FLAG_TO_ADDON_SKU: Record<string, AddonSkuCode> = {
   "flag.forecasting": "FORECASTING",
   "flag.analytics": "FORECASTING",
   "flag.msrp": "MSRP",
+  "flag.sales_agents": "SALES_AGENTS",
 };
 
 /**
@@ -236,6 +239,7 @@ export const FLAG_TO_ADDON_SKU: Record<string, AddonSkuCode> = {
 export const LEGACY_ADDON_KEY_TO_SKU: Record<string, AddonSkuCode> = {
   tobacco_dealer: "REGULATED_ITEMS",
   msrp: "MSRP",
+  sales_agents: "SALES_AGENTS",
 };
 
 /** Resolve an active TenantAddon row to its canonical SKU code (or null if unknown). */

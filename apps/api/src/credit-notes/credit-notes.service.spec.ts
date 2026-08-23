@@ -3,6 +3,7 @@ import { CreditNotesService } from "./credit-notes.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("CreditNotesService — W5c regulated reversal", () => {
@@ -22,6 +23,14 @@ describe("CreditNotesService — W5c regulated reversal", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: { emitCreditNoteCreated: jest.fn() } },
         { provide: RegulatedLedgerService, useValue: ledger },
+        {
+          provide: CommissionEngineService,
+          useValue: {
+            syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
+            syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
+            removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
     service = mod.get(CreditNotesService);
@@ -261,6 +270,14 @@ describe("CreditNotesService — P5-13 apply-math + auto-apply", () => {
           useValue: {
             reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
             unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: CommissionEngineService,
+          useValue: {
+            syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
+            syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
+            removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],
@@ -595,6 +612,14 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
           useValue: {
             reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
             unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: CommissionEngineService,
+          useValue: {
+            syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
+            syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
+            removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],

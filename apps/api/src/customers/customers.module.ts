@@ -8,6 +8,7 @@ import { StorageModule } from "../storage/storage.module";
 // customer soft-cap gate in create(). EntitlementsModule depends only on the
 // global PrismaService, so importing it here pulls in no Stripe/cron/controllers.
 import { EntitlementsModule } from "../billing/entitlements.module";
+import { CommissionsModule } from "../sales-agents/commissions.module";
 // Statement builders live in buyer/ (P5-15), but BuyerModule imports THIS
 // module — importing it back would be a cycle. Both services are stateless
 // (Prisma + Storage only), so they're registered here directly for the
@@ -16,7 +17,7 @@ import { StatementService } from "../buyer/statement.service";
 import { StatementPdfService } from "../buyer/statement-pdf.service";
 
 @Module({
-  imports: [AuthModule, ConfigModule, StorageModule, EntitlementsModule],
+  imports: [AuthModule, ConfigModule, StorageModule, EntitlementsModule, CommissionsModule],
   controllers: [CustomersController],
   providers: [CustomersService, StatementService, StatementPdfService],
   exports: [CustomersService],
