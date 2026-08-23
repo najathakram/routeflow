@@ -2706,6 +2706,191 @@ describe("OrdersService", () => {
     });
   });
 
+  // ─── updateOrderItems — operator/admin tier pricing (WP1) ───────────────────
+  // The operator/admin branch used to price every new/replaced line at flat
+  // `product.pricePerUnit`, ignoring the customer's tier entirely (create() and
+  // the buyer-edit branch of this same function already resolved it). Both
+  // sub-branches — replace-all and the individual-item "new line" case — now
+  // load Customer.pricingTier + CustomerPrice once per call and resolve an
+  // un-priced (or list-price-equal) line through resolveBuyerLinePrice, the
+  // same helper create() uses. A genuinely different explicit price is still a
+  // MANUAL override — tier resolution never overrides operator intent.
+
+  describe("updateOrderItems — operator/admin tier pricing (WP1)", () => {
+    const TIERED_PRODUCT = {
+      id: "prod-1",
+      pricePerUnit: 10,
+      priceTier3: 8,
+      unitsPerBox: null,
+      category: null,
+      trackedCategoryId: null,
+    };
+
+    it("(a) operator adds a line for a tier-3 customer with no explicit price — tier-3 price, SPECIAL", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [],
+      });
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findUnique.mockResolvedValue(TIERED_PRODUCT);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-1", qty: 2 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            unitPrice: 8,
+            originalPrice: 10,
+            priceType: "SPECIAL",
+            subtotal: 16,
+          }),
+        }),
+      );
+    });
+
+    it("(b) operator supplies an explicit different price on a new line — that price, MANUAL (not tier-resolved)", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [],
+      });
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findUnique.mockResolvedValue(TIERED_PRODUCT);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 12, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ productId: "prod-1", qty: 2, unitPrice: 6, overrideReason: "loyalty" }],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            unitPrice: 6,
+            originalPrice: 10,
+            priceType: "MANUAL",
+            overrideReason: "loyalty",
+            overriddenBy: "user-op",
+            subtotal: 12,
+          }),
+        }),
+      );
+    });
+
+    it("(c) an msrp-only CustomerPrice row ({pricingTier: null}) still prices a new line at the customer's default tier", async () => {
+      // MSRP made CustomerPrice.pricingTier nullable: a row may carry ONLY an
+      // MSRP override. That row must be pricing-inert — the customer's default
+      // tier keeps winning here too, mirroring create()'s same fallback.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [],
+      });
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 }); // default tier 3 → tier price 8
+      prisma.customerPrice.findMany.mockResolvedValue([
+        { productId: "prod-1", pricingTier: null, msrp: 5 },
+      ]);
+      prisma.product.findUnique.mockResolvedValue(TIERED_PRODUCT);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-1", qty: 2 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            unitPrice: 8,
+            originalPrice: 10,
+            priceType: "SPECIAL",
+            subtotal: 16,
+          }),
+        }),
+      );
+    });
+
+    it("(d) buyer-edit branch still resolves a new line through the customer's tier (regression pin, unchanged by WP1)", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        customerId: "cust-1",
+        lineItems: [],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
+
+      await service.updateOrderItems("ord-1", { items: [{ productId: "prod-1", qty: 2 }] }, {
+        ...customerPayload,
+        sub: "user-cust",
+      } as any);
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            unitPrice: 8,
+            originalPrice: 10,
+            priceType: "SPECIAL",
+            subtotal: 16,
+          }),
+        }),
+      );
+    });
+
+    it("(e) an explicit price EQUAL to list is stored verbatim — STANDARD, never tier-resolved", async () => {
+      // The operator line editors pre-fill the price field, so a typed $10.00
+      // (== list) for a tier-3 customer is a deliberate sell-at-list for this one
+      // order. Tier resolution must never quietly rewrite it down to $8.00.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [],
+      });
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findUnique.mockResolvedValue(TIERED_PRODUCT);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 20, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-1", qty: 2, unitPrice: 10 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            unitPrice: 10,
+            originalPrice: null,
+            priceType: "STANDARD",
+            subtotal: 20,
+          }),
+        }),
+      );
+    });
+  });
+
   // ─── updateOrderItems — driver diff routing (A4) ────────────────────────────
   // The mobile item editor is shared between the operator and driver screens and
   // sends an incremental diff ({id, action} entries, replaceAll:false). The
@@ -2831,6 +3016,46 @@ describe("OrdersService", () => {
             productId: "prod-C",
             unitPrice: 9,
             priceType: "STANDARD",
+          }),
+        }),
+      );
+    });
+
+    it("a driver diff fresh add bills LIST even for a tiered customer — tier resolution is staff-only", async () => {
+      // WP1 gave the operator/admin branch a tier ladder, and a DRIVER diff is
+      // routed through that same branch (A4). Driver edits keep the legacy list
+      // pricing, so the customer's tier 3 ($6) must not touch this line.
+      prisma.order.findUnique.mockResolvedValue(twoLineOrder);
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
+      prisma.customerPrice.findMany.mockResolvedValue([
+        { productId: "prod-C", pricingTier: 3, msrp: null },
+      ]);
+      prisma.product.findUnique.mockResolvedValue({
+        id: "prod-C",
+        pricePerUnit: 9,
+        priceTier3: 6,
+        unitsPerBox: null,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([
+        { subtotal: 10, status: "PENDING" },
+        { subtotal: 7, status: "PENDING" },
+        { subtotal: 18, status: "PENDING" },
+      ]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-C", qty: 2 }], replaceAll: false },
+        driverPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-C",
+            unitPrice: 9,
+            originalPrice: null,
+            priceType: "STANDARD",
+            subtotal: 18,
           }),
         }),
       );
