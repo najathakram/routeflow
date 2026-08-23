@@ -28,6 +28,7 @@ import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { useProducts, useUpdateProduct, useBulkDeleteProducts } from "@/lib/api/products";
 import { cascadeTierPrices, type TierField } from "@/lib/pricing";
+import { useTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { unitsLabel } from "@/lib/stock-label";
 import { useTrackedCategories, type TrackedCategory } from "@/lib/api/tracked-categories";
 import { useHasAddon } from "@/lib/api/tobacco";
@@ -301,6 +302,7 @@ function makeTableColumns(
     prior: { trackedCategoryId: string | null; trackedSubcategoryId: string | null },
   ) => void,
   hasMsrpAddon: boolean,
+  tierLabels: TierLabelsConfig | undefined,
 ): ColumnDef<ApiProduct, unknown>[] {
   const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
   const someSelected = !allSelected && allIds.some((id) => selected.has(id));
@@ -635,7 +637,10 @@ function makeTableColumns(
     // Tier price columns — always shown, editable only in Quick Edit mode
     ...[2, 3, 4, 5].map((tier) => ({
       id: `priceTier${tier}`,
-      header: `T${tier}`,
+      // Compact column header — keep the existing "T2".."T5" abbreviation as the
+      // fallback (this column is narrow) and only swap in a configured tier name,
+      // rather than tierLabel()'s "Tier N" fallback which would widen it by default.
+      header: tierLabels?.[String(tier)]?.trim() || `T${tier}`,
       enableSorting: false,
       cell: ({ row }: any) => {
         const p = row.original;
@@ -735,6 +740,7 @@ export default function ProductsPage() {
   const [page, setPage] = useUrlPage();
   const [pageSize, setPageSize] = React.useState(50);
   const hasMsrpAddon = useHasAddon(MSRP_ADDON);
+  const { data: tierLabels } = useTierLabels();
   const updateProduct = useUpdateProduct();
   const bulkDelete = useBulkDeleteProducts();
 
@@ -1107,6 +1113,7 @@ export default function ProductsPage() {
         hasSections,
         handleSectionSave,
         hasMsrpAddon,
+        tierLabels,
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -1124,6 +1131,7 @@ export default function ProductsPage() {
       hasSections,
       handleSectionSave,
       hasMsrpAddon,
+      tierLabels,
     ],
   );
 

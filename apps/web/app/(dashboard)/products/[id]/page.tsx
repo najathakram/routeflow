@@ -49,6 +49,8 @@ import {
 } from "@/lib/api/tracked-categories";
 import { sectionPickerOptions } from "@/lib/regulated-format";
 import { getTierPrice, cascadeTierPrices, perUnitPrice, type TierField } from "@/lib/pricing";
+import { useTierLabels } from "@/lib/api/tier-labels";
+import { tierLabel } from "@/lib/tier-label";
 import { unitsLabel } from "@/lib/stock-label";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
@@ -308,6 +310,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const { toast } = useToast();
   const { data: product, isLoading } = useProduct(params.id);
   const { data: allProductsResult } = useProducts({ limit: 0 });
+  const { data: tierLabels } = useTierLabels();
   const updateProduct = useUpdateProduct();
   const createProduct = useCreateProduct();
   const deleteProduct = useDeleteProduct();
@@ -1777,7 +1780,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     }
                   />
                   <InfoRow
-                    label="Tier 1 Price (List)"
+                    label={`${tierLabel(tierLabels, 1)} Price (List)`}
                     value={
                       isEditing ? (
                         <>
@@ -1930,17 +1933,17 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                         }}
                         className="text-xs text-brand-600 hover:underline"
                       >
-                        Set all to Tier 1
+                        Set all to {tierLabel(tierLabels, 1)}
                       </button>
                     )}
                   </div>
                   <div className="grid grid-cols-4 gap-2">
                     {(
                       [
-                        ["Tier 2", "priceTier2", product.priceTier2],
-                        ["Tier 3", "priceTier3", product.priceTier3],
-                        ["Tier 4", "priceTier4", product.priceTier4],
-                        ["Tier 5", "priceTier5", product.priceTier5],
+                        [tierLabel(tierLabels, 2), "priceTier2", product.priceTier2],
+                        [tierLabel(tierLabels, 3), "priceTier3", product.priceTier3],
+                        [tierLabel(tierLabels, 4), "priceTier4", product.priceTier4],
+                        [tierLabel(tierLabels, 5), "priceTier5", product.priceTier5],
                       ] as [string, string, any][]
                     ).map(([label, field, productVal], idx) => {
                       const prevFields = ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4"];
@@ -2371,10 +2374,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                             SKU
                           </th>
                           <th className="border-b-2 border-navy px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
-                            Tier 1
+                            {tierLabel(tierLabels, 1)}
                           </th>
                           <th className="border-b-2 border-navy px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
-                            Tier 2
+                            {tierLabel(tierLabels, 2)}
                           </th>
                           <th className="border-b-2 border-navy px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
                             Status
@@ -2567,13 +2570,17 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
             <div className="grid grid-cols-5 gap-2">
               {(
                 [
-                  ["T1 (List)", "price"],
-                  ["T2", "priceTier2"],
-                  ["T3", "priceTier3"],
-                  ["T4", "priceTier4"],
-                  ["T5", "priceTier5"],
-                ] as [string, keyof typeof variantForm][]
-              ).map(([label, field], idx) => {
+                  ["price", 1, "T1 (List)"],
+                  ["priceTier2", 2, "T2"],
+                  ["priceTier3", 3, "T3"],
+                  ["priceTier4", 4, "T4"],
+                  ["priceTier5", 5, "T5"],
+                ] as [keyof typeof variantForm, number, string][]
+              ).map(([field, tier, fallbackLabel], idx) => {
+                // Compact grid heading — swap in a configured tier name when the tenant
+                // set one, else keep the existing "T1 (List)".."T5" abbreviation (these
+                // cells are narrow), same posture as the products list tier columns.
+                const label = tierLabels?.[String(tier)]?.trim() || fallbackLabel;
                 const val = parseFloat(variantForm[field]) || 0;
                 const prevField =
                   idx > 0
@@ -2599,7 +2606,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     />
                     {warn && (
                       <p className="mt-0.5 text-xs text-warning">
-                        Higher than {label.split(" ")[0] === "T2" ? "T1" : `T${idx}`}
+                        Higher than {tierLabels?.[String(idx)]?.trim() || `T${idx}`}
                       </p>
                     )}
                   </div>
@@ -2607,7 +2614,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
               })}
             </div>
             <p className="mt-1.5 text-xs text-navy/70">
-              Higher tiers (volume) are typically equal to or lower than Tier 1.
+              Higher tiers (volume) are typically equal to or lower than {tierLabel(tierLabels, 1)}.
             </p>
           </div>
 

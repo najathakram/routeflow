@@ -22,6 +22,8 @@ import {
   type ProductFormValues,
   type SubmitPayload,
 } from "../lib/product-form";
+import { useTierLabels } from "../lib/api/tier-labels";
+import { tierLabel } from "../lib/tier-label";
 
 // Re-export the pure form logic so existing importers keep their import site,
 // while the logic itself lives in a React-Native-free module that mobile Jest
@@ -60,6 +62,7 @@ export function ProductForm({
   onSubmit,
 }: ProductFormProps) {
   const router = useRouter();
+  const { data: tierLabels } = useTierLabels();
   const [form, setForm] = React.useState<ProductFormValues>(initial);
   const [error, setError] = React.useState<string | null>(null);
   const [parentPickerOpen, setParentPickerOpen] = React.useState(false);
@@ -410,7 +413,7 @@ export function ProductForm({
             keyboardType="decimal-pad"
           />
         </FormField>
-        <FormField label="Tier 2 price">
+        <FormField label={`${tierLabel(tierLabels, 2)} price`}>
           <FormTextInput
             value={form.priceTier2}
             onChangeText={(v) => set("priceTier2", v)}
@@ -420,7 +423,7 @@ export function ProductForm({
             keyboardType="decimal-pad"
           />
         </FormField>
-        <FormField label="Tier 3 price">
+        <FormField label={`${tierLabel(tierLabels, 3)} price`}>
           <FormTextInput
             value={form.priceTier3}
             onChangeText={(v) => set("priceTier3", v)}
@@ -430,7 +433,7 @@ export function ProductForm({
             keyboardType="decimal-pad"
           />
         </FormField>
-        <FormField label="Tier 4 price">
+        <FormField label={`${tierLabel(tierLabels, 4)} price`}>
           <FormTextInput
             value={form.priceTier4}
             onChangeText={(v) => set("priceTier4", v)}
@@ -440,7 +443,7 @@ export function ProductForm({
             keyboardType="decimal-pad"
           />
         </FormField>
-        <FormField label="Tier 5 price">
+        <FormField label={`${tierLabel(tierLabels, 5)} price`}>
           <FormTextInput
             value={form.priceTier5}
             onChangeText={(v) => set("priceTier5", v)}
