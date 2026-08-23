@@ -63,6 +63,7 @@ import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { EntitlementsService } from "../billing/entitlements.service";
 
 @Injectable()
 export class OrdersService implements OnApplicationBootstrap {
@@ -80,6 +81,7 @@ export class OrdersService implements OnApplicationBootstrap {
     private readonly promotionsService: PromotionsService,
     private readonly messaging: MessagingService,
     private readonly creditNotes: CreditNotesService,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
   /**
@@ -2510,6 +2512,11 @@ export class OrdersService implements OnApplicationBootstrap {
       ? await this.loadActivePromotions(UserRole.CUSTOMER)
       : [];
 
+    // WP3: resolved on its own pooled connection BEFORE the tx opens, like the
+    // reference reads above — the credit guard runs inside the transaction and
+    // must not issue a non-transactional query from in there.
+    const creditCheckEnabled = await this.isCreditLimitCheckEnabled();
+
     // P5-08b: the entire mutation phase — item writes, totals recompute, the
     // stock/credit guards, and the order-header update — runs in ONE tenant
     // transaction. A guard violation (or any failure) rolls back every item
@@ -3187,6 +3194,7 @@ export class OrdersService implements OnApplicationBootstrap {
             // rounded. Note: mirrors the existing edit recompute, which
             // (pre-existing) does not subtract Order.discountAmount.
             total,
+            creditCheckEnabled,
           );
         }
 
@@ -3483,6 +3491,39 @@ export class OrdersService implements OnApplicationBootstrap {
   }
 
   /**
+   * WP3: resolves whether the credit-limit check applies to this tenant.
+   *
+   * MUST be called BEFORE opening an interactive transaction (pool-starvation
+   * guard, :1660-1672): EntitlementsService reads the tenant row on its OWN
+   * pooled connection, so a cache miss inside an open tx would check out a
+   * second connection while the first is held — N concurrent edits on a cold
+   * cache then deadlock the pool (P2024) and every edit rolls back.
+   *
+   * Both fallbacks resolve to TRUE (run the check) because the legacy,
+   * pre-flag behavior is that the check ALWAYS runs, and assertWithinCreditLimit
+   * throws inside the order-edit transaction: a catalog/DB hiccup must degrade
+   * to the money guard staying ON, never to a rolled-back edit reporting a
+   * billing-catalog error. (PlanFlagGuard fails CLOSED instead — it can deny a
+   * request cleanly; this call site cannot.)
+   */
+  private async isCreditLimitCheckEnabled(): Promise<boolean> {
+    // Release toggle (REMOVE by 2026-10-01): plan-flag enforcement ships dark.
+    // "on" = enforce; anything else = legacy behavior (always check).
+    if ((process.env.PLAN_FLAG_ENFORCEMENT ?? "off") !== "on") return true;
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return true;
+    try {
+      return await this.entitlements.hasFlag(tenantId, "flag.credit_limits");
+    } catch (err) {
+      this.logger.error(
+        `Entitlement resolution failed for tenant ${tenantId}; running the credit check (legacy)`,
+        err as Error,
+      );
+      return true;
+    }
+  }
+
+  /**
    * P5-08b credit-limit guard — the FIRST credit enforcement in the codebase
    * (verified: no other creditLimit read exists in apps/api/src outside DTOs).
    *
@@ -3513,13 +3554,24 @@ export class OrdersService implements OnApplicationBootstrap {
    * Runs INSIDE the updateOrderItems transaction, after the totals recompute:
    * projectedOrderTotal is the SAME roundMoney(subtotal + tax) the order.update
    * persists. A throw rolls the whole edit back.
+   *
+   * flag.credit_limits gates the CHECK itself, not customer CRUD — an
+   * unflagged tenant's stored creditLimit values persist but are inert. Same
+   * PLAN_FLAG_ENFORCEMENT kill switch as PlanFlagGuard (see plan-flag.guard.ts):
+   * legacy behavior (kill switch off) is that this check ALWAYS runs, so the
+   * off-path must keep running it, not skip it. The decision is resolved by
+   * isCreditLimitCheckEnabled OUTSIDE the transaction and passed in — this
+   * method issues NO query on the non-transactional client.
    */
   private async assertWithinCreditLimit(
     db: any,
     customerId: string,
     currentOrderId: string,
     projectedOrderTotal: number,
+    creditCheckEnabled: boolean,
   ): Promise<void> {
+    if (!creditCheckEnabled) return;
+
     const customer = await db.customer.findUnique({
       where: { id: customerId },
       select: { creditLimit: true },
@@ -3600,6 +3652,7 @@ export class OrdersService implements OnApplicationBootstrap {
       customerId,
       excludeOrderId,
       projectedTotal,
+      await this.isCreditLimitCheckEnabled(),
     );
   }
 
@@ -3711,6 +3764,8 @@ export class OrdersService implements OnApplicationBootstrap {
       cr.type === ChangeRequestType.ADD_ITEM
         ? await this.getCustomerPriceHistory(order.customerId)
         : {};
+    // WP3: hoisted for the same reason — the credit guard below runs inside the tx.
+    const creditCheckEnabled = await this.isCreditLimitCheckEnabled();
 
     const { subtotal, tax, total } = await this.prisma.tenantTransaction(
       async (tx: any) => {
@@ -3999,7 +4054,13 @@ export class OrdersService implements OnApplicationBootstrap {
         // stock guard's block/warn semantics (DRIVER hard-blocks; operators
         // warn-only, matching create()/edit posture). Credit blocks all roles.
         await this.assertStockAvailableForEdit(tx, order, activeItems, resolver);
-        await this.assertWithinCreditLimit(tx, order.customerId, order.id, total);
+        await this.assertWithinCreditLimit(
+          tx,
+          order.customerId,
+          order.id,
+          total,
+          creditCheckEnabled,
+        );
 
         // NO status revert here — post-dispatch orders must NOT flip to PENDING
         // (the shouldRevert logic in updateOrderItems is pre-dispatch-only).

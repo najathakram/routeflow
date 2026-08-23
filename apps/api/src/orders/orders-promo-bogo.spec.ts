@@ -55,6 +55,7 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { EntitlementsService } from "../billing/entitlements.service";
 
 const customerPayload = {
   sub: "user-cust",
@@ -198,6 +199,10 @@ describe("OrdersService — BUY_N_GET_M (BOGO)", () => {
             releaseOrderCreditsInTx: jest.fn().mockResolvedValue([]),
             previewOrderCreditRelease: jest.fn().mockResolvedValue([]),
           },
+        },
+        {
+          provide: EntitlementsService,
+          useValue: { hasFlag: jest.fn().mockResolvedValue(true) },
         },
       ],
     }).compile();

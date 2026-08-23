@@ -18,6 +18,8 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { PlanFlagGuard } from "../billing/plan-flag.guard";
+import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { VendorBillsService } from "./vendor-bills.service";
 import { CreateVendorBillDto } from "./dto/create-vendor-bill.dto";
 import { UpdateVendorBillDto } from "./dto/update-vendor-bill.dto";
@@ -27,9 +29,11 @@ import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
 import { SaveProductMappingDto } from "./dto/save-product-mapping.dto";
 import { RecordSupplierPaymentDto } from "./dto/supplier-payment.dto";
 
+// OPERATOR-only end to end.
 @Controller("vendor-bills")
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @Roles(UserRole.OPERATOR)
+@RequirePlanFlag("flag.ap_bills")
 export class VendorBillsController {
   constructor(private readonly vendorBillsService: VendorBillsService) {}
 
