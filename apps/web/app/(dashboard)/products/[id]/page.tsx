@@ -2065,6 +2065,12 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                         <p className="mt-1 text-xs text-navy/50">
                           per piece — even for boxed products
                         </p>
+                        {!(editDraft.msrp as string)?.trim() && (
+                          <p className="mt-1 text-xs text-navy/50">
+                            Shown on new invoices once set — existing invoices keep their original
+                            snapshot.
+                          </p>
+                        )}
                         {msrpBelowWholesale && (
                           <p className="mt-1 text-xs text-warning">
                             Below wholesale price (${wholesalePerPiece.toFixed(2)}/pc)

@@ -46,6 +46,9 @@ import { EntitlementsModule } from "./entitlements.module";
     PlatformPricingService,
     AddonService,
     AddonGuard,
+    // Platform-admin plan changes move the snapshot MRR run-rate, so they must emit the
+    // matching signed BillingEvent delta (see PlatformAdminService.updatePlan).
+    BillingEventService,
     EntitlementsModule,
   ],
 })

@@ -246,3 +246,13 @@ export const LEGACY_ADDON_KEY_TO_SKU: Record<string, AddonSkuCode> = {
 export function addonSkuCode(row: { sku?: string | null; addonKey: string }): string | null {
   return row.sku ?? LEGACY_ADDON_KEY_TO_SKU[row.addonKey] ?? null;
 }
+
+/**
+ * SKUs a TENANT_ADMIN may enable from settings→billing. Everything else is
+ * platform-admin-only ("ships dark") — owner decision 2026-08-24. SEAT_EXTRA is
+ * seat-billing plumbing, never a toggle.
+ */
+export const SELF_SERVICE_ADDON_SKUS: readonly AddonSkuCode[] = [
+  "CUSTOMER_PACK_100",
+  "FORECASTING",
+] as const;

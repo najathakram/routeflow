@@ -6,7 +6,7 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { FLAG_TO_ADDON_SKU } from "./plan-catalog.constants";
+import { FLAG_TO_ADDON_SKU, SELF_SERVICE_ADDON_SKUS } from "./plan-catalog.constants";
 import { PlanGateUpgrade } from "./plan-gate";
 
 /** Editable fields on a plan definition (draft only). */
@@ -121,18 +121,23 @@ export class PlanCatalogService {
         featureFlags: d.featureFlags,
         sortOrder: d.sortOrder,
       })),
-      addons: v.addonSkus.map((s) => ({
-        sku: s.sku,
-        name: s.name,
-        monthlyPrice: s.monthlyPrice,
-        unit: s.unit,
-        includedAtPlan: s.includedAtPlan,
-        meteredKey: s.meteredKey,
-        capacityPerUnit: s.capacityPerUnit,
-        stackable: s.stackable,
-        grantsFlags: s.grantsFlags,
-        sortOrder: s.sortOrder,
-      })),
+      // Self-service SKUs only — MSRP/SALES_AGENTS (and any future admin-only SKU) "ship
+      // dark": platform-admin grants them, but this tenant-facing payload must never
+      // advertise them as something a TENANT_ADMIN can pick.
+      addons: v.addonSkus
+        .filter((s) => (SELF_SERVICE_ADDON_SKUS as readonly string[]).includes(s.sku))
+        .map((s) => ({
+          sku: s.sku,
+          name: s.name,
+          monthlyPrice: s.monthlyPrice,
+          unit: s.unit,
+          includedAtPlan: s.includedAtPlan,
+          meteredKey: s.meteredKey,
+          capacityPerUnit: s.capacityPerUnit,
+          stackable: s.stackable,
+          grantsFlags: s.grantsFlags,
+          sortOrder: s.sortOrder,
+        })),
     };
   }
 
