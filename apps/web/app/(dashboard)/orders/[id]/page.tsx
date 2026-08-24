@@ -43,7 +43,7 @@ import {
   type CustomerPriceHistory,
 } from "@/lib/api/orders";
 import { describeCancelImpact } from "@/lib/cancel-impact";
-import { isInternalEmail } from "@/lib/formatting";
+import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import {
   describeChangeRequest,
   describeResolution,
@@ -765,6 +765,7 @@ function EditableLineItems({
   canEditPrice,
   priceHistory,
   tierPriceFor,
+  isSpecialTierFor,
 }: {
   items: EditItemState[];
   onChange: (items: EditItemState[]) => void;
@@ -779,6 +780,9 @@ function EditableLineItems({
   /** This customer's contracted price for a product (per-product tier override,
    *  else the customer's tier). Mirrors mobile's `tierPriceFor`. */
   tierPriceFor: (product: SubstituteOption) => number;
+  /** True when this customer's effective tier for the product is not tier 1 — a
+   *  contracted price a stale remembered price must never outrank. */
+  isSpecialTierFor: (product: SubstituteOption) => boolean;
 }) {
   // Scroll the just-scanned/added row into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLDivElement>>(new Map());
@@ -838,11 +842,20 @@ function EditableLineItems({
       onChange(items.map((it) => (it.id === existing.id ? { ...it, qty: it.qty + 1 } : it)));
       setScrollToId(existing.id);
     } else {
-      // Pre-fill the remembered price for this customer + product (carry a prior
-      // discount OR upsell forward); fall back to catalog.
-      const catalog = Number(p.pricePerUnit ?? 0);
+      // This customer's contracted price is the line's BASE — pinning the base
+      // to list made every tier add look like an operator override, so the
+      // server stored it MANUAL instead of resolving the tier as SPECIAL.
+      // Pre-fill the remembered price over it only when it is a genuine
+      // discount (below the tier price) or upsell (above list) and no
+      // contracted tier applies — a stale memory must never outrank a tier
+      // price. Mirrors mobile's `addPickedToDraft`.
+      const list = Number(p.pricePerUnit ?? 0);
+      const base = tierPriceFor(p);
       const hist = priceHistory?.[p.id];
-      const startPrice = hist ? hist.lastPrice : catalog;
+      const startPrice =
+        !isSpecialTierFor(p) && hist != null && (hist.lastPrice < base || hist.lastPrice > list)
+          ? hist.lastPrice
+          : base;
       const newId = `new-${Date.now()}-${Math.random()}`;
       onAdd({
         id: newId,
@@ -854,9 +867,9 @@ function EditableLineItems({
         productName: p.name,
         qty: 1,
         unitPrice: startPrice,
-        basePrice: catalog,
+        basePrice: base,
         originalUnitPrice: startPrice,
-        originalBasePrice: catalog,
+        originalBasePrice: base,
         // Carry the case size so a later substitution re-denominates this
         // line's selling-unit qty correctly (boxSplit stays unset — a plain
         // new line still bills in selling units and sends no split).
@@ -1425,6 +1438,10 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const customerTier = (customerDetail as { pricingTier?: number } | undefined)?.pricingTier ?? 1;
   const tierPriceFor = React.useCallback(
     (p: SubstituteOption) => getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1),
+    [cpMap, customerTier],
+  );
+  const isSpecialTierFor = React.useCallback(
+    (p: SubstituteOption) => (cpMap.get(p.id) ?? customerTier ?? 1) !== 1,
     [cpMap, customerTier],
   );
   const router = useRouter();
@@ -2360,6 +2377,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                   canEditPrice={canEdit}
                   priceHistory={priceHistory}
                   tierPriceFor={tierPriceFor}
+                  isSpecialTierFor={isSpecialTierFor}
                 />
 
                 {/* Live total preview */}
@@ -3005,7 +3023,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                         <Badge status={inv.status as BadgeStatus} />
                         {inv.dueDate && (
                           <span className="text-xs text-navy/70">
-                            Due {new Date(inv.dueDate).toLocaleDateString()}
+                            Due {fmtCalendarDate(inv.dueDate)}
                           </span>
                         )}
                       </div>

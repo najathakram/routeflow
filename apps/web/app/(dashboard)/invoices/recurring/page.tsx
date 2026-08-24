@@ -13,15 +13,9 @@ import {
   type RecurringInvoice,
 } from "@/lib/api/invoices";
 import { useRouter } from "next/navigation";
+import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function fmtDate(d?: string | null) {
-  if (!d) return "—";
-  const dt = new Date(d);
-  if (isNaN(dt.getTime())) return "—";
-  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
 
 function freqLabel(freq: string, dayOfWeek?: number | null, dayOfMonth?: number | null) {
   if (freq === "WEEKLY") {
@@ -160,9 +154,11 @@ export default function RecurringInvoicesPage() {
               </div>
 
               <div className="mt-3 space-y-1 text-xs text-navy/70">
+                {/* nextRunAt is a UTC-midnight calendar date (fmtCalendarDate); lastRunAt is a
+                    real timestamp and stays in the viewer's local time (fmtDate). */}
                 <div className="flex justify-between">
                   <span>Next run</span>
-                  <span className="font-medium text-navy">{fmtDate(ri.nextRunAt)}</span>
+                  <span className="font-medium text-navy">{fmtCalendarDate(ri.nextRunAt)}</span>
                 </div>
                 {ri.lastRunAt && (
                   <div className="flex justify-between">

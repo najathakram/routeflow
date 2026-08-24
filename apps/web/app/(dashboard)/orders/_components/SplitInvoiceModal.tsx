@@ -108,7 +108,10 @@ export function SplitInvoiceModal({
       {
         orderId,
         items: chosen,
-        terms,
+        // The Net-N pick is the structured label, NOT the long-form T&C text
+        // (`terms`) — posting it there would overwrite the tenant's configured
+        // Terms & Conditions block on this invoice.
+        paymentTermsLabel: terms || undefined,
         dueDate,
         send,
       },
@@ -230,7 +233,13 @@ export function SplitInvoiceModal({
             <input
               type="date"
               value={dueDate}
-              onChange={(e) => setDueDate(e.target.value)}
+              onChange={(e) => {
+                // A hand-typed due date supersedes the term that derived it —
+                // posting "Net 30" beside a date that is not issue+30 is the
+                // exact label/due-date disagreement this model eliminates.
+                setTerms("");
+                setDueDate(e.target.value);
+              }}
               className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
           </div>

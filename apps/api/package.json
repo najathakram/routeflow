@@ -24,6 +24,7 @@
     "db:seed": "ts-node -r tsconfig-paths/register prisma/seed.ts",
     "db:publish:catalog": "ts-node -r tsconfig-paths/register prisma/publish-plan-catalog-v8.ts",
     "db:publish:catalog:v9": "ts-node -r tsconfig-paths/register prisma/publish-plan-catalog-v9.ts",
+    "db:publish:catalog:v10": "ts-node -r tsconfig-paths/register prisma/publish-plan-catalog-v10.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

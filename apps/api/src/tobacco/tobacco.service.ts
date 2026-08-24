@@ -85,6 +85,9 @@ export class TobaccoService {
         isActive: true,
         currentStock: true,
         averageCost: true,
+        // Stock is denominated in PIECES; the reader needs the case size to label
+        // it without printing a piece count next to the box noun.
+        unitsPerBox: true,
       },
     });
     return products.map((p) => {

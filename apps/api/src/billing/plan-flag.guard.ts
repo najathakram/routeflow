@@ -12,6 +12,23 @@ import { REQUIRE_PLAN_FLAG_KEY } from "./require-plan-flag.decorator";
 import { buildPlanGateBody } from "./plan-gate";
 
 /**
+ * Flags whose server-side enforcement the 2026-08-23 rollout introduces — these,
+ * and ONLY these, are muted by the PLAN_FLAG_ENFORCEMENT kill switch. Any gate
+ * not listed here was already live before the switch existed (flag.msrp, shipped
+ * in #411) and must keep enforcing regardless of the env. REMOVE this set along
+ * with the switch by 2026-10-01.
+ */
+const DARK_PLAN_FLAGS = new Set([
+  "flag.analytics",
+  "flag.ap_bills",
+  "flag.import_integrations",
+  "flag.forecasting",
+  "flag.pricing_tiers",
+  "flag.reports",
+  "flag.returns",
+]);
+
+/**
  * Enforces @RequirePlanFlag(flagKey). Mirrors AddonGuard's contract:
  * `@UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)` — guards run BEFORE the
  * TenantInterceptor, so the tenant AsyncLocalStorage is NOT initialized here; read
@@ -37,6 +54,16 @@ export class PlanFlagGuard implements CanActivate {
       context.getClass(),
     ]);
     if (!flagKey) return true;
+
+    // Release toggle (REMOVE by 2026-10-01): the gates added by the 2026-08-23
+    // rollout ship dark. "on" = enforce; anything else = allow. Scoped to
+    // DARK_PLAN_FLAGS so gates that were already live (flag.msrp) keep enforcing.
+    // The owner flips this on only after the prod entitlement audit
+    // (scripts/audit-tenant-entitlements.mjs) proves no live tenant loses a
+    // surface it uses today.
+    if (DARK_PLAN_FLAGS.has(flagKey) && (process.env.PLAN_FLAG_ENFORCEMENT ?? "off") !== "on") {
+      return true;
+    }
 
     const request = context.switchToHttp().getRequest<{ user?: { tenantId?: string | null } }>();
     const tenantId = request.user?.tenantId ?? null;

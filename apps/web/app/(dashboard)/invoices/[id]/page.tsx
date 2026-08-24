@@ -54,6 +54,7 @@ import {
   useUnvoidInvoice,
   useAdjustInvoicePrices,
   useUpdateInvoiceShipment,
+  useUpdateInvoiceTerms,
   useSetCheckStatus,
   type Invoice,
   type InvoiceStatus,
@@ -63,7 +64,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
-import { fmt, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { formatQtySplit } from "@/lib/pricing";
 import {
   SELECTABLE_PAYMENT_METHODS,
@@ -858,6 +859,140 @@ function WriteOffModal({
   );
 }
 
+// ─── Edit terms modal (WP3 PATCH /invoices/:id/terms) ─────────────────────────
+// Same TERMS_OPTIONS values as invoices/new/page.tsx and the DRAFT edit page —
+// kept local since none of the three share a lib module for it.
+const EDIT_TERMS_OPTIONS = [
+  { value: "", label: "Select terms…" },
+  { value: "Due on Receipt", label: "Due on Receipt" },
+  { value: "Net 15", label: "Net 15" },
+  { value: "Net 30", label: "Net 30" },
+  { value: "Net 45", label: "Net 45" },
+  { value: "Net 60", label: "Net 60" },
+];
+
+interface EditTermsFields {
+  dueDate?: string;
+  paymentTermsLabel?: string;
+  referenceNumber?: string;
+  subject?: string;
+}
+
+function EditTermsModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  invoice,
+  isPending,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: (fields: EditTermsFields) => void;
+  invoice: Invoice;
+  isPending: boolean;
+}) {
+  const [dueDate, setDueDate] = React.useState("");
+  const [paymentTermsLabel, setPaymentTermsLabel] = React.useState("");
+  const [referenceNumber, setReferenceNumber] = React.useState("");
+  const [subject, setSubject] = React.useState("");
+
+  React.useEffect(() => {
+    if (!isOpen) return;
+    setDueDate(invoice.dueDate ? invoice.dueDate.slice(0, 10) : "");
+    setPaymentTermsLabel(invoice.paymentTermsLabel ?? "");
+    setReferenceNumber(invoice.referenceNumber ?? "");
+    setSubject(invoice.subject ?? "");
+  }, [isOpen, invoice]);
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    onConfirm({
+      // dueDate stays undefined-when-empty: the DTO takes an ISO date and this
+      // modal never clears a due date.
+      dueDate: dueDate || undefined,
+      // The three text fields are sent even when empty: "" is how this modal
+      // CLEARS a stale label / reference / subject (the server maps it to null,
+      // same convention as the DRAFT edit page and the customer/supplier
+      // default-terms selects). Collapsing them to undefined would make the
+      // server treat a deliberately blanked field as "leave unchanged" and the
+      // old value would reappear on the next refetch.
+      paymentTermsLabel,
+      referenceNumber: referenceNumber.trim(),
+      subject: subject.trim(),
+    });
+  }
+
+  const inputCls =
+    "h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500";
+
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Edit Terms"
+      description={`Correct the due date, payment terms, reference, or subject on invoice ${invoice.invoiceNumber}. Line items, discounts, and payments are untouched.`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button type="submit" form="edit-terms-form" loading={isPending}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      <form id="edit-terms-form" onSubmit={handleSubmit} className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-navy/80">Due Date</label>
+            <input
+              type="date"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              className={inputCls}
+            />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-navy/80">Terms</label>
+            <select
+              value={paymentTermsLabel}
+              onChange={(e) => setPaymentTermsLabel(e.target.value)}
+              className={inputCls}
+            >
+              {EDIT_TERMS_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">
+            Reference / PO Number
+          </label>
+          <input
+            type="text"
+            value={referenceNumber}
+            onChange={(e) => setReferenceNumber(e.target.value)}
+            className={inputCls}
+          />
+        </div>
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Subject</label>
+          <input
+            type="text"
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            className={inputCls}
+          />
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 // ─── Delete payment confirm modal ─────────────────────────────────────────────
 
 function DeletePaymentModal({
@@ -1261,6 +1396,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const revertToDraft = useRevertInvoiceToDraft();
   const unvoid = useUnvoidInvoice();
   const updateShipment = useUpdateInvoiceShipment();
+  const updateTerms = useUpdateInvoiceTerms();
   const setCheckStatus = useSetCheckStatus();
   const unapplyCreditNote = useUnapplyCreditNote();
   const { user } = useAuth();
@@ -1275,6 +1411,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
   const [isReopenOpen, setIsReopenOpen] = React.useState(false);
   const [isWriteOffOpen, setIsWriteOffOpen] = React.useState(false);
+  const [isEditTermsOpen, setIsEditTermsOpen] = React.useState(false);
   const [isRevertToDraftOpen, setIsRevertToDraftOpen] = React.useState(false);
   const [isUnvoidOpen, setIsUnvoidOpen] = React.useState(false);
   // Why the email path is blocked: no usable address on file, or the server refused
@@ -1792,6 +1929,25 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     });
   };
 
+  const handleUpdateTerms = (fields: EditTermsFields) => {
+    updateTerms.mutate(
+      { id: invoice.id, ...fields },
+      {
+        onSuccess: () => {
+          toast({ title: "Terms updated", variant: "success" });
+          setIsEditTermsOpen(false);
+        },
+        onError: (err: any) => {
+          toast({
+            title: "Failed to update terms",
+            description: err?.response?.data?.message ?? "Please try again.",
+            variant: "error",
+          });
+        },
+      },
+    );
+  };
+
   const handleDownloadPdf = () => {
     downloadPdf.mutate(
       { id: invoice.id, variant: pdfVariant },
@@ -1853,8 +2009,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           <p className="mt-1 text-sm text-navy/70">
             {invoice.customer?.businessName ?? "—"}
             {(invoice as any).orderNumber ? ` · from ${(invoice as any).orderNumber}` : ""} · issued{" "}
-            {fmtDate(invoice.issueDate ?? invoice.createdAt)}
-            {invoice.dueDate ? ` · due ${fmtDate(invoice.dueDate)}` : ""}
+            {fmtCalendarDate(invoice.issueDate ?? invoice.createdAt)}
+            {invoice.dueDate ? ` · due ${fmtCalendarDate(invoice.dueDate)}` : ""}
           </p>
         </div>
 
@@ -2025,6 +2181,13 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             items={[
               { label: "Duplicate", onClick: handleDuplicate },
               {
+                // WP3: narrow post-issue correction of dueDate/paymentTermsLabel/
+                // reference/subject only — blocked exactly where the API blocks it.
+                label: "Edit Terms",
+                onClick: () => setIsEditTermsOpen(true),
+                disabled: status === "VOID" || status === "WRITTEN_OFF",
+              },
+              {
                 label: "Reopen Invoice",
                 onClick: () => setIsReopenOpen(true),
                 disabled: status !== "PAID",
@@ -2084,7 +2247,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
               <div>
                 <p className="font-display text-2xl text-navy">Invoice</p>
                 <p className="mt-1 font-mono text-xs text-navy/70">
-                  {invoice.invoiceNumber} · {fmtDate(invoice.issueDate ?? invoice.createdAt)}
+                  {invoice.invoiceNumber} ·{" "}
+                  {fmtCalendarDate(invoice.issueDate ?? invoice.createdAt)}
                 </p>
               </div>
               <div className="flex flex-col items-end gap-2">
@@ -2125,19 +2289,35 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                 <p className="overline mb-1.5">Invoice Details</p>
                 <p className="text-sm text-navy/70">
                   <span className="font-medium text-navy">Issue Date:</span>{" "}
-                  {fmtDate(invoice.issueDate ?? invoice.createdAt)}
+                  {fmtCalendarDate(invoice.issueDate ?? invoice.createdAt)}
                 </p>
                 {invoice.dueDate && (
                   <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Due Date:</span>{" "}
                     <span className={cn(status === "OVERDUE" && "font-medium text-danger")}>
-                      {fmtDate(invoice.dueDate)}
+                      {fmtCalendarDate(invoice.dueDate)}
+                    </span>
+                  </p>
+                )}
+                {/* Structured "Net 30"-style label — distinct from the long-form
+                    Terms & Conditions text below, which keeps its own line. */}
+                {invoice.paymentTermsLabel && (
+                  <p className="text-sm text-navy/70">
+                    <span className="font-medium text-navy">Terms:</span>{" "}
+                    {invoice.paymentTermsLabel}
+                  </p>
+                )}
+                {invoice.depositOverdue && (
+                  <p>
+                    <span className="inline-flex items-center gap-1 rounded-full bg-danger/10 px-2 py-0.5 text-xs font-semibold text-danger">
+                      Deposit overdue
                     </span>
                   </p>
                 )}
                 {(invoice as any).terms && (
                   <p className="text-sm text-navy/70">
-                    <span className="font-medium text-navy">Terms:</span> {(invoice as any).terms}
+                    <span className="font-medium text-navy">Terms &amp; Conditions:</span>{" "}
+                    {(invoice as any).terms}
                   </p>
                 )}
                 {(invoice as any).orderNumber && (
@@ -2699,6 +2879,14 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         onConfirm={handleWriteOff}
         invoiceNumber={invoice.invoiceNumber}
         isPending={writeOffInvoice.isPending}
+      />
+
+      <EditTermsModal
+        isOpen={isEditTermsOpen}
+        onClose={() => setIsEditTermsOpen(false)}
+        onConfirm={handleUpdateTerms}
+        invoice={invoice}
+        isPending={updateTerms.isPending}
       />
 
       <Modal

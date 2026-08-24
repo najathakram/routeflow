@@ -109,6 +109,19 @@ export interface Invoice {
   referenceNumber?: string;
   subject?: string;
   terms?: string;
+  /**
+   * Structured "Net 30"-style label, distinct from `terms` (the long-form
+   * Terms & Conditions text) — always agrees with `dueDate` on every invoice
+   * this label was set on.
+   */
+  paymentTermsLabel?: string | null;
+  /** Deposit schedule (Tier 1, deliberately minimal): percent of `total` due by
+   *  `depositDueDate`. `depositAmount`/`depositOverdue` are server-computed at
+   *  read time, never stored. */
+  depositPercent?: number | null;
+  depositDueDate?: string | null;
+  depositAmount?: number | null;
+  depositOverdue?: boolean;
   pdfUrl?: string;
   writeOffReason?: string;
   writtenOffAt?: string;
@@ -265,6 +278,15 @@ export interface CreateInvoiceDto {
   shippingTrackingNumber?: string;
   /** If true, invoice transitions DRAFT → SENT immediately after creation. */
   send?: boolean;
+  /**
+   * Structured "Net 30"-style label — whichever term string drove `dueDate`
+   * above. Distinct from `terms` (the long-form Terms & Conditions text).
+   */
+  paymentTermsLabel?: string;
+  /** Deliberately minimal deposit schedule (Tier 1): percent of the total due
+   *  by `depositDueDate`. The dollar amount is always derived server-side. */
+  depositPercent?: number;
+  depositDueDate?: string;
 }
 
 export function useCreateInvoice() {
@@ -279,6 +301,32 @@ export function useUpdateInvoice() {
   const qc = useQueryClient();
   return useMutation<Invoice, Error, { id: string } & Partial<CreateInvoiceDto>>({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/invoices/${id}`, dto).then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", id] });
+    },
+  });
+}
+
+/**
+ * WP3: narrow post-issue correction of exactly `{ dueDate?, paymentTermsLabel?,
+ * referenceNumber?, subject? }` — never items/discount/shipping/deposit, which
+ * still require a credit note or a DRAFT edit. The server rejects VOID/
+ * WRITTEN_OFF invoices; a dueDate change re-runs recomputeStatus (can flip
+ * SENT↔OVERDUE) but never triggers the order back-sync.
+ */
+export interface UpdateInvoiceTermsDto {
+  dueDate?: string;
+  paymentTermsLabel?: string;
+  referenceNumber?: string;
+  subject?: string;
+}
+
+export function useUpdateInvoiceTerms() {
+  const qc = useQueryClient();
+  return useMutation<Invoice, Error, { id: string } & UpdateInvoiceTermsDto>({
+    mutationFn: ({ id, ...dto }) =>
+      apiClient.patch(`/invoices/${id}/terms`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", id] });
@@ -849,7 +897,10 @@ export interface CreatePartialInvoiceDto {
   orderId: string;
   items: CreatePartialInvoiceItem[];
   dueDate?: string;
+  /** Long-form Terms & Conditions text — NEVER a "Net N" label. */
   terms?: string;
+  /** Structured "Net N" label describing dueDate. */
+  paymentTermsLabel?: string;
   notes?: string;
   send?: boolean;
 }

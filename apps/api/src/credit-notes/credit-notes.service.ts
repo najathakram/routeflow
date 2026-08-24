@@ -10,6 +10,7 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { roundMoney } from "../common/pricing";
 import { InvoiceStatus, PaymentMethod } from "@prisma/client";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 
 @Injectable()
 export class CreditNotesService {
@@ -17,6 +18,7 @@ export class CreditNotesService {
     private readonly prisma: PrismaService,
     private readonly gateway: RouteFlowGateway,
     private readonly ledger: RegulatedLedgerService,
+    private readonly commissionEngine: CommissionEngineService,
   ) {}
 
   /** Round a quantity to 3 decimals (matches the Decimal(12,3) columns). */
@@ -440,6 +442,10 @@ export class CreditNotesService {
       },
     });
 
+    // Sales agents & commissions: a credit application shrinks the base and
+    // is excluded from cash — both sides of the money math move.
+    await this.commissionEngine.syncInvoiceCommissionSafe(inv.id, tx);
+
     return { applied: applyAmount, invoiceStatus: newStatus };
   }
 
@@ -666,6 +672,9 @@ export class CreditNotesService {
           paidAt: newStatus === InvoiceStatus.PAID ? (inv.paidAt ?? new Date()) : null,
         },
       });
+      // Sales agents & commissions: giving the credit back to the wallet
+      // grows the base again and un-shrinks the collectible.
+      await this.commissionEngine.syncInvoiceCommissionSafe(payment.invoiceId, tx);
     }
     return restore;
   }

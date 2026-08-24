@@ -260,6 +260,9 @@ export class VendorBillsService {
           subtotal: this.moneyOrNull(dto.subtotal),
           billDate,
           dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+          // Persisted verbatim, never recomputed here — bills have no
+          // due-date-computation machinery server side (see schema comment).
+          termsLabel: dto.termsLabel ?? null,
           notes: dto.notes,
           items:
             dto.items && dto.items.length > 0
@@ -668,6 +671,7 @@ export class VendorBillsService {
             billDate: dto.billDate ? new Date(dto.billDate) : null,
           }),
           ...(dto.dueDate !== undefined && { dueDate: dto.dueDate ? new Date(dto.dueDate) : null }),
+          ...(dto.termsLabel !== undefined && { termsLabel: dto.termsLabel }),
           ...(dto.notes !== undefined && { notes: dto.notes }),
           ...(dto.supplierInvoiceNumber !== undefined && {
             supplierInvoiceNumber: this.resolveSupplierInvoiceNumber({

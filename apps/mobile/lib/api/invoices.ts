@@ -66,6 +66,12 @@ export interface Invoice {
   shippingFee?: number | string;
   total: number;
   dueDate?: string;
+  /**
+   * Structured "Net 30"-style label, persisted alongside `dueDate` so the two
+   * can never disagree. Undefined/null on historical invoices predating this
+   * field — renders nothing.
+   */
+  paymentTermsLabel?: string | null;
   notes?: string;
   /** Carrier shipment tracking (when goods ship via a carrier, not our own route). */
   shippingCarrier?: string | null;
@@ -427,7 +433,10 @@ export interface CreatePartialInvoiceDto {
   orderId: string;
   items: CreatePartialInvoiceItem[];
   dueDate?: string;
+  /** Long-form Terms & Conditions text — NEVER a "Net N" label. */
   terms?: string;
+  /** Structured "Net N" label describing dueDate. */
+  paymentTermsLabel?: string;
   notes?: string;
   send?: boolean;
 }

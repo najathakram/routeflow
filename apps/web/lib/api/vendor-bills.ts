@@ -44,6 +44,9 @@ export interface VendorBill {
   status: VendorBillStatus;
   billDate?: string;
   dueDate?: string;
+  /** Net-terms label as entered on the bill ("Net 30", "Due on Receipt", …).
+   *  Persisted verbatim — the server never derives dueDate from it. */
+  termsLabel?: string;
   receivedDate?: string;
   totalOwed: number;
   totalPaid: number;
@@ -207,6 +210,9 @@ export interface CreateVendorBillDto {
   purchaseOrderId?: string;
   billDate: string;
   dueDate: string;
+  /** Net-terms label as entered on the bill, prefillable from Supplier.defaultTerms.
+   *  Persisted verbatim — the client computes dueDate = billDate + days. */
+  termsLabel?: string;
   items: CreateVendorBillItem[];
   notes?: string;
   /** Sales tax on the supplier invoice — folded into totalOwed server-side. */
@@ -256,6 +262,7 @@ export interface UpdateVendorBillDto {
   supplierId?: string;
   billDate?: string;
   dueDate?: string;
+  termsLabel?: string;
   notes?: string;
   items?: CreateVendorBillItem[];
 }

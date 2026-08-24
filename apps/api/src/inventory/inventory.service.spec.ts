@@ -127,6 +127,68 @@ describe("InventoryService", () => {
         ),
       ).resolves.toBeDefined();
     });
+
+    // ─── receiving-box-conversion (2026-08-23): boxed payloads convert ─────────
+
+    it("converts a boxed payload (boxes×unitsPerBox) to pieces before writing stock, movement, lot and average cost", async () => {
+      prisma.product.findUnique.mockResolvedValue(
+        product({ unitsPerBox: 24, currentStock: D(0), averageCost: null }),
+      );
+      prisma.stockMovement.count.mockResolvedValue(0);
+
+      await service.recordPurchase(
+        { productId: "prod-1", boxes: 5, unitCost: 48 } as any,
+        "user-1",
+      );
+
+      // 5 boxes × 24 units/box = 120 pieces
+      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(Number(movementArgs.quantity)).toBe(120);
+      expect(movementArgs.stockAfter.toString()).toBe("120");
+      // $48/box ÷ 24 = $2/piece; stock was 0 so the average resets to it.
+      expect(movementArgs.unitCost.toString()).toBe("2");
+      expect(movementArgs.avgCostAfter.toString()).toBe("2");
+
+      const lotArgs = prisma.stockLot.create.mock.calls[0][0].data;
+      expect(Number(lotArgs.qty)).toBe(120);
+      expect(lotArgs.unitCost.toString()).toBe("2");
+
+      const productArgs = prisma.product.update.mock.calls[0][0].data;
+      expect(productArgs.currentStock.increment.toString()).toBe("120");
+      expect(productArgs.averageCost.toString()).toBe("2");
+    });
+
+    it("a bare quantity KEEPS meaning pieces even for a boxed product — never reinterpreted as boxes (regression pin)", async () => {
+      prisma.product.findUnique.mockResolvedValue(
+        product({ unitsPerBox: 24, currentStock: D(10), averageCost: D(2) }),
+      );
+      prisma.stockMovement.count.mockResolvedValue(0);
+
+      await service.recordPurchase(
+        { productId: "prod-1", quantity: 120, unitCost: 3.5 } as any,
+        "user-1",
+      );
+
+      // No boxes/pieces sent: 120 is pieces, NOT boxes (which would resolve to
+      // 120 × 24 = 2880 if this ever regressed to reinterpreting it).
+      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(Number(movementArgs.quantity)).toBe(120);
+      expect(movementArgs.stockAfter.toString()).toBe("130"); // 10 + 120
+      // unitCost also stays per-piece — no ÷unitsPerBox conversion applied.
+      expect(movementArgs.unitCost.toString()).toBe("3.5");
+
+      const productArgs = prisma.product.update.mock.calls[0][0].data;
+      expect(productArgs.currentStock.increment.toString()).toBe("120");
+    });
+
+    it("rejects a purchase that resolves to zero quantity (neither quantity nor boxes/pieces yields a positive total)", async () => {
+      prisma.product.findUnique.mockResolvedValue(product());
+
+      await expect(
+        service.recordPurchase({ productId: "prod-1", unitCost: 3.5 } as any, "user-1"),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    });
   });
 
   // ─── recordAdjustment — P5-03 stock-alert fire hook ────────────────────────────
@@ -209,6 +271,125 @@ describe("InventoryService", () => {
       expect(productArgs.averageCost.toString()).toBe("2.5");
       const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
       expect(movementArgs.avgCostAfter.toString()).toBe("2.5");
+    });
+
+    // ─── receiving-box-conversion (2026-08-23): boxed PO receive converts ──────
+
+    it("converts a boxed receive item (boxes×unitsPerBox) to pieces, identically to recordPurchase", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(
+        purchaseOrder({
+          items: [
+            {
+              id: "poi-1",
+              productId: "prod-1",
+              qtyOrdered: D(200),
+              qtyReceived: D(0),
+              // PO line costs are stored per PIECE ($48/box ÷ 24) — the split
+              // below converts the quantity only, never the cost basis.
+              unitCost: D(2),
+            },
+          ],
+        }),
+      );
+      prisma.product.findUnique.mockResolvedValue(
+        product({ unitsPerBox: 24, currentStock: D(0), averageCost: null }),
+      );
+
+      await service.receivePurchaseOrder(
+        "po-1",
+        { items: [{ itemId: "poi-1", boxes: 5 }] },
+        "user-1",
+      );
+
+      // 5 boxes × 24 units/box = 120 pieces
+      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(Number(movementArgs.quantity)).toBe(120);
+      expect(movementArgs.stockAfter.toString()).toBe("120");
+      // The stored per-piece cost is used as-is — NOT divided again by
+      // unitsPerBox just because the receive payload was boxed.
+      expect(movementArgs.unitCost.toString()).toBe("2");
+      expect(movementArgs.avgCostAfter.toString()).toBe("2");
+
+      const productArgs = prisma.product.update.mock.calls[0][0].data;
+      expect(productArgs.currentStock.toString()).toBe("120");
+      expect(productArgs.averageCost.toString()).toBe("2");
+
+      const poItemArgs = prisma.purchaseOrderItem.update.mock.calls[0][0].data;
+      expect(poItemArgs.qtyReceived).toBe(120);
+    });
+
+    it("a bare receivedQty KEEPS meaning pieces for a boxed product — never reinterpreted as boxes (regression pin)", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(purchaseOrder());
+      prisma.product.findUnique.mockResolvedValue(
+        product({ unitsPerBox: 24, currentStock: D(10), averageCost: D(2) }),
+      );
+
+      await service.receivePurchaseOrder(
+        "po-1",
+        { items: [{ itemId: "poi-1", receivedQty: 5 }] },
+        "user-1",
+      );
+
+      // No boxes/pieces sent: 5 is pieces, NOT boxes.
+      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(Number(movementArgs.quantity)).toBe(5);
+      expect(movementArgs.stockAfter.toString()).toBe("15"); // 10 + 5
+      // unitCost also stays per-piece — no ÷unitsPerBox conversion applied.
+      expect(movementArgs.unitCost.toString()).toBe("3.5");
+    });
+
+    it("rejects a receipt bigger than what is outstanding instead of silently under-receiving", async () => {
+      // A PO raised in BOXES before the cutover (qtyOrdered 10 = 10 boxes of 24)
+      // receiving the 240 pieces that actually arrived: the old Math.min clamp
+      // took 10 PIECES, priced them per box and flipped the PO to RECEIVED, so
+      // the missing 230 could never be received.
+      prisma.purchaseOrder.findUnique.mockResolvedValue(purchaseOrder());
+      prisma.product.findUnique.mockResolvedValue(
+        product({ unitsPerBox: 24, currentStock: D(0), averageCost: null }),
+      );
+
+      await expect(
+        service.receivePurchaseOrder(
+          "po-1",
+          { items: [{ itemId: "poi-1", receivedQty: 240 }] },
+          "user-1",
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(prisma.product.update).not.toHaveBeenCalled();
+      expect(prisma.purchaseOrderItem.update).not.toHaveBeenCalled();
+    });
+
+    it("accepts the exact remaining quantity on a decimal-unit line (no float artifact)", async () => {
+      // qtyOrdered/qtyReceived are Decimal(10,3): 1.2 − 0.4 is 0.7999999999999999
+      // in float, so a float compare would reject the operator's correct 0.8.
+      prisma.purchaseOrder.findUnique.mockResolvedValue(
+        purchaseOrder({
+          items: [
+            {
+              id: "poi-1",
+              productId: "prod-1",
+              qtyOrdered: D("1.2"),
+              qtyReceived: D("0.4"),
+              unitCost: D(3.5),
+            },
+          ],
+        }),
+      );
+      prisma.product.findUnique.mockResolvedValue(
+        product({ currentStock: D(0), averageCost: null }),
+      );
+
+      await service.receivePurchaseOrder(
+        "po-1",
+        { items: [{ itemId: "poi-1", receivedQty: 0.8 }] },
+        "user-1",
+      );
+
+      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(movementArgs.quantity.toString()).toBe("0.8");
+      expect(movementArgs.stockAfter.toString()).toBe("0.8");
     });
   });
 

@@ -34,6 +34,7 @@ import {
 import { CreatePartialInvoiceDto } from "./dto/create-partial-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { PriceAdjustmentDto } from "./dto/price-adjustment.dto";
+import { UpdateInvoiceTermsDto } from "./dto/update-invoice-terms.dto";
 import { UpdateShipmentDto } from "../orders/dto/update-shipment.dto";
 
 @Controller("invoices")
@@ -163,6 +164,17 @@ export class InvoicesController {
   @Patch(":id/shipment") updateShipment(@Param("id") id: string, @Body() dto: UpdateShipmentDto) {
     return this.invoicesService.updateInvoiceShipment(id, dto);
   }
+
+  /**
+   * WP3: narrow post-issue correction — dueDate/paymentTermsLabel/
+   * referenceNumber/subject only, never money. Allowed on any status except
+   * VOID/WRITTEN_OFF (see `InvoicesService.updateTerms`).
+   */
+  @Patch(":id/terms")
+  updateTerms(@Param("id") id: string, @Body() dto: UpdateInvoiceTermsDto) {
+    return this.invoicesService.updateTerms(id, dto);
+  }
+
   @Post(":id/send") send(@Param("id") id: string) {
     return this.invoicesService.send(id);
   }

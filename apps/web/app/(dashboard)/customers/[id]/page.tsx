@@ -62,7 +62,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useApprovePortalRequest, useDeclinePortalRequest } from "@/lib/api/portal-approvals";
 import { CustomerFormModal } from "../_components/CustomerFormModal";
 import { AuthorizationsTab } from "../_components/AuthorizationsTab";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { getTierPrice, computeMarginFraction, classifyMargin } from "@/lib/pricing";
 import {
   SELECTABLE_PAYMENT_METHODS,
@@ -71,6 +71,8 @@ import {
   type SelectablePaymentMethod,
 } from "@/lib/payment-methods";
 import { useMarginConfig } from "@/lib/api/margin";
+import { useTierLabels } from "@/lib/api/tier-labels";
+import { tierLabel } from "@/lib/tier-label";
 import {
   useCustomer,
   useCustomerOrders,
@@ -755,6 +757,18 @@ function ContactPersonModal({
 
 // ── Special Prices Tab ────────────────────────────────────────────────────────
 
+// Same VALID_TERMS list as the API DTO (update-customer.dto.ts) and the invoice
+// pages' TERMS_OPTIONS — "" clears the override and falls back to the tenant
+// default from Settings → Invoicing.
+const CUSTOMER_TERMS_OPTIONS = [
+  { value: "", label: "Use tenant default" },
+  { value: "Due on Receipt", label: "Due on Receipt" },
+  { value: "Net 15", label: "Net 15" },
+  { value: "Net 30", label: "Net 30" },
+  { value: "Net 45", label: "Net 45" },
+  { value: "Net 60", label: "Net 60" },
+];
+
 function SpecialPricesTab({ customerId }: { customerId: string }) {
   const { data: customer } = useCustomer(customerId);
   const updateCustomer = useUpdateCustomer();
@@ -767,6 +781,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   const upsertPrice = useUpsertCustomerPrice();
   const deletePrice = useDeleteCustomerPrice();
   const hasMsrpAddon = useHasAddon(MSRP_ADDON);
+  const { data: tierLabels } = useTierLabels();
   // Their price vs cost now — the Price Memory margin column (pos-cost-roles §1).
   const { data: marginConfig } = useMarginConfig();
   const marginFloor = marginConfig?.defaultMarginFloor ?? 0.15;
@@ -868,13 +883,15 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             >
               {[1, 2, 3, 4, 5].map((t) => (
                 <option key={t} value={t}>
-                  Tier {t}
+                  {tierLabel(tierLabels, t)}
                   {t === 1 ? " (Default)" : ""}
                 </option>
               ))}
             </select>
           ) : (
-            <p className="text-sm font-semibold text-navy">Tier {customer?.pricingTier ?? 1}</p>
+            <p className="text-sm font-semibold text-navy">
+              {tierLabel(tierLabels, customer?.pricingTier ?? 1)}
+            </p>
           )}
         </div>
         {priceList.length > 0 && (
@@ -883,6 +900,37 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             override and will keep {priceList.length === 1 ? "its" : "their"} own tier.
           </p>
         )}
+      </Card>
+
+      <Card className="mb-5">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h3 className="text-base font-semibold text-navy">Default Payment Terms</h3>
+            <p className="mt-0.5 text-xs text-navy/70">
+              Seeds the terms and due date on this customer&apos;s new invoices. Wins over the
+              tenant default in Settings &rarr; Invoicing.
+            </p>
+          </div>
+          {isOperator ? (
+            <select
+              value={customer?.defaultPaymentTerms ?? ""}
+              onChange={(e) => {
+                updateCustomer.mutate({ id: customerId, defaultPaymentTerms: e.target.value });
+              }}
+              className="rounded border border-surface-border bg-white px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            >
+              {CUSTOMER_TERMS_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <p className="text-sm font-semibold text-navy">
+              {customer?.defaultPaymentTerms || "Tenant default"}
+            </p>
+          )}
+        </div>
       </Card>
 
       <Card>
@@ -966,7 +1014,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                       </td>
                       <td className="px-4 py-3 text-center">
                         {cp.pricingTier != null ? (
-                          <Badge variant="neutral">Tier {cp.pricingTier}</Badge>
+                          <Badge variant="neutral">{tierLabel(tierLabels, cp.pricingTier)}</Badge>
                         ) : (
                           <span className="text-xs italic text-navy/50">Default tier</span>
                         )}
@@ -1112,7 +1160,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
               <option value="">No override (use customer default)</option>
               {[1, 2, 3, 4, 5].map((t) => (
                 <option key={t} value={t}>
-                  Tier {t}
+                  {tierLabel(tierLabels, t)}
                   {t === 1 ? " (List Price)" : ""}
                   {selectedProduct ? ` — ${fmt(getTierPrice(selectedProduct, t))}` : ""}
                   {tierUnset(selectedProduct, t) ? " (list)" : ""}
@@ -1121,7 +1169,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             </select>
             {selectedProduct && selectedTier != null && (
               <p className="mt-1 text-xs text-navy/70">
-                Price at Tier {selectedTier}:{" "}
+                Price at {tierLabel(tierLabels, selectedTier)}:{" "}
                 <span className="font-semibold text-brand-600">
                   {fmt(getTierPrice(selectedProduct, selectedTier))}
                 </span>
@@ -1621,6 +1669,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
   const isOperator = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
 
   const { data: customer, isLoading } = useCustomer(params.id);
+  const { data: tierLabels } = useTierLabels();
   const { data: ordersResult } = useCustomerOrders(params.id);
   const { data: customerRoutes } = useCustomerRoutes(params.id);
   const { data: orderTemplates } = useOrderTemplates(params.id);
@@ -1889,7 +1938,10 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
             <div className="flex flex-wrap items-center gap-2.5">
               <h1 className="text-2xl font-bold text-navy">{customer.businessName}</h1>
               <Badge status={currentStatus} />
-              <Badge variant="info" label={`Tier ${customer.pricingTier ?? 1} pricing`} />
+              <Badge
+                variant="info"
+                label={`${tierLabel(tierLabels, customer.pricingTier ?? 1)} pricing`}
+              />
               <span
                 className={cn(
                   "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
@@ -2136,7 +2188,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                         >
                           {[1, 2, 3, 4, 5].map((t) => (
                             <option key={t} value={t}>
-                              Tier {t}
+                              {tierLabel(tierLabels, t)}
                               {t === 1 ? " (Default)" : ""}
                             </option>
                           ))}
@@ -2145,7 +2197,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                     </div>
                     {!isOperator && (
                       <p className="mt-1 text-sm font-semibold text-navy">
-                        Tier {customer.pricingTier ?? 1}
+                        {tierLabel(tierLabels, customer.pricingTier ?? 1)}
                       </p>
                     )}
                   </div>
@@ -3126,12 +3178,12 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                             </Link>
                           </td>
                           <td className="px-4 py-3 text-navy/70">
-                            {inv.issueDate ? fmtDate(inv.issueDate) : "—"}
+                            {inv.issueDate ? fmtCalendarDate(inv.issueDate) : "—"}
                           </td>
                           <td
                             className={`px-4 py-3 ${isOverdue ? "font-semibold text-danger" : "text-navy/70"}`}
                           >
-                            {inv.dueDate ? fmtDate(inv.dueDate) : "—"}
+                            {inv.dueDate ? fmtCalendarDate(inv.dueDate) : "—"}
                           </td>
                           <td className="px-4 py-3 text-right text-navy">{fmt(inv.total)}</td>
                           <td

@@ -5,6 +5,8 @@ import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "./FormSheet";
 import { AddressAutocompleteInput } from "./AddressAutocompleteInput";
 import { isInternalEmail } from "../lib/internal-email";
+import { useTierLabels } from "../lib/api/tier-labels";
+import { tierLabel } from "../lib/tier-label";
 
 export interface CustomerFormValues {
   businessName: string;
@@ -211,6 +213,7 @@ export function CustomerForm({
 }: Props) {
   const [form, setForm] = React.useState<CustomerFormValues>(initial);
   const [error, setError] = React.useState<string | null>(null);
+  const { data: tierLabels } = useTierLabels();
   const set = <K extends keyof CustomerFormValues>(k: K, v: CustomerFormValues[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
@@ -359,13 +362,28 @@ export function CustomerForm({
             keyboardType="decimal-pad"
           />
         </FormField>
-        <FormField label="Pricing tier">
+        <FormField
+          label="Pricing tier"
+          // Buttons stay compact digits (1-5) so the row always fits — only
+          // the selected tier's resolved name is surfaced, as a hint, and
+          // only when the tenant has actually configured one (tierLabel()
+          // falls back to "Tier N" otherwise, which would just repeat the
+          // digit already shown above).
+          hint={
+            tierLabels?.[String(form.pricingTier)]?.trim()
+              ? tierLabel(tierLabels, form.pricingTier)
+              : undefined
+          }
+        >
           <View style={styles.tierRow}>
             {([1, 2, 3, 4, 5] as const).map((t) => (
               <Pressable
                 key={t}
                 style={[styles.tierBtn, form.pricingTier === t && styles.tierBtnActive]}
                 onPress={() => set("pricingTier", t)}
+                accessibilityRole="button"
+                accessibilityLabel={tierLabel(tierLabels, t)}
+                accessibilityState={{ selected: form.pricingTier === t }}
               >
                 <Text
                   style={[styles.tierBtnText, form.pricingTier === t && styles.tierBtnTextActive]}

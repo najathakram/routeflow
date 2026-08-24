@@ -199,6 +199,56 @@ export class SystemConfigService {
     await this.set(SystemConfigService.REMITTANCE_KEY, JSON.stringify(next));
   }
 
+  // ─── Pricing tier labels (rung-2 config) ────────────────────────────────────
+  // Tenant-configurable display names for price tiers 1-5 (e.g. "Wholesaler"
+  // instead of "Tier 2"). ONE JSON blob under `pricing.tierLabels`, keyed by
+  // tier number as a string ("1".."5"). PATCH semantics match remittance:
+  // undefined = untouched, "" = cleared (falls back to "Tier N" at render
+  // time via the tierLabel() helper in common/tier-label.ts).
+  private static readonly TIER_LABELS_KEY = "pricing.tierLabels";
+  private static readonly TIER_LABEL_KEYS = ["1", "2", "3", "4", "5"] as const;
+
+  async getPricingTierLabels(): Promise<Record<string, string>> {
+    const raw = await this.get(SystemConfigService.TIER_LABELS_KEY);
+    if (!raw) return {};
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const out: Record<string, string> = {};
+      for (const key of SystemConfigService.TIER_LABEL_KEYS) {
+        const value = parsed[key];
+        if (typeof value === "string" && value.length > 0) out[key] = value;
+      }
+      return out;
+    } catch {
+      this.logger.error("Corrupt pricing.tierLabels JSON — returning empty config");
+      return {};
+    }
+  }
+
+  async setPricingTierLabels(dto: {
+    tier1?: string;
+    tier2?: string;
+    tier3?: string;
+    tier4?: string;
+    tier5?: string;
+  }): Promise<void> {
+    const current = await this.getPricingTierLabels();
+    const next: Record<string, string> = { ...current };
+    const pairs: Array<[string, string | undefined]> = [
+      ["1", dto.tier1],
+      ["2", dto.tier2],
+      ["3", dto.tier3],
+      ["4", dto.tier4],
+      ["5", dto.tier5],
+    ];
+    for (const [key, value] of pairs) {
+      if (value === undefined) continue;
+      if (value === "") delete next[key];
+      else next[key] = value;
+    }
+    await this.set(SystemConfigService.TIER_LABELS_KEY, JSON.stringify(next));
+  }
+
   async setZohoConfig(dto: {
     clientId?: string;
     clientSecret?: string;

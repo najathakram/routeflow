@@ -332,92 +332,102 @@ model Tenant {
   billingEvents BillingEvent[]
   rfInvoices    RfInvoice[]
 
-  userPreferences        UserPreference[]
-  customers              Customer[]
-  customerAddresses      CustomerAddress[]
-  customerDocuments      CustomerDocument[]
-  drivers                Driver[]
-  products               Product[]
-  routes                 Route[]
-  routeStops             RouteStop[]
-  routeCustomers         RouteCustomer[]
-  routeRuns              RouteRun[]
-  routeRunStops          RouteRunStop[]
-  orders                 Order[]
-  orderItems             OrderItem[]
-  deliveryMutations      DeliveryMutation[]
-  transactions           Transaction[]
-  transactionItems       TransactionItem[]
-  payments               Payment[]
-  deviceTokens           DeviceToken[]
-  orderTemplates         OrderTemplate[]
-  orderTemplateItems     OrderTemplateItem[]
-  refreshTokens          RefreshToken[]
-  suppliers              Supplier[]
-  stockLots              StockLot[]
-  stockMovements         StockMovement[]
-  invoices               Invoice[]
-  invoiceItems           InvoiceItem[]
-  invoicePayments        InvoicePayment[]
-  paymentCounters        PaymentCounter[]
-  expenseCategories      ExpenseCategory[]
-  expenses               Expense[]
-  expenseLineItems       ExpenseLineItem[]
-  mileageRates           MileageRate[]
-  contactPersons         ContactPerson[]
-  customerTags           CustomerTag[]
-  customerTagAssignments CustomerTagAssignment[]
-  customerComments       CustomerComment[]
-  purchaseOrders         PurchaseOrder[]
-  purchaseOrderItems     PurchaseOrderItem[]
-  creditNotes            CreditNote[]
-  creditNoteItems        CreditNoteItem[]
-  orderCreditNotes       OrderCreditNote[]
-  estimates              Estimate[]
-  estimateItems          EstimateItem[]
-  vendorBills            VendorBill[]
-  invoiceScans           InvoiceScan[]
-  vendorBillItems        VendorBillItem[]
-  billPayments           BillPayment[]
-  productMappings        ProductMapping[]
-  returns                Return[]
-  returnItems            ReturnItem[]
-  advancePayments        AdvancePayment[]
-  supplierCredits        SupplierCredit[]
-  recurringInvoices      RecurringInvoice[]
-  recurringInvoiceItems  RecurringInvoiceItem[]
-  messages               Message[]
-  messageThreads         MessageThread[]
-  messageTemplates       MessageTemplate[]
-  notificationRules      NotificationRule[]
-  messageOptOuts         MessageOptOut[]
-  messagingSettings      MessagingSettings?
-  inboundTriages         InboundTriage[]
-  customerPrices         CustomerPrice[]
-  systemConfigs          SystemConfig[]
-  customerLinks          CustomerLink[]
-  stripeConnect          TenantStripeConnect?
-  buyerPaymentRequests   BuyerPaymentRequest[]
-  buyerMergeRequests     BuyerMergeRequest[]
-  buyerFavorites         BuyerFavorite[]
-  deliveryBatches        DeliveryBatch[]
-  driverLocations        DriverLocation[]
-  tobaccoReports         TobaccoReport[]
-  saleDrafts             SaleDraft[]
-  trackedCategories      TrackedCategory[]
-  trackedSubcategories   TrackedSubcategory[]
-  customerAuthorizations CustomerAuthorization[]
-  authorizationOverrides AuthorizationOverride[]
-  regulatedSalesLedger   RegulatedSalesLedger[]
-  regulatedFilings       RegulatedFiling[]
-  promotions             Promotion[]
-  orderRevisions         OrderRevision[]
-  changeRequests         ChangeRequest[]
-  replenishmentSnoozes   ReplenishmentSnooze[]
-  stockAlerts            StockAlert[]
-  stockCountSessions     StockCountSession[]
-  stockCountLines        StockCountLine[]
-  supplierStatementScans SupplierStatementScan[]
+  userPreferences          UserPreference[]
+  customers                Customer[]
+  customerAddresses        CustomerAddress[]
+  customerDocuments        CustomerDocument[]
+  drivers                  Driver[]
+  products                 Product[]
+  routes                   Route[]
+  routeStops               RouteStop[]
+  routeCustomers           RouteCustomer[]
+  routeRuns                RouteRun[]
+  routeRunStops            RouteRunStop[]
+  orders                   Order[]
+  orderItems               OrderItem[]
+  deliveryMutations        DeliveryMutation[]
+  transactions             Transaction[]
+  transactionItems         TransactionItem[]
+  payments                 Payment[]
+  deviceTokens             DeviceToken[]
+  orderTemplates           OrderTemplate[]
+  orderTemplateItems       OrderTemplateItem[]
+  refreshTokens            RefreshToken[]
+  suppliers                Supplier[]
+  stockLots                StockLot[]
+  stockMovements           StockMovement[]
+  invoices                 Invoice[]
+  invoiceItems             InvoiceItem[]
+  invoicePayments          InvoicePayment[]
+  paymentCounters          PaymentCounter[]
+  expenseCategories        ExpenseCategory[]
+  expenses                 Expense[]
+  expenseLineItems         ExpenseLineItem[]
+  mileageRates             MileageRate[]
+  contactPersons           ContactPerson[]
+  customerTags             CustomerTag[]
+  customerTagAssignments   CustomerTagAssignment[]
+  customerComments         CustomerComment[]
+  purchaseOrders           PurchaseOrder[]
+  purchaseOrderItems       PurchaseOrderItem[]
+  creditNotes              CreditNote[]
+  creditNoteItems          CreditNoteItem[]
+  orderCreditNotes         OrderCreditNote[]
+  estimates                Estimate[]
+  estimateItems            EstimateItem[]
+  vendorBills              VendorBill[]
+  invoiceScans             InvoiceScan[]
+  vendorBillItems          VendorBillItem[]
+  billPayments             BillPayment[]
+  productMappings          ProductMapping[]
+  returns                  Return[]
+  returnItems              ReturnItem[]
+  advancePayments          AdvancePayment[]
+  supplierCredits          SupplierCredit[]
+  recurringInvoices        RecurringInvoice[]
+  recurringInvoiceItems    RecurringInvoiceItem[]
+  messages                 Message[]
+  messageThreads           MessageThread[]
+  messageTemplates         MessageTemplate[]
+  notificationRules        NotificationRule[]
+  messageOptOuts           MessageOptOut[]
+  messagingSettings        MessagingSettings?
+  inboundTriages           InboundTriage[]
+  customerPrices           CustomerPrice[]
+  systemConfigs            SystemConfig[]
+  customerLinks            CustomerLink[]
+  stripeConnect            TenantStripeConnect?
+  buyerPaymentRequests     BuyerPaymentRequest[]
+  buyerMergeRequests       BuyerMergeRequest[]
+  buyerFavorites           BuyerFavorite[]
+  deliveryBatches          DeliveryBatch[]
+  driverLocations          DriverLocation[]
+  tobaccoReports           TobaccoReport[]
+  saleDrafts               SaleDraft[]
+  trackedCategories        TrackedCategory[]
+  trackedSubcategories     TrackedSubcategory[]
+  customerAuthorizations   CustomerAuthorization[]
+  authorizationOverrides   AuthorizationOverride[]
+  regulatedSalesLedger     RegulatedSalesLedger[]
+  regulatedFilings         RegulatedFiling[]
+  promotions               Promotion[]
+  orderRevisions           OrderRevision[]
+  changeRequests           ChangeRequest[]
+  replenishmentSnoozes     ReplenishmentSnooze[]
+  stockAlerts              StockAlert[]
+  stockCountSessions       StockCountSession[]
+  stockCountLines          StockCountLine[]
+  supplierStatementScans   SupplierStatementScan[]
+  // ─── Sales agents & commissions (flag.sales_agents) ───
+  salesAgents              SalesAgent[]
+  salesAgentRates          SalesAgentRate[]
+  customerCommissionRates  CustomerCommissionRate[]
+  agentAssignments         AgentAssignment[]
+  commissionAccruals       CommissionAccrual[]
+  commissionAdjustments    CommissionAdjustment[]
+  commissionStatements     CommissionStatement[]
+  commissionStatementLines CommissionStatementLine[]
+  commissionPayouts        CommissionPayout[]
 
   @@index([slug])
   @@index([status])
@@ -560,20 +570,20 @@ model PlanVersion {
 }
 
 model PlanDefinition {
-  id               String   @id @default(uuid())
-  planVersionId    String
-  planKey          String // STARTER | TEAM | BUSINESS | ENTERPRISE
-  name             String
-  monthlyPrice     Decimal? @db.Decimal(10, 2) // null = custom (Enterprise)
-  annualPrice      Decimal? @db.Decimal(10, 2) // = monthlyPrice * 10
-  isCustom         Boolean  @default(false)
-  seatsIncluded    Int? // null = unlimited
-  routesConcurrent Int? // null = unlimited
-  scansIncluded    Int? // null = unlimited (Enterprise)
-  msgsIncluded     Int      @default(200)
+  id                String   @id @default(uuid())
+  planVersionId     String
+  planKey           String // STARTER | TEAM | BUSINESS | ENTERPRISE
+  name              String
+  monthlyPrice      Decimal? @db.Decimal(10, 2) // null = custom (Enterprise)
+  annualPrice       Decimal? @db.Decimal(10, 2) // = monthlyPrice * 10
+  isCustom          Boolean  @default(false)
+  seatsIncluded     Int? // null = unlimited
+  routesConcurrent  Int? // null = unlimited
+  scansIncluded     Int? // null = unlimited (Enterprise)
+  msgsIncluded      Int      @default(200)
   customersIncluded Int? // null = unlimited (Enterprise)
-  featureFlags     String[] // subset of the 16 flag keys granted at this plan
-  sortOrder        Int      @default(0)
+  featureFlags      String[] // subset of the 16 flag keys granted at this plan
+  sortOrder         Int      @default(0)
 
   planVersion PlanVersion @relation(fields: [planVersionId], references: [id], onDelete: Cascade)
 
@@ -686,6 +696,8 @@ model User {
   messages             Message[]
   preferences          UserPreference[]
   passwordResetTokens  PasswordResetToken[]
+  // Future AGENT-role login seat (records-only v1 — see SalesAgent.userId).
+  salesAgentSeat       SalesAgent?
 
   @@unique([tenantId, email])
   @@unique([tenantId, username])
@@ -741,6 +753,10 @@ model Customer {
   creditLimit           Decimal?    @db.Decimal(10, 2)
   currency              String      @default("USD")
   pricingTier           Int         @default(1)
+  // Per-customer default payment terms label ("this customer is always Net 60").
+  // Empty string clears an override; null means "use the tenant default". Wins
+  // over the tenant SystemConfig default in resolveDefaultTerms().
+  defaultPaymentTerms   String?
   // P6-1 (F0): per-channel messaging consent (only the STOP-gated SMS/WA channels
   // carry consent; EMAIL/PORTAL don't). Additive — existing rows backfill to false.
   smsConsent            Boolean     @default(false)
@@ -753,8 +769,8 @@ model Customer {
   deletedAt             DateTime?
   tenantId              String?
 
-  user                 User                    @relation(fields: [userId], references: [id])
-  tenant               Tenant?                 @relation(fields: [tenantId], references: [id])
+  user                 User                     @relation(fields: [userId], references: [id])
+  tenant               Tenant?                  @relation(fields: [tenantId], references: [id])
   messageThreads       MessageThread[]
   messageOptOuts       MessageOptOut[]
   addresses            CustomerAddress[]
@@ -784,6 +800,9 @@ model Customer {
   authOverrides        AuthorizationOverride[]
   replenishmentSnoozes ReplenishmentSnooze[]
   stockAlerts          StockAlert[]
+  agentAssignments     AgentAssignment[]
+  commissionRates      CustomerCommissionRate[]
+  commissionAccruals   CommissionAccrual[]
 
   @@index([zohoContactId])
   @@index([businessName])
@@ -1247,6 +1266,10 @@ model Order {
   // Phase 4: denormalized flag — true when any line's product is in a tracked
   // (regulated) category. Drives the split preview + signature-POD requirement.
   hasRegulated           Boolean     @default(false)
+  // Sales agents & commissions (flag.sales_agents): staff-set per-order override of
+  // the commission rate, resolved ahead of any customer/agent default. `0` is a valid
+  // value meaning "exempt"; `null` means no override (fall through to rate resolution).
+  commissionRatePct      Decimal?    @db.Decimal(5, 2)
   createdAt              DateTime    @default(now())
   updatedAt              DateTime    @updatedAt
   tenantId               String?
@@ -1693,6 +1716,10 @@ model Supplier {
   lat              Float?
   lng              Float?
   country          String?
+  // Net-terms label seeded onto a new vendor bill for this supplier ("Net 30",
+  // "Due on Receipt", …). Bills have no due-date-computation machinery server
+  // side; the client computes Due Date = Bill Date + days from this label.
+  defaultTerms     String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   tenantId         String?
@@ -1780,6 +1807,17 @@ model Invoice {
   referenceNumber        String?
   subject                String?
   terms                  String?
+  // Structured "Net 30"-style label that must always agree with `dueDate` — every
+  // code path that derives dueDate from a terms string persists that SAME string
+  // here. Distinct from `terms` above, which is the long-form Terms & Conditions
+  // text; conflating the two was the documented historical bug
+  // (invoices/new/page.tsx ~L995).
+  paymentTermsLabel      String?
+  // Deliberately minimal deposit schedule (Tier 1): the deposit AMOUNT is always
+  // derived from depositPercent * total at read time (see InvoicesService), never
+  // stored. No InvoiceInstallment table / deposit-aware statuses in this phase.
+  depositPercent         Decimal?      @db.Decimal(5, 2)
+  depositDueDate         DateTime?
   issueDate              DateTime      @default(now())
   pdfUrl                 String?
   // Carrier shipment tracking — copied from the linked order on invoice generation,
@@ -1800,15 +1838,16 @@ model Invoice {
   updatedAt              DateTime      @updatedAt
   tenantId               String?
 
-  customer         Customer          @relation(fields: [customerId], references: [id])
-  tenant           Tenant?           @relation(fields: [tenantId], references: [id])
-  order            Order?            @relation(fields: [orderId], references: [id])
-  deliveryBatch    DeliveryBatch?    @relation(fields: [deliveryBatchId], references: [id])
-  items            InvoiceItem[]
-  payments         InvoicePayment[]
-  creditNotes      CreditNote[]
-  recurringInvoice RecurringInvoice? @relation(fields: [recurringInvoiceId], references: [id])
-  paymentRequests  BuyerPaymentRequest[]
+  customer           Customer              @relation(fields: [customerId], references: [id])
+  tenant             Tenant?               @relation(fields: [tenantId], references: [id])
+  order              Order?                @relation(fields: [orderId], references: [id])
+  deliveryBatch      DeliveryBatch?        @relation(fields: [deliveryBatchId], references: [id])
+  items              InvoiceItem[]
+  payments           InvoicePayment[]
+  creditNotes        CreditNote[]
+  recurringInvoice   RecurringInvoice?     @relation(fields: [recurringInvoiceId], references: [id])
+  paymentRequests    BuyerPaymentRequest[]
+  commissionAccruals CommissionAccrual[]
 
   @@unique([tenantId, invoiceNumber])
   @@index([customerId])
@@ -2007,12 +2046,15 @@ model Expense {
   updatedAt           DateTime      @updatedAt
   tenantId            String?
 
-  category    ExpenseCategory?  @relation(fields: [categoryId], references: [id])
-  tenant      Tenant?           @relation(fields: [tenantId], references: [id])
-  supplier    Supplier?         @relation(fields: [supplierId], references: [id])
-  customer    Customer?         @relation(fields: [customerId], references: [id])
-  performedBy User?             @relation(fields: [performedById], references: [id])
-  lineItems   ExpenseLineItem[]
+  category         ExpenseCategory?  @relation(fields: [categoryId], references: [id])
+  tenant           Tenant?           @relation(fields: [tenantId], references: [id])
+  supplier         Supplier?         @relation(fields: [supplierId], references: [id])
+  customer         Customer?         @relation(fields: [customerId], references: [id])
+  performedBy      User?             @relation(fields: [performedById], references: [id])
+  lineItems        ExpenseLineItem[]
+  // The commission payout this Expense books — how a payout reaches P&L/cash
+  // reports with zero bookkeeping.service changes.
+  commissionPayout CommissionPayout?
 
   @@index([categoryId])
   @@index([supplierId])
@@ -2324,6 +2366,10 @@ model VendorBill {
   // block a re-scan — dedup is an app-level guard (VendorBillsService.create).
   // Null on legacy rows the backfill could not parse and on old mobile builds.
   supplierInvoiceNumber String?
+  // Net-terms label as entered on the bill ("Net 30", "Due on Receipt", …),
+  // prefillable from Supplier.defaultTerms. Persisted verbatim; the server does
+  // NOT compute dueDate from it — the client derives Due Date = Bill Date + days.
+  termsLabel            String?
   createdAt             DateTime         @default(now())
   updatedAt             DateTime         @updatedAt
   tenantId              String?
@@ -2492,19 +2538,19 @@ model VendorBillItem {
 }
 
 model BillPayment {
-  id             String        @id @default(uuid())
-  vendorBillId   String
-  amount         Decimal       @db.Decimal(10, 2)
-  method         PaymentMethod
-  reference      String?
-  notes          String?
-  paidAt         DateTime      @default(now())
-  createdAt      DateTime      @default(now())
+  id               String        @id @default(uuid())
+  vendorBillId     String
+  amount           Decimal       @db.Decimal(10, 2)
+  method           PaymentMethod
+  reference        String?
+  notes            String?
+  paidAt           DateTime      @default(now())
+  createdAt        DateTime      @default(now())
   // Stamped once per supplier-level allocation event, so N BillPayment rows created
   // from one lump-sum supplier payment (recordSupplierPayment) are recognisable as
   // one group. Mirrors InvoicePayment.paymentGroupId on the AR side. Null on every
   // pre-existing row and on payments made through the single-bill recordPayment route.
-  paymentGroupId String?
+  paymentGroupId   String?
   // Set ONLY when this row is a draw-down of on-account SupplierCredit
   // (auto-applied when a bill is created). This link — not the free-text
   // `reference`, which any caller can type — is what identifies a draw, so a
@@ -2625,16 +2671,16 @@ model AdvancePayment {
 /// down automatically against the next bill. No status machine: fully drawn
 /// is simply balance = 0.
 model SupplierCredit {
-  id         String   @id @default(uuid())
+  id         String        @id @default(uuid())
   supplierId String
-  amount     Decimal  @db.Decimal(10, 2) // original, immutable
-  balance    Decimal  @db.Decimal(10, 2) // remaining drawable
+  amount     Decimal       @db.Decimal(10, 2) // original, immutable
+  balance    Decimal       @db.Decimal(10, 2) // remaining drawable
   method     PaymentMethod
   reference  String?
   notes      String?
-  receivedAt DateTime @default(now())
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  receivedAt DateTime      @default(now())
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
   tenantId   String?
 
   supplier     Supplier      @relation(fields: [supplierId], references: [id])
@@ -2947,8 +2993,8 @@ model BuyerAccount {
   refreshTokens            BuyerRefreshToken[]
   passwordResetTokens      BuyerPasswordResetToken[]
   emailVerificationTokens  BuyerEmailVerificationToken[]
-  mergeRequestsAsPrimary   BuyerMergeRequest[]       @relation("MergeAsPrimary")
-  mergeRequestsAsSecondary BuyerMergeRequest[]       @relation("MergeAsSecondary")
+  mergeRequestsAsPrimary   BuyerMergeRequest[]           @relation("MergeAsPrimary")
+  mergeRequestsAsSecondary BuyerMergeRequest[]           @relation("MergeAsSecondary")
   favorites                BuyerFavorite[]
   paymentRequests          BuyerPaymentRequest[]
 
@@ -4029,4 +4075,261 @@ enum StockCountStatus {
 enum StockCountLineMode {
   REPLACE
   ADD
+}
+
+// ─── Sales agents & commissions (flag.sales_agents, PR-C) ─────────────────────
+// Agents bring customers in and earn a commission % on those customers' invoices.
+// Hybrid trigger: commission ACCRUES on invoice issue, becomes PAYABLE pro-rata as
+// the invoice is paid (no commission on bad debt). Agents are records-only v1 — no
+// login, no new UserRole; `SalesAgent.userId` is a nullable seat for a future AGENT
+// role. Entitlement-gated end to end; when the flag is off the engine no-ops.
+
+enum SalesAgentStatus {
+  ACTIVE
+  PAUSED
+  STOPPED_FOR_NEW
+}
+
+enum CommissionRateSource {
+  ORDER_OVERRIDE
+  CUSTOMER_RATE
+  AGENT_DEFAULT
+  NONE
+}
+
+enum CommissionAccrualStatus {
+  PENDING // issued, nothing collected yet
+  PARTIAL // some cash landed, ratio < 1
+  PAYABLE // ratio = 1, not fully claimed
+  SETTLED // fully claimed and converged
+  VOID // invoice un-issued / reassigned away — target 0
+}
+
+enum CommissionAdjustmentKind {
+  CLAWBACK
+  RATE_CHANGE
+  REASSIGNMENT
+  MANUAL
+}
+
+enum CommissionStatementStatus {
+  PENDING
+  APPROVED
+  PAID
+  VOID
+}
+
+enum CommissionStatementLineKind {
+  CLAIM // positive: unclaimed payable on one accrual
+  ADJUSTMENT // signed: sweeps one CommissionAdjustment exactly once
+  CARRYFORWARD // negative: absorbs a prior statement's negative residual
+}
+
+model SalesAgent {
+  id                String           @id @default(uuid())
+  name              String
+  email             String?
+  phone             String?
+  notes             String?
+  status            SalesAgentStatus @default(ACTIVE)
+  // Set when status -> STOPPED_FOR_NEW; the grandfathering pivot (see engine rules).
+  stopNewBusinessAt DateTime?
+  // Future AGENT-role login seat (owner decision: records-only v1, seat designed now).
+  userId            String?          @unique
+  deletedAt         DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  tenantId          String?
+
+  tenant        Tenant?                  @relation(fields: [tenantId], references: [id])
+  user          User?                    @relation(fields: [userId], references: [id])
+  rates         SalesAgentRate[]
+  assignments   AgentAssignment[]
+  customerRates CustomerCommissionRate[]
+  accruals      CommissionAccrual[]
+  adjustments   CommissionAdjustment[]
+  statements    CommissionStatement[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+}
+
+model SalesAgentRate {
+  id            String   @id @default(uuid())
+  agentId       String
+  ratePct       Decimal  @db.Decimal(5, 2)
+  // Rate rows are INSERT-ONLY history: newest effectiveFrom <= basisDate wins.
+  effectiveFrom DateTime
+  createdAt     DateTime @default(now())
+  tenantId      String?
+
+  tenant Tenant?    @relation(fields: [tenantId], references: [id])
+  agent  SalesAgent @relation(fields: [agentId], references: [id])
+
+  @@unique([tenantId, agentId, effectiveFrom])
+  @@index([agentId, effectiveFrom])
+  @@index([tenantId])
+}
+
+model CustomerCommissionRate {
+  id            String   @id @default(uuid())
+  customerId    String
+  agentId       String // who negotiated it, for display; resolution is per-customer
+  ratePct       Decimal  @db.Decimal(5, 2)
+  effectiveFrom DateTime
+  createdAt     DateTime @default(now())
+  tenantId      String?
+
+  tenant   Tenant?    @relation(fields: [tenantId], references: [id])
+  customer Customer   @relation(fields: [customerId], references: [id])
+  agent    SalesAgent @relation(fields: [agentId], references: [id])
+
+  @@unique([tenantId, customerId, effectiveFrom])
+  @@index([customerId, effectiveFrom])
+  @@index([tenantId])
+}
+
+model AgentAssignment {
+  id            String    @id @default(uuid())
+  customerId    String
+  agentId       String
+  effectiveFrom DateTime
+  // null = current holder. History is never rewritten: reassignment closes the open
+  // row (sets effectiveTo) and inserts a new one. Partial unique index (raw SQL in
+  // the migration): one open row per (tenantId, customerId).
+  effectiveTo   DateTime?
+  createdAt     DateTime  @default(now())
+  tenantId      String?
+
+  tenant   Tenant?    @relation(fields: [tenantId], references: [id])
+  customer Customer   @relation(fields: [customerId], references: [id])
+  agent    SalesAgent @relation(fields: [agentId], references: [id])
+
+  @@index([customerId, effectiveFrom])
+  @@index([agentId])
+  @@index([tenantId])
+}
+
+model CommissionAccrual {
+  id            String                  @id @default(uuid())
+  invoiceId     String
+  agentId       String
+  customerId    String
+  // order.orderDate ?? invoice.issueDate — the attribution + rate anchor.
+  basisDate     DateTime
+  baseAmount    Decimal                 @db.Decimal(10, 2)
+  ratePct       Decimal                 @db.Decimal(5, 2)
+  rateSource    CommissionRateSource
+  accruedAmount Decimal                 @db.Decimal(10, 2)
+  payableAmount Decimal                 @db.Decimal(10, 2)
+  // Denormalized Σ of CLAIM lines on non-VOID statements. Source of truth is the lines.
+  claimedAmount Decimal                 @default(0) @db.Decimal(10, 2)
+  status        CommissionAccrualStatus @default(PENDING)
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+  tenantId      String?
+
+  tenant      Tenant?                   @relation(fields: [tenantId], references: [id])
+  invoice     Invoice                   @relation(fields: [invoiceId], references: [id])
+  agent       SalesAgent                @relation(fields: [agentId], references: [id])
+  customer    Customer                  @relation(fields: [customerId], references: [id])
+  adjustments CommissionAdjustment[]
+  lines       CommissionStatementLine[]
+
+  @@unique([tenantId, invoiceId, agentId]) // the double-accrual lock
+  @@index([agentId, status])
+  @@index([customerId])
+  @@index([tenantId, basisDate])
+}
+
+model CommissionAdjustment {
+  id        String                   @id @default(uuid())
+  accrualId String
+  agentId   String
+  kind      CommissionAdjustmentKind
+  // Signed; in practice negative (drift < -epsilon emission rule). Append-only.
+  amount    Decimal                  @db.Decimal(10, 2)
+  reason    String?
+  createdAt DateTime                 @default(now())
+  tenantId  String?
+
+  tenant  Tenant?                  @relation(fields: [tenantId], references: [id])
+  accrual CommissionAccrual        @relation(fields: [accrualId], references: [id])
+  agent   SalesAgent               @relation(fields: [agentId], references: [id])
+  line    CommissionStatementLine?
+
+  @@index([agentId])
+  @@index([accrualId])
+  @@index([tenantId])
+}
+
+model CommissionStatement {
+  id              String                    @id @default(uuid())
+  statementNumber String
+  agentId         String
+  periodFrom      DateTime?
+  periodTo        DateTime?
+  status          CommissionStatementStatus @default(PENDING)
+  totalAmount     Decimal                   @db.Decimal(10, 2)
+  paidAmount      Decimal                   @default(0) @db.Decimal(10, 2)
+  approvedAt      DateTime?
+  notes           String?
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  tenantId        String?
+
+  tenant      Tenant?                   @relation(fields: [tenantId], references: [id])
+  agent       SalesAgent                @relation(fields: [agentId], references: [id])
+  lines       CommissionStatementLine[]
+  payouts     CommissionPayout[]
+  carriedInto CommissionStatementLine[] @relation("CarryForwardSource")
+
+  @@unique([tenantId, statementNumber])
+  @@index([agentId, status])
+  @@index([tenantId])
+}
+
+model CommissionStatementLine {
+  id                     String                      @id @default(uuid())
+  statementId            String
+  kind                   CommissionStatementLineKind
+  // Exactly ONE of the three refs is set, matching kind.
+  accrualId              String?
+  adjustmentId           String?                     @unique
+  carriedFromStatementId String?                     @unique
+  amount                 Decimal                     @db.Decimal(10, 2)
+  description            String?
+  tenantId               String?
+
+  tenant      Tenant?               @relation(fields: [tenantId], references: [id])
+  statement   CommissionStatement   @relation(fields: [statementId], references: [id])
+  accrual     CommissionAccrual?    @relation(fields: [accrualId], references: [id])
+  adjustment  CommissionAdjustment? @relation(fields: [adjustmentId], references: [id])
+  carriedFrom CommissionStatement?  @relation("CarryForwardSource", fields: [carriedFromStatementId], references: [id])
+
+  @@index([statementId])
+  @@index([accrualId])
+  @@index([tenantId])
+}
+
+model CommissionPayout {
+  id          String        @id @default(uuid())
+  statementId String
+  amount      Decimal       @db.Decimal(10, 2)
+  method      PaymentMethod
+  reference   String?
+  notes       String?
+  paidAt      DateTime      @default(now())
+  // The linked COMMISSIONS_AND_FEES Expense — how payouts reach P&L/cash reports
+  // with zero bookkeeping.service changes.
+  expenseId   String        @unique
+  createdAt   DateTime      @default(now())
+  tenantId    String?
+
+  tenant    Tenant?             @relation(fields: [tenantId], references: [id])
+  statement CommissionStatement @relation(fields: [statementId], references: [id])
+  expense   Expense             @relation(fields: [expenseId], references: [id])
+
+  @@index([statementId])
+  @@index([tenantId])
 }

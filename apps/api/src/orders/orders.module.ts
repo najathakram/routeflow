@@ -13,6 +13,11 @@ import { AuthorizationsModule } from "../authorizations/authorizations.module";
 import { PromotionsModule } from "../promotions/promotions.module";
 import { MessagingModule } from "../messaging/messaging.module";
 import { CreditNotesModule } from "../credit-notes/credit-notes.module";
+import { CommissionsModule } from "../sales-agents/commissions.module";
+// OrdersService flag-gates assertWithinCreditLimit's exposure check on
+// flag.credit_limits (WP3). EntitlementsModule depends only on the global
+// PrismaService, so importing it here pulls in no Stripe/cron/controllers.
+import { EntitlementsModule } from "../billing/entitlements.module";
 
 @Module({
   imports: [
@@ -27,6 +32,8 @@ import { CreditNotesModule } from "../credit-notes/credit-notes.module";
     PromotionsModule,
     MessagingModule,
     CreditNotesModule,
+    CommissionsModule,
+    EntitlementsModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService, ChangeRequestsService],

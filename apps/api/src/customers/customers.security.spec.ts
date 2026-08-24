@@ -7,6 +7,7 @@
  * falls back to a safe default for anything else.
  */
 import { Test } from "@nestjs/testing";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { ConfigService } from "@nestjs/config";
 import { CustomersService } from "./customers.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -25,6 +26,14 @@ describe("CustomersService — F4-002 sort-field allowlist", () => {
     prisma = createMockPrisma();
     const mod = await Test.createTestingModule({
       providers: [
+        {
+          provide: CommissionEngineService,
+          useValue: {
+            syncInvoiceCommissionSafe: jest.fn(),
+            syncOrderInvoices: jest.fn(),
+            syncInvoiceCommission: jest.fn(),
+          },
+        },
         CustomersService,
         { provide: PrismaService, useValue: prisma },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(null) } },

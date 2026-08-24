@@ -40,6 +40,18 @@ function fmt(n?: number) {
   return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+// Same VALID_TERMS list as the API DTO (create-supplier.dto.ts) and the
+// invoice pages' TERMS_OPTIONS — "" seeds/clears "no default" (falls back to
+// whatever the operator picks on the bill).
+const TERMS_OPTIONS = [
+  { value: "", label: "No default" },
+  { value: "Due on Receipt", label: "Due on Receipt" },
+  { value: "Net 15", label: "Net 15" },
+  { value: "Net 30", label: "Net 30" },
+  { value: "Net 45", label: "Net 45" },
+  { value: "Net 60", label: "Net 60" },
+];
+
 // ─── Supplier form modal ───────────────────────────────────────────────────────
 
 function SupplierModal({
@@ -62,6 +74,7 @@ function SupplierModal({
     website: initial?.website ?? "",
     notes: initial?.notes ?? "",
     leadTimeDays: initial?.leadTimeDays != null ? String(initial.leadTimeDays) : "",
+    defaultTerms: initial?.defaultTerms ?? "",
     addressLine1: initial?.addressLine1 ?? "",
     addressLine2: initial?.addressLine2 ?? "",
     city: initial?.city ?? "",
@@ -84,6 +97,10 @@ function SupplierModal({
       website: form.website || undefined,
       notes: form.notes || undefined,
       leadTimeDays: form.leadTimeDays ? Number(form.leadTimeDays) : undefined,
+      // Always send — unlike the free-text fields above, "" here is a deliberate
+      // choice (the "No default" option), not "leave unset", and the API reads
+      // "" as "clear a previously-set default" (create-supplier.dto.ts).
+      defaultTerms: form.defaultTerms,
       addressLine1: form.addressLine1 || undefined,
       addressLine2: form.addressLine2 || undefined,
       city: form.city || undefined,
@@ -166,6 +183,22 @@ function SupplierModal({
                   onChange={(e) => set("mobile", e.target.value)}
                   className={inputCls}
                 />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">
+                  Default payment terms
+                </label>
+                <select
+                  value={form.defaultTerms}
+                  onChange={(e) => set("defaultTerms", e.target.value)}
+                  className={inputCls}
+                >
+                  {TERMS_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="col-span-2">
                 <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">

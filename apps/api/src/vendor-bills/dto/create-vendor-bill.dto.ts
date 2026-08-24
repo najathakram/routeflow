@@ -4,6 +4,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  MaxLength,
   Min,
   ValidateNested,
 } from "class-validator";
@@ -42,6 +43,10 @@ export class CreateVendorBillDto {
   @IsOptional() @IsString() purchaseOrderId?: string;
   @IsOptional() @IsString() billDate?: string;
   @IsOptional() @IsString() dueDate?: string;
+  /** Net-terms label as entered on the bill ("Net 30", "Due on Receipt", …),
+   * prefillable from Supplier.defaultTerms. Persisted verbatim — the server
+   * does NOT compute dueDate from it (the client derives Due Date = Bill Date + days). */
+  @IsOptional() @IsString() @MaxLength(40) termsLabel?: string;
   @IsOptional() @IsString() notes?: string;
   /** Sales tax on the supplier invoice — folded into totalOwed AND persisted. */
   @IsOptional() @IsNumber() @Min(0) taxAmount?: number;

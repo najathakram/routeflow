@@ -38,6 +38,7 @@ import {
 import { useApplyAdvancePayment, useCustomerAdvancePayments } from "../../../../lib/api/customers";
 import { useGetPaymentImageUrl } from "../../../../lib/api/payments";
 import { deriveInvoiceVariant } from "../../../../lib/invoice-pdf-variant";
+import { fmtCalendarDate } from "../../../../lib/format-date";
 import { isInternalEmail } from "../../../../lib/internal-email";
 import {
   canRecordPayment,
@@ -78,6 +79,12 @@ function fmtCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
   return `$${(Number.isFinite(v) ? v : 0).toFixed(2)}`;
 }
+
+// admin.ts's AdminInvoice doesn't declare `paymentTermsLabel` yet even though
+// the server now persists it on every Invoice and GET /invoices/:id returns
+// it already. Widen locally rather than touching admin.ts's canonical type
+// (out of scope for this change — same pattern used elsewhere for msrp).
+type InvoiceTermsLabelField = { paymentTermsLabel?: string | null };
 
 function statusPill(status: string) {
   switch (status) {
@@ -175,6 +182,7 @@ export default function InvoiceDetailScreen() {
 
   const s = statusPill(invoice.status);
   const balance = invoice.balanceDue ?? invoice.total;
+  const paymentTermsLabel = (invoice as typeof invoice & InvoiceTermsLabelField).paymentTermsLabel;
   const isVoid = invoice.status === "VOID";
   // B4: mirrors web's allow-list exactly. The server only rejects VOID, so a
   // bare "not paid, not void" gate used to offer this on DRAFT/WRITTEN_OFF —
@@ -597,12 +605,13 @@ export default function InvoiceDetailScreen() {
               hitSlop={4}
             >
               <Text style={styles.due}>
-                {invoice.dueDate
-                  ? `Due ${new Date(invoice.dueDate).toLocaleDateString()}`
-                  : "Set due date"}
+                {invoice.dueDate ? `Due ${fmtCalendarDate(invoice.dueDate)}` : "Set due date"}
               </Text>
               <Ionicons name="pencil-outline" size={12} color={ios.label3} />
             </Pressable>
+            {paymentTermsLabel ? (
+              <Text style={styles.headerMeta}>Terms: {paymentTermsLabel}</Text>
+            ) : null}
           </View>
 
           {siblingInvoices.length > 0 ? (
@@ -1243,7 +1252,7 @@ function ApplyCreditSheet({
                       </Text>
                       {cn.expiresAt ? (
                         <Text style={styles.creditMeta}>
-                          Expires {new Date(cn.expiresAt).toLocaleDateString()}
+                          Expires {fmtCalendarDate(cn.expiresAt)}
                         </Text>
                       ) : null}
                     </View>

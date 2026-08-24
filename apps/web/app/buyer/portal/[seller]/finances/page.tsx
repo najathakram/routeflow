@@ -15,6 +15,7 @@ import {
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerAnalytics, useBuyerStatement } from "@/lib/api/buyer";
+import { fmtCalendarDate } from "@/lib/formatting";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -228,7 +229,7 @@ export default function FinancesPage() {
                   <p className="text-xs font-medium text-navy truncate">{c.description}</p>
                   <p className="text-[11px] text-navy/70 mt-0.5">
                     {fmtDate(c.date)}
-                    {c.expiresAt ? ` · Expires ${fmtDate(c.expiresAt)}` : ""}
+                    {c.expiresAt ? ` · Expires ${fmtCalendarDate(c.expiresAt)}` : ""}
                   </p>
                 </div>
                 <span className="ml-3 flex-shrink-0 text-sm font-semibold text-buyer-600">

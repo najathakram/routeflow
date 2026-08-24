@@ -15,12 +15,19 @@ import { showToast } from "../../../lib/toast";
 import { checkBadgeFor } from "../../../lib/check-badge";
 import { formatPaymentMethod, paymentRowFlags } from "../../../lib/buyer-payments-logic";
 import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
+import { fmtCalendarDate } from "../../../lib/format-date";
 
 // buyer.ts's BuyerInvoiceItem doesn't declare `msrp` yet even though the
 // server now snapshots it onto every InvoiceItem (display-only, per PIECE)
 // and GET /buyer/invoices/:id returns it already. Widen locally rather than
 // touching buyer.ts's canonical type (out of scope for this change).
 type ItemMsrpField = { msrp?: number | null };
+
+// Same reason as ItemMsrpField above: buyer.ts's BuyerInvoice doesn't declare
+// `paymentTermsLabel` yet even though the server now persists it on every
+// Invoice and GET /buyer/invoices/:id returns it already. Null/undefined
+// (historical invoices predating this field) renders nothing.
+type InvoiceTermsLabelField = { paymentTermsLabel?: string | null };
 
 function invoicePill(status: string, isOverdue?: boolean) {
   if (isOverdue) return { variant: "gray" as const, label: "Overdue" };
@@ -39,6 +46,9 @@ function invoicePill(status: string, isOverdue?: boolean) {
   }
 }
 
+// Real timestamp (has a meaningful time-of-day) — kept in the viewer's local
+// time, unlike the invoice issue/due dates below which are UTC-midnight
+// calendar dates routed through the shared fmtCalendarDate helper.
 function fmtDate(s?: string | null) {
   if (!s) return null;
   return new Date(s).toLocaleDateString(undefined, {
@@ -71,6 +81,7 @@ export default function CustomerInvoiceDetailScreen() {
   const balanceDue = Number(invoice.balanceDue ?? invoice.amountDue ?? 0);
   const paidAmount = Number(invoice.paidAmount ?? invoice.amountPaid ?? 0);
   const pdfUrl = (invoice as any).pdfUrl as string | undefined;
+  const paymentTermsLabel = (invoice as typeof invoice & InvoiceTermsLabelField).paymentTermsLabel;
 
   const handleSharePdf = async () => {
     if (!pdfUrl) return;
@@ -104,7 +115,9 @@ export default function CustomerInvoiceDetailScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.invoiceNum}>#{invoice.invoiceNumber}</Text>
               {invoice.issueDate ? (
-                <Text style={styles.issuedDate}>Issued: {fmtDate(invoice.issueDate)}</Text>
+                <Text style={styles.issuedDate}>
+                  Issued: {fmtCalendarDate(invoice.issueDate, "short")}
+                </Text>
               ) : null}
             </View>
             <Pill variant={p.variant} dot>
@@ -122,7 +135,10 @@ export default function CustomerInvoiceDetailScreen() {
           <Text style={styles.total}>${Number(invoice.total).toFixed(2)}</Text>
 
           {invoice.dueDate ? (
-            <Text style={styles.dueDate}>Due: {fmtDate(invoice.dueDate)}</Text>
+            <Text style={styles.dueDate}>Due: {fmtCalendarDate(invoice.dueDate, "short")}</Text>
+          ) : null}
+          {paymentTermsLabel ? (
+            <Text style={styles.dueDate}>Terms: {paymentTermsLabel}</Text>
           ) : null}
         </View>
 

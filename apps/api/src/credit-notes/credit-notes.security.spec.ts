@@ -12,6 +12,7 @@ import { CreditNotesService } from "./credit-notes.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 const MOCK_CN = {
@@ -41,6 +42,14 @@ describe("CreditNotesService — F10-003 findOneForUser role gate", () => {
           useValue: {
             reverseCreditNoteEntries: jest.fn(),
             unreverseCreditNoteEntries: jest.fn(),
+          },
+        },
+        {
+          provide: CommissionEngineService,
+          useValue: {
+            syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
+            syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
+            removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],

@@ -27,6 +27,7 @@ import {
 import { roundMoney } from "../../../lib/pricing";
 import { productImageFile } from "../../../lib/product-image";
 import { showToast } from "../../../lib/toast";
+import { fmtCalendarDate } from "../../../lib/format-date";
 
 /**
  * Standalone payment with multi-invoice allocation — one check at the door
@@ -359,7 +360,7 @@ function PaymentForm({
                 </Text>
                 <Text style={styles.allocMeta}>
                   Due ${Number(inv.balanceDue ?? 0).toFixed(2)}
-                  {inv.dueDate ? ` · by ${new Date(inv.dueDate).toLocaleDateString()}` : ""}
+                  {inv.dueDate ? ` · by ${fmtCalendarDate(inv.dueDate)}` : ""}
                 </Text>
               </View>
               <View style={styles.allocInputWrap}>

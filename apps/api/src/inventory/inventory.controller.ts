@@ -15,6 +15,8 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { PlanFlagGuard } from "../billing/plan-flag.guard";
+import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { InventoryService } from "./inventory.service";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
@@ -199,13 +201,17 @@ export class InventoryController {
     return this.inventoryService.closePurchaseOrder(id);
   }
 
-  // ── Forecasting ──
+  // ── Forecasting ── gated on flag.forecasting; everything else on this controller is core inventory.
   @Get("forecasting")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.forecasting")
   getForecasting() {
     return this.inventoryService.getForecasting();
   }
 
   @Patch("products/:productId/reorder-settings")
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.forecasting")
   setReorderPoint(@Param("productId") productId: string, @Body() dto: any) {
     return this.inventoryService.setReorderPoint(productId, dto.reorderPoint, dto.reorderQty);
   }

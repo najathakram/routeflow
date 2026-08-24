@@ -7,18 +7,72 @@ import { ArrowLeft, Plus, Trash2, Search, Loader2 } from "lucide-react";
 import { Button, Card, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useInvoice, useUpdateInvoice, type CreateInvoiceItem } from "@/lib/api/invoices";
-import { useCustomers } from "@/lib/api/customers";
+import {
+  useCustomers,
+  useCustomer,
+  useCustomerPrices,
+  type CustomerPrice,
+} from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { displayProductName } from "@/lib/product-display";
-import { computeLineSubtotal, normalizeBoxesPieces, roundMoney } from "@/lib/pricing";
+import { computeLineSubtotal, normalizeBoxesPieces, roundMoney, getTierPrice } from "@/lib/pricing";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+
+// Same values as invoices/new/page.tsx's TERMS_OPTIONS — kept local rather than
+// shared since that page doesn't export them.
+const TERMS_OPTIONS = [
+  { value: "", label: "Select terms…" },
+  { value: "Due on Receipt", label: "Due on Receipt" },
+  { value: "Net 15", label: "Net 15" },
+  { value: "Net 30", label: "Net 30" },
+  { value: "Net 45", label: "Net 45" },
+  { value: "Net 60", label: "Net 60" },
+];
+
+function getDaysForTerms(terms: string): number | null {
+  switch (terms) {
+    case "Due on Receipt":
+      return 0;
+    case "Net 15":
+      return 15;
+    case "Net 30":
+      return 30;
+    case "Net 45":
+      return 45;
+    case "Net 60":
+      return 60;
+    default:
+      return null;
+  }
+}
+
+/** Add calendar days to a YYYY-MM-DD date, in UTC end to end — mirrors
+ *  invoices/new/page.tsx's addDaysIso (local-getter math loses a day across a
+ *  DST boundary). */
+function addDaysIso(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return iso;
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Shape needed to resolve this customer's tier price for a product — mirrors
+ *  invoices/new's `getTierPrice` callers. */
+interface TierPriceableProduct {
+  id: string;
+  pricePerUnit: number | string;
+  priceTier2?: number | string | null;
+  priceTier3?: number | string | null;
+  priceTier4?: number | string | null;
+  priceTier5?: number | string | null;
+}
 
 // ─── Product search dropdown (inline) ────────────────────────────────────────
 
@@ -27,6 +81,8 @@ function ProductSearchInput({
   onChange,
   onCreateProduct,
   onBarcodeNotFound,
+  tierPriceFor,
+  pricingPending,
 }: {
   value: string;
   onChange: (
@@ -37,6 +93,13 @@ function ProductSearchInput({
   ) => void;
   onCreateProduct?: (searchTerm: string) => void;
   onBarcodeNotFound?: (barcode: string) => void;
+  /** This customer's price for a product (per-product tier override, else the
+   *  customer's tier ladder) — used instead of catalog list price whenever a
+   *  product is selected here (scan or dropdown pick). */
+  tierPriceFor: (product: TierPriceableProduct) => number;
+  /** True until the customer + customer-prices queries settle. `tierPriceFor`
+   *  would resolve to LIST until then, so no product may be picked yet. */
+  pricingPending: boolean;
 }) {
   const [query, setQuery] = React.useState(value);
   const [debouncedQuery, setDebouncedQuery] = React.useState("");
@@ -65,7 +128,8 @@ function ProductSearchInput({
       <input
         ref={inputRef}
         type="text"
-        placeholder="Description / product…"
+        disabled={pricingPending}
+        placeholder={pricingPending ? "Loading customer pricing…" : "Description / product…"}
         value={query}
         onChange={(e) => {
           setQuery(e.target.value);
@@ -73,78 +137,99 @@ function ProductSearchInput({
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
-        className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+        className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:cursor-not-allowed disabled:bg-surface-raised"
       />
-      <BarcodeScannerButton
-        inputRef={inputRef}
-        onScan={async (code) => {
-          try {
-            const product = await apiClient
-              .get(`/products/barcode/${encodeURIComponent(code)}`)
-              .then((r) => r.data);
-            if (product) {
-              setQuery(product.name);
-              onChange(product.name, product.id, product.pricePerUnit, product.unitsPerBox);
-              setOpen(false);
-              return;
+      {/* Hold every product-selection path until the tier data lands: picking or
+          scanning earlier resolves `tierPriceFor` to the catalog LIST price, so a
+          tiered customer is silently over-charged and nothing re-resolves the line
+          afterwards. Disabling the input also silences the USB-scanner keydown
+          listener that BarcodeScannerButton attaches to it. */}
+      {pricingPending ? (
+        <span
+          title="Loading customer pricing…"
+          className="inline-flex items-center justify-center rounded border border-surface-border bg-white p-1.5 text-navy/30"
+        >
+          <Loader2 className="h-4 w-4 animate-spin" />
+        </span>
+      ) : (
+        <BarcodeScannerButton
+          inputRef={inputRef}
+          onScan={async (code) => {
+            try {
+              const product = await apiClient
+                .get(`/products/barcode/${encodeURIComponent(code)}`)
+                .then((r) => r.data);
+              if (product) {
+                setQuery(product.name);
+                onChange(product.name, product.id, tierPriceFor(product), product.unitsPerBox);
+                setOpen(false);
+                return;
+              }
+            } catch {
+              // product not found by barcode
             }
-          } catch {
-            // product not found by barcode
-          }
-          if (onBarcodeNotFound) onBarcodeNotFound(code);
-        }}
-      />
-      {open && debouncedQuery.length > 0 && (products.length > 0 || onCreateProduct) && (
-        <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
-          <ul className="max-h-36 overflow-y-auto">
-            {products.length === 0 && (
-              <li className="px-3 py-2 text-sm text-navy/70">No products found.</li>
-            )}
-            {products.map(
-              (p: {
-                id: string;
-                name: string;
-                pricePerUnit: number;
-                sku?: string;
-                unitsPerBox?: number | null;
-              }) => (
-                <li key={p.id}>
+            if (onBarcodeNotFound) onBarcodeNotFound(code);
+          }}
+        />
+      )}
+      {!pricingPending &&
+        open &&
+        debouncedQuery.length > 0 &&
+        (products.length > 0 || onCreateProduct) && (
+          <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
+            <ul className="max-h-36 overflow-y-auto">
+              {products.length === 0 && (
+                <li className="px-3 py-2 text-sm text-navy/70">No products found.</li>
+              )}
+              {products.map(
+                (p: {
+                  id: string;
+                  name: string;
+                  pricePerUnit: number;
+                  sku?: string;
+                  unitsPerBox?: number | null;
+                  priceTier2?: number | string | null;
+                  priceTier3?: number | string | null;
+                  priceTier4?: number | string | null;
+                  priceTier5?: number | string | null;
+                }) => (
+                  <li key={p.id}>
+                    <button
+                      className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
+                      onClick={() => {
+                        setQuery(p.name);
+                        onChange(p.name, p.id, tierPriceFor(p), p.unitsPerBox ?? undefined);
+                        setOpen(false);
+                      }}
+                    >
+                      <div>
+                        <span className="text-sm font-medium text-navy">{p.name}</span>
+                        {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
+                      </div>
+                      <span className="text-xs text-navy/70">
+                        {fmt.format(Number(p.pricePerUnit))}
+                      </span>
+                    </button>
+                  </li>
+                ),
+              )}
+              {onCreateProduct && (
+                <li className="border-t border-surface-border">
                   <button
-                    className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
+                    className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-brand-500 hover:bg-surface-raised font-medium"
                     onClick={() => {
-                      setQuery(p.name);
-                      onChange(p.name, p.id, p.pricePerUnit, p.unitsPerBox ?? undefined);
+                      onCreateProduct(debouncedQuery);
                       setOpen(false);
                     }}
                   >
-                    <div>
-                      <span className="text-sm font-medium text-navy">{p.name}</span>
-                      {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
-                    </div>
-                    <span className="text-xs text-navy/70">
-                      {fmt.format(Number(p.pricePerUnit))}
-                    </span>
+                    <Plus className="h-3.5 w-3.5" />
+                    Create new product{debouncedQuery ? `: "${debouncedQuery}"` : ""}
                   </button>
                 </li>
-              ),
-            )}
-            {onCreateProduct && (
-              <li className="border-t border-surface-border">
-                <button
-                  className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-brand-500 hover:bg-surface-raised font-medium"
-                  onClick={() => {
-                    onCreateProduct(debouncedQuery);
-                    setOpen(false);
-                  }}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Create new product{debouncedQuery ? `: "${debouncedQuery}"` : ""}
-                </button>
-              </li>
-            )}
-          </ul>
-        </div>
-      )}
+              )}
+            </ul>
+          </div>
+        )}
     </div>
   );
 }
@@ -246,6 +331,44 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
   const { data: invoice, isLoading, isError } = useInvoice(params.id);
   const updateInvoice = useUpdateInvoice();
 
+  // Customer tier pricing (mirrors invoices/new): every product-selection path
+  // below should price at this customer's tier, not the raw catalog price.
+  const customerQuery = useCustomer(invoice?.customerId ?? "");
+  const customerPricesQuery = useCustomerPrices(invoice?.customerId);
+  const { data: customer } = customerQuery;
+  const { data: customerPricesData } = customerPricesQuery;
+  // Unlike invoices/new, this page auto-loads with the line rows already usable,
+  // so both requests are still in flight when the operator can first scan/pick —
+  // and `tierPriceFor` would answer LIST. Block selection until they settle.
+  // (v5 `isLoading` is false while a query is disabled or after it errors, so an
+  // invoice with no customer, or a failed fetch, never leaves the rows stuck.)
+  const tierPricingPending = customerQuery.isLoading || customerPricesQuery.isLoading;
+  // Per-product PRICE resolved from the CustomerPrice TIER override through the
+  // product's tier ladder. An msrp-only override row has pricingTier null —
+  // price at the customer's default tier (Post-MSRP hazard).
+  const priceMap = React.useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const cp of (customerPricesData ?? []) as CustomerPrice[]) {
+      if (!cp.product) continue;
+      const price = getTierPrice(cp.product, cp.pricingTier ?? customer?.pricingTier ?? 1);
+      if (Number.isFinite(price)) map[cp.productId] = price;
+    }
+    return map;
+  }, [customerPricesData, customer]);
+  /** This customer's price for `product` — the per-product CustomerPrice
+   *  override first, else this customer's own tier ladder; falls back to list
+   *  for Tier 1 / no override (mirrors invoices/new's addProductFromCatalog). */
+  const tierPriceFor = React.useCallback(
+    (product: TierPriceableProduct) => {
+      const listPrice = parseFloat(String(product.pricePerUnit ?? 0)) || 0;
+      const customerTier = customer?.pricingTier ?? 1;
+      const tierLadderPrice = customerTier !== 1 ? getTierPrice(product, customerTier) : undefined;
+      const specialPrice = priceMap[product.id] ?? tierLadderPrice;
+      return specialPrice != null && Number.isFinite(specialPrice) ? specialPrice : listPrice;
+    },
+    [customer, priceMap],
+  );
+
   const [initialized, setInitialized] = React.useState(false);
   const [issueDate, setIssueDate] = React.useState("");
   const [dueDate, setDueDate] = React.useState("");
@@ -253,6 +376,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
   const [shippingFee, setShippingFee] = React.useState("0");
   const [notes, setNotes] = React.useState("");
   const [terms, setTerms] = React.useState("");
+  const [paymentTermsLabel, setPaymentTermsLabel] = React.useState("");
   const [referenceNumber, setReferenceNumber] = React.useState("");
   const [subject, setSubject] = React.useState("");
   const [items, setItems] = React.useState<LineItemState[]>([createEmptyItem()]);
@@ -275,6 +399,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
       setShippingFee(String(Number(invoice.shippingFee ?? 0)));
       setNotes(invoice.notes ?? "");
       setTerms(invoice.terms ?? "");
+      setPaymentTermsLabel(invoice.paymentTermsLabel ?? "");
       setReferenceNumber(invoice.referenceNumber ?? "");
       setSubject(invoice.subject ?? "");
       setItems(
@@ -334,6 +459,14 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
     setItems((prev) => [...prev, createEmptyItem()]);
   }
 
+  // ── Payment Terms → Due Date recompute (mirrors invoices/new/page.tsx) ───────
+
+  function handleTermsChange(t: string) {
+    setPaymentTermsLabel(t);
+    const days = getDaysForTerms(t);
+    if (days !== null && issueDate) setDueDate(addDaysIso(issueDate, days));
+  }
+
   // ── Validation ────────────────────────────────────────────────────────────────
 
   function validate() {
@@ -367,8 +500,13 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
       shippingFee: shipping,
       notes: notes.trim() || undefined,
       terms: terms.trim() || undefined,
-      referenceNumber: referenceNumber.trim() || undefined,
-      subject: subject.trim() || undefined,
+      // Sent even when empty: "" is how this form CLEARS a stale label /
+      // reference / subject (the server maps it to null). Collapsing them to
+      // undefined would leave the old "Net 30" on an invoice whose due date the
+      // operator just hand-typed, and make a blanked PO number reappear.
+      paymentTermsLabel,
+      referenceNumber: referenceNumber.trim(),
+      subject: subject.trim(),
       items: items.map((it): CreateInvoiceItem => {
         // Send the boxed split so the server prorates (unitPrice is the BOX price).
         // Without boxes/pieces the server falls back to unitPrice*qty and over-charges.
@@ -459,7 +597,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
         <div className="space-y-5 lg:col-span-3">
           {/* Dates */}
           <Card title="Invoice Dates">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">Issue Date</label>
                 <input
@@ -474,12 +612,34 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
                 {errors.issueDate && <p className="mt-1 text-xs text-danger">{errors.issueDate}</p>}
               </div>
               <div>
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                  Payment Terms
+                </label>
+                <select
+                  value={paymentTermsLabel}
+                  onChange={(e) => handleTermsChange(e.target.value)}
+                  className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                >
+                  {TERMS_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">Due Date</label>
                 <input
                   type="date"
                   value={dueDate}
                   min={issueDate || undefined}
-                  onChange={(e) => setDueDate(e.target.value)}
+                  onChange={(e) => {
+                    // A hand-typed due date supersedes the term that derived it — clear
+                    // the label so we never save "Net 30" next to a date that isn't
+                    // issue+30 (mirrors invoices/new/page.tsx).
+                    setPaymentTermsLabel("");
+                    setDueDate(e.target.value);
+                  }}
                   className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
@@ -507,6 +667,8 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
                 >
                   <ProductSearchInput
                     value={item.description}
+                    tierPriceFor={tierPriceFor}
+                    pricingPending={tierPricingPending}
                     onCreateProduct={(searchTerm) => {
                       const idx = items.findIndex((it) => it.key === item.key);
                       const looksLikeSku = /^\d{6,}$/.test(searchTerm.trim());
@@ -624,7 +786,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                  Payment Terms
+                  Terms &amp; Conditions
                 </label>
                 <textarea
                   rows={2}
@@ -740,7 +902,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
                       ...item,
                       description: displayProductName(product),
                       productId: product.id,
-                      unitPrice: parseFloat(product.pricePerUnit) || 0,
+                      unitPrice: tierPriceFor(product),
                     }
                   : item,
               ),

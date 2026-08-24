@@ -20,6 +20,12 @@ export interface InvoicePdfData {
   generatedAt?: Date | string;
   issueDate: Date | string;
   dueDate?: Date | string | null;
+  /**
+   * Structured "Net 30"-style label, persisted alongside the due date so the
+   * two can never disagree. Null on historical invoices predating this field
+   * — renders nothing (not "Net 30" and not the raw dueDate arithmetic).
+   */
+  paymentTermsLabel?: string | null;
   paidAt?: Date | string | null;
   subtotal: DecimalLike;
   taxAmount: DecimalLike;
@@ -99,9 +105,13 @@ const toNum = (val: DecimalLike): number => {
   return val.toNumber();
 };
 const fmt = (val: DecimalLike) => `$${toNum(val).toFixed(2)}`;
+// Calendar dates (issueDate/dueDate/paidAt) are stored as UTC-midnight instants.
+// Formatting via local-time components would render them a day early for any
+// negative-UTC-offset viewer, so we read the UTC calendar components directly.
 const fmtDate = (val: Date | string | null | undefined): string => {
   if (!val) return "—";
   return new Date(val).toLocaleDateString("en-US", {
+    timeZone: "UTC",
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -469,6 +479,9 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
               <Text style={styles.billSub}>Invoice Date: {fmtDate(invoice.issueDate)}</Text>
               {invoice.dueDate ? (
                 <Text style={styles.billSub}>Due Date: {fmtDate(invoice.dueDate)}</Text>
+              ) : null}
+              {invoice.paymentTermsLabel ? (
+                <Text style={styles.billSub}>Terms: {invoice.paymentTermsLabel}</Text>
               ) : null}
               {invoice.paidAt ? (
                 <Text style={[styles.billSub, { color: SUCCESS }]}>

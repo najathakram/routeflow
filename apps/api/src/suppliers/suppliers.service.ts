@@ -125,7 +125,16 @@ export class SuppliersService {
   async create(dto: CreateSupplierDto) {
     // Geocode before the write — best-effort, never blocks supplier creation.
     const coords = await this.geocodeIfPossible(dto);
-    return this.prisma.forTenant().supplier.create({ data: { ...dto, ...(coords ?? {}) } });
+    return this.prisma.forTenant().supplier.create({
+      data: {
+        ...dto,
+        // "" from the defaultTerms select means "no default" — store it as null
+        // rather than an empty string so every other reader can use a plain
+        // truthy check (supplier.defaultTerms ? ... : ...).
+        defaultTerms: dto.defaultTerms === "" ? null : dto.defaultTerms,
+        ...(coords ?? {}),
+      },
+    });
   }
 
   async update(id: string, dto: UpdateSupplierDto) {
@@ -156,6 +165,7 @@ export class SuppliersService {
       where: { id },
       data: {
         ...dto,
+        defaultTerms: dto.defaultTerms === "" ? null : dto.defaultTerms,
         ...(addressChanged && { lat: null, lng: null }),
         ...(coords ?? {}),
       },

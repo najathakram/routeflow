@@ -176,8 +176,32 @@ export class InventoryService {
       if (!supplier) throw new NotFoundException("Supplier not found");
     }
 
-    const qty = new Prisma.Decimal(dto.quantity);
-    const unitCost = costDecimal(dto.unitCost);
+    // Boxed payloads convert to pieces up front; a bare `quantity` KEEPS
+    // meaning pieces (existing callers must be untouched). Mirrors
+    // vendor-bills' lineInventoryDelta contract: everything below this line
+    // is PIECES.
+    const explicitBoxed = dto.boxes != null || dto.pieces != null;
+    const qtyPieces = explicitBoxed
+      ? normalizeBoxesPieces({
+          boxes: dto.boxes,
+          pieces: dto.pieces,
+          unitsPerBox: product.unitsPerBox,
+        }).qty
+      : (dto.quantity ?? 0);
+    if (!(qtyPieces > 0)) {
+      throw new BadRequestException("Purchase quantity must be greater than zero");
+    }
+
+    // dto.unitCost is quoted per SELLING UNIT — a box when the payload is
+    // explicitly boxed (mirrors the box-priced selling convention in
+    // common/pricing.ts), a piece otherwise. Convert to per-piece before AVCO
+    // math, since Product.averageCost is contractually per piece.
+    const rawUnitCost = costDecimal(dto.unitCost);
+    const unitsPerBox = Number(product.unitsPerBox ?? 0);
+    const unitCost =
+      explicitBoxed && unitsPerBox > 1 ? costDecimal(rawUnitCost.div(unitsPerBox)) : rawUnitCost;
+
+    const qty = new Prisma.Decimal(qtyPieces);
     const currentStock = product.currentStock;
     const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
 
@@ -1041,7 +1065,9 @@ export class InventoryService {
       },
       include: {
         supplier: { select: { id: true, name: true } },
-        items: { include: { product: { select: { id: true, name: true, unit: true } } } },
+        items: {
+          include: { product: { select: { id: true, name: true, unit: true, unitsPerBox: true } } },
+        },
       },
     });
   }
@@ -1070,7 +1096,9 @@ export class InventoryService {
       where: { id },
       include: {
         supplier: true,
-        items: { include: { product: { select: { id: true, name: true, unit: true } } } },
+        items: {
+          include: { product: { select: { id: true, name: true, unit: true, unitsPerBox: true } } },
+        },
       },
     });
     if (!po) throw new NotFoundException("Purchase order not found");
@@ -1099,15 +1127,48 @@ export class InventoryService {
 
       for (const recv of dto.items) {
         const itemId = recv.id ?? recv.itemId;
-        const receivedQty = recv.receivedQty ?? recv.qtyReceived ?? 0;
         // Match by item id first, fall back to productId
         const item = po.items.find(
           (i) => i.id === itemId || (recv.productId && i.productId === recv.productId),
         );
         if (!item) continue;
-        const maxReceivable = Number(item.qtyOrdered) - Number(item.qtyReceived);
-        const actualQty = Math.min(receivedQty, maxReceivable);
+
+        const prod = await tx.product.findUnique({ where: { id: item.productId } });
+
+        // Boxed payloads convert to pieces up front; a bare receivedQty/
+        // qtyReceived KEEPS meaning pieces (existing callers must be
+        // untouched) — mirrors recordPurchase's contract above: everything
+        // below this line is PIECES, and item.unitCost is per PIECE.
+        const explicitBoxed = recv.boxes != null || recv.pieces != null;
+        const receivedQty = explicitBoxed
+          ? normalizeBoxesPieces({
+              boxes: recv.boxes,
+              pieces: recv.pieces,
+              unitsPerBox: prod?.unitsPerBox,
+            }).qty
+          : (recv.receivedQty ?? recv.qtyReceived ?? 0);
+
+        // Never silently clamp an over-receipt down to what remains: a PO raised
+        // in BOXES (mobile, or anything created before the box→piece cutover)
+        // has a box-denominated qtyOrdered, so clamping a piece-denominated
+        // receipt against it under-receives by unitsPerBox, writes a per-box
+        // unitCost as if per piece, and flips the PO to RECEIVED — after which
+        // the missing pieces can never be received. Fail loudly instead.
+        // Compare in Decimal — qtyOrdered/qtyReceived are Decimal(10,3) and
+        // decimal-unit lines are real (both qty inputs step by 0.001), so a
+        // float subtraction (1.2 − 0.4 = 0.7999999999999999) would reject the
+        // exact remaining quantity now that this guard throws instead of clamping.
+        const outstanding = item.qtyOrdered.minus(item.qtyReceived);
+        const actualQty = receivedQty;
         if (actualQty <= 0) continue;
+        if (outstanding.lt(actualQty)) {
+          throw new BadRequestException(
+            `Cannot receive ${actualQty} of "${prod?.name ?? item.productId}" — only ${outstanding} ` +
+              `outstanding on ${po.poNumber} (ordered ${Number(item.qtyOrdered)}, already received ` +
+              `${Number(item.qtyReceived)}). If the PO was raised in boxes, close it and record the ` +
+              `receipt against a new one — quantities are stored in pieces.`,
+          );
+        }
         restockedProductIds.push(item.productId);
         const newQtyReceived = Number(item.qtyReceived) + actualQty;
         await tx.purchaseOrderItem.update({
@@ -1116,9 +1177,14 @@ export class InventoryService {
         });
 
         const qtyReceived = new Prisma.Decimal(actualQty);
+        // The PO line's cost basis is a property of the STORED row, never of the
+        // receive payload: `item.unitCost` is written once at PO creation and is
+        // always per PIECE (createPurchaseOrder stores it raw, and the Create-PO
+        // form converts a Cost-per-Box entry to per-piece before posting — see
+        // PurchaseOrderItemDto). So boxes/pieces here convert the QUANTITY only;
+        // dividing the cost again would value the same goods at 1/unitsPerBox.
         const itemUnitCost = costDecimal(item.unitCost);
 
-        const prod = await tx.product.findUnique({ where: { id: item.productId } });
         const newAvgCost = prod
           ? nextAverageCost(prod.currentStock, prod.averageCost, qtyReceived, itemUnitCost)
           : itemUnitCost;
@@ -1180,7 +1246,11 @@ export class InventoryService {
         data: { status: newStatus },
         include: {
           supplier: { select: { id: true, name: true } },
-          items: { include: { product: { select: { id: true, name: true, unit: true } } } },
+          items: {
+            include: {
+              product: { select: { id: true, name: true, unit: true, unitsPerBox: true } },
+            },
+          },
         },
       });
     });

@@ -22,7 +22,9 @@ import {
   type CustomerPrice,
 } from "../../../../lib/api/customers";
 import { useAdminProducts, type AdminProduct } from "../../../../lib/api/admin";
+import { useTierLabels } from "../../../../lib/api/tier-labels";
 import { getTierPrice } from "../../../../lib/pricing";
+import { tierLabel } from "../../../../lib/tier-label";
 import { showToast } from "../../../../lib/toast";
 import { confirm } from "../../../../lib/confirm";
 
@@ -65,6 +67,7 @@ function EditTierOverrideModal({
   const allowNoTier = existing?.msrp != null;
   const [notes, setNotes] = useState(existing?.notes ?? "");
   const upsert = useUpsertCustomerPrice();
+  const { data: tierLabels } = useTierLabels();
 
   const selectedProduct = useMemo(
     () => allProducts.find((p) => p.id === productId) ?? null,
@@ -200,7 +203,7 @@ function EditTierOverrideModal({
             </View>
             {selectedProduct && tier != null ? (
               <Text style={styles.tierHint}>
-                Price at Tier {tier}:{" "}
+                Price at {tierLabel(tierLabels, tier)}:{" "}
                 <Text style={styles.tierHintPrice}>{fmt(getTierPrice(selectedProduct, tier))}</Text>
                 {tierUnset(selectedProduct, tier) ? " (list)" : ""}
               </Text>
@@ -255,6 +258,7 @@ export default function CustomerCatalogScreen() {
     limit: 200,
   });
   const deleteMut = useDeleteCustomerPrice();
+  const { data: tierLabels } = useTierLabels();
 
   const [editing, setEditing] = useState<CustomerPrice | null>(null);
   const [showAdd, setShowAdd] = useState(false);
@@ -332,8 +336,10 @@ export default function CustomerCatalogScreen() {
                     </View>
                     <View style={styles.priceCol}>
                       <View style={styles.tierBadge}>
-                        <Text style={styles.tierBadgeText}>
-                          {cp.pricingTier != null ? `Tier ${cp.pricingTier}` : "Default"}
+                        <Text style={styles.tierBadgeText} numberOfLines={1}>
+                          {cp.pricingTier != null
+                            ? tierLabel(tierLabels, cp.pricingTier)
+                            : "Default"}
                         </Text>
                       </View>
                       <Text style={styles.tierPriceText}>

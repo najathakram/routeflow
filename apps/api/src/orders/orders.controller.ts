@@ -299,6 +299,21 @@ export class OrdersController {
     return this.ordersService.toggleUrgent(id, user, body.urgent);
   }
 
+  // Sales agents & commissions: staff-only per-order commission-rate override
+  // (0 = exempt, null = clear). Body kept as an inline type — no dedicated DTO
+  // file — mirroring the toggleUrgent precedent above; validated in the
+  // service (setCommissionRate), same gate as parseOrderDate.
+  @Patch(":id/commission-rate")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  setCommissionRate(
+    @Param("id") id: string,
+    @Body() body: { commissionRatePct: number | null },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.ordersService.setCommissionRate(id, body.commissionRatePct, user);
+  }
+
   @Post("sweep-pending")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
