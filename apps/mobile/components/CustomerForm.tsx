@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Switch, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "./FormSheet";
+import { AddressAutocompleteInput } from "./AddressAutocompleteInput";
 import { isInternalEmail } from "../lib/internal-email";
 import { useTierLabels } from "../lib/api/tier-labels";
 import { tierLabel } from "../lib/tier-label";
@@ -20,6 +21,15 @@ export interface CustomerFormValues {
   deliveryWindowEnd: string;
   isTaxExempt: boolean;
   taxId: string;
+  // Create-only: bundled into the create payload as the customer's first
+  // address (mirrors web's CustomerFormModal). Editing an existing
+  // customer's address(es) happens on the dedicated Addresses screen
+  // (app/(operator)/customers/[id]/addresses.tsx), which already supports
+  // add/update — so these stay empty and unused in edit mode.
+  street: string;
+  city: string;
+  state: string;
+  zip: string;
 }
 
 export function emptyCustomerForm(): CustomerFormValues {
@@ -36,6 +46,10 @@ export function emptyCustomerForm(): CustomerFormValues {
     deliveryWindowEnd: "",
     isTaxExempt: false,
     taxId: "",
+    street: "",
+    city: "",
+    state: "",
+    zip: "",
   };
 }
 
@@ -57,11 +71,24 @@ export function customerFormFromValues(c: Record<string, any>): CustomerFormValu
     deliveryWindowEnd: c.deliveryWindowEnd ?? "",
     isTaxExempt: c.isTaxExempt ?? false,
     taxId: c.taxId ?? "",
+    // Edit mode never renders or submits the address section (see comment on
+    // CustomerFormValues) — leave blank rather than prefill fields the form
+    // can't save.
+    street: "",
+    city: "",
+    state: "",
+    zip: "",
   };
 }
 
 export interface CustomerPayload {
   businessName: string;
+  // Create-only. CreateCustomerDto REQUIRES `username` (the API mints the
+  // customer's linked User record from it) and the global ValidationPipe runs
+  // with `whitelist + forbidNonWhitelisted`, so omitting it 400s the whole
+  // create — address bundle included. Derived client-side, same as web's
+  // CustomerFormModal.
+  username?: string;
   contactName?: string;
   email?: string;
   phone?: string;
@@ -73,6 +100,19 @@ export interface CustomerPayload {
   deliveryWindowEnd?: string;
   isTaxExempt?: boolean;
   taxId?: string;
+  // Create-only bundle for the customer's first address — the mobile create
+  // payload didn't carry an address at all before this; the API's
+  // CreateCustomerDto already accepts it (see customers.service.ts create()).
+  // `label` is required by CreateAddressDto (not just the /addresses
+  // sub-resource endpoint, which is more lenient) — mirrors web's "Main".
+  addresses?: Array<{
+    label: string;
+    line1: string;
+    city: string;
+    state: string;
+    zip: string;
+    isDefault?: boolean;
+  }>;
 }
 
 function parseOptionalNumber(v: string): number | undefined {
@@ -82,30 +122,74 @@ function parseOptionalNumber(v: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+/**
+ * Mirrors web's CustomerFormModal: the username no longer depends on the (now
+ * optional) email — take the email local-part when there is one, else the
+ * business or contact name, slugified, with a short suffix so it stays unique.
+ */
+function deriveUsername(email: string, businessName: string, contactName: string): string {
+  const base =
+    (email ? email.split("@")[0] : businessName || contactName)
+      .replace(/[^a-z0-9]/gi, "")
+      .toLowerCase()
+      .slice(0, 24) || "customer";
+  return `${base}_${Date.now().toString(36)}`;
+}
+
 function buildPayload(
   form: CustomerFormValues,
   mode: "create" | "edit",
 ): CustomerPayload | { error: string } {
   const businessName = form.businessName.trim();
   if (!businessName) return { error: "Business name is required." };
+
+  // Address is optional on create (you can always add one later from the
+  // Addresses screen) — but once the operator starts filling it in, require
+  // the full set, same rule AddAddressForm uses on the Addresses screen.
+  const street = form.street.trim();
+  const city = form.city.trim();
+  const state = form.state.trim();
+  const zip = form.zip.trim();
+  const hasAnyAddressInput = mode === "create" && !!(street || city || state || zip);
+  const hasFullAddress = !!(street && city && state && zip);
+  if (hasAnyAddressInput && !hasFullAddress) {
+    return { error: "Street, city, state, and ZIP are all required to add an address." };
+  }
+
+  const contactName = form.contactName.trim();
+  const email = form.email.trim();
+
   return {
     businessName,
-    contactName: form.contactName.trim() || undefined,
+    // Create-only — see CustomerPayload.username.
+    username: mode === "create" ? deriveUsername(email, businessName, contactName) : undefined,
+    // CreateCustomerDto declares contactName as a REQUIRED @IsString, so create
+    // must always send a string ("" is accepted, and is what web sends when the
+    // field is blank); edit keeps `undefined` = leave as-is.
+    contactName: mode === "create" ? contactName : contactName || undefined,
     // Edit sends "" so a blanked field CLEARS the stored email server-side
     // (UpdateCustomerDto emptyToNull) — `|| undefined` made clearing a silent
     // no-op, so a sentinel could never be removed. Create keeps `undefined`:
     // CreateCustomerDto's @IsEmail rejects "" and the service mints its own
     // placeholder for an absent email.
-    email: mode === "edit" ? form.email.trim() : form.email.trim() || undefined,
+    email: mode === "edit" ? email : email || undefined,
     phone: form.phone.trim() || undefined,
     creditLimit: parseOptionalNumber(form.creditLimit),
     pricingTier: form.pricingTier,
     currency: form.currency.trim() || undefined,
     notes: form.notes.trim() || undefined,
-    deliveryWindowStart: form.deliveryWindowStart.trim() || undefined,
-    deliveryWindowEnd: form.deliveryWindowEnd.trim() || undefined,
+    // Edit-only: CreateCustomerDto has no delivery-window fields, and
+    // `forbidNonWhitelisted` rejects the ENTIRE create payload over one unknown
+    // property — a filled window would take the address bundle down with it.
+    // The window is set from the edit screen instead (section below matches).
+    deliveryWindowStart: mode === "edit" ? form.deliveryWindowStart.trim() || undefined : undefined,
+    deliveryWindowEnd: mode === "edit" ? form.deliveryWindowEnd.trim() || undefined : undefined,
     isTaxExempt: form.isTaxExempt,
     taxId: form.taxId.trim() || undefined,
+    addresses:
+      mode === "create" && hasFullAddress
+        ? [{ label: "Main", line1: street, city, state, zip, isDefault: true }]
+        : undefined,
   };
 }
 
@@ -215,6 +299,60 @@ export function CustomerForm({
         </FormField>
       </FormSection>
 
+      {/* Lifted above the sections that follow it: the street field's suggestion
+          list overflows this card, and only a zIndex on the section itself
+          out-ranks the later section cards. */}
+      {mode === "create" ? (
+        <FormSection title="Address (optional)" style={{ zIndex: 20 }}>
+          <AddressAutocompleteInput
+            label="Street"
+            value={form.street}
+            onChangeText={(v) => set("street", v)}
+            onAddressSelect={(parts) =>
+              setForm((f) => ({
+                ...f,
+                street: parts.street || f.street,
+                city: parts.city || f.city,
+                state: parts.state || f.state,
+                zip: parts.zip || f.zip,
+              }))
+            }
+            placeholder="123 Harbor Way"
+          />
+          <FormField label="City">
+            <FormTextInput
+              value={form.city}
+              onChangeText={(v) => set("city", v)}
+              placeholder="Austin"
+              autoCapitalize="words"
+            />
+          </FormField>
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <View style={{ flex: 1 }}>
+              <FormField label="State">
+                <FormTextInput
+                  value={form.state}
+                  onChangeText={(v) => set("state", v)}
+                  placeholder="TX"
+                  autoCapitalize="characters"
+                  maxLength={2}
+                />
+              </FormField>
+            </View>
+            <View style={{ flex: 1 }}>
+              <FormField label="ZIP">
+                <FormTextInput
+                  value={form.zip}
+                  onChangeText={(v) => set("zip", v)}
+                  placeholder="78701"
+                  keyboardType="number-pad"
+                />
+              </FormField>
+            </View>
+          </View>
+        </FormSection>
+      ) : null}
+
       <FormSection title="Billing">
         <FormField label="Credit limit">
           <FormTextInput
@@ -286,30 +424,33 @@ export function CustomerForm({
         ) : null}
       </FormSection>
 
-      <FormSection title="Delivery window">
-        <View style={styles.windowRow}>
-          <View style={{ flex: 1, gap: 6 }}>
-            <Text style={styles.windowLabel}>FROM (HH:MM)</Text>
-            <FormTextInput
-              value={form.deliveryWindowStart}
-              onChangeText={(v) => set("deliveryWindowStart", v)}
-              placeholder="08:00"
-              keyboardType="numbers-and-punctuation"
-              maxLength={5}
-            />
+      {/* Edit-only — the create endpoint rejects these fields (see buildPayload). */}
+      {mode === "edit" ? (
+        <FormSection title="Delivery window">
+          <View style={styles.windowRow}>
+            <View style={{ flex: 1, gap: 6 }}>
+              <Text style={styles.windowLabel}>FROM (HH:MM)</Text>
+              <FormTextInput
+                value={form.deliveryWindowStart}
+                onChangeText={(v) => set("deliveryWindowStart", v)}
+                placeholder="08:00"
+                keyboardType="numbers-and-punctuation"
+                maxLength={5}
+              />
+            </View>
+            <View style={{ flex: 1, gap: 6 }}>
+              <Text style={styles.windowLabel}>TO (HH:MM)</Text>
+              <FormTextInput
+                value={form.deliveryWindowEnd}
+                onChangeText={(v) => set("deliveryWindowEnd", v)}
+                placeholder="17:00"
+                keyboardType="numbers-and-punctuation"
+                maxLength={5}
+              />
+            </View>
           </View>
-          <View style={{ flex: 1, gap: 6 }}>
-            <Text style={styles.windowLabel}>TO (HH:MM)</Text>
-            <FormTextInput
-              value={form.deliveryWindowEnd}
-              onChangeText={(v) => set("deliveryWindowEnd", v)}
-              placeholder="17:00"
-              keyboardType="numbers-and-punctuation"
-              maxLength={5}
-            />
-          </View>
-        </View>
-      </FormSection>
+        </FormSection>
+      ) : null}
     </FormSheet>
   );
 }

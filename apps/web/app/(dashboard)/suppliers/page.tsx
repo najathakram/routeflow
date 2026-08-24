@@ -23,6 +23,7 @@ import { PageHeader, Badge, Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import {
   useSuppliers,
   useCreateSupplier,
@@ -230,11 +231,16 @@ function SupplierModal({
                 Address
               </p>
               <div className="space-y-2">
-                <input
-                  placeholder="Street address"
+                <AddressAutocomplete
+                  placeholder="Street address — start typing for suggestions"
                   value={form.addressLine1}
-                  onChange={(e) => set("addressLine1", e.target.value)}
-                  className={inputCls}
+                  onChange={(v) => set("addressLine1", v)}
+                  onAddressSelect={({ street, city, state, zip }) => {
+                    set("addressLine1", street);
+                    set("city", city);
+                    set("state", state);
+                    set("zip", zip);
+                  }}
                 />
                 <input
                   placeholder="Address line 2"

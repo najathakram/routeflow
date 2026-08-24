@@ -299,6 +299,8 @@ export function useMyAccountSummary() {
 
 export interface CreateCustomerDto {
   businessName: string;
+  /** Create-only, and REQUIRED there — the API mints the linked User from it. */
+  username?: string;
   contactName?: string;
   email?: string;
   phone?: string;
@@ -311,11 +313,21 @@ export interface CreateCustomerDto {
   deliveryWindowEnd?: string;
   isTaxExempt?: boolean;
   taxId?: string;
+  /** Create-only: the customer's first address, bundled with the create. */
+  addresses?: Array<{
+    label: string;
+    line1: string;
+    city: string;
+    state: string;
+    zip: string;
+    isDefault?: boolean;
+  }>;
 }
 
 export function useCreateCustomer() {
   const qc = useQueryClient();
-  return useMutation<{ id: string }, Error, CreateCustomerDto>({
+  // POST /customers returns { customer, user, tempPassword } — not a bare customer.
+  return useMutation<{ customer: { id: string } }, Error, CreateCustomerDto>({
     mutationFn: (dto) => apiClient.post("/customers", dto).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["customers"] });

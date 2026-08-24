@@ -43,9 +43,15 @@ describe("CustomersService", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   let meter: { read: jest.Mock };
   let catalog: { getPublishedVersion: jest.Mock };
+  let configGet: jest.Mock;
+  const originalFetch = global.fetch;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // Defaults to "no key configured" so geocoding is a no-op (returns null without
+    // calling fetch) for every pre-existing test — narrow it per-test to exercise
+    // the geocode-on-create paths below.
+    configGet = jest.fn().mockReturnValue(null);
     // createMockPrisma()'s model list predates the CUSTOMERS soft-cap (WP3) and
     // doesn't carry tenantSubscription; attach it here rather than editing the
     // shared mock (out of this package's file scope).
@@ -80,7 +86,7 @@ describe("CustomersService", () => {
         },
         CustomersService,
         { provide: PrismaService, useValue: prisma },
-        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(null) } },
+        { provide: ConfigService, useValue: { get: configGet } },
         {
           provide: StorageService,
           useValue: {
@@ -100,6 +106,10 @@ describe("CustomersService", () => {
     }).compile();
 
     service = module.get<CustomersService>(CustomersService);
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
   });
 
   // ─── findAll ──────────────────────────────────────────────────────────────
@@ -264,6 +274,60 @@ describe("CustomersService", () => {
         { username: "acme" },
       ]);
       expect(res.user.email).toBe("a@b.com");
+    });
+
+    // ─── create: geocode on customer create ──────────────────────────────────
+
+    it("stores lat/lng on the created address when the geocoder succeeds", async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue({ id: "u1", username: "acme", email: "placeholder" });
+      prisma.customer.create.mockResolvedValue({ id: "c1" });
+      configGet.mockImplementation((key: string) =>
+        key === "googleMaps.apiKey" ? "test-key" : null,
+      );
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          results: [{ geometry: { location: { lat: 40.7128, lng: -74.006 } } }],
+        }),
+      }) as any;
+
+      await service.create({
+        ...baseDto,
+        addresses: [
+          { label: "Main", line1: "123 Main St", city: "Springfield", state: "IL", zip: "62701" },
+        ],
+      });
+
+      expect(prisma.customerAddress.createMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: [expect.objectContaining({ lat: 40.7128, lng: -74.006 })],
+        }),
+      );
+    });
+
+    it("still creates the customer with null lat/lng when the geocoder fails", async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue({ id: "u1", username: "acme", email: "placeholder" });
+      prisma.customer.create.mockResolvedValue({ id: "c1" });
+      configGet.mockImplementation((key: string) =>
+        key === "googleMaps.apiKey" ? "test-key" : null,
+      );
+      global.fetch = jest.fn().mockRejectedValue(new Error("network down")) as any;
+
+      const res: any = await service.create({
+        ...baseDto,
+        addresses: [
+          { label: "Main", line1: "123 Main St", city: "Springfield", state: "IL", zip: "62701" },
+        ],
+      });
+
+      // The write still succeeds…
+      expect(res.customer).toEqual({ id: "c1" });
+      // …and the address row carries no lat/lng at all (left null by the DB default).
+      const createdData = prisma.customerAddress.createMany.mock.calls[0][0].data[0];
+      expect(createdData).not.toHaveProperty("lat");
+      expect(createdData).not.toHaveProperty("lng");
     });
   });
 
