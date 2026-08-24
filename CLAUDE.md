@@ -188,6 +188,13 @@ window exists ONLY to run CI, so keep it to minutes.
 > Docs-only changes (outside `watchPatterns` = `apps/<svc>/**` + `packages/**`) are SKIPPED by
 > Railway — nothing to watch.
 
+## Heavy files policy
+
+No images, videos, or office binaries in git (mobile app icons in
+`apps/mobile/assets/` are the exception — required build assets). Machine-local
+home: `local-assets/` (gitignored). Generated docs/screenshots go there, never
+into `docs/`. The repo goes public briefly for CI, and clones should stay lean.
+
 ## Token Budget
 
 - grep before reading whole files; read exports/signatures before bodies.

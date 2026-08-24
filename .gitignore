@@ -93,3 +93,9 @@ docs/audit/
 # ─── Generated fuzz fixtures (reproduce via docs/qa/workers/w6-fuzz-pack/generate.js;
 #     the 26MB f20-huge.pdf alone was 84% of the repo pack) ──────────────────
 docs/qa/workers/w6-fuzz-pack/f20-huge.pdf
+
+# ─── Machine-local heavy assets (docs binaries, screenshots, media) ─────────
+# Repo policy (owner, 2026-08-23): no images/videos/office binaries in git —
+# they live in local-assets/ on the dev machine. The repo goes public briefly
+# for CI, and clones should stay lean.
+local-assets/
