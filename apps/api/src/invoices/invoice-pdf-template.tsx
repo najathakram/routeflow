@@ -20,6 +20,12 @@ export interface InvoicePdfData {
   generatedAt?: Date | string;
   issueDate: Date | string;
   dueDate?: Date | string | null;
+  /**
+   * Structured "Net 30"-style label, persisted alongside the due date so the
+   * two can never disagree. Null on historical invoices predating this field
+   * — renders nothing (not "Net 30" and not the raw dueDate arithmetic).
+   */
+  paymentTermsLabel?: string | null;
   paidAt?: Date | string | null;
   subtotal: DecimalLike;
   taxAmount: DecimalLike;
@@ -473,6 +479,9 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
               <Text style={styles.billSub}>Invoice Date: {fmtDate(invoice.issueDate)}</Text>
               {invoice.dueDate ? (
                 <Text style={styles.billSub}>Due Date: {fmtDate(invoice.dueDate)}</Text>
+              ) : null}
+              {invoice.paymentTermsLabel ? (
+                <Text style={styles.billSub}>Terms: {invoice.paymentTermsLabel}</Text>
               ) : null}
               {invoice.paidAt ? (
                 <Text style={[styles.billSub, { color: SUCCESS }]}>

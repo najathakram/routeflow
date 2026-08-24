@@ -2,6 +2,7 @@ import {
   IsBoolean,
   IsEmail,
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -16,6 +17,11 @@ import { Type } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
 import { CreateAddressDto } from "./create-address.dto";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import { VALID_TERMS } from "../../system-config/dto/update-invoice-settings.dto";
+
+// Canonical list plus "" to allow explicitly leaving this customer on the
+// tenant default at create time.
+const VALID_CUSTOMER_TERMS = [...VALID_TERMS, ""];
 
 export class CreateCustomerDto {
   // BUG-B1-5: bound free-text fields server-side. The audit POSTed a
@@ -48,6 +54,17 @@ export class CreateCustomerDto {
   @IsOptional() @Min(0) @Max(1_000_000_000) creditLimit?: number;
   @IsOptional() @IsString() @MaxLength(3) currency?: string;
   @IsOptional() @IsInt() @Min(1) @Max(5) pricingTier?: number;
+  /**
+   * Per-customer default payment terms ("this customer is always Net 60") — wins
+   * over the tenant SystemConfig default in resolveDefaultTerms(). "" (or
+   * omitted) leaves the customer on the tenant default.
+   */
+  @IsOptional()
+  @IsString()
+  @IsIn(VALID_CUSTOMER_TERMS, {
+    message: "defaultPaymentTerms must be one of: " + VALID_CUSTOMER_TERMS.join(", "),
+  })
+  defaultPaymentTerms?: string;
   /**
    * Sales agents & commissions: opens the customer's first attribution window
    * (AgentAssignment, effectiveFrom = now) inside the create tx.

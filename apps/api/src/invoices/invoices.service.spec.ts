@@ -4093,6 +4093,39 @@ describe("InvoicesService", () => {
 
       expectDatedToday(invoice.issueDate);
     });
+
+    it("createPartialFromOrder labels the split with the Net-N the modal picked", async () => {
+      seedDatingSpies();
+      prisma.order.findUnique.mockResolvedValue(
+        orderWith({ orderDate: null, lineItems: [{ ...orderWith().lineItems[0], id: "oi-1" }] }),
+      );
+
+      // What SplitInvoiceModal posts: the derived date AND the term that derived it.
+      const invoice = (await service.createPartialFromOrder("ord-1", {
+        items: [{ orderItemId: "oi-1", qty: 2 }],
+        dueDate: "2026-10-03",
+        paymentTermsLabel: "Net 60",
+      } as any)) as any;
+
+      expect(invoice.paymentTermsLabel).toBe("Net 60");
+      expect(invoice.dueDate).toEqual(new Date("2026-10-03T00:00:00.000Z"));
+      // The Net-N never lands in the long-form T&C column.
+      expect(invoice.terms).toBe("Net 30");
+    });
+
+    it("createPartialFromOrder leaves the label null for a bare dueDate override", async () => {
+      seedDatingSpies();
+      prisma.order.findUnique.mockResolvedValue(
+        orderWith({ orderDate: null, lineItems: [{ ...orderWith().lineItems[0], id: "oi-1" }] }),
+      );
+
+      const invoice = (await service.createPartialFromOrder("ord-1", {
+        items: [{ orderItemId: "oi-1", qty: 2 }],
+        dueDate: "2026-10-03",
+      } as any)) as any;
+
+      expect(invoice.paymentTermsLabel).toBeNull();
+    });
   });
 
   // ─── settledAt: when the money actually landed in the bank ────────────────
@@ -4413,6 +4446,432 @@ describe("InvoicesService", () => {
         }),
       );
     });
+  });
+
+  // ─── WP2: payment-terms model — durable label + customer defaults + deposit ─
+
+  describe("WP2 — payment terms model", () => {
+    describe("create() — paymentTermsLabel + deposit fields", () => {
+      it("persists paymentTermsLabel, depositPercent, and depositDueDate verbatim", async () => {
+        prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", isTaxExempt: false });
+        prisma.invoice.findFirst.mockResolvedValue(null); // nextInvoiceNumber
+        prisma.invoice.create.mockImplementation((args: any) =>
+          Promise.resolve({ ...args.data, id: "inv-new", items: [], payments: [], customer: {} }),
+        );
+
+        await service.create({
+          customerId: "cust-1",
+          items: [{ description: "Widget", qty: 1, unitPrice: 100 }],
+          paymentTermsLabel: "Net 45",
+          depositPercent: 50,
+          depositDueDate: "2026-09-01",
+        } as any);
+
+        const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+        expect(data.paymentTermsLabel).toBe("Net 45");
+        expect(Number(data.depositPercent)).toBe(50);
+        expect(data.depositDueDate).toEqual(new Date("2026-09-01"));
+      });
+
+      it("defaults paymentTermsLabel/deposit fields to null when omitted", async () => {
+        prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", isTaxExempt: false });
+        prisma.invoice.findFirst.mockResolvedValue(null);
+        prisma.invoice.create.mockImplementation((args: any) =>
+          Promise.resolve({ ...args.data, id: "inv-new2", items: [], payments: [], customer: {} }),
+        );
+
+        await service.create({
+          customerId: "cust-1",
+          items: [{ description: "Widget", qty: 1, unitPrice: 100 }],
+        } as any);
+
+        const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+        expect(data.paymentTermsLabel).toBeNull();
+        expect(data.depositPercent).toBeNull();
+        expect(data.depositDueDate).toBeNull();
+      });
+    });
+
+    describe("resolveDefaultTerms(customerId) — customer default beats tenant default", () => {
+      it("uses the customer's defaultPaymentTerms when set, ignoring the tenant SystemConfig", async () => {
+        prisma.customer.findUnique.mockResolvedValue({ defaultPaymentTerms: "Net 60" });
+        mockSystemConfig.get.mockResolvedValue("Net 30"); // tenant default — must be beaten
+        // mockSystemConfig is a shared jest.fn() across the whole spec file (never
+        // reset between tests), so clear ITS call history right before the act —
+        // otherwise the "not called" assertion below inherits calls from unrelated
+        // earlier tests.
+        mockSystemConfig.get.mockClear();
+
+        const result = await service.resolveDefaultTerms("cust-1");
+
+        expect(result).toEqual({ terms: "Net 60", dueDays: 60 });
+        // The customer override short-circuits before the tenant lookup is even needed.
+        expect(mockSystemConfig.get).not.toHaveBeenCalled();
+      });
+
+      it("falls back to the tenant default when the customer has no override", async () => {
+        prisma.customer.findUnique.mockResolvedValue({ defaultPaymentTerms: null });
+        mockSystemConfig.get.mockResolvedValue("Net 45");
+
+        const result = await service.resolveDefaultTerms("cust-1");
+
+        expect(result).toEqual({ terms: "Net 45", dueDays: 45 });
+      });
+
+      it("keeps the existing tenant-only behavior when called with no customerId", async () => {
+        mockSystemConfig.get.mockResolvedValue(null);
+
+        const result = await service.resolveDefaultTerms();
+
+        expect(result).toEqual({ terms: "Net 30", dueDays: 30 });
+        expect(prisma.customer.findUnique).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("createInvoiceFromOrder / createSale — label always matches the derived dueDate", () => {
+      const orderWith = (over: any = {}) => ({
+        id: "ord-terms",
+        customerId: "cust-1",
+        orderNumber: "ORD-T1",
+        subtotal: 20,
+        tax: 0,
+        lineItems: [
+          {
+            id: "li-1",
+            productId: "p1",
+            name: null,
+            qty: 2,
+            invoicedQty: 0,
+            unitPrice: 10,
+            originalPrice: null,
+            priceType: "STANDARD",
+            product: { name: "Widget", unitsPerBox: 0 },
+          },
+        ],
+        ...over,
+      });
+
+      it("labels an order-generated invoice with the resolved default term when no override is given", async () => {
+        jest
+          .spyOn(service as any, "resolveTenantInvoiceDefaults")
+          .mockResolvedValue({ notes: null, terms: null, timezone: null });
+        jest.spyOn(service as any, "generateInvoiceNumber").mockResolvedValue("INV-T1");
+        // Customer override resolves the default term to "Net 45" (45 days).
+        prisma.customer.findUnique.mockResolvedValue({ defaultPaymentTerms: "Net 45" });
+        prisma.order.findUnique.mockResolvedValue(orderWith());
+        prisma.invoice.create.mockImplementation((args: any) =>
+          Promise.resolve({ ...args.data, items: [], payments: [], customer: {} }),
+        );
+
+        await service.createInvoiceFromOrder("ord-terms");
+
+        const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+        // INVARIANT: the label equals exactly the string that drove the dueDate math.
+        expect(data.paymentTermsLabel).toBe("Net 45");
+        const days = Math.round(
+          (new Date(data.dueDate).getTime() - new Date(data.issueDate).getTime()) / 86_400_000,
+        );
+        expect(days).toBe(45);
+      });
+
+      it("labels an order-generated invoice with the New-Sale operator's chosen term (createSale override)", async () => {
+        jest
+          .spyOn(service as any, "resolveTenantInvoiceDefaults")
+          .mockResolvedValue({ notes: null, terms: null, timezone: null });
+        jest.spyOn(service as any, "generateInvoiceNumber").mockResolvedValue("INV-T2");
+        prisma.customer.findUnique.mockResolvedValue({ defaultPaymentTerms: null });
+        mockSystemConfig.get.mockResolvedValue(null); // tenant default -> "Net 30", unused here
+        prisma.order.findUnique.mockResolvedValue(orderWith());
+        prisma.invoice.create.mockImplementation((args: any) =>
+          Promise.resolve({ ...args.data, items: [], payments: [], customer: {} }),
+        );
+
+        // Mirrors what orders.service.createSale threads through from CreateSaleDto.
+        await service.createInvoiceFromOrder("ord-terms", undefined, {
+          dueDate: "2026-10-03",
+          paymentTermsLabel: "Net 60",
+        });
+
+        const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+        expect(data.paymentTermsLabel).toBe("Net 60");
+        expect(data.dueDate).toEqual(new Date("2026-10-03T00:00:00.000Z"));
+      });
+
+      it("leaves the label null when a dueDate is supplied WITHOUT one (no term drove that date)", async () => {
+        jest
+          .spyOn(service as any, "resolveTenantInvoiceDefaults")
+          .mockResolvedValue({ notes: null, terms: null, timezone: null });
+        jest.spyOn(service as any, "generateInvoiceNumber").mockResolvedValue("INV-T3");
+        // Resolved default is "Net 45" — it must NOT be stamped on a hand-typed date.
+        prisma.customer.findUnique.mockResolvedValue({ defaultPaymentTerms: "Net 45" });
+        prisma.order.findUnique.mockResolvedValue(orderWith());
+        prisma.invoice.create.mockImplementation((args: any) =>
+          Promise.resolve({ ...args.data, items: [], payments: [], customer: {} }),
+        );
+
+        // Operator hand-typed a Due Date and never touched the Terms dropdown.
+        await service.createInvoiceFromOrder("ord-terms", undefined, { dueDate: "2026-10-03" });
+
+        const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+        expect(data.paymentTermsLabel).toBeNull();
+        expect(data.dueDate).toEqual(new Date("2026-10-03T00:00:00.000Z"));
+      });
+    });
+
+    describe("findOne/findAll — derived depositAmount/depositOverdue", () => {
+      it("rounds the deposit amount to the cent (50% of a non-round total)", async () => {
+        prisma.invoice.findUnique.mockResolvedValue({
+          id: "inv-dep-1",
+          status: InvoiceStatus.SENT,
+          total: 1234.5678,
+          dueDate: null,
+          depositPercent: 50,
+          depositDueDate: null,
+          payments: [],
+          items: [],
+        });
+
+        const res = await service.findOne("inv-dep-1");
+
+        // 1234.5678 * 50% = 617.2839 -> rounds to the cent via roundMoney.
+        expect((res as any).depositAmount).toBeCloseTo(617.28, 2);
+      });
+
+      it("flags depositOverdue only when the deposit due date has passed and it isn't covered yet", async () => {
+        const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+        prisma.invoice.findUnique.mockResolvedValue({
+          id: "inv-dep-2",
+          status: InvoiceStatus.SENT,
+          total: 1000,
+          dueDate: null,
+          depositPercent: 20, // deposit = $200
+          depositDueDate: yesterday,
+          payments: [],
+          items: [],
+        });
+
+        const overdue = await service.findOne("inv-dep-2");
+        expect((overdue as any).depositAmount).toBe(200);
+        expect((overdue as any).depositOverdue).toBe(true);
+
+        // A payment covering the deposit clears the flag even though the invoice
+        // as a whole is still open.
+        prisma.invoice.findUnique.mockResolvedValue({
+          id: "inv-dep-3",
+          status: InvoiceStatus.PARTIAL,
+          total: 1000,
+          dueDate: null,
+          depositPercent: 20,
+          depositDueDate: yesterday,
+          payments: [{ status: "PAID", amount: 200 }],
+          items: [],
+        });
+        const covered = await service.findOne("inv-dep-3");
+        expect((covered as any).depositOverdue).toBe(false);
+      });
+
+      it("returns depositAmount null and depositOverdue false when no deposit is configured", async () => {
+        prisma.invoice.findUnique.mockResolvedValue({
+          id: "inv-no-dep",
+          status: InvoiceStatus.SENT,
+          total: 500,
+          dueDate: null,
+          depositPercent: null,
+          depositDueDate: null,
+          payments: [],
+          items: [],
+        });
+
+        const res = await service.findOne("inv-no-dep");
+        expect((res as any).depositAmount).toBeNull();
+        expect((res as any).depositOverdue).toBe(false);
+      });
+    });
+
+    // ─── WP3 note (item 6 of this package): updateTerms ────────────────────
+    describe("updateTerms — narrow post-issue correction", () => {
+      it("rejects a VOID invoice", async () => {
+        prisma.invoice.findUnique.mockResolvedValue({
+          id: "inv-void",
+          status: InvoiceStatus.VOID,
+          total: 100,
+          dueDate: null,
+          internalNotes: null,
+          payments: [],
+        });
+
+        await expect(
+          service.updateTerms("inv-void", { paymentTermsLabel: "Net 45" }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(prisma.invoice.update).not.toHaveBeenCalled();
+      });
+
+      it("rejects a WRITTEN_OFF invoice", async () => {
+        prisma.invoice.findUnique.mockResolvedValue({
+          id: "inv-wo",
+          status: InvoiceStatus.WRITTEN_OFF,
+          total: 100,
+          dueDate: null,
+          internalNotes: null,
+          payments: [],
+        });
+
+        await expect(
+          service.updateTerms("inv-wo", { paymentTermsLabel: "Net 45" }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      });
+
+      it("a PAID invoice accepts a label fix and stays PAID", async () => {
+        prisma.invoice.findUnique.mockResolvedValue({
+          id: "inv-paid",
+          status: InvoiceStatus.PAID,
+          total: 100,
+          dueDate: new Date("2026-06-01"),
+          internalNotes: null,
+          payments: [{ status: "PAID", amount: 100 }],
+        });
+        prisma.invoice.update.mockResolvedValue({ id: "inv-paid", status: InvoiceStatus.PAID });
+
+        await service.updateTerms("inv-paid", { paymentTermsLabel: "Net 45 (corrected)" });
+
+        const data = (prisma.invoice.update.mock.calls[0][0] as any).data;
+        expect(data.paymentTermsLabel).toBe("Net 45 (corrected)");
+        expect(data.status).toBe(InvoiceStatus.PAID);
+      });
+
+      it("a dueDate edit flips OVERDUE back to SENT when the new date is in the future", async () => {
+        prisma.invoice.findUnique.mockResolvedValue({
+          id: "inv-over",
+          status: InvoiceStatus.OVERDUE,
+          total: 100,
+          dueDate: new Date("2026-01-01"), // long past
+          internalNotes: null,
+          payments: [],
+        });
+        prisma.invoice.update.mockResolvedValue({ id: "inv-over", status: InvoiceStatus.SENT });
+
+        const future = new Date(Date.now() + 30 * 86_400_000).toISOString();
+        await service.updateTerms("inv-over", { dueDate: future });
+
+        const data = (prisma.invoice.update.mock.calls[0][0] as any).data;
+        expect(data.status).toBe(InvoiceStatus.SENT);
+      });
+
+      it("a dueDate edit flips SENT to OVERDUE when the new date is in the past", async () => {
+        prisma.invoice.findUnique.mockResolvedValue({
+          id: "inv-sent",
+          status: InvoiceStatus.SENT,
+          total: 100,
+          dueDate: new Date(Date.now() + 30 * 86_400_000),
+          internalNotes: null,
+          payments: [],
+        });
+        prisma.invoice.update.mockResolvedValue({ id: "inv-sent", status: InvoiceStatus.OVERDUE });
+
+        const past = new Date(Date.now() - 5 * 86_400_000).toISOString();
+        await service.updateTerms("inv-sent", { dueDate: past });
+
+        const data = (prisma.invoice.update.mock.calls[0][0] as any).data;
+        expect(data.status).toBe(InvoiceStatus.OVERDUE);
+      });
+
+      it("appends an internalNotes breadcrumb noting the dueDate change", async () => {
+        prisma.invoice.findUnique.mockResolvedValue({
+          id: "inv-note",
+          status: InvoiceStatus.SENT,
+          total: 100,
+          dueDate: new Date("2026-06-01T00:00:00.000Z"),
+          internalNotes: "existing note",
+          payments: [],
+        });
+        prisma.invoice.update.mockResolvedValue({ id: "inv-note" });
+
+        await service.updateTerms("inv-note", { dueDate: "2026-07-01" });
+
+        const data = (prisma.invoice.update.mock.calls[0][0] as any).data;
+        expect(data.internalNotes).toContain("existing note");
+        expect(data.internalNotes).toContain("Terms updated: 2026-06-01 → 2026-07-01");
+      });
+
+      it("a bare terms edit does NOT trigger the order back-sync (recomputeOrderFromInvoices)", async () => {
+        const resyncSpy = jest
+          .spyOn(service as any, "recomputeOrderFromInvoices")
+          .mockResolvedValue(undefined);
+        prisma.invoice.findUnique.mockResolvedValue({
+          id: "inv-order-linked",
+          orderId: "ord-1",
+          status: InvoiceStatus.SENT,
+          total: 100,
+          dueDate: new Date("2026-06-01"),
+          internalNotes: null,
+          payments: [],
+        });
+        prisma.invoice.update.mockResolvedValue({ id: "inv-order-linked" });
+
+        await service.updateTerms("inv-order-linked", { referenceNumber: "PO-42" });
+
+        expect(resyncSpy).not.toHaveBeenCalled();
+      });
+
+      it('clears a mislabeled term / stale reference when the modal sends "" (never leaves it unchanged)', async () => {
+        prisma.invoice.findUnique.mockResolvedValue({
+          id: "inv-clear",
+          status: InvoiceStatus.SENT,
+          total: 100,
+          dueDate: new Date("2026-06-01"),
+          paymentTermsLabel: "Net 45",
+          referenceNumber: "PO-42",
+          internalNotes: null,
+          payments: [],
+        });
+        prisma.invoice.update.mockResolvedValue({ id: "inv-clear" });
+
+        await service.updateTerms("inv-clear", {
+          paymentTermsLabel: "",
+          referenceNumber: "",
+          subject: "",
+        });
+
+        const data = (prisma.invoice.update.mock.calls[0][0] as any).data;
+        expect(data.paymentTermsLabel).toBeNull();
+        expect(data.referenceNumber).toBeNull();
+        expect(data.subject).toBeNull();
+      });
+    });
+  });
+});
+
+/**
+ * Invoice issue/due dates are CALENDAR dates: they are stored as UTC-midnight instants
+ * and every render surface (list, detail, PDF, email) formats them with timeZone: "UTC".
+ * These guard the write side of that invariant.
+ */
+describe("calendar-date helpers", () => {
+  it("dates a same-day sale in the TENANT's calendar day, at UTC midnight", () => {
+    // 8:10pm America/New_York on Aug 22 is already Aug 23 in UTC. Storing raw
+    // new Date() would print the invoice as Aug 23 — a day after the sale happened.
+    const at810pmEdt = new Date("2026-08-23T00:10:00.000Z");
+    expect(startOfCalendarDay("America/New_York", at810pmEdt).toISOString()).toBe(
+      "2026-08-22T00:00:00.000Z",
+    );
+  });
+
+  it("falls back to the UTC day when the tenant timezone is missing or invalid", () => {
+    const now = new Date("2026-08-23T00:10:00.000Z");
+    expect(startOfCalendarDay(null, now).toISOString()).toBe("2026-08-23T00:00:00.000Z");
+    expect(startOfCalendarDay("Not/AZone", now).toISOString()).toBe("2026-08-23T00:00:00.000Z");
+  });
+
+  it("adds payment terms in UTC so the due date never drifts across a DST change", () => {
+    // Net 30 from Mar 1: local setDate() on a UTC-midnight instant lands on
+    // 2026-03-30T23:00Z after spring-forward, which prints as Mar 30 — one day early.
+    expect(addCalendarDays(new Date("2026-03-01T00:00:00.000Z"), 30).toISOString()).toBe(
+      "2026-03-31T00:00:00.000Z",
+    );
+    // Plan acceptance criterion: Aug 4 + Net 60 = Oct 3.
+    expect(addCalendarDays(new Date("2026-08-04T00:00:00.000Z"), 60).toISOString()).toBe(
+      "2026-10-03T00:00:00.000Z",
+    );
   });
 });
 

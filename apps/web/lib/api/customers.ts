@@ -26,6 +26,13 @@ export interface Customer {
   pricingTier?: number;
   receivables?: number;
   unusedCredits?: number;
+  /**
+   * Per-customer "this customer is always Net 60" override — one of the same
+   * VALID_TERMS values as Settings → Invoicing's tenant default ("Due on
+   * Receipt"/"Net 15"/"Net 30"/"Net 45"/"Net 60"), or "" to fall back to the
+   * tenant default. Wins over the tenant default in `resolveDefaultTerms()`.
+   */
+  defaultPaymentTerms?: string;
   createdAt: string;
   updatedAt: string;
 }

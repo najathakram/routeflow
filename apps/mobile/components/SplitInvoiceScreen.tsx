@@ -277,7 +277,9 @@ export function SplitInvoiceScreen({
         const invoice = await createPartial.mutateAsync({
           orderId,
           items: chosen,
-          terms: d.terms,
+          // Mirrors web's SplitInvoiceModal: the Net-N pick is the structured
+          // label, NOT the long-form T&C text (`terms`).
+          paymentTermsLabel: d.terms || undefined,
           dueDate: d.dueDate,
           send: d.send,
         });
@@ -485,7 +487,7 @@ export function SplitInvoiceScreen({
                   <Text style={styles.draftFooterLabel}>Due date</Text>
                   <TextInput
                     value={draft.dueDate}
-                    onChangeText={(v) => updateDraft(draft.id, { dueDate: v })}
+                    onChangeText={(v) => updateDraft(draft.id, { dueDate: v, terms: "" })}
                     placeholder="YYYY-MM-DD"
                     style={styles.dueInput}
                     editable={!created}

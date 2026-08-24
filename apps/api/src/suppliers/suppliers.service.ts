@@ -83,12 +83,20 @@ export class SuppliersService {
   }
 
   async create(dto: CreateSupplierDto) {
-    return this.prisma.forTenant().supplier.create({ data: { ...dto } });
+    return this.prisma.forTenant().supplier.create({
+      // "" from the defaultTerms select means "no default" — store it as null
+      // rather than an empty string so every other reader can use a plain
+      // truthy check (`supplier.defaultTerms ? … : …`).
+      data: { ...dto, defaultTerms: dto.defaultTerms === "" ? null : dto.defaultTerms },
+    });
   }
 
   async update(id: string, dto: UpdateSupplierDto) {
     await this.findOne(id);
-    return this.prisma.forTenant().supplier.update({ where: { id }, data: { ...dto } });
+    return this.prisma.forTenant().supplier.update({
+      where: { id },
+      data: { ...dto, defaultTerms: dto.defaultTerms === "" ? null : dto.defaultTerms },
+    });
   }
 
   async deactivate(id: string) {

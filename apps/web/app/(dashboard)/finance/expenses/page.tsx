@@ -165,6 +165,46 @@ const STATUS_OPTIONS = [
   { value: "VOID", label: "Void" },
 ];
 
+// ─── Bill terms (client-side Due Date math — bills have no server-side
+// terms→dueDate machinery) — same values as invoices/new/page.tsx TERMS_OPTIONS
+// and suppliers/page.tsx's defaultTerms select ────────────────────────────────
+
+const BILL_TERMS_OPTIONS = [
+  { value: "", label: "Select terms…" },
+  { value: "Due on Receipt", label: "Due on Receipt" },
+  { value: "Net 15", label: "Net 15" },
+  { value: "Net 30", label: "Net 30" },
+  { value: "Net 45", label: "Net 45" },
+  { value: "Net 60", label: "Net 60" },
+];
+
+function getDaysForBillTerms(terms: string): number | null {
+  switch (terms) {
+    case "Due on Receipt":
+      return 0;
+    case "Net 15":
+      return 15;
+    case "Net 30":
+      return 30;
+    case "Net 45":
+      return 45;
+    case "Net 60":
+      return 60;
+    default:
+      return null;
+  }
+}
+
+/** Add calendar days to a YYYY-MM-DD date, in UTC end to end — mirrors
+ *  invoices/new/page.tsx's addDaysIso (local-getter math loses a day across a
+ *  DST boundary). */
+function addBillDaysIso(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return iso;
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 // ─── Line item row ─────────────────────────────────────────────────────────────
 
 interface LineItemRow {
@@ -403,11 +443,21 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   const savePrefs = useSavePreferences();
 
   const { data: suppliersData } = useInventorySuppliers();
-  const suppliers: Array<{ id: string; name: string }> = suppliersData ?? [];
+  // `/inventory/suppliers` selects every Supplier column (no explicit `select`),
+  // so `defaultTerms` is already on the wire — widen the local type rather than
+  // touching the shared inventory.ts hook (outside this package's file set).
+  const suppliers: Array<{ id: string; name: string; defaultTerms?: string }> = suppliersData ?? [];
 
   const [supplierId, setSupplierId] = React.useState("");
   const [billDate, setBillDate] = React.useState(todayIso());
   const [dueDate, setDueDate] = React.useState("");
+  const [termsLabel, setTermsLabel] = React.useState("");
+  // Set when the operator types straight into the Due Date field: their exact
+  // date then wins over the terms-driven recompute (mirrors invoices/new).
+  const dueDateEditedRef = React.useRef(false);
+  // Guards the supplier-default prefill to once per supplier selection, so
+  // re-picking the same supplier doesn't clobber a term the operator changed.
+  const seededSupplierRef = React.useRef<string | null>(null);
   const [notes, setNotes] = React.useState("");
   const [lineItems, setLineItems] = React.useState<LineItemRow[]>([emptyLineItem()]);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
@@ -490,6 +540,9 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       setPurchaseOrderId("");
       setBillDate(todayIso());
       setDueDate("");
+      setTermsLabel("");
+      dueDateEditedRef.current = false;
+      seededSupplierRef.current = null;
       setNotes("");
       setLineItems([emptyLineItem()]);
       setErrors({});
@@ -501,6 +554,37 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   React.useEffect(() => {
     setPurchaseOrderId("");
   }, [supplierId]);
+
+  // Prefill Terms (and the Due Date it drives) from the selected supplier's
+  // defaultTerms — once per supplier pick, and never over a term the operator
+  // already chose or a hand-typed due date.
+  React.useEffect(() => {
+    if (!supplierId || seededSupplierRef.current === supplierId) return;
+    seededSupplierRef.current = supplierId;
+    const supplierDefault = suppliers.find((s) => s.id === supplierId)?.defaultTerms;
+    if (!supplierDefault || termsLabel || dueDateEditedRef.current) return;
+    const days = getDaysForBillTerms(supplierDefault);
+    if (days === null) return;
+    setTermsLabel(supplierDefault);
+    setDueDate(addBillDaysIso(billDate, days));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supplierId, suppliers]);
+
+  function handleTermsLabelChange(t: string) {
+    setTermsLabel(t);
+    const days = getDaysForBillTerms(t);
+    if (days !== null) {
+      dueDateEditedRef.current = false;
+      setDueDate(addBillDaysIso(billDate, days));
+    }
+  }
+
+  function handleBillDateChange(d: string) {
+    setBillDate(d);
+    if (dueDateEditedRef.current) return;
+    const days = getDaysForBillTerms(termsLabel);
+    if (days !== null && d) setDueDate(addBillDaysIso(d, days));
+  }
 
   function updateLineItem(i: number, updates: Partial<LineItemRow>) {
     setLineItems((prev) => prev.map((row, idx) => (idx === i ? { ...row, ...updates } : row)));
@@ -544,6 +628,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
         purchaseOrderId: purchaseOrderId || undefined,
         billDate,
         dueDate,
+        termsLabel: termsLabel || undefined,
         items,
         notes: notes.trim() || undefined,
         ...(allowDuplicate ? { allowDuplicate: true } : {}),
@@ -660,13 +745,13 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
               ))}
             </select>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy/80">Bill Date</label>
               <input
                 type="date"
                 value={billDate}
-                onChange={(e) => setBillDate(e.target.value)}
+                onChange={(e) => handleBillDateChange(e.target.value)}
                 className={cn(
                   "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
                   errors.billDate ? "border-danger" : "border-surface-border",
@@ -675,12 +760,29 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
               {errors.billDate && <p className="mt-1 text-xs text-danger">{errors.billDate}</p>}
             </div>
             <div>
+              <label className="mb-1.5 block text-sm font-medium text-navy/80">Terms</label>
+              <select
+                value={termsLabel}
+                onChange={(e) => handleTermsLabelChange(e.target.value)}
+                className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              >
+                {BILL_TERMS_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
               <label className="mb-1.5 block text-sm font-medium text-navy/80">Due Date</label>
               <input
                 type="date"
                 value={dueDate}
                 min={billDate || undefined}
-                onChange={(e) => setDueDate(e.target.value)}
+                onChange={(e) => {
+                  dueDateEditedRef.current = true;
+                  setDueDate(e.target.value);
+                }}
                 className={cn(
                   "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
                   errors.dueDate ? "border-danger" : "border-surface-border",

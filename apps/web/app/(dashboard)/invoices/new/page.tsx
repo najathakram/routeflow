@@ -28,7 +28,7 @@ import {
   useInvoiceSettings,
   type CreateInvoiceItem,
 } from "@/lib/api/invoices";
-import { useCreateSale, useUninvoicedOrders } from "@/lib/api/orders";
+import { useCreateSale, useUninvoicedOrders, type CreateSaleDto } from "@/lib/api/orders";
 import { SplitInvoiceModal } from "../../orders/_components/SplitInvoiceModal";
 import {
   useCustomers,
@@ -702,6 +702,11 @@ export default function NewInvoicePage() {
   }, [scrollToKey, items]);
   const [notes, setNotes] = React.useState("");
   const [termsText, setTermsText] = React.useState("");
+  // Deposit schedule — deliberately minimal (Tier 1), standalone invoices only:
+  // CreateSaleDto has no deposit fields, so this never applies to a "new sale".
+  const [depositOpen, setDepositOpen] = React.useState(false);
+  const [depositPercent, setDepositPercent] = React.useState<number | null>(null);
+  const [depositDueDate, setDepositDueDate] = React.useState("");
   const [adjustment, setAdjustment] = React.useState(0);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [showAvgCost, setShowAvgCost] = React.useState(false);
@@ -744,17 +749,42 @@ export default function NewInvoicePage() {
   // never over a choice the operator already made.
   const { data: invoiceSettings } = useInvoiceSettings();
   const didSeedTermsRef = React.useRef(false);
+  // Tracks WHO last auto-seeded `terms`, so a later, more specific seed can
+  // still replace an earlier auto-seed (customer default beats tenant default,
+  // whichever fires first) without ever overriding the operator's own pick.
+  const termsSourceRef = React.useRef<"tenant" | "customer" | "manual" | null>(null);
   React.useEffect(() => {
     const configured = invoiceSettings?.defaultTerms;
     if (didSeedTermsRef.current || !configured) return;
     didSeedTermsRef.current = true;
-    if (terms || dueDateEditedRef.current) return;
+    if (termsSourceRef.current || dueDateEditedRef.current) return;
     const days = getDaysForTerms(configured);
     if (days === null) return; // a term this page can't price — leave it to the server
+    termsSourceRef.current = "tenant";
     setTerms(configured);
     setDueDate(addDaysIso(issueDate, days));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoiceSettings]);
+
+  // Seed Payment Terms from the selected customer's defaultPaymentTerms
+  // ("this customer is always Net 60") — beats the tenant default above even
+  // if that one already fired, but never overrides a term the operator
+  // explicitly picked or a hand-typed due date. Once per customer selection,
+  // so switching customers before choosing a term re-prefills for the new one.
+  const seededCustomerIdRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!customer || seededCustomerIdRef.current === customer.id) return;
+    seededCustomerIdRef.current = customer.id;
+    const customerDefault = customer.defaultPaymentTerms;
+    if (!customerDefault) return;
+    if (termsSourceRef.current === "manual" || dueDateEditedRef.current) return;
+    const days = getDaysForTerms(customerDefault);
+    if (days === null) return;
+    termsSourceRef.current = "customer";
+    setTerms(customerDefault);
+    setDueDate(addDaysIso(issueDate, days));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customer]);
 
   const { data: customerPricesData } = useCustomerPrices(customer?.id);
   // Per-product PRICE resolved from the CustomerPrice TIER override through
@@ -782,6 +812,10 @@ export default function NewInvoicePage() {
     // tenant default the server will apply (`?? 30` mirrors the server's
     // TERM_DAYS fallback), instead of showing a stale date from the previous
     // pick that would silently not be saved.
+    // Any deliberate dropdown pick — including reverting to the placeholder —
+    // is the operator's own choice: it must never be overwritten by a later
+    // tenant/customer auto-seed.
+    termsSourceRef.current = "manual";
     setTerms(t);
     const days = getDaysForTerms(t);
     if (days !== null) {
@@ -1004,6 +1038,14 @@ export default function NewInvoicePage() {
         break;
       }
     }
+    if (depositOpen) {
+      if (depositPercent != null && depositPercent > 0 && !depositDueDate) {
+        errs.depositDueDate = "Deposit due date is required.";
+      }
+      if (depositDueDate && !(depositPercent != null && depositPercent > 0)) {
+        errs.depositPercent = "Enter a deposit percentage.";
+      }
+    }
     setErrors(errs);
     return Object.keys(errs).length === 0;
   }
@@ -1047,6 +1089,10 @@ export default function NewInvoicePage() {
       // making the configured Terms & Conditions invisible on every new
       // invoice. The dropdown's effect is preserved via dueDate above.
       terms: termsText.trim() || undefined,
+      // The structured "Net 30"-style label — distinct from `terms` above.
+      // Always agrees with the dueDate above: picking a term derives the date,
+      // and hand-typing a date clears the term, so the two can never disagree.
+      paymentTermsLabel: terms || undefined,
       items: items.map(
         (it): CreateInvoiceItem => ({
           productId: it.productId,
@@ -1065,6 +1111,13 @@ export default function NewInvoicePage() {
       // Map adjustment to discount (negative = reduce price) or shippingFee (positive = surcharge)
       ...(adjustment < 0 ? { discount: Math.abs(adjustment) } : {}),
       ...(adjustment > 0 ? { shippingFee: adjustment } : {}),
+      // Deposit is deliberately all-or-nothing here: a percent with no due date
+      // (or vice versa) isn't a usable schedule, so validate() already blocks
+      // submit on that combination — this mirrors the same completeness check
+      // rather than silently sending a half-set deposit.
+      ...(depositOpen && depositPercent != null && depositPercent > 0 && depositDueDate
+        ? { depositPercent, depositDueDate }
+        : {}),
       ...(sendNow ? { send: true } : {}),
     };
   }
@@ -1248,8 +1301,12 @@ export default function NewInvoicePage() {
         // resolveDefaultTerms() with a date nobody chose.
         ...((terms || dueDateEditedRef.current) && dueDate ? { dueDate } : {}),
         ...(termsText.trim() ? { terms: termsText.trim() } : {}),
+        // Structured "Net 30"-style label — orders.ts's CreateSaleDto isn't
+        // part of this package's file set, so the API-supported field is sent
+        // via a local cast rather than widening that shared type here.
+        ...(terms ? { paymentTermsLabel: terms } : {}),
         send,
-      },
+      } as CreateSaleDto & { paymentTermsLabel?: string },
       {
         onSuccess: (inv) => {
           toast({
@@ -1477,6 +1534,11 @@ export default function NewInvoicePage() {
                       min={issueDate || undefined}
                       onChange={(e) => {
                         dueDateEditedRef.current = true;
+                        // A hand-typed due date supersedes the term that derived it, so
+                        // drop the stale selection: posting `paymentTermsLabel: "Net 30"`
+                        // alongside a due date that is not issue+30 is exactly the
+                        // label/due-date disagreement this model exists to eliminate.
+                        setTerms("");
                         setDueDate(e.target.value);
                       }}
                       className={cn(
@@ -1487,6 +1549,76 @@ export default function NewInvoicePage() {
                     {errors.dueDate && <p className="mt-1 text-xs text-danger">{errors.dueDate}</p>}
                   </div>
                 </div>
+
+                {/* Deposit schedule — deliberately minimal (Tier 1): a percent
+                    of the total due by a separate date, e.g. "50% up front,
+                    50% after Net 60". The dollar amount is always derived
+                    server-side from depositPercent × total, never stored.
+                    Standalone invoices only — a "new sale" posts through
+                    CreateSaleDto, which has no deposit fields. */}
+                {!isSale &&
+                  (depositOpen ? (
+                    <div className="space-y-2 rounded-lg border border-surface-border bg-surface-raised p-3">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                            Deposit %
+                          </label>
+                          <DecimalInput
+                            decimals={2}
+                            min={0.01}
+                            max={99.99}
+                            value={depositPercent}
+                            onChange={(v) => setDepositPercent(v)}
+                            className={cn(
+                              "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
+                              errors.depositPercent ? "border-danger" : "border-surface-border",
+                            )}
+                          />
+                          {errors.depositPercent && (
+                            <p className="mt-1 text-xs text-danger">{errors.depositPercent}</p>
+                          )}
+                        </div>
+                        <div>
+                          <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                            Deposit Due Date
+                          </label>
+                          <input
+                            type="date"
+                            value={depositDueDate}
+                            onChange={(e) => setDepositDueDate(e.target.value)}
+                            className={cn(
+                              "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
+                              errors.depositDueDate ? "border-danger" : "border-surface-border",
+                            )}
+                          />
+                          {errors.depositDueDate && (
+                            <p className="mt-1 text-xs text-danger">{errors.depositDueDate}</p>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDepositOpen(false);
+                          setDepositPercent(null);
+                          setDepositDueDate("");
+                        }}
+                        className="text-xs font-medium text-navy/50 hover:text-danger transition-colors"
+                      >
+                        Remove deposit
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setDepositOpen(true)}
+                      className="flex items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600 transition-colors"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add deposit
+                    </button>
+                  ))}
               </div>
             </Card>
 

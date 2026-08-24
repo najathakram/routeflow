@@ -665,6 +665,12 @@ export class EmailService {
     invoiceId: string;
     issueDate: string;
     dueDate: string;
+    /**
+     * Structured "Net 30"-style label, persisted alongside the due date so the
+     * two can never disagree. Undefined/null on historical invoices predating
+     * this field — renders nothing beside the due date.
+     */
+    paymentTermsLabel?: string | null;
     total: number;
     items: {
       description: string;
@@ -836,6 +842,7 @@ export class EmailService {
       invoiceNumber: string;
       issueDate: string;
       dueDate: string;
+      paymentTermsLabel?: string | null;
       total: number;
       items: {
         description: string;
@@ -916,6 +923,14 @@ export class EmailService {
               <td style="font-size:13px;color:#6b7280;padding-top:6px;">Due Date</td>
               <td style="font-size:13px;color:#1a2033;font-weight:600;text-align:right;padding-top:6px;${params.isReminder ? "color:#dc2626;" : ""}">${params.dueDate}</td>
             </tr>
+            ${
+              params.paymentTermsLabel
+                ? `<tr>
+              <td style="font-size:13px;color:#6b7280;padding-top:6px;">Terms</td>
+              <td style="font-size:13px;color:#1a2033;text-align:right;padding-top:6px;">${params.paymentTermsLabel}</td>
+            </tr>`
+                : ""
+            }
           </table>
 
           <!-- Line items -->
