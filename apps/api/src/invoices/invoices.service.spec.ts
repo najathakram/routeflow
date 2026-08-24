@@ -2267,6 +2267,9 @@ describe("InvoicesService", () => {
       expect(prisma.invoiceItem.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           invoiceId: "inv-1",
+          // The commission engine excludes this line from the base by this exact
+          // prefix — the writer must never drift from the shared constant.
+          description: expect.stringMatching(/^NSF fee — returned check/),
           qty: 1,
           unitPrice: 25,
           discount: 0,

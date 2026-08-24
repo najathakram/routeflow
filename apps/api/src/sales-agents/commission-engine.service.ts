@@ -7,6 +7,7 @@ import { roundMoney } from "../common/pricing";
 import {
   COMMISSION_EPS,
   InvoiceMoneyState,
+  NSF_FEE_DESCRIPTION_PREFIX,
   RateSource,
   accruedCommission,
   collectionRatio,
@@ -185,6 +186,7 @@ export class CommissionEngineService {
       where: { id: invoiceId },
       include: {
         payments: { select: { id: true, amount: true, method: true, status: true } },
+        items: { select: { description: true, qty: true, unitPrice: true } },
         order: {
           select: {
             orderDate: true,
@@ -245,6 +247,11 @@ export class CommissionEngineService {
       rateSource = resolved.source;
     }
 
+    const nsfFees = roundMoney(
+      (invoice.items ?? [])
+        .filter((i: any) => i.description?.startsWith(NSF_FEE_DESCRIPTION_PREFIX))
+        .reduce((s: number, i: any) => s + Number(i.qty) * Number(i.unitPrice), 0),
+    );
     const moneyState: InvoiceMoneyState = {
       subtotal: Number(invoice.subtotal),
       discount: Number(invoice.discount),
@@ -255,6 +262,7 @@ export class CommissionEngineService {
       creditApplied: invoice.payments
         .filter((p: any) => p.status === "PAID" && p.method === "CREDIT_NOTE")
         .reduce((s: number, p: any) => s + Number(p.amount), 0),
+      nsfFees,
     };
     const base = commissionBase(moneyState);
     const ratio = collectionRatio(moneyState);
