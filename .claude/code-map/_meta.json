@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "mappedSha": "ec67881e",
-  "generatedAt": "2026-08-24T04:07:51.815Z",
+  "generatedAt": "2026-08-24T12:48:53.350Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 888,
   "notes": "**2026-08-23** — NSF-EXCLUSION (branch feat/nsf-commission-exclusion): NSF returned-check fees excluded from the commission base (owner decision). commission-math.ts exports NSF_FEE_DESCRIPTION_PREFIX; InvoiceMoneyState gains nsfFees; commissionBase = max(0, subtotal − discount − nsfFees). invoices.service NSF item creation + commission-engine invoice-state reader both use the shared prefix. collectionRatio unchanged (conservative). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
