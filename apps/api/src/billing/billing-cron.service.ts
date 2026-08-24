@@ -249,6 +249,9 @@ export class BillingCronService {
       // via subscribe() sees them still-active (deltaQty=0) and never re-adds the +add-on delta,
       // drifting the ledger below the snapshot. (A non-paying tenant holding "active" paid
       // add-ons is itself incorrect state.)
+      // NOTE for support: this drops admin-granted "ships dark" SKUs too (MSRP, SALES_AGENTS,
+      // REGULATED_ITEMS). They are outside SELF_SERVICE_ADDON_SKUS, so a re-subscribe cannot
+      // bring them back — platform-admin must re-grant them after the tenant reactivates.
       await this.prisma.tenantAddon.updateMany({
         where: { tenantId: s.tenantId, active: true },
         data: { active: false },

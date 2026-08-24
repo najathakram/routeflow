@@ -87,13 +87,13 @@ describe("PlanCatalogService", () => {
             {
               id: "s1",
               planVersionId: "v7",
-              sku: "SEAT_EXTRA",
-              name: "Extra seat",
-              monthlyPrice: 12,
-              unit: "PER_USER",
+              sku: "CUSTOMER_PACK_100",
+              name: "Customer pack (+100)",
+              monthlyPrice: 50,
+              unit: "FLAT",
               includedAtPlan: null,
-              meteredKey: "SEATS",
-              capacityPerUnit: 1,
+              meteredKey: "CUSTOMERS",
+              capacityPerUnit: 100,
               stackable: true,
               grantsFlags: [],
               sortOrder: 0,
@@ -115,8 +115,35 @@ describe("PlanCatalogService", () => {
     expect(plan).not.toHaveProperty("id");
     expect(plan).not.toHaveProperty("planVersionId");
     const addon = (pub.addons as Record<string, unknown>[])[0];
-    expect(addon.sku).toBe("SEAT_EXTRA");
+    expect(addon.sku).toBe("CUSTOMER_PACK_100");
     expect(addon).not.toHaveProperty("id");
+  });
+
+  it("getPublicCatalog lists only self-service SKUs (admin-only ones ship dark)", async () => {
+    const prisma = {
+      planVersion: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: "v7",
+          version: 7,
+          status: "PUBLISHED",
+          effectiveAt: new Date("2026-07-08T00:00:00.000Z"),
+          definitions: [],
+          addonSkus: [
+            { sku: "CUSTOMER_PACK_100", name: "Customer pack (+100)", sortOrder: 0 },
+            { sku: "MSRP", name: "MSRP", sortOrder: 1 },
+            { sku: "SALES_AGENTS", name: "Sales agents", sortOrder: 2 },
+            { sku: "BUYER_PORTAL", name: "Buyer portal", sortOrder: 3 },
+          ],
+        }),
+      },
+    } as any;
+    const pub = (await new PlanCatalogService(prisma).getPublicCatalog()) as Record<
+      string,
+      unknown
+    >;
+    expect((pub.addons as Record<string, unknown>[]).map((a) => a.sku)).toEqual([
+      "CUSTOMER_PACK_100",
+    ]);
   });
 });
 

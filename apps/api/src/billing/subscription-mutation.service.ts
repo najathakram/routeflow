@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { roundMoney } from "../common/pricing";
@@ -13,6 +18,7 @@ import {
   planRank,
   planKeyToEnum,
   addonSkuCode,
+  SELF_SERVICE_ADDON_SKUS,
 } from "./plan-catalog.constants";
 import { annualPrice, Cycle } from "./billing-math";
 
@@ -44,6 +50,15 @@ function addMonthsUtc(from: Date, months: number): Date {
 function addCycle(from: Date, cycle: Cycle): Date {
   return addMonthsUtc(from, cycle === "ANNUAL" ? 12 : 1);
 }
+
+/** A SKU a TENANT_ADMIN may add or drop themselves. Everything else "ships dark" —
+ *  platform-admin grants it (see SELF_SERVICE_ADDON_SKUS). */
+function isSelfServiceAddon(sku: string): boolean {
+  return (SELF_SERVICE_ADDON_SKUS as readonly string[]).includes(sku);
+}
+
+const ADMIN_ONLY_ADDON_MESSAGE =
+  "This add-on is enabled by RouteFlow for your workspace — contact support";
 
 /**
  * Subscription state MUTATIONS (Plans & Billing Phase 4). Owns the tenant's
@@ -104,17 +119,25 @@ export class SubscriptionMutationService {
       return m ? Number(m.monthlyPrice) : 0;
     };
 
-    // Reconcile desired (from input) against prior-active add-ons.
+    // Reconcile desired (from input) against prior-active add-ons. This is the same
+    // TENANT_ADMIN self-service surface as enableAddon(), so an admin-only ("ships dark")
+    // SKU is a 403 here too — otherwise subscribe() is a back door around that gate.
     const desired = new Map<string, number>();
     for (const a of input.addons ?? []) {
-      if (skuByCode.has(a.sku)) desired.set(a.sku, Math.max(1, Math.trunc(a.quantity ?? 1)));
+      if (!skuByCode.has(a.sku)) continue;
+      if (!isSelfServiceAddon(a.sku)) throw new ForbiddenException(ADMIN_ONLY_ADDON_MESSAGE);
+      desired.set(a.sku, Math.max(1, Math.trunc(a.quantity ?? 1)));
     }
     const priorByCode = new Map<string, { id: string; qty: number }>();
     for (const row of priorAddons) {
       const code = addonSkuCode(row);
       if (code) priorByCode.set(code, { id: row.id, qty: row.quantity });
     }
-    const toDisable = [...priorByCode.keys()].filter((c) => !desired.has(c));
+    // Only self-service add-ons are the tenant's to drop: an admin-granted SKU the payload
+    // is not even allowed to name must not be revoked by omitting it.
+    const toDisable = [...priorByCode.keys()].filter(
+      (c) => !desired.has(c) && isSelfServiceAddon(c),
+    );
 
     // Coming from a NON-paying status (READ_ONLY / SUSPENDED / CANCELLED / TRIAL) the tenant
     // still carries its old planKey but contributes 0 to the run-rate — so re-entry is a full
@@ -358,6 +381,7 @@ export class SubscriptionMutationService {
     const version = await this.catalog.getPublishedCatalog();
     const skuDef = version.addonSkus.find((s) => s.sku === sku);
     if (!skuDef) throw new BadRequestException(`Unknown add-on "${sku}"`);
+    if (!isSelfServiceAddon(sku)) throw new ForbiddenException(ADMIN_ONLY_ADDON_MESSAGE);
     const qty = Math.max(1, Math.trunc(quantity ?? 1));
     const preview = await this.proration.prorationPreview(tenantId, sku);
 
@@ -413,6 +437,9 @@ export class SubscriptionMutationService {
     if (!addon) throw new NotFoundException(`Active add-on "${sku}" not found.`);
     // Resolve the CANONICAL code (bridges legacy addonKey like tobacco_dealer → REGULATED_ITEMS).
     const code = addonSkuCode(addon) ?? sku;
+    // Symmetric with enableAddon: an admin-granted ("ships dark") add-on is revocable only by
+    // platform-admin — self-disabling one is a dead end, since re-enabling it is a 403.
+    if (!isSelfServiceAddon(code)) throw new ForbiddenException(ADMIN_ONLY_ADDON_MESSAGE);
     const version = await this.catalog.getPublishedCatalog();
     const skuDef = version.addonSkus.find((s) => s.sku === code);
     const monthly = skuDef ? roundMoney(Number(skuDef.monthlyPrice) * addon.quantity) : 0;

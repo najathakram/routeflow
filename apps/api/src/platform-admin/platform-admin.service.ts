@@ -17,7 +17,13 @@ import { PlatformPricingService } from "../billing/platform-pricing.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { MeterService } from "../billing/meter.service";
-import { normalizePlanKey, planKeyFromEnum } from "../billing/plan-catalog.constants";
+import { BillingEventService } from "../billing/billing-event.service";
+import {
+  normalizePlanKey,
+  planKeyFromEnum,
+  findPlanDefinition,
+  BILLING_EVENTS,
+} from "../billing/plan-catalog.constants";
 import { roundMoney } from "../common/pricing";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AppConfig } from "../config/configuration";
@@ -52,6 +58,7 @@ export class PlatformAdminService {
     private readonly platformPricingService: PlatformPricingService,
     private readonly planCatalogService: PlanCatalogService,
     private readonly entitlementsService: EntitlementsService,
+    private readonly billingEventService: BillingEventService,
     private readonly meterService: MeterService,
     private readonly tenantStatusGuard: TenantStatusGuard,
     private readonly auditService: AuditService,
@@ -380,19 +387,115 @@ ${paymentSection}
   async updatePlan(id: string, dto: UpdateTenantPlanDto, adminId: string | null = null) {
     const before = await this.prisma.tenant.findUnique({
       where: { id },
-      select: { id: true, slug: true, plan: true },
+      select: { id: true, slug: true, plan: true, status: true },
     });
     if (!before) throw new NotFoundException(`Tenant ${id} not found`);
-    const tenant = await this.prisma.tenant.update({
-      where: { id },
-      data: { plan: dto.plan },
-    });
-    // Upsert subscription record to reflect plan change
-    await this.prisma.tenantSubscription.upsert({
+
+    // Resolve the target plan against the currently PUBLISHED PlanVersion so this write
+    // stays consistent with SubscriptionMutationService.subscribe()
+    // (subscription-mutation.service.ts:132-163) — planKey/planVersionId must always point
+    // at a real catalog row, never just the legacy TenantPlan enum shadow.
+    const targetPlanKey = planKeyFromEnum(dto.plan);
+    const version = await this.planCatalogService.getPublishedVersion();
+    if (!version) {
+      throw new NotFoundException(
+        "No published plan catalog exists. Seed the billing catalog first.",
+      );
+    }
+    const definition = findPlanDefinition(version.definitions, targetPlanKey);
+    if (!definition) {
+      throw new NotFoundException(`Plan ${targetPlanKey} not found in the current catalog version`);
+    }
+
+    // Prior run-rate baseline — the MRR ledger books the signed CHANGE from this state.
+    const priorSub = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId: id },
-      create: { tenantId: id, currentPlan: dto.plan },
-      update: { currentPlan: dto.plan },
+      select: {
+        planKey: true,
+        basePriceSnapshot: true,
+        priceOverrideMonthly: true,
+        discount: true,
+      },
     });
+
+    // A custom (Enterprise) definition has no catalog price — the tenant's negotiated fee
+    // lives in `priceOverrideMonthly` instead. Writing `planKey` with a null snapshot would
+    // enter the tenant in the rollup at $0 base while its active add-ons start counting
+    // (mrr.service.ts:63-66), the "add-on MRR with no base behind it" that guard warns about.
+    const baseSnapshot = definition.monthlyPrice ?? priorSub?.priceOverrideMonthly ?? null;
+
+    // MrrService's paying predicate (mrr.service.ts:44-47): ACTIVE tenant with a non-null
+    // planKey. This write always sets planKey, so an ACTIVE tenant is paying afterwards —
+    // a manual/external activation (which deliberately leaves planKey null) CROSSES in here.
+    const wasPaying = before.status === "ACTIVE" && priorSub?.planKey != null;
+    const isPaying = before.status === "ACTIVE";
+
+    const tenant = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.tenant.update({
+        where: { id },
+        data: { plan: dto.plan, planVersionId: version.id },
+      });
+      // Upsert subscription record to reflect plan change — the same catalog-derived
+      // fields subscribe() writes, so entitlements resolution reads a consistent state
+      // regardless of which mutation path last touched this tenant. `basePriceSnapshot`
+      // must move WITH `planKey`: MrrService prices a tenant from the snapshot alone
+      // (mrr.service.ts:82), so leaving it stale/null would book the old plan's price —
+      // or $0 — under the new plan.
+      await tx.tenantSubscription.upsert({
+        where: { tenantId: id },
+        create: {
+          tenantId: id,
+          currentPlan: dto.plan,
+          planKey: definition.planKey,
+          planVersionId: version.id,
+          basePriceSnapshot: baseSnapshot,
+        },
+        update: {
+          currentPlan: dto.plan,
+          planKey: definition.planKey,
+          planVersionId: version.id,
+          basePriceSnapshot: baseSnapshot,
+        },
+      });
+
+      // Moving the snapshot run-rate without a matching ledger delta makes `mrr` and
+      // `ledgerMrr`/`momDelta` diverge permanently (mrr.service.ts:21-27), so this path
+      // emits PLAN_CHANGED in the same transaction like every other run-rate mover
+      // (subscribe() :212-217, upgrade() :298-303, the downgrade cron). Contribution
+      // mirrors BillingService.emitPayingDelta: base + Σ active add-ons − discount.
+      // Add-ons and the discount are untouched here, so they cancel out unless the tenant
+      // crosses in/out of the paying set — only then is the extra query worth making.
+      let extras = 0;
+      if (wasPaying !== isPaying) {
+        const addons = await tx.tenantAddon.findMany({
+          where: { tenantId: id, active: true },
+          select: { priceSnapshot: true, quantity: true },
+        });
+        extras =
+          addons.reduce(
+            (sum, a) => sum + (a.priceSnapshot != null ? Number(a.priceSnapshot) : 0) * a.quantity,
+            0,
+          ) - Number(priorSub?.discount ?? 0);
+      }
+      const priorContribution = wasPaying
+        ? roundMoney(Number(priorSub?.basePriceSnapshot ?? 0) + extras)
+        : 0;
+      const nextContribution = isPaying ? roundMoney(Number(baseSnapshot ?? 0) + extras) : 0;
+      await this.billingEventService.emit(
+        id,
+        BILLING_EVENTS.PLAN_CHANGED,
+        {
+          fromPlan: priorSub?.planKey ?? null,
+          toPlan: definition.planKey,
+          platformAdmin: true,
+        },
+        { amountDelta: roundMoney(nextContribution - priorContribution), actorId: adminId, tx },
+      );
+      return updated;
+    });
+
+    this.entitlementsService.invalidate(id);
+
     await this.recordAdminAction(id, adminId, AdminAuditAction.TENANT_PLAN_CHANGED, {
       from: before.plan,
       to: tenant.plan,
@@ -781,7 +884,7 @@ ${paymentSection}
     // negotiated fee, leave Stripe billing the old amount, and tell the admin it failed.
     const existing = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId: id },
-      select: { priceOverrideMonthly: true },
+      select: { priceOverrideMonthly: true, planKey: true, basePriceSnapshot: true },
     });
     const nextMonthly =
       dto.monthly === undefined ? (existing?.priceOverrideMonthly ?? null) : dto.monthly;
@@ -790,17 +893,37 @@ ${paymentSection}
       await this.platformPricingService.resolveCatalogPricing(id);
     }
 
-    await this.prisma.tenantSubscription.upsert({
-      where: { tenantId: id },
-      update: {
-        priceOverrideMonthly: dto.monthly === undefined ? undefined : dto.monthly,
-        priceOverrideAnnual: dto.annual === undefined ? undefined : dto.annual,
-      },
-      create: {
-        tenantId: id,
-        priceOverrideMonthly: dto.monthly ?? null,
-        priceOverrideAnnual: dto.annual ?? null,
-      },
+    // A custom-priced plan applied BEFORE its negotiated fee was entered leaves
+    // `basePriceSnapshot` null (updatePlan's fallback has nothing to resolve), so MRR
+    // books this tenant's add-ons with a $0 base. Entering the fee is the moment the
+    // base becomes known: back-fill the snapshot and emit the run-rate delta in the
+    // same transaction, mirroring updatePlan's PLAN_CHANGED emission. Only the
+    // null-snapshot case back-fills — a set snapshot is grandfathered data and an
+    // override on top of it deliberately does not rewrite it.
+    const backfillBase =
+      dto.monthly != null && existing?.planKey != null && existing.basePriceSnapshot == null;
+    await this.prisma.$transaction(async (tx) => {
+      await tx.tenantSubscription.upsert({
+        where: { tenantId: id },
+        update: {
+          priceOverrideMonthly: dto.monthly === undefined ? undefined : dto.monthly,
+          priceOverrideAnnual: dto.annual === undefined ? undefined : dto.annual,
+          ...(backfillBase ? { basePriceSnapshot: dto.monthly } : {}),
+        },
+        create: {
+          tenantId: id,
+          priceOverrideMonthly: dto.monthly ?? null,
+          priceOverrideAnnual: dto.annual ?? null,
+        },
+      });
+      if (backfillBase) {
+        await this.billingEventService.emit(
+          id,
+          BILLING_EVENTS.PLAN_CHANGED,
+          { toPlan: existing.planKey, platformAdmin: true, priceOverrideBackfill: true },
+          { amountDelta: roundMoney(dto.monthly!), actorId: adminId, tx },
+        );
+      }
     });
 
     const [sync, pricing] = await Promise.all([
