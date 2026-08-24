@@ -29,6 +29,8 @@ export interface Order {
   requestedDeliveryDate?: string;
   /** Business date the order actually happened on. Null = `createdAt` is the date. */
   orderDate?: string | null;
+  /** Staff-only per-order commission override. `0` = exempt (no commission); `null`/absent = agent/customer default. */
+  commissionRatePct?: number | string | null;
   templateId?: string;
   lineItems: OrderItem[];
   /** Invoices generated from this order (sibling split invoices share invoiceGroupId). */
@@ -264,6 +266,8 @@ export function useCreateOrder() {
       /** Customer credit notes to apply to this order's invoice(s) at creation
        *  time — undefined/omitted leaves credits untouched. */
       appliedCreditNotes?: { creditNoteId: string; amount?: number }[];
+      /** Staff-only per-order commission override; 0 = exempt. */
+      commissionRatePct?: number;
     }
   >({
     mutationFn: (dto) => apiClient.post("/orders", dto).then((r) => r.data),
@@ -517,5 +521,14 @@ export function useResolveChangeRequest() {
       qc.invalidateQueries({ queryKey: ["orders", orderId] });
       qc.invalidateQueries({ queryKey: ["orders"] });
     },
+  });
+}
+
+export function usePatchOrderCommissionRate() {
+  const qc = useQueryClient();
+  return useMutation<Order, Error, { id: string; commissionRatePct: number | null }>({
+    mutationFn: ({ id, commissionRatePct }) =>
+      apiClient.patch(`/orders/${id}/commission-rate`, { commissionRatePct }).then((r) => r.data),
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["orders", vars.id] }),
   });
 }

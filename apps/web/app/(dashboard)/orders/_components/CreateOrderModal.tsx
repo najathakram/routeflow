@@ -26,7 +26,7 @@ import {
 } from "@/lib/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
-import { MoneyInput } from "@/components/MoneyInput";
+import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
 import { displayProductName } from "@/lib/product-display";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
@@ -34,6 +34,9 @@ import { LicenseGuardModal } from "./LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
+import { useAuth } from "@/lib/auth-context";
+import { useHasAddon } from "@/lib/api/tobacco";
+import { SALES_AGENTS_ADDON } from "@/lib/api/addons";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -324,6 +327,7 @@ export function CreateOrderModal({
     setCustomError("");
     setRequestedDeliveryDate("");
     setOrderDate("");
+    setCommissionRatePct(null);
     setOrderDiscount("");
     setShippingFeeInput("");
     setAppliedCredits([]);
@@ -651,6 +655,13 @@ export function CreateOrderModal({
   // The server's upper bound is the end of the current UTC day (parseOrderDate).
   const maxOrderDate = new Date().toISOString().slice(0, 10);
 
+  // Staff-only per-order commission override (0 = exempt; null = agent/customer
+  // default). Gated on role + the sales_agents addon — server re-checks both.
+  const { user } = useAuth();
+  const isStaff = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
+  const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
+  const [commissionRatePct, setCommissionRatePct] = React.useState<number | null>(null);
+
   // ── Minimize & resume drafts (pos-cost-roles-spec §2) ───────────────────────
 
   // The full builder state, serialized so a parked draft restores exactly.
@@ -665,6 +676,7 @@ export function CreateOrderModal({
       notes: notesValue ?? "",
       urgent: !!isUrgent,
       floorAcked: Array.from(floorAcked),
+      commissionRatePct,
     }),
     [
       selectedCustomer,
@@ -676,6 +688,7 @@ export function CreateOrderModal({
       notesValue,
       isUrgent,
       floorAcked,
+      commissionRatePct,
     ],
   );
   const draftPayloadJson = JSON.stringify(draftPayload);
@@ -780,6 +793,7 @@ export function CreateOrderModal({
     setShippingFeeInput(p.shippingFee ?? "");
     setRequestedDeliveryDate(p.requestedDeliveryDate ?? "");
     setOrderDate(p.orderDate ?? "");
+    setCommissionRatePct(p.commissionRatePct ?? null);
     setFloorAcked(new Set(p.floorAcked ?? []));
     reset({ notes: p.notes ?? "", urgent: !!p.urgent });
     setActiveDraftId(loadedDraft.id);
@@ -795,6 +809,7 @@ export function CreateOrderModal({
       notes: p.notes ?? "",
       urgent: !!p.urgent,
       floorAcked: p.floorAcked ?? [],
+      commissionRatePct: p.commissionRatePct ?? null,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, resumeDraftId, loadedDraft]);
@@ -886,6 +901,9 @@ export function CreateOrderModal({
         orderDate: orderDate || undefined,
         ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
         ...(shippingAmt > 0 ? { shippingFee: shippingAmt } : {}),
+        // 0 MUST be sent (it means exempt) — `!= null` preserves it; only a
+        // blank field (null) is omitted so the agent/customer default applies.
+        ...(commissionRatePct != null ? { commissionRatePct } : {}),
         ...(asDraft ? { status: "DRAFT" as const } : {}),
         ...(mergeChoice ? { mergeChoice } : {}),
         // Bill-now (createSale) has no path through this modal today — only
@@ -1804,6 +1822,29 @@ export function CreateOrderModal({
                 </p>
               </div>
             </div>
+
+            {isStaff && hasSalesAgents && (
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-navy/70" htmlFor="commission-rate">
+                  Commission rate override{" "}
+                  <span className="font-normal text-navy/70">(optional)</span>
+                </label>
+                <DecimalInput
+                  id="commission-rate"
+                  value={commissionRatePct}
+                  onChange={setCommissionRatePct}
+                  decimals={2}
+                  min={0}
+                  max={100}
+                  placeholder="Agent / customer default"
+                  className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+                <p className="text-[11px] leading-snug text-navy/70">
+                  Percent of the goods subtotal for this order only. 0 = exempt (no commission).
+                  Blank = the customer/agent default rate.
+                </p>
+              </div>
+            )}
 
             <Textarea
               label="Notes"

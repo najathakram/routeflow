@@ -253,5 +253,19 @@ export default defineConfig({
       testMatch: /17-buyer-shop-density-detail\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
     },
+
+    // ── Sales-agents entitlement gate (PR-D 18) ────────────────────────────────
+    // Reads the tenant's live addon flag and asserts the nav entry / locked card
+    // match it. Read-only: GETs and renders only — nothing is created or approved.
+    // Uses operator auth state; the spec reads its token out of that session.
+    {
+      name: "sales-agents-gate",
+      testMatch: /18-sales-agents-gate\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
   ],
 });

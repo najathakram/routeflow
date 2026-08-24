@@ -120,7 +120,14 @@ import {
 import { useUndo } from "@/lib/undo";
 import { useProducts } from "@/lib/api/products";
 import { useHasAddon } from "@/lib/api/tobacco";
-import { MSRP_ADDON } from "@/lib/api/addons";
+import { MSRP_ADDON, SALES_AGENTS_ADDON } from "@/lib/api/addons";
+import {
+  useCustomerCurrentAgent,
+  useSalesAgents,
+  useAddAssignment,
+  useCloseAssignment,
+  pctLabel,
+} from "@/lib/api/sales-agents";
 import { useInvoices } from "@/lib/api/invoices";
 import { useRoutes, useAddStopToRoute } from "@/lib/api/routes";
 import {
@@ -574,6 +581,119 @@ function AssignRouteModal({
             />
           </div>
           {error && <p className="text-sm text-danger">{error}</p>}
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ── Assign / Reassign Sales Agent Modal ──────────────────────────────────────
+
+function AssignAgentModal({
+  isOpen,
+  onClose,
+  customerId,
+  hasSalesAgents,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  customerId: string;
+  hasSalesAgents: boolean;
+}) {
+  const { toast } = useToast();
+  // Double-gated: the button that opens this modal only renders when
+  // hasSalesAgents is true, but the query still checks it directly so a stale
+  // mount (e.g. the addon toggling off mid-session) never fires the request.
+  const { data: agents, isLoading: agentsLoading } = useSalesAgents(
+    { status: "ACTIVE" },
+    { enabled: isOpen && hasSalesAgents },
+  );
+  const [agentId, setAgentId] = React.useState("");
+  const [effectiveFrom, setEffectiveFrom] = React.useState("");
+  const addAssignment = useAddAssignment(agentId);
+
+  React.useEffect(() => {
+    if (isOpen) {
+      setAgentId("");
+      setEffectiveFrom(new Date().toISOString().slice(0, 10));
+    }
+  }, [isOpen]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!agentId) return;
+    addAssignment.mutate(
+      { customerId, effectiveFrom: effectiveFrom || undefined },
+      {
+        onSuccess: (data) => {
+          toast({
+            title: "Agent assigned",
+            description: data.recompute
+              ? `Recomputed ${data.recompute.invoicesSynced} invoice(s)`
+              : undefined,
+            variant: "success",
+          });
+          onClose();
+        },
+      },
+    );
+  };
+
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Assign Sales Agent"
+      description="Choose the agent to attribute for this customer going forward."
+      footer={
+        <>
+          <Button variant="secondary" type="button" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            form="assign-agent-form"
+            loading={addAssignment.isPending}
+            disabled={!agentId}
+          >
+            Assign
+          </Button>
+        </>
+      }
+    >
+      <form id="assign-agent-form" onSubmit={handleSubmit} noValidate>
+        <div className="space-y-4">
+          {agentsLoading ? (
+            <p className="text-sm text-navy/70">Loading agents…</p>
+          ) : (
+            <div>
+              <label className="mb-1 block text-sm font-medium text-navy">Agent</label>
+              <select
+                value={agentId}
+                onChange={(e) => setAgentId(e.target.value)}
+                className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="">Select an agent…</option>
+                {(agents ?? []).map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div>
+            <label className="mb-1 block text-sm font-medium text-navy">Effective from</label>
+            <input
+              type="date"
+              value={effectiveFrom}
+              onChange={(e) => setEffectiveFrom(e.target.value)}
+              className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+            <p className="mt-1 text-xs text-navy/70">
+              Backdating recomputes commission from that date.
+            </p>
+          </div>
         </div>
       </form>
     </Modal>
@@ -1667,6 +1787,29 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
   const { user } = useAuth();
   // See the note in SpecialPricesTab: TENANT_ADMIN satisfies OPERATOR server-side.
   const isOperator = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
+  const { toast } = useToast();
+  const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
+  const currentAgent = useCustomerCurrentAgent(params.id, { enabled: hasSalesAgents });
+  const [agentModalOpen, setAgentModalOpen] = React.useState(false);
+  const closeAssignment = useCloseAssignment();
+
+  const handleEndAttribution = () => {
+    if (!confirm("Remove this customer's sales agent attribution?")) return;
+    closeAssignment.mutate(
+      { customerId: params.id },
+      {
+        onSuccess: (data) => {
+          toast({
+            title: "Agent removed",
+            description: data.recompute
+              ? `Recomputed ${data.recompute.invoicesSynced} invoice(s)`
+              : undefined,
+            variant: "success",
+          });
+        },
+      },
+    );
+  };
 
   const { data: customer, isLoading } = useCustomer(params.id);
   const { data: tierLabels } = useTierLabels();
@@ -2569,6 +2712,67 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
               </div>
 
               <div className="space-y-5">
+                {hasSalesAgents && (
+                  <Card title="Sales Agent">
+                    {currentAgent.isLoading ? (
+                      <p className="text-sm text-navy/70">Loading…</p>
+                    ) : currentAgent.data?.assignment ? (
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <Link
+                            href={`/sales-agents/${currentAgent.data.assignment.agent.id}`}
+                            className="text-sm font-semibold text-brand-700 hover:underline"
+                          >
+                            {currentAgent.data.assignment.agent.name}
+                          </Link>
+                          {currentAgent.data.assignment.agent.status !== "ACTIVE" && (
+                            <Badge
+                              variant="warning"
+                              label={
+                                currentAgent.data.assignment.agent.status === "STOPPED_FOR_NEW"
+                                  ? "Stopped for new"
+                                  : "Paused"
+                              }
+                            />
+                          )}
+                        </div>
+                        <p className="text-xs text-navy/70">
+                          Since {fmtCalendarDate(currentAgent.data.assignment.effectiveFrom)}
+                          {currentAgent.data.customerRatePct != null &&
+                            ` · customer rate ${pctLabel(currentAgent.data.customerRatePct)}`}
+                        </p>
+                        {isOperator && (
+                          <div className="flex gap-2 border-t border-surface-border pt-3">
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => setAgentModalOpen(true)}
+                            >
+                              Reassign
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={handleEndAttribution}>
+                              Remove
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-3">
+                        <p className="text-sm text-navy/70">No agent assigned (house account).</p>
+                        {isOperator && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => setAgentModalOpen(true)}
+                          >
+                            Assign agent
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                  </Card>
+                )}
+
                 <Card title="Account Status">
                   <div className="flex flex-col gap-4">
                     <div className="flex items-center justify-between">
@@ -3677,6 +3881,12 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
         }}
         customerId={params.id}
         editingContact={editingContact}
+      />
+      <AssignAgentModal
+        isOpen={agentModalOpen}
+        onClose={() => setAgentModalOpen(false)}
+        customerId={params.id}
+        hasSalesAgents={hasSalesAgents}
       />
 
       <ConfirmDialog

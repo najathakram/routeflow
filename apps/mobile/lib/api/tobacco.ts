@@ -24,6 +24,9 @@ export function useHasAddon(key: string): boolean {
 
 export const TOBACCO_ADDON = "tobacco_dealer";
 
+// Mirrors web lib/api/addons.ts SALES_AGENTS_ADDON.
+export const SALES_AGENTS_ADDON = "sales_agents";
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface TobaccoOverview {

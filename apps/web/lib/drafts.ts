@@ -55,6 +55,12 @@ export interface OrderDraftPayload {
   /** tempIds the operator chose "Sell anyway" on (below-floor acks). */
   floorAcked: string[];
   /**
+   * Staff-only per-order commission override (0 = exempt; null/absent = the
+   * agent/customer default rate). Optional so previously parked drafts (which
+   * predate this field) still hydrate fine.
+   */
+  commissionRatePct?: number | null;
+  /**
    * Credit notes the operator picked to apply. Round-tripped only by mobile's
    * parked drafts (`apps/mobile/lib/drafts-payload.ts`); web keeps the field so the
    * shapes stay identical, but never reads or writes it.

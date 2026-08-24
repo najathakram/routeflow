@@ -26,7 +26,7 @@ import {
   Send,
   X,
 } from "lucide-react";
-import { Badge, Button, Card, cn, useToast, type BadgeStatus } from "@routeflow/ui/web";
+import { Badge, Button, Card, Modal, cn, useToast, type BadgeStatus } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useOrder,
@@ -38,10 +38,14 @@ import {
   useCustomerPriceHistory,
   useResolveChangeRequest,
   useCancelImpact,
+  usePatchOrderCommissionRate,
   type OrderItem,
   type ItemUpdate,
   type CustomerPriceHistory,
 } from "@/lib/api/orders";
+import { useAuth } from "@/lib/auth-context";
+import { useHasAddon } from "@/lib/api/tobacco";
+import { SALES_AGENTS_ADDON } from "@/lib/api/addons";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import {
@@ -64,7 +68,7 @@ import {
 import { useCustomer, useCustomerPrices } from "@/lib/api/customers";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
-import { MoneyInput } from "@/components/MoneyInput";
+import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
@@ -549,6 +553,87 @@ function DemoteReasonModal({
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── Commission rate override (staff + sales_agents addon only) ───────────────
+
+function CommissionEditModal({
+  open,
+  onClose,
+  orderId,
+  currentValue,
+}: {
+  open: boolean;
+  onClose: () => void;
+  orderId: string;
+  currentValue: number | null;
+}) {
+  const { toast } = useToast();
+  const patchCommission = usePatchOrderCommissionRate();
+  const [value, setValue] = React.useState<number | null>(currentValue);
+
+  React.useEffect(() => {
+    if (open) setValue(currentValue);
+  }, [open, currentValue]);
+
+  // The server resyncs every issued invoice of the order in the same tx
+  // (setCommissionRate → syncOrderInvoices) — this just refetches via the
+  // hook's invalidation; it never predicts the ledger effect client-side.
+  const save = (commissionRatePct: number | null) => {
+    patchCommission.mutate(
+      { id: orderId, commissionRatePct },
+      {
+        onSuccess: () => {
+          toast({ title: "Commission rate updated", variant: "success" });
+          onClose();
+        },
+      },
+    );
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Commission rate override"
+      description="Percent of the goods subtotal for this order only. 0 = exempt (no commission); blank = the customer/agent default rate."
+      className="max-w-sm"
+      footer={
+        <>
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={patchCommission.isPending}>
+            Cancel
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => save(null)}
+            disabled={patchCommission.isPending}
+          >
+            Clear override
+          </Button>
+          <Button size="sm" onClick={() => save(value)} loading={patchCommission.isPending}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-1">
+        <label className="block text-xs font-medium text-navy/70" htmlFor="order-commission-rate">
+          Commission rate %
+        </label>
+        <DecimalInput
+          id="order-commission-rate"
+          value={value}
+          onChange={setValue}
+          decimals={2}
+          min={0}
+          max={100}
+          placeholder="Agent / customer default"
+          className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+        />
+      </div>
+    </Modal>
   );
 }
 
@@ -1451,6 +1536,13 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const deleteOrder = useDeleteOrder();
   const updateShipment = useUpdateOrderShipment();
   const createInvoiceFromOrder = useCreateInvoiceFromOrder();
+
+  // Order-level commission override (staff + sales_agents addon only — the
+  // server independently re-checks both via PlanFlagGuard/parseCommissionRatePct).
+  const { user } = useAuth();
+  const isStaff = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
+  const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
+  const [commissionEditOpen, setCommissionEditOpen] = React.useState(false);
 
   // P5-11: change-request resolution (office side; driver-at-stop is P10 mobile).
   const resolveCr = useResolveChangeRequest();
@@ -2873,6 +2965,27 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                   <dd className="font-medium text-navy">{formatDateOnly(order.orderDate)}</dd>
                 </div>
               )}
+              {hasSalesAgents && (
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-navy/70">Commission</dt>
+                  <dd className="flex items-center gap-2 font-medium text-navy">
+                    {order.commissionRatePct == null
+                      ? "Default"
+                      : Number(order.commissionRatePct) === 0
+                        ? "Exempt (0%)"
+                        : `${Number(order.commissionRatePct)}% (override)`}
+                    {isStaff && (
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-brand-700 hover:underline"
+                        onClick={() => setCommissionEditOpen(true)}
+                      >
+                        Edit
+                      </button>
+                    )}
+                  </dd>
+                </div>
+              )}
               {order.requestedDeliveryDate && (
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-navy/70">Delivery date</dt>
@@ -3155,6 +3268,16 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
       {/* Send invoice modal — shown after marking order as delivered */}
       {invoiceModal && (
         <SendInvoiceModal data={invoiceModal} onClose={() => setInvoiceModal(null)} />
+      )}
+
+      {/* Commission rate override — staff + sales_agents addon only */}
+      {hasSalesAgents && isStaff && (
+        <CommissionEditModal
+          open={commissionEditOpen}
+          onClose={() => setCommissionEditOpen(false)}
+          orderId={order.id}
+          currentValue={order.commissionRatePct == null ? null : Number(order.commissionRatePct)}
+        />
       )}
 
       {/* License guard (W6b): an edit/promote hit a 409 REGULATED_AUTH_REQUIRED.

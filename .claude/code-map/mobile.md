@@ -689,3 +689,21 @@ degrades to an empty state, never a 403 toast. `app/(driver)/**` has **zero diff
   row. `(tenant)/_layout.tsx` gives the dispatch `Tabs.Screen` `href: devMode ? undefined : null`.
   `(auth)/role-picker.tsx` (no in-app entry point today — defense in depth) hides the Driver hero
   and auto-selects operator.
+
+### PR-D 2026-08-23 — sales-agent read parity (one row, read-only by design)
+
+Web got the whole agents/commissions UI; mobile gets the cheapest honest mirror — **who holds
+this customer** — and nothing else. Management stays on web, matching the supplier-statement
+precedent (capture/read on mobile, review on web). No mobile write surface for agents exists.
+
+- **`lib/api/tobacco.ts`** — `SALES_AGENTS_ADDON = "sales_agents"` beside `TOBACCO_ADDON`, read
+  through the same `useHasAddon`/`useTenantAddons` pair (`GET /tenants/me/addons`, shared cache).
+  Mirrors web's constant in `lib/api/addons.ts`.
+- **`lib/api/customers.ts`** — `CustomerCurrentAgent` type + `useCustomerCurrentAgent(customerId,
+enabled)` against the PR-D read endpoint `GET /sales-agents/assignments/current?customerId=`
+  (key `["sales-agents","current-assignment",customerId]`, `staleTime` 2min). **The `enabled`
+  argument is mandatory, not optional:** the route is plan-flag gated and 403s for every tenant
+  without the addon, so an ungated fetch would fire on each customer screen open.
+- **`app/(operator)/customers/[id].tsx`** — one read-only `Row label="Sales agent"` directly after
+  the "Pricing tier" row, rendered only when `hasSalesAgents && currentAgent?.assignment`.
+  **Absence is the empty state** — unflagged or unassigned shows no row at all, no placeholder.

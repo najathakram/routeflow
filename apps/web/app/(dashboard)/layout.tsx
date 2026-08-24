@@ -45,6 +45,8 @@ import {
   Cigarette,
   ShieldCheck,
   ShieldAlert,
+  Handshake,
+  BadgePercent,
   type LucideIcon,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -61,7 +63,7 @@ import { usePendingPortalApprovals } from "@/lib/api/portal-approvals";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { DraftDock } from "@/components/DraftDock";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
-import { useDeveloperMode } from "@/lib/api/addons";
+import { useDeveloperMode, SALES_AGENTS_ADDON } from "@/lib/api/addons";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
@@ -866,6 +868,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
   const hasTobacco = useHasAddon(TOBACCO_ADDON);
+  const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
   const { enabled: devMode } = useDeveloperMode();
   // Only OPERATOR/TENANT_ADMIN see regulated nav; skip the fetch for CUSTOMER/DRIVER.
   const isStaff = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
@@ -896,13 +899,44 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     if (hasTobacco) {
       inject.push({ kind: "leaf", label: "Tobacco", href: "/tobacco", icon: Cigarette });
     }
-    if (inject.length === 0) return nav;
 
-    const idx = nav.findIndex((e) => e.kind === "leaf" && e.href === "/analytics");
+    let base = nav;
+    if (hasSalesAgents) {
+      // "Sales Agents" as a top-level leaf right after Customers; "Commissions"
+      // inside the Finance group after Supplier Statements. Same splice style as
+      // the canActAsDriver Dispatch rewrite above — never mutate OPERATOR_NAV.
+      base = base.flatMap((entry): NavEntry[] => {
+        if (entry.kind === "leaf" && entry.href === "/customers") {
+          return [
+            entry,
+            { kind: "leaf", label: "Sales Agents", href: "/sales-agents", icon: Handshake },
+          ];
+        }
+        if (entry.kind === "group" && entry.label === "Finance") {
+          const idx = entry.children.findIndex((c) => c.href === "/finance/statements");
+          const child: NavLeaf = {
+            kind: "leaf",
+            label: "Commissions",
+            href: "/finance/commissions",
+            icon: BadgePercent,
+          };
+          const children =
+            idx === -1
+              ? [...entry.children, child]
+              : [...entry.children.slice(0, idx + 1), child, ...entry.children.slice(idx + 1)];
+          return [{ ...entry, children }];
+        }
+        return [entry];
+      });
+    }
+
+    if (inject.length === 0) return base;
+
+    const idx = base.findIndex((e) => e.kind === "leaf" && e.href === "/analytics");
     return idx === -1
-      ? [...nav, ...inject]
-      : [...nav.slice(0, idx + 1), ...inject, ...nav.slice(idx + 1)];
-  }, [user, isStaff, hasTobacco, regulatedSections, devMode]);
+      ? [...base, ...inject]
+      : [...base.slice(0, idx + 1), ...inject, ...base.slice(idx + 1)];
+  }, [user, isStaff, hasTobacco, hasSalesAgents, regulatedSections, devMode]);
   const [collapsed, setCollapsed] = React.useState(() => {
     if (typeof window !== "undefined") {
       // Auto-collapse on small screens, otherwise respect saved preference
