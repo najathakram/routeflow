@@ -1,6 +1,6 @@
 {
   "mappedSha": "769bc1e9",
-  "generatedAt": "2026-08-26T03:43:24.394Z",
+  "generatedAt": "2026-08-26T03:46:07.398Z",
   "areas": [
     "api",
     "web",
@@ -8,5 +8,5 @@
     "packages"
   ],
   "fileCount": 898,
-  "notes": "**2026-08-25** — PO LIST DTO COERCION (branch fix/po-list-dto-coercion): prod 500 `PrismaClientValidationError take: \"20\"` at `InventoryService.listPurchaseOrders` — GET `/inventory/purchase-orders` had no DTO (`@Query() query: any`), so `page`/`limit` reached Prisma as strings. New `inventory/dto/list-purchase-orders.dto.ts` mirroring `ListOrdersDto` (`@Type(() => Number) @IsInt @Min(1)` page/limit, defaults 1/20; `@IsEnum(PurchaseOrderStatus)` status; supplierId; `from`/`to` whitelisted-but-unfiltered because the web POs tab sends them and global `forbidNonWhitelisted` would 400 the request), wired into controller + service signature. Spec `dto/list-purchase-orders.dto.spec.ts`. Checked the `limit=0` fetch-all sentinel trap — no PO caller uses it (web sends 20/50, mobile sends none). ⚠️ Found in passing: mobile `useOpenPurchaseOrders` sends `status=PARTIALLY_RECEIVED` which is not in ` || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "2026-08-24 (branch fix/repair-escaped-entities-buyer-scope, rebased 2026-08-25) — REPAIR-SCRIPT BUYER SCOPE FIX: repair-escaped-entities.mjs buyerAccount branch scoped via customerLinks:{some:{tenantId}} + errorReason() so a skipped target always states why. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
