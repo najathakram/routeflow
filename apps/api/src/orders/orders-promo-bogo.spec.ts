@@ -208,6 +208,8 @@ describe("OrdersService — BUY_N_GET_M (BOGO)", () => {
             syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
             removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
           },
+        },
+        {
           provide: EntitlementsService,
           useValue: { hasFlag: jest.fn().mockResolvedValue(true) },
         },
