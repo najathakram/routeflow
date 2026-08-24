@@ -1,6 +1,6 @@
 # Plan: exclude NSF fees from the commission base (owner decision 2026-08-23)
 
-> Status: READY. This file is the ONLY context implementers receive. No migration.
+> Status: IMPLEMENTED (pipeline wf_ebeee896-1cc clean; Fable money-pass PASS). This file is the ONLY context implementers receive. No migration.
 
 ## Objective
 
