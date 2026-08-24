@@ -25,3 +25,10 @@ export function useDeveloperMode(): { enabled: boolean; isLoading: boolean; reso
 // the server independently re-checks flag.msrp on every write, so this is a UX
 // gate only, never the source of truth.
 export const MSRP_ADDON = "msrp";
+
+// ─── Sales agents & commissions (flag.sales_agents) ───────────────────────
+//
+// Read with `useHasAddon(SALES_AGENTS_ADDON)` (lib/api/tobacco.ts) to gate the
+// sales-agents / commissions surfaces. UX gate only — every /sales-agents and
+// /commission-statements route independently 403s via PlanFlagGuard.
+export const SALES_AGENTS_ADDON = "sales_agents";

@@ -60,7 +60,9 @@ export class CreateSalesAgentDto {
 
 export class UpdateSalesAgentDto {
   @IsOptional() @IsString() @MaxLength(200) name?: string;
-  @IsOptional() @IsEmail() @MaxLength(254) email?: string;
+  // `null` clears the email — @IsOptional() skips validation for null/undefined,
+  // so only a non-empty value is checked against @IsEmail().
+  @IsOptional() @IsEmail() @MaxLength(254) email?: string | null;
   @IsOptional() @IsString() @MaxLength(40) phone?: string;
   @IsOptional() @IsString() @MaxLength(2000) notes?: string;
 }
@@ -109,6 +111,10 @@ export class RecomputeCommissionsDto {
   @IsDateString() fromDate: string;
 }
 
+export class CurrentAssignmentQueryDto {
+  @IsUUID() customerId: string;
+}
+
 // ─── Controller ────────────────────────────────────────────────────────────
 
 /**
@@ -142,6 +148,11 @@ export class SalesAgentsController {
   @Post("assignments/close")
   closeAssignment(@Body() dto: CloseAgentAssignmentDto) {
     return this.salesAgentsService.closeAssignment(dto);
+  }
+
+  @Get("assignments/current")
+  currentAssignment(@Query() query: CurrentAssignmentQueryDto) {
+    return this.salesAgentsService.currentAssignment(query.customerId);
   }
 
   @Get(":id")

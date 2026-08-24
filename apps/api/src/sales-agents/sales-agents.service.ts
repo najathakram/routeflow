@@ -361,6 +361,31 @@ export class SalesAgentsService {
     return { closed: result.count, recompute };
   }
 
+  /**
+   * Read side for the customer-page "agent box" and the mobile parity row:
+   * the OPEN assignment (effectiveTo IS NULL — at most one, enforced by the
+   * AgentAssignment_open_assignment_key partial unique index) plus the
+   * customer's currently-effective per-customer rate. Display-only — the
+   * engine resolves rates per-invoice on basisDate; this is "as of now".
+   */
+  async currentAssignment(customerId: string) {
+    const assignment = await this.prisma.forTenant().agentAssignment.findFirst({
+      where: { customerId, effectiveTo: null },
+      include: { agent: { select: { id: true, name: true, status: true, deletedAt: true } } },
+    });
+    const rate = await this.prisma.forTenant().customerCommissionRate.findFirst({
+      where: { customerId, effectiveFrom: { lte: new Date() } },
+      orderBy: { effectiveFrom: "desc" },
+      select: { ratePct: true, effectiveFrom: true },
+    });
+    return {
+      assignment: assignment
+        ? { id: assignment.id, effectiveFrom: assignment.effectiveFrom, agent: assignment.agent }
+        : null,
+      customerRatePct: rate ? Number(rate.ratePct) : null,
+    };
+  }
+
   async getAccruals(agentId: string, query: ListCommissionAccrualsDto) {
     await this.ensureExists(agentId);
     const page = query.page ?? 1;

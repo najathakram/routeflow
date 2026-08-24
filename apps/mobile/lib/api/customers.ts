@@ -252,6 +252,29 @@ export function useCustomer(id: string) {
   });
 }
 
+export interface CustomerCurrentAgent {
+  assignment: {
+    id: string;
+    effectiveFrom: string;
+    agent: { id: string; name: string; status: string; deletedAt: string | null };
+  } | null;
+  customerRatePct: number | null;
+}
+
+/** Read-only mirror of web's agent box. MUST stay `enabled`-gated: the route is
+ *  plan-flag gated and 403s for tenants without the sales_agents addon. */
+export function useCustomerCurrentAgent(customerId: string, enabled: boolean) {
+  return useQuery<CustomerCurrentAgent>({
+    queryKey: ["sales-agents", "current-assignment", customerId],
+    queryFn: () =>
+      apiClient
+        .get("/sales-agents/assignments/current", { params: { customerId } })
+        .then((r) => r.data),
+    enabled: !!customerId && enabled,
+    staleTime: 2 * 60_000,
+  });
+}
+
 // ─── My profile (CUSTOMER role) ───────────────────────────────────────────────
 
 export interface MyCustomerProfile extends Omit<CustomerDetail, "user"> {

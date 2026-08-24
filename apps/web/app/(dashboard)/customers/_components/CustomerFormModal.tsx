@@ -8,6 +8,9 @@ import { Modal, Input, Textarea, Select, Button, useToast, cn } from "@routeflow
 import { useCreateCustomer, useUpdateCustomer } from "@/lib/api/customers";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { isInternalEmail } from "@/lib/formatting";
+import { useHasAddon } from "@/lib/api/tobacco";
+import { SALES_AGENTS_ADDON } from "@/lib/api/addons";
+import { useSalesAgents } from "@/lib/api/sales-agents";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -174,6 +177,17 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
   const [cityError, setCityError] = React.useState("");
   const [zipError, setZipError] = React.useState("");
 
+  // Add-mode-only: optional sales agent assignment at creation. Edit mode has
+  // no reassignment path here — that lives in the customer page's agent box
+  // (the PATCH customer route has no agent field; assignment-open lives
+  // inside the engine's create() only).
+  const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
+  const [salesAgentId, setSalesAgentId] = React.useState("");
+  const { data: salesAgents } = useSalesAgents(
+    { status: "ACTIVE" },
+    { enabled: isOpen && hasSalesAgents && mode === "add" },
+  );
+
   const {
     register,
     handleSubmit,
@@ -198,6 +212,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
       setStreetError("");
       setCityError("");
       setZipError("");
+      setSalesAgentId("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialData]);
@@ -266,6 +281,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
               addressType: data.addressType || "BILLING",
             },
           ],
+          ...(salesAgentId ? { salesAgentId } : {}),
         },
         {
           onSuccess: () => {
@@ -426,6 +442,27 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
               </div>
             )}
           </section>
+
+          {/* ── Sales agent (add mode only, flag-gated) ──────────────────────── */}
+          {hasSalesAgents && mode === "add" && (
+            <section className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
+                Sales Agent
+              </p>
+              <Select
+                label="Sales agent (optional)"
+                value={salesAgentId}
+                onChange={(e) => setSalesAgentId(e.target.value)}
+                options={[
+                  // A real selectable option, not `placeholder` — the shared Select
+                  // renders a placeholder as a DISABLED option, which would make a
+                  // picked agent impossible to un-pick.
+                  { value: "", label: "No agent" },
+                  ...(salesAgents ?? []).map((a) => ({ value: a.id, label: a.name })),
+                ]}
+              />
+            </section>
+          )}
 
           {/* ── Contact Details (shared) ─────────────────────────────────────── */}
           <section className="space-y-3">

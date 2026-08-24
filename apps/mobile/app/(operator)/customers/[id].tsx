@@ -18,9 +18,11 @@ import { NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios
 import {
   useCreateAdvancePayment,
   useCustomer,
+  useCustomerCurrentAgent,
   useCustomerStatement,
   useDeleteCustomer,
 } from "../../../lib/api/customers";
+import { SALES_AGENTS_ADDON, useHasAddon } from "../../../lib/api/tobacco";
 import { useTierLabels } from "../../../lib/api/tier-labels";
 import { MoneyTextInput } from "../../../components/MoneyTextInput";
 import { openInMaps } from "../../../components/openInMaps";
@@ -51,6 +53,11 @@ export default function CustomerDetailScreen() {
   }, [isCreateAlias, router]);
 
   const { data: customer, isLoading } = useCustomer(isCreateAlias ? "" : (id ?? ""));
+  const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
+  const { data: currentAgent } = useCustomerCurrentAgent(
+    isCreateAlias ? "" : (id ?? ""),
+    hasSalesAgents,
+  );
   const { data: statement } = useCustomerStatement(isCreateAlias ? "" : (id ?? ""));
   const deleteMut = useDeleteCustomer();
   const { data: tierLabels } = useTierLabels();
@@ -257,6 +264,12 @@ export default function CustomerDetailScreen() {
                 </Pill>
               }
             />
+            {hasSalesAgents && currentAgent?.assignment ? (
+              <Row
+                label="Sales agent"
+                value={<Text style={styles.rowValue}>{currentAgent.assignment.agent.name}</Text>}
+              />
+            ) : null}
             <Pressable
               style={styles.linkRow}
               onPress={() => router.push(`/(operator)/customers/${id}/catalog`)}

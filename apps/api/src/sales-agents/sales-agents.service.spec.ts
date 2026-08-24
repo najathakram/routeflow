@@ -356,4 +356,56 @@ describe("SalesAgentsService", () => {
       );
     });
   });
+
+  describe("currentAssignment", () => {
+    it("returns the shaped payload with a Number-coerced customerRatePct when both exist", async () => {
+      const effectiveFrom = new Date("2026-01-01T00:00:00.000Z");
+      models.agentAssignment.findFirst.mockResolvedValue({
+        id: "asn1",
+        effectiveFrom,
+        agent: { id: "a1", name: "Agent One", status: "ACTIVE", deletedAt: null },
+      });
+      models.customerCommissionRate.findFirst.mockResolvedValue({
+        ratePct: "12.50",
+        effectiveFrom,
+      });
+
+      const result = await service.currentAssignment("c1");
+
+      expect(result).toEqual({
+        assignment: {
+          id: "asn1",
+          effectiveFrom,
+          agent: { id: "a1", name: "Agent One", status: "ACTIVE", deletedAt: null },
+        },
+        customerRatePct: 12.5,
+      });
+    });
+
+    it("returns assignment: null when no open row exists, still tolerating a rate result", async () => {
+      models.agentAssignment.findFirst.mockResolvedValue(null);
+      models.customerCommissionRate.findFirst.mockResolvedValue({
+        ratePct: "5",
+        effectiveFrom: new Date("2026-01-01T00:00:00.000Z"),
+      });
+
+      const result = await service.currentAssignment("c1");
+
+      expect(result).toEqual({ assignment: null, customerRatePct: 5 });
+    });
+
+    it("queries the customer rate as of now, so a future-dated row is never returned", async () => {
+      models.agentAssignment.findFirst.mockResolvedValue(null);
+      models.customerCommissionRate.findFirst.mockResolvedValue(null);
+
+      const result = await service.currentAssignment("c1");
+
+      expect(models.customerCommissionRate.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { customerId: "c1", effectiveFrom: { lte: expect.any(Date) } },
+        }),
+      );
+      expect(result).toEqual({ assignment: null, customerRatePct: null });
+    });
+  });
 });
