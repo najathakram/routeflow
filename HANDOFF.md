@@ -1,48 +1,23 @@
 # HANDOFF — current state & what to pick up next
 
-**Written:** 2026-08-24 (overnight autonomous follow-up run) · **Visibility:** private ·
+**Written:** 2026-08-24 (post-ship, morning window complete) · **Visibility:** private ·
 **CI:** GitHub Actions is DEAD on the free plan while private (billing declined; jobs die in 2s
 with 0 steps). **Owner decision 2026-08-23: stay on the free plan — the public-flip routine in
 CLAUDE.md is canonical again** (public → push/CI → merge → wait for Railway `BUILDING` → private).
 Until a public window, the **pre-push hook running the FULL `npm run verify` is the authoritative
 gate** — never `SKIP_VERIFY=1` without an explicit green verify of the exact pushed state.
 
-## 🟡 THREE PRs OPEN — awaiting the owner's merge windows (2026-08-24)
+## ✅ SHIPPED + LIVE 2026-08-24 (morning window) — #427 / #428 / #429 / #430
 
-Built, verified, and pushed overnight; **not merged** because this session's auto-mode
-classifier blocks `gh pr merge` and `gh repo edit` (visibility flips) — the merge windows are
-owner-run. Every PR passed the full pre-push-hook `npm run verify` on its exact pushed state.
+All four merged in ONE public window (public → squash-merge x4 → all three services BUILDING →
+private confirmed → deploys SUCCESS → post-deploy-check GREEN). What landed:
 
-| PR       | Branch                                 | What                                                                                                                                                                                                                            | Extra verification                                      |
-| -------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| **#427** | `scripts/receiving-and-entity-repairs` | `repair-receiving-units.mjs` (HIGH-signature box-entered PURCHASE repair + printed `recompute-costs` follow-up) · `repair-escaped-entities.mjs` (pre-#414 stored entities) · drift scan scope widened to ACTIVE/TRIAL/READ_ONLY | scripts-only; `node --check` ✅                         |
-| **#428** | `fix/commission-nsf-exclusion`         | NSF bounce fees excluded from the commission base (owner decision): shared `NSF_FEE_DESCRIPTION_PREFIX`, `InvoiceMoneyState.nsfFees`, `collectionRatio` deliberately conservative                                               | pipeline clean (2765 tests) + **Fable money-pass PASS** |
-| **#429** | `feat/sales-agents-ui`                 | **PR-D** — full sales-agents & commissions UI (pages, customer "agent box", statements w/ stale-409 regenerate, order override, mobile row, e2e 18). One read-only API addition. No migration                                   | major pipeline (60 agents), 1 fix round → 0 findings    |
-
-**Merge runbook (per PR, in the order above — no migrations, so no DB step):**
-
-```bash
-gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences
-```
-
-(CI is not merge-gating and each branch already passed the full hook verify; if you want a CI
-record anyway, re-run the PR's workflow from the Actions tab after flipping public.)
-
-```bash
-gh pr merge <PR#> --squash --delete-branch
-```
-
-```bash
-until railway deployment list --service @routeflow/api | sed -n '2p' | grep -qE 'BUILDING|DEPLOYING|SUCCESS'; do sleep 10; done
-```
-
-```bash
-gh repo edit najathakram/routeflow --visibility private --accept-visibility-change-consequences
-```
-
-Then confirm `gh repo view --json visibility` says PRIVATE, watch the deploy to SUCCESS, and
-`npm run post-deploy-check`. #427/#428 deploy only the API; #429 deploys API + web + mobile.
-Batching all three into ONE public window is fine (merge 427 → 428 → 429, then wait `BUILDING`).
+| PR | What |
+| --- | --- |
+| #427 | Repair scripts: receiving-units (HIGH-signature + printed recompute-costs follow-up), escaped-entities, drift scan covers TRIAL |
+| #428 | NSF bounce fees excluded from the commission base (shared NSF_FEE_DESCRIPTION_PREFIX; ratio deliberately conservative). Pipeline clean + Fable money-pass PASS |
+| #429 | PR-D — full sales-agents & commissions UI (agent box, statements w/ stale-409 regenerate, order override, mobile row, e2e 18). Dark until the sales_agents addon is enabled per tenant |
+| #430 | This handoff refresh |
 
 ## 🔵 Enforcement is LIVE (2026-08-23)
 
@@ -50,7 +25,7 @@ Batching all three into ONE public window is fine (merge 427 → 428 → 429, th
 `post-deploy-check` green. The audit script showed ZERO tenants lose anything. Kill switch
 removal date stands: 2026-10-01.
 
-## 🔵 Client-data repairs — exact sequence for the owner (after #427 merges + `git pull`)
+## 🔵 Client-data repairs — exact sequence for the owner (#427 is merged; `git pull` first)
 
 All from `C:/ClaudeCode/routeflow` (main checkout). Backups first where marked.
 
@@ -109,8 +84,8 @@ All merged, deployed, `post-deploy-check` green after every wave. Memory
 ## 🔴 Owner queue
 
 1. ~~Flag enforcement switch-on~~ **DONE 2026-08-23** — see the Enforcement section above.
-2. ~~NSF-fee commission question~~ **DECIDED (exclude) + BUILT** — merge #428.
-3. ~~PR-D — sales agents UI~~ **BUILT** — merge #429, then enable the addon per tenant.
+2. ~~NSF-fee commission question~~ **SHIPPED #428 (2026-08-24)**.
+3. ~~PR-D — sales agents UI~~ **SHIPPED #429 (2026-08-24)** — enable the addon per tenant (demo first).
 4. **Client-2 data repairs** — scripts built (#427); exact command sequence in the repairs
    section above. Client sign-off + fresh backup before any `--execute`.
 5. **Standing pre-batch items**: 600 product images (client review gate), returns §2.1 decision,
