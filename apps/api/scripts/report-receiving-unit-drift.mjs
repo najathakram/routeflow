@@ -278,13 +278,16 @@ async function analyzeTenant(tenant) {
 
 (async () => {
   const tenants = await prisma.tenant.findMany({
-    where: slug ? { slug } : { status: "ACTIVE" },
+    // TRIAL tenants are live businesses evaluating the product — the very
+    // client who reported this bug was on TRIAL and an ACTIVE-only scan
+    // skipped them entirely (caught 2026-08-23). Only CANCELLED stays out.
+    where: slug ? { slug } : { status: { in: ["ACTIVE", "TRIAL", "READ_ONLY"] } },
     select: { id: true, slug: true, status: true },
     orderBy: { slug: "asc" },
   });
 
   console.log(`\n===== RECEIVING UNIT-DRIFT REPORT (read-only) =====`);
-  console.log(`Scope: ${slug ? `tenant ${slug}` : "all ACTIVE tenants"}`);
+  console.log(`Scope: ${slug ? `tenant ${slug}` : "all ACTIVE/TRIAL/READ_ONLY tenants"}`);
   if (receivedBefore)
     console.log(`PURCHASE movements reinterpreted only if created before ${receivedBefore}`);
   console.log(`Tenants scanned: ${tenants.length}\n`);

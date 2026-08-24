@@ -45,6 +45,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -4561,7 +4562,7 @@ export class InvoicesService {
         await tx.invoiceItem.create({
           data: {
             invoiceId,
-            description: `NSF fee — returned check${
+            description: `${NSF_FEE_DESCRIPTION_PREFIX}${
               payment.paymentNumber
                 ? ` ${payment.paymentNumber}`
                 : payment.reference
