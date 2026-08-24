@@ -148,6 +148,9 @@ async function mockRegulatedApi(page: Page, prefs: Record<string, string[]> | nu
   await page.route(/\/regulated\/ledger(\?.*)?$/, (route) =>
     fulfillJson(route, { rows: [], totals: { qty: 0, netSales: 0, categoryTax: 0 } }),
   );
+  await page.route(/\/tenants\/me\/addons(\?.*)?$/, (route) =>
+    fulfillJson(route, { addons: ["tobacco_dealer"] }),
+  );
   return { patches };
 }
 

@@ -7,9 +7,10 @@ import { RegulatedReportService } from "./regulated-report.service";
 import { RegulatedFilingCronService } from "./regulated-filing-cron.service";
 import { StorageModule } from "../storage/storage.module";
 import { AuditModule } from "../audit/audit.module";
+import { BillingModule } from "../billing/billing.module";
 
 @Module({
-  imports: [StorageModule, AuditModule],
+  imports: [StorageModule, AuditModule, BillingModule],
   controllers: [RegulatedController],
   providers: [
     RegulatedService,

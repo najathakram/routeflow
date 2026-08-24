@@ -74,10 +74,11 @@ describe("RegulatedFilingCronService", () => {
     expect(prisma.forTenant).not.toHaveBeenCalled();
   });
 
-  it("prepares the previous period for each category when no filing exists", async () => {
+  it("prepares the previous period for each category when no filing exists (pack tenant)", async () => {
     prisma.trackedCategory.findMany.mockResolvedValue([
       { id: "cat-1", tenantId: "t1", reportCadence: "MONTHLY" },
     ]);
+    prisma.tenantAddon.findMany.mockResolvedValue([{ tenantId: "t1" }]);
     prisma.regulatedFiling.findFirst.mockResolvedValue(null);
 
     await svc.autoPrepareClosedFilings();
@@ -93,6 +94,7 @@ describe("RegulatedFilingCronService", () => {
     prisma.trackedCategory.findMany.mockResolvedValue([
       { id: "cat-1", tenantId: "t1", reportCadence: "MONTHLY" },
     ]);
+    prisma.tenantAddon.findMany.mockResolvedValue([{ tenantId: "t1" }]);
     prisma.regulatedFiling.findFirst.mockResolvedValue({ id: "existing" });
 
     await svc.autoPrepareClosedFilings();
@@ -105,6 +107,7 @@ describe("RegulatedFilingCronService", () => {
       { id: "cat-1", tenantId: "t1", reportCadence: "MONTHLY" },
       { id: "cat-2", tenantId: "t2", reportCadence: "QUARTERLY" },
     ]);
+    prisma.tenantAddon.findMany.mockResolvedValue([{ tenantId: "t1" }, { tenantId: "t2" }]);
     prisma.regulatedFiling.findFirst.mockResolvedValue(null);
     filing.prepareFiling
       .mockRejectedValueOnce(new Error("boom"))
@@ -112,5 +115,37 @@ describe("RegulatedFilingCronService", () => {
 
     await expect(svc.autoPrepareClosedFilings()).resolves.toBeUndefined();
     expect(filing.prepareFiling).toHaveBeenCalledTimes(2);
+  });
+
+  it("never prepares a category on a tenant without the tobacco_dealer addon", async () => {
+    prisma.trackedCategory.findMany.mockResolvedValue([
+      { id: "cat-1", tenantId: "t1", reportCadence: "MONTHLY" },
+    ]);
+    prisma.tenantAddon.findMany.mockResolvedValue([]); // no active addon rows
+    prisma.regulatedFiling.findFirst.mockResolvedValue(null);
+
+    await svc.autoPrepareClosedFilings();
+
+    expect(prisma.forTenant).not.toHaveBeenCalled();
+    expect(filing.prepareFiling).not.toHaveBeenCalled();
+  });
+
+  it("prepares a category on an addon tenant while skipping one on an addon-less tenant", async () => {
+    prisma.trackedCategory.findMany.mockResolvedValue([
+      { id: "cat-1", tenantId: "t1", reportCadence: "MONTHLY" },
+      { id: "cat-2", tenantId: "t2", reportCadence: "MONTHLY" },
+    ]);
+    // Only t1 has the active tobacco_dealer addon.
+    prisma.tenantAddon.findMany.mockResolvedValue([{ tenantId: "t1" }]);
+    prisma.regulatedFiling.findFirst.mockResolvedValue(null);
+
+    await svc.autoPrepareClosedFilings();
+
+    expect(tenantCtx.run).toHaveBeenCalledTimes(1);
+    expect(tenantCtx.run).toHaveBeenCalledWith("t1", expect.any(Function));
+    expect(filing.prepareFiling).toHaveBeenCalledTimes(1);
+    expect(filing.prepareFiling).toHaveBeenCalledWith(
+      expect.objectContaining({ trackedCategoryId: "cat-1" }),
+    );
   });
 });

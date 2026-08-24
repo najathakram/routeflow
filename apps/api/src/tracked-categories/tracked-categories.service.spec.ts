@@ -303,7 +303,17 @@ describe("TrackedCategoriesService", () => {
 
       await service.assignProducts("c1", ["p1"]);
 
-      expect(prisma.product.updateMany).toHaveBeenCalledTimes(1); // only the main reassignment
+      // Only the main reassignment + the (unconditional) isTobacco mirror sync —
+      // the synced-category clear is skipped since nothing was synced.
+      expect(prisma.product.updateMany).toHaveBeenCalledTimes(2);
+      expect(prisma.product.updateMany).toHaveBeenNthCalledWith(1, {
+        where: { id: { in: ["p1"] }, NOT: { trackedCategoryId: "c1" } },
+        data: { trackedCategoryId: "c1", trackedSubcategoryId: null },
+      });
+      expect(prisma.product.updateMany).toHaveBeenNthCalledWith(2, {
+        where: { id: { in: ["p1"] } },
+        data: { isTobacco: true },
+      });
     });
 
     it("unassignProducts clears movers' SYNCED categories only — diverged/free-text survives", async () => {
@@ -333,6 +343,139 @@ describe("TrackedCategoriesService", () => {
         where: { id: { in: ["p1", "p2"] }, trackedCategoryId: "c1" },
         data: { trackedCategoryId: null, trackedSubcategoryId: null },
       });
+    });
+  });
+
+  // ── isTobacco write-sync (2026-08-24 tobacco→Regulated consolidation) ──────
+
+  describe("isTobacco mirror sync (write-sync consolidation)", () => {
+    it('assignProducts to a category named "Tobacco" sets isTobacco:true on the FULL id set', async () => {
+      prisma.trackedCategory.findUnique.mockResolvedValue({
+        id: "c1",
+        name: "Tobacco",
+        active: true,
+        _count: { products: 0 },
+      });
+      prisma.product.updateMany.mockResolvedValue({ count: 2 });
+
+      await service.assignProducts("c1", ["p1", "p2"]);
+
+      expect(prisma.product.updateMany).toHaveBeenLastCalledWith({
+        where: { id: { in: ["p1", "p2"] } },
+        data: { isTobacco: true },
+      });
+    });
+
+    it("assignProducts to a NON-Tobacco category sets isTobacco:false on the FULL id set", async () => {
+      prisma.trackedCategory.findUnique.mockResolvedValue({
+        id: "c2",
+        name: "Alcohol",
+        active: true,
+        _count: { products: 0 },
+      });
+      prisma.product.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.assignProducts("c2", ["p1"]);
+
+      expect(prisma.product.updateMany).toHaveBeenLastCalledWith({
+        where: { id: { in: ["p1"] } },
+        data: { isTobacco: false },
+      });
+    });
+
+    it("assignProducts matches the Tobacco category case-insensitively", async () => {
+      prisma.trackedCategory.findUnique.mockResolvedValue({
+        id: "c1",
+        name: "tobacco",
+        active: true,
+        _count: { products: 0 },
+      });
+      prisma.product.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.assignProducts("c1", ["p1"]);
+
+      expect(prisma.product.updateMany).toHaveBeenLastCalledWith({
+        where: { id: { in: ["p1"] } },
+        data: { isTobacco: true },
+      });
+    });
+
+    it("unassignProducts clears isTobacco ONLY on rows that were actually members", async () => {
+      prisma.trackedCategory.findUnique.mockResolvedValue({
+        id: "c1",
+        name: "Tobacco",
+        active: true,
+        _count: { products: 0 },
+      });
+      // Only p1 was actually a member of c1 (mirrors the targetWhere-scoped
+      // findMany) — p2 was requested but never in this category and must not
+      // be touched by the mirror write.
+      prisma.product.findMany.mockResolvedValue([
+        { id: "p1", category: null, trackedSubcategory: null },
+      ]);
+      prisma.product.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.unassignProducts("c1", ["p1", "p2"]);
+
+      expect(prisma.product.updateMany).toHaveBeenLastCalledWith({
+        where: { id: { in: ["p1"] } },
+        data: { isTobacco: false },
+      });
+    });
+
+    it("unassignProducts writes no mirror update when none of the requested ids were actually members", async () => {
+      prisma.trackedCategory.findUnique.mockResolvedValue({
+        id: "c1",
+        name: "Tobacco",
+        active: true,
+        _count: { products: 0 },
+      });
+      prisma.product.findMany.mockResolvedValue([]); // none of the requested ids were members
+      prisma.product.updateMany.mockResolvedValue({ count: 0 });
+
+      await service.unassignProducts("c1", ["p9"]);
+
+      // Only the main (no-op) clear — no isTobacco mirror write on an empty target set.
+      expect(prisma.product.updateMany).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("isTobaccoCategory (computed, on every serialized payload)", () => {
+    it('findAll: true for a category named "Tobacco" case-insensitively', async () => {
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        { id: "c1", name: "tobacco", active: true, _count: { products: 0 } },
+      ]);
+      const result = await service.findAll({});
+      expect(result[0]).toMatchObject({ isTobaccoCategory: true });
+    });
+
+    it("findAll: false for any other category name", async () => {
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        { id: "c2", name: "Alcohol", active: true, _count: { products: 0 } },
+      ]);
+      const result = await service.findAll({});
+      expect(result[0]).toMatchObject({ isTobaccoCategory: false });
+    });
+
+    it("findOne carries isTobaccoCategory too", async () => {
+      prisma.trackedCategory.findUnique.mockResolvedValue({
+        id: "c1",
+        name: "Tobacco",
+        active: true,
+        _count: { products: 0 },
+      });
+      const result = await service.findOne("c1");
+      expect(result).toMatchObject({ isTobaccoCategory: true });
+    });
+
+    it("create/update payloads carry isTobaccoCategory too", async () => {
+      prisma.trackedCategory.create.mockResolvedValue({
+        id: "c1",
+        name: "Tobacco",
+        _count: { products: 0 },
+      });
+      const created = await service.create({ name: "Tobacco" });
+      expect(created).toMatchObject({ isTobaccoCategory: true });
     });
   });
 

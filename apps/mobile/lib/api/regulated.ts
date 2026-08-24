@@ -31,13 +31,14 @@ export interface PrepareFilingInput {
   index?: number; // month 1-12 (MONTHLY) or quarter 1-4 (QUARTERLY); ignored ANNUAL
 }
 
-export function useRegulatedFilings(categoryId?: string) {
+export function useRegulatedFilings(categoryId?: string, options?: { enabled?: boolean }) {
   return useQuery<RegulatedFiling[]>({
     queryKey: ["regulated-filings", categoryId ?? null],
     queryFn: () =>
       apiClient
         .get("/regulated/filings", { params: categoryId ? { category: categoryId } : {} })
         .then((r) => r.data),
+    enabled: options?.enabled ?? true,
   });
 }
 

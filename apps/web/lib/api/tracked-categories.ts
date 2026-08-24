@@ -36,6 +36,8 @@ export interface TrackedCategory {
   txUom: string | null;
   /** Saved custom report column layout, keyed by template code. */
   reportColumnPrefs?: Record<string, string[]> | null;
+  /** Computed server-side: name is "Tobacco" (ci) — the compliance-pack anchor. */
+  isTobaccoCategory?: boolean;
 }
 
 export interface TrackedCategoryInput {
@@ -247,13 +249,14 @@ export interface PrepareFilingInput {
 
 const FILINGS_KEY = ["regulated", "filings"] as const;
 
-export function useRegulatedFilings(categoryId?: string) {
+export function useRegulatedFilings(categoryId?: string, options?: { enabled?: boolean }) {
   return useQuery<RegulatedFiling[]>({
     queryKey: [...FILINGS_KEY, categoryId ?? null],
     queryFn: () =>
       apiClient
         .get("/regulated/filings", { params: categoryId ? { category: categoryId } : {} })
         .then((r) => r.data),
+    enabled: options?.enabled ?? true,
   });
 }
 
