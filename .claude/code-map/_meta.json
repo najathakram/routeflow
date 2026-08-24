@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "mappedSha": "ec67881e",
-  "generatedAt": "2026-08-24T03:54:11.011Z",
+  "generatedAt": "2026-08-24T12:48:53.350Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 888,
-  "notes": "**2026-08-23** — DATA-REPAIR SCRIPTS (branch scripts/receiving-and-entity-repairs): NEW apps/api/scripts/repair-receiving-units.mjs — HIGH-signature-only receiving repair (unitsPerBox>1 + negative stock that ×unitsPerBox conversion fully heals): per-product transaction converts PURCHASE movement qty ×upb + unitCost ÷upb (originals appended to notes), conservatively-matched StockLots scaled, currentStock incremented; averageCost/snapshots deliberately NOT touched — script prints the exact POST /inventory/recompute-costs body to re-derive via the shipped replay. NEW repair-escaped-entities.mjs — decodes pre-#414 stored entities (amp LAST to avoid double-decode) across the census column list. BOTH: dry-run default, --execute --confirm-tenant=<slug> type-back, live tenants additionally need --live-tenant-override + fresh backup (isTestTenant from scripts/lib/test-tenants.cjs). report-receiving-unit-drift.mjs tenant scope widened ACTIVE→ACTIVE/TRIAL/READ_ONLY (the reporting client was TRIAL and got skipped); explicit REPORT_TENANT_SLUG always bypassed the filter. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "**2026-08-23** — NSF-EXCLUSION (branch feat/nsf-commission-exclusion): NSF returned-check fees excluded from the commission base (owner decision). commission-math.ts exports NSF_FEE_DESCRIPTION_PREFIX; InvoiceMoneyState gains nsfFees; commissionBase = max(0, subtotal − discount − nsfFees). invoices.service NSF item creation + commission-engine invoice-state reader both use the shared prefix. collectionRatio unchanged (conservative). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

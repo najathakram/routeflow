@@ -1,5 +1,6 @@
 import {
   COMMISSION_EPS,
+  NSF_FEE_DESCRIPTION_PREFIX,
   accruedCommission,
   collectionRatio,
   commissionBase,
@@ -25,6 +26,7 @@ describe("commission-math", () => {
       total: 100,
       cashCollected: 0,
       creditApplied: 0,
+      nsfFees: 0,
       ...overrides,
     };
   }
@@ -60,6 +62,40 @@ describe("commission-math", () => {
       expect(
         commissionBase(state({ subtotal: 33.33, discount: 0, total: 100, creditApplied: 10 })),
       ).toBe(30);
+    });
+
+    it("excludes an NSF bounce fee from the base — $100 goods @10%, a $25 fee bounce that is fully repaid accrues exactly $10.00, not $12.50", () => {
+      // setCheckStatus folds the $25 fee into the STORED subtotal/total (both
+      // 100 -> 125), so without the NSF exclusion base would read 125 and
+      // accrue 12.50. With it, base lands back at the original 100.
+      const s = state({ subtotal: 125, discount: 0, total: 125, nsfFees: 25, cashCollected: 125 });
+      const base = commissionBase(s);
+      expect(base).toBe(100);
+      expect(accruedCommission(base, 10)).toBe(10);
+      expect(payableCommission(accruedCommission(base, 10), collectionRatio(s))).toBe(10);
+    });
+
+    it("an invoice with no NSF lines is byte-identical to the pre-NSF base (regression pin)", () => {
+      // Same scenario as the "excludes tax and shipping" case above, restated
+      // explicitly with nsfFees: 0 to pin that its introduction changes nothing
+      // for invoices that never had a bounce fee.
+      expect(
+        commissionBase(
+          state({ subtotal: 100, discount: 10, total: 118, creditApplied: 0, nsfFees: 0 }),
+        ),
+      ).toBe(90);
+    });
+
+    it("clamps at zero — an nsfFees covering the whole subtotal never produces a negative base", () => {
+      expect(commissionBase(state({ subtotal: 100, discount: 0, total: 125, nsfFees: 150 }))).toBe(
+        0,
+      );
+    });
+  });
+
+  describe("NSF_FEE_DESCRIPTION_PREFIX", () => {
+    it("is the single shared marker string — no duplicated literal elsewhere", () => {
+      expect(NSF_FEE_DESCRIPTION_PREFIX).toBe("NSF fee — returned check");
     });
   });
 

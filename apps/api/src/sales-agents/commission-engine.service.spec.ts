@@ -4,6 +4,7 @@ import { CommissionEngineService } from "./commission-engine.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { AuditService } from "../audit/audit.service";
+import { NSF_FEE_DESCRIPTION_PREFIX } from "./commission-math";
 
 /**
  * The sales-agents models (SalesAgent, CommissionAccrual, ...) are not in
@@ -89,6 +90,7 @@ function baseInvoice(overrides: any = {}) {
     order: null,
     recurringInvoice: null,
     payments: [],
+    items: [],
     commissionAccruals: [],
     ...overrides,
   };
@@ -270,6 +272,33 @@ describe("CommissionEngineService", () => {
       await service.syncInvoiceCommission("inv-1", db2);
       expect(db2.commissionAccrual.update).not.toHaveBeenCalled();
       expect(db2.commissionAdjustment.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("NSF fee exclusion from the commission base", () => {
+    it("the state builder fills nsfFees from only the NSF-prefixed item, leaving a normal line out of it", async () => {
+      // $1000 goods + a $25 NSF bounce fee folded into the stored subtotal/total
+      // by invoices.service.ts setCheckStatus, fully repaid.
+      const invoice = baseInvoice({
+        subtotal: 1025,
+        total: 1025,
+        items: [
+          { description: `${NSF_FEE_DESCRIPTION_PREFIX} CHK-1001`, qty: 1, unitPrice: 25 },
+          { description: "Widget line", qty: 2, unitPrice: 10 },
+        ],
+        payments: [{ id: "p1", amount: 1025, method: "CASH", status: "PAID" }],
+      });
+      const assignment = { agentId: "agent-1" };
+      const agentRates = [{ ratePct: 10, effectiveFrom: new Date("2026-01-01T00:00:00.000Z") }];
+      const { db } = buildFakeDb({ invoice, assignment, agentRates });
+      await service.syncInvoiceCommission("inv-1", db);
+
+      const created = db.commissionAccrual.create.mock.calls[0][0].data;
+      // base = subtotal(1025) - discount(0) - nsfFees(25) = 1000, so the $25 fee
+      // never inflates the base; accrued = 10% of 1000 = 100.00, not 102.50.
+      expect(created.baseAmount).toBe(1000);
+      expect(created.accruedAmount).toBe(100);
+      expect(created.payableAmount).toBe(100);
     });
   });
 
