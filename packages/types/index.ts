@@ -141,3 +141,12 @@ export * from "./trip-grouping";
  * Bridge-to-catalog (later): LEGACY_ADDON_KEY_TO_SKU -> DEV_MODE sku granting flag.dispatch_live.
  */
 export const DEVELOPER_MODE_ADDON = "developer_mode";
+
+/**
+ * TenantAddon.addonKey gating at-door payment collection by drivers (owner
+ * decision 2026-08-24: OPT-IN per tenant — affa collects at the door,
+ * bb-distro bills on account only). Server-enforced: complete-with-payment
+ * 403s without it; the plain complete endpoint (deliveries + POD +
+ * auto-invoice, no money) is always available.
+ */
+export const DRIVER_PAYMENTS_ADDON = "driver_payments";

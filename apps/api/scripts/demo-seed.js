@@ -409,6 +409,23 @@ async function ensureTenant(existing) {
   });
   console.log("   ✓ Developer mode addon active (driver/dispatch demo screens)");
 
+  // At-door payment collection is per-tenant opt-in (driver_payments addon,
+  // 2026-08-24). The demo walkthrough shows the driver collecting cash at the
+  // door, so the demo tenant needs the addon or payment.tsx degrades to the
+  // on-account completion path.
+  await prisma.tenantAddon.upsert({
+    where: { tenantId_addonKey: { tenantId: DEMO_TENANT_ID, addonKey: "driver_payments" } },
+    create: {
+      tenantId: DEMO_TENANT_ID,
+      addonKey: "driver_payments",
+      stripePriceId: null,
+      stripeItemId: null,
+      active: true,
+    },
+    update: { active: true },
+  });
+  console.log("   ✓ Driver payments addon active (at-door collection demo)");
+
   for (const cat of IRS_SYSTEM_CATEGORIES) {
     await prisma.expenseCategory.upsert({
       where: { tenantId_code: { tenantId: DEMO_TENANT_ID, code: cat.code } },

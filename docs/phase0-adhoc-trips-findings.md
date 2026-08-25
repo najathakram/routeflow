@@ -11,8 +11,15 @@ optimization returns `400` on that tenant. Root cause, confirmed live:
 - Demo customer addresses were seeded with `lat = null` / `lng = null` — the
   Prisma seed script writes rows directly and bypasses the normal
   geocode-on-create path that runs for addresses created through the app.
-- `GOOGLE_MAPS_API_KEY` appears unset on the prod API, so there is no server-side
-  fallback to geocode the address at optimize time either.
+- The optimize-time geocode fallback also failed — but NOT because the key is
+  missing. **CORRECTED 2026-08-24 (probed live):** `GOOGLE_MAPS_API_KEY` IS set
+  on the prod API (confirmed via the authenticated `GET /public/places/config`),
+  and the Geocoding API rejects it with
+  `REQUEST_DENIED: You must enable Billing on the Google Cloud Project`. The
+  Places (New) autocomplete proxy 403s the same way. Every Google Maps feature
+  (geocoding, address autocomplete) is dead on prod until Google Cloud billing
+  is restored — same day GitHub Actions started refusing jobs over failed
+  payments, so likely one shared payment method failed.
 
 **Fix (this pipeline, WP13):** `apps/api/scripts/demo-seed.js` now writes
 deterministic, idempotent Austin-area `lat`/`lng` coordinates on every demo
@@ -21,9 +28,24 @@ upsert, so re-running the seed repairs existing null rows). With real
 coordinates present, the optimizer's local NN+2-opt fallback works correctly
 with no Google Maps API key.
 
-**Owner action (optional, out of scope for this pipeline):** set
-`GOOGLE_MAPS_API_KEY` on the prod API service if geocoding of real (non-demo)
-customer addresses is also desired.
+**Owner action:** re-enable **Billing on the Google Cloud project** that owns
+the `RouteFlowRoute` API key (console.cloud.google.com → Billing). No env-var
+change is needed — the key is already set on the prod API. While billing is
+down, geocoding and address autocomplete fail closed and the optimizer falls
+back to seeded/stored coordinates.
+
+## Driver payments are per-tenant opt-in (added 2026-08-24, same PR)
+
+At-door money collection by drivers is now gated by the `driver_payments`
+TenantAddon (owner direction: affa collects at the door; bb-distro bills on
+account only). Enforcement is `DriverPaymentsGuard` on
+`POST /route-runs/:id/stops/:stopId/complete-with-payment` — body-aware, so
+completions with no payment (or $0 "on account") keep working for every tenant;
+only `payment.amount > 0` requires the addon. Mobile hides the collection UI
+(method picker, keypad, payment photo) without the addon and completes on
+account. **Rollout:** enable `driver_payments` for `affa` (platform-admin →
+tenant → addons) at deploy time; `routeflow-demo` gets it from `demo-seed.js`;
+every other tenant stays off (bills on account) until asked.
 
 ## ⚠️ Owner sign-off required: `fulfillPath` guard on the SCHEDULED dispatch sweep
 

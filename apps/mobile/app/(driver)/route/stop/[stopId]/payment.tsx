@@ -21,6 +21,7 @@ import {
   type RouteRunOrder,
 } from "../../../../../lib/api/routes";
 import { useOrder } from "../../../../../lib/api/orders";
+import { useDriverPayments } from "../../../../../lib/api/addons";
 import { useUploadPaymentImage } from "../../../../../lib/api/payments";
 import { productImageFile } from "../../../../../lib/product-image";
 import { PhotoCapture } from "../../../../../components/PhotoCapture";
@@ -119,6 +120,14 @@ export default function PaymentScreen() {
     ? `ORDER ${stop.orders[0].orderNumber} · ${(stop.customer?.businessName ?? "Customer").toUpperCase()}`
     : "PAYMENT";
 
+  // Per-tenant opt-in for at-door money collection (owner decision
+  // 2026-08-24: affa collects, bb-distro bills on account). Fail-CLOSED:
+  // while the flag is unknown the collection UI stays hidden and the close
+  // sends no payment — that path is allowed for every tenant, so a flaky
+  // addons fetch can never strand a driver at the door (the server's
+  // DriverPaymentsGuard only 403s an actual amount > 0).
+  const { enabled: canCollect } = useDriverPayments();
+
   const [method, setMethod] = useState<string>("Cash");
   const [received, setReceived] = useState<string>("0");
   const [amountError, setAmountError] = useState<string | null>(null);
@@ -152,8 +161,10 @@ export default function PaymentScreen() {
     if (!stopId || !runId || !stop) return;
 
     // RF-006: block submit when a money-collecting method has zero collected
-    // amount. Every method except "Account" (on account) collects something at the door.
-    const requiresAmount = method !== "Account";
+    // amount. Every method except "Account" (on account) collects something at
+    // the door. With driver payments disabled there is no method picker at all
+    // — every close is on account, so no amount is ever required.
+    const requiresAmount = canCollect && method !== "Account";
     if (requiresAmount && receivedNum === 0) {
       // "Zelle" is a brand name — never lowercased.
       const noun = method === "Zelle" ? "Zelle" : method.toLowerCase();
@@ -225,7 +236,7 @@ export default function PaymentScreen() {
       Zelle: "ZELLE",
       Account: "ADVANCE",
     }[method] ?? "OTHER") as CollectedMethod;
-    const collected = method === "Account" ? 0 : Math.min(receivedNum, invoiceTotal);
+    const collected = !canCollect || method === "Account" ? 0 : Math.min(receivedNum, invoiceTotal);
 
     // BUG-DRV1-3: stable per-attempt idempotency-key. The header is captured
     // by the offline-queue persister so a retry after a network blip cannot
@@ -339,7 +350,7 @@ export default function PaymentScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         tint="light"
-        inlineTitle="Collect payment"
+        inlineTitle={canCollect ? "Collect payment" : "Complete stop"}
         leading={<NavBackButton label="Stop" onPress={() => router.back()} />}
         trailing={<NavAction label="Skip" onPress={() => router.back()} />}
       />
@@ -354,60 +365,75 @@ export default function PaymentScreen() {
           </View>
         </View>
 
-        <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
-          <SegmentedControl
-            items={METHODS as unknown as string[]}
-            value={method}
-            onChange={setMethod}
-          />
-        </View>
+        {canCollect ? (
+          <>
+            <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
+              <SegmentedControl
+                items={METHODS as unknown as string[]}
+                value={method}
+                onChange={setMethod}
+              />
+            </View>
 
-        <View style={styles.receivedBlock}>
-          <View>
-            <Text style={styles.eyebrowSmall}>{method.toUpperCase()} RECEIVED</Text>
-            <Text style={styles.receivedValue}>${received}</Text>
+            <View style={styles.receivedBlock}>
+              <View>
+                <Text style={styles.eyebrowSmall}>{method.toUpperCase()} RECEIVED</Text>
+                <Text style={styles.receivedValue}>${received}</Text>
+              </View>
+              <View style={styles.changeBlock}>
+                <Text style={styles.changeEyebrow}>CHANGE</Text>
+                <Text style={styles.changeValue}>${change.toFixed(2)}</Text>
+              </View>
+            </View>
+
+            <View style={styles.quickGrid}>
+              {[
+                Math.max(20, Math.round(invoiceTotal * 0.5)),
+                Math.round(invoiceTotal),
+                Math.round(invoiceTotal) + 20,
+                Math.round(invoiceTotal) + 50,
+              ]
+                .filter((n) => n > 0)
+                .map((n) => (
+                  <Pressable key={n} style={styles.quickCell} onPress={() => setReceived(`${n}`)}>
+                    <Text style={styles.quickText}>${n}</Text>
+                  </Pressable>
+                ))}
+            </View>
+
+            <View style={styles.keypad}>
+              {KEYS.map((k) => (
+                <Pressable key={k} style={styles.key} onPress={() => press(k)}>
+                  <Text style={styles.keyText}>{k}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
+              <Text style={styles.eyebrowSmall}>PAYMENT PHOTO (OPTIONAL)</Text>
+              <View style={{ marginTop: 8 }}>
+                <PhotoCapture
+                  photos={photos}
+                  onAdd={(uri) => setPhotos([uri])}
+                  onRemove={(uri) => setPhotos((p) => p.filter((u) => u !== uri))}
+                  maxPhotos={1}
+                  label="Payment photo"
+                />
+              </View>
+            </View>
+          </>
+        ) : (
+          // Money collection is disabled for this workspace: the close goes on
+          // the customer's account and the office records the payment later.
+          // Plain honest copy (no dead controls) per the design directives.
+          <View style={styles.onAccountNote}>
+            <Text style={styles.onAccountTitle}>Invoice goes on account</Text>
+            <Text style={styles.onAccountBody}>
+              This workspace doesn&apos;t collect payment at the door. Completing the stop records
+              the delivery and invoices the customer&apos;s account — the office handles payment.
+            </Text>
           </View>
-          <View style={styles.changeBlock}>
-            <Text style={styles.changeEyebrow}>CHANGE</Text>
-            <Text style={styles.changeValue}>${change.toFixed(2)}</Text>
-          </View>
-        </View>
-
-        <View style={styles.quickGrid}>
-          {[
-            Math.max(20, Math.round(invoiceTotal * 0.5)),
-            Math.round(invoiceTotal),
-            Math.round(invoiceTotal) + 20,
-            Math.round(invoiceTotal) + 50,
-          ]
-            .filter((n) => n > 0)
-            .map((n) => (
-              <Pressable key={n} style={styles.quickCell} onPress={() => setReceived(`${n}`)}>
-                <Text style={styles.quickText}>${n}</Text>
-              </Pressable>
-            ))}
-        </View>
-
-        <View style={styles.keypad}>
-          {KEYS.map((k) => (
-            <Pressable key={k} style={styles.key} onPress={() => press(k)}>
-              <Text style={styles.keyText}>{k}</Text>
-            </Pressable>
-          ))}
-        </View>
-
-        <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
-          <Text style={styles.eyebrowSmall}>PAYMENT PHOTO (OPTIONAL)</Text>
-          <View style={{ marginTop: 8 }}>
-            <PhotoCapture
-              photos={photos}
-              onAdd={(uri) => setPhotos([uri])}
-              onRemove={(uri) => setPhotos((p) => p.filter((u) => u !== uri))}
-              maxPhotos={1}
-              label="Payment photo"
-            />
-          </View>
-        </View>
+        )}
 
         <View style={{ padding: 16 }}>
           {amountError ? (
@@ -423,7 +449,7 @@ export default function PaymentScreen() {
             <Text style={styles.greenBtnText}>
               {submitting
                 ? "Closing…"
-                : method === "Account"
+                : !canCollect || method === "Account"
                   ? "Mark on account & close"
                   : "Receive payment & close"}
             </Text>
@@ -575,6 +601,25 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 17,
     fontFamily: "Inter_600SemiBold",
+  },
+  onAccountNote: {
+    marginHorizontal: 16,
+    marginTop: 16,
+    backgroundColor: ios.fill3,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  onAccountTitle: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: ios.label,
+  },
+  onAccountBody: {
+    marginTop: 4,
+    fontSize: 13,
+    lineHeight: 18,
+    color: ios.label2,
   },
   amountErrorBox: {
     backgroundColor: "#FEE2E2",

@@ -13,6 +13,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useActiveRouteRun, useRouteRun } from "../../../../../lib/api/routes";
+import { useDriverPayments } from "../../../../../lib/api/addons";
 import { useOrder, type OrderItem } from "../../../../../lib/api/orders";
 import { useDeliveryPlanStore } from "../../../../../store/delivery-plan-store";
 import {
@@ -30,6 +31,9 @@ import { sanitizeIntInput, parseIntQty } from "../../../../../lib/qty";
  * payment.tsx to consume.
  */
 export default function ShortPickScreen() {
+  // CTA honesty: without the driver_payments addon the next screen completes
+  // the stop on account instead of collecting money.
+  const { enabled: canCollect } = useDriverPayments();
   const router = useRouter();
   const params = useLocalSearchParams<{ stopId: string; runId?: string }>();
   const stopId = params.stopId;
@@ -132,7 +136,9 @@ export default function ShortPickScreen() {
 
         <View style={{ paddingHorizontal: 16 }}>
           <Pressable style={styles.continueBtn} onPress={handleContinue}>
-            <Text style={styles.continueBtnText}>Continue to payment</Text>
+            <Text style={styles.continueBtnText}>
+              {canCollect ? "Continue to payment" : "Review & complete"}
+            </Text>
           </Pressable>
         </View>
       </ScrollView>
