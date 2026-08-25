@@ -26,6 +26,7 @@ import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
+import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { CreateChangeRequestDto } from "./dto/create-change-request.dto";
 import { ResolveChangeRequestDto } from "./dto/resolve-change-request.dto";
 
@@ -284,6 +285,19 @@ export class OrdersController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.ordersService.updateShipment(id, dto, user);
+  }
+
+  // Ad-hoc trips + fulfillment mode: staff-only ROUTE/SHIP switch. Locked once
+  // the order has left the "open" states (service enforces the 400).
+  @Patch(":id/fulfill-path")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  updateFulfillPath(
+    @Param("id") id: string,
+    @Body() dto: UpdateFulfillPathDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.ordersService.updateFulfillPath(id, dto, user);
   }
 
   // F2-005: drivers have no business flipping order urgency — restrict to the

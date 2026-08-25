@@ -9,6 +9,10 @@ export interface Driver {
   vehicleModel?: string;
   vehicleColour?: string;
   vehiclePlate?: string;
+  /** Composed home base ("line1, city, state, zip"), set via the four home* update fields. */
+  homeAddress?: string | null;
+  homeLat?: number | null;
+  homeLng?: number | null;
   status: "ACTIVE" | "INACTIVE";
   user: {
     id: string;
@@ -69,9 +73,21 @@ export function useCreateDriver() {
   });
 }
 
+/**
+ * PATCH /drivers/:id body. The home base is WRITTEN as four structured fields
+ * (the API composes + geocodes them into `homeAddress`/`homeLat`/`homeLng`) but
+ * READ back as the composed string, so the write shape isn't `Partial<Driver>`.
+ */
+export type UpdateDriverInput = Partial<Driver> & {
+  homeLine1?: string;
+  homeCity?: string;
+  homeState?: string;
+  homeZip?: string;
+};
+
 export function useUpdateDriver() {
   const qc = useQueryClient();
-  return useMutation<Driver, Error, { id: string; data: Partial<Driver> }>({
+  return useMutation<Driver, Error, { id: string; data: UpdateDriverInput }>({
     mutationFn: ({ id, data }) => apiClient.patch(`/drivers/${id}`, data).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["drivers"] });

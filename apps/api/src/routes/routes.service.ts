@@ -9,7 +9,15 @@ import {
 import { createHash } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
-import { UserRole, RouteRunStatus, OrderStatus, NotificationEvent, Prisma } from "@prisma/client";
+import {
+  UserRole,
+  RouteRunStatus,
+  OrderStatus,
+  NotificationEvent,
+  Prisma,
+  RouteKind,
+  FulfillPath,
+} from "@prisma/client";
 import { ListRoutesDto } from "./dto/list-routes.dto";
 import { CreateRouteDto } from "./dto/create-route.dto";
 import { UpdateRouteDto } from "./dto/update-route.dto";
@@ -102,6 +110,9 @@ export class RoutesService {
     const { search, isActive, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
+    // Defaults to SCHEDULED so templates/route-run flows never see ADHOC trips
+    // unless a caller explicitly asks for them (trips list UI passes ADHOC).
+    where.kind = query?.kind ?? RouteKind.SCHEDULED;
     if (isActive !== undefined) where.isActive = isActive;
     if (search) where.name = { contains: search, mode: "insensitive" };
 
@@ -265,7 +276,7 @@ export class RoutesService {
   }
 
   async deleteRoute(id: string) {
-    await this.findRouteOrThrow(id);
+    const route = await this.findRouteOrThrow(id);
 
     // Collect all run IDs and run-stop IDs for this route before deleting
     const runs = await this.prisma.forTenant().routeRun.findMany({
@@ -274,6 +285,21 @@ export class RoutesService {
     });
     const runIds = runs.map((r) => r.id);
     const runStopIds = runs.flatMap((r) => r.stops.map((s) => s.id));
+
+    // An ad-hoc trip IS the only delivery record its orders have — there is no
+    // recurring route to rebuild it from. Deleting one whose run has started or
+    // finished would destroy the run stops carrying POD photos, signatures and
+    // arrival/completion timestamps, so refuse. Drafts (and scheduled/cancelled
+    // runs, which recorded nothing) stay deletable. SCHEDULED routes are
+    // untouched by this guard.
+    if (
+      route.kind === RouteKind.ADHOC &&
+      runs.some((r) => r.status === "IN_PROGRESS" || r.status === "COMPLETED")
+    ) {
+      throw new BadRequestException(
+        "This trip has already been delivered on and cannot be deleted — its proof of delivery would be lost.",
+      );
+    }
 
     await this.prisma.tenantTransaction(async (tx) => {
       // 1. Unlink orders from runs/stops
@@ -411,7 +437,10 @@ export class RoutesService {
     Record<string, { routeId: string; routeName: string }[]>
   > {
     const stops = await this.prisma.forTenant().routeStop.findMany({
-      where: { customerId: { not: null } },
+      // ADHOC trips must never populate the "Currently in:" customer hints —
+      // those are a SCHEDULED-route concept and a one-shot trip isn't a
+      // recurring assignment.
+      where: { customerId: { not: null }, route: { kind: RouteKind.SCHEDULED } },
       select: {
         customerId: true,
         route: { select: { id: true, name: true } },
@@ -515,6 +544,29 @@ export class RoutesService {
     });
     if (!route) throw new NotFoundException("Route not found");
 
+    // orderIds narrows the dispatch sweep below to exactly the requested orders —
+    // only meaningful for an ADHOC trip (a SCHEDULED route's stops already imply
+    // their own order set). Reject it outright on a SCHEDULED route rather than
+    // silently ignoring it.
+    if (dto.orderIds?.length && route.kind !== RouteKind.ADHOC) {
+      throw new BadRequestException(
+        "orderIds can only be provided when dispatching an ad-hoc trip",
+      );
+    }
+    // ...and the inverse. An ad-hoc trip stores NO order linkage of its own (a
+    // draft trip performs zero order writes), so dispatching one without
+    // orderIds would let the sweep below attach EVERY open order of each stop's
+    // customer — not just the ones the operator picked. Only the trip builder
+    // knows that selection, so reject every other dispatch path (route-detail
+    // "Dispatch Run", a re-dispatch of a finished trip) instead of over-attaching.
+    if (route.kind === RouteKind.ADHOC && !dto.orderIds?.length) {
+      throw new BadRequestException(
+        "An ad-hoc trip must be dispatched from the trip builder, which sends the exact orders to deliver. Rebuild this trip from the Orders list.",
+      );
+    }
+    const adhocOrderIds =
+      route.kind === RouteKind.ADHOC && dto.orderIds?.length ? dto.orderIds : null;
+
     // For stops missing a customerAddressId, resolve the customer's default address now
     // so the run stop gets a proper address FK (needed for map pins and optimization).
     const stopsNeedingAddr = route.stops.filter((s) => !s.customerAddressId && s.customerId);
@@ -566,7 +618,11 @@ export class RoutesService {
         );
       }
 
-      // Resolve depot for snapshot: route-level → system default → geocoded tenant address
+      // Snapshot the route's own depot onto the run, if the route has one set.
+      // This is NOT the multi-tier resolution (system default / geocoded tenant
+      // address) — that lookup lives in route-optimization.service.resolveDepot
+      // and runs separately at optimize time. A route with no depot set here
+      // simply gets an undepotted run; optimize resolves it later.
       let depotLat: number | undefined;
       let depotLng: number | undefined;
       let depotAddress: string | undefined;
@@ -616,7 +672,7 @@ export class RoutesService {
     });
 
     // Assign pending/confirmed orders to their respective run stops (outside the lock transaction)
-    await Promise.all(
+    const sweepResults = await Promise.all(
       run.stops
         .filter((s) => s.customerId)
         .map((s) =>
@@ -625,11 +681,35 @@ export class RoutesService {
               customerId: s.customerId!,
               status: { notIn: [OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
               routeRunStopId: null,
+              // SHIP orders go out via a carrier, so they must never attach to a
+              // run stop — a driver would otherwise see them on the route and
+              // could complete the stop (and take a delivery payment) against
+              // goods a carrier is shipping. This mirrors TripsService's
+              // checkEligibility and is what makes "won't appear on delivery
+              // routes" true for SCHEDULED routes too, not just trips.
+              //
+              // This key is a DELIBERATE deviation from the plan's "SCHEDULED
+              // sweep stays byte-identical" criterion, and it needs owner
+              // sign-off — see the pre-deploy audit in
+              // docs/phase0-adhoc-trips-findings.md. Every EXISTING order is
+              // unaffected (the column defaults to ROUTE and the migration
+              // performs no backfill), but OrdersService.create seeds new orders
+              // from `Customer.fulfillPath`, which was writable via DTOs long
+              // before anything read it. A legacy customer row left on SHIP
+              // would therefore drop its new orders off scheduled runs too, not
+              // just off trips — hence the audit before deploy.
+              fulfillPath: FulfillPath.ROUTE,
+              ...(adhocOrderIds ? { id: { in: adhocOrderIds } } : {}),
             },
             data: { routeRunId: run.id, routeRunStopId: s.id },
           }),
         ),
     );
+    // How many orders the sweep actually attached. For an ad-hoc trip the client
+    // asked for a specific set, and orders can be cancelled or dispatched
+    // elsewhere between building the trip and sending it — reporting this lets
+    // the builder surface what got dropped instead of claiming the full set.
+    const attachedOrderCount = sweepResults.reduce((sum, r) => sum + (r?.count ?? 0), 0);
 
     // Phase 4 (W7b): flag stops whose newly-assigned orders contain an age/ID-gated
     // category so the driver app can surface "regulated — signature required"
@@ -669,7 +749,7 @@ export class RoutesService {
         });
     }
 
-    return run;
+    return { ...run, attachedOrderCount };
   }
 
   /**

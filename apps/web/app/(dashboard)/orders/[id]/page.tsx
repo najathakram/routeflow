@@ -26,7 +26,16 @@ import {
   Send,
   X,
 } from "lucide-react";
-import { Badge, Button, Card, Modal, cn, useToast, type BadgeStatus } from "@routeflow/ui/web";
+import {
+  Badge,
+  Button,
+  Card,
+  Modal,
+  Select,
+  cn,
+  useToast,
+  type BadgeStatus,
+} from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useOrder,
@@ -39,6 +48,7 @@ import {
   useResolveChangeRequest,
   useCancelImpact,
   usePatchOrderCommissionRate,
+  usePatchOrderFulfillPath,
   type OrderItem,
   type ItemUpdate,
   type CustomerPriceHistory,
@@ -1536,6 +1546,10 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const deleteOrder = useDeleteOrder();
   const updateShipment = useUpdateOrderShipment();
   const createInvoiceFromOrder = useCreateInvoiceFromOrder();
+  const patchFulfillPath = usePatchOrderFulfillPath();
+  // Bumped after a SHIP order is marked shipped, to nudge the ShipmentCard's
+  // tracking-entry dialog open — see openSignal prop below.
+  const [shipmentOpenSignal, setShipmentOpenSignal] = React.useState(0);
 
   // Order-level commission override (staff + sales_agents addon only — the
   // server independently re-checks both via PlanFlagGuard/parseCommissionRatePct).
@@ -1684,6 +1698,13 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const canEdit =
     order?.editWindow?.editable ??
     (localStatus === "DRAFT" || localStatus === "PENDING" || localStatus === "CONFIRMED");
+
+  // Fulfillment path can only change while the order is open — mirrors the
+  // server's PATCH /orders/:id/fulfill-path rejection rule exactly.
+  const fulfillPathLocked =
+    localStatus === "OUT_FOR_DELIVERY" ||
+    localStatus === "DELIVERED" ||
+    localStatus === "CANCELLED";
 
   const changeRequests = order.changeRequests ?? [];
   const pendingChangeRequests = changeRequests.filter((cr) => cr.status === "PENDING");
@@ -1953,7 +1974,12 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     updateStatus.mutate(
       { id: order.id, status: "OUT_FOR_DELIVERY" },
       {
-        onSuccess: () => setLocalStatus("OUT_FOR_DELIVERY"),
+        onSuccess: () => {
+          setLocalStatus("OUT_FOR_DELIVERY");
+          // Nudge the operator straight into tracking entry for a SHIP order —
+          // there's nowhere else on this screen prompting for it.
+          if (order.fulfillPath === "SHIP") setShipmentOpenSignal((n) => n + 1);
+        },
         onError: guardError(() => handleLock()),
       },
     );
@@ -2296,15 +2322,23 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           {/* CONFIRMED actions */}
           {localStatus === "CONFIRMED" && !isEditing && (
             <>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<Truck className="h-4 w-4" />}
-                onClick={handleLock}
-                loading={updateStatus.isPending}
-              >
-                Out for Delivery
-              </Button>
+              <div className="flex flex-col items-start gap-1">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<Truck className="h-4 w-4" />}
+                  onClick={handleLock}
+                  loading={updateStatus.isPending}
+                >
+                  {order.fulfillPath === "SHIP" ? "Mark shipped" : "Out for Delivery"}
+                </Button>
+                {order.fulfillPath === "SHIP" && (
+                  <p className="text-[11px] text-navy/50">
+                    Sets the order to Out for Delivery — the customer is notified it&apos;s on the
+                    way.
+                  </p>
+                )}
+              </div>
               {/* CONFIRMED→PENDING is a demotion — the server rejects it without a
                   reason, so the ONLY path is the DemoteReasonModal. A second
                   "Unconfirm" button used to submit directly (predating the
@@ -2338,7 +2372,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 onClick={handleDeliver}
                 loading={updateStatus.isPending}
               >
-                Mark as Delivered
+                {order.fulfillPath === "SHIP" ? "Mark delivered" : "Mark as Delivered"}
               </Button>
               <Button
                 size="sm"
@@ -2346,7 +2380,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 leftIcon={<RefreshCcw className="h-4 w-4" />}
                 onClick={() => setDemoteTarget("CONFIRMED")}
               >
-                Return to Confirmed
+                {order.fulfillPath === "SHIP" ? "Unmark shipped" : "Return to Confirmed"}
               </Button>
               <Button
                 size="sm"
@@ -2959,6 +2993,47 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           {/* Order summary */}
           <Card title="Summary">
             <dl className="space-y-2.5 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-navy/70">Fulfillment</dt>
+                <dd className="flex flex-col items-end gap-0.5">
+                  <div className="w-40">
+                    <Select
+                      options={[
+                        { value: "ROUTE", label: "Delivery route" },
+                        { value: "SHIP", label: "Ship via carrier" },
+                      ]}
+                      value={order.fulfillPath}
+                      disabled={fulfillPathLocked || patchFulfillPath.isPending}
+                      title={
+                        fulfillPathLocked
+                          ? "Fulfillment path can only be changed while the order is open"
+                          : undefined
+                      }
+                      onChange={(e) => {
+                        const fulfillPath = e.target.value as "ROUTE" | "SHIP";
+                        patchFulfillPath.mutate(
+                          { id: order.id, fulfillPath },
+                          {
+                            onSuccess: () =>
+                              toast({ title: "Fulfillment updated", variant: "success" }),
+                            onError: (err: any) =>
+                              toast({
+                                title: "Could not update fulfillment",
+                                description: err?.response?.data?.message,
+                                variant: "error",
+                              }),
+                          },
+                        );
+                      }}
+                    />
+                  </div>
+                  {order.fulfillPath === "SHIP" && (
+                    <span className="text-[11px] text-navy/50">
+                      Ships via carrier — won&apos;t appear on delivery routes.
+                    </span>
+                  )}
+                </dd>
+              </div>
               {order.orderDate && (
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-navy/70">Order date</dt>
@@ -3094,6 +3169,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             shippedAt={order.shippedAt}
             isSaving={updateShipment.isPending}
             onSave={(values) => updateShipment.mutateAsync({ id: order.id, ...values })}
+            openSignal={shipmentOpenSignal}
           />
 
           {/* Invoice card — show for any non-draft, non-cancelled order so the operator

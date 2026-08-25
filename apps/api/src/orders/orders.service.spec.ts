@@ -342,6 +342,26 @@ describe("OrdersService", () => {
         }),
       );
     });
+
+    // ── Ad-hoc trips + fulfillment mode: ListOrdersDto.fulfillPath filter ──
+    it("passes fulfillPath through to the where clause when supplied", async () => {
+      prisma.order.findMany.mockResolvedValue([]);
+      prisma.order.count.mockResolvedValue(0);
+
+      await service.findAll({ page: 1, limit: 20, fulfillPath: "SHIP" as any }, operatorPayload);
+
+      const where = prisma.order.findMany.mock.calls.at(-1)?.[0].where;
+      expect(where.fulfillPath).toBe("SHIP");
+    });
+
+    it("omits the fulfillPath key entirely when not supplied (every existing order stays visible)", async () => {
+      prisma.order.findMany.mockResolvedValue([]);
+      prisma.order.count.mockResolvedValue(0);
+
+      await service.findAll({ page: 1, limit: 20 }, operatorPayload);
+
+      expect(prisma.order.findMany.mock.calls.at(-1)?.[0].where).not.toHaveProperty("fulfillPath");
+    });
   });
 
   // ─── findOne ──────────────────────────────────────────────────────────────
@@ -1298,6 +1318,49 @@ describe("OrdersService", () => {
         expect(creditNotesService.settleOrderCreditsInTx).not.toHaveBeenCalled();
       });
     });
+
+    // ── Ad-hoc trips + fulfillment mode: fulfillPath default chain ──────────
+    describe("fulfillPath default chain", () => {
+      beforeEach(() => {
+        prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+        prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+        prisma.order.create.mockResolvedValue(MOCK_ORDER);
+        (service as any).systemConfig.get.mockResolvedValue("0");
+      });
+
+      it("an explicit dto.fulfillPath wins over the customer's own default", async () => {
+        prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1, fulfillPath: "SHIP" });
+
+        await service.create(
+          { items: [{ productId: "prod-1", qty: 1 }], fulfillPath: "ROUTE" } as any,
+          customerPayload,
+        );
+
+        expect(prisma.order.create).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ fulfillPath: "ROUTE" }) }),
+        );
+      });
+
+      it("falls back to the customer's own default when dto.fulfillPath is omitted", async () => {
+        prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1, fulfillPath: "SHIP" });
+
+        await service.create({ items: [{ productId: "prod-1", qty: 1 }] } as any, customerPayload);
+
+        expect(prisma.order.create).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ fulfillPath: "SHIP" }) }),
+        );
+      });
+
+      it("defaults to ROUTE when neither the dto nor the customer specify a path", async () => {
+        prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1, fulfillPath: null });
+
+        await service.create({ items: [{ productId: "prod-1", qty: 1 }] } as any, customerPayload);
+
+        expect(prisma.order.create).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ fulfillPath: "ROUTE" }) }),
+        );
+      });
+    });
   });
 
   // ─── createSale (order + invoice in one step) ─────────────────────────────
@@ -1879,6 +1942,116 @@ describe("OrdersService", () => {
       expect(prisma.routeRun.findUnique).not.toHaveBeenCalled();
     });
 
+    // ── Ad-hoc trips + fulfillment mode: additive carrier-name else-if ──────
+    it("OUT_FOR_DELIVERY on a run-less SHIP order names the carrier and writes no run data", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "CONFIRMED",
+        fulfillPath: "SHIP",
+        shippingCarrier: "UPS",
+        routeRunId: null,
+      });
+      prisma.order.update.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "OUT_FOR_DELIVERY",
+        fulfillPath: "SHIP",
+      });
+
+      await service.changeStatus("ord-1", { status: "OUT_FOR_DELIVERY" as any }, operatorPayload);
+
+      // Additive-only: the write itself carries no run/driver fields.
+      expect(prisma.order.update).toHaveBeenCalledWith({
+        where: { id: "ord-1" },
+        data: { status: "OUT_FOR_DELIVERY" },
+      });
+      expect(prisma.routeRun.findUnique).not.toHaveBeenCalled();
+      expect(messagingService.notifyEvent).toHaveBeenCalledWith(
+        "OUT_FOR_DELIVERY",
+        expect.objectContaining({
+          vars: expect.objectContaining({ driverName: "UPS" }),
+        }),
+      );
+    });
+
+    it("OUT_FOR_DELIVERY on a run-less SHIP order with no carrier set falls back to 'the carrier'", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "CONFIRMED",
+        fulfillPath: "SHIP",
+        shippingCarrier: null,
+        routeRunId: null,
+      });
+      prisma.order.update.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "OUT_FOR_DELIVERY",
+        fulfillPath: "SHIP",
+      });
+
+      await service.changeStatus("ord-1", { status: "OUT_FOR_DELIVERY" as any }, operatorPayload);
+
+      expect(messagingService.notifyEvent).toHaveBeenCalledWith(
+        "OUT_FOR_DELIVERY",
+        expect.objectContaining({
+          vars: expect.objectContaining({ driverName: "the carrier" }),
+        }),
+      );
+    });
+
+    // ── SHIP-vs-ROUTE DELIVERED invoicing parity ────────────────────────────
+    // Pins that changeStatus's DELIVERED invoicing branch never forks on
+    // fulfillPath: SHIP must bill exactly what ROUTE bills (the ordered qty,
+    // ignoring deliveredQty) because the only additive change in this WP is
+    // the OUT_FOR_DELIVERY carrier-name else-if above — the DELIVERED branch
+    // and its invoicing call are byte-unchanged.
+    it("SHIP orders invoice byte-identically to ROUTE orders on DELIVERED (ordered qty billed, deliveredQty ignored)", async () => {
+      const invoices = (service as any).invoicesService;
+      const fixture = {
+        ...MOCK_ORDER,
+        status: "OUT_FOR_DELIVERY" as const,
+        lineItems: [{ id: "li-1", qty: 10, deliveredQty: 4, invoicedQty: 0 }],
+      };
+
+      prisma.order.findUnique.mockResolvedValueOnce({ ...fixture, fulfillPath: "ROUTE" });
+      prisma.order.update.mockResolvedValueOnce({
+        ...fixture,
+        status: "DELIVERED",
+        fulfillPath: "ROUTE",
+      });
+      await service.changeStatus("ord-1", { status: "DELIVERED" as any }, operatorPayload);
+      const routeCall = invoices.createInvoiceFromOrderWithTenant.mock.calls[0];
+
+      invoices.createInvoiceFromOrderWithTenant.mockClear();
+      prisma.order.findUnique.mockResolvedValueOnce({ ...fixture, fulfillPath: "SHIP" });
+      prisma.order.update.mockResolvedValueOnce({
+        ...fixture,
+        status: "DELIVERED",
+        fulfillPath: "SHIP",
+      });
+      await service.changeStatus("ord-1", { status: "DELIVERED" as any }, operatorPayload);
+      const shipCall = invoices.createInvoiceFromOrderWithTenant.mock.calls[0];
+
+      expect(routeCall).toBeDefined();
+      expect(shipCall).toEqual(routeCall);
+    });
+
+    // ── re-pin: DELIVERED with an open draft still reconciles at basis "order" ──
+    it("an open draft invoice on DELIVERED always reconciles at basis 'order', never 'delivered'", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, status: "CONFIRMED" });
+      prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "DELIVERED" });
+      const invoices = (service as any).invoicesService;
+      invoices.findOpenOrderDraft.mockResolvedValueOnce({ id: "d1" });
+
+      await service.changeStatus("ord-1", { status: "DELIVERED" as any }, operatorPayload);
+
+      expect(invoices.reconcileOrderDraftInvoice).toHaveBeenCalledWith("ord-1", {
+        basis: "order",
+      });
+      expect(invoices.reconcileOrderDraftInvoice).not.toHaveBeenCalledWith(
+        "ord-1",
+        expect.objectContaining({ basis: "delivered" }),
+      );
+    });
+
     it("CANCELLED fires no messaging trigger", async () => {
       prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
       prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "CANCELLED" });
@@ -1886,6 +2059,143 @@ describe("OrdersService", () => {
       await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload);
 
       expect(messagingService.notifyEvent).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── updateFulfillPath (ad-hoc trips + fulfillment mode) ──────────────────
+
+  describe("updateFulfillPath", () => {
+    it("rejects the change once the order is OUT_FOR_DELIVERY", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "OUT_FOR_DELIVERY",
+      });
+
+      await expect(
+        service.updateFulfillPath("ord-1", { fulfillPath: "SHIP" } as any, operatorPayload),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects the change once the order is DELIVERED", async () => {
+      prisma.order.findFirst.mockResolvedValue({ ...MOCK_ORDER, status: "DELIVERED" });
+
+      await expect(
+        service.updateFulfillPath("ord-1", { fulfillPath: "SHIP" } as any, operatorPayload),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects the change once the order is CANCELLED", async () => {
+      prisma.order.findFirst.mockResolvedValue({ ...MOCK_ORDER, status: "CANCELLED" });
+
+      await expect(
+        service.updateFulfillPath("ord-1", { fulfillPath: "SHIP" } as any, operatorPayload),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it("succeeds on a CONFIRMED (open) order", async () => {
+      prisma.order.findFirst.mockResolvedValue({ ...MOCK_ORDER, status: "CONFIRMED" });
+      prisma.order.update.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "CONFIRMED",
+        fulfillPath: "SHIP",
+      });
+
+      const result = await service.updateFulfillPath(
+        "ord-1",
+        { fulfillPath: "SHIP" } as any,
+        operatorPayload,
+      );
+
+      expect(prisma.order.update).toHaveBeenCalledWith({
+        where: { id: "ord-1" },
+        data: { fulfillPath: "SHIP" },
+      });
+      expect(result.fulfillPath).toBe("SHIP");
+    });
+
+    it("rejects the switch to SHIP while the order is on an active run", async () => {
+      // The dispatch sweep attaches orders while they're still CONFIRMED, so
+      // status alone would let a dispatched order flip to SHIP mid-route.
+      prisma.order.findFirst.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "CONFIRMED",
+        routeRunStopId: "run-stop-1",
+        routeRunStop: { routeRun: { status: "IN_PROGRESS", driver: { contactName: "Dana" } } },
+      });
+
+      await expect(
+        service.updateFulfillPath("ord-1", { fulfillPath: "SHIP" } as any, operatorPayload),
+      ).rejects.toThrow(/active delivery run with Dana/);
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it("allows the switch to SHIP when the run attachment is stale (finished run)", async () => {
+      // `routeRunStopId` is never cleared on completion — a stale link must not
+      // lock the order out of fulfillment changes forever.
+      prisma.order.findFirst.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "CONFIRMED",
+        routeRunStopId: "run-stop-1",
+        routeRunStop: { routeRun: { status: "COMPLETED", driver: null } },
+      });
+      prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, fulfillPath: "SHIP" });
+
+      await service.updateFulfillPath("ord-1", { fulfillPath: "SHIP" } as any, operatorPayload);
+
+      expect(prisma.order.update).toHaveBeenCalledWith({
+        where: { id: "ord-1" },
+        data: { fulfillPath: "SHIP" },
+      });
+    });
+
+    it("still allows switching back to ROUTE on an active run", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "CONFIRMED",
+        fulfillPath: "SHIP",
+        routeRunStopId: "run-stop-1",
+        routeRunStop: { routeRun: { status: "SCHEDULED", driver: { contactName: "Dana" } } },
+      });
+      prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, fulfillPath: "ROUTE" });
+
+      await service.updateFulfillPath("ord-1", { fulfillPath: "ROUTE" } as any, operatorPayload);
+
+      expect(prisma.order.update).toHaveBeenCalledWith({
+        where: { id: "ord-1" },
+        data: { fulfillPath: "ROUTE" },
+      });
+    });
+
+    it("throws NotFoundException for a non-existent order", async () => {
+      prisma.order.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.updateFulfillPath("nonexistent", { fulfillPath: "SHIP" } as any, operatorPayload),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it("reads the order tenant-scoped so a cross-tenant id 404s", async () => {
+      // forTenant()'s findUnique can only post-filter on a returned `tenantId`,
+      // which an exclusive `select` omitting it silently defeats — a foreign
+      // order's status and driver name would then leak through the 400 messages.
+      // findFirst gets `tenantId` injected into the where, so the row is simply
+      // never returned. Pin the method AND the where.
+      await expect(
+        service.updateFulfillPath(
+          "other-tenant-order",
+          { fulfillPath: "SHIP" } as any,
+          operatorPayload,
+        ),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(prisma.order.findUnique).not.toHaveBeenCalled();
+      expect(prisma.order.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "other-tenant-order" } }),
+      );
+      expect(prisma.order.update).not.toHaveBeenCalled();
     });
   });
 

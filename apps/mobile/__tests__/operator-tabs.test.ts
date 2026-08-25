@@ -69,6 +69,17 @@ describe("activeOperatorTab — routes outside (tabs)", () => {
   });
 });
 
+describe("activeOperatorTab — ad-hoc trips section", () => {
+  it("maps the trips section to Dispatch (an unmapped section produces a dead tab bar)", () => {
+    expect(activeOperatorTab(["(operator)", "trips"])).toBe("dispatch");
+  });
+
+  it("stays on Dispatch however deep the trips route goes", () => {
+    expect(activeOperatorTab(["(operator)", "trips", "new"])).toBe("dispatch");
+    expect(activeOperatorTab(["(operator)", "trips", "index"])).toBe("dispatch");
+  });
+});
+
 describe("activeOperatorTab — degenerate input", () => {
   it("treats the bare group as Home", () => {
     expect(activeOperatorTab(["(operator)"])).toBe("home");

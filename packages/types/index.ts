@@ -74,6 +74,11 @@ export enum FulfillPath {
   SHIP = "SHIP",
 }
 
+export enum RouteKind {
+  SCHEDULED = "SCHEDULED",
+  ADHOC = "ADHOC",
+}
+
 export enum DriverStatus {
   ACTIVE = "ACTIVE",
   INACTIVE = "INACTIVE",
@@ -123,6 +128,10 @@ export interface ApiResponse<T> {
 
 export type { PackSizeConfidence, PackSizeParse, PackSizeSuggestion } from "./pack-size";
 export { formatCountList, parsePackSizeDetailed, suggestPackSize } from "./pack-size";
+
+// ─── Trip grouping (ad-hoc trip stop grouping helper) ─────────────────────────
+
+export * from "./trip-grouping";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 

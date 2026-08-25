@@ -47,6 +47,7 @@ const SECTION_TO_TAB: Readonly<Record<string, OperatorTabKey>> = {
   drivers: "dispatch",
   driver: "dispatch",
   fleet: "dispatch",
+  trips: "dispatch",
 
   orders: "orders",
   "new-order": "orders",

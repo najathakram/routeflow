@@ -71,6 +71,15 @@ export interface OrderDraftPayload {
    * unread) onto web's `OrderDraftPayload` so the shapes stay identical.
    */
   selectedCreditIds?: string[];
+  /**
+   * ADDITIVE (ad-hoc trips / fulfillment): the order's fulfillment mode as the
+   * operator left it. Optional so a draft parked BEFORE this field existed
+   * still resumes — missing ⇒ `fromOrderDraftPayload` normalizes to ROUTE.
+   * Always written going forward, matching web's parked payload (which carries
+   * the same key via `DraftPayloadWithFulfillPath` in `CreateOrderModal`), so a
+   * draft parked on one device resumes with the same mode on the other.
+   */
+  fulfillPath?: "ROUTE" | "SHIP";
 }
 
 // ─── Builder-state shape (the pure boundary WP3's ProductPickView writes to) ──
@@ -113,9 +122,9 @@ export interface DraftUnlistedLine {
  * The order-builder's full parkable state. Lives inside `ProductPickView`
  * (decisions doc §PR-3.5 — it owns `items`, `unlisted`, `floorAcked`,
  * `orderNotes`, `orderUrgent`, `deliveryDate`, `orderDate`, `discountRaw`,
- * `shippingFeeRaw`, `selectedCreditIds`); field names mirror those builder
- * state variables 1:1 so `toOrderDraftPayload`/`fromOrderDraftPayload` are
- * near-trivial glue at the call site.
+ * `shippingFeeRaw`, `selectedCreditIds`, `fulfillPath`); field names mirror
+ * those builder state variables 1:1 so `toOrderDraftPayload`/
+ * `fromOrderDraftPayload` are near-trivial glue at the call site.
  */
 export interface DraftBuilderState {
   customer: DraftCustomer | null;
@@ -129,6 +138,8 @@ export interface DraftBuilderState {
   discountRaw: string;
   shippingFeeRaw: string;
   selectedCreditIds: string[];
+  /** ROUTE (delivery route) or SHIP (carrier) — see `OrderDraftPayload`. */
+  fulfillPath: "ROUTE" | "SHIP";
 }
 
 /**
@@ -182,6 +193,7 @@ export function toOrderDraftPayload(state: DraftBuilderState): OrderDraftPayload
     urgent: state.orderUrgent,
     floorAcked: [...state.floorAcked],
     ...(state.selectedCreditIds.length ? { selectedCreditIds: [...state.selectedCreditIds] } : {}),
+    fulfillPath: state.fulfillPath,
   };
 }
 
@@ -235,6 +247,10 @@ export function fromOrderDraftPayload(payload: OrderDraftPayload): DraftBuilderS
     discountRaw: payload.orderDiscount,
     shippingFeeRaw: payload.shippingFee,
     selectedCreditIds: [...(payload.selectedCreditIds ?? [])],
+    // Anything other than an explicit "SHIP" (including a pre-fulfillPath
+    // payload, where the key is simply absent) resumes as ROUTE — the column
+    // default, and the mode every existing draft was composed under.
+    fulfillPath: payload.fulfillPath === "SHIP" ? "SHIP" : "ROUTE",
   };
 }
 

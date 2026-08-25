@@ -746,9 +746,19 @@ export default function RouteTemplateDetailPage({ params }: { params: { id: stri
             {optimizeTemplate.isPending ? "Optimizing…" : "Optimize"}
           </Button>
 
-          <Button leftIcon={<Play className="h-4 w-4" />} onClick={() => setDispatchOpen(true)}>
-            Dispatch Run
-          </Button>
+          {/* Ad-hoc trips carry no order linkage until they are sent, so only the
+              trip builder (which knows the picked orders) may dispatch one — the
+              API rejects a dispatch without orderIds. Show a hint instead of a
+              button that would always fail. */}
+          {route?.kind === "ADHOC" ? (
+            <span className="text-xs text-navy/70">
+              Send this trip from the trip builder — rebuild it from the Orders list.
+            </span>
+          ) : (
+            <Button leftIcon={<Play className="h-4 w-4" />} onClick={() => setDispatchOpen(true)}>
+              Dispatch Run
+            </Button>
+          )}
         </div>
       </div>
 

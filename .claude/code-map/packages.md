@@ -26,7 +26,8 @@ Shared DTO/enum definitions. Entry: `index.ts` (no `src/`).
   from a stale 4 values to all 8 — `CASH,CHECK,ACH,OTHER,CREDIT_NOTE,ADVANCE,CREDIT_CARD,ZELLE`
   — matching Prisma; note the apps do NOT import it, they use their own
   `{web,mobile}/lib/payment-methods.ts` constants); `MutationType`,
-  `FulfillPath`, `DriverStatus`.
+  `FulfillPath`, `DriverStatus`, **`RouteKind`** (2026-08-24: `SCHEDULED | ADHOC`, string values,
+  synced with the Prisma `Route.kind` enum added for ad-hoc order trips).
 - **Interfaces**: `User`, `Order`, `PaginatedResponse<T>` (data + meta: total/page/limit/totalPages),
   `ApiResponse<T>`.
 - **Constants**: `DEVELOPER_MODE_ADDON = "developer_mode"` (2026-08-20) — the legacy
@@ -41,6 +42,19 @@ Shared DTO/enum definitions. Entry: `index.ts` (no `src/`).
   - Parse order is load-bearing: `N/<measure>` (e.g. "12/1.93OZ") is read FIRST, then measurements are stripped so "5 HOUR"/"65MG" cannot read as counts, then `N CT|PK|PACK|COUNT|PCS`. Counts kept only when `> 1` and `<= 1000`.
   - **`packages/types` has no Jest runner** (its test script is `tsc --noEmit`), so the specs live at `apps/api/src/common/pack-size.spec.ts`. Put new cases there or they silently never run.
   - `apps/api/scripts/propose-pack-sizes.mjs` holds a MIRROR of this logic (plain node can't import TS) and is labelled as such — canonical behaviour is here.
+
+- **`trip-grouping.ts` (2026-08-24) — the ONE grouping algorithm for ad-hoc order trips.** Pure,
+  no imports beyond its own file. Exports `TripGroupableOrder`/`TripStopGroup`/`TripSkippedOrder`/
+  `TripGroupingResult` + `groupOrdersForTrip(orders)`: groups by `customerId` into one stop per
+  distinct customer (orders with no `customerId` land in `skipped[]` with reason `NO_CUSTOMER`).
+  Re-exported from `index.ts` (`export * from "./trip-grouping"`). **Mirrored byte-for-byte**
+  (not imported) at `apps/api/src/common/trip-grouping.ts` — the API must never `require` this
+  package at runtime, since `main: "./index.ts"` is raw TS with no build step and `nest build`
+  emits the bare `require("@routeflow/types")` into `dist/`, crashing `node dist/main.js` at
+  startup (guard spec: `apps/api/src/common/no-runtime-workspace-imports.spec.ts`) — and at
+  `apps/mobile/lib/trip-grouping.ts` (RN apps don't consume this package's TS source at the same
+  build boundary), with its own Jest test on the mobile side. Only web imports it directly, via
+  `transpilePackages`. Change all three copies together.
 
 ### `@routeflow/ui` (`packages/ui`)
 

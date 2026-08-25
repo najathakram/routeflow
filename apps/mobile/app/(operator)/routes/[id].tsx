@@ -407,12 +407,19 @@ export default function RouteDetailScreen() {
           </Pressable>
 
           {(() => {
-            const cannotDispatch = !driver || stops.length === 0;
-            const dispatchHint = !driver
-              ? "Assign a driver before dispatching"
-              : stops.length === 0
-                ? "Add at least one stop before dispatching"
-                : null;
+            // An ad-hoc trip carries no order linkage until it is sent, so only
+            // the trip builder (which knows the picked orders) may dispatch one —
+            // the API rejects a dispatch without orderIds. Block it here rather
+            // than offering a button that always fails.
+            const isAdhocTrip = route.kind === "ADHOC";
+            const cannotDispatch = isAdhocTrip || !driver || stops.length === 0;
+            const dispatchHint = isAdhocTrip
+              ? "Send this trip from the trip builder — rebuild it from the Orders list"
+              : !driver
+                ? "Assign a driver before dispatching"
+                : stops.length === 0
+                  ? "Add at least one stop before dispatching"
+                  : null;
             return (
               <>
                 <Pressable

@@ -20,6 +20,7 @@ import { DriversModule } from "./drivers/drivers.module";
 import { ProductsModule } from "./products/products.module";
 import { PromotionsModule } from "./promotions/promotions.module";
 import { RoutesModule } from "./routes/routes.module";
+import { TripsModule } from "./trips/trips.module";
 import { OrdersModule } from "./orders/orders.module";
 import { BookkeepingModule } from "./bookkeeping/bookkeeping.module";
 import { SystemConfigModule } from "./system-config/system-config.module";
@@ -124,6 +125,7 @@ import { AppService } from "./app.service";
     ProductsModule,
     PromotionsModule,
     RoutesModule,
+    TripsModule,
     OrdersModule,
     BookkeepingModule,
     SystemConfigModule,

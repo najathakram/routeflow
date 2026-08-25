@@ -22,6 +22,7 @@ export interface Route {
   id: string;
   name: string;
   isActive: boolean;
+  kind: "SCHEDULED" | "ADHOC";
   createdAt: string;
   depotLat?: number | null;
   depotLng?: number | null;
@@ -48,6 +49,9 @@ export interface RouteRun {
   notes?: string;
   stops?: RouteRunStop[];
   _count?: { stops: number };
+  /** Dispatch response only — how many orders the sweep actually attached to
+   *  this run (an ad-hoc trip can lose orders between build and send). */
+  attachedOrderCount?: number;
 }
 
 export interface RouteRunStop {
@@ -68,7 +72,12 @@ interface PaginatedResponse<T> {
 }
 
 // Routes
-export function useRoutes(params?: { search?: string; isActive?: boolean; page?: number }) {
+export function useRoutes(params?: {
+  search?: string;
+  isActive?: boolean;
+  page?: number;
+  kind?: "SCHEDULED" | "ADHOC";
+}) {
   return useQuery<PaginatedResponse<Route>>({
     queryKey: ["routes", params],
     queryFn: () => apiClient.get("/routes", { params }).then((r) => r.data),
@@ -259,6 +268,8 @@ export function useCreateRouteRun() {
       driverId?: string;
       startTime?: string;
       notes?: string;
+      /** ADHOC trips only — narrows the dispatch sweep to exactly these orders. */
+      orderIds?: string[];
     }
   >({
     mutationFn: (dto) => apiClient.post("/route-runs", dto).then((r) => r.data),
@@ -383,6 +394,58 @@ export function useOptimizeTemplate() {
       qc.invalidateQueries({ queryKey: ["routes", id] });
       qc.invalidateQueries({ queryKey: ["routes"] });
     },
+  });
+}
+
+// ─── Trips (ad-hoc) ────────────────────────────────────────────────────────────
+
+export type TripIneligibleReason =
+  | "SHIP_FULFILLMENT"
+  | "INELIGIBLE_STATUS"
+  | "ON_ACTIVE_RUN"
+  | "PREVIOUSLY_DISPATCHED"
+  | "NO_ADDRESS"
+  | "NOT_FOUND";
+
+export interface TripEligibilityRow {
+  orderId: string;
+  orderNumber: string | null;
+  customerId: string | null;
+  customerName: string | null;
+  eligible: boolean;
+  reason?: TripIneligibleReason;
+  detail?: string;
+}
+
+export type TripOrigin =
+  | { type: "TENANT" }
+  | { type: "DRIVER"; driverId: string }
+  | { type: "ADDRESS"; line1: string; city?: string; state?: string; zip?: string };
+
+/** Eligibility check for a candidate set of orders — feeds the trip builder's
+ *  stop preview and skipped-orders panel. Enabled only while orders are selected. */
+export function useTripEligibility(orderIds: string[]) {
+  return useQuery<TripEligibilityRow[]>({
+    queryKey: ["trip-eligibility", orderIds],
+    queryFn: () =>
+      apiClient
+        .get("/trips/eligibility", { params: { orderIds: orderIds.join(",") } })
+        .then((r) => r.data),
+    enabled: orderIds.length > 0,
+  });
+}
+
+/** Creates a DRAFT ad-hoc route (kind ADHOC) from a set of orders. Performs
+ *  ZERO order writes — orders attach to it only at dispatch (useCreateRouteRun). */
+export function useCreateTrip() {
+  const qc = useQueryClient();
+  return useMutation<
+    Route,
+    Error,
+    { orderIds: string[]; name?: string; driverId?: string; origin: TripOrigin }
+  >({
+    mutationFn: (dto) => apiClient.post("/trips", dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["routes"] }),
   });
 }
 

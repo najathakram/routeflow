@@ -17,6 +17,10 @@ export default function EditDriverScreen() {
   const [vehicleModel, setVehicleModel] = useState("");
   const [vehiclePlate, setVehiclePlate] = useState("");
   const [vehicleColour, setVehicleColour] = useState("");
+  const [homeLine1, setHomeLine1] = useState("");
+  const [homeCity, setHomeCity] = useState("");
+  const [homeState, setHomeState] = useState("");
+  const [homeZip, setHomeZip] = useState("");
 
   useEffect(() => {
     if (driver) {
@@ -25,6 +29,16 @@ export default function EditDriverScreen() {
       setVehicleModel(driver.vehicleModel ?? "");
       setVehiclePlate(driver.vehiclePlate ?? "");
       setVehicleColour((driver as any).vehicleColour ?? "");
+      // The API stores ONE composed string (non-empty parts joined with ", "),
+      // so split it back apart; anything that isn't a clean 4-parter goes into
+      // line 1 whole, so an untouched save recomposes byte-identically.
+      const parts = (driver.homeAddress ?? "").split(", ");
+      const [line1, city, state, zip] =
+        parts.length === 4 ? parts : [driver.homeAddress ?? "", "", "", ""];
+      setHomeLine1(line1);
+      setHomeCity(city);
+      setHomeState(state);
+      setHomeZip(zip);
     }
   }, [driver]);
 
@@ -45,6 +59,19 @@ export default function EditDriverScreen() {
 
   const submit = () => {
     if (!id) return;
+    // Sending any home field makes the API recompose + re-geocode the home base.
+    // Send them only when something is typed or a home base already exists (so
+    // blanking the fields can still clear it) — never on a phone/vehicle-only edit.
+    const homeTyped = [homeLine1, homeCity, homeState, homeZip].some((v) => !!v.trim());
+    const homeFields =
+      homeTyped || driver.homeAddress
+        ? {
+            homeLine1: homeLine1.trim(),
+            homeCity: homeCity.trim(),
+            homeState: homeState.trim(),
+            homeZip: homeZip.trim(),
+          }
+        : {};
     mut.mutate(
       {
         id,
@@ -53,6 +80,7 @@ export default function EditDriverScreen() {
         vehicleModel: vehicleModel.trim() || undefined,
         vehiclePlate: vehiclePlate.trim() || undefined,
         vehicleColour: vehicleColour.trim() || undefined,
+        ...homeFields,
       },
       {
         onSuccess: () => {
@@ -93,6 +121,25 @@ export default function EditDriverScreen() {
             onChangeText={setVehiclePlate}
             autoCapitalize="characters"
           />
+        </FormField>
+      </FormSection>
+
+      <FormSection title="Home base">
+        <FormField label="Address">
+          <FormTextInput value={homeLine1} onChangeText={setHomeLine1} />
+        </FormField>
+        <FormField label="City">
+          <FormTextInput value={homeCity} onChangeText={setHomeCity} />
+        </FormField>
+        <FormField label="State">
+          <FormTextInput
+            value={homeState}
+            onChangeText={setHomeState}
+            autoCapitalize="characters"
+          />
+        </FormField>
+        <FormField label="ZIP">
+          <FormTextInput value={homeZip} onChangeText={setHomeZip} keyboardType="number-pad" />
         </FormField>
       </FormSection>
     </FormSheet>

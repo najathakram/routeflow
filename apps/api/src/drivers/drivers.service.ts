@@ -1,9 +1,11 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
   ForbiddenException,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import * as crypto from "crypto";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
@@ -14,10 +16,16 @@ import { CreateDriverDto } from "./dto/create-driver.dto";
 import { UpdateDriverDto } from "./dto/update-driver.dto";
 import { ChangeDriverStatusDto } from "./dto/change-driver-status.dto";
 import { PostLocationDto } from "./dto/post-location.dto";
+import { geocodeAddress } from "../common/geocode.util";
 
 @Injectable()
 export class DriversService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(DriversService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
   async findAll(query: ListDriversDto) {
     const { search, status, page = 1, limit = 20 } = query;
@@ -176,9 +184,38 @@ export class DriversService {
 
   async update(id: string, dto: UpdateDriverDto) {
     await this.findOneOrThrow(id);
+    const { homeLine1, homeCity, homeState, homeZip, ...rest } = dto;
+    const data: Record<string, unknown> = { ...rest };
+    const homeFieldPresent =
+      homeLine1 !== undefined ||
+      homeCity !== undefined ||
+      homeState !== undefined ||
+      homeZip !== undefined;
+
+    if (homeFieldPresent) {
+      const parts = [homeLine1, homeCity, homeState, homeZip].filter(
+        (part): part is string => !!part,
+      );
+      data.homeAddress = parts.length > 0 ? parts.join(", ") : null;
+
+      const key = this.config.get<string>("googleMaps.apiKey") ?? "";
+      const coords = await geocodeAddress(
+        {
+          line1: homeLine1 ?? "",
+          city: homeCity ?? "",
+          state: homeState ?? "",
+          zip: homeZip ?? "",
+        },
+        key,
+        this.logger,
+      );
+      data.homeLat = coords?.lat ?? null;
+      data.homeLng = coords?.lng ?? null;
+    }
+
     return this.prisma.forTenant().driver.update({
       where: { id },
-      data: dto,
+      data,
       include: { user: { select: { id: true, username: true, email: true, status: true } } },
     });
   }

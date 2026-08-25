@@ -17,6 +17,10 @@ import { useSalesAgents } from "@/lib/api/sales-agents";
 const customerSchema = z
   .object({
     customerType: z.enum(["BUSINESS", "INDIVIDUAL"]),
+    // Default fulfillment for orders created for this customer — ROUTE (delivery
+    // route) vs SHIP (supplier/carrier-shipped, excluded from trip/route dispatch).
+    // Orders still get their own per-order override in CreateOrderModal.
+    fulfillPath: z.enum(["ROUTE", "SHIP"]).optional(),
     // Business-specific
     businessName: z.string().optional().or(z.literal("")),
     contactName: z.string().optional().or(z.literal("")),
@@ -99,6 +103,8 @@ export interface CustomerFormModalProps {
     isTaxExempt?: boolean;
     creditLimit?: number;
     currency?: string;
+    /** ROUTE (default) or SHIP — this customer's own fulfillment default. */
+    fulfillPath?: string;
     user?: { email?: string };
     notes?: string;
     addresses?: {
@@ -119,6 +125,7 @@ function buildDefaultValues(
   if (!initialData) {
     return {
       customerType: "BUSINESS",
+      fulfillPath: "ROUTE",
       businessName: "",
       contactName: "",
       salutation: "",
@@ -141,6 +148,7 @@ function buildDefaultValues(
   }
   return {
     customerType: (initialData.customerType as "BUSINESS" | "INDIVIDUAL") ?? "BUSINESS",
+    fulfillPath: initialData.fulfillPath === "SHIP" ? "SHIP" : "ROUTE",
     businessName: initialData.businessName ?? "",
     contactName: initialData.contactName ?? "",
     salutation: initialData.salutation ?? "",
@@ -269,6 +277,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           isTaxExempt: data.isTaxExempt || false,
           creditLimit: data.creditLimit ? parseFloat(data.creditLimit) : undefined,
           currency: data.currency || "USD",
+          fulfillPath: data.fulfillPath || "ROUTE",
           notes: data.notes,
           addresses: [
             {
@@ -313,6 +322,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           isTaxExempt: data.isTaxExempt || false,
           creditLimit: data.creditLimit ? parseFloat(data.creditLimit) : undefined,
           currency: data.currency || "USD",
+          fulfillPath: data.fulfillPath || "ROUTE",
           notes: data.notes,
         },
         {
@@ -530,6 +540,21 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
                   Tax Exempt
                 </label>
               </div>
+            </div>
+            <div className="space-y-1">
+              <Select
+                label="Default fulfillment"
+                options={[
+                  { value: "ROUTE", label: "Delivery route" },
+                  { value: "SHIP", label: "Ship via carrier" },
+                ]}
+                register={register("fulfillPath")}
+              />
+              {watch("fulfillPath") === "SHIP" && (
+                <p className="text-[11px] leading-snug text-navy/70">
+                  Ships via carrier — won&apos;t appear on delivery routes.
+                </p>
+              )}
             </div>
           </section>
 

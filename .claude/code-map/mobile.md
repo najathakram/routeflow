@@ -202,7 +202,12 @@ nonce}` so a re-scan re-flashes),
 - `(tabs)/orders/` → index (status filter; **#225:** DRAFT filter chip; **A3 2026-08-19: reads the `customerId` route param the customer screen pushes — it used to be DROPPED, so "View orders" showed every order — forwards it to `useAdminOrders` and renders a dismissible "Customer: X" chip whose label comes from `useAdminCustomer` (correct even at zero orders); dismissing clears the state AND `router.setParams`. Pure rules in `lib/customer-order-filter.ts` + specs**), `[id].tsx` (assign driver, split-invoice; **"Edit items" entry shown for DRAFT/PENDING/CONFIRMED** — mirrors API guard; **#225:** `useReopenOrder` CANCELLED→PENDING action, `SendInvoiceSheet` re-send on DELIVERED orders via `useCreateInvoiceFromOrder`), `[id]/edit-items.tsx` (integer-qty stepper; `PriceOverrideModal` new-price **+ "Amount off / unit"** lens, **price edit on DRAFT/PENDING/CONFIRMED** (gated by `canEditPrice`; was DRAFT-only) — read-only on terminal statuses; fresh adds pre-fill remembered price via `useCustomerPriceHistory`; **#225:** save now builds a minimal `buildOrderItemDiff` sent with `replaceAll:false`, was a full id-less resend that wiped invoiced/override history on untouched lines), `[id]/split-invoice.tsx`.
 - `(tabs)/invoices/` → index (status), `[id].tsx` (payments, **Share PDF → `sharePdf()` direct share**; **#225:** write-off tile → `[id]/write-off.tsx`, pencil on editable payment rows → `[id]/payments/[paymentId]/edit.tsx`), `[id]/record-payment.tsx` (**#225:** dropped the Advance/Credit-Note method chips — server always rejected them here), `create.tsx`, `new.tsx`.
 - `customers/` → index (**2026-07-30, WP15:** `FilterChipRow` All/Regulated passing `regulated` through `useAdminCustomers` — cast to bypass `lib/api/admin.ts`'s untyped param, out of this WP's file scope), `[id].tsx`, `[id]/edit.tsx`, `[id]/addresses.tsx`, `[id]/catalog.tsx` (per-customer tier pricing; module-level `tierUnset()` appends a subdued "(list)" suffix on the override-row price + modal tier-hint when the tier column is 0/unset — `getTierPrice` already falls back to list), **`[id]/documents.tsx`** (2026-07-30, WP15 new: view/share/delete customer document library — `lib/api/customers.ts` `useCustomerDocuments`/`useDeleteCustomerDocument`; tap-to-view uses `expo-web-browser` `openBrowserAsync` on native, a modal `<iframe>` via `React.createElement("iframe",...)` on web (mirrors `components/MapView.tsx`'s web-map pattern, no react-native-webview dep); share via `sharePdf`; upload out of scope. Not yet linked from `[id].tsx` — that file is outside WP15's scope, so the screen has no in-app entry point beyond direct navigation), `new.tsx`/`create.tsx`.
-- `drivers/` → index, `[id].tsx`, `[id]/edit.tsx`, `new.tsx`/`add.tsx`.
+- `drivers/` → index, `[id].tsx`, `[id]/edit.tsx`, `new.tsx`/`add.tsx`. `[id]/edit.tsx` carries a
+  **"Home base"** section (line1/city/state/zip → `UpdateDriverDto.home*`, mirroring web's
+  `EditDriverModal`) — the only mobile writer of the fields `trips.service.ts resolveOrigin`'s
+  DRIVER tier reads. It prefills by splitting the stored composed `Driver.homeAddress` and omits
+  the home fields entirely when none is set and none typed, so a phone/vehicle-only save never
+  triggers the API's recompose + re-geocode.
 - `products/` → index (barcode lookup; **#225:** `useAdminProductsInfinite` FlatList paging, id-de-duped, replaces the `limit:100` fetch), `[id].tsx` (**#225:** "Photos" card — camera/library capture via `useUploadProductImages`/`useDeleteProductImage`, HEIC→JPEG transcode), `[id]/adjust-stock.tsx`, `new.tsx`/`create.tsx`, `adjust-picker.tsx`, **#225 new:** `bulk-set-cost.tsx`, `recompute-costs.tsx`, `stock-count.tsx` (scan-driven physical count → `POST /inventory/stock-count/commit`).
 - `returns/` (**#225:** `index.tsx` rows tap through to `[id].tsx` new detail screen — status-gated action tiles over the full 8-status ladder; `new.tsx` new 3-step create-return: customer→DELIVERED order→per-line qty+restock), `routes/`, `purchase-orders/` (Stack layouts); `new-order.tsx`, `pick.tsx` (pick-list),
   `exceptions.tsx`, `analytics/index.tsx`, `movements.tsx`, `messages.tsx`, `fleet.tsx`, `driver.tsx`,
@@ -689,6 +694,53 @@ degrades to an empty state, never a 403 toast. `app/(driver)/**` has **zero diff
   row. `(tenant)/_layout.tsx` gives the dispatch `Tabs.Screen` `href: devMode ? undefined : null`.
   `(auth)/role-picker.tsx` (no in-app entry point today — defense in depth) hides the Driver hero
   and auto-selects operator.
+
+### 2026-08-24 — ad-hoc order trips + fulfillment mode (dev-mode-gated)
+
+- **`DEV_MODE_SECTIONS`** gained `trips`, **`SECTION_TO_TAB`** gained `trips: "dispatch"` (both —
+  a section listed without a tab mapping leaves the deep-link chokepoint unable to route to a tab,
+  a dead-tab-bar failure mode). `(operator)/(tabs)/dispatch.tsx` gets a Trips row (parallel to the
+  existing Routes/Fleet/Drivers rows), gated the same `devMode` way; nothing was added to
+  `more.tsx`. `(operator)/trips/` (new) hosts the builder screens — same PICKING → Build → BUILT →
+  Send state machine as web (mobile folds it into ONE CTA that runs create → optimize → createRun,
+  but holds the created route in `createdTrip` state with its frozen stop groups + order ids, so a
+  failed dispatch retries against the SAME route instead of orphaning a duplicate draft per press;
+  swipe-to-drop and the origin gate switch off once it is set, and the free-text run date is gated
+  on `/^\d{4}-\d{2}-\d{2}$/` client-side to match `CreateRouteRunDto.@IsDateString()`), all three
+  `resolveOrigin` origin types (DRIVER/ADDRESS/TENANT). The
+  Driver origin needs the picked driver's `homeLat`/`homeLng` (now on `admin.ts AdminDriver`), not
+  just a picked driver — without them the tab warns "{name} has no home base set" and links to
+  `drivers/[id]/edit`, matching web's `TripOriginPicker`. `(operator)/trips/index.tsx` lists ADHOC
+  routes and shows its trash affordance **only on run-less drafts** (same rule as web's two trip
+  lists, backed by the `deleteRoute` ADHOC guard — deleting a dispatched trip would destroy the
+  run stops carrying POD/signature data).
+- **`lib/trip-grouping.ts`** mirrors `packages/types/trip-grouping.ts` `groupOrdersForTrip`
+  **byte-for-byte** (own Jest test `__tests__/trip-grouping.test.ts` — not re-exported from the
+  shared package, this is the RN-side copy per the "mobile mirrors web" convention). `lib/trip-
+draft.ts` mirrors web's `lib/trip-draft.ts` (local-only picked-orders draft, cleared only on
+  dispatch success).
+- **`lib/order-actions.ts`** (new) — `statusActions` **extracted** out of the order-detail screen
+  to `statusActions(status, fulfillPath = "ROUTE")`: the ROUTE-path output is byte-identical to
+  the pre-extraction inline logic (regression pin in `__tests__/order-actions.test.ts`); a
+  `fulfillPath: "SHIP"` order gets carrier-facing relabels ("Mark shipped" etc, mirrors the api
+  `orders.service.ts changeStatus` SHIP branch) and drops the "Partial delivery" action (shipped
+  orders don't get a driver-side partial-delivery flow). `orders/[id].tsx` calls the extracted
+  helper instead of inlining it; `NewOrderScreen.tsx` + `CustomerForm.tsx` gained the
+  `fulfillPath` field wired through the same create-draft round-trip pattern as web's
+  `CreateOrderModal`/`CustomerFormModal`. That round-trip needed the plumbing types to carry the
+  field: `lib/drafts-payload.ts` `OrderDraftPayload.fulfillPath?` (optional on the wire — a draft
+  parked before the field existed resumes as ROUTE) + `DraftBuilderState.fulfillPath` (required)
+  through BOTH converters; `lib/api/customers.ts` `CustomerDetail.fulfillPath?` +
+  `CreateCustomerDto.fulfillPath?` (the per-customer default the order form seeds from); and
+  `lib/api/orders.ts` `CreateOrderAsDriverDto.fulfillPath?` (the submit payload — omitted on
+  ROUTE so the server default carries). `NewOrderScreen` only lets a parked value win when the
+  draft's customer matches the current one, so the "Change customer" remount still re-seeds from
+  the new customer's default, matching web.
+- Orders select-mode / bulk affordances stay hidden without dev mode, and **`orders` was
+  deliberately NOT added to `DEV_MODE_SECTIONS`** (the base orders screen must stay visible to
+  every tenant — only the trip-planning entry points are dev-gated, via the `dispatch.tsx` Trips
+  row and the builder screens themselves).
+- Findings + demo-seed coordinate fix for this feature: `docs/phase0-adhoc-trips-findings.md`.
 
 ### PR-D 2026-08-23 — sales-agent read parity (one row, read-only by design)
 
