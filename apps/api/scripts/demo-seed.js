@@ -426,6 +426,22 @@ async function ensureTenant(existing) {
   });
   console.log("   ✓ Driver payments addon active (at-door collection demo)");
 
+  // Tenant-wide default depot. route-optimization's resolveDepot() reads these
+  // SystemConfig keys as its tier-2 fallback, and the trip builder's "tenant
+  // depot" origin resolves the same way — seeding them means neither needs a
+  // geocode call, so the demo survives a missing or unbilled Maps key.
+  for (const [key, value] of [
+    ["route.defaultDepotLat", String(DEMO_DEPOT.lat)],
+    ["route.defaultDepotLng", String(DEMO_DEPOT.lng)],
+  ]) {
+    await prisma.systemConfig.upsert({
+      where: { tenantId_key: { tenantId: DEMO_TENANT_ID, key } },
+      create: { tenantId: DEMO_TENANT_ID, key, value },
+      update: { value },
+    });
+  }
+  console.log("   ✓ Default depot coordinates set (keyless optimize + trip origins)");
+
   for (const cat of IRS_SYSTEM_CATEGORIES) {
     await prisma.expenseCategory.upsert({
       where: { tenantId_code: { tenantId: DEMO_TENANT_ID, code: cat.code } },
@@ -492,8 +508,11 @@ async function ensureStaff() {
         vehicleModel: d.key === "driver" ? "Transit 250" : "ProMaster 1500",
         vehicleColour: "White",
         vehiclePlate: d.key === "driver" ? "DEMO-142" : "DEMO-118",
+        // Home base for the ad-hoc trip builder's "start from the driver's
+        // home" origin — real coordinates so that origin needs no geocoding.
+        ...driverHomeBase(d.key),
       }),
-      update: { contactName: d.contactName, status: "ACTIVE" },
+      update: { contactName: d.contactName, status: "ACTIVE", ...driverHomeBase(d.key) },
     });
     driverIds[d.key] = id;
   }
@@ -538,6 +557,27 @@ function demoAddressCoords(index) {
     lat: DEMO_ORIGIN.lat + (row - 3) * 0.015, // ~1.6 km N-S steps
     lng: DEMO_ORIGIN.lng + (col - 3) * 0.018, // ~1.7 km E-W steps
   };
+}
+
+// The demo warehouse — the depot both demo routes start from. Seeded WITH
+// coordinates, not just an address string: route-optimization's resolveDepot()
+// tier 1 needs depotLat/depotLng, and its later tiers fall back to geocoding,
+// which is dead whenever the Maps key or its billing is unavailable.
+const DEMO_DEPOT = {
+  lat: 30.2438,
+  lng: -97.6989,
+  address: "4200 Smith School Rd, Austin, TX 78744",
+};
+
+// Driver home bases, well away from the depot so optimizing a trip from a
+// driver's home visibly reorders the stops versus starting from the depot.
+const DEMO_DRIVER_HOMES = {
+  driver: { lat: 30.3305, lng: -97.7891, address: "6800 Burnet Rd, Austin, TX 78757" },
+  operator: { lat: 30.2201, lng: -97.7712, address: "2300 S Lamar Blvd, Austin, TX 78704" },
+};
+function driverHomeBase(key) {
+  const h = DEMO_DRIVER_HOMES[key];
+  return h ? { homeLat: h.lat, homeLng: h.lng, homeAddress: h.address } : {};
 }
 
 async function ensureCustomers() {
@@ -631,9 +671,17 @@ async function ensureRoutes(customers, driverIds) {
         name: r.name,
         driverId,
         isActive: true,
-        depotAddress: "4200 S Congress Ave, Austin, TX 78745",
+        depotLat: DEMO_DEPOT.lat,
+        depotLng: DEMO_DEPOT.lng,
+        depotAddress: DEMO_DEPOT.address,
       }),
-      update: { name: r.name, isActive: true },
+      update: {
+        name: r.name,
+        isActive: true,
+        depotLat: DEMO_DEPOT.lat,
+        depotLng: DEMO_DEPOT.lng,
+        depotAddress: DEMO_DEPOT.address,
+      },
     });
 
     let stopNumber = 0;
@@ -698,7 +746,11 @@ async function writeRouteRuns(routes) {
           status: run.status,
           scheduledDate: run.date,
           startTime: "08:00",
-          depotAddress: "4200 S Congress Ave, Austin, TX 78745",
+          // Runs snapshot the depot at dispatch — mirror the route's coords so a
+          // seeded run can be re-optimized from its own origin too.
+          depotLat: DEMO_DEPOT.lat,
+          depotLng: DEMO_DEPOT.lng,
+          depotAddress: DEMO_DEPOT.address,
           startedAt: done ? run.date : null,
           completedAt: done ? addDays(run.date, 0) : null,
           createdAt: run.date,
@@ -915,7 +967,43 @@ async function clearTransactions() {
   counts.payments = (await prisma.invoicePayment.deleteMany({ where: orVia("invoice") })).count;
   counts.creditNotes = (await prisma.creditNote.deleteMany({ where: orVia("customer") })).count;
   counts.invoiceItems = (await prisma.invoiceItem.deleteMany({ where: orVia("invoice") })).count;
+
+  // Commission chain (#421/#429) — accruals FK to Invoice, so they must go
+  // before it or `CommissionAccrual_invoiceId_fkey` blocks the invoice delete
+  // (this is exactly what broke the 2026-08-25 refresh). Order within the
+  // chain: payouts → statement lines → statements → adjustments → accruals,
+  // since lines FK both the statement and the accrual. Agents and their
+  // customer assignments are FOUNDATION — left alone, like customers.
+  counts.commissionPayouts = (
+    await prisma.commissionPayout.deleteMany({ where: orVia("statement") })
+  ).count;
+  counts.commissionStatementLines = (
+    await prisma.commissionStatementLine.deleteMany({ where: orVia("statement") })
+  ).count;
+  counts.commissionStatements = (await prisma.commissionStatement.deleteMany({ where })).count;
+  counts.commissionAdjustments = (
+    await prisma.commissionAdjustment.deleteMany({ where: orVia("accrual") })
+  ).count;
+  counts.commissionAccruals = (
+    await prisma.commissionAccrual.deleteMany({ where: orVia("invoice") })
+  ).count;
+
   counts.invoices = (await prisma.invoice.deleteMany({ where: orVia("customer") })).count;
+  // Delivery rows FK the run stop AND reference order items; clear them before
+  // orders/stops so neither delete trips a constraint.
+  counts.deliveryMutations = (
+    await prisma.deliveryMutation.deleteMany({
+      // Reachable through EITHER parent: routeRunStopId and orderItemId are both
+      // nullable, so a row nested-created under one can carry a NULL tenantId
+      // and a NULL link to the other.
+      where: {
+        OR: [{ tenantId }, { routeRunStop: { tenantId } }, { orderItem: { order: { tenantId } } }],
+      },
+    })
+  ).count;
+  counts.deliveryBatches = (
+    await prisma.deliveryBatch.deleteMany({ where: orVia("routeRunStop") })
+  ).count;
   counts.orderItems = (await prisma.orderItem.deleteMany({ where: orVia("order") })).count;
   counts.orders = (await prisma.order.deleteMany({ where: orVia("customer") })).count;
   counts.routeRunStops = (await prisma.routeRunStop.deleteMany({ where: orVia("routeRun") })).count;
@@ -1080,6 +1168,13 @@ async function writeOrders(pricedPlans) {
         createdAt: plan.orderDate,
         requestedDeliveryDate: addDays(plan.orderDate, 1),
         deliveredAt: isDelivered ? addDays(plan.orderDate, 1) : null,
+        // Mirror what OrdersService.create does for app-created orders: seed the
+        // order's fulfillment path from its customer's default. Writing rows
+        // straight through Prisma bypasses that service default, which would
+        // leave the SHIP demo customer's orders on ROUTE and make the
+        // carrier-shipment demo (badge, filter, "Mark shipped", exclusion from
+        // the trip picker) impossible to show.
+        fulfillPath: plan.customer.fulfillPath ?? "ROUTE",
         hasRegulated: plan.lines.some((l) => l.trackedCategoryId),
       }),
     });
