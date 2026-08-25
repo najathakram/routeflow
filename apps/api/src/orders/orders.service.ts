@@ -37,6 +37,8 @@ import {
   ChangeRequestStatus,
   ChangeRequestType,
   NotificationEvent,
+  FulfillPath,
+  RouteRunStatus,
 } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { CreateOrderDto } from "./dto/create-order.dto";
@@ -44,6 +46,7 @@ import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
+import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import {
   assertRegulatedDeliverySatisfied,
   deriveStopRegulatedRequirements,
@@ -265,6 +268,7 @@ export class OrdersService implements OnApplicationBootstrap {
       limit = 20,
       deliveryDateFrom,
       deliveryDateTo,
+      fulfillPath,
     } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
@@ -289,6 +293,9 @@ export class OrdersService implements OnApplicationBootstrap {
 
     if (status) where.status = status;
     if (urgent !== undefined) where.urgent = urgent;
+    // Ad-hoc trips + fulfillment mode: filter by ROUTE/SHIP. Omitted ⇒ no where
+    // key at all (every existing order stays visible either way).
+    if (fulfillPath) where.fulfillPath = fulfillPath;
     if (deliveryDateFrom || deliveryDateTo) {
       where.requestedDeliveryDate = {
         ...(deliveryDateFrom ? { gte: new Date(deliveryDateFrom) } : {}),
@@ -1502,11 +1509,16 @@ export class OrdersService implements OnApplicationBootstrap {
       throw new BadRequestException("At least one item is required");
     }
 
-    // Load customer's pricing tier
-    const customerRecord = await this.prisma
-      .forTenant()
-      .customer.findUnique({ where: { id: customerId }, select: { pricingTier: true } });
+    // Load customer's pricing tier (+ default fulfillment path for new orders)
+    const customerRecord = await this.prisma.forTenant().customer.findUnique({
+      where: { id: customerId },
+      select: { pricingTier: true, fulfillPath: true },
+    });
     const defaultTier = customerRecord?.pricingTier ?? 1;
+    // Ad-hoc trips + fulfillment mode: an explicit dto value always wins, else
+    // fall back to the customer's own default, else ROUTE (byte-identical to
+    // today for every existing order/customer, which default to ROUTE too).
+    const fulfillPath = dto.fulfillPath ?? customerRecord?.fulfillPath ?? FulfillPath.ROUTE;
 
     // Unlisted (ad-hoc) lines have no productId — only fetch catalog rows for the
     // lines that reference a real product.
@@ -1911,6 +1923,7 @@ export class OrdersService implements OnApplicationBootstrap {
               // (0 = exempt; null/undefined = no override, fall back to the
               // customer/agent default). Validated by parseCommissionRatePct above.
               commissionRatePct,
+              fulfillPath,
               lineItems: { create: lineItemsData },
             },
             include: {
@@ -2281,6 +2294,13 @@ export class OrdersService implements OnApplicationBootstrap {
           select: { driver: { select: { contactName: true } } },
         });
         driverName = run?.driver?.contactName ?? "your driver";
+      } else if (
+        messagingEvent === NotificationEvent.OUT_FOR_DELIVERY &&
+        order.fulfillPath === FulfillPath.SHIP
+      ) {
+        // Ad-hoc trips + fulfillment mode: a SHIP order has no route run, so the
+        // "Out for Delivery" notification names the carrier instead of a driver.
+        driverName = order.shippingCarrier ?? "the carrier";
       }
       const vars: Record<string, string> = {
         orderNumber: order.orderNumber ?? "",
@@ -4278,6 +4298,64 @@ export class OrdersService implements OnApplicationBootstrap {
     });
 
     return updated;
+  }
+
+  /**
+   * Ad-hoc trips + fulfillment mode: change an order's fulfillment path
+   * (ROUTE ↔ SHIP) while it's still open. Locked once the order has left the
+   * "open" states — a shipped/delivered/cancelled order's fulfillment history
+   * shouldn't move out from under its trip/shipment records after the fact —
+   * and locked toward SHIP while the order sits on a live run.
+   */
+  async updateFulfillPath(orderId: string, dto: UpdateFulfillPathDto, _user?: JwtPayload) {
+    // `findFirst`, NOT `findUnique`: forTenant()'s findUnique can only POST-filter
+    // on the returned row's `tenantId`, and an exclusive `select` that omits it
+    // silently disables that check — which would leak another tenant's order
+    // status and driver name through the 400 messages below. findFirst gets
+    // `tenantId` injected into the `where`, so a foreign id simply 404s here.
+    const order = await this.prisma.forTenant().order.findFirst({
+      where: { id: orderId },
+      select: {
+        id: true,
+        status: true,
+        routeRunStopId: true,
+        routeRunStop: {
+          select: {
+            routeRun: { select: { status: true, driver: { select: { contactName: true } } } },
+          },
+        },
+      },
+    });
+    if (!order) throw new NotFoundException("Order not found");
+    if (
+      order.status === OrderStatus.OUT_FOR_DELIVERY ||
+      order.status === OrderStatus.DELIVERED ||
+      order.status === OrderStatus.CANCELLED
+    ) {
+      throw new BadRequestException("Fulfillment path can only be changed while the order is open");
+    }
+    // Status alone isn't enough: the dispatch sweep attaches orders to a run
+    // while they're still CONFIRMED, so a freshly dispatched order would flip
+    // to SHIP and render as "Shipped" while still standing as a stop on the
+    // driver's live run. Stale attachments (finished/cancelled runs —
+    // `routeRunStopId` is never cleared) are harmless, so only ACTIVE runs
+    // block, mirroring TripsService.checkEligibility's ON_ACTIVE_RUN predicate.
+    const run = order.routeRunStop?.routeRun ?? null;
+    const onActiveRun =
+      order.routeRunStopId != null &&
+      run != null &&
+      (run.status === RouteRunStatus.SCHEDULED || run.status === RouteRunStatus.IN_PROGRESS);
+    if (dto.fulfillPath === FulfillPath.SHIP && onActiveRun) {
+      throw new BadRequestException(
+        `This order is out on an active delivery run${
+          run?.driver?.contactName ? ` with ${run.driver.contactName}` : ""
+        }. Remove it from the run before switching it to shipping.`,
+      );
+    }
+    return this.prisma.forTenant().order.update({
+      where: { id: orderId },
+      data: { fulfillPath: dto.fulfillPath },
+    });
   }
 
   async toggleUrgent(id: string, user: JwtPayload, urgent?: boolean) {

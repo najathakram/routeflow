@@ -280,5 +280,16 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+    // ── Ad-hoc trip builder entitlement gate (WP12, spec 20) ────────────────────────
+    // Reads the tenant's live developer_mode addon flag and asserts the orders
+    // bulkbar action / trip-builder deep-link match it. Read-only: GETs and
+    // renders only — Build/Create trip/Send are never clicked.
+    // Uses operator auth state; the spec reads its token out of that session.
+    {
+      name: "trip-builder-gate",
+      testMatch: /20-trip-builder-gate\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
   ],
 });

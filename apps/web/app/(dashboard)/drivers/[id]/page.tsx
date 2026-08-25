@@ -25,6 +25,7 @@ import {
   useDriverMetrics,
   useUpdateDriver,
   useDeleteDriver,
+  type UpdateDriverInput,
 } from "@/lib/api/drivers";
 import { EditDriverModal } from "../_components/EditDriverModal";
 
@@ -159,7 +160,7 @@ export default function DriverDetailPage({ params }: { params: { id: string } })
 
   const completionRate = totalRuns > 0 ? Math.round((completedRuns / totalRuns) * 100) : 0;
 
-  const handleSaveDriver = async (data: Partial<typeof driver>) => {
+  const handleSaveDriver = async (data: UpdateDriverInput) => {
     await updateDriver.mutateAsync({ id: params.id, data });
     toast({ title: "Driver updated", variant: "success" });
   };

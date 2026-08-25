@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { NotFoundException, ForbiddenException } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { DriversService } from "./drivers.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -38,14 +39,28 @@ describe("DriversService", () => {
   let service: DriversService;
   let prisma: ReturnType<typeof createMockPrisma>;
 
+  let configGet: jest.Mock;
+  const originalFetch = global.fetch;
+
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // Defaults to "no key configured" so geocoding is a no-op for every pre-existing
+    // test — narrow it per-test to exercise the geocode-on-update paths below.
+    configGet = jest.fn().mockReturnValue(null);
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [DriversService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        DriversService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: ConfigService, useValue: { get: configGet } },
+      ],
     }).compile();
 
     service = module.get<DriversService>(DriversService);
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
   });
 
   // ─── findAll ──────────────────────────────────────────────────────────────
@@ -156,6 +171,92 @@ describe("DriversService", () => {
       const result = await service.findMetrics("drv-1");
 
       expect(result).toEqual({ completedRuns: 5, totalRuns: 10 });
+    });
+  });
+
+  // ─── update: home base geocoding ───────────────────────────────────────────
+
+  describe("update", () => {
+    it("composes homeAddress and writes coords when the geocoder succeeds", async () => {
+      prisma.driver.findUnique.mockResolvedValue(MOCK_DRIVER);
+      prisma.driver.update.mockResolvedValue(MOCK_DRIVER);
+      configGet.mockImplementation((key: string) =>
+        key === "googleMaps.apiKey" ? "test-key" : null,
+      );
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          results: [{ geometry: { location: { lat: 40.7128, lng: -74.006 } } }],
+        }),
+      }) as any;
+
+      await service.update("drv-1", {
+        homeLine1: "123 Main St",
+        homeCity: "Springfield",
+        homeState: "IL",
+        homeZip: "62701",
+      });
+
+      expect(prisma.driver.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "drv-1" },
+          data: expect.objectContaining({
+            homeAddress: "123 Main St, Springfield, IL, 62701",
+            homeLat: 40.7128,
+            homeLng: -74.006,
+          }),
+        }),
+      );
+    });
+
+    it("writes null coords without throwing when the geocoder fails", async () => {
+      prisma.driver.findUnique.mockResolvedValue(MOCK_DRIVER);
+      prisma.driver.update.mockResolvedValue(MOCK_DRIVER);
+      configGet.mockImplementation((key: string) =>
+        key === "googleMaps.apiKey" ? "test-key" : null,
+      );
+      global.fetch = jest.fn().mockRejectedValue(new Error("network down")) as any;
+
+      await expect(
+        service.update("drv-1", {
+          homeLine1: "123 Main St",
+          homeCity: "Springfield",
+          homeState: "IL",
+          homeZip: "62701",
+        }),
+      ).resolves.toEqual(MOCK_DRIVER);
+
+      expect(prisma.driver.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            homeAddress: "123 Main St, Springfield, IL, 62701",
+            homeLat: null,
+            homeLng: null,
+          }),
+        }),
+      );
+    });
+
+    it("never calls geocodeAddress when the update carries no home fields", async () => {
+      prisma.driver.findUnique.mockResolvedValue(MOCK_DRIVER);
+      prisma.driver.update.mockResolvedValue(MOCK_DRIVER);
+      configGet.mockImplementation((key: string) =>
+        key === "googleMaps.apiKey" ? "test-key" : null,
+      );
+      global.fetch = jest.fn();
+
+      await service.update("drv-1", { contactName: "New Name" });
+
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(prisma.driver.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { contactName: "New Name" },
+        }),
+      );
+      const data = prisma.driver.update.mock.calls[0][0].data;
+      expect(data).not.toHaveProperty("homeAddress");
+      expect(data).not.toHaveProperty("homeLat");
+      expect(data).not.toHaveProperty("homeLng");
     });
   });
 });

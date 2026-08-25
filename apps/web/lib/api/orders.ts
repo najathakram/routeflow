@@ -19,6 +19,8 @@ export interface Order {
     email?: string | null;
   };
   status: "DRAFT" | "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
+  /** ROUTE = dispatched on a delivery route (default); SHIP = supplier/carrier-shipped, excluded from trip/route dispatch. */
+  fulfillPath: "ROUTE" | "SHIP";
   urgent: boolean;
   subtotal: number;
   tax: number;
@@ -172,6 +174,7 @@ export function useOrders(
     productId?: string;
     status?: string;
     urgent?: boolean;
+    fulfillPath?: "ROUTE" | "SHIP";
     page?: number;
     limit?: number;
     deliveryDateFrom?: string;
@@ -529,6 +532,15 @@ export function usePatchOrderCommissionRate() {
   return useMutation<Order, Error, { id: string; commissionRatePct: number | null }>({
     mutationFn: ({ id, commissionRatePct }) =>
       apiClient.patch(`/orders/${id}/commission-rate`, { commissionRatePct }).then((r) => r.data),
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["orders", vars.id] }),
+  });
+}
+
+export function usePatchOrderFulfillPath() {
+  const qc = useQueryClient();
+  return useMutation<Order, Error, { id: string; fulfillPath: "ROUTE" | "SHIP" }>({
+    mutationFn: ({ id, fulfillPath }) =>
+      apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath }).then((r) => r.data),
     onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["orders", vars.id] }),
   });
 }

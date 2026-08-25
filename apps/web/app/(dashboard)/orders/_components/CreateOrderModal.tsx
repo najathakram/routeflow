@@ -43,9 +43,23 @@ import { SALES_AGENTS_ADDON } from "@/lib/api/addons";
 const schema = z.object({
   notes: z.string().optional(),
   urgent: z.boolean().optional(),
+  /** ROUTE (dispatched on a delivery route) vs SHIP (supplier/carrier-shipped,
+   *  excluded from trip/route dispatch) — seeded from the selected customer's
+   *  own default, editable per order via the segmented control below. Plain
+   *  `.optional()` (not `.default()`) matches `urgent` above — every call site
+   *  already supplies an explicit "ROUTE"/"SHIP" value, and `.default()` here
+   *  makes the zodResolver's inferred type disagree with useForm<FormValues>. */
+  fulfillPath: z.enum(["ROUTE", "SHIP"]).optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
+
+/**
+ * `OrderDraftPayload` (lib/drafts.ts) predates fulfillPath. Extended locally
+ * rather than widening the shared type — fully optional so drafts parked
+ * before this feature (missing the key) still hydrate fine.
+ */
+type DraftPayloadWithFulfillPath = OrderDraftPayload & { fulfillPath?: "ROUTE" | "SHIP" };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -54,6 +68,8 @@ interface SelectedCustomer {
   businessName: string;
   contactName?: string;
   pricingTier?: number;
+  /** Per-customer fulfillment default — seeds the order's fulfillPath on select. */
+  fulfillPath?: "ROUTE" | "SHIP";
 }
 
 interface LineItem {
@@ -299,19 +315,20 @@ export function CreateOrderModal({
     barcodeScanHandlerRef.current(code);
   };
 
-  const { register, handleSubmit, reset, watch } = useForm<FormValues>({
+  const { register, handleSubmit, reset, watch, setValue } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { urgent: false },
+    defaultValues: { urgent: false, fulfillPath: "ROUTE" },
   });
 
   const isUrgent = watch("urgent");
   const notesValue = watch("notes");
+  const fulfillPath = watch("fulfillPath");
 
   // Reset the builder each time it opens (a fresh session). For a resume, the
   // hydration effect below re-fills the state from the draft payload right after.
   React.useEffect(() => {
     if (!isOpen) return;
-    reset({ urgent: false });
+    reset({ urgent: false, fulfillPath: "ROUTE" });
     setCustomerSearch("");
     setDebouncedCustomerSearch("");
     setSelectedCustomer(null);
@@ -665,7 +682,7 @@ export function CreateOrderModal({
   // ── Minimize & resume drafts (pos-cost-roles-spec §2) ───────────────────────
 
   // The full builder state, serialized so a parked draft restores exactly.
-  const draftPayload = React.useMemo<OrderDraftPayload>(
+  const draftPayload = React.useMemo<DraftPayloadWithFulfillPath>(
     () => ({
       customer: selectedCustomer,
       lineItems,
@@ -677,6 +694,7 @@ export function CreateOrderModal({
       urgent: !!isUrgent,
       floorAcked: Array.from(floorAcked),
       commissionRatePct,
+      fulfillPath: fulfillPath ?? "ROUTE",
     }),
     [
       selectedCustomer,
@@ -689,6 +707,7 @@ export function CreateOrderModal({
       isUrgent,
       floorAcked,
       commissionRatePct,
+      fulfillPath,
     ],
   );
   const draftPayloadJson = JSON.stringify(draftPayload);
@@ -786,7 +805,7 @@ export function CreateOrderModal({
     if (!isOpen || !resumeDraftId || !loadedDraft) return;
     if (hydratedRef.current === loadedDraft.id) return;
     hydratedRef.current = loadedDraft.id;
-    const p = (loadedDraft.payload ?? {}) as unknown as OrderDraftPayload;
+    const p = (loadedDraft.payload ?? {}) as unknown as DraftPayloadWithFulfillPath;
     setSelectedCustomer(p.customer ?? null);
     setLineItems(Array.isArray(p.lineItems) ? p.lineItems : []);
     setOrderDiscount(p.orderDiscount ?? "");
@@ -795,7 +814,11 @@ export function CreateOrderModal({
     setOrderDate(p.orderDate ?? "");
     setCommissionRatePct(p.commissionRatePct ?? null);
     setFloorAcked(new Set(p.floorAcked ?? []));
-    reset({ notes: p.notes ?? "", urgent: !!p.urgent });
+    // fulfillPath round-trips from the parked draft itself — NOT re-derived from
+    // the customer's own default (that only seeds a FRESH selection; see the
+    // picker's onClick). Order matters: this reset() must run after
+    // setSelectedCustomer above so a resumed SHIP order stays SHIP.
+    reset({ notes: p.notes ?? "", urgent: !!p.urgent, fulfillPath: p.fulfillPath ?? "ROUTE" });
     setActiveDraftId(loadedDraft.id);
     // Seed the autosave baseline so hydration itself never triggers a write. Key
     // order must match `draftPayload` — the comparison is on the JSON string.
@@ -810,6 +833,7 @@ export function CreateOrderModal({
       urgent: !!p.urgent,
       floorAcked: p.floorAcked ?? [],
       commissionRatePct: p.commissionRatePct ?? null,
+      fulfillPath: p.fulfillPath ?? "ROUTE",
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, resumeDraftId, loadedDraft]);
@@ -897,6 +921,7 @@ export function CreateOrderModal({
         items: itemsForSubmit,
         notes: data.notes,
         urgent: data.urgent,
+        fulfillPath: data.fulfillPath || "ROUTE",
         requestedDeliveryDate: requestedDeliveryDate || undefined,
         orderDate: orderDate || undefined,
         ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
@@ -1137,6 +1162,12 @@ export function CreateOrderModal({
                             type="button"
                             onClick={() => {
                               setSelectedCustomer(c);
+                              // Seed the order's fulfillment from this customer's own
+                              // default — done here (not a selectedCustomer-keyed
+                              // effect) so hydrating a parked draft's own
+                              // fulfillPath — via the same setSelectedCustomer call
+                              // below — is never clobbered by this default.
+                              setValue("fulfillPath", c.fulfillPath ?? "ROUTE");
                               setCustomerSearch("");
                               setDebouncedCustomerSearch("");
                             }}
@@ -1845,6 +1876,37 @@ export function CreateOrderModal({
                 </p>
               </div>
             )}
+
+            <div className="space-y-1">
+              <label className="block text-xs font-medium text-navy/70">Fulfillment</label>
+              <div className="inline-flex rounded-lg border border-surface-border bg-white p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setValue("fulfillPath", "ROUTE")}
+                  className={cn(
+                    "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                    fulfillPath === "ROUTE" ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
+                  )}
+                >
+                  Delivery route
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setValue("fulfillPath", "SHIP")}
+                  className={cn(
+                    "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                    fulfillPath === "SHIP" ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
+                  )}
+                >
+                  Ship via carrier
+                </button>
+              </div>
+              {fulfillPath === "SHIP" && (
+                <p className="text-[11px] leading-snug text-navy/70">
+                  Ships via carrier — won&apos;t appear on delivery routes.
+                </p>
+              )}
+            </div>
 
             <Textarea
               label="Notes"

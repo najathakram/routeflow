@@ -26,6 +26,7 @@ import {
   Building2,
   Layers,
   Megaphone,
+  Route as RouteIcon,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
@@ -66,7 +67,7 @@ interface CommandItem {
 // ─── Static command definitions ───────────────────────────────────────────────
 
 /** Command ids for in-development dispatch/driver/route surfaces — hidden without developer_mode */
-const DEV_MODE_COMMAND_IDS = ["nav-routes", "nav-drivers", "act-new-route"];
+const DEV_MODE_COMMAND_IDS = ["nav-routes", "nav-drivers", "act-new-route", "act-plan-trip"];
 
 function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] {
   const { enabled: devMode } = useDeveloperMode();
@@ -232,6 +233,14 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
           icon: Plus,
           action: () => router.push("/routes/create"),
           keywords: "create add route",
+        },
+        {
+          id: "act-plan-trip",
+          group: "Actions",
+          label: "Plan delivery trip",
+          icon: RouteIcon,
+          action: () => router.push("/routes/trips/new"),
+          keywords: "adhoc trip dispatch delivery",
         },
         {
           id: "act-new-customer",

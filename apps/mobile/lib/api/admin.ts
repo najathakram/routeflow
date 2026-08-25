@@ -126,6 +126,12 @@ export interface AdminOrder {
   shippingCarrier?: string | null;
   shippingTrackingNumber?: string | null;
   shippedAt?: string | null;
+  /**
+   * ROUTE (default) = eligible for driver-route dispatch; SHIP = supplier/
+   * carrier-shipped, excluded from every trip/route dispatch sweep. Every
+   * order has one — not optional, just like the API's `@default(ROUTE)`.
+   */
+  fulfillPath: "ROUTE" | "SHIP";
   createdAt: string;
   customer?: {
     id: string;
@@ -230,6 +236,8 @@ export function useAdminOrders(params?: {
   customerId?: string;
   /** PR-B: "which orders had this item?" — mirrors ListOrdersDto.productId. */
   productId?: string;
+  /** Ad-hoc trips: filter the orders list to ROUTE-only or SHIP-only. */
+  fulfillPath?: "ROUTE" | "SHIP";
 }) {
   return useQuery<{ data: AdminOrder[]; meta: PaginationMeta }>({
     queryKey: ["admin", "orders", params],
@@ -563,6 +571,8 @@ export interface AdminRoute {
   description?: string;
   isActive?: boolean;
   driverId?: string;
+  /** SCHEDULED (the recurring templates list) or ADHOC (a one-shot trip). */
+  kind?: "SCHEDULED" | "ADHOC";
   _count?: { stops: number };
   runs?: AdminRouteRunSummary[];
 }
@@ -592,6 +602,8 @@ export function useAdminRoutes(params?: {
   isActive?: boolean;
   page?: number;
   limit?: number;
+  /** Defaults server-side to SCHEDULED — pass "ADHOC" for the trips list. */
+  kind?: "SCHEDULED" | "ADHOC";
 }) {
   return useQuery<{ data: AdminRoute[]; meta: PaginationMeta }>({
     queryKey: ["admin", "routes", params],
@@ -614,6 +626,11 @@ export interface AdminDriver {
   vehicleMake?: string;
   vehicleModel?: string;
   vehiclePlate?: string;
+  /** Home base, set from the driver profile's Home Base fields. Coords are what the
+   * DRIVER trip origin resolves from — without them `POST /trips` 400s. */
+  homeAddress?: string | null;
+  homeLat?: number | null;
+  homeLng?: number | null;
   status: string;
   user?: {
     id: string;
@@ -628,6 +645,112 @@ export function useAdminDrivers(params?: { status?: string; page?: number; limit
     queryKey: ["admin", "drivers", params],
     queryFn: () => apiClient.get("/drivers", { params }).then((r) => r.data),
     staleTime: 60_000,
+  });
+}
+
+// ─── Ad-hoc trips (Admin) ─────────────────────────────────────────────────────
+//
+// Backs the API's TripsModule (apps/api/src/trips): `GET /trips/eligibility`
+// and `POST /trips`. Dispatching the created draft route still goes through
+// the existing `POST /route-runs` endpoint — `useCreateTripRun` below is a
+// separate, orderIds-aware mutation against that same endpoint, deliberately
+// NOT an edit to `useCreateRun` in lib/api/routes.ts, so the scheduled-route
+// template dispatch flow at (operator)/routes/[id].tsx (which never sends
+// orderIds and must keep sweeping every eligible order for its stops) stays
+// byte-identical.
+
+export type TripIneligibleReason =
+  | "SHIP_FULFILLMENT"
+  | "INELIGIBLE_STATUS"
+  | "ON_ACTIVE_RUN"
+  | "PREVIOUSLY_DISPATCHED"
+  | "NO_ADDRESS"
+  | "NOT_FOUND";
+
+export interface TripEligibilityRow {
+  orderId: string;
+  orderNumber: string | null;
+  customerId: string | null;
+  customerName: string | null;
+  eligible: boolean;
+  reason?: TripIneligibleReason;
+  /** Human-readable detail from the server — prefer this over a locally
+   *  hard-coded label per `reason` when present. */
+  detail?: string;
+}
+
+/** GET /trips/eligibility?orderIds=a,b,c — enabled only once orders are picked. */
+export function useTripEligibility(orderIds: string[]) {
+  return useQuery<TripEligibilityRow[]>({
+    queryKey: ["trips", "eligibility", orderIds],
+    queryFn: () =>
+      apiClient
+        .get("/trips/eligibility", { params: { orderIds: orderIds.join(",") } })
+        .then((r) => r.data),
+    enabled: orderIds.length > 0,
+  });
+}
+
+/** The trip's start point — mirrors the API's `CreateTripDto.origin` union. */
+export type TripOrigin =
+  | { type: "TENANT" }
+  | { type: "DRIVER"; driverId: string }
+  | { type: "ADDRESS"; line1: string; city?: string; state?: string; zip?: string };
+
+export interface CreateTripDto {
+  orderIds: string[];
+  name?: string;
+  driverId?: string;
+  origin: TripOrigin;
+}
+
+export interface CreatedTripRoute {
+  id: string;
+  name: string;
+  kind: "ADHOC";
+  driverId?: string | null;
+  depotLat?: number | null;
+  depotLng?: number | null;
+  depotAddress?: string | null;
+  stops?: AdminRouteDetailStop[];
+}
+
+/** POST /trips — creates a DRAFT ad-hoc route (kind: ADHOC). Zero order writes;
+ *  orders only attach once the draft is dispatched via `useCreateTripRun`. */
+export function useCreateTrip() {
+  const qc = useQueryClient();
+  return useMutation<CreatedTripRoute, Error, CreateTripDto>({
+    mutationFn: (dto) => apiClient.post("/trips", dto).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "routes"] });
+    },
+  });
+}
+
+/**
+ * POST /route-runs with `orderIds` — narrows the API's dispatch sweep (see
+ * routes.service.ts `createRun`, WP3) to just the orders the trip builder
+ * screen picked, instead of sweeping every currently-eligible order for the
+ * draft route's stops.
+ */
+export function useCreateTripRun() {
+  const qc = useQueryClient();
+  return useMutation<
+    { id: string },
+    Error,
+    {
+      routeId: string;
+      scheduledDate: string;
+      driverId?: string;
+      notes?: string;
+      orderIds?: string[];
+    }
+  >({
+    mutationFn: (dto) => apiClient.post("/route-runs", dto).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["route-runs"] });
+      qc.invalidateQueries({ queryKey: ["admin", "routes"] });
+    },
   });
 }
 

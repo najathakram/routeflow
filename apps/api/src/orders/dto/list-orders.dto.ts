@@ -1,6 +1,6 @@
 import { IsBoolean, IsDateString, IsEnum, IsInt, IsOptional, IsString, Min } from "class-validator";
 import { Transform, Type } from "class-transformer";
-import { OrderStatus } from "@prisma/client";
+import { FulfillPath, OrderStatus } from "@prisma/client";
 
 export class ListOrdersDto {
   @IsOptional() @IsString() customerId?: string;
@@ -18,4 +18,7 @@ export class ListOrdersDto {
   @IsOptional() @IsInt() @Min(1) @Type(() => Number) limit?: number = 20;
   @IsOptional() @IsDateString() deliveryDateFrom?: string;
   @IsOptional() @IsDateString() deliveryDateTo?: string;
+  @IsOptional()
+  @IsEnum(FulfillPath)
+  fulfillPath?: FulfillPath;
 }

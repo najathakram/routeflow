@@ -173,6 +173,13 @@ export interface CreateOrderAsDriverDto {
   discountAmount?: number;
   /** Optional flat shipping fee added to the order total (never taxed). Only send when > 0. */
   shippingFee?: number;
+  /**
+   * Fulfillment mode for this order. Omit for ROUTE (the server default and the
+   * dispatch-eligible path); "SHIP" marks it carrier/supplier-shipped, which
+   * excludes it from every trip/route sweep. Seeded from the customer's own
+   * default in `NewOrderScreen`.
+   */
+  fulfillPath?: "ROUTE" | "SHIP";
   routeRunId?: string;
   routeRunStopId?: string;
   immediateDelivery?: boolean;

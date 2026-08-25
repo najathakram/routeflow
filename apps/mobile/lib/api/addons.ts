@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { DEVELOPER_MODE_ADDON } from "@routeflow/types";
+import { DEVELOPER_MODE_ADDON, DRIVER_PAYMENTS_ADDON } from "@routeflow/types";
 import { apiClient } from "../api-client";
 import { useAuthStore } from "../auth-store";
 import { useTenantStore } from "../tenant-store";
@@ -43,6 +43,31 @@ export function useDeveloperMode(): { enabled: boolean; isLoading: boolean; reso
   });
 
   const enabled = query.data?.addons?.includes(DEVELOPER_MODE_ADDON) ?? false;
+  const isLoading = isAuthenticated && query.isPending && query.failureCount === 0;
+  return { enabled, isLoading, resolved: query.isSuccess };
+}
+
+// ─── Driver payments (per-tenant at-door collection opt-in) ───────────────────
+//
+// Owner decision 2026-08-24: collecting money at the door is opt-in per tenant
+// (affa yes, bb-distro no). Same query/cache as useDeveloperMode — one addons
+// fetch serves both. Fail-CLOSED on `enabled` (unknown ⇒ no payment UI) but the
+// at-door flow must key the "which completion endpoint" choice off `resolved`
+// where it can strand a driver: when the flag is unknown, payment.tsx falls
+// back to the plain complete endpoint, which every tenant may call.
+export function useDriverPayments(): { enabled: boolean; isLoading: boolean; resolved: boolean } {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const tenantSlug = useTenantStore((s) => s.slug);
+
+  const query = useQuery<{ addons: string[] }>({
+    queryKey: ["tenant", tenantSlug, "addons"],
+    queryFn: () => apiClient.get("/tenants/me/addons").then((r) => r.data),
+    staleTime: 5 * 60_000,
+    retry: 2,
+    enabled: isAuthenticated,
+  });
+
+  const enabled = query.data?.addons?.includes(DRIVER_PAYMENTS_ADDON) ?? false;
   const isLoading = isAuthenticated && query.isPending && query.failureCount === 0;
   return { enabled, isLoading, resolved: query.isSuccess };
 }

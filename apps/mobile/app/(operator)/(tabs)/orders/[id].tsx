@@ -55,6 +55,7 @@ import { ShipmentSection, ShipmentEditModal } from "../../../../components/Shipm
 import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
 import { ReasonSheet } from "../../../../components/ReasonSheet";
 import { canDeleteOrder, demotionRequiresReason } from "../../../../lib/order-status-flow";
+import { statusActions, type StatusAction } from "../../../../lib/order-actions";
 
 function formatCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -82,151 +83,6 @@ function statusPill(status: string): {
       return { variant: "red", label: "Cancelled" };
     default:
       return { variant: "gray", label: status };
-  }
-}
-
-interface StatusAction {
-  label: string;
-  toStatus: OrderStatus;
-  style: "primary" | "secondary" | "warning" | "danger";
-  icon: string;
-  confirmMessage?: string;
-  /** Passed to PATCH /status (e.g. the demote-to-CONFIRMED reason). */
-  reason?: string;
-  /** Route through POST /orders/:id/reopen (CANCELLED → PENDING) instead of /status. */
-  reopenCancelled?: boolean;
-}
-
-function statusActions(current: string): StatusAction[] {
-  switch (current) {
-    case "DRAFT":
-      return [
-        {
-          label: "Submit for review",
-          toStatus: "PENDING",
-          style: "primary",
-          icon: "arrow-forward-circle-outline",
-        },
-      ];
-    case "PENDING":
-      return [
-        {
-          label: "Confirm order",
-          toStatus: "CONFIRMED",
-          style: "primary",
-          icon: "checkmark-circle-outline",
-        },
-        {
-          label: "Cancel order",
-          toStatus: "CANCELLED",
-          style: "danger",
-          icon: "close-circle-outline",
-          confirmMessage: "Cancel this order? It cannot be undone easily.",
-        },
-      ];
-    case "CONFIRMED":
-      return [
-        {
-          // PR-4: this is the van-sale two-tap flow — DELIVERED already chains
-          // openSendForOrder() → SendInvoiceSheet below, so promoting it to
-          // primary makes "deliver, then send" the default path.
-          label: "Deliver & send invoice",
-          toStatus: "DELIVERED",
-          style: "primary",
-          icon: "flash-outline",
-          confirmMessage: "Mark as delivered without going through dispatch?",
-        },
-        {
-          label: "Send for delivery",
-          toStatus: "OUT_FOR_DELIVERY",
-          style: "secondary",
-          icon: "car-outline",
-        },
-        {
-          label: "Back to pending",
-          toStatus: "PENDING",
-          style: "warning",
-          icon: "arrow-back-circle-outline",
-          confirmMessage: "Revert order back to Pending?",
-        },
-        {
-          label: "Cancel order",
-          toStatus: "CANCELLED",
-          style: "danger",
-          icon: "close-circle-outline",
-          confirmMessage: "Cancel this order?",
-        },
-      ];
-    case "OUT_FOR_DELIVERY":
-      return [
-        {
-          label: "Mark delivered",
-          toStatus: "DELIVERED",
-          style: "primary",
-          icon: "checkmark-done-circle-outline",
-        },
-        {
-          label: "Partial delivery",
-          toStatus: "PARTIALLY_DELIVERED",
-          style: "secondary",
-          icon: "git-branch-outline",
-        },
-        {
-          label: "Back to confirmed",
-          toStatus: "CONFIRMED",
-          style: "warning",
-          icon: "arrow-back-circle-outline",
-          confirmMessage: "Revert order back to Confirmed?",
-        },
-        {
-          label: "Cancel order",
-          toStatus: "CANCELLED",
-          style: "danger",
-          icon: "close-circle-outline",
-          confirmMessage: "Cancel this order?",
-        },
-      ];
-    case "PARTIALLY_DELIVERED":
-      return [
-        {
-          label: "Mark fully delivered",
-          toStatus: "DELIVERED",
-          style: "primary",
-          icon: "checkmark-done-circle-outline",
-        },
-        {
-          label: "Back out for delivery",
-          toStatus: "OUT_FOR_DELIVERY",
-          style: "warning",
-          icon: "arrow-back-circle-outline",
-          confirmMessage: "Revert back to Out for delivery?",
-        },
-        {
-          label: "Cancel order",
-          toStatus: "CANCELLED",
-          style: "danger",
-          icon: "close-circle-outline",
-          confirmMessage: "Cancel this order?",
-        },
-      ];
-    // Note: DELIVERED has NO reopen — the API deliberately blocks
-    // DELIVERED→CONFIRMED (removed as BUG-ORD-01); it would always 400. Only a
-    // CANCELLED order can be reopened, via the dedicated /reopen endpoint below.
-    case "CANCELLED":
-      // POST /orders/:id/reopen → PENDING (OPERATOR-only; server 400s if a
-      // paid/partial/written-off invoice exists).
-      return [
-        {
-          label: "Reopen order",
-          toStatus: "PENDING",
-          style: "primary",
-          icon: "refresh-outline",
-          confirmMessage: "Reopen this cancelled order back to Pending?",
-          reopenCancelled: true,
-        },
-      ];
-    default:
-      return [];
   }
 }
 
@@ -292,7 +148,11 @@ export default function OrderDetailScreen() {
   }
 
   const s = statusPill(order.status);
-  const actions = statusActions(order.status);
+  // `AdminOrder.status` is a plain string (server-shaped payload); `order-actions`
+  // pins its signature to the narrower `OrderStatus` union so a typo'd status
+  // string is caught at the call site instead of silently falling through to
+  // the switch's `default: []`.
+  const actions = statusActions(order.status as OrderStatus, order.fulfillPath);
   // R1: trust the server edit-window — items are now editable at every live stage
   // (incl. OUT_FOR_DELIVERY / DELIVERED); only CANCELLED closes it. Fall back to a
   // non-cancelled check for older API responses that don't send editWindow.
@@ -717,6 +577,16 @@ export default function OrderDetailScreen() {
                 {s.label}
               </Pill>
               {order.urgent ? <Pill variant="red">Urgent</Pill> : null}
+              {/* ROUTE (the vast majority) gets no badge — a badge on every row would
+                  be noise. SHIP is the exception worth calling out. */}
+              {order.fulfillPath === "SHIP" ? (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+                  <Ionicons name="cube-outline" size={12} color="#636366" />
+                  <Pill variant="gray" small>
+                    Ship
+                  </Pill>
+                </View>
+              ) : null}
             </View>
             <Text style={styles.customerName}>{order.customer?.businessName ?? "Customer"}</Text>
             {order.customer?.contactName || order.customer?.phone ? (
@@ -1018,6 +888,12 @@ export default function OrderDetailScreen() {
                   </Pressable>
                 ))}
               </View>
+              {order.fulfillPath === "SHIP" &&
+              actions.some((a) => a.toStatus === "OUT_FOR_DELIVERY") ? (
+                <Text style={styles.shipHint}>
+                  Sets the order to Out for delivery — the customer is notified it's on the way.
+                </Text>
+              ) : null}
             </View>
           ) : null}
 
@@ -1230,4 +1106,5 @@ const styles = StyleSheet.create({
   dangerAction: { backgroundColor: ios.fill3 },
   actionBtnText: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
   actionDisabled: { opacity: 0.5 },
+  shipHint: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 8 },
 });

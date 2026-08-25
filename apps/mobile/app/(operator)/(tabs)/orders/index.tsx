@@ -15,6 +15,8 @@ import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavAction, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminCustomer, useAdminOrders, type AdminOrder } from "../../../../lib/api/admin";
 import { useProduct } from "../../../../lib/api/products";
+import { useDeveloperMode } from "../../../../lib/api/addons";
+import { useTripDraftStore } from "../../../../lib/trip-draft";
 import { DraftStrip } from "../../../../components/DraftStrip";
 import {
   customerFilterChipLabel,
@@ -97,6 +99,37 @@ export default function OrdersListScreen() {
     resolveProductIdParam(params.productId),
   );
 
+  // Ad-hoc trips: multi-select is a hide-only affordance (the underlying
+  // POST /trips endpoint is already OPERATOR-role-gated server-side), so it
+  // keys off `enabled` rather than `resolved` — the same tenant-scoped hook
+  // (operator)/_layout.tsx uses to gate the /trips route itself.
+  const { enabled: devMode } = useDeveloperMode();
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const setTripOrderIds = useTripDraftStore((s) => s.setOrderIds);
+
+  const toggleSelectMode = () => {
+    setSelectMode((v) => !v);
+    setSelected(new Set());
+  };
+
+  const toggleSelected = (orderId: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(orderId)) next.delete(orderId);
+      else next.add(orderId);
+      return next;
+    });
+  };
+
+  const handlePlanTrip = () => {
+    if (selected.size === 0) return;
+    setTripOrderIds([...selected]);
+    setSelectMode(false);
+    setSelected(new Set());
+    router.push("/(operator)/trips/new" as any);
+  };
+
   const statusParam = filter === "ALL" ? undefined : filter;
   const { data, isLoading, isFetching, refetch } = useAdminOrders({
     status: statusParam,
@@ -136,6 +169,11 @@ export default function OrdersListScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         largeTitle="Orders"
+        leading={
+          devMode ? (
+            <NavAction label={selectMode ? "Done" : "Select"} onPress={toggleSelectMode} />
+          ) : undefined
+        }
         trailing={
           <NavAction label="New" bold onPress={() => router.push("/(operator)/new-order")} />
         }
@@ -176,7 +214,14 @@ export default function OrdersListScreen() {
 
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ flexGrow: 1 }}
+        contentContainerStyle={[
+          { flexGrow: 1 },
+          // Bottom content inset so the last row is never hidden behind the
+          // floating bulk bar (which sits above this ScrollView, itself
+          // already above the operator tab bar — see the bulk bar's own
+          // comment below).
+          selectMode && { paddingBottom: 96 },
+        ]}
         refreshControl={
           <RefreshControl refreshing={isFetching && !isLoading} onRefresh={refetch} />
         }
@@ -207,12 +252,35 @@ export default function OrdersListScreen() {
                 duplicateCount={
                   o.customer?.id ? (pendingCountByCustomer.get(o.customer?.id) ?? 0) : 0
                 }
-                onPress={() => router.push(`/(operator)/orders/${o.id}`)}
+                selectMode={selectMode}
+                selected={selected.has(o.id)}
+                onPress={() =>
+                  selectMode ? toggleSelected(o.id) : router.push(`/(operator)/orders/${o.id}`)
+                }
               />
             ))}
           </View>
         )}
       </ScrollView>
+
+      {/* Bottom bulk bar — an in-flow sibling below the ScrollView (not
+          absolutely positioned), so it already sits above the persistent
+          operator tab bar rendered in (operator)/_layout.tsx: that bar is
+          itself a flex sibling below this whole screen's <Stack>, so this
+          screen's own bounds already end before it. Design directive: 44pt
+          target, no double-submit. */}
+      {selectMode ? (
+        <View style={styles.bulkBar}>
+          <Pressable
+            style={[styles.bulkBtn, selected.size === 0 && styles.bulkBtnDisabled]}
+            disabled={selected.size === 0}
+            onPress={handlePlanTrip}
+          >
+            <Ionicons name="navigate-outline" size={18} color="#fff" />
+            <Text style={styles.bulkBtnText}>{selected.size} selected · Plan trip</Text>
+          </Pressable>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -220,10 +288,14 @@ export default function OrdersListScreen() {
 function OrderRow({
   order,
   duplicateCount = 0,
+  selectMode = false,
+  selected = false,
   onPress,
 }: {
   order: AdminOrder;
   duplicateCount?: number;
+  selectMode?: boolean;
+  selected?: boolean;
   onPress: () => void;
 }) {
   const s = statusPill(order.status);
@@ -236,8 +308,17 @@ function OrderRow({
   }, [order.createdAt]);
 
   return (
+    // The full row is the hit area for both navigation and select-mode
+    // toggling — no separate small checkbox-only pressable.
     <Pressable style={styles.row} onPress={onPress}>
       <View style={styles.rowHead}>
+        {selectMode ? (
+          <Ionicons
+            name={selected ? "checkmark-circle" : "ellipse-outline"}
+            size={22}
+            color={selected ? ios.brand : ios.gray[3]}
+          />
+        ) : null}
         <View style={{ flex: 1, minWidth: 0 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
             <Text style={styles.rowTitle} numberOfLines={1}>
@@ -277,7 +358,7 @@ function OrderRow({
       </View>
       <View style={styles.rowFoot}>
         <Text style={styles.rowTotal}>{formatCurrency(order.total)}</Text>
-        <Ionicons name="chevron-forward" size={16} color={ios.gray[3]} />
+        {selectMode ? null : <Ionicons name="chevron-forward" size={16} color={ios.gray[3]} />}
       </View>
     </Pressable>
   );
@@ -359,4 +440,23 @@ const styles = StyleSheet.create({
     color: ios.label,
     fontVariant: ["tabular-nums"],
   },
+  bulkBar: {
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 16,
+    backgroundColor: ios.bgElev,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: ios.separator,
+  },
+  bulkBtn: {
+    minHeight: ios.rowMinH,
+    backgroundColor: ios.brand,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderRadius: 14,
+  },
+  bulkBtnDisabled: { opacity: 0.4 },
+  bulkBtnText: { color: "#fff", fontSize: 15, fontFamily: "Inter_600SemiBold" },
 });

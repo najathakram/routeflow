@@ -16,6 +16,7 @@ import {
   useUpdateDriver,
   useDeleteDriver,
   type Driver,
+  type UpdateDriverInput,
 } from "@/lib/api/drivers";
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
@@ -129,7 +130,7 @@ export default function DriversPage() {
     return result.tempPassword;
   };
 
-  const handleSaveDriver = async (id: string, data: Partial<Driver>) => {
+  const handleSaveDriver = async (id: string, data: UpdateDriverInput) => {
     await updateDriver.mutateAsync({ id, data });
     toast({ title: "Driver updated", variant: "success" });
   };

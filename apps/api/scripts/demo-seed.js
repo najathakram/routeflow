@@ -409,6 +409,23 @@ async function ensureTenant(existing) {
   });
   console.log("   ✓ Developer mode addon active (driver/dispatch demo screens)");
 
+  // At-door payment collection is per-tenant opt-in (driver_payments addon,
+  // 2026-08-24). The demo walkthrough shows the driver collecting cash at the
+  // door, so the demo tenant needs the addon or payment.tsx degrades to the
+  // on-account completion path.
+  await prisma.tenantAddon.upsert({
+    where: { tenantId_addonKey: { tenantId: DEMO_TENANT_ID, addonKey: "driver_payments" } },
+    create: {
+      tenantId: DEMO_TENANT_ID,
+      addonKey: "driver_payments",
+      stripePriceId: null,
+      stripeItemId: null,
+      active: true,
+    },
+    update: { active: true },
+  });
+  console.log("   ✓ Driver payments addon active (at-door collection demo)");
+
   for (const cat of IRS_SYSTEM_CATEGORIES) {
     await prisma.expenseCategory.upsert({
       where: { tenantId_code: { tenantId: DEMO_TENANT_ID, code: cat.code } },
@@ -510,13 +527,27 @@ async function ensureSuppliers() {
   return ids;
 }
 
+// Deterministic Austin-area spread — no randomness, so re-seeding is idempotent.
+// Gives every demo customer address a lat/lng so the trip-builder optimizer's
+// local NN+2-opt fallback works even with no GOOGLE_MAPS_API_KEY configured.
+const DEMO_ORIGIN = { lat: 30.2672, lng: -97.7431 }; // downtown Austin
+function demoAddressCoords(index) {
+  const row = index % 7;
+  const col = Math.floor(index / 7) % 7;
+  return {
+    lat: DEMO_ORIGIN.lat + (row - 3) * 0.015, // ~1.6 km N-S steps
+    lng: DEMO_ORIGIN.lng + (col - 3) * 0.018, // ~1.7 km E-W steps
+  };
+}
+
 async function ensureCustomers() {
   const hash = await bcrypt.hash(DEMO_PASSWORD, 10);
   const out = [];
-  for (const c of CUSTOMERS) {
+  for (const [index, c] of CUSTOMERS.entries()) {
     const userId = stableId("user", c.username);
     const customerId = stableId("customer", c.key);
     const addressId = stableId("address", c.key);
+    const coords = demoAddressCoords(index);
 
     await prisma.user.upsert({
       where: { id: userId },
@@ -574,10 +605,12 @@ async function ensureCustomers() {
         city: c.address.city,
         state: c.address.state,
         zip: c.address.zip,
+        lat: coords.lat,
+        lng: coords.lng,
         isDefault: true,
         addressType: "SHIPPING",
       }),
-      update: { line1: c.address.line1, isDefault: true },
+      update: { line1: c.address.line1, lat: coords.lat, lng: coords.lng, isDefault: true },
     });
 
     out.push({ ...c, userId, customerId, addressId });

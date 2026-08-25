@@ -37,6 +37,14 @@ export interface CustomerDetail {
   pricingTier?: number;
   currency?: string;
   notes?: string;
+  /**
+   * The customer's DEFAULT fulfillment mode — new orders seed their own
+   * `fulfillPath` from it (`NewOrderScreen`, web `CreateOrderModal`); it never
+   * constrains an existing order. Optional because the API has returned it
+   * since launch (`Customer.fulfillPath @default(ROUTE)`) but older cached
+   * payloads may predate this client reading it.
+   */
+  fulfillPath?: "ROUTE" | "SHIP";
   addresses: Array<{
     id: string;
     line1: string;
@@ -336,6 +344,8 @@ export interface CreateCustomerDto {
   deliveryWindowEnd?: string;
   isTaxExempt?: boolean;
   taxId?: string;
+  /** Default fulfillment mode for this customer's new orders (server default ROUTE). */
+  fulfillPath?: "ROUTE" | "SHIP";
   /** Create-only: the customer's first address, bundled with the create. */
   addresses?: Array<{
     label: string;

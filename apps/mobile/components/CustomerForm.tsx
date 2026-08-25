@@ -21,6 +21,13 @@ export interface CustomerFormValues {
   deliveryWindowEnd: string;
   isTaxExempt: boolean;
   taxId: string;
+  /**
+   * The DEFAULT fulfillment mode new orders for this customer seed from
+   * (`NewOrderScreen`'s fulfillment row reads it) — not a constraint on the
+   * customer's own orders, which can still be overridden per-order. ROUTE
+   * (delivery route) is the default; SHIP = ships via carrier, never routed.
+   */
+  fulfillPath: "ROUTE" | "SHIP";
   // Create-only: bundled into the create payload as the customer's first
   // address (mirrors web's CustomerFormModal). Editing an existing
   // customer's address(es) happens on the dedicated Addresses screen
@@ -46,6 +53,7 @@ export function emptyCustomerForm(): CustomerFormValues {
     deliveryWindowEnd: "",
     isTaxExempt: false,
     taxId: "",
+    fulfillPath: "ROUTE",
     street: "",
     city: "",
     state: "",
@@ -71,6 +79,7 @@ export function customerFormFromValues(c: Record<string, any>): CustomerFormValu
     deliveryWindowEnd: c.deliveryWindowEnd ?? "",
     isTaxExempt: c.isTaxExempt ?? false,
     taxId: c.taxId ?? "",
+    fulfillPath: c.fulfillPath === "SHIP" ? "SHIP" : "ROUTE",
     // Edit mode never renders or submits the address section (see comment on
     // CustomerFormValues) — leave blank rather than prefill fields the form
     // can't save.
@@ -100,6 +109,13 @@ export interface CustomerPayload {
   deliveryWindowEnd?: string;
   isTaxExempt?: boolean;
   taxId?: string;
+  /**
+   * The customer's default fulfillment mode — seeds new orders' fulfillment
+   * row (mobile `NewOrderScreen`, web `CreateOrderModal`). Accepted on both
+   * create and edit (`CreateCustomerDto.fulfillPath` in lib/api/customers.ts,
+   * and the server's create/update DTOs since launch).
+   */
+  fulfillPath?: "ROUTE" | "SHIP";
   // Create-only bundle for the customer's first address — the mobile create
   // payload didn't carry an address at all before this; the API's
   // CreateCustomerDto already accepts it (see customers.service.ts create()).
@@ -186,6 +202,7 @@ function buildPayload(
     deliveryWindowEnd: mode === "edit" ? form.deliveryWindowEnd.trim() || undefined : undefined,
     isTaxExempt: form.isTaxExempt,
     taxId: form.taxId.trim() || undefined,
+    fulfillPath: form.fulfillPath,
     addresses:
       mode === "create" && hasFullAddress
         ? [{ label: "Main", line1: street, city, state, zip, isDefault: true }]
@@ -296,6 +313,52 @@ export function CustomerForm({
             placeholder="+1 555 555 1234"
             keyboardType="phone-pad"
           />
+        </FormField>
+      </FormSection>
+
+      <FormSection title="Fulfillment">
+        <FormField
+          label="Default fulfillment"
+          hint={
+            form.fulfillPath === "SHIP"
+              ? "Ships via carrier — won't appear on delivery routes."
+              : undefined
+          }
+        >
+          <View style={styles.fulfillRow}>
+            <Pressable
+              style={[styles.fulfillBtn, form.fulfillPath === "ROUTE" && styles.fulfillBtnActive]}
+              onPress={() => set("fulfillPath", "ROUTE")}
+              accessibilityRole="button"
+              accessibilityLabel="Delivery route"
+              accessibilityState={{ selected: form.fulfillPath === "ROUTE" }}
+            >
+              <Text
+                style={[
+                  styles.fulfillBtnText,
+                  form.fulfillPath === "ROUTE" && styles.fulfillBtnTextActive,
+                ]}
+              >
+                Delivery route
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.fulfillBtn, form.fulfillPath === "SHIP" && styles.fulfillBtnActive]}
+              onPress={() => set("fulfillPath", "SHIP")}
+              accessibilityRole="button"
+              accessibilityLabel="Ship via carrier"
+              accessibilityState={{ selected: form.fulfillPath === "SHIP" }}
+            >
+              <Text
+                style={[
+                  styles.fulfillBtnText,
+                  form.fulfillPath === "SHIP" && styles.fulfillBtnTextActive,
+                ]}
+              >
+                Ship via carrier
+              </Text>
+            </Pressable>
+          </View>
         </FormField>
       </FormSection>
 
@@ -477,6 +540,24 @@ const styles = StyleSheet.create({
   tierBtnActive: { backgroundColor: ios.brand },
   tierBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label2 },
   tierBtnTextActive: { color: "#fff" },
+  fulfillRow: { flexDirection: "row", gap: 8 },
+  fulfillBtn: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    backgroundColor: ios.fill3,
+  },
+  fulfillBtnActive: { backgroundColor: ios.brand },
+  fulfillBtnText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    textAlign: "center",
+  },
+  fulfillBtnTextActive: { color: "#fff" },
   switchRow: {
     flexDirection: "row",
     alignItems: "center",

@@ -53,6 +53,9 @@ const fixture: DraftBuilderState = {
   discountRaw: "10",
   shippingFeeRaw: "5",
   selectedCreditIds: ["credit-1", "credit-2"],
+  // Deliberately the NON-default mode, so the round-trip test below proves the
+  // parked value is restored rather than re-defaulted.
+  fulfillPath: "SHIP",
 };
 
 describe("toOrderDraftPayload / fromOrderDraftPayload round-trip", () => {
@@ -116,6 +119,18 @@ describe("toOrderDraftPayload / fromOrderDraftPayload round-trip", () => {
     const legacyPayload = toOrderDraftPayload(fixture);
     delete legacyPayload.selectedCreditIds;
     expect(fromOrderDraftPayload(legacyPayload).selectedCreditIds).toEqual([]);
+  });
+
+  it("writes fulfillPath on the wire and restores it — a parked SHIP order resumes as SHIP", () => {
+    const payload = toOrderDraftPayload(fixture);
+    expect(payload.fulfillPath).toBe("SHIP");
+    expect(fromOrderDraftPayload(payload).fulfillPath).toBe("SHIP");
+  });
+
+  it("defaults fulfillPath to ROUTE when resuming a payload parked before the field existed", () => {
+    const legacyPayload = toOrderDraftPayload(fixture);
+    delete legacyPayload.fulfillPath;
+    expect(fromOrderDraftPayload(legacyPayload).fulfillPath).toBe("ROUTE");
   });
 });
 

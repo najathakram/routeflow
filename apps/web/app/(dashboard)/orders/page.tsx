@@ -18,6 +18,8 @@ import {
   Download,
   History,
   Package,
+  Truck,
+  Route as RouteIcon,
 } from "lucide-react";
 import { PageHeader, Badge, Select, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -29,6 +31,8 @@ import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { downloadCsv, csvDate } from "@/lib/export";
 import { apiClient } from "@/lib/api-client";
+import { useDeveloperMode } from "@/lib/api/addons";
+import { saveTripDraft } from "@/lib/trip-draft";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
 
 // ─── Saved view definitions ───────────────────────────────────────────────────
@@ -54,6 +58,14 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "PARTIALLY_DELIVERED", label: "Partially Delivered" },
   { value: "DELIVERED", label: "Delivered" },
   { value: "CANCELLED", label: "Cancelled" },
+];
+
+// ─── Fulfillment filter options ───────────────────────────────────────────────
+
+const FULFILLMENT_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "All Fulfillment" },
+  { value: "ROUTE", label: "Delivery route" },
+  { value: "SHIP", label: "Ship via carrier" },
 ];
 
 // ─── Date column ──────────────────────────────────────────────────────────────
@@ -113,14 +125,21 @@ export default function OrdersPage() {
     // PR-B: "which orders had this item?" — round-trips through the URL like
     // every other chip here so a deep link / Back nav preserves it.
     productId: "",
+    // Ad-hoc trips: ROUTE (dispatched) vs SHIP (supplier/carrier-shipped,
+    // excluded from trip/route dispatch) — same URL-chip treatment as status.
+    fulfillPath: "",
   });
   const statusFilter = (urlFilters.status as string) ?? "";
   const urgentOnly = (urlFilters.urgent as boolean) ?? false;
   const dateFrom = (urlFilters.dateFrom as string) ?? "";
   const dateTo = (urlFilters.dateTo as string) ?? "";
   const productIdFilter = (urlFilters.productId as string) ?? "";
+  const fulfillPathFilter = (urlFilters.fulfillPath as string) ?? "";
   // Only fetched to render the chip's label — the filter itself is the id.
   const { data: filterProduct } = useProduct(productIdFilter);
+  // Hide-only gate for the ad-hoc trip builder entry point — bulkbar action stays
+  // hidden on `enabled` (never `resolved`; this is a nav affordance, not a data guard).
+  const { enabled: devModeEnabled } = useDeveloperMode();
 
   // Customer search is URL-backed like the chips above, so drilling into an order
   // and pressing Back returns to the search that found it.
@@ -248,7 +267,14 @@ export default function OrdersPage() {
   // Reset page when filters change — but not on mount: page now lives in the
   // URL (useUrlPage), so a mount-time reset would clobber the ?page= just
   // restored when the operator presses Back from an order.
-  useResetPageOnChange(setPage, [statusFilter, urgentOnly, dateFrom, dateTo, productIdFilter]);
+  useResetPageOnChange(setPage, [
+    statusFilter,
+    urgentOnly,
+    dateFrom,
+    dateTo,
+    productIdFilter,
+    fulfillPathFilter,
+  ]);
 
   // Active saved view detection
   const activeSavedView = React.useMemo(() => {
@@ -256,7 +282,14 @@ export default function OrdersPage() {
       SAVED_VIEWS.find((v) => {
         const keys = Object.keys(v.filters);
         if (keys.length === 0) {
-          return !statusFilter && !urgentOnly && !dateFrom && !dateTo && !productIdFilter;
+          return (
+            !statusFilter &&
+            !urgentOnly &&
+            !dateFrom &&
+            !dateTo &&
+            !productIdFilter &&
+            !fulfillPathFilter
+          );
         }
         return keys.every(
           (k) =>
@@ -265,7 +298,7 @@ export default function OrdersPage() {
         );
       })?.id ?? null
     );
-  }, [urlFilters, statusFilter, urgentOnly, dateFrom, dateTo, productIdFilter]);
+  }, [urlFilters, statusFilter, urgentOnly, dateFrom, dateTo, productIdFilter, fulfillPathFilter]);
 
   const applyView = (view: (typeof SAVED_VIEWS)[0]) => {
     clearFilters();
@@ -280,6 +313,7 @@ export default function OrdersPage() {
     deliveryDateFrom: dateFrom || undefined,
     deliveryDateTo: dateTo || undefined,
     productId: productIdFilter || undefined,
+    fulfillPath: (fulfillPathFilter as "ROUTE" | "SHIP" | "") || undefined,
     page,
     limit,
   });
@@ -332,6 +366,7 @@ export default function OrdersPage() {
           urgent: urgentOnly || undefined,
           deliveryDateFrom: dateFrom || undefined,
           deliveryDateTo: dateTo || undefined,
+          fulfillPath: fulfillPathFilter || undefined,
           page: 1,
           limit: EXPORT_LIMIT,
         },
@@ -350,13 +385,23 @@ export default function OrdersPage() {
       });
       downloadCsv(
         `orders-${new Date().toISOString().split("T")[0]}.csv`,
-        ["Order #", "Customer", "Items", "Total", "Status", "Delivery Date", "Created"],
+        [
+          "Order #",
+          "Customer",
+          "Items",
+          "Total",
+          "Status",
+          "Fulfillment",
+          "Delivery Date",
+          "Created",
+        ],
         rows.map((o) => [
           o.orderNumber ?? o.id.slice(0, 8).toUpperCase(),
           o.customer?.businessName ?? "",
           o.lineItems?.length ?? 0,
           Number(o.total ?? 0).toFixed(2),
           o.status,
+          o.fulfillPath ?? "ROUTE",
           csvDate(o.requestedDeliveryDate),
           csvDate(o.createdAt),
         ]),
@@ -439,6 +484,21 @@ export default function OrdersPage() {
             {isCancelling && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             Cancel {selected.size}
           </button>
+          {devModeEnabled && (
+            <>
+              <span className="h-[18px] w-px bg-white/20" />
+              <button
+                onClick={() => {
+                  saveTripDraft(Array.from(selected));
+                  router.push(`/routes/trips/new?n=${selected.size}`);
+                }}
+                className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-white/75 hover:text-white transition-colors"
+              >
+                <RouteIcon className="h-3.5 w-3.5" />
+                Plan delivery trip
+              </button>
+            </>
+          )}
           {deleteConfirm ? (
             <div className="flex items-center gap-2.5">
               <span className="text-[12.5px] font-semibold text-[#FCA5A5]">
@@ -546,6 +606,13 @@ export default function OrdersPage() {
             onChange={(e) => setFilter("status", e.target.value)}
           />
         </div>
+        <div className="w-44">
+          <Select
+            options={FULFILLMENT_OPTIONS}
+            value={fulfillPathFilter}
+            onChange={(e) => setFilter("fulfillPath", e.target.value)}
+          />
+        </div>
         {/* Urgent toggle */}
         <button
           onClick={() => setFilter("urgent", !urgentOnly)}
@@ -631,6 +698,7 @@ export default function OrdersPage() {
           dateFrom ||
           dateTo ||
           productIdFilter ||
+          fulfillPathFilter ||
           customerSearch) && (
           <button
             onClick={() => {
@@ -719,6 +787,7 @@ export default function OrdersPage() {
                     dateFrom ||
                     dateTo ||
                     productIdFilter ||
+                    fulfillPathFilter ||
                     customerSearch ? (
                       <EmptyState
                         variant="orders"
@@ -807,6 +876,15 @@ export default function OrdersPage() {
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
                         <Badge status={order.status} />
+                        {order.fulfillPath === "SHIP" && (
+                          <span
+                            title="Shipped by supplier/carrier — won't appear on delivery routes"
+                            className="inline-flex h-[21px] items-center gap-1 rounded-full bg-sky-50 px-2 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200"
+                          >
+                            <Truck className="h-3 w-3" aria-hidden />
+                            Shipped
+                          </span>
+                        )}
                         {/* P5-11: pending post-dispatch change requests on this order
                             (filtered _count from the list endpoint; absent = no pill). */}
                         {(order._count?.changeRequests ?? 0) > 0 && (

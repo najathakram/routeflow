@@ -60,6 +60,20 @@ export default function DispatchScreen() {
           <SegmentedControl items={["Routes", "Drivers"]} value={tab} onChange={setTab} />
         </View>
 
+        <SectionHeader title="Trips" />
+        <View style={{ paddingHorizontal: 16, paddingBottom: 4 }}>
+          <Pressable
+            style={styles.routeRow}
+            onPress={() => router.push("/(operator)/trips" as any)}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={styles.routeName}>Ad-hoc trips</Text>
+              <Text style={styles.routeSub}>Plan and dispatch one-shot delivery runs</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={ios.gray[3]} />
+          </Pressable>
+        </View>
+
         {tab === "Routes" ? (
           <RoutesTab
             routes={routes}

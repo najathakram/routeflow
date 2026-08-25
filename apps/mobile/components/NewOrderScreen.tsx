@@ -559,6 +559,10 @@ function ProductPickView({
     draftSeedRef.current = fromOrderDraftPayload(initialDraft.payload);
   }
   const draftSeed = draftSeedRef.current;
+  // Only a draft parked for THIS customer carries per-customer choices over.
+  // "Change customer" remounts this view with the SAME draft (lines survive by
+  // design), and those choices must then re-seed from the new customer.
+  const draftSeedIsSameCustomer = !!draftSeed && draftSeed.customer?.id === customerId;
 
   const [category, setCategory] = useState("All");
   /** Scanned code with several substring matches → open a picker over the camera. */
@@ -602,6 +606,9 @@ function ProductPickView({
     return m;
   }, [splitTrackedCategories]);
   const customerTier = customerDetail?.pricingTier ?? 1;
+  // Ad-hoc trips (plan §WP11): the customer's default fulfillment mode, which
+  // seeds this order's own fulfillPath below (never constrains it).
+  const customerFulfillPath = customerDetail?.fulfillPath;
   const cpMap = useMemo(() => {
     const m = new Map<string, number | null>();
     for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
@@ -634,6 +641,14 @@ function ProductPickView({
   const [orderDate, setOrderDate] = useState(() => draftSeed?.orderDate ?? "");
   const [discountRaw, setDiscountRaw] = useState(() => draftSeed?.discountRaw ?? "");
   const [shippingFeeRaw, setShippingFeeRaw] = useState(() => draftSeed?.shippingFeeRaw ?? "");
+  // Ad-hoc trips (plan §WP11): ROUTE (default) or SHIP (supplier/carrier —
+  // excluded from every trip/route dispatch sweep). A draft parked for this
+  // customer restores the mode it was parked with; otherwise it seeds from the
+  // customer's default below, once their detail loads. Either way the operator
+  // can override it per order.
+  const [fulfillPath, setFulfillPath] = useState<"ROUTE" | "SHIP">(() =>
+    draftSeedIsSameCustomer ? (draftSeed?.fulfillPath ?? "ROUTE") : "ROUTE",
+  );
   // Apply-credit selection (mobile v1: toggle only, no amount input — null
   // amount = up to the credit's remaining balance, resolved server-side).
   // A resumed id is re-validated below (once the customer's open credits
@@ -673,6 +688,23 @@ function ProductPickView({
     setSelectedCreditIds([]);
     setJustCreatedCredits([]);
   }, [customerId]);
+  // Seed fulfillPath from the customer's default exactly once per customer,
+  // as soon as their detail loads — `fulfillSeededForRef` marks it done so a
+  // later refetch of the SAME customer (e.g. window refocus) never stomps a
+  // manual toggle mid-session, and a genuine customer SWITCH re-seeds. Resuming
+  // a draft parked for THIS customer starts the ref pinned, so the parked
+  // choice survives instead of being overwritten by the customer default;
+  // carrying that draft to a DIFFERENT customer (the "Change" flow remounts
+  // with the same draft) still re-seeds, matching web's CreateOrderModal.
+  const fulfillSeededForRef = useRef<string | undefined>(
+    draftSeedIsSameCustomer ? customerId : undefined,
+  );
+  useEffect(() => {
+    if (fulfillSeededForRef.current === customerId) return;
+    if (!customerId || customerDetail == null) return; // wait for this customer's detail
+    fulfillSeededForRef.current = customerId;
+    setFulfillPath(customerFulfillPath === "SHIP" ? "SHIP" : "ROUTE");
+  }, [customerId, customerDetail, customerFulfillPath]);
   // Re-validate a resumed credit selection once the customer's open credits
   // have loaded (once per mount — later expiries during the session are left
   // alone so an applied credit doesn't vanish mid-edit).
@@ -1490,6 +1522,7 @@ function ProductPickView({
       discountRaw,
       shippingFeeRaw,
       selectedCreditIds,
+      fulfillPath,
     }),
     [
       customerId,
@@ -1505,6 +1538,7 @@ function ProductPickView({
       discountRaw,
       shippingFeeRaw,
       selectedCreditIds,
+      fulfillPath,
     ],
   );
   const draftPayload = useMemo<OrderDraftPayload>(
@@ -1728,6 +1762,12 @@ function ProductPickView({
         ...(orderDateTrim ? { orderDate: orderDateTrim } : {}),
         ...(discountAmount > 0 ? { discountAmount } : {}),
         ...(shippingFee > 0 ? { shippingFee } : {}),
+        // ALWAYS sent, unlike the omit-when-empty options above (mirrors web's
+        // `fulfillPath: data.fulfillPath || "ROUTE"`). `create()` resolves
+        // `dto.fulfillPath ?? customer.fulfillPath ?? ROUTE`, so omitting it on
+        // ROUTE would let a SHIP-default customer silently overwrite an explicit
+        // "Delivery route" choice — and drop the order out of every trip sweep.
+        fulfillPath,
         ...(mergeChoice ? { mergeChoice } : {}),
         ...(selectedCreditIds.length
           ? { appliedCreditNotes: selectedCreditIds.map((id) => ({ creditNoteId: id })) }
@@ -2262,6 +2302,8 @@ function ProductPickView({
           onChangeShippingFee: setShippingFeeRaw,
           notes: orderNotes,
           onChangeNotes: setOrderNotes,
+          fulfillPath,
+          onChangeFulfillPath: setFulfillPath,
         }}
         credits={{
           rows: creditRows,
@@ -2323,6 +2365,9 @@ interface OrderOptions {
   onChangeShippingFee: (v: string) => void;
   notes: string;
   onChangeNotes: (v: string) => void;
+  /** Ad-hoc trips (plan §WP11): ROUTE (default) or SHIP (carrier-shipped). */
+  fulfillPath: "ROUTE" | "SHIP";
+  onChangeFulfillPath: (v: "ROUTE" | "SHIP") => void;
 }
 
 interface CreditPicker {
@@ -2368,6 +2413,8 @@ function CartSection({
 function OrderOptionsSection({ options: o }: { options: OrderOptions }) {
   const summary = [
     o.urgent ? "Urgent" : null,
+    // ROUTE is the default majority — only call it out when it isn't.
+    o.fulfillPath === "SHIP" ? "Ship via carrier" : null,
     o.orderDate ? `Dated ${o.orderDate}` : null,
     o.deliveryDate ? `Deliver ${o.deliveryDate}` : null,
     parseFloat(o.discountRaw) > 0 ? `-$${parseFloat(o.discountRaw).toFixed(2)}` : null,
@@ -2392,6 +2439,48 @@ function OrderOptionsSection({ options: o }: { options: OrderOptions }) {
           <View style={[styles.toggleDot, o.urgent && styles.toggleDotOn]} />
         </View>
       </Pressable>
+      <View style={styles.optionField}>
+        <Text style={styles.optionLabel}>Fulfillment</Text>
+        <View style={styles.fulfillRow}>
+          <Pressable
+            style={[styles.fulfillBtn, o.fulfillPath === "ROUTE" && styles.fulfillBtnActive]}
+            onPress={() => o.onChangeFulfillPath("ROUTE")}
+            accessibilityRole="button"
+            accessibilityLabel="Delivery route"
+            accessibilityState={{ selected: o.fulfillPath === "ROUTE" }}
+          >
+            <Text
+              style={[
+                styles.fulfillBtnText,
+                o.fulfillPath === "ROUTE" && styles.fulfillBtnTextActive,
+              ]}
+            >
+              Delivery route
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.fulfillBtn, o.fulfillPath === "SHIP" && styles.fulfillBtnActive]}
+            onPress={() => o.onChangeFulfillPath("SHIP")}
+            accessibilityRole="button"
+            accessibilityLabel="Ship via carrier"
+            accessibilityState={{ selected: o.fulfillPath === "SHIP" }}
+          >
+            <Text
+              style={[
+                styles.fulfillBtnText,
+                o.fulfillPath === "SHIP" && styles.fulfillBtnTextActive,
+              ]}
+            >
+              Ship via carrier
+            </Text>
+          </Pressable>
+        </View>
+        {o.fulfillPath === "SHIP" ? (
+          <Text style={styles.optionHelp}>
+            Ships via carrier — won't appear on delivery routes.
+          </Text>
+        ) : null}
+      </View>
       {o.canBackdate ? (
         <View style={styles.optionField}>
           <Text style={styles.optionLabel}>Order date (backdate)</Text>
@@ -3494,6 +3583,24 @@ const styles = StyleSheet.create({
   toggleOn: { backgroundColor: ios.brand },
   toggleDot: { width: 20, height: 20, borderRadius: 10, backgroundColor: "#fff" },
   toggleDotOn: { alignSelf: "flex-end" },
+  fulfillRow: { flexDirection: "row", gap: 8 },
+  fulfillBtn: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    backgroundColor: ios.fill3,
+  },
+  fulfillBtnActive: { backgroundColor: ios.brand },
+  fulfillBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    textAlign: "center",
+  },
+  fulfillBtnTextActive: { color: "#fff" },
   customerChip: {
     flexDirection: "row",
     alignItems: "center",

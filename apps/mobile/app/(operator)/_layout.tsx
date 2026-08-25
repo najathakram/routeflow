@@ -17,6 +17,7 @@ const DEV_MODE_SECTIONS = new Set([
   "drivers",
   "driver",
   "fleet",
+  "trips",
 ]);
 
 function OfflineBanner() {

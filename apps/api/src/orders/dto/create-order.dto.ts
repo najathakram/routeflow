@@ -17,6 +17,7 @@ import {
   ValidateNested,
 } from "class-validator";
 import { Type } from "class-transformer";
+import { FulfillPath } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 
 // BUG-B1-6: bound numeric inputs server-side. The audit submitted a
@@ -100,6 +101,14 @@ export class CreateOrderDto {
    * `{ code: 'MERGE_CHOICE_REQUIRED', activeOrder: {...} }` so the UI can prompt.
    */
   @IsOptional() @IsEnum(["merge", "separate"]) mergeChoice?: "merge" | "separate";
+  /**
+   * Ad-hoc trips + fulfillment mode: how this order is delivered. Omit to fall
+   * back to the customer's own default (`create()` resolves
+   * `dto.fulfillPath ?? customer.fulfillPath ?? ROUTE`).
+   */
+  @IsOptional()
+  @IsEnum(FulfillPath)
+  fulfillPath?: FulfillPath;
   /** Credit notes to apply to this order's invoice(s). undefined = leave untouched;
    *  [] = remove all; otherwise the FULL desired set (server diffs). */
   @IsOptional()

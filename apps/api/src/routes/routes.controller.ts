@@ -27,6 +27,7 @@ import { UpdateRunStatusDto } from "./dto/update-run-status.dto";
 import { ListRunsDto } from "./dto/list-runs.dto";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { CompleteWithPaymentDto } from "./dto/complete-with-payment.dto";
+import { DriverPaymentsGuard } from "./driver-payments.guard";
 
 @ApiTags("routes")
 @ApiBearerAuth()
@@ -179,8 +180,18 @@ export class RouteRunsController {
   }
 
   // RF-005: Atomic complete + payment
+  //
+  // At-door MONEY COLLECTION is a per-tenant OPT-IN (owner decision
+  // 2026-08-24): some tenants (affa) let drivers collect at the door, others
+  // (bb-distro) bill on account only and the office collects. Enforced by
+  // DriverPaymentsGuard on the BODY, not a blanket addon gate on the route —
+  // every mobile completion (including $0 "on account") flows through this
+  // endpoint for its delivered-basis invoice reconcile, so completions with
+  // no payment (or amount 0) must keep working for every tenant. Only a
+  // payment with amount > 0 requires the "driver_payments" TenantAddon
+  // (enable from platform-admin).
   @Post(":id/stops/:stopId/complete-with-payment")
-  @UseGuards(RolesGuard)
+  @UseGuards(RolesGuard, DriverPaymentsGuard)
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   completeWithPayment(
     @Param("id") runId: string,

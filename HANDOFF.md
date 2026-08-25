@@ -36,12 +36,12 @@ GOOGLE_MAPS_API_KEY exists on the prod API service.
 All four merged in ONE public window (public → squash-merge x4 → all three services BUILDING →
 private confirmed → deploys SUCCESS → post-deploy-check GREEN). What landed:
 
-| PR | What |
-| --- | --- |
-| #427 | Repair scripts: receiving-units (HIGH-signature + printed recompute-costs follow-up), escaped-entities, drift scan covers TRIAL |
-| #428 | NSF bounce fees excluded from the commission base (shared NSF_FEE_DESCRIPTION_PREFIX; ratio deliberately conservative). Pipeline clean + Fable money-pass PASS |
+| PR   | What                                                                                                                                                                                   |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #427 | Repair scripts: receiving-units (HIGH-signature + printed recompute-costs follow-up), escaped-entities, drift scan covers TRIAL                                                        |
+| #428 | NSF bounce fees excluded from the commission base (shared NSF_FEE_DESCRIPTION_PREFIX; ratio deliberately conservative). Pipeline clean + Fable money-pass PASS                         |
 | #429 | PR-D — full sales-agents & commissions UI (agent box, statements w/ stale-409 regenerate, order override, mobile row, e2e 18). Dark until the sales_agents addon is enabled per tenant |
-| #430 | This handoff refresh |
+| #430 | This handoff refresh                                                                                                                                                                   |
 
 ## 🔵 Enforcement is LIVE (2026-08-23)
 

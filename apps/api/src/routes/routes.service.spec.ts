@@ -1,5 +1,11 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException, NotFoundException, ForbiddenException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+  ForbiddenException,
+} from "@nestjs/common";
+import { RouteKind, OrderStatus, FulfillPath } from "@prisma/client";
 import { RoutesService } from "./routes.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -128,6 +134,34 @@ describe("RoutesService", () => {
         }),
       );
     });
+
+    // WP3: templates/route-run flows must never surface ADHOC trips unless
+    // explicitly asked for.
+    it("should default kind to SCHEDULED when omitted", async () => {
+      prisma.route.findMany.mockResolvedValue([]);
+      prisma.route.count.mockResolvedValue(0);
+
+      await service.findAllRoutes({ page: 1, limit: 20 });
+
+      expect(prisma.route.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ kind: RouteKind.SCHEDULED }),
+        }),
+      );
+    });
+
+    it("should pass through an explicit kind filter", async () => {
+      prisma.route.findMany.mockResolvedValue([]);
+      prisma.route.count.mockResolvedValue(0);
+
+      await service.findAllRoutes({ kind: RouteKind.ADHOC, page: 1, limit: 20 });
+
+      expect(prisma.route.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ kind: RouteKind.ADHOC }),
+        }),
+      );
+    });
   });
 
   describe("findOneRoute", () => {
@@ -165,6 +199,21 @@ describe("RoutesService", () => {
     it("should throw NotFoundException when stop does not belong to route", async () => {
       prisma.routeStop.findFirst.mockResolvedValue(null);
       await expect(service.removeStop("route-1", "stop-x")).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe("getCustomerRouteAssignments", () => {
+    // WP3: ad-hoc trips must never pollute the "Currently in:" customer hints.
+    it("should filter to SCHEDULED routes only", async () => {
+      prisma.routeStop.findMany.mockResolvedValue([]);
+
+      await service.getCustomerRouteAssignments();
+
+      expect(prisma.routeStop.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ route: { kind: RouteKind.SCHEDULED } }),
+        }),
+      );
     });
   });
 
@@ -350,6 +399,149 @@ describe("RoutesService", () => {
       } as any);
 
       expect(gateway.emitToDriver).not.toHaveBeenCalled();
+    });
+
+    // WP3: ad-hoc trip sweep narrowing — the SCHEDULED where-object is
+    // money-critical (it controls which orders attach to a run, and thus
+    // delivery payments downstream), so it is pinned by deep-equal here. The
+    // ONE deliberate addition vs. the pre-feature shape is the `fulfillPath`
+    // guard; it needs owner sign-off and a pre-deploy customer audit, both
+    // documented in docs/phase0-adhoc-trips-findings.md.
+    describe("dispatch sweep narrowing (kind / orderIds)", () => {
+      const routeStops = [{ id: "rs-1", stopNumber: 1, customerId: "c1", customerAddressId: "a1" }];
+      const createdRun = {
+        ...MOCK_RUN,
+        route: { id: "route-1", name: "Downtown Route" },
+        stops: [{ id: "rrs-1", customerId: "c1" }],
+      };
+      // Every key the sweep has ever had, plus the fulfillPath guard that keeps
+      // carrier-shipped orders off delivery runs. `fulfillPath` defaults to ROUTE
+      // and is never backfilled, so this is behaviour-identical for existing data.
+      const EXPECTED_SCHEDULED_WHERE = {
+        customerId: "c1",
+        status: { notIn: [OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
+        routeRunStopId: null,
+        fulfillPath: FulfillPath.ROUTE,
+      };
+
+      it("SCHEDULED dispatch with no orderIds: sweep where deep-equals today's shape, no id key", async () => {
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.SCHEDULED,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 0 });
+
+        await service.createRun({
+          routeId: "route-1",
+          scheduledDate: "2025-06-01",
+        } as any);
+
+        const sweepArgs = prisma.order.updateMany.mock.calls[0][0];
+        expect(sweepArgs.where).toEqual(EXPECTED_SCHEDULED_WHERE);
+        expect(sweepArgs.where).not.toHaveProperty("id");
+      });
+
+      it("SCHEDULED route + orderIds: rejects with BadRequestException before any writes", async () => {
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.SCHEDULED,
+          stops: routeStops,
+        });
+
+        await expect(
+          service.createRun({
+            routeId: "route-1",
+            scheduledDate: "2025-06-01",
+            orderIds: ["ord-1"],
+          } as any),
+        ).rejects.toThrow(BadRequestException);
+
+        expect(prisma.order.updateMany).not.toHaveBeenCalled();
+        expect(prisma.routeRun.create).not.toHaveBeenCalled();
+      });
+
+      it("ADHOC route + orderIds: sweep where gains ONLY id:{in:...}, retains customerId + routeRunStopId:null", async () => {
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.ADHOC,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 1 });
+
+        await service.createRun({
+          routeId: "route-1",
+          scheduledDate: "2025-06-01",
+          orderIds: ["ord-1", "ord-2"],
+        } as any);
+
+        const sweepArgs = prisma.order.updateMany.mock.calls[0][0];
+        expect(sweepArgs.where).toEqual({
+          ...EXPECTED_SCHEDULED_WHERE,
+          id: { in: ["ord-1", "ord-2"] },
+        });
+      });
+
+      // A draft trip writes no order linkage, so a dispatch that arrives without
+      // orderIds (route-detail "Dispatch Run", a re-dispatch of a finished trip)
+      // has nothing to narrow the sweep with and would attach every open order of
+      // each stop's customer. Fail closed — only the trip builder may dispatch.
+      it("ADHOC route with no orderIds: rejects with BadRequestException before any writes", async () => {
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.ADHOC,
+          stops: routeStops,
+        });
+
+        await expect(
+          service.createRun({
+            routeId: "route-1",
+            scheduledDate: "2025-06-01",
+          } as any),
+        ).rejects.toThrow(BadRequestException);
+
+        expect(prisma.order.updateMany).not.toHaveBeenCalled();
+        expect(prisma.routeRun.create).not.toHaveBeenCalled();
+      });
+
+      it("reports attachedOrderCount so the caller can detect orders dropped between build and send", async () => {
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.ADHOC,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        // Asked for two orders; one was cancelled/dispatched elsewhere meanwhile.
+        prisma.order.updateMany.mockResolvedValue({ count: 1 });
+
+        const run = await service.createRun({
+          routeId: "route-1",
+          scheduledDate: "2025-06-01",
+          orderIds: ["ord-1", "ord-2"],
+        } as any);
+
+        expect(run.attachedOrderCount).toBe(1);
+      });
+
+      it("re-pin: a second dispatch on a route with an active run still throws ConflictException", async () => {
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.SCHEDULED,
+          stops: routeStops,
+        });
+        prisma.routeRun.findFirst.mockResolvedValue({ id: "run-existing" });
+
+        await expect(
+          service.createRun({
+            routeId: "route-1",
+            scheduledDate: "2025-06-01",
+          } as any),
+        ).rejects.toThrow(ConflictException);
+
+        expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      });
     });
   });
 

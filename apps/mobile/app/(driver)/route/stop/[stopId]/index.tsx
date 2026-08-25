@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { showToast } from "../../../../../lib/toast";
 import { confirm } from "../../../../../lib/confirm";
+import { useDriverPayments } from "../../../../../lib/api/addons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -64,6 +65,9 @@ function itemsFromStop(stop: RouteRunStop): Array<{
 
 export default function StopDetailScreen() {
   const router = useRouter();
+  // At-door money collection is a per-tenant opt-in; without it the same flow
+  // completes the stop on account, so the CTA must not promise "collect".
+  const { enabled: canCollect } = useDriverPayments();
   const params = useLocalSearchParams<{ stopId: string; runId?: string }>();
   const stopId = params.stopId;
 
@@ -381,7 +385,9 @@ export default function StopDetailScreen() {
             style={styles.greenBtn}
             onPress={() => router.push(`/route/stop/${stopId}/short-pick`)}
           >
-            <Text style={styles.greenBtnText}>Complete & collect →</Text>
+            <Text style={styles.greenBtnText}>
+              {canCollect ? "Complete & collect →" : "Complete stop →"}
+            </Text>
           </Pressable>
         </View>
         <View style={{ height: 20 }} />
