@@ -1,7 +1,7 @@
 {
-  "mappedSha": "024def25",
-  "generatedAt": "2026-08-25T03:01:20.112Z",
+  "mappedSha": "769bc1e9",
+  "generatedAt": "2026-08-25T15:35:25.995Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 898,
-  "notes": "2026-08-24 adhoc-trips session: ad-hoc trips + fulfillment (see CHANGELOG 2026-08-24 bullet) + driver_payments per-tenant opt-in + Google Maps root cause = Google Cloud billing. Merged over #433/#434 (tobacco consolidation — its note is the CHANGELOG's other 2026-08-24 bullet); e2e spec renumbered 19→20 (compliance-pack-gate took 19). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "2026-08-25 (PR #437) — demo-seed teardown walks the commission chain before invoices (CommissionAccrual FKs Invoice; the refresh died half-cleared) + clears DeliveryMutation/Batch before orders; seeds depot COORDS on Route+RouteRun, SystemConfig route.defaultDepot*, driver home bases, and order fulfillPath from customer so the ad-hoc trip builder demos with no Maps key. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
