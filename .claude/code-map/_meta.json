@@ -1,6 +1,6 @@
 {
   "mappedSha": "769bc1e9",
-  "generatedAt": "2026-08-25T17:48:03.214Z",
+  "generatedAt": "2026-08-25T19:23:15.483Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 898,
   "notes": "2026-08-25 (PR #437) — platform-admin AVAILABLE_ADDONS gained driver_payments (+ dev-mode copy mentions the trip builder; toggleError banner replaces the silent catch); demo-seed teardown walks the commission chain before invoices (CommissionAccrual FKs Invoice; the refresh died half-cleared) + clears DeliveryMutation/Batch before orders; seeds depot COORDS on Route+RouteRun, SystemConfig route.defaultDepot*, driver home bases, and order fulfillPath from customer so the ad-hoc trip builder demos with no Maps key. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
