@@ -1,6 +1,6 @@
 {
   "mappedSha": "769bc1e9",
-  "generatedAt": "2026-08-26T04:12:14.201Z",
+  "generatedAt": "2026-08-26T04:17:20.260Z",
   "areas": [
     "api",
     "web",
@@ -8,5 +8,5 @@
     "packages"
   ],
   "fileCount": 898,
-  "notes": "**2026-08-25** — ORDER-DELIVERY / RECURRING-ROUTES ADDON SPLIT (worktree `adhoc-trips`, WP1-WP8; no schema change): order-delivery (ad-hoc trips + `/deliveries` history) and recurring-routes (standing route templates + `/routes` + `/dispatch`) are now two independent per-tenant addons — `RECURRING_ROUTES_ADDON = \"recurring_routes\"` / `ORDER_DELIVERY_ADDON = \"order_delivery\"` (`packages/types/index.ts`) — with `developer_mode` kept as the master switch that unlocks both (`useDeliveryAccess`/`useRoutesAccess` composition hooks, `devMode || <feature>`, mirrored web+mobile in `lib/api/addons.ts`; `useDeveloperMode` itself is byte-unchanged). Web: `(dashboard)/layout.tsx` splits the \"Dispatch\" nav group (routes access) from a new \"Deliveries\" group (delivery access, Drivers appended when Dispatch is hidden); trip builder + history moved from `routes/trips/` to new `app/(dashboard)/deliveries/ || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "2026-08-25 (branch claude/quizzical-dirac-58e99b, rebased post-#438) — iOS CSV SHARE ACTIVATION: the CSV share path gains the same lost-transient-activation retap recovery #438 gave the PDF path (share() NotAllowedError routes to the tap-again sheet instead of a dead toast). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
