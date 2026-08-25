@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { DEVELOPER_MODE_ADDON } from "@routeflow/types";
+import { DEVELOPER_MODE_ADDON, DRIVER_PAYMENTS_ADDON } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { AdminTabs } from "../../../_components/AdminTabs";
@@ -113,10 +113,21 @@ const AVAILABLE_ADDONS = [
       "Agent records, customer attribution, commission accrual on invoices, statements and payouts",
   },
   {
+    key: DRIVER_PAYMENTS_ADDON,
+    name: "Driver payments (at-door collection)",
+    description:
+      "Let drivers collect money at the door when completing a stop (cash, card, cheque, Zelle). " +
+      "Server-enforced: while OFF, collection is blocked (403) and drivers complete stops on " +
+      "account — deliveries, proof-of-delivery, and invoicing continue unchanged; the office " +
+      "records payments instead. Turn ON only for tenants whose drivers handle money.",
+  },
+  {
     key: DEVELOPER_MODE_ADDON,
     name: "Developer Mode",
     description:
-      "Unlock in-development features (dispatch, routes, drivers) for this tenant (UI-only — hides these surfaces in the official apps; not a server-side access control)",
+      "Unlock in-development features (dispatch, routes, drivers, and the ad-hoc trip builder) " +
+      "for this tenant (UI-only — hides these surfaces in the official apps; not a server-side " +
+      "access control)",
   },
 ];
 
@@ -1090,8 +1101,11 @@ function AddonsTab({ tenant }: { tenant: TenantDetail }) {
     fetchAddons();
   }, [fetchAddons]);
 
+  const [toggleError, setToggleError] = React.useState<string | null>(null);
+
   const toggleAddon = async (key: string, currentlyActive: boolean) => {
     setToggling(key);
+    setToggleError(null);
     try {
       if (currentlyActive) {
         await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/addons/disable`, {
@@ -1103,7 +1117,17 @@ function AddonsTab({ tenant }: { tenant: TenantDetail }) {
         });
       }
       fetchAddons();
-    } catch {}
+    } catch (e: unknown) {
+      // A silently-failed toggle looks like success (the switch just doesn't
+      // move) — surface the server's reason instead. Addon enables can
+      // legitimately fail, e.g. a bridged key whose SKU isn't in the published
+      // catalog (#433's validation).
+      const err = e as { response?: { data?: { message?: string } } };
+      setToggleError(
+        err?.response?.data?.message ??
+          `Could not ${currentlyActive ? "disable" : "enable"} that add-on. Try again.`,
+      );
+    }
     setToggling(null);
     setShowEnableModal(null);
   };
@@ -1147,43 +1171,50 @@ function AddonsTab({ tenant }: { tenant: TenantDetail }) {
       {loading ? (
         <div className="py-8 text-center text-slate-500">Loading addons...</div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {AVAILABLE_ADDONS.map((addon) => {
-            const isActive = activeKeys.has(addon.key);
-            return (
-              <div
-                key={addon.key}
-                className={`rounded-xl p-4 ring-1 transition-colors ${
-                  isActive ? "bg-indigo-900/20 ring-indigo-600/30" : "bg-slate-800 ring-white/5"
-                }`}
-              >
-                <div className="flex items-start justify-between mb-2">
-                  <h3 className="text-sm font-semibold text-white">{addon.name}</h3>
-                  <button
-                    disabled={toggling === addon.key}
-                    onClick={() => {
-                      if (isActive) {
-                        toggleAddon(addon.key, true);
-                      } else {
-                        setShowEnableModal(addon.key);
-                      }
-                    }}
-                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 ${
-                      isActive ? "bg-indigo-600" : "bg-slate-600"
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                        isActive ? "translate-x-4" : "translate-x-0.5"
+        <>
+          {toggleError && (
+            <div className="mb-4 rounded-lg bg-red-900/30 px-4 py-3 text-sm text-red-300 ring-1 ring-red-600/30">
+              {toggleError}
+            </div>
+          )}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {AVAILABLE_ADDONS.map((addon) => {
+              const isActive = activeKeys.has(addon.key);
+              return (
+                <div
+                  key={addon.key}
+                  className={`rounded-xl p-4 ring-1 transition-colors ${
+                    isActive ? "bg-indigo-900/20 ring-indigo-600/30" : "bg-slate-800 ring-white/5"
+                  }`}
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <h3 className="text-sm font-semibold text-white">{addon.name}</h3>
+                    <button
+                      disabled={toggling === addon.key}
+                      onClick={() => {
+                        if (isActive) {
+                          toggleAddon(addon.key, true);
+                        } else {
+                          setShowEnableModal(addon.key);
+                        }
+                      }}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 ${
+                        isActive ? "bg-indigo-600" : "bg-slate-600"
                       }`}
-                    />
-                  </button>
+                    >
+                      <span
+                        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                          isActive ? "translate-x-4" : "translate-x-0.5"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-400">{addon.description}</p>
                 </div>
-                <p className="text-xs text-slate-400">{addon.description}</p>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        </>
       )}
     </>
   );
