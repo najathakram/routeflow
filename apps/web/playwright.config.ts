@@ -267,5 +267,18 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+
+    // ── Compliance-pack entitlement gate (tobacco consolidation, 19) ──────────
+    // Reads the tenant's live addon flag and asserts the /tobacco redirect and
+    // the hub's locked/unlocked state match it. Read-only: GETs and renders only.
+    {
+      name: "compliance-pack-gate",
+      testMatch: /19-compliance-pack-gate\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
   ],
 });

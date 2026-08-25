@@ -24,9 +24,12 @@ import {
   useRegulatedLedger,
   fetchRegulatedFilingUrl,
 } from "@/lib/api/tracked-categories";
+import { useTenantAddons, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { lastCompletedPeriod, taxRuleLabel, treatmentLabel } from "@/lib/regulated-format";
 import { RegulatedFilingsTable } from "@/components/RegulatedFilingsTable";
 import { RegulatedReportPanel } from "@/components/RegulatedReportPanel";
+import { LockedPage } from "@/app/(dashboard)/_components/gates/PlanGates";
+import { CompliancePackPanel } from "./_components/CompliancePackPanel";
 
 export default function RegulatedSectionPage({ params }: { params: { categoryId: string } }) {
   const { setTitle } = usePageTitle();
@@ -34,7 +37,15 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
 
   const category = useTrackedCategory(params.categoryId);
   const { data: subs = [] } = useTrackedSubcategories(params.categoryId);
-  const { data: filings = [] } = useRegulatedFilings(params.categoryId);
+
+  // Compliance-pack gate: ledger/filings/reports are gated on the tobacco_dealer
+  // addon (bridged to REGULATED_ITEMS). Free structure (header, categories,
+  // regulated-products KPI) always renders; the gated hooks pass `enabled` so an
+  // unentitled tenant fires ZERO gated requests.
+  const { data: addonsData, isLoading: addonsLoading } = useTenantAddons();
+  const packEnabled = addonsData?.addons?.includes(TOBACCO_ADDON) ?? false;
+
+  const { data: filings = [] } = useRegulatedFilings(params.categoryId, { enabled: packEnabled });
   const prepare = usePrepareFiling();
 
   React.useEffect(() => {
@@ -49,7 +60,10 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
   const year = now.getUTCFullYear();
   const currentMonth = now.getUTCMonth() + 1; // 1-12
   const from = `${year}-01-01`;
-  const ledger = useRegulatedLedger({ category: params.categoryId, from });
+  const ledger = useRegulatedLedger(
+    { category: params.categoryId, from },
+    { enabled: packEnabled },
+  );
 
   // Read the query's own array reference (stable across renders) so the memo
   // below doesn't recompute every render on a fresh `?? []`.
@@ -143,27 +157,32 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
         </div>
       </div>
 
-      {/* KPI cards */}
+      {/* KPI cards — Net Sales/Tax/Filings are compliance-pack (gated); Regulated
+          Products is free structure and always renders. */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Card>
-          <div className="flex items-center gap-2 text-xs text-navy/70">
-            <Receipt className="h-4 w-4" /> Net Sales (this month)
-          </div>
-          <p className="mt-1 text-2xl font-bold text-navy">
-            {ledger.isLoading ? "…" : fmt(thisMonth?.netSales ?? 0)}
-          </p>
-        </Card>
-        <Card>
-          <div className="flex items-center gap-2 text-xs text-navy/70">
-            <Receipt className="h-4 w-4" /> Tax (this month)
-          </div>
-          <p className="mt-1 text-2xl font-bold text-navy">
-            {ledger.isLoading ? "…" : fmt(thisMonth?.categoryTax ?? 0)}
-          </p>
-          <p className="mt-0.5 text-[11px] text-navy/50">
-            Snapshot pending the tax engine · net sales are live
-          </p>
-        </Card>
+        {packEnabled && (
+          <>
+            <Card>
+              <div className="flex items-center gap-2 text-xs text-navy/70">
+                <Receipt className="h-4 w-4" /> Net Sales (this month)
+              </div>
+              <p className="mt-1 text-2xl font-bold text-navy">
+                {ledger.isLoading ? "…" : fmt(thisMonth?.netSales ?? 0)}
+              </p>
+            </Card>
+            <Card>
+              <div className="flex items-center gap-2 text-xs text-navy/70">
+                <Receipt className="h-4 w-4" /> Tax (this month)
+              </div>
+              <p className="mt-1 text-2xl font-bold text-navy">
+                {ledger.isLoading ? "…" : fmt(thisMonth?.categoryTax ?? 0)}
+              </p>
+              <p className="mt-0.5 text-[11px] text-navy/50">
+                Snapshot pending the tax engine · net sales are live
+              </p>
+            </Card>
+          </>
+        )}
         <Link
           href={`/products?section=${params.categoryId}`}
           title="View these products"
@@ -176,47 +195,51 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
             <p className="mt-1 text-2xl font-bold text-navy">{c.productCount}</p>
           </Card>
         </Link>
-        <Card>
-          <div className="flex items-center gap-2 text-xs text-navy/70">
-            <FileText className="h-4 w-4" /> Filings
-          </div>
-          <p className="mt-1 text-2xl font-bold text-navy">{filings.length}</p>
-        </Card>
+        {packEnabled && (
+          <Card>
+            <div className="flex items-center gap-2 text-xs text-navy/70">
+              <FileText className="h-4 w-4" /> Filings
+            </div>
+            <p className="mt-1 text-2xl font-bold text-navy">{filings.length}</p>
+          </Card>
+        )}
       </div>
 
-      {/* Monthly trend */}
-      <Card title={`Monthly Net Sales vs Tax (${year})`}>
-        <ResponsiveContainer width="100%" height={220}>
-          <BarChart data={chartData} margin={{ top: 4, right: 4, left: -16, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-            <XAxis
-              dataKey="month"
-              tick={{ fontSize: 10, fill: "#1B3A5C99" }}
-              tickLine={false}
-              axisLine={false}
-              tickFormatter={(m: string) => m.slice(5)}
-            />
-            <YAxis tick={{ fontSize: 10, fill: "#1B3A5C99" }} tickLine={false} axisLine={false} />
-            <Tooltip
-              contentStyle={{ borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 12 }}
-              formatter={
-                ((v: number, name: string) => [
-                  fmt(v),
-                  name === "netSales" ? "Net sales" : "Tax",
-                ]) as any
-              }
-            />
-            <Legend
-              formatter={(v: string) => (v === "netSales" ? "Net sales" : "Tax collected")}
-              wrapperStyle={{ fontSize: 11 }}
-            />
-            <Bar dataKey="netSales" fill="#3b82f6" radius={[3, 3, 0, 0]} />
-            <Bar dataKey="categoryTax" fill="#10b981" radius={[3, 3, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </Card>
+      {packEnabled && (
+        /* Monthly trend */
+        <Card title={`Monthly Net Sales vs Tax (${year})`}>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={chartData} margin={{ top: 4, right: 4, left: -16, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+              <XAxis
+                dataKey="month"
+                tick={{ fontSize: 10, fill: "#1B3A5C99" }}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(m: string) => m.slice(5)}
+              />
+              <YAxis tick={{ fontSize: 10, fill: "#1B3A5C99" }} tickLine={false} axisLine={false} />
+              <Tooltip
+                contentStyle={{ borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 12 }}
+                formatter={
+                  ((v: number, name: string) => [
+                    fmt(v),
+                    name === "netSales" ? "Net sales" : "Tax",
+                  ]) as any
+                }
+              />
+              <Legend
+                formatter={(v: string) => (v === "netSales" ? "Net sales" : "Tax collected")}
+                wrapperStyle={{ fontSize: 11 }}
+              />
+              <Bar dataKey="netSales" fill="#3b82f6" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="categoryTax" fill="#10b981" radius={[3, 3, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </Card>
+      )}
 
-      {/* Subcategories (read-only; manage in Settings) */}
+      {/* Subcategories (read-only; manage in Settings) — free structure */}
       <Card title="Categories">
         <div className="mb-2 flex items-center justify-between">
           <p className="text-xs text-navy/60">Classification tags within this type.</p>
@@ -249,38 +272,61 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
         )}
       </Card>
 
-      {/* Reports — arbitrary date-range preview + CSV, separate from the filings archive below */}
-      <RegulatedReportPanel
-        categoryId={params.categoryId}
-        categoryName={c.name}
-        categoryDefaultTemplate={c.reportTemplate}
-        reportColumnPrefs={c.reportColumnPrefs}
-      />
+      {/* Compliance pack: ledger/reports/filings, gated on the tobacco_dealer addon */}
+      {packEnabled ? (
+        <>
+          {c.isTobaccoCategory && <CompliancePackPanel categoryId={c.id} />}
 
-      {/* Filings */}
-      <Card title="Filings">
-        <div className="mb-2 flex items-center justify-between">
-          <p className="text-xs text-navy/60">
-            Filings for closed periods are prepared automatically overnight.
-          </p>
-          <Button
-            variant="secondary"
-            size="sm"
-            leftIcon={
-              preparing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <FileText className="h-4 w-4" />
-              )
-            }
-            onClick={handlePrepare}
-            disabled={preparing}
+          {/* Reports — arbitrary date-range preview + CSV, separate from the filings archive below */}
+          <RegulatedReportPanel
+            categoryId={params.categoryId}
+            categoryName={c.name}
+            categoryDefaultTemplate={c.reportTemplate}
+            reportColumnPrefs={c.reportColumnPrefs}
+          />
+
+          {/* Filings */}
+          <Card title="Filings">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-xs text-navy/60">
+                Filings for closed periods are prepared automatically overnight.
+              </p>
+              <Button
+                variant="secondary"
+                size="sm"
+                leftIcon={
+                  preparing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileText className="h-4 w-4" />
+                  )
+                }
+                onClick={handlePrepare}
+                disabled={preparing}
+              >
+                Prepare last period
+              </Button>
+            </div>
+            <RegulatedFilingsTable filings={filings} />
+          </Card>
+        </>
+      ) : (
+        !addonsLoading && (
+          <LockedPage
+            gate={{
+              code: "PLAN_GATE",
+              message: "Compliance ledgers, reports and filings aren't enabled for this workspace.",
+            }}
+            title="Regulated compliance pack"
           >
-            Prepare last period
-          </Button>
-        </div>
-        <RegulatedFilingsTable filings={filings} />
-      </Card>
+            {/* Ghost child: LockedPage overlays its upsell card with `absolute
+                inset-0`, so the layer needs a sized child or it collapses to
+                zero height and covers the card above (same as the sales-agents
+                and commissions gates). */}
+            <Card className="h-64" />
+          </LockedPage>
+        )
+      )}
     </div>
   );
 }

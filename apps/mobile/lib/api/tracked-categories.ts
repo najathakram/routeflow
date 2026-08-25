@@ -41,6 +41,8 @@ export interface TrackedCategory {
   txUom?: string | null;
   /** Saved custom report column layout, keyed by template code. */
   reportColumnPrefs?: Record<string, string[]> | null;
+  /** Computed server-side: name is "Tobacco" (ci) — the compliance-pack anchor. Mirrors web. */
+  isTobaccoCategory?: boolean;
   productCount: number;
   createdAt: string;
   updatedAt: string;

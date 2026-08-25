@@ -12,6 +12,7 @@ import { ListTrackedCategoriesDto } from "./dto/list-tracked-categories.dto";
 import { CreateSubcategoryDto } from "./dto/create-subcategory.dto";
 import { UpdateSubcategoryDto } from "./dto/update-subcategory.dto";
 import { templateByKey, allColumnKeys } from "../regulated/template-registry";
+import { isTobaccoCategoryName } from "../common/tobacco-category";
 
 /**
  * CRUD for tenant-defined regulated ("tracked") categories — the generic system
@@ -31,7 +32,12 @@ export class TrackedCategoriesService {
 
   private serialize<T extends object>(row: WithCount<T>) {
     const { _count, ...rest } = row;
-    return { ...rest, productCount: _count.products };
+    return {
+      ...rest,
+      productCount: _count.products,
+      // Computed, never stored: the compliance-pack anchor flag clients key on.
+      isTobaccoCategory: isTobaccoCategoryName((rest as { name?: string }).name),
+    };
   }
 
   async findAll(query: ListTrackedCategoriesDto) {
@@ -188,14 +194,12 @@ export class TrackedCategoriesService {
 
   /**
    * Bulk-assign products to this category (one category max per product — this
-   * overwrites any prior assignment). Sets ONLY the new generic
-   * `Product.trackedCategoryId` pointer. During the shadow-column period the
-   * legacy `isTobacco` flag stays owned by the product flow (+ its addon gate),
-   * and tobacco reports still key off `isTobacco`, so they are unaffected here
-   * until they are re-pointed to the category in a later release.
+   * overwrites any prior assignment). Sets `Product.trackedCategoryId` and, at
+   * the end, syncs the `isTobacco` mirror on the full id set — membership in
+   * the Tobacco type IS the flag (2026-08-24 write-sync consolidation).
    */
   async assignProducts(id: string, productIds: string[]) {
-    await this.findOne(id);
+    const category = await this.findOne(id);
     // Movers/new assignees get the section AND a cleared subcategory (a
     // subcategory's parent must equal the product's section — leaving the old
     // one behind strands an invariant violation that 400s later product
@@ -222,6 +226,13 @@ export class TrackedCategoriesService {
       where: moverWhere,
       data: { trackedCategoryId: id, trackedSubcategoryId: null },
     });
+    // Compliance-pack sync: isTobacco mirrors membership in the Tobacco type.
+    // Applied to the full id set (movers AND rows already in this category) so
+    // a drifted mirror is healed by any re-assign.
+    await this.prisma.forTenant().product.updateMany({
+      where: { id: { in: productIds } },
+      data: { isTobacco: isTobaccoCategoryName((category as { name?: string }).name) },
+    });
     return { assigned: count };
   }
 
@@ -247,6 +258,14 @@ export class TrackedCategoriesService {
       where: targetWhere,
       data: { trackedCategoryId: null, trackedSubcategoryId: null },
     });
+    const targetIds = targets.map((t) => t.id);
+    if (targetIds.length > 0) {
+      // Unassigned products are in no regulated type — never tobacco.
+      await this.prisma.forTenant().product.updateMany({
+        where: { id: { in: targetIds } },
+        data: { isTobacco: false },
+      });
+    }
     return { unassigned: count };
   }
 

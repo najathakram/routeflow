@@ -96,9 +96,9 @@ const PLANS = ["STARTER", "PROFESSIONAL", "ENTERPRISE"] as const;
 const AVAILABLE_ADDONS = [
   {
     key: "tobacco_dealer",
-    name: "Tobacco Dealer Compliance",
+    name: "Regulated compliance pack",
     description:
-      "Tobacco product tracking, optional exclusion from main analytics, and monthly compliance reports",
+      "Regulated Items compliance pack — license-column ledgers, monthly tobacco reports, regulated filings & range reports, and the analytics-exclusion option inside the Regulated Items hub (legacy key: tobacco_dealer)",
   },
   {
     key: "msrp",

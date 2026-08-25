@@ -26,6 +26,7 @@ import { isValidItemType, isValidUom, templateByKey } from "../regulated/templat
 import { normalizeScanCode, pickBestScanMatch } from "../common/barcode-normalize";
 import { buildScanSearchOr } from "./scan-search";
 import { isMsrpBelowWholesale, wholesalePerPiece } from "../common/msrp";
+import { TOBACCO_CATEGORY_NAME, isTobaccoCategoryName } from "../common/tobacco-category";
 
 /** `-fp50x40` → focal point 50% across, 40% down. Omitted if focal is centre. */
 function encodeFocalSuffix(focal?: { x: number; y: number }): string {
@@ -126,6 +127,63 @@ export class ProductsService {
         'Marking products as tobacco requires the "tobacco_dealer" add-on.',
       );
     }
+  }
+
+  /** The tenant's Tobacco regulated type, matched by name (case-insensitive). */
+  private async findTobaccoCategory(): Promise<{ id: string; name: string } | null> {
+    return this.prisma.forTenant().trackedCategory.findFirst({
+      where: { name: { equals: TOBACCO_CATEGORY_NAME, mode: "insensitive" } },
+      select: { id: true, name: true },
+    });
+  }
+
+  /**
+   * Resolve the tenant's Tobacco type, creating it when absent. The created row
+   * mirrors the Phase-4 W1 seed exactly (warn-only: taxType NONE, no license,
+   * CA_CDTFA / MONTHLY, SEPARATE_INVOICE) so flagging a first tobacco product
+   * never enables tax or license enforcement as a side effect.
+   *
+   * Seeding that row is a WRITE, and it is NOT in the same transaction as the
+   * product write it serves — so `pending` (the request's effective subcategory
+   * and regulatory trio) is validated against the row we are ABOUT to seed
+   * BEFORE creating it. Without that, a request the section validations reject
+   * downstream — e.g. quick-toggling tobacco on a product carrying reg codes
+   * from a non-CA_CDTFA section — would 400 and still leave an orphan "Tobacco"
+   * type in the Regulated Items nav for a tenant that never had one.
+   */
+  private async resolveOrCreateTobaccoCategory(pending: {
+    trackedSubcategoryId: string | null;
+    regItemType: string | null;
+    regUomCase: string | null;
+    regUomUnit: string | null;
+  }): Promise<{ id: string }> {
+    const existing = await this.findTobaccoCategory();
+    if (existing) return existing;
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException("A tenant context is required to flag tobacco products.");
+    }
+    const reportTemplate = "CA_CDTFA";
+    // A brand-new type has no subcategories, so any subcategory carried by the
+    // request belongs to another section — assertSubcategoryInSection would
+    // reject it below, which must happen before the seed, not after.
+    if (pending.trackedSubcategoryId != null) {
+      throw new BadRequestException("Subcategory does not belong to the chosen section.");
+    }
+    this.assertRegConfigMatchesTemplate({ name: TOBACCO_CATEGORY_NAME, reportTemplate }, pending);
+    return this.prisma.forTenant().trackedCategory.create({
+      data: {
+        tenantId,
+        name: TOBACCO_CATEGORY_NAME,
+        taxType: "NONE",
+        requiresLicense: false,
+        reportTemplate,
+        reportCadence: "MONTHLY",
+        invoiceTreatment: "SEPARATE_INVOICE",
+        active: true,
+      },
+      select: { id: true },
+    });
   }
 
   async findAll(
@@ -528,7 +586,13 @@ export class ProductsService {
     // of its three fields still falls back to the parent independently — a
     // variant can override just its case UoM, say, without breaking away from
     // the parent's section.
-    const regulated =
+    const regulated: {
+      trackedCategoryId: string | null;
+      trackedSubcategoryId: string | null;
+      regItemType: string | null;
+      regUomCase: string | null;
+      regUomUnit: string | null;
+    } =
       dto.trackedCategoryId === undefined && parent
         ? {
             trackedCategoryId: parent.trackedCategoryId ?? null,
@@ -545,6 +609,29 @@ export class ProductsService {
             regUomCase: dto.regUomCase ?? null,
             regUomUnit: dto.regUomUnit ?? null,
           };
+    // ── Compliance-pack sync: Category is the ONE axis; isTobacco is a derived
+    // mirror of membership in the tenant's Tobacco type. An isTobacco-only create
+    // (no category sent — legacy clients / quick flows) is sugar for "put it in
+    // the Tobacco type"; when a category IS sent, the category wins.
+    let isTobacco = dto.isTobacco ?? parent?.isTobacco ?? false;
+    if (regulated.trackedCategoryId == null && dto.isTobacco === true) {
+      // The end state is handed to the resolver so it can validate BEFORE
+      // seeding a first Tobacco type — the assertions below run after it.
+      const tobacco = await this.resolveOrCreateTobaccoCategory({
+        trackedSubcategoryId: regulated.trackedSubcategoryId,
+        regItemType: regulated.regItemType,
+        regUomCase: regulated.regUomCase,
+        regUomUnit: regulated.regUomUnit,
+      });
+      regulated.trackedCategoryId = tobacco.id;
+      isTobacco = true;
+    } else if (regulated.trackedCategoryId != null) {
+      const cat = await this.prisma.forTenant().trackedCategory.findUnique({
+        where: { id: regulated.trackedCategoryId },
+        select: { name: true },
+      });
+      isTobacco = isTobaccoCategoryName(cat?.name);
+    }
     await this.assertSubcategoryInSection(
       regulated.trackedCategoryId,
       regulated.trackedSubcategoryId,
@@ -582,8 +669,9 @@ export class ProductsService {
         description: dto.description,
         isActive: dto.isActive,
         // Inherited-from-parent tobacco skips the addon re-check (top of create):
-        // the parent already passed it when IT was flagged.
-        isTobacco: dto.isTobacco ?? parent?.isTobacco ?? false,
+        // the parent already passed it when IT was flagged. `isTobacco` here is
+        // the mirror-derived value computed above (category is the one axis).
+        isTobacco,
         // Default new products to the tenant's configured costing method when the
         // operator didn't pick one (pos-cost-roles-spec §1). Variants inherit the
         // parent's method instead so the family is costed consistently.
@@ -674,6 +762,38 @@ export class ProductsService {
         );
       }
     }
+    // ── Compliance-pack sync: an isTobacco-only PATCH (the mobile quick-toggle)
+    // is sugar for a Tobacco-type assign/unassign. When the request also carries
+    // an explicit trackedCategoryId, the category wins and the mirror derivation
+    // below reconciles the flag. Deliberately placed AFTER the uniqueness checks
+    // and given the request's end state: resolving the type can SEED it, and a
+    // request rejected after that write would leave an orphan regulated section
+    // behind (the seed and the product write are not one transaction).
+    let unflagClear = false;
+    if (dto.isTobacco !== undefined && dto.trackedCategoryId === undefined) {
+      if (dto.isTobacco === true) {
+        const tobacco = await this.resolveOrCreateTobaccoCategory({
+          // A move into the Tobacco type clears the old section's subcategory,
+          // so only an EXPLICIT subcategory survives into the end state.
+          trackedSubcategoryId: dto.trackedSubcategoryId ?? null,
+          regItemType: dto.regItemType !== undefined ? dto.regItemType : existing.regItemType,
+          regUomCase: dto.regUomCase !== undefined ? dto.regUomCase : existing.regUomCase,
+          regUomUnit: dto.regUomUnit !== undefined ? dto.regUomUnit : existing.regUomUnit,
+        });
+        if (existing.trackedCategoryId !== tobacco.id) {
+          dto.trackedCategoryId = tobacco.id;
+          // A section move always clears the old section's subcategory (the
+          // parent==section invariant) unless the request set one explicitly.
+          if (dto.trackedSubcategoryId === undefined) dto.trackedSubcategoryId = null;
+        }
+      } else {
+        const tobacco = await this.findTobaccoCategory();
+        if (tobacco && existing.trackedCategoryId === tobacco.id) {
+          dto.trackedCategoryId = null; // un-flagging = leaving the Tobacco type
+          unflagClear = true;
+        }
+      }
+    }
     // Keep a variant's name and variantName in sync — create() enforces
     // name === variantName, so a rename (via the generic name field, e.g. the
     // mobile edit form which has no dedicated flavor input) must carry variantName
@@ -741,10 +861,24 @@ export class ProductsService {
     // clears the section while ALSO sending reg codes must not persist config with
     // no section to validate it against, and only the raw `{ ...dto }` spread
     // could leak them through.
+    // A clear that came from the isTobacco quick-toggle (`unflagClear`) leaves the
+    // trio ALONE instead: "Unmark tobacco product" is a single unconfirmed menu
+    // action that used to write ONLY the boolean, re-flagging does not restore the
+    // codes, and the filing resolves item type / UoM from the product row LIVE — so
+    // discarding them there would silently restate already-filed periods. A detached
+    // product keeping the config its historic ledger rows are reported under is
+    // exactly the tolerated state the comment above describes. The DTO is still
+    // stripped, so an API-direct caller can't slip unvalidated codes in either.
     if (clearingSection) {
-      data.regItemType = null;
-      data.regUomCase = null;
-      data.regUomUnit = null;
+      if (unflagClear) {
+        delete data.regItemType;
+        delete data.regUomCase;
+        delete data.regUomUnit;
+      } else {
+        data.regItemType = null;
+        data.regUomCase = null;
+        data.regUomUnit = null;
+      }
     }
     // One-category-axis rule: keep Product.category in sync with the structured
     // category so filters/analytics/buyer facets never see the type name instead
@@ -776,6 +910,20 @@ export class ProductsService {
     // dto.msrp through — a bare "0" decimal string must never persist.
     if (dto.msrp !== undefined) {
       data.msrp = normalizeMsrpForWrite(dto.msrp);
+    }
+    // ── Mirror derivation: after this write, isTobacco always reflects membership
+    // in the Tobacco type. Recomputed only when the section actually changes or
+    // the caller sent isTobacco — unrelated PATCHes never touch the flag.
+    if (sectionChanged || dto.isTobacco !== undefined) {
+      if (effectiveCategoryId == null) {
+        data.isTobacco = false;
+      } else {
+        const cat = await this.prisma.forTenant().trackedCategory.findUnique({
+          where: { id: effectiveCategoryId },
+          select: { name: true },
+        });
+        data.isTobacco = isTobaccoCategoryName(cat?.name);
+      }
     }
     return this.prisma.forTenant().product.update({
       where: { id },
@@ -872,6 +1020,20 @@ export class ProductsService {
       select: { name: true, reportTemplate: true },
     });
     if (!cat) throw new BadRequestException("Regulated type not found");
+    this.assertRegConfigMatchesTemplate(cat, { regItemType, regUomCase, regUomUnit });
+  }
+
+  /**
+   * The template half of `assertRegConfigValid`, split out so a section that does
+   * not exist YET — the Tobacco type `resolveOrCreateTobaccoCategory` is about to
+   * seed — can be validated from its known template before anything is written.
+   */
+  private assertRegConfigMatchesTemplate(
+    cat: { name: string; reportTemplate: string },
+    trio: { regItemType: string | null; regUomCase: string | null; regUomUnit: string | null },
+  ): void {
+    const { regItemType, regUomCase, regUomUnit } = trio;
+    if (!regItemType && !regUomCase && !regUomUnit) return;
     if (!templateByKey(cat.reportTemplate)?.productConfig) {
       throw new BadRequestException(
         `"${cat.name}" uses a report template with no per-product configuration`,
