@@ -1,8 +1,7 @@
 {
-  "schemaVersion": 1,
-  "mappedSha": "b3b0f72e",
-  "generatedAt": "2026-08-25T02:59:39.296Z",
+  "mappedSha": "024def25",
+  "generatedAt": "2026-08-25T03:01:20.112Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 898,
-  "notes": "2026-08-24 adhoc-trips session addendum: driver_payments per-tenant opt-in (DriverPaymentsGuard on complete-with-payment, body-aware) + Google Maps root cause corrected to Google Cloud billing. Full note: .claude/code-map/CHANGELOG.md (2026-08-24 bullet)."
+  "notes": "2026-08-24 adhoc-trips session: ad-hoc trips + fulfillment (see CHANGELOG 2026-08-24 bullet) + driver_payments per-tenant opt-in + Google Maps root cause = Google Cloud billing. Merged over #433/#434 (tobacco consolidation — its note is the CHANGELOG's other 2026-08-24 bullet); e2e spec renumbered 19→20 (compliance-pack-gate took 19). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

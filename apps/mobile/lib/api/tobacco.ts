@@ -53,11 +53,15 @@ export interface TobaccoReport {
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
-export function useTobaccoOverview(month?: string) {
+export function useTobaccoOverview(month?: string, options?: { enabled?: boolean }) {
   return useQuery<TobaccoOverview>({
     queryKey: ["tobacco", "overview", month],
     queryFn: () =>
       apiClient.get("/tobacco/overview", { params: month ? { month } : {} }).then((r) => r.data),
+    // The endpoint is addon-guarded (403 without tobacco_dealer); callers that
+    // aren't already behind an addon gate should pass enabled to avoid a 403.
+    enabled: options?.enabled ?? true,
+    retry: false,
   });
 }
 

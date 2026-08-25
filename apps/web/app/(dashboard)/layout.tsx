@@ -42,7 +42,6 @@ import {
   X,
   Check,
   Languages,
-  Cigarette,
   ShieldCheck,
   ShieldAlert,
   Handshake,
@@ -62,7 +61,7 @@ import { useExpiringAuthorizations, type ExpiringAuthorization } from "@/lib/api
 import { usePendingPortalApprovals } from "@/lib/api/portal-approvals";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { DraftDock } from "@/components/DraftDock";
-import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
+import { useHasAddon } from "@/lib/api/tobacco";
 import { useDeveloperMode, SALES_AGENTS_ADDON } from "@/lib/api/addons";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
@@ -867,7 +866,6 @@ function ImpersonationBanner() {
 function DashboardShell({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
-  const hasTobacco = useHasAddon(TOBACCO_ADDON);
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
   const { enabled: devMode } = useDeveloperMode();
   // Only OPERATOR/TENANT_ADMIN see regulated nav; skip the fetch for CUSTOMER/DRIVER.
@@ -879,8 +877,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
     // "Regulated Items" nav group — one child per active regulated section, each
     // opening that section's dashboard. Shown whenever the tenant has ≥1 section
-    // (an empty group is never spliced). The addon-gated Tobacco deep page stays a
-    // separate leaf so existing tobacco tenants keep their dedicated view.
+    // (an empty group is never spliced).
     const inject: NavEntry[] = [];
     const sections = regulatedSections ?? [];
     if (sections.length > 0) {
@@ -896,10 +893,6 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         })),
       });
     }
-    if (hasTobacco) {
-      inject.push({ kind: "leaf", label: "Tobacco", href: "/tobacco", icon: Cigarette });
-    }
-
     let base = nav;
     if (hasSalesAgents) {
       // "Sales Agents" as a top-level leaf right after Customers; "Commissions"
@@ -936,7 +929,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     return idx === -1
       ? [...base, ...inject]
       : [...base.slice(0, idx + 1), ...inject, ...base.slice(idx + 1)];
-  }, [user, isStaff, hasTobacco, hasSalesAgents, regulatedSections, devMode]);
+  }, [user, isStaff, hasSalesAgents, regulatedSections, devMode]);
   const [collapsed, setCollapsed] = React.useState(() => {
     if (typeof window !== "undefined") {
       // Auto-collapse on small screens, otherwise respect saved preference

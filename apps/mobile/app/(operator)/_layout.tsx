@@ -39,14 +39,16 @@ export default function OperatorLayout() {
   // (order.created, order.statusChanged, route.stop.completed, etc.) keep
   // active queries fresh across every operator screen, not only the home tab.
   useSocket();
-  const { enabled: devMode, isLoading: devLoading } = useDeveloperMode();
+  const { enabled: devMode, resolved: devResolved } = useDeveloperMode();
   const segments = useSegments() as string[];
 
   // Single deep-link chokepoint for every dispatch/route/driver/fleet screen,
   // instead of guarding ~15 individual screens. segments[0] is always
   // "(operator)" here; the tabs live one group deeper under "(tabs)".
   const section = segments[1] === "(tabs)" ? segments[2] : segments[1];
-  if (DEV_MODE_SECTIONS.has(section ?? "") && !devLoading && !devMode) {
+  // Fail OPEN when the addon read did not land (offline, timeout, API 5xx):
+  // block only on a positively-read flag, matching app/_layout.tsx :178.
+  if (DEV_MODE_SECTIONS.has(section ?? "") && devResolved && !devMode) {
     return <Redirect href="/(operator)/home" />;
   }
 

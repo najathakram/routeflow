@@ -5,6 +5,8 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { AddonGuard } from "../billing/addon.guard";
+import { RequireAddon } from "../billing/require-addon.decorator";
 import { RegulatedService } from "./regulated.service";
 import { RegulatedFilingService } from "./regulated-filing.service";
 import { RegulatedReportService } from "./regulated-report.service";
@@ -14,10 +16,12 @@ import { PrepareFilingDto } from "./dto/prepare-filing.dto";
 import { ReportQueryDto } from "./dto/report-query.dto";
 import { REPORT_TEMPLATES } from "./template-registry";
 
-// Generic feature — no addon gate (mirrors tracked-categories; tobacco stays the
-// only addon-gated surface). TENANT_ADMIN satisfies OPERATOR via the RolesGuard.
+// Categorization stays free; the LEDGER/FILINGS/REPORTS surfaces are the
+// Regulated compliance pack, gated on the tobacco_dealer addon (bridged to the
+// REGULATED_ITEMS SKU). GET /templates stays ungated — the free product forms
+// read it. Guard order matters: AddonGuard reads req.user (set by JwtAuthGuard).
 @Controller("regulated")
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, AddonGuard)
 @Roles(UserRole.OPERATOR)
 export class RegulatedController {
   constructor(
@@ -27,6 +31,7 @@ export class RegulatedController {
   ) {}
 
   @Get("ledger")
+  @RequireAddon("tobacco_dealer")
   getLedger(@Query() query: ListLedgerDto) {
     return this.regulated.getLedger(query);
   }
@@ -43,11 +48,13 @@ export class RegulatedController {
   }
 
   @Get("reports/preview")
+  @RequireAddon("tobacco_dealer")
   previewReport(@Query() query: ReportQueryDto) {
     return this.reports.buildReport(query);
   }
 
   @Get("reports/csv")
+  @RequireAddon("tobacco_dealer")
   async downloadReportCsv(
     @Query() query: ReportQueryDto,
     @Res({ passthrough: true }) res: Response,
@@ -64,21 +71,25 @@ export class RegulatedController {
   // Static routes first; the `:id` param routes stay last (route-order safety).
 
   @Get("filings")
+  @RequireAddon("tobacco_dealer")
   listFilings(@Query() q: ListFilingsDto) {
     return this.filings.listFilings(q.category);
   }
 
   @Post("filings/prepare")
+  @RequireAddon("tobacco_dealer")
   prepare(@Body() dto: PrepareFilingDto, @CurrentUser() user: { id: string }) {
     return this.filings.prepareFiling({ ...dto, userId: user.id });
   }
 
   @Get("filings/:id/csv")
+  @RequireAddon("tobacco_dealer")
   downloadCsv(@Param("id") id: string) {
     return this.filings.downloadUrl(id, "csv");
   }
 
   @Get("filings/:id/pdf")
+  @RequireAddon("tobacco_dealer")
   downloadPdf(@Param("id") id: string) {
     return this.filings.downloadUrl(id, "pdf");
   }

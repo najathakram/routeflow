@@ -1576,8 +1576,18 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                       <span className="font-semibold">Tobacco product</span> — purchases and sales
                       are tracked separately for monthly tax reports.
                     </p>
-                    <Link href="/tobacco" className="text-xs font-medium text-amber-800 underline">
-                      Tobacco section →
+                    {/* The standalone /tobacco surface retired into the Regulated Items hub
+                        (2026-08-24 consolidation) — link straight at this product's own
+                        regulated section, falling back to the hub when it has none. */}
+                    <Link
+                      href={
+                        product.trackedCategory
+                          ? `/compliance/${product.trackedCategory.id}`
+                          : "/compliance"
+                      }
+                      className="text-xs font-medium text-amber-800 underline"
+                    >
+                      Regulated Items →
                     </Link>
                   </div>
                 )}
@@ -2065,6 +2075,12 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                         <p className="mt-1 text-xs text-navy/50">
                           per piece — even for boxed products
                         </p>
+                        {!(editDraft.msrp as string)?.trim() && (
+                          <p className="mt-1 text-xs text-navy/50">
+                            Shown on new invoices once set — existing invoices keep their original
+                            snapshot.
+                          </p>
+                        )}
                         {msrpBelowWholesale && (
                           <p className="mt-1 text-xs text-warning">
                             Below wholesale price (${wholesalePerPiece.toFixed(2)}/pc)

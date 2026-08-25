@@ -194,7 +194,13 @@ export class EntitlementsService {
         }
         meta = publishedSkuByCode.get(code);
       }
-      if (!meta) continue;
+      if (!meta) {
+        this.logger.warn(
+          `tenant ${tenantId}: active addon '${addon.addonKey}' resolves to SKU '${code}' ` +
+            `not present in pinned or published catalog — granting nothing`,
+        );
+        continue;
+      }
       for (const flag of meta.grantsFlags) flags.add(flag);
       if (meta.meteredKey && meta.capacityPerUnit) {
         capacity[meta.meteredKey] += addon.quantity * meta.capacityPerUnit;

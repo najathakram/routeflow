@@ -13,12 +13,13 @@ import { RegulatedFilingsList } from "../../../components/RegulatedFilingsList";
 export default function ComplianceHubScreen() {
   const router = useRouter();
   const { data: sections = [], isLoading } = useTrackedCategories();
-  const hasTobacco = useHasAddon(TOBACCO_ADDON);
-  // Mirrors the existing app/(operator)/tobacco/index.tsx precedent: this hook has
-  // no `enabled` option on mobile, so it's called unconditionally — only the
-  // *display* below is gated on hasTobacco.
-  const { data: overview } = useTobaccoOverview();
-  const { data: filings = [] } = useRegulatedFilings();
+  // Ledger/filings/reports are the Regulated compliance pack — gated on the raw
+  // tobacco_dealer addon. Both hooks below take `enabled` so an unentitled tenant
+  // fires zero gated requests (previously useTobaccoOverview fired unconditionally
+  // and 403'd for every tenant without the addon).
+  const packEnabled = useHasAddon(TOBACCO_ADDON);
+  const { data: overview } = useTobaccoOverview(undefined, { enabled: packEnabled });
+  const { data: filings = [] } = useRegulatedFilings(undefined, { enabled: packEnabled });
 
   const activeCount = sections.filter((s) => s.active).length;
   const regulatedProducts = sections.reduce((sum, s) => sum + (s.productCount ?? 0), 0);
@@ -56,7 +57,7 @@ export default function ComplianceHubScreen() {
               <KpiCard
                 icon={<Ionicons name="receipt-outline" size={18} color={ios.system.orangeInk} />}
                 iconBg={ios.system.orangeWash}
-                value={hasTobacco && overview ? fmtMoney(overview.sales.totalTax) : "—"}
+                value={packEnabled && overview ? fmtMoney(overview.sales.totalTax) : "—"}
                 label="Tax (this month)"
               />
               <KpiCard
@@ -64,7 +65,7 @@ export default function ComplianceHubScreen() {
                   <Ionicons name="document-text-outline" size={18} color={ios.system.purpleInk} />
                 }
                 iconBg={ios.system.purpleWash}
-                value={String(filings.length)}
+                value={packEnabled ? String(filings.length) : "—"}
                 label="Filings"
               />
             </View>
@@ -102,7 +103,18 @@ export default function ComplianceHubScreen() {
               ) : null}
             </ListGroup>
 
-            <RegulatedFilingsList filings={filings} showCategory categoryName={categoryName} />
+            {packEnabled ? (
+              <RegulatedFilingsList filings={filings} showCategory categoryName={categoryName} />
+            ) : (
+              <ListGroup header="COMPLIANCE PACK">
+                <View style={styles.emptyRow}>
+                  <Text style={styles.emptyText}>
+                    Ledgers, reports and filings are part of the Regulated compliance pack, which
+                    isn&apos;t enabled for this workspace. Ask your platform administrator.
+                  </Text>
+                </View>
+              </ListGroup>
+            )}
 
             <View style={{ height: 32 }} />
           </>

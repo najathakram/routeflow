@@ -1,4 +1,4 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 
@@ -15,6 +15,12 @@ function catalog() {
       { sku: "SEAT_EXTRA", name: "Extra seat", monthlyPrice: 12 },
       { sku: "BUYER_PORTAL", name: "Buyer portal", monthlyPrice: 49 },
       { sku: "REGULATED_ITEMS", name: "Regulated", monthlyPrice: 39 },
+      // Self-service SKUs (SELF_SERVICE_ADDON_SKUS) — the only two enableAddon may grant.
+      { sku: "CUSTOMER_PACK_100", name: "Customer pack", monthlyPrice: 12 },
+      { sku: "FORECASTING", name: "Forecasting", monthlyPrice: 25 },
+      // Admin-only SKUs — enableAddon must 403 a self-service request for these.
+      { sku: "MSRP", name: "MSRP", monthlyPrice: 20 },
+      { sku: "SALES_AGENTS", name: "Sales agents", monthlyPrice: 30 },
     ],
   };
 }
@@ -101,7 +107,7 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
     const { svc, tx, events, entitlements } = make({ tenantStatus: "TRIAL" });
     await svc.subscribe(
       "t1",
-      { planKey: "TEAM", cycle: "MONTHLY", addons: [{ sku: "SEAT_EXTRA", quantity: 2 }] },
+      { planKey: "TEAM", cycle: "MONTHLY", addons: [{ sku: "CUSTOMER_PACK_100", quantity: 2 }] },
       "admin",
     );
     expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(149); // plan only, NOT 173
@@ -112,7 +118,6 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
         BILLING_EVENTS.TRIAL_CONVERTED,
         BILLING_EVENTS.PLAN_CHANGED,
         BILLING_EVENTS.ADDON_ENABLED,
-        BILLING_EVENTS.SEAT_ADDED,
       ]),
     );
     expect(tx.tenant.update.mock.calls[0][0].data).toMatchObject({
@@ -127,12 +132,18 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       tenantStatus: "ACTIVE",
       sub: { planKey: "BUSINESS" },
       priorAddons: [
-        { id: "a1", addonKey: "BUYER_PORTAL", sku: "BUYER_PORTAL", quantity: 1, active: true },
+        {
+          id: "a1",
+          addonKey: "CUSTOMER_PACK_100",
+          sku: "CUSTOMER_PACK_100",
+          quantity: 1,
+          active: true,
+        },
       ],
     });
     await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
     expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(-290); // 59 − 349
-    expect(deltaOf(events, BILLING_EVENTS.ADDON_DISABLED)).toBe(-49); // dropped BUYER_PORTAL
+    expect(deltaOf(events, BILLING_EVENTS.ADDON_DISABLED)).toBe(-12); // dropped CUSTOMER_PACK_100
     expect(tx.tenantAddon.update).toHaveBeenCalledWith({
       where: { id: "a1" },
       data: { active: false },
@@ -159,7 +170,11 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
     });
     await svc.subscribe(
       "t1",
-      { planKey: "BUSINESS", cycle: "MONTHLY", addons: [{ sku: "SEAT_EXTRA", quantity: 2 }] },
+      {
+        planKey: "BUSINESS",
+        cycle: "MONTHLY",
+        addons: [{ sku: "CUSTOMER_PACK_100", quantity: 2 }],
+      },
       "admin",
     );
     // Full run-rate re-added: +349 base and +24 add-on (12×2) — matching the −373 at churn.
@@ -239,20 +254,96 @@ describe("SubscriptionMutationService downgrade / add-ons", () => {
   });
 
   it("enableAddon charges the qty delta only (idempotent re-enable at same qty emits nothing)", async () => {
+    // CUSTOMER_PACK_100, not SEAT_EXTRA — SEAT_EXTRA is seat-billing plumbing, never a
+    // self-service toggle (see the SELF_SERVICE_ADDON_SKUS tests below).
     const first = make();
-    await first.svc.enableAddon("t1", "SEAT_EXTRA", 2, "admin");
+    await first.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "admin");
     expect(deltaOf(first.events, BILLING_EVENTS.ADDON_ENABLED)).toBe(24); // 12 × 2
 
     const again = make({ existingAddon: { active: true, quantity: 2 } });
-    await again.svc.enableAddon("t1", "SEAT_EXTRA", 2);
+    await again.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2);
     expect(emitted(again.events)).not.toContain(BILLING_EVENTS.ADDON_ENABLED); // no change → no MRR event
   });
 
-  it("disableAddon credits the CANONICAL price for a legacy addonKey row (tobacco_dealer → REGULATED_ITEMS)", async () => {
-    const { svc, events } = make({
+  it("disableAddon credits the add-on's price (CUSTOMER_PACK_100 × 2)", async () => {
+    const { svc, events, tx } = make({
+      addonRow: {
+        id: "a1",
+        addonKey: "CUSTOMER_PACK_100",
+        sku: "CUSTOMER_PACK_100",
+        quantity: 2,
+        active: true,
+      },
+    });
+    await svc.disableAddon("t1", "CUSTOMER_PACK_100");
+    expect(deltaOf(events, BILLING_EVENTS.ADDON_DISABLED)).toBe(-24); // 12 × 2
+    expect(tx.tenantAddon.update).toHaveBeenCalledWith({
+      where: { id: "a1" },
+      data: { active: false },
+    });
+  });
+});
+
+describe("SubscriptionMutationService.enableAddon self-service gate (SELF_SERVICE_ADDON_SKUS)", () => {
+  it("403s a self-service enable of an admin-only SKU (MSRP)", async () => {
+    const { svc, tx, entitlements } = make();
+    await expect(svc.enableAddon("t1", "MSRP", 1, "admin")).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(tx.tenantAddon.upsert).not.toHaveBeenCalled();
+    expect(entitlements.invalidate).not.toHaveBeenCalled();
+  });
+
+  it("403s a self-service enable of an admin-only SKU (SALES_AGENTS)", async () => {
+    const { svc } = make();
+    await expect(svc.enableAddon("t1", "SALES_AGENTS", 1, "admin")).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
+
+  it("allows self-service enable of CUSTOMER_PACK_100", async () => {
+    const { svc, tx, entitlements } = make();
+    await svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "admin");
+    expect(tx.tenantAddon.upsert).toHaveBeenCalled();
+    expect(entitlements.invalidate).toHaveBeenCalledWith("t1");
+  });
+
+  it("403s a self-service disable of an admin-only SKU, incl. via the legacy addonKey", async () => {
+    const { svc, tx } = make({
       addonRow: { id: "a1", addonKey: "tobacco_dealer", sku: null, quantity: 1, active: true },
     });
-    await svc.disableAddon("t1", "tobacco_dealer");
-    expect(deltaOf(events, BILLING_EVENTS.ADDON_DISABLED)).toBe(-39); // REGULATED_ITEMS price, NOT -0
+    // tobacco_dealer bridges to REGULATED_ITEMS — admin-granted, so the tenant cannot
+    // switch it off (re-enabling it is a 403, which would be a support-only dead end).
+    await expect(svc.disableAddon("t1", "tobacco_dealer")).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(tx.tenantAddon.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("SubscriptionMutationService.subscribe self-service gate (SELF_SERVICE_ADDON_SKUS)", () => {
+  it("403s a subscribe that names an admin-only SKU in addons[] — the enableAddon back door", async () => {
+    const { svc, tx, entitlements } = make();
+    await expect(
+      svc.subscribe(
+        "t1",
+        { planKey: "TEAM", cycle: "MONTHLY", addons: [{ sku: "MSRP" }, { sku: "SALES_AGENTS" }] },
+        "admin",
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(tx.tenantAddon.upsert).not.toHaveBeenCalled();
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(entitlements.invalidate).not.toHaveBeenCalled();
+  });
+
+  it("never revokes an admin-granted add-on the payload omits", async () => {
+    const { svc, tx, events } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "TEAM" },
+      priorAddons: [{ id: "a1", addonKey: "msrp", sku: null, quantity: 1, active: true }],
+    });
+    await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+    expect(tx.tenantAddon.update).not.toHaveBeenCalled(); // MSRP stays active
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.ADDON_DISABLED);
   });
 });

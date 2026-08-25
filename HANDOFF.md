@@ -7,17 +7,41 @@ CLAUDE.md is canonical again** (public → push/CI → merge → wait for Railwa
 Until a public window, the **pre-push hook running the FULL `npm run verify` is the authoritative
 gate** — never `SKIP_VERIFY=1` without an explicit green verify of the exact pushed state.
 
+## ✅ SHIPPED + LIVE 2026-08-24 (evening) — #433 addon hygiene · #434 tobacco consolidation
+
+Both merged, deployed (api/web/mobile SUCCESS), post-deploy green.
+
+- **#433**: addon enable validates against the published catalog (400 + remedy); every toggle
+  invalidates the entitlements cache; self-service allowlist (MSRP/SALES_AGENTS admin-only);
+  6 vaporware admin toggles deleted; catalog **v11 published** (BUYER_PORTAL/SEAT_EXTRA/
+  OCR_PACK_250/ROUTE_EXTRA/MSG_BUNDLE_500 retired); 7 inert TenantAddon rows deactivated;
+  consistency probe: ZERO orphaned grants. Full evaluation: the Addon Truth Matrix artifact.
+- **#434**: ONE regulated surface — /tobacco retired into the Regulated Items hub as the
+  addon-gated 'Regulated compliance pack' (same tobacco_dealer key). Product.isTobacco is a
+  write-synced mirror of Tobacco-type membership (un-flag PRESERVES the reg reporting trio).
+  NO migration. **Byte-equivalence PROVEN**: demo July report identical pre/post-deploy.
+  Backfill executed: routeflow-demo 16 + affa 66 mirrors healed, 0 conflicts, re-run clean —
+  those 66 affa tobacco products were MISSING from compliance reports until now; regenerating
+  any PAST affa period will now include them (owner decision before restating filed periods).
+  Fresh validated backup: production_20260824_pre-tobacco-consolidation.sql (126==126).
+
+Also 2026-08-24: sales-agents outage root-caused (catalog v10 was never published — published
+same day) and demo fully seeded (2 agents, backdated rates, CST-2026-0001 approved + $700
+partial payout). In-flight elsewhere: the ad-hoc order trips session (feat/adhoc-order-trips,
+migration slot 20260904 claimed) — its runbook: prod migration BEFORE deploy; check
+GOOGLE_MAPS_API_KEY exists on the prod API service.
+
 ## ✅ SHIPPED + LIVE 2026-08-24 (morning window) — #427 / #428 / #429 / #430
 
 All four merged in ONE public window (public → squash-merge x4 → all three services BUILDING →
 private confirmed → deploys SUCCESS → post-deploy-check GREEN). What landed:
 
-| PR | What |
-| --- | --- |
-| #427 | Repair scripts: receiving-units (HIGH-signature + printed recompute-costs follow-up), escaped-entities, drift scan covers TRIAL |
-| #428 | NSF bounce fees excluded from the commission base (shared NSF_FEE_DESCRIPTION_PREFIX; ratio deliberately conservative). Pipeline clean + Fable money-pass PASS |
+| PR   | What                                                                                                                                                                                   |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #427 | Repair scripts: receiving-units (HIGH-signature + printed recompute-costs follow-up), escaped-entities, drift scan covers TRIAL                                                        |
+| #428 | NSF bounce fees excluded from the commission base (shared NSF_FEE_DESCRIPTION_PREFIX; ratio deliberately conservative). Pipeline clean + Fable money-pass PASS                         |
 | #429 | PR-D — full sales-agents & commissions UI (agent box, statements w/ stale-409 regenerate, order override, mobile row, e2e 18). Dark until the sales_agents addon is enabled per tenant |
-| #430 | This handoff refresh |
+| #430 | This handoff refresh                                                                                                                                                                   |
 
 ## 🔵 Enforcement is LIVE (2026-08-23)
 

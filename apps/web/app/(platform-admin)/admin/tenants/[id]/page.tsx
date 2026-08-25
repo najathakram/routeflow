@@ -95,46 +95,16 @@ const PLANS = ["STARTER", "PROFESSIONAL", "ENTERPRISE"] as const;
 
 const AVAILABLE_ADDONS = [
   {
-    key: "ai_scanning",
-    name: "AI Receipt Scanning",
-    description: "Automatically extract data from receipt images using AI",
-  },
-  {
-    key: "advanced_routes",
-    name: "Advanced Route Optimization",
-    description: "AI-powered route optimization and real-time rerouting",
-  },
-  {
-    key: "api_access",
-    name: "API Access",
-    description: "Full REST API access for third-party integrations",
-  },
-  {
-    key: "custom_branding",
-    name: "Custom Branding",
-    description: "White-label branding with custom logo, colors, and domain",
-  },
-  {
-    key: "priority_support",
-    name: "Priority Support",
-    description: "Dedicated support channel with 4-hour SLA",
-  },
-  {
-    key: "advanced_reporting",
-    name: "Advanced Reporting",
-    description: "Custom report builder with export and scheduling",
-  },
-  {
     key: "tobacco_dealer",
-    name: "Tobacco Dealer Compliance",
+    name: "Regulated compliance pack",
     description:
-      "Tobacco product tracking, optional exclusion from main analytics, and monthly compliance reports",
+      "Regulated Items compliance pack — license-column ledgers, monthly tobacco reports, regulated filings & range reports, and the analytics-exclusion option inside the Regulated Items hub (legacy key: tobacco_dealer)",
   },
   {
     key: "msrp",
     name: "MSRP on invoices",
     description:
-      "Suggested retail price (per piece) on product, customer, and invoice pricing — display-only, never enters money math",
+      "Suggested retail price (per piece) on products, customers, and invoice pricing — display-only. Nothing appears until MSRP values are entered, and only invoices created afterwards show them.",
   },
   {
     key: "sales_agents",
@@ -145,7 +115,8 @@ const AVAILABLE_ADDONS = [
   {
     key: DEVELOPER_MODE_ADDON,
     name: "Developer Mode",
-    description: "Unlock in-development features (dispatch, routes, drivers) for this tenant",
+    description:
+      "Unlock in-development features (dispatch, routes, drivers) for this tenant (UI-only — hides these surfaces in the official apps; not a server-side access control)",
   },
 ];
 

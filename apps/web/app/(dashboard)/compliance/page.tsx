@@ -27,7 +27,9 @@ export default function CompliancePage() {
   // The generic per-category tax KPI is still deferred (W3 tax engine); for a
   // tobacco tenant we surface the existing tobacco overview total, else "—".
   const { data: overview } = useTobaccoOverview(undefined, { enabled: hasTobacco });
-  const { data: filings = [] } = useRegulatedFilings();
+  // Filings/ledgers/reports are the compliance pack — gated on tobacco_dealer.
+  const packEnabled = hasTobacco;
+  const { data: filings = [] } = useRegulatedFilings(undefined, { enabled: packEnabled });
 
   const activeCount = categories.filter((c) => c.active).length;
   const regulatedProducts = categories.reduce((sum, c) => sum + (c.productCount ?? 0), 0);
@@ -83,12 +85,7 @@ export default function CompliancePage() {
           <div className="flex items-center gap-2 text-xs text-navy/70">
             <FileText className="h-4 w-4" /> Filings
           </div>
-          <p className="mt-1 text-2xl font-bold text-navy">{filings.length}</p>
-          {hasTobacco && (
-            <Link href="/tobacco" className="text-xs text-brand-600 hover:underline">
-              Tobacco reports →
-            </Link>
-          )}
+          <p className="mt-1 text-2xl font-bold text-navy">{packEnabled ? filings.length : "—"}</p>
         </Card>
       </div>
 
@@ -156,10 +153,19 @@ export default function CompliancePage() {
         )}
       </Card>
 
-      {/* Filings roll-up (all sections) */}
-      <Card title="Filings">
-        <RegulatedFilingsTable filings={filings} showCategory categoryName={categoryName} />
-      </Card>
+      {/* Filings roll-up (all sections) — compliance pack, gated on tobacco_dealer */}
+      {packEnabled ? (
+        <Card title="Filings">
+          <RegulatedFilingsTable filings={filings} showCategory categoryName={categoryName} />
+        </Card>
+      ) : (
+        <Card title="Filings">
+          <p className="py-6 text-center text-sm text-navy/60">
+            Filings, ledgers and reports are part of the Regulated compliance pack, which isn&apos;t
+            enabled for this workspace.
+          </p>
+        </Card>
+      )}
     </div>
   );
 }

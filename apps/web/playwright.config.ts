@@ -268,14 +268,26 @@ export default defineConfig({
       },
     },
 
-    // ── Ad-hoc trip builder entitlement gate (WP12 19) ────────────────────────
+    // ── Compliance-pack entitlement gate (tobacco consolidation, 19) ──────────
+    // Reads the tenant's live addon flag and asserts the /tobacco redirect and
+    // the hub's locked/unlocked state match it. Read-only: GETs and renders only.
+    {
+      name: "compliance-pack-gate",
+      testMatch: /19-compliance-pack-gate\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+    // ── Ad-hoc trip builder entitlement gate (WP12, spec 20) ────────────────────────
     // Reads the tenant's live developer_mode addon flag and asserts the orders
     // bulkbar action / trip-builder deep-link match it. Read-only: GETs and
     // renders only — Build/Create trip/Send are never clicked.
     // Uses operator auth state; the spec reads its token out of that session.
     {
       name: "trip-builder-gate",
-      testMatch: /19-trip-builder-gate\.spec\.ts/,
+      testMatch: /20-trip-builder-gate\.spec\.ts/,
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },

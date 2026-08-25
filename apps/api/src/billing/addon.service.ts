@@ -1,6 +1,15 @@
-import { Injectable, Logger, NotFoundException, ConflictException } from "@nestjs/common";
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { StripeService } from "./stripe.service";
+import { EntitlementsService } from "./entitlements.service";
+import { PlanCatalogService } from "./plan-catalog.service";
+import { LEGACY_ADDON_KEY_TO_SKU } from "./plan-catalog.constants";
 
 /**
  * Manages add-on features for tenants.
@@ -16,6 +25,8 @@ export class AddonService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stripe: StripeService,
+    private readonly entitlements: EntitlementsService,
+    private readonly catalog: PlanCatalogService,
   ) {}
 
   // ─── Check access ─────────────────────────────────────────────────────────
@@ -84,6 +95,24 @@ export class AddonService {
       );
     }
 
+    // Bridged legacy keys (tobacco_dealer, msrp, sales_agents, …) must resolve to a SKU
+    // that actually exists in the published catalog — otherwise the row activates but
+    // EntitlementsService.compute() can never turn it into a flag (see the silent-continue
+    // fix there), which is how the sales-agents "not available on your plan" outage
+    // happened. Unbridged legacy keys (e.g. developer_mode) have no SKU to check and are
+    // allowed unchanged — that is the documented client-only pattern.
+    const sku = LEGACY_ADDON_KEY_TO_SKU[addonKey];
+    if (sku) {
+      const published = await this.catalog.getPublishedCatalog();
+      const skuIsPublished = published.addonSkus.some((s) => s.sku === sku);
+      if (!skuIsPublished) {
+        throw new BadRequestException(
+          `Addon '${addonKey}' maps to SKU '${sku}' which is not in the published catalog — ` +
+            `publish the catalog version that defines it first`,
+        );
+      }
+    }
+
     // Add Stripe subscription item if configured
     let stripeItemId: string | null = null;
     if (stripePriceId && this.stripe.isConfigured) {
@@ -127,6 +156,7 @@ export class AddonService {
       },
     });
 
+    this.entitlements.invalidate(tenantId);
     this.logger.log(`Add-on "${addonKey}" enabled for tenant ${tenant.slug}`);
     return addon;
   }
@@ -163,6 +193,7 @@ export class AddonService {
       data: { active: false, stripeItemId: null },
     });
 
+    this.entitlements.invalidate(tenantId);
     this.logger.log(`Add-on "${addonKey}" disabled for tenant ${tenantId}`);
     return updated;
   }

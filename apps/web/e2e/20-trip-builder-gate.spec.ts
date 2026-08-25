@@ -1,5 +1,5 @@
 /**
- * WP12 (19): Ad-hoc trip builder entitlement gate. READ-ONLY: GETs, renders,
+ * WP12 (spec 20; 19 was taken by compliance-pack-gate): Ad-hoc trip builder entitlement gate. READ-ONLY: GETs, renders,
  * and toggling the orders-list "Select" mode / a row checkbox only — Build,
  * Create trip, and Send are never clicked. Branches on the tenant's live addon
  * state via GET /tenants/me/addons (helpers/api.ts pattern, copied verbatim
