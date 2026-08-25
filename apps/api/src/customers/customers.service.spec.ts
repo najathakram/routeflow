@@ -1,7 +1,14 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
-import { NotFoundException, ForbiddenException, BadRequestException } from "@nestjs/common";
+import {
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+  ConflictException,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { plainToInstance } from "class-transformer";
+import { validate } from "class-validator";
 import { CustomersService } from "./customers.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
@@ -9,6 +16,8 @@ import { MeterService } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { CreateCustomerDto } from "./dto/create-customer.dto";
+import { UpdateCustomerDto } from "./dto/update-customer.dto";
 
 const MOCK_CUSTOMER = {
   id: "cust-1",
@@ -329,6 +338,33 @@ describe("CustomersService", () => {
       expect(createdData).not.toHaveProperty("lat");
       expect(createdData).not.toHaveProperty("lng");
     });
+
+    // ─── create: defaultDepositPercent (WP1) ────────────────────────────────
+
+    it("stores defaultDepositPercent on the created customer when provided", async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue({ id: "u1", username: "acme", email: "placeholder" });
+      prisma.customer.create.mockResolvedValue({ id: "c1" });
+
+      await service.create({ ...baseDto, defaultDepositPercent: 50 });
+
+      expect(prisma.customer.create.mock.calls[0][0].data).toHaveProperty(
+        "defaultDepositPercent",
+        50,
+      );
+    });
+
+    it("omits defaultDepositPercent from the create data when not provided", async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue({ id: "u1", username: "acme", email: "placeholder" });
+      prisma.customer.create.mockResolvedValue({ id: "c1" });
+
+      await service.create({ ...baseDto });
+
+      expect(prisma.customer.create.mock.calls[0][0].data).not.toHaveProperty(
+        "defaultDepositPercent",
+      );
+    });
   });
 
   // ─── create: CUSTOMERS soft cap (WP3) ──────────────────────────────────────
@@ -485,6 +521,43 @@ describe("CustomersService", () => {
       prisma.customer.findUnique.mockResolvedValue(null);
       await expect(service.update("nonexistent", {} as any)).rejects.toThrow(NotFoundException);
     });
+
+    // ─── update: defaultDepositPercent (WP1) ────────────────────────────────
+
+    it("forwards a numeric defaultDepositPercent to the update data", async () => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.customer.update.mockResolvedValue({ ...MOCK_CUSTOMER, defaultDepositPercent: 50 });
+
+      await service.update("cust-1", { defaultDepositPercent: 50 } as any);
+
+      expect(prisma.customer.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ defaultDepositPercent: 50 }) }),
+      );
+    });
+
+    it("forwards null to clear a previously-set defaultDepositPercent", async () => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.customer.update.mockResolvedValue({ ...MOCK_CUSTOMER, defaultDepositPercent: null });
+
+      await service.update("cust-1", { defaultDepositPercent: null } as any);
+
+      expect(prisma.customer.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ defaultDepositPercent: null }),
+        }),
+      );
+    });
+
+    it("omits defaultDepositPercent from the update data when not provided (no accidental clear)", async () => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.customer.update.mockResolvedValue(MOCK_CUSTOMER);
+
+      await service.update("cust-1", { businessName: "New Name" } as any);
+
+      expect(prisma.customer.update.mock.calls[0][0].data).not.toHaveProperty(
+        "defaultDepositPercent",
+      );
+    });
   });
 
   // ─── addAddress ───────────────────────────────────────────────────────────
@@ -502,6 +575,200 @@ describe("CustomersService", () => {
           zip: "10001",
         } as any),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ─── updateAddress ────────────────────────────────────────────────────────
+
+  describe("updateAddress", () => {
+    beforeEach(() => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+    });
+
+    it("passes addressType through to the update data (no field-picking omits it)", async () => {
+      prisma.customerAddress.update.mockResolvedValue({
+        id: "addr-1",
+        customerId: "cust-1",
+        addressType: "SHIPPING",
+      });
+
+      await service.updateAddress("cust-1", "addr-1", { addressType: "SHIPPING" } as any);
+
+      expect(prisma.customerAddress.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "addr-1", customerId: "cust-1" },
+          data: expect.objectContaining({ addressType: "SHIPPING" }),
+        }),
+      );
+    });
+  });
+
+  // ─── deleteAddress (WP1) ──────────────────────────────────────────────────
+
+  describe("deleteAddress", () => {
+    const DEFAULT_ADDRESS = {
+      id: "addr-1",
+      customerId: "cust-1",
+      isDefault: true,
+      createdAt: new Date("2026-01-01"),
+    };
+
+    beforeEach(() => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+    });
+
+    it("throws NotFoundException when the address does not exist", async () => {
+      prisma.customerAddress.findFirst.mockResolvedValueOnce(null);
+
+      await expect(service.deleteAddress("cust-1", "missing")).rejects.toThrow(NotFoundException);
+      expect(prisma.customerAddress.delete).not.toHaveBeenCalled();
+    });
+
+    it("scopes the lookup to the given customerId, so an address on another customer 404s", async () => {
+      // The where clause filters by customerId — a row belonging to a different
+      // customer never matches, so the (mocked) DB lookup returns null just like
+      // "unknown". Asserting the call args proves the scoping is actually wired,
+      // not just that a null happens to throw.
+      prisma.customerAddress.findFirst.mockResolvedValueOnce(null);
+
+      await expect(service.deleteAddress("cust-1", "addr-of-other-customer")).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(prisma.customerAddress.findFirst).toHaveBeenCalledWith({
+        where: { id: "addr-of-other-customer", customerId: "cust-1" },
+      });
+    });
+
+    it("throws ConflictException (409) when a RouteStop references the address", async () => {
+      prisma.customerAddress.findFirst.mockResolvedValueOnce(DEFAULT_ADDRESS);
+      prisma.routeStop.count.mockResolvedValueOnce(1);
+      prisma.routeRunStop.count.mockResolvedValueOnce(0);
+
+      await expect(service.deleteAddress("cust-1", "addr-1")).rejects.toThrow(ConflictException);
+      expect(prisma.customerAddress.delete).not.toHaveBeenCalled();
+    });
+
+    it("throws ConflictException (409) when a RouteRunStop references the address", async () => {
+      prisma.customerAddress.findFirst.mockResolvedValueOnce(DEFAULT_ADDRESS);
+      prisma.routeStop.count.mockResolvedValueOnce(0);
+      prisma.routeRunStop.count.mockResolvedValueOnce(1);
+
+      await expect(service.deleteAddress("cust-1", "addr-1")).rejects.toThrow(ConflictException);
+      expect(prisma.customerAddress.delete).not.toHaveBeenCalled();
+    });
+
+    it("deletes a non-default, unreferenced address with no default-promotion", async () => {
+      const nonDefault = { ...DEFAULT_ADDRESS, isDefault: false };
+      prisma.customerAddress.findFirst.mockResolvedValueOnce(nonDefault);
+      prisma.routeStop.count.mockResolvedValueOnce(0);
+      prisma.routeRunStop.count.mockResolvedValueOnce(0);
+
+      const result = await service.deleteAddress("cust-1", "addr-1");
+
+      expect(prisma.customerAddress.delete).toHaveBeenCalledWith({
+        where: { id: "addr-1", customerId: "cust-1" },
+      });
+      expect(prisma.customerAddress.update).not.toHaveBeenCalled();
+      expect(result).toEqual({ success: true });
+    });
+
+    it("promotes the oldest remaining address to isDefault when the deleted row was primary", async () => {
+      prisma.customerAddress.findFirst
+        .mockResolvedValueOnce(DEFAULT_ADDRESS) // pre-check lookup
+        .mockResolvedValueOnce({ id: "addr-2", createdAt: new Date("2025-06-01") }); // oldest remaining, inside tx
+      prisma.routeStop.count.mockResolvedValueOnce(0);
+      prisma.routeRunStop.count.mockResolvedValueOnce(0);
+
+      const result = await service.deleteAddress("cust-1", "addr-1");
+
+      expect(prisma.customerAddress.delete).toHaveBeenCalledWith({
+        where: { id: "addr-1", customerId: "cust-1" },
+      });
+      expect(prisma.customerAddress.update).toHaveBeenCalledWith({
+        where: { id: "addr-2" },
+        data: { isDefault: true },
+      });
+      expect(result).toEqual({ success: true });
+    });
+
+    it("deletes the last remaining default address with no promotion (none left to promote)", async () => {
+      prisma.customerAddress.findFirst
+        .mockResolvedValueOnce(DEFAULT_ADDRESS)
+        .mockResolvedValueOnce(null); // no other address remains
+      prisma.routeStop.count.mockResolvedValueOnce(0);
+      prisma.routeRunStop.count.mockResolvedValueOnce(0);
+
+      await service.deleteAddress("cust-1", "addr-1");
+
+      expect(prisma.customerAddress.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── DTO acceptance: defaultDepositPercent (WP1) ─────────────────────────
+
+  describe("defaultDepositPercent DTO validation", () => {
+    const baseCreatePayload = { username: "acme", businessName: "Acme", contactName: "Jane" };
+
+    it("CreateCustomerDto accepts a numeric deposit percent within 0-100", async () => {
+      const dto = plainToInstance(CreateCustomerDto, {
+        ...baseCreatePayload,
+        defaultDepositPercent: 50,
+      });
+      const errors = await validate(dto);
+      expect(errors).toHaveLength(0);
+      expect(dto.defaultDepositPercent).toBe(50);
+    });
+
+    it("CreateCustomerDto rejects a deposit percent above 100", async () => {
+      const dto = plainToInstance(CreateCustomerDto, {
+        ...baseCreatePayload,
+        defaultDepositPercent: 150,
+      });
+      const errors = await validate(dto);
+      expect(errors.some((e) => e.property === "defaultDepositPercent")).toBe(true);
+    });
+
+    it("CreateCustomerDto rejects a negative deposit percent", async () => {
+      const dto = plainToInstance(CreateCustomerDto, {
+        ...baseCreatePayload,
+        defaultDepositPercent: -5,
+      });
+      const errors = await validate(dto);
+      expect(errors.some((e) => e.property === "defaultDepositPercent")).toBe(true);
+    });
+
+    it("CreateCustomerDto leaves defaultDepositPercent undefined when omitted", async () => {
+      const dto = plainToInstance(CreateCustomerDto, { ...baseCreatePayload });
+      const errors = await validate(dto);
+      expect(errors).toHaveLength(0);
+      expect(dto.defaultDepositPercent).toBeUndefined();
+    });
+
+    it("UpdateCustomerDto accepts null to clear the deposit default", async () => {
+      const dto = plainToInstance(UpdateCustomerDto, { defaultDepositPercent: null });
+      const errors = await validate(dto);
+      expect(errors).toHaveLength(0);
+      expect(dto.defaultDepositPercent).toBeNull();
+    });
+
+    it("UpdateCustomerDto accepts a numeric deposit percent", async () => {
+      const dto = plainToInstance(UpdateCustomerDto, { defaultDepositPercent: 25 });
+      const errors = await validate(dto);
+      expect(errors).toHaveLength(0);
+      expect(dto.defaultDepositPercent).toBe(25);
+    });
+
+    it("UpdateCustomerDto rejects an out-of-range deposit percent (null bypass doesn't leak to numbers)", async () => {
+      const dto = plainToInstance(UpdateCustomerDto, { defaultDepositPercent: 101 });
+      const errors = await validate(dto);
+      expect(errors.some((e) => e.property === "defaultDepositPercent")).toBe(true);
+    });
+
+    it("UpdateCustomerDto leaves defaultDepositPercent undefined when omitted (no accidental clear)", async () => {
+      const dto = plainToInstance(UpdateCustomerDto, { businessName: "Acme Wholesale" });
+      const errors = await validate(dto);
+      expect(errors).toHaveLength(0);
+      expect(dto.defaultDepositPercent).toBeUndefined();
     });
   });
 

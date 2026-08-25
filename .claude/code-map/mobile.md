@@ -759,3 +759,26 @@ enabled)` against the PR-D read endpoint `GET /sales-agents/assignments/current?
 - **`app/(operator)/customers/[id].tsx`** — one read-only `Row label="Sales agent"` directly after
   the "Pricing tier" row, rendered only when `hasSalesAgents && currentAgent?.assignment`.
   **Absence is the empty state** — unflagged or unassigned shows no row at all, no placeholder.
+
+### 2026-08-25 — customer-feedback batch (address CRUD, dead reopen, shipment gating)
+
+- **`app/(operator)/customers/[id]/addresses.tsx`** — full CRUD: edit (all fields incl. label/
+  `addressType`), delete, and set-primary, mirroring web's `customers/[id]/page.tsx` Addresses
+  tab. `lib/api/customers.ts` gained `useDeleteCustomerAddress({customerId, addressId})` →
+  `DELETE :id/addresses/:addrId` (invalidates `["customers", customerId]` on success; surfaces the
+  server's 409 reason when a route stop still references the address). `CustomerAddressDto` gained
+  `label` (required by the server's `CreateAddressDto` — empty string is valid) and `addressType`
+  (update route validates against `["BILLING","SHIPPING","DELIVERY"]`); `CustomerDetail.addresses[]`
+  gained matching `label?`/`addressType?` read fields.
+- **BUG-ORD-01 was already fixed on mobile** (`order-actions.ts` never rendered a DELIVERED
+  reopen affordance) — this batch only brought web into parity; no mobile change here.
+- **Shipment gating** — `orders/[id].tsx`: `ShipmentSection` renders only when
+  `order.fulfillPath === "SHIP"` or the order already carries `shippingCarrier`/
+  `shippingTrackingNumber`. `invoices/[id].tsx`: same section, but gated on tracking data being
+  PRESENT rather than `fulfillPath` — the invoice payload's `order` field (`admin.ts`
+  `AdminInvoice.order`) is status/orderNumber only and was deliberately not widened just for this
+  gate, so the check is
+  `!isVoid && (!invoice.orderId || invoice.shippingCarrier || invoice.shippingTrackingNumber)` —
+  order-linked invoices inherit tracking from the order (`orders.service.updateShipment` mirrors it
+  down), while a standalone invoice has no order to record it on and keeps the section. Mirrors
+  web's `invoices/[id]/page.tsx` gate.

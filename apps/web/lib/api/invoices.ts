@@ -166,9 +166,19 @@ export function useInvoices(
   params?: {
     customerId?: string;
     status?: string;
+    /**
+     * Multi-status filter — sent instead of `status` (never both) to compose a
+     * status SET, e.g. the "unpaid" statuses (SENT/VIEWED/PARTIAL/OVERDUE) the
+     * due-soon chips apply when no single status tab is explicitly picked.
+     * Mirrors the API's pre-existing `statuses` (`ListInvoicesDto`) IN-clause.
+     */
+    statuses?: string[];
     search?: string;
     dateFrom?: string;
     dateTo?: string;
+    /** Due-date window (YYYY-MM-DD, inclusive) — the invoices-page due-soon chips. */
+    dueFrom?: string;
+    dueTo?: string;
     sortBy?: string;
     sortOrder?: "asc" | "desc";
     page?: number;

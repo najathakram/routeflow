@@ -33,6 +33,14 @@ export interface Customer {
    * tenant default. Wins over the tenant default in `resolveDefaultTerms()`.
    */
   defaultPaymentTerms?: string;
+  /**
+   * Per-customer default deposit percent ("50% upfront, remainder on the terms
+   * above") — auto-applied (depositDueDate = issue date) to every invoice
+   * GENERATED for this customer from an order; a manual invoice's explicit
+   * depositPercent still wins. `null`/undefined = no deposit default. Prisma
+   * Decimal serializes as a string on the wire.
+   */
+  defaultDepositPercent?: number | string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -158,8 +166,38 @@ export function useAddCustomerAddress() {
 export function useUpdateCustomerAddress() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, addrId, ...data }: { id: string; addrId: string; [k: string]: unknown }) =>
-      apiClient.patch(`/customers/${id}/addresses/${addrId}`, data).then((r) => r.data),
+    mutationFn: ({
+      id,
+      addrId,
+      ...data
+    }: {
+      id: string;
+      addrId: string;
+      label?: string;
+      line1?: string;
+      line2?: string;
+      city?: string;
+      state?: string;
+      zip?: string;
+      isDefault?: boolean;
+      /** BILLING | SHIPPING | DELIVERY — matches the API's UpdateAddressDto. */
+      addressType?: string;
+    }) => apiClient.patch(`/customers/${id}/addresses/${addrId}`, data).then((r) => r.data),
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.id] }),
+  });
+}
+
+/**
+ * Delete a customer address. The server 409s (ConflictException) when a
+ * RouteStop or RouteRunStop still references it — surface that message via
+ * toast, don't swallow it. Deleting the primary promotes the oldest
+ * remaining address to primary server-side.
+ */
+export function useDeleteCustomerAddress() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, addrId }: { id: string; addrId: string }) =>
+      apiClient.delete(`/customers/${id}/addresses/${addrId}`).then((r) => r.data),
     onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.id] }),
   });
 }

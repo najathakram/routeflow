@@ -840,8 +840,11 @@ export default function OrderDetailScreen() {
             </View>
           ) : null}
 
-          {/* Carrier shipment */}
-          <ShipmentSection shipment={order} onEdit={() => setShipmentModal(true)} />
+          {/* Carrier shipment — only for carrier-shipped orders, or rows that
+              already carry tracking data recorded before this gate existed. */}
+          {order.fulfillPath === "SHIP" || order.shippingCarrier || order.shippingTrackingNumber ? (
+            <ShipmentSection shipment={order} onEdit={() => setShipmentModal(true)} />
+          ) : null}
 
           {/* Status transitions */}
           {actions.length > 0 ? (

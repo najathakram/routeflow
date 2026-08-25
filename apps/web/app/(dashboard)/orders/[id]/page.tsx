@@ -2393,16 +2393,18 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             </>
           )}
 
-          {/* DELIVERED actions */}
+          {/* DELIVERED actions — no Reopen here. Mirrors mobile's
+              order-actions.ts: DELIVERED has NO reopen — the API deliberately
+              blocks DELIVERED→CONFIRMED (removed as BUG-ORD-01; the server's
+              transition map is `DELIVERED: []`, so it always 400s). Only a
+              CANCELLED order can be reopened, via the dedicated /reopen
+              endpoint below. OUT_FOR_DELIVERY's "Return to Confirmed" demotion
+              above is unaffected — the map allows that one. */}
           {localStatus === "DELIVERED" && (
-            <Button
-              size="sm"
-              variant="secondary"
-              leftIcon={<RefreshCcw className="h-4 w-4" />}
-              onClick={() => setDemoteTarget("CONFIRMED")}
-            >
-              Reopen Order
-            </Button>
+            <p className="text-xs text-navy/50">
+              Delivered orders can&apos;t be reopened. Adjust items with Edit Items (the invoice
+              re-syncs), or reopen the delivery stop from its route run.
+            </p>
           )}
 
           {/* CANCELLED */}
@@ -3162,15 +3164,21 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           </Card>
 
           {/* Carrier shipment — operator records carrier + tracking when goods ship
-              via a carrier instead of our own route. */}
-          <ShipmentCard
-            carrier={order.shippingCarrier}
-            trackingNumber={order.shippingTrackingNumber}
-            shippedAt={order.shippedAt}
-            isSaving={updateShipment.isPending}
-            onSave={(values) => updateShipment.mutateAsync({ id: order.id, ...values })}
-            openSignal={shipmentOpenSignal}
-          />
+              via a carrier instead of our own route. Gated so it doesn't render on
+              every order: only carrier-shipped (fulfillPath === "SHIP") orders, or
+              historical rows that already carry tracking data. */}
+          {(order.fulfillPath === "SHIP" ||
+            order.shippingCarrier ||
+            order.shippingTrackingNumber) && (
+            <ShipmentCard
+              carrier={order.shippingCarrier}
+              trackingNumber={order.shippingTrackingNumber}
+              shippedAt={order.shippedAt}
+              isSaving={updateShipment.isPending}
+              onSave={(values) => updateShipment.mutateAsync({ id: order.id, ...values })}
+              openSignal={shipmentOpenSignal}
+            />
+          )}
 
           {/* Invoice card — show for any non-draft, non-cancelled order so the operator
               can split into multiple invoices any time after the order is confirmed. */}

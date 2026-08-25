@@ -159,20 +159,30 @@ export class InvoicesService {
    * falls back to the existing tenant-only behavior. Callers that generate an
    * invoice FROM an order should pass the order's customerId so the customer's
    * override is honored.
+   *
+   * Also carries back the customer's `defaultDepositPercent` (or null) from the
+   * SAME customer row — order-generation callers use it to auto-apply the
+   * customer's "50% upfront" deposit default without a second query.
    */
-  async resolveDefaultTerms(customerId?: string): Promise<{ terms: string; dueDays: number }> {
+  async resolveDefaultTerms(
+    customerId?: string,
+  ): Promise<{ terms: string; dueDays: number; customerDepositPercent: number | null }> {
+    let customerDepositPercent: number | null = null;
     if (customerId) {
-      const customer = await this.prisma
-        .forTenant()
-        .customer.findFirst({ where: { id: customerId }, select: { defaultPaymentTerms: true } });
+      const customer = await this.prisma.forTenant().customer.findFirst({
+        where: { id: customerId },
+        select: { defaultPaymentTerms: true, defaultDepositPercent: true },
+      });
+      customerDepositPercent =
+        customer?.defaultDepositPercent != null ? Number(customer.defaultDepositPercent) : null;
       if (customer?.defaultPaymentTerms) {
         const terms = customer.defaultPaymentTerms;
-        return { terms, dueDays: TERM_DAYS[terms] ?? 30 };
+        return { terms, dueDays: TERM_DAYS[terms] ?? 30, customerDepositPercent };
       }
     }
     const stored = await this.systemConfig.get("invoice.defaultTerms");
     const terms = stored || "Net 30";
-    return { terms, dueDays: TERM_DAYS[terms] ?? 30 };
+    return { terms, dueDays: TERM_DAYS[terms] ?? 30, customerDepositPercent };
   }
 
   /**
@@ -510,7 +520,14 @@ export class InvoicesService {
   async createInvoiceFromOrder(
     orderId: string,
     txClient?: any,
-    overrides?: { dueDate?: string; terms?: string; paymentTermsLabel?: string },
+    overrides?: {
+      dueDate?: string;
+      terms?: string;
+      paymentTermsLabel?: string;
+      /** Explicit per-invoice deposit — wins over the customer's defaultDepositPercent. */
+      depositPercent?: number;
+      depositDueDate?: string;
+    },
   ) {
     const db = txClient ?? this.prisma;
 
@@ -565,7 +582,12 @@ export class InvoicesService {
     // Due date from configured payment terms (e.g. "Net 30"), unless the caller
     // (e.g. the "New sale" flow) supplied an explicit override. Customer-aware:
     // the customer's own defaultPaymentTerms (when set) wins over the tenant default.
-    const { terms: defaultTerms, dueDays } = await this.resolveDefaultTerms(order.customerId);
+    // Also carries the customer's defaultDepositPercent off the SAME row (no extra query).
+    const {
+      terms: defaultTerms,
+      dueDays,
+      customerDepositPercent,
+    } = await this.resolveDefaultTerms(order.customerId);
     // Customer-facing invoice Notes and T&C from tenant settings
     const tenantDefaults = await this.resolveTenantInvoiceDefaults();
     // A backdated order bills on its business date, and the payment term runs from
@@ -588,6 +610,26 @@ export class InvoicesService {
     // participates in the dueDate computation, so it is not a candidate.)
     const paymentTermsLabel =
       overrides?.paymentTermsLabel?.trim() || (overrides?.dueDate ? null : defaultTerms);
+    // Per-customer deposit default ("50% upfront, remainder on terms"): applies ONLY
+    // when this invoice doesn't already carry an explicit deposit — an explicit
+    // caller-supplied deposit (overrides.depositPercent, e.g. a future "New sale"
+    // deposit field) always wins and is never clobbered. The deposit is due
+    // immediately (depositDueDate = issueDate); the remainder still rides the
+    // terms-label dueDate resolved above. computeDepositFields does all the
+    // read-time math — nothing derived is stored here. A customer with no default
+    // (customerDepositPercent null/0) leaves these keys OUT of extraInvoiceData
+    // entirely, so the create payload is byte-identical to before this change.
+    const depositFields: Record<string, any> =
+      overrides?.depositPercent != null
+        ? {
+            depositPercent: overrides.depositPercent,
+            depositDueDate: overrides.depositDueDate
+              ? new Date(overrides.depositDueDate)
+              : issueDate,
+          }
+        : customerDepositPercent != null && customerDepositPercent > 0
+          ? { depositPercent: customerDepositPercent, depositDueDate: issueDate }
+          : {};
 
     const extraInvoiceData: Record<string, any> = {
       dueDate,
@@ -595,6 +637,7 @@ export class InvoicesService {
       paymentTermsLabel,
       issueDate,
       notes: tenantDefaults.notes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
+      ...depositFields,
       // Carry carrier shipment tracking from the order onto the invoice so the
       // shipment shows on the customer's invoice + PDF.
       ...(order.shippingCarrier || order.shippingTrackingNumber
@@ -1972,7 +2015,14 @@ export class InvoicesService {
   async createInvoiceFromOrderWithTenant(
     orderId: string,
     tenantId: string | null,
-    overrides?: { dueDate?: string; terms?: string; paymentTermsLabel?: string },
+    overrides?: {
+      dueDate?: string;
+      terms?: string;
+      paymentTermsLabel?: string;
+      /** Explicit per-invoice deposit — wins over the customer's defaultDepositPercent. */
+      depositPercent?: number;
+      depositDueDate?: string;
+    },
   ) {
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, ...(tenantId ? { tenantId } : {}) },
@@ -2013,12 +2063,17 @@ export class InvoicesService {
     // the customer's own defaultPaymentTerms, which (when set) wins over the
     // tenant default below — mirrors resolveDefaultTerms(customerId) used by the
     // awaited paths, adapted for this explicit-tenantId (no AsyncLocalStorage) call.
+    // Also carries defaultDepositPercent off the SAME row (no extra query).
     const customerForTax = tenantId
       ? await this.prisma.customer.findFirst({
           where: { id: order.customerId, ...(tenantId ? { tenantId } : {}) },
-          select: { isTaxExempt: true, defaultPaymentTerms: true },
+          select: { isTaxExempt: true, defaultPaymentTerms: true, defaultDepositPercent: true },
         })
       : null;
+    const customerDepositPercent =
+      (customerForTax as any)?.defaultDepositPercent != null
+        ? Number((customerForTax as any).defaultDepositPercent)
+        : null;
 
     // Resolve default terms — read SystemConfig with explicit tenantId since we're
     // outside the normal request context (fire-and-forget, no AsyncLocalStorage).
@@ -2068,12 +2123,27 @@ export class InvoicesService {
     // null when an explicit dueDate override means no term string drove it.
     const paymentTermsLabel =
       overrides?.paymentTermsLabel?.trim() || (overrides?.dueDate ? null : defaultTerms);
+    // Per-customer deposit default — see createInvoiceFromOrder for the full
+    // rationale. Explicit overrides.depositPercent wins; a customer without a
+    // default leaves these keys out entirely (byte-identical to before).
+    const depositFields: Record<string, any> =
+      overrides?.depositPercent != null
+        ? {
+            depositPercent: overrides.depositPercent,
+            depositDueDate: overrides.depositDueDate
+              ? new Date(overrides.depositDueDate)
+              : issueDate,
+          }
+        : customerDepositPercent != null && customerDepositPercent > 0
+          ? { depositPercent: customerDepositPercent, depositDueDate: issueDate }
+          : {};
     const extraInvoiceData: Record<string, any> = {
       dueDate,
       terms: overrideTerms ?? tenantTerms ?? defaultTerms,
       paymentTermsLabel,
       issueDate,
       notes: tenantNotes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
+      ...depositFields,
     };
 
     // W4: split by regulated category (fire-and-forget path). db = unscoped prisma
@@ -2103,7 +2173,14 @@ export class InvoicesService {
   async createPartialFromOrder(
     orderId: string,
     dto: CreatePartialInvoiceDto,
-    overrides?: { dueDate?: string; terms?: string; paymentTermsLabel?: string },
+    overrides?: {
+      dueDate?: string;
+      terms?: string;
+      paymentTermsLabel?: string;
+      /** Explicit per-invoice deposit — wins over the customer's defaultDepositPercent. */
+      depositPercent?: number;
+      depositDueDate?: string;
+    },
   ) {
     const order = await this.prisma.forTenant().order.findUnique({
       where: { id: orderId },
@@ -2181,7 +2258,12 @@ export class InvoicesService {
     // Resolve due date: explicit dto.dueDate wins, then a caller-supplied override,
     // else default term from the issue date. Customer-aware: the customer's own
     // defaultPaymentTerms (when set) wins over the tenant default.
-    const { terms: defaultTerms, dueDays } = await this.resolveDefaultTerms(order.customerId);
+    // Also carries the customer's defaultDepositPercent off the SAME row (no extra query).
+    const {
+      terms: defaultTerms,
+      dueDays,
+      customerDepositPercent,
+    } = await this.resolveDefaultTerms(order.customerId);
     const tenantDefaults = await this.resolveTenantInvoiceDefaults();
     // A backdated order bills on its business date, and the payment term runs from
     // that date — not from when the invoice happened to be generated.
@@ -2204,6 +2286,21 @@ export class InvoicesService {
       dto.paymentTermsLabel?.trim() ||
       overrides?.paymentTermsLabel?.trim() ||
       (dto.dueDate || overrides?.dueDate ? null : defaultTerms);
+    // Per-customer deposit default — see createInvoiceFromOrder for the full
+    // rationale. An explicit deposit (dto.depositPercent, or a caller override)
+    // wins over the customer's default and is never clobbered; a customer without
+    // a default leaves these keys out entirely (byte-identical to before).
+    const explicitDepositPercent = (dto as any)?.depositPercent ?? overrides?.depositPercent;
+    const explicitDepositDueDate = (dto as any)?.depositDueDate ?? overrides?.depositDueDate;
+    const depositFields: Record<string, any> =
+      explicitDepositPercent != null
+        ? {
+            depositPercent: explicitDepositPercent,
+            depositDueDate: explicitDepositDueDate ? new Date(explicitDepositDueDate) : issueDate,
+          }
+        : customerDepositPercent != null && customerDepositPercent > 0
+          ? { depositPercent: customerDepositPercent, depositDueDate: issueDate }
+          : {};
     const tenantId = this.prisma.getTenantId();
     const invoiceNumber = await this.generateInvoiceNumber();
 
@@ -2228,6 +2325,7 @@ export class InvoicesService {
             dto.notes ??
             tenantDefaults.notes ??
             (order.orderNumber ? `Order #${order.orderNumber}` : null),
+          ...depositFields,
           items: { create: itemsData },
           ...(tenantId ? { tenantId } : {}),
         },
@@ -2284,6 +2382,8 @@ export class InvoicesService {
       search,
       dateFrom,
       dateTo,
+      dueFrom,
+      dueTo,
       sortBy,
       sortOrder,
       shipped,
@@ -2343,6 +2443,19 @@ export class InvoicesService {
         const end = new Date(dateTo);
         end.setHours(23, 59, 59, 999);
         where.issueDate.lte = end;
+      }
+    }
+    // Due-soon window (Due today / Due tomorrow / Next 7 days chips). MERGE into any
+    // dueDate clause `isOverdue` already set — the two intersect, they don't override
+    // each other. `dueTo` widens to end-of-day like `dateTo`, otherwise a date-only
+    // value truncates to midnight and drops invoices due later that same day.
+    if (dueFrom || dueTo) {
+      where.dueDate = { ...(where.dueDate ?? {}) };
+      if (dueFrom) where.dueDate.gte = new Date(dueFrom);
+      if (dueTo) {
+        const dueEnd = new Date(dueTo);
+        dueEnd.setHours(23, 59, 59, 999);
+        where.dueDate.lte = dueEnd;
       }
     }
 

@@ -2565,15 +2565,25 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           )}
 
           {/* Carrier shipment — operator records carrier + tracking number; editable
-              on any non-void invoice (read-only once void / written off). */}
-          <ShipmentCard
-            carrier={invoice.shippingCarrier}
-            trackingNumber={invoice.shippingTrackingNumber}
-            shippedAt={invoice.shippedAt}
-            isSaving={updateShipment.isPending}
-            readOnly={status === "VOID" || status === "WRITTEN_OFF"}
-            onSave={(values) => updateShipment.mutateAsync({ id: invoice.id, ...values })}
-          />
+              on any non-void invoice (read-only once void / written off). Gated so it
+              doesn't render on every invoice. The invoice payload's `order` selection
+              (invoices.service.ts findOne) does NOT carry fulfillPath — widening it is
+              out of scope for this package — so unlike the order detail page this can't
+              gate on fulfillPath === "SHIP". Order-linked invoices instead show the card
+              only once tracking exists: it's recorded on the ORDER, which mirrors carrier/
+              tracking onto every non-void invoice of that order (orders.service
+              updateShipment). A standalone invoice has no order to record it on, so it
+              always keeps the card — this is its only place to enter tracking. */}
+          {(!invoice.orderId || invoice.shippingCarrier || invoice.shippingTrackingNumber) && (
+            <ShipmentCard
+              carrier={invoice.shippingCarrier}
+              trackingNumber={invoice.shippingTrackingNumber}
+              shippedAt={invoice.shippedAt}
+              isSaving={updateShipment.isPending}
+              readOnly={status === "VOID" || status === "WRITTEN_OFF"}
+              onSave={(values) => updateShipment.mutateAsync({ id: invoice.id, ...values })}
+            />
+          )}
 
           {/* Payment history */}
           <Card title="Payment History">

@@ -1,6 +1,6 @@
 {
   "mappedSha": "769bc1e9",
-  "generatedAt": "2026-08-26T03:52:06.059Z",
+  "generatedAt": "2026-08-26T03:57:47.847Z",
   "areas": [
     "api",
     "web",
@@ -8,5 +8,5 @@
     "packages"
   ],
   "fileCount": 898,
-  "notes": "**2026-08-24** — TENANT-SCOPE FINDUNIQUE SWEEP (branch claude/relaxed-austin-6cd590; NO schema change): `forTenant()`/`tenantTransaction` findUnique post-filters on the RETURNED row's `tenantId` (prisma.service.ts :123-131/:144-153), so an exclusive `select` omitting `tenantId` returned cross-tenant rows unfiltered — existence/status oracle + data echo (vendor-bill duplicate payload, regulated category names in errors, credit-note details, customer contact info feeding SMS/WA sends). Converted **77 sites across 23 API files** to `findFirst` with identical where/select (behavior-identical for id lookups; findFirst gets `tenantId` injected into the where). NOT touched: raw `this.prisma.*` platform/auth/billing lookups (unscoped by design), compound uniques already carrying tenantId (import/external-ref), selects already including `tenantId`. New specs pin \"a cross-tenant id 404s\" (findUniq || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "**2026-08-25** — CUSTOMER-FEEDBACK BATCH (worktree `feedback-batch`; migration `20260905000000_customer_deposit_default`, additive): address CRUD+primary (web+mobile — edit all fields, delete with inline confirm + server 409 when a `RouteStop`/`RouteRunStop` still references it, delete-the-primary promotes the oldest remaining; `CustomersController DELETE :id/addresses/:addrId`); `CustomerFormModal` edit mode drops its inline address inputs (was a silent-discard trap) and links to the Addresses tab instead, add mode unchanged; \"+ New agent\" inside the add-customer modal opens the existing `AgentFormModal` and selects the created agent without leaving the form; per-customer `defaultDepositPercent` auto-applies to every invoice GENERATED from an order (`resolveDefaultTerms` now also returns `customerDepositPercent` off the same customer row; explicit per-invoice deposits still win; a custo || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

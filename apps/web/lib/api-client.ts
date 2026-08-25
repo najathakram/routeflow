@@ -13,7 +13,15 @@ import { parsePlanGate, type PlanGateBody } from "./plan-gate";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
 
-export const apiClient = axios.create({ baseURL: BASE_URL });
+export const apiClient = axios.create({
+  baseURL: BASE_URL,
+  // Serialize array params as repeated keys (?statuses=A&statuses=B) instead of
+  // axios's default bracket notation (?statuses[]=A&statuses[]=B). Express's
+  // `simple` query parser doesn't unwrap brackets, so the API sees the literal
+  // key "statuses[]" and the global ValidationPipe (forbidNonWhitelisted) 400s.
+  // Mirrors `buyerApiClient` in apps/mobile/lib/buyer-auth.ts.
+  paramsSerializer: { indexes: null },
+});
 
 /** Read the username from the operator access token payload, even if expired
  *  (used to label the re-auth sheet). Returns null if unreadable. */

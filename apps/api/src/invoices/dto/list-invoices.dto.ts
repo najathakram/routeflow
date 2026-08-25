@@ -1,4 +1,14 @@
-import { IsArray, IsBoolean, IsEnum, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
+import {
+  IsArray,
+  IsBoolean,
+  IsDateString,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from "class-validator";
 import { Transform, Type } from "class-transformer";
 import { InvoiceStatus } from "@prisma/client";
 import { MAX_LIST_LIMIT } from "../../common/pagination";
@@ -14,6 +24,8 @@ export class ListInvoicesDto {
   @IsOptional() @IsString() search?: string;
   @IsOptional() @IsString() dateFrom?: string;
   @IsOptional() @IsString() dateTo?: string;
+  @IsOptional() @IsDateString() dueFrom?: string;
+  @IsOptional() @IsDateString() dueTo?: string;
   @IsOptional() @IsString() sortBy?: string;
   @IsOptional() @IsString() sortOrder?: "asc" | "desc";
   @IsOptional() @Transform(({ value }) => value === "true") @IsBoolean() isOverdue?: boolean;

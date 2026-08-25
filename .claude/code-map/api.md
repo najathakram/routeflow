@@ -878,6 +878,74 @@ candidates)` — earlier candidate wins, then barcode > sku > unitSku, ties on `
   Fixes every client at once — mobile web, native and desktop — with no client change.
   Escape hatch if tier 2 ever shows up in profiling: a raw-SQL `UPPER()` expression index (the
   repo already ships raw-SQL partial indexes).
+
+### Backfill — PR #422 payment-terms model (map predated it; entries missing until now)
+
+- **`Invoice.paymentTermsLabel`** (structured Net-N label — NEVER `Invoice.terms`, which stays
+  free-text T&C) **+ `depositPercent`/`depositDueDate`**, **`Customer.defaultPaymentTerms`**,
+  `Supplier.defaultTerms`, `VendorBill.termsLabel` — migration `20260902000000_payment_terms`
+  (additive). **THE INVARIANT:** every path that derives a `dueDate` from a terms string persists
+  that string as `paymentTermsLabel` — label and arithmetic can never disagree; a hand-edited due
+  date clears the label (falls to the server's null branch) on the create page, the sale flow,
+  order-generated invoices, and both web + mobile split screens.
+- **`invoices.service.ts` `resolveDefaultTerms(customerId?): {terms, dueDays}`** — the customer's
+  own `defaultPaymentTerms` (when set) wins over the tenant `SystemConfig` default
+  (`invoice.defaultTerms`, falls back to "Net 30"); `TERM_DAYS[terms] ?? 30` maps the label to a
+  day count. Called by every from-order invoice path (`createInvoiceFromOrder`,
+  `createInvoiceFromOrderWithTenant`, `createPartialFromOrder`) and by the "New sale" flow.
+- **Deposit v1 (50% up front / 50% on terms)** — `depositAmount` is DERIVED at read time
+  (`roundMoney(total * depositPercent / 100)`), never stored; `depositOverdue` is a derived flag.
+  `recomputeStatus`/AR-aging are BYTE-UNTOUCHED by the deposit fields.
+- **Narrow `PATCH /invoices/:id/terms`** — corrects `dueDate`/`paymentTermsLabel`/`reference`/
+  `subject` on any status except VOID/WRITTEN_OFF, re-runs `recomputeStatus`, leaves an
+  `internalNotes` breadcrumb (same convention as `applyPriceAdjustment`); spec pins that it never
+  back-syncs the linked order.
+- Renders on: web invoice detail/edit, `CreateBillModal` terms dropdown (prefilled from the
+  supplier's `defaultTerms`), the invoice PDF, the invoice email, the buyer portal, and both
+  mobile invoice-detail screens. Null label renders nothing (historical invoices predate the
+  column).
+
+### 2026-08-25 — customer-feedback batch (deposit defaults, due-soon chips, dead reopen, shipment gating)
+
+- **`Customer.defaultDepositPercent Decimal? @db.Decimal(5,2)`** (migration
+  `20260905000000_customer_deposit_default`, additive) — a per-customer default deposit percent
+  ("50% upfront, remainder on terms"); `null` = no default. Read/write via
+  `create`/`updateCustomer` (`customers.service.ts`) same `!== undefined` spread pattern as
+  `defaultPaymentTerms`; `null` clears it.
+- **`resolveDefaultTerms(customerId?)` now also returns `customerDepositPercent: number | null`**
+  (off the SAME customer row — no extra query) — signature is now
+  `Promise<{terms, dueDays, customerDepositPercent}>`. All three from-order invoice paths
+  (`createInvoiceFromOrder`, `createInvoiceFromOrderWithTenant`, `createPartialFromOrder`) build a
+  `depositFields` object: an explicit caller-supplied `overrides.depositPercent` (or, on
+  `createPartialFromOrder`, `dto.depositPercent`) always wins and is never clobbered; otherwise a
+  positive `customerDepositPercent` auto-applies `{depositPercent, depositDueDate: issueDate}`. A
+  customer with no default leaves `depositFields` an empty object, so `extraInvoiceData` is
+  byte-identical to before this change (spec-pinned in `invoices.service.spec.ts`).
+  `computeDepositFields`/`recomputeStatus` are untouched — nothing derived is stored here.
+- **`ListInvoicesDto` gained `dueFrom?`/`dueTo?` (`@IsDateString`)** — server-side due-date window
+  filter for the web "Due today / Due tomorrow / Next 7 days" chips; composes with the existing
+  `statuses` (plural) param so a due-window query only surfaces unissued/unpaid invoices
+  (SENT/VIEWED/PARTIAL/OVERDUE), reusing the list's pre-existing status-filtering mechanism rather
+  than inventing a new one. `findAll`'s where-builder translates it into `where.dueDate`
+  (`gte`/`lte`) beside the `dateFrom`/`dateTo` → `issueDate` block: `dueTo` widens to end-of-day
+  (`setHours(23,59,59,999)`) exactly like `dateTo`, and the clause **merges into** any `dueDate`
+  the `isOverdue` branch already set (`{lt: now}`) so the two intersect instead of clobbering.
+- **`customers.service.ts deleteAddress(id, addrId)`** (new, `DELETE :id/addresses/:addrId`,
+  OPERATOR) — 404s if the address isn't found under that customer; 409s
+  (`ConflictException`) if a **`RouteStop`** or **`RouteRunStop`** references it
+  (`customerAddressId`) — both checked, both tenant-scoped via `forTenant()` — so deleting doesn't
+  orphan a live route stop. On delete, if the removed address was `isDefault`, promotes the
+  oldest remaining address (`orderBy: createdAt asc`) to `isDefault: true` inside the same
+  `tenantTransaction`, so exactly one address (or zero) is ever primary.
+- **BUG-ORD-01, web parity** — DELIVERED orders never had a legal reopen transition server-side
+  (`DELIVERED: []` in the status transition map always 400'd); web's order-detail page used to
+  still render a "Reopen Order" button here anyway (dead affordance). Removed — mirrors mobile's
+  `order-actions.ts`, which never showed it. Only a CANCELLED order can be reopened, via the
+  dedicated `/reopen` endpoint; `OUT_FOR_DELIVERY`'s "Return to Confirmed" demotion is untouched.
+- **Shipment card gating (web + mobile, orders + invoices)** — the carrier-shipment card/section
+  now renders ONLY when `order.fulfillPath === "SHIP"` or the row already carries
+  `shippingCarrier`/`shippingTrackingNumber` (historical data), instead of unconditionally on
+  every order/invoice. `/shipments` list itself is unchanged.
 - **Stale comment fixed** in `findAll`: it claimed `@Min(1)` blocks external `limit=0`; the DTO is
   `@Min(0)`. Bounding that for external callers is a separate hardening change (web pickers pass
   500/1000 and `BuyerCatalogService` uses 0 internally).

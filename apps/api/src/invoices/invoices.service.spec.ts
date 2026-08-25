@@ -2442,6 +2442,46 @@ describe("InvoicesService", () => {
   // A bounced check flips its InvoicePayment.status to VOID and reverts the invoice
   // to OPEN/PARTIAL. Any sum of payment amounts that ignored VOID under-states the
   // balance; these lock in the payment-level filter that findOne already had.
+  // WP3 — the invoices page's Due today / Due tomorrow / Next 7 days chips send a
+  // dueFrom/dueTo window. findAll must translate it into a `dueDate` range; without
+  // it the chips silently return every unpaid invoice (indistinguishable from no filter).
+  describe("WP3 — findAll due-date window (dueFrom/dueTo)", () => {
+    const whereArg = () => prisma.invoice.findMany.mock.calls[0][0].where;
+
+    beforeEach(() => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.invoice.count.mockResolvedValue(0);
+    });
+
+    it("passes dueFrom/dueTo through as a dueDate range, widening dueTo to end-of-day", async () => {
+      await service.findAll({ dueFrom: "2026-08-26", dueTo: "2026-08-26" } as any);
+
+      const expectedEnd = new Date("2026-08-26");
+      expectedEnd.setHours(23, 59, 59, 999);
+      expect(whereArg().dueDate).toEqual({ gte: new Date("2026-08-26"), lte: expectedEnd });
+    });
+
+    it("accepts dueFrom alone (open-ended window)", async () => {
+      await service.findAll({ dueFrom: "2026-08-26" } as any);
+
+      expect(whereArg().dueDate).toEqual({ gte: new Date("2026-08-26") });
+    });
+
+    it("leaves `where` untouched when both are omitted", async () => {
+      await service.findAll({} as any);
+
+      expect(whereArg()).not.toHaveProperty("dueDate");
+    });
+
+    it("intersects with isOverdue's dueDate instead of clobbering it", async () => {
+      await service.findAll({ isOverdue: true, dueFrom: "2026-08-01" } as any);
+
+      const dueDate = whereArg().dueDate;
+      expect(dueDate.gte).toEqual(new Date("2026-08-01"));
+      expect(dueDate.lt).toBeInstanceOf(Date); // isOverdue's "past due" bound survives
+    });
+  });
+
   describe("P5-12 — VOID payments excluded from balance math", () => {
     it("findAll: a VOID (bounced) payment does not reduce balanceDue or clear isOverdue", async () => {
       const pastDue = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
@@ -4507,7 +4547,7 @@ describe("InvoicesService", () => {
 
         const result = await service.resolveDefaultTerms("cust-1");
 
-        expect(result).toEqual({ terms: "Net 60", dueDays: 60 });
+        expect(result).toEqual({ terms: "Net 60", dueDays: 60, customerDepositPercent: null });
         // The customer override short-circuits before the tenant lookup is even needed.
         expect(mockSystemConfig.get).not.toHaveBeenCalled();
       });
@@ -4518,7 +4558,7 @@ describe("InvoicesService", () => {
 
         const result = await service.resolveDefaultTerms("cust-1");
 
-        expect(result).toEqual({ terms: "Net 45", dueDays: 45 });
+        expect(result).toEqual({ terms: "Net 45", dueDays: 45, customerDepositPercent: null });
       });
 
       it("keeps the existing tenant-only behavior when called with no customerId", async () => {
@@ -4526,8 +4566,21 @@ describe("InvoicesService", () => {
 
         const result = await service.resolveDefaultTerms();
 
-        expect(result).toEqual({ terms: "Net 30", dueDays: 30 });
+        expect(result).toEqual({ terms: "Net 30", dueDays: 30, customerDepositPercent: null });
         expect(prisma.customer.findFirst).not.toHaveBeenCalled();
+      });
+
+      it("carries the customer's defaultDepositPercent off the SAME row (no extra query)", async () => {
+        prisma.customer.findFirst.mockResolvedValue({
+          defaultPaymentTerms: "Net 60",
+          defaultDepositPercent: 50,
+        });
+        prisma.customer.findFirst.mockClear();
+
+        const result = await service.resolveDefaultTerms("cust-1");
+
+        expect(result).toEqual({ terms: "Net 60", dueDays: 60, customerDepositPercent: 50 });
+        expect(prisma.customer.findFirst).toHaveBeenCalledTimes(1);
       });
     });
 
@@ -4620,6 +4673,196 @@ describe("InvoicesService", () => {
         const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
         expect(data.paymentTermsLabel).toBeNull();
         expect(data.dueDate).toEqual(new Date("2026-10-03T00:00:00.000Z"));
+      });
+    });
+
+    // WP2: per-customer deposit default ("50% upfront, remainder on terms")
+    // auto-applies to invoices generated from orders.
+    describe("createInvoiceFromOrder* / createPartialFromOrder — deposit default auto-apply", () => {
+      const orderWith = (over: any = {}) => ({
+        id: "ord-terms",
+        customerId: "cust-1",
+        orderNumber: "ORD-T1",
+        subtotal: 20,
+        tax: 0,
+        lineItems: [
+          {
+            id: "li-1",
+            productId: "p1",
+            name: null,
+            qty: 2,
+            invoicedQty: 0,
+            unitPrice: 10,
+            originalPrice: null,
+            priceType: "STANDARD",
+            product: { name: "Widget", unitsPerBox: 0 },
+          },
+        ],
+        ...over,
+      });
+
+      beforeEach(() => {
+        jest
+          .spyOn(service as any, "resolveTenantInvoiceDefaults")
+          .mockResolvedValue({ notes: null, terms: null, timezone: null });
+        jest.spyOn(service as any, "generateInvoiceNumber").mockResolvedValue("INV-DEP");
+        prisma.invoice.create.mockImplementation((args: any) =>
+          Promise.resolve({ ...args.data, items: [], payments: [], customer: {} }),
+        );
+      });
+
+      it("(a) createInvoiceFromOrder: customer default 50 + Net 60 -> depositPercent 50, depositDueDate = issueDate, dueDate +60d", async () => {
+        prisma.customer.findFirst.mockResolvedValue({
+          isTaxExempt: false,
+          defaultPaymentTerms: "Net 60",
+          defaultDepositPercent: 50,
+        });
+        prisma.order.findUnique.mockResolvedValue(orderWith());
+
+        await service.createInvoiceFromOrder("ord-terms");
+
+        const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+        expect(data.depositPercent).toBe(50);
+        expect(data.depositDueDate).toEqual(data.issueDate);
+        expect(data.paymentTermsLabel).toBe("Net 60");
+        const days = Math.round(
+          (new Date(data.dueDate).getTime() - new Date(data.issueDate).getTime()) / 86_400_000,
+        );
+        expect(days).toBe(60);
+      });
+
+      it("(b) createInvoiceFromOrder: customer WITHOUT a deposit default omits depositPercent/depositDueDate entirely (byte-identical guard)", async () => {
+        prisma.customer.findFirst.mockResolvedValue({
+          isTaxExempt: false,
+          defaultPaymentTerms: null,
+          defaultDepositPercent: null,
+        });
+        prisma.order.findUnique.mockResolvedValue(orderWith());
+
+        await service.createInvoiceFromOrder("ord-terms");
+
+        const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+        expect("depositPercent" in data).toBe(false);
+        expect("depositDueDate" in data).toBe(false);
+      });
+
+      it("(b') a defaultDepositPercent of 0 does not auto-apply (must be > 0)", async () => {
+        prisma.customer.findFirst.mockResolvedValue({
+          isTaxExempt: false,
+          defaultPaymentTerms: "Net 30",
+          defaultDepositPercent: 0,
+        });
+        prisma.order.findUnique.mockResolvedValue(orderWith());
+
+        await service.createInvoiceFromOrder("ord-terms");
+
+        const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+        expect("depositPercent" in data).toBe(false);
+        expect("depositDueDate" in data).toBe(false);
+      });
+
+      it("(c) createInvoiceFromOrder: an explicit deposit override wins over the customer default (explicit ≠ overwritten)", async () => {
+        prisma.customer.findFirst.mockResolvedValue({
+          isTaxExempt: false,
+          defaultPaymentTerms: "Net 60",
+          defaultDepositPercent: 50,
+        });
+        prisma.order.findUnique.mockResolvedValue(orderWith());
+
+        await service.createInvoiceFromOrder("ord-terms", undefined, {
+          depositPercent: 25,
+          depositDueDate: "2026-09-01",
+        });
+
+        const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+        expect(data.depositPercent).toBe(25);
+        expect(data.depositDueDate).toEqual(new Date("2026-09-01T00:00:00.000Z"));
+      });
+
+      it("createInvoiceFromOrderWithTenant: applies the customer's deposit default off the same select (no extra query)", async () => {
+        prisma.systemConfig.findFirst.mockResolvedValue(null);
+        prisma.tenantConfig.findUnique.mockResolvedValue(null);
+        prisma.order.findFirst.mockResolvedValue(orderWith());
+        prisma.customer.findFirst.mockResolvedValue({
+          isTaxExempt: false,
+          defaultPaymentTerms: "Net 45",
+          defaultDepositPercent: 20,
+        });
+
+        await service.createInvoiceFromOrderWithTenant("ord-terms", "test-tenant");
+
+        const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+        expect(data.depositPercent).toBe(20);
+        expect(data.depositDueDate).toEqual(data.issueDate);
+        expect(prisma.customer.findFirst).toHaveBeenCalledTimes(1);
+      });
+
+      it("createInvoiceFromOrderWithTenant: customer without a default omits the deposit keys entirely", async () => {
+        prisma.systemConfig.findFirst.mockResolvedValue(null);
+        prisma.tenantConfig.findUnique.mockResolvedValue(null);
+        prisma.order.findFirst.mockResolvedValue(orderWith());
+        prisma.customer.findFirst.mockResolvedValue({
+          isTaxExempt: false,
+          defaultPaymentTerms: null,
+          defaultDepositPercent: null,
+        });
+
+        await service.createInvoiceFromOrderWithTenant("ord-terms", "test-tenant");
+
+        const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+        expect("depositPercent" in data).toBe(false);
+        expect("depositDueDate" in data).toBe(false);
+      });
+
+      it("createPartialFromOrder: applies the customer's deposit default to a split invoice", async () => {
+        prisma.customer.findUnique.mockResolvedValue({
+          isTaxExempt: false,
+          defaultPaymentTerms: "Net 60",
+          defaultDepositPercent: 50,
+        });
+        prisma.order.findUnique.mockResolvedValue(orderWith());
+
+        const invoice = (await service.createPartialFromOrder("ord-terms", {
+          items: [{ orderItemId: "li-1", qty: 2 }],
+        } as any)) as any;
+
+        expect(invoice.depositPercent).toBe(50);
+        expect(invoice.depositDueDate).toEqual(invoice.issueDate);
+      });
+
+      it("createPartialFromOrder: customer WITHOUT a default omits the deposit keys entirely (byte-identical guard)", async () => {
+        prisma.customer.findUnique.mockResolvedValue({
+          isTaxExempt: false,
+          defaultPaymentTerms: null,
+          defaultDepositPercent: null,
+        });
+        prisma.order.findUnique.mockResolvedValue(orderWith());
+
+        await service.createPartialFromOrder("ord-terms", {
+          items: [{ orderItemId: "li-1", qty: 2 }],
+        } as any);
+
+        const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+        expect("depositPercent" in data).toBe(false);
+        expect("depositDueDate" in data).toBe(false);
+      });
+
+      it("createPartialFromOrder: an explicit dto deposit wins over the customer default", async () => {
+        prisma.customer.findUnique.mockResolvedValue({
+          isTaxExempt: false,
+          defaultPaymentTerms: "Net 60",
+          defaultDepositPercent: 50,
+        });
+        prisma.order.findUnique.mockResolvedValue(orderWith());
+
+        const invoice = (await service.createPartialFromOrder("ord-terms", {
+          items: [{ orderItemId: "li-1", qty: 2 }],
+          depositPercent: 10,
+          depositDueDate: "2026-09-05",
+        } as any)) as any;
+
+        expect(invoice.depositPercent).toBe(10);
+        expect(invoice.depositDueDate).toEqual(new Date("2026-09-05T00:00:00.000Z"));
       });
     });
 

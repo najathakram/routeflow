@@ -47,6 +47,7 @@ export interface CustomerDetail {
   fulfillPath?: "ROUTE" | "SHIP";
   addresses: Array<{
     id: string;
+    label?: string;
     line1: string;
     line2?: string;
     city: string;
@@ -54,6 +55,8 @@ export interface CustomerDetail {
     zip: string;
     country?: string;
     isDefault?: boolean;
+    /** Free string server-side, but the update route only accepts these three. */
+    addressType?: string;
     lat?: number | null;
     lng?: number | null;
     notes?: string;
@@ -392,17 +395,21 @@ export function useDeleteCustomer() {
   });
 }
 
+/** Mirrors Create/UpdateAddressDto EXACTLY. The API's global ValidationPipe runs
+ *  `forbidNonWhitelisted`, so any extra key (country, notes, lat, lng…) is a 400,
+ *  not a silent strip — coordinates in particular are server-owned (it geocodes on
+ *  add and clears + re-geocodes on update). Do not widen without the DTO. */
 export interface CustomerAddressDto {
+  /** Required by CreateAddressDto server-side (empty string is a valid value). */
+  label: string;
   line1: string;
   line2?: string;
   city: string;
   state: string;
   zip: string;
-  country?: string;
-  lat?: number;
-  lng?: number;
   isDefault?: boolean;
-  notes?: string;
+  /** Update route validates against ["BILLING","SHIPPING","DELIVERY"]. */
+  addressType?: string;
 }
 
 export function useAddCustomerAddress() {
@@ -425,6 +432,20 @@ export function useUpdateCustomerAddress() {
   >({
     mutationFn: ({ customerId, addressId, ...body }) =>
       apiClient.patch(`/customers/${customerId}/addresses/${addressId}`, body).then((r) => r.data),
+    onSuccess: (_, { customerId }) => {
+      qc.invalidateQueries({ queryKey: ["customers", customerId] });
+    },
+  });
+}
+
+/** DELETE :id/addresses/:addrId — 409 (ConflictException) when a RouteStop or
+ *  RouteRunStop still references the address; server promotes the oldest
+ *  remaining address to default when the deleted row was the default. */
+export function useDeleteCustomerAddress() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, { customerId: string; addressId: string }>({
+    mutationFn: ({ customerId, addressId }) =>
+      apiClient.delete(`/customers/${customerId}/addresses/${addressId}`).then(() => undefined),
     onSuccess: (_, { customerId }) => {
       qc.invalidateQueries({ queryKey: ["customers", customerId] });
     },
