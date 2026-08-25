@@ -5,7 +5,7 @@ import { StackActions } from "@react-navigation/native";
 import { IosTabBarView, type IosTabBarItem } from "@routeflow/ui/mobile/ios";
 import { activeOperatorTab, visibleOperatorTabs, type OperatorTabKey } from "../lib/operator-tabs";
 import { findDeepTabStackKey } from "../lib/operator-tab-nav";
-import { useDeveloperMode } from "../lib/api/addons";
+import { useDeliveryAccess, useRoutesAccess } from "../lib/api/addons";
 
 const META: Record<OperatorTabKey, { label: string; icon: keyof typeof Ionicons.glyphMap }> = {
   home: { label: "Home", icon: "home-outline" },
@@ -28,11 +28,20 @@ export function OperatorTabBar() {
   const segments = useSegments() as string[];
   const navRef = useNavigationContainerRef();
   const active = activeOperatorTab(segments);
-  const { enabled: devMode, isLoading: devLoading } = useDeveloperMode();
-  // Default-hidden while loading: a non-dev tenant must never see Dispatch
-  // flash then vanish on cold start. A dev tenant sees it appear a moment
-  // late on first load only — the addons query is cached afterwards.
-  const tabs = visibleOperatorTabs(devMode && !devLoading);
+  const routesAccess = useRoutesAccess();
+  const deliveryAccess = useDeliveryAccess();
+  // Owner split 2026-08-25: the Dispatch hub fronts BOTH recurring routes and
+  // ad-hoc order delivery, so EITHER addon earns the tab (each helper already
+  // folds in the developer_mode master switch — a dev tenant regresses zero).
+  // Gating on developer_mode alone would hide the tab from a tenant who bought
+  // only recurring_routes or only order_delivery, stranding them with no way
+  // into (operator)/_layout.tsx's now-widened sections.
+  //
+  // Default-hidden while loading: both helpers report `enabled: false` until
+  // the addons query resolves, so an entitled tenant must never see Dispatch
+  // flash then vanish on cold start. It appears a moment late on first load
+  // only — the addons query is cached afterwards.
+  const tabs = visibleOperatorTabs(routesAccess.enabled || deliveryAccess.enabled);
 
   const go = (tab: OperatorTabKey) => {
     if (!navRef.isReady()) return;

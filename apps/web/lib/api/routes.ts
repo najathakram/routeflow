@@ -27,8 +27,18 @@ export interface Route {
   depotLat?: number | null;
   depotLng?: number | null;
   depotAddress?: string | null;
-  _count?: { stops: number };
-  runs?: RouteRun[];
+  // findAllRoutes (the list endpoint) carries a run summary + counts so the
+  // Deliveries history page can render driver/date/status without a second
+  // round-trip per row — narrower than RouteRun since the API `select`s only
+  // these fields on the list, not the full run shape.
+  _count?: { runs: number; stops: number };
+  runs?: {
+    id: string;
+    status: string;
+    scheduledDate?: string | null;
+    completedAt?: string | null;
+    driver?: { id: string; contactName?: string | null } | null;
+  }[];
   stops?: RouteTemplateStop[];
 }
 

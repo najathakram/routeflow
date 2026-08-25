@@ -64,14 +64,15 @@ const SECTION_TO_TAB: Readonly<Record<string, OperatorTabKey>> = {
 /**
  * Which tabs the bar should render for the current tenant/loading state.
  *
- * `developer_mode` (hidden platform-admin addon) gates the Dispatch tab: it
- * fronts the in-development driver/route/fleet surfaces, which are hidden for
- * every tenant except the ones the addon has been enabled for. Pure — pass
- * `false` while the addon fetch is loading so the tab never flashes then
- * vanishes (see `OperatorTabBar`, which does exactly that).
+ * Per-tenant addons gate the Dispatch tab: it fronts the driver/route/fleet
+ * surfaces AND the ad-hoc order-delivery entry, so `dispatchAccess` is EITHER
+ * feature's access — `recurring_routes || order_delivery || developer_mode`
+ * (the master switch). Pure — pass `false` while the addon fetch is loading so
+ * the tab never flashes then vanishes (see `OperatorTabBar`, which composes it
+ * from `useRoutesAccess`/`useDeliveryAccess`).
  */
-export function visibleOperatorTabs(devMode: boolean): OperatorTabKey[] {
-  return devMode ? [...OPERATOR_TABS] : OPERATOR_TABS.filter((t) => t !== "dispatch");
+export function visibleOperatorTabs(dispatchAccess: boolean): OperatorTabKey[] {
+  return dispatchAccess ? [...OPERATOR_TABS] : OPERATOR_TABS.filter((t) => t !== "dispatch");
 }
 
 /** expo-router segments keep their parens: "(operator)", "(tabs)". */

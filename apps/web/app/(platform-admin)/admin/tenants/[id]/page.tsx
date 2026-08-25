@@ -3,7 +3,12 @@
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { DEVELOPER_MODE_ADDON, DRIVER_PAYMENTS_ADDON } from "@routeflow/types";
+import {
+  DEVELOPER_MODE_ADDON,
+  DRIVER_PAYMENTS_ADDON,
+  RECURRING_ROUTES_ADDON,
+  ORDER_DELIVERY_ADDON,
+} from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { AdminTabs } from "../../../_components/AdminTabs";
@@ -122,12 +127,27 @@ const AVAILABLE_ADDONS = [
       "records payments instead. Turn ON only for tenants whose drivers handle money.",
   },
   {
+    key: RECURRING_ROUTES_ADDON,
+    name: "Recurring routes",
+    description:
+      "Standing route templates and scheduled dispatch — fixed customer rounds the tenant " +
+      "re-runs (Dispatch → Routes). Independent of Order delivery; enable either or both.",
+  },
+  {
+    key: ORDER_DELIVERY_ADDON,
+    name: "Order delivery (ad-hoc trips)",
+    description:
+      "Plan one-shot delivery trips from selected orders: optimize the stop order, dispatch " +
+      "to a driver, and keep the full delivery history. Trips are never reused. Independent " +
+      "of Recurring routes; enable either or both.",
+  },
+  {
     key: DEVELOPER_MODE_ADDON,
     name: "Developer Mode",
     description:
       "Unlock in-development features (dispatch, routes, drivers, and the ad-hoc trip builder) " +
-      "for this tenant (UI-only — hides these surfaces in the official apps; not a server-side " +
-      "access control)",
+      "for this tenant (master switch — unlocks every in-development surface, including both " +
+      "delivery features, for this tenant; UI-only)",
   },
 ];
 

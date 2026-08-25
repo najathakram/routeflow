@@ -70,8 +70,8 @@ export default function TripsListScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
-        largeTitle="Trips"
-        subtitle={`${routes.length} ad-hoc trip${routes.length === 1 ? "" : "s"}`}
+        largeTitle="Deliveries"
+        subtitle={`${routes.length} deliver${routes.length === 1 ? "y" : "ies"}`}
         leading={<NavBackButton label="Dispatch" onPress={() => router.back()} />}
       />
       <ScrollView
@@ -87,8 +87,15 @@ export default function TripsListScreen() {
           </View>
         ) : routes.length === 0 ? (
           <View style={styles.center}>
-            <Text style={styles.emptyText}>No ad-hoc trips yet.</Text>
-            <Text style={styles.emptySub}>Select orders from the Orders list to plan one.</Text>
+            <Text style={styles.emptyText}>Past deliveries will appear here.</Text>
+            <Text style={styles.emptySub}>Plan one from the Orders tab.</Text>
+            <Pressable
+              style={styles.primaryBtn}
+              onPress={() => router.push("/(operator)/(tabs)/orders")}
+            >
+              <Ionicons name="arrow-forward" size={16} color="#fff" />
+              <Text style={styles.primaryBtnText}>Go to Orders</Text>
+            </Pressable>
           </View>
         ) : (
           <View style={{ paddingHorizontal: 16, gap: 8, paddingTop: 8 }}>
@@ -159,6 +166,17 @@ const styles = StyleSheet.create({
     color: ios.label3,
     textAlign: "center",
   },
+  primaryBtn: {
+    backgroundColor: ios.brand,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    marginTop: 4,
+  },
+  primaryBtnText: { color: "#fff", fontSize: 14, fontFamily: "Inter_600SemiBold" },
   row: {
     backgroundColor: ios.bgElev,
     borderRadius: 12,

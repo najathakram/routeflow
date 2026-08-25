@@ -150,3 +150,12 @@ export const DEVELOPER_MODE_ADDON = "developer_mode";
  * auto-invoice, no money) is always available.
  */
 export const DRIVER_PAYMENTS_ADDON = "driver_payments";
+
+/**
+ * Per-tenant feature addons for the two delivery products (owner decision
+ * 2026-08-25): tenants may run standing routes, ad-hoc order delivery, or both.
+ * `developer_mode` remains the master dev switch that unlocks both — every
+ * client gate must read `devMode || <feature>`.
+ */
+export const RECURRING_ROUTES_ADDON = "recurring_routes";
+export const ORDER_DELIVERY_ADDON = "order_delivery";

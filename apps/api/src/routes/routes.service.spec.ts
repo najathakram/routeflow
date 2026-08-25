@@ -162,6 +162,34 @@ describe("RoutesService", () => {
         }),
       );
     });
+
+    // WP2: the Deliveries history list needs run counts + a latest-run summary
+    // (status/date/driver) on every row without a second round-trip.
+    it("should include run/stop counts and a latest-run summary", async () => {
+      prisma.route.findMany.mockResolvedValue([]);
+      prisma.route.count.mockResolvedValue(0);
+
+      await service.findAllRoutes({ page: 1, limit: 20 });
+
+      expect(prisma.route.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: {
+            _count: { select: { runs: true, stops: true } },
+            runs: {
+              orderBy: { createdAt: "desc" },
+              take: 1,
+              select: {
+                id: true,
+                status: true,
+                scheduledDate: true,
+                completedAt: true,
+                driver: { select: { id: true, contactName: true } },
+              },
+            },
+          },
+        }),
+      );
+    });
   });
 
   describe("findOneRoute", () => {
