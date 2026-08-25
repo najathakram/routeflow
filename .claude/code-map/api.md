@@ -198,9 +198,22 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   Austin-area `lat`/`lng` per demo customer, written on both the `CustomerAddress` `create` and
   the `update` branch of the upsert (so re-running the seed repairs existing null rows).
   Root cause this fixes: demo customer addresses were seeded with `lat = null` (this script
-  bypasses the app's geocode-on-create path) and `GOOGLE_MAPS_API_KEY` appears unset on the prod
-  API, so the ad-hoc trip builder's optimize step 400'd on the demo tenant. See
-  `docs/phase0-adhoc-trips-findings.md`.
+  bypasses the app's geocode-on-create path), so the ad-hoc trip builder's optimize step 400'd
+  on the demo tenant. See `docs/phase0-adhoc-trips-findings.md`.
+  **2026-08-25 (PR #437):** the teardown in `clearTransactions()` now walks the **commission
+  chain before invoices** — payouts → statement lines → statements → adjustments → accruals —
+  because `CommissionAccrual.invoiceId` FKs `Invoice` and blocked `invoice.deleteMany` (the
+  refresh died half-cleared; sales agents + assignments stay FOUNDATION, never swept). It also
+  clears `DeliveryMutation`/`DeliveryBatch` before orders and run stops, matching mutations via
+  EITHER parent (`routeRunStopId` and `orderItemId` are both nullable, so a nested-created row
+  can carry a NULL `tenantId` and a NULL link to one side). Demo-readiness for the trip builder
+  with NO Maps key: `DEMO_DEPOT` coords land on both `Route` **and** `RouteRun`
+  (`resolveDepot()` tier 1 needs `depotLat/depotLng` — an address string alone is why optimize
+  400'd), `SystemConfig route.defaultDepotLat/Lng` is seeded (tier 2 + the trip builder's
+  tenant-depot origin), `driverHomeBase(key)` gives both demo drivers `homeLat/homeLng/
+homeAddress` (the driver-home origin), and orders inherit `fulfillPath` from their customer —
+  mirroring `OrdersService.create`, which the Prisma-direct write bypassed, leaving the SHIP
+  demo customer's orders all ROUTE. Also upserts the ACTIVE `driver_payments` TenantAddon.
 - **`prisma/migrations/`** (2026-08-15, baselined) — two migrations only. `0_init` is
   generated to equal PRODUCTION exactly, replacing 75 partial migrations that could not build
   a database from scratch (40 of 106 models were never created; deploy died at

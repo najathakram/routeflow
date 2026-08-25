@@ -401,7 +401,7 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 ### `(platform-admin)/` — super-admin panel (role-guarded)
 
 - `admin/dashboard/page.tsx` — platform stats (tenants, users, plans, MRR).
-- `admin/tenants/page.tsx`, `new/page.tsx`, `[id]/page.tsx` (edit plan, trial, suspend, impersonate, audit). Its `AVAILABLE_ADDONS` array is the **only** toggle for the hidden `DEVELOPER_MODE_ADDON` ("Developer Mode" — unlocks dispatch/routes/drivers); no API change was needed since the enable/disable endpoints take free-text addon keys and an unset `stripePriceId` creates no Stripe item.
+- `admin/tenants/page.tsx`, `new/page.tsx`, `[id]/page.tsx` (edit plan, trial, suspend, impersonate, audit). Its `AVAILABLE_ADDONS` array is the **only** toggle surface for unbridged addon keys — `tobacco_dealer`, `msrp`, `sales_agents`, `DRIVER_PAYMENTS_ADDON` ("Driver payments (at-door collection)", server-enforced via DriverPaymentsGuard, added 2026-08-25 #437) and `DEVELOPER_MODE_ADDON` ("Developer Mode" — unlocks dispatch/routes/drivers + the ad-hoc trip builder); no API change needed since the enable/disable endpoints take free-text addon keys and an unset `stripePriceId` creates no Stripe item. `toggleAddon` failures now surface in a `toggleError` banner (was a silent catch — a failed toggle looked like success).
 - `admin/buyers/page.tsx` + `[id]/page.tsx`; `admin/buyers/merge-requests/page.tsx` + `[id]/page.tsx`.
 - `admin/plans/page.tsx`, `admin/billing/page.tsx`, `admin/audit-logs/page.tsx`, `admin/{profile,settings}/page.tsx`.
 
