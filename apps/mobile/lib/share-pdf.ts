@@ -3,6 +3,7 @@ import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { showToast } from "./toast";
 import { chooseAction } from "./confirm";
+import { classifyShareError } from "./share-error";
 
 export interface SharePdfOptions {
   /** Fully-qualified (signed) PDF URL returned by `GET /invoices/:id/pdf`. */
@@ -60,7 +61,10 @@ export const ACTIVATION_BUDGET_MS = 3000;
  *  - `"opened-tab"` — no file-share capability (or the file couldn't be
  *    downloaded for one); the PDF opened in a new tab instead.
  *  - `"ready-await-tap"` — the PDF wasn't ready inside the activation
- *    budget. Nothing was shared or opened. A caller that passed
+ *    budget, OR `share()` itself rejected with NotAllowedError (iOS Safari's
+ *    transient activation not surviving the fetch — see share-error.ts; the
+ *    file IS downloaded and cached, so the recovery is identical: one fresh
+ *    tap). Nothing was shared or opened. A caller that passed
  *    `retapHandled` should flip its control to a "PDF ready — tap to share"
  *    state; calling `sharePdf` again with the SAME `url` is cheap (the fetch
  *    is cached module-wide) and, once the fetch has actually finished,
@@ -299,11 +303,28 @@ async function sharePdfWeb(options: SharePdfOptions): Promise<ShareOutcome> {
         // This exact file isn't shareable (rare) — fall through to opening it.
         releasePdfFile(url);
       } catch (err: any) {
-        releasePdfFile(url);
-        // User dismissed the OS share sheet — not an error.
-        if (err?.name === "AbortError") return "shared";
-        showToast("Couldn't share the PDF.");
-        return "failed";
+        switch (classifyShareError(err?.name)) {
+          case "dismissed":
+            // User dismissed the OS share sheet — not an error.
+            releasePdfFile(url);
+            return "shared";
+          case "retap": {
+            // iOS Safari: share() rejected with NotAllowedError because the
+            // transient-activation window didn't survive the PDF fetch — even
+            // though the fetch is DONE and the File is in hand. This is the
+            // customer-visible "share works on desktop, fails on my phone"
+            // bug. Recover exactly like a budget expiry: KEEP the cached file
+            // (do NOT release it — the whole point is that the next tap
+            // shares it synchronously under its own fresh activation) and
+            // hand the operator one explicit tap.
+            if (!retapHandled) offerRetapShare(options);
+            return "ready-await-tap";
+          }
+          case "failed":
+            releasePdfFile(url);
+            showToast("Couldn't share the PDF.");
+            return "failed";
+        }
       }
     }
   }
