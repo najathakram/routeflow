@@ -1,4 +1,6 @@
-import { NestFactory } from "@nestjs/core";
+import "./instrument";
+
+import { HttpAdapterHost, NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
@@ -8,6 +10,7 @@ import { Pool } from "pg";
 import { AppModule } from "./app.module";
 import { RedisIoAdapter } from "./gateways/redis-io.adapter";
 import { ThrottlerExceptionFilter } from "./common/throttler-exception.filter";
+import { SentryExceptionFilter } from "./common/sentry-exception.filter";
 
 const DEFAULT_CORS_ORIGINS = [
   "http://localhost:3001", // web dashboard
@@ -168,7 +171,10 @@ async function bootstrap() {
 
   // ─── Global exception filters ────────────────────────────────────────────────
   // RF-160: emit Retry-After header on 429 throttle responses
-  app.useGlobalFilters(new ThrottlerExceptionFilter());
+  // Sentry filter runs first (reports 5xx before the throttler filter handles
+  // its own exception type), then defers to Nest's default handling.
+  const { httpAdapter } = app.get(HttpAdapterHost);
+  app.useGlobalFilters(new SentryExceptionFilter(httpAdapter), new ThrottlerExceptionFilter());
 
   // ─── Validation ─────────────────────────────────────────────────────────────
   app.useGlobalPipes(

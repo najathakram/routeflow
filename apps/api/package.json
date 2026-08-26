@@ -49,6 +49,7 @@
     "@prisma/client": "^7.4.2",
     "@react-pdf/renderer": "^4.3.2",
     "@routeflow/types": "*",
+    "@sentry/node": "^10.71.0",
     "@socket.io/redis-adapter": "^8.3.0",
     "@types/nodemailer": "^8.0.0",
     "@types/passport-google-oauth20": "^2.0.17",
