@@ -28,7 +28,7 @@ import {
 } from "@/lib/api/invoices";
 import { apiClient } from "@/lib/api-client";
 import { useBookkeepingSummary } from "@/lib/api/bookkeeping";
-import { fmt, fmtCalendarDate } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, calendarDaysUntil } from "@/lib/formatting";
 import { useAuth } from "@/lib/auth-context";
 
 /** Add calendar days to a YYYY-MM-DD date, in UTC end to end — mirrors
@@ -79,9 +79,6 @@ const DUE_CHIPS: { key: DueChipKey; label: string }[] = [
 // ─── Contextual status display (Zoho-style) ───────────────────────────────────
 
 function renderStatus(status: InvoiceStatus, dueDate?: string | null): React.ReactNode {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
   if (status === "PAID") {
     return <span className="text-xs font-semibold text-success">Paid</span>;
   }
@@ -102,12 +99,8 @@ function renderStatus(status: InvoiceStatus, dueDate?: string | null): React.Rea
   }
 
   // For PARTIAL / OVERDUE — compute days to add context
-  if (dueDate) {
-    const due = new Date(dueDate);
-    due.setHours(0, 0, 0, 0);
-    const diffMs = due.getTime() - today.getTime();
-    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
-
+  const diffDays = calendarDaysUntil(dueDate);
+  if (diffDays !== null) {
     if (status === "OVERDUE" || diffDays < 0) {
       const overdueDays = Math.abs(diffDays);
       if (status === "PARTIAL") {
