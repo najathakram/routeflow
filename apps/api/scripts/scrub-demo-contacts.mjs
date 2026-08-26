@@ -82,7 +82,13 @@ function digitsOnly(value) {
 }
 
 function isOffendingEmail(email) {
-  return !!email && !email.toLowerCase().endsWith("example.com");
+  if (!email) return false;
+  const lower = email.toLowerCase();
+  // `no-email+<uuid>@placeholder.local` is the DELIBERATE sentinel for
+  // customers without an email (see customers.service create; sendPortalInvite
+  // special-cases the domain). It is fictional by construction — never scrub it.
+  if (lower.endsWith("@placeholder.local")) return false;
+  return !lower.endsWith("example.com");
 }
 
 function isOffendingPhone(phone) {

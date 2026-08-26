@@ -1,6 +1,8 @@
 # Plan: Audit P0/P1 batch — trust repairs, impersonation integrity, delete demotion, format kit
 
-**Status:** PLANNED
+**Status:** IMPLEMENTED — all 9 packages + Opus review fixes landed on `fix/audit-p0-batch` (PR #457);
+verify green (18/18 tasks, 0 lint errors); demo scrub executed against prod (2 customers + 1 user,
+sentinels exempt, 1 buyer account report-only). Awaiting owner merge.
 **Date:** 2026-08-26
 **Branch:** `fix/audit-p0-batch` (worktree `C:/ClaudeCode/routeflow/.claude/worktrees/audit-batch`)
 **Context:** A full UX audit of the tenant-admin dashboard (routeflow-demo, production) found five
