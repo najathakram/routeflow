@@ -482,12 +482,16 @@ export function useRoutesLive() {
   });
 }
 
-export function useOperatorRouteRuns(params?: { status?: string; date?: string; limit?: number }) {
+export function useOperatorRouteRuns(
+  params?: { status?: string; date?: string; limit?: number },
+  options?: { enabled?: boolean },
+) {
   return useQuery<{ data: RouteRun[]; meta: any }>({
     queryKey: ["route-runs", "operator", params],
     queryFn: () =>
       apiClient.get("/route-runs", { params: { limit: 50, ...params } }).then((r) => r.data),
     staleTime: 30_000,
+    enabled: options?.enabled ?? true,
   });
 }
 

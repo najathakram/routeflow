@@ -239,7 +239,7 @@ export default function TripBuilderScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         <NavBar
-          inlineTitle="Plan a trip"
+          inlineTitle="Plan delivery"
           leading={<NavBackButton onPress={() => router.back()} />}
         />
         <IosEmptyState
@@ -256,7 +256,10 @@ export default function TripBuilderScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      <NavBar inlineTitle="Plan a trip" leading={<NavBackButton onPress={() => router.back()} />} />
+      <NavBar
+        inlineTitle="Plan delivery"
+        leading={<NavBackButton onPress={() => router.back()} />}
+      />
 
       <ScrollView
         showsVerticalScrollIndicator={false}

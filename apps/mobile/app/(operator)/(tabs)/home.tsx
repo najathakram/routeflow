@@ -30,7 +30,7 @@ import {
 } from "../../../lib/api/routes";
 import { startLocationTracking } from "../../../lib/location-tracker";
 import { useAuthStore } from "../../../lib/auth-store";
-import { useDeveloperMode } from "../../../lib/api/addons";
+import { useDeliveryAccess, useDeveloperMode, useRoutesAccess } from "../../../lib/api/addons";
 
 function routeStatusLabel(r: AdminRoute): {
   label: string;
@@ -55,6 +55,17 @@ function driverDisplayName(driver: AdminDriver | undefined): string {
 export default function OperatorHomeScreen() {
   const router = useRouter();
   const { user } = useAuthStore();
+  // Owner split 2026-08-25: the dispatch-readiness hero and "Routes today" are
+  // recurring-routes surfaces (useAdminRoutes keeps the SCHEDULED default), so
+  // they follow the routes addon; drivers is shared by both features, matching
+  // (operator)/_layout.tsx's EITHER_SECTIONS. Each helper folds in
+  // developer_mode, so a dev tenant regresses zero.
+  const routesAccess = useRoutesAccess();
+  const deliveryAccess = useDeliveryAccess();
+  const driversAccess = routesAccess.enabled || deliveryAccess.enabled;
+  // Drive mode keeps the RAW dev switch: the (driver) app is still gated on
+  // developer_mode in app/_layout.tsx, so an addon-only operator has no driver
+  // UI to switch into.
   const { enabled: devMode } = useDeveloperMode();
   const [viewMode, setViewMode] = useState<"operator" | "driver">("operator");
   // Non-dev tenants have no driver UI to switch into — force operator
@@ -187,7 +198,7 @@ export default function OperatorHomeScreen() {
       ) : (
         <ScrollView showsVerticalScrollIndicator={false}>
           {/* Readiness hero */}
-          {devMode ? (
+          {routesAccess.enabled ? (
             <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
               <LinearGradient
                 colors={[ios.brandGradient[0]!, ios.brandGradient[1]!, ios.brandGradient[2]!]}
@@ -249,19 +260,20 @@ export default function OperatorHomeScreen() {
                     label="Pending orders"
                   />
                 </Pressable>
-                {/* Non-dev tenants have no drivers surface — the grid keeps two
-                    cells per row by swapping in a non-dispatch KPI. */}
+                {/* Tenants with neither delivery addon have no drivers surface —
+                    the grid keeps two cells per row by swapping in a
+                    non-dispatch KPI. */}
                 <Pressable
                   style={{ flex: 1 }}
                   onPress={() =>
-                    router.push(devMode ? "/(operator)/drivers" : "/(operator)/customers")
+                    router.push(driversAccess ? "/(operator)/drivers" : "/(operator)/customers")
                   }
                 >
                   <KpiCard
                     icon={<Ionicons name="people-outline" size={18} color={ios.system.greenInk} />}
                     iconBg={ios.system.greenWash}
-                    value={String(devMode ? stats.activeDrivers : stats.totalCustomers)}
-                    label={devMode ? "Active drivers" : "Customers"}
+                    value={String(driversAccess ? stats.activeDrivers : stats.totalCustomers)}
+                    label={driversAccess ? "Active drivers" : "Customers"}
                   />
                 </Pressable>
               </View>
@@ -295,7 +307,7 @@ export default function OperatorHomeScreen() {
             </>
           )}
 
-          {devMode ? (
+          {routesAccess.enabled ? (
             <>
               <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>Routes today</Text>

@@ -117,13 +117,13 @@ describe("table invariants", () => {
   });
 });
 
-describe("visibleOperatorTabs — developer_mode gate", () => {
-  it("returns every tab, including Dispatch, when devMode is true", () => {
+describe("visibleOperatorTabs — dispatch access gate", () => {
+  it("returns every tab, including Dispatch, when either feature grants access", () => {
     expect(visibleOperatorTabs(true)).toEqual([...OPERATOR_TABS]);
     expect(visibleOperatorTabs(true)).toContain("dispatch");
   });
 
-  it("drops only Dispatch when devMode is false, preserving order", () => {
+  it("drops only Dispatch when neither feature grants access, preserving order", () => {
     expect(visibleOperatorTabs(false)).toEqual(["home", "orders", "warehouse", "more"]);
     expect(visibleOperatorTabs(false)).not.toContain("dispatch");
   });

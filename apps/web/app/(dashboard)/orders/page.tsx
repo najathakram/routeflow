@@ -31,7 +31,7 @@ import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { downloadCsv, csvDate } from "@/lib/export";
 import { apiClient } from "@/lib/api-client";
-import { useDeveloperMode } from "@/lib/api/addons";
+import { useDeliveryAccess } from "@/lib/api/addons";
 import { saveTripDraft } from "@/lib/trip-draft";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
 
@@ -137,9 +137,10 @@ export default function OrdersPage() {
   const fulfillPathFilter = (urlFilters.fulfillPath as string) ?? "";
   // Only fetched to render the chip's label — the filter itself is the id.
   const { data: filterProduct } = useProduct(productIdFilter);
-  // Hide-only gate for the ad-hoc trip builder entry point — bulkbar action stays
-  // hidden on `enabled` (never `resolved`; this is a nav affordance, not a data guard).
-  const { enabled: devModeEnabled } = useDeveloperMode();
+  // Hide-only gate for the ad-hoc delivery builder entry point — bulkbar action
+  // stays hidden on `enabled` (never `resolved`; this is a nav affordance, not a
+  // data guard). devMode || order_delivery, via the shared composition helper.
+  const { enabled: deliveryAccessEnabled } = useDeliveryAccess();
 
   // Customer search is URL-backed like the chips above, so drilling into an order
   // and pressing Back returns to the search that found it.
@@ -484,13 +485,13 @@ export default function OrdersPage() {
             {isCancelling && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             Cancel {selected.size}
           </button>
-          {devModeEnabled && (
+          {deliveryAccessEnabled && (
             <>
               <span className="h-[18px] w-px bg-white/20" />
               <button
                 onClick={() => {
                   saveTripDraft(Array.from(selected));
-                  router.push(`/routes/trips/new?n=${selected.size}`);
+                  router.push(`/deliveries/new?n=${selected.size}`);
                 }}
                 className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-white/75 hover:text-white transition-colors"
               >

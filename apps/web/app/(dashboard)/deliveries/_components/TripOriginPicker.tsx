@@ -97,7 +97,7 @@ export function TripOriginPicker({
       kind: "ADDRESS",
       icon: <MapPin className="h-4 w-4" />,
       title: "Custom address",
-      subtitle: "Enter a one-off start address for this trip",
+      subtitle: "Enter a one-off start address for this delivery",
       disabled: false,
     },
   ];
@@ -172,7 +172,7 @@ export function TripOriginPicker({
                     className="col-span-2 h-9 rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
                   <p className="col-span-2 text-[11px] text-navy/70">
-                    We&apos;ll locate this address when the trip is built.
+                    We&apos;ll locate this address when the delivery is built.
                   </p>
                 </div>
               )}

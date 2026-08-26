@@ -1,5 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { DEVELOPER_MODE_ADDON, DRIVER_PAYMENTS_ADDON } from "@routeflow/types";
+import {
+  DEVELOPER_MODE_ADDON,
+  DRIVER_PAYMENTS_ADDON,
+  ORDER_DELIVERY_ADDON,
+  RECURRING_ROUTES_ADDON,
+} from "@routeflow/types";
 import { apiClient } from "../api-client";
 import { useAuthStore } from "../auth-store";
 import { useTenantStore } from "../tenant-store";
@@ -70,4 +75,69 @@ export function useDriverPayments(): { enabled: boolean; isLoading: boolean; res
   const enabled = query.data?.addons?.includes(DRIVER_PAYMENTS_ADDON) ?? false;
   const isLoading = isAuthenticated && query.isPending && query.failureCount === 0;
   return { enabled, isLoading, resolved: query.isSuccess };
+}
+
+// ─── Recurring routes (standing route templates + scheduled dispatch) ─────────
+//
+// Owner decision 2026-08-25: order delivery and recurring routes are separate
+// per-tenant addons; `useDeveloperMode` remains the master switch that unlocks
+// both (see useDeliveryAccess/useRoutesAccess below — every gate should read
+// through those, not this hook directly, so devMode is never missed). Same
+// query/cache as useDeveloperMode and useDriverPayments — one addons fetch
+// serves all three.
+export function useRecurringRoutes(): { enabled: boolean; isLoading: boolean; resolved: boolean } {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const tenantSlug = useTenantStore((s) => s.slug);
+
+  const query = useQuery<{ addons: string[] }>({
+    queryKey: ["tenant", tenantSlug, "addons"],
+    queryFn: () => apiClient.get("/tenants/me/addons").then((r) => r.data),
+    staleTime: 5 * 60_000,
+    retry: 2,
+    enabled: isAuthenticated,
+  });
+
+  const enabled = query.data?.addons?.includes(RECURRING_ROUTES_ADDON) ?? false;
+  const isLoading = isAuthenticated && query.isPending && query.failureCount === 0;
+  return { enabled, isLoading, resolved: query.isSuccess };
+}
+
+// ─── Order delivery (ad-hoc trips planned from selected orders) ───────────────
+//
+// See useRecurringRoutes above — same addons fetch, sibling feature.
+export function useOrderDelivery(): { enabled: boolean; isLoading: boolean; resolved: boolean } {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const tenantSlug = useTenantStore((s) => s.slug);
+
+  const query = useQuery<{ addons: string[] }>({
+    queryKey: ["tenant", tenantSlug, "addons"],
+    queryFn: () => apiClient.get("/tenants/me/addons").then((r) => r.data),
+    staleTime: 5 * 60_000,
+    retry: 2,
+    enabled: isAuthenticated,
+  });
+
+  const enabled = query.data?.addons?.includes(ORDER_DELIVERY_ADDON) ?? false;
+  const isLoading = isAuthenticated && query.isPending && query.failureCount === 0;
+  return { enabled, isLoading, resolved: query.isSuccess };
+}
+
+// ─── Composition helpers: effective surface visibility ────────────────────────
+//
+// Every routes/deliveries gate (section redirects, dispatch hub, orders Select
+// action) should read through these, never through the raw addon hooks —
+// `developer_mode` must keep unlocking both features with zero regressions.
+
+/** Order-delivery surface visibility: the feature addon OR the dev master switch. */
+export function useDeliveryAccess(): { enabled: boolean; resolved: boolean } {
+  const dev = useDeveloperMode();
+  const od = useOrderDelivery();
+  return { enabled: dev.enabled || od.enabled, resolved: dev.resolved || od.resolved };
+}
+
+/** Recurring-routes surface visibility: the feature addon OR the dev master switch. */
+export function useRoutesAccess(): { enabled: boolean; resolved: boolean } {
+  const dev = useDeveloperMode();
+  const rr = useRecurringRoutes();
+  return { enabled: dev.enabled || rr.enabled, resolved: dev.resolved || rr.resolved };
 }

@@ -597,18 +597,22 @@ export interface AdminRouteDetail extends AdminRoute {
   stops?: AdminRouteDetailStop[];
 }
 
-export function useAdminRoutes(params?: {
-  search?: string;
-  isActive?: boolean;
-  page?: number;
-  limit?: number;
-  /** Defaults server-side to SCHEDULED — pass "ADHOC" for the trips list. */
-  kind?: "SCHEDULED" | "ADHOC";
-}) {
+export function useAdminRoutes(
+  params?: {
+    search?: string;
+    isActive?: boolean;
+    page?: number;
+    limit?: number;
+    /** Defaults server-side to SCHEDULED — pass "ADHOC" for the trips list. */
+    kind?: "SCHEDULED" | "ADHOC";
+  },
+  options?: { enabled?: boolean },
+) {
   return useQuery<{ data: AdminRoute[]; meta: PaginationMeta }>({
     queryKey: ["admin", "routes", params],
     queryFn: () => apiClient.get("/routes", { params }).then((r) => r.data),
     staleTime: 30_000,
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -640,11 +644,15 @@ export interface AdminDriver {
   };
 }
 
-export function useAdminDrivers(params?: { status?: string; page?: number; limit?: number }) {
+export function useAdminDrivers(
+  params?: { status?: string; page?: number; limit?: number },
+  options?: { enabled?: boolean },
+) {
   return useQuery<{ data: AdminDriver[]; meta: PaginationMeta }>({
     queryKey: ["admin", "drivers", params],
     queryFn: () => apiClient.get("/drivers", { params }).then((r) => r.data),
     staleTime: 60_000,
+    enabled: options?.enabled ?? true,
   });
 }
 

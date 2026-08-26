@@ -32,7 +32,7 @@ import { useProducts } from "@/lib/api/products";
 import { unitsLabel } from "@/lib/stock-label";
 import { useFinanceDashboard } from "@/lib/api/finance";
 import { useInvoices, type Invoice } from "@/lib/api/invoices";
-import { useDeveloperMode } from "@/lib/api/addons";
+import { useDeveloperMode, useRoutesAccess } from "@/lib/api/addons";
 
 // ─── Column definitions (stable refs, defined outside component) ───────────────
 
@@ -502,6 +502,12 @@ export default function DashboardPage() {
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
   const { enabled: devMode } = useDeveloperMode();
+  // Routes/drivers are recurring-routes surfaces, so every gate below (the mode
+  // pill AND the route/driver cards it reveals) must use the same union as the
+  // shell's "Drive mode" menu item / exit chip in (dashboard)/layout.tsx —
+  // otherwise a recurring_routes-only tenant can enter drive mode but lands back
+  // here with no mode pill and no driver content.
+  const { enabled: routesAccess } = useRoutesAccess();
 
   const baseIsOperator =
     !user?.role ||
@@ -511,7 +517,8 @@ export default function DashboardPage() {
   const isCustomer = user?.role === "CUSTOMER";
   const baseIsDriver = user?.role === "DRIVER";
 
-  const canActAsDriver = user?.canActAsDriver === true && baseIsOperator && devMode;
+  const canActAsDriver =
+    user?.canActAsDriver === true && baseIsOperator && (devMode || routesAccess);
 
   // View mode for dual-role users — persisted across visits
   const [viewMode, setViewMode] = React.useState<ViewMode>("operator");
@@ -646,7 +653,7 @@ export default function DashboardPage() {
               <FileMinus className="mr-1.5 h-3.5 w-3.5" />
               New Invoice
             </Button>
-            {devMode && (
+            {(devMode || routesAccess) && (
               <Button href="/routes/create" size="sm" variant="secondary">
                 <Truck className="mr-1.5 h-3.5 w-3.5" />
                 New Route
@@ -717,7 +724,7 @@ export default function DashboardPage() {
           </Link>
         )}
         {(isOperator || isDriver) &&
-          devMode &&
+          (devMode || routesAccess) &&
           (runsLoading ? (
             <StatSkeleton />
           ) : (
@@ -731,7 +738,7 @@ export default function DashboardPage() {
             </Link>
           ))}
         {isOperator &&
-          devMode &&
+          (devMode || routesAccess) &&
           (driversLoading ? (
             <StatSkeleton />
           ) : (
@@ -892,7 +899,7 @@ export default function DashboardPage() {
               ))}
 
             {/* Scheduled route runs */}
-            {devMode && (
+            {(devMode || routesAccess) && (
               <Card>
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-base font-semibold text-navy">Scheduled Route Runs</h3>
@@ -933,7 +940,7 @@ export default function DashboardPage() {
           {/* Right 1/3: Driver Status + Low Stock */}
           {isOperator && (
             <div className="flex flex-col gap-6">
-              {devMode && (
+              {(devMode || routesAccess) && (
                 <Card title="Driver Status">
                   {driversLoading ? (
                     <div className="animate-pulse space-y-4 py-2">

@@ -14,6 +14,7 @@ import {
   type AdminRoute,
 } from "../../../lib/api/admin";
 import { useOperatorRouteRuns, type RouteRun } from "../../../lib/api/routes";
+import { useDeliveryAccess, useRoutesAccess } from "../../../lib/api/addons";
 
 function driverDisplayName(driver: AdminDriver | undefined): string {
   if (!driver) return "Unassigned";
@@ -26,8 +27,21 @@ function driverDisplayName(driver: AdminDriver | undefined): string {
 export default function DispatchScreen() {
   const router = useRouter();
   const [tab, setTab] = useState("Routes");
-  const { data: routesData, isLoading: routesLoading } = useAdminRoutes({ limit: 50 });
-  const { data: driversData, isLoading: driversLoading } = useAdminDrivers();
+  // Owner split 2026-08-25: recurring routes and order delivery are separate
+  // addons (developer_mode still unlocks both — folded into these composed
+  // hooks). A single-feature tenant reaches this hub via the EITHER-gated
+  // /dispatch section ((operator)/_layout.tsx) and sees only their rows.
+  const { enabled: routesEnabled } = useRoutesAccess();
+  const { enabled: deliveryEnabled } = useDeliveryAccess();
+  // Recurring-routes data only — a delivery-only tenant renders neither tab, so
+  // skip the round-trips entirely rather than fetching lists nothing shows.
+  const { data: routesData, isLoading: routesLoading } = useAdminRoutes(
+    { limit: 50 },
+    { enabled: routesEnabled },
+  );
+  const { data: driversData, isLoading: driversLoading } = useAdminDrivers(undefined, {
+    enabled: routesEnabled,
+  });
 
   const routes = routesData?.data ?? [];
   const drivers = driversData?.data ?? [];
@@ -39,10 +53,10 @@ export default function DispatchScreen() {
 
   const unassigned = routes.filter((r) => !r.driverId);
   const today = new Date().toISOString().slice(0, 10);
-  const { data: runsData, isLoading: runsLoading } = useOperatorRouteRuns({
-    date: today,
-    limit: 50,
-  });
+  const { data: runsData, isLoading: runsLoading } = useOperatorRouteRuns(
+    { date: today, limit: 50 },
+    { enabled: routesEnabled },
+  );
   const runs = runsData?.data ?? [];
 
   return (
@@ -56,25 +70,31 @@ export default function DispatchScreen() {
       />
 
       <ScrollView showsVerticalScrollIndicator={false}>
-        <View style={{ paddingHorizontal: 16, paddingTop: 6 }}>
-          <SegmentedControl items={["Routes", "Drivers"]} value={tab} onChange={setTab} />
-        </View>
+        {routesEnabled ? (
+          <View style={{ paddingHorizontal: 16, paddingTop: 6 }}>
+            <SegmentedControl items={["Routes", "Drivers"]} value={tab} onChange={setTab} />
+          </View>
+        ) : null}
 
-        <SectionHeader title="Trips" />
-        <View style={{ paddingHorizontal: 16, paddingBottom: 4 }}>
-          <Pressable
-            style={styles.routeRow}
-            onPress={() => router.push("/(operator)/trips" as any)}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={styles.routeName}>Ad-hoc trips</Text>
-              <Text style={styles.routeSub}>Plan and dispatch one-shot delivery runs</Text>
+        {deliveryEnabled ? (
+          <>
+            <SectionHeader title="Order delivery" />
+            <View style={{ paddingHorizontal: 16, paddingBottom: 4 }}>
+              <Pressable
+                style={styles.routeRow}
+                onPress={() => router.push("/(operator)/trips" as any)}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.routeName}>Plan & history</Text>
+                  <Text style={styles.routeSub}>Plan a delivery or review past runs</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={ios.gray[3]} />
+              </Pressable>
             </View>
-            <Ionicons name="chevron-forward" size={18} color={ios.gray[3]} />
-          </Pressable>
-        </View>
+          </>
+        ) : null}
 
-        {tab === "Routes" ? (
+        {routesEnabled && tab === "Routes" ? (
           <RoutesTab
             routes={routes}
             unassigned={unassigned}
@@ -83,9 +103,31 @@ export default function DispatchScreen() {
             runs={runs}
             runsLoading={runsLoading}
           />
-        ) : (
+        ) : null}
+
+        {routesEnabled && tab === "Drivers" ? (
           <DriversTab drivers={drivers} loading={driversLoading} />
-        )}
+        ) : null}
+
+        {/* Without recurring routes there is no SegmentedControl to select the
+            drivers list with, so a delivery-only tenant gets a deliberate,
+            labelled row instead of an unasked-for full drivers list. Drivers
+            stay reachable for both features (EITHER_SECTIONS in
+            (operator)/_layout.tsx). */}
+        {!routesEnabled ? (
+          <>
+            <SectionHeader title="Drivers" />
+            <View style={{ paddingHorizontal: 16, paddingBottom: 20 }}>
+              <Pressable style={styles.routeRow} onPress={() => router.push("/(operator)/drivers")}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.routeName}>Manage drivers</Text>
+                  <Text style={styles.routeSub}>View and add the drivers who run deliveries</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={ios.gray[3]} />
+              </Pressable>
+            </View>
+          </>
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );
