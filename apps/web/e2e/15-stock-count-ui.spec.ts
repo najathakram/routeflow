@@ -147,7 +147,10 @@ test.describe("Operator — Stock count UI (WP3-15)", () => {
     // DISCARDED session lives on — the only residue this spec leaves).
     await page.getByRole("link", { name: "Count history" }).click();
     await expect(page).toHaveURL(/\/inventory\/stock-counts/);
-    await expect(page.getByRole("heading", { name: "Stock Counts" })).toBeVisible({
+    // level: 2 — the dashboard shell's <h1> page title ALSO reads "Stock
+    // Counts" (via setTitle), so an unleveled heading match resolves 2
+    // elements and violates strict mode.
+    await expect(page.getByRole("heading", { level: 2, name: "Stock Counts" })).toBeVisible({
       timeout: 15_000,
     });
     await expect(page.getByText("Status", { exact: true })).toBeVisible();

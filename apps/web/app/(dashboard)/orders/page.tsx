@@ -855,6 +855,10 @@ export default function OrdersPage() {
                           type="checkbox"
                           checked={selected.has(order.id)}
                           onChange={() => toggleSelect(order.id)}
+                          // Without this, a click ON the checkbox toggles twice:
+                          // onChange here, then the bubble reaches the td's
+                          // onClick — net zero, the box appears dead.
+                          onClick={(e) => e.stopPropagation()}
                           className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
                         />
                       </td>

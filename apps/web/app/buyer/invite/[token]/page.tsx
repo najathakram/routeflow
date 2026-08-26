@@ -40,7 +40,7 @@ interface InviteDetails {
 export default function BuyerInvitePage() {
   const params = useParams();
   const router = useRouter();
-  const { buyer, isLoading: authLoading, isAuthenticated } = useBuyerAuth();
+  const { buyer, isLoading: authLoading, isAuthenticated, refreshSellers } = useBuyerAuth();
   const token = params.token as string;
 
   const [invite, setInvite] = React.useState<InviteDetails | null>(null);
@@ -84,6 +84,12 @@ export default function BuyerInvitePage() {
     setAcceptError(null);
     try {
       await acceptInvite(token, accessToken);
+      // Re-pull the roster into the shared context BEFORE landing on the
+      // portal: register→accept→portal is all soft navigation under one
+      // BuyerAuthProvider, whose sellers list was seeded [] at registration —
+      // without this the freshly-linked buyer lands on "No sellers connected
+      // yet" until a hard reload (e2e BSD-01 caught it).
+      await refreshSellers().catch(() => {});
       setAccepted(true);
       // Redirect to portal with linked=true so the banner fires
       setTimeout(() => {

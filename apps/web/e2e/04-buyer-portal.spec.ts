@@ -223,7 +223,10 @@ test.describe("Buyer Portal", () => {
       test.skip(true, "Buyer login timed out — skipping seller card check");
       return;
     }
-    const sellerCard = page.locator("[class*='seller'], [class*='card'] button").first();
+    // button[data-testid] scopes to the CLICKABLE (ACTIVE-link) variant of
+    // SellerCard. The old `[class*='seller'], [class*='card'] button` locator
+    // never matched the portal DOM, so BY-09..12 silently self-skipped forever.
+    const sellerCard = page.locator('button[data-testid="seller-card"]').first();
     const hasCards = await sellerCard.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasCards) {
       test.skip(true, "No sellers linked to this buyer account — run invite flow first");
@@ -239,7 +242,7 @@ test.describe("Buyer Portal", () => {
       test.skip(true, "Buyer login timed out — skipping");
       return;
     }
-    const sellerCard = page.locator("[class*='seller'], [class*='card'] button").first();
+    const sellerCard = page.locator('button[data-testid="seller-card"]').first();
     const hasCards = await sellerCard.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasCards) {
       test.skip(true, "No sellers linked");
@@ -257,7 +260,7 @@ test.describe("Buyer Portal", () => {
       test.skip(true, "Buyer login timed out — skipping");
       return;
     }
-    const sellerCard = page.locator("[class*='seller'], [class*='card'] button").first();
+    const sellerCard = page.locator('button[data-testid="seller-card"]').first();
     const hasCards = await sellerCard.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasCards) {
       test.skip(true, "No sellers linked");
@@ -279,7 +282,7 @@ test.describe("Buyer Portal", () => {
       test.skip(true, "Buyer login timed out — skipping");
       return;
     }
-    const sellerCard = page.locator("[class*='seller'], [class*='card'] button").first();
+    const sellerCard = page.locator('button[data-testid="seller-card"]').first();
     const hasCards = await sellerCard.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasCards) {
       test.skip(true, "No sellers linked");

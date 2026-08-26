@@ -892,11 +892,15 @@ test.describe("Operator — Tenant Dashboard", () => {
     // Current-stock hint proves the selection registered.
     await expect(page.getByText(/current stock:/i)).toBeVisible();
 
-    // The modal's labels aren't htmlFor-associated — target by position:
-    // the qty/cost grid renders them as the first two number inputs.
+    // The modal's labels aren't htmlFor-associated — target by position. The
+    // layout depends on the picked product: non-boxed renders [Quantity, Unit
+    // Cost]; a BOXED product renders [Boxes, + Pieces, Cost per Box] (#417).
+    // First = qty/boxes and LAST = the required cost in both layouts — nth(1)
+    // would fill Pieces on a boxed product and leave Cost empty, so the
+    // required-field validation silently blocks the submit.
     const numberInputs = page.locator('form input[type="number"]');
-    await numberInputs.nth(0).fill("1");
-    await numberInputs.nth(1).fill("1.00");
+    await numberInputs.first().fill("1");
+    await numberInputs.last().fill("1.00");
 
     const purchaseResp = page.waitForResponse(
       (r) => r.url().includes("/inventory/movements/purchase") && r.request().method() === "POST",

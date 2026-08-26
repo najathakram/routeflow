@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useDebounce } from "./useDebounce";
 
 /**
@@ -18,9 +18,12 @@ import { useDebounce } from "./useDebounce";
  * leaving for a detail page pushes a new entry, so Back returns to the list
  * entry with `?search=` still on it and the box re-hydrates from the URL.
  *
- * Uses `router.replace`, never `push` — replace overwrites the current history
- * entry, so a 20-character query leaves ONE entry and Back exits the list
- * instead of replaying the search one character at a time.
+ * Uses a shallow `history.replaceState`, never `push` — replacing overwrites
+ * the current history entry, so a 20-character query leaves ONE entry and Back
+ * exits the list instead of replaying the search one character at a time. And
+ * it must be `replaceState`, not `router.replace`: the debounced write can land
+ * while a `router.push` to a detail page is in flight, and a router.replace
+ * there cancels the push (the clicked row silently never opens).
  *
  * Only for list searches that own the page's URL. Searches scoped to a modal or
  * an inline picker must stay local: they have no history entry to return from,
@@ -30,7 +33,6 @@ export function useUrlSearch(
   key = "search",
   delay = 300,
 ): [string, (next: string) => void, string] {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
@@ -67,8 +69,17 @@ export function useUrlSearch(
     // A changed query re-ranks everything, so any page cursor is meaningless.
     params.delete("page");
     const qs = params.toString();
-    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-  }, [debounced, key, pathname, router]);
+    // Shallow replaceState, NOT router.replace: this write lands up to `delay`
+    // ms after the last keystroke, and a router.replace fired in that window
+    // CANCELS an in-flight router.push — type, click a row within the debounce
+    // window, and the click was silently swallowed (the row never opened;
+    // reproduced via e2e 17's create→search→open flow, where a fast local API
+    // made the filtered row clickable before the write landed). replaceState
+    // only mutates the current history entry's URL — nothing for the router to
+    // cancel — and Next ≥14.1 syncs usePathname/useSearchParams from it, so
+    // Back-restore (e2e 12) still sees `?search=` on the list entry.
+    window.history.replaceState(window.history.state, "", qs ? `${pathname}?${qs}` : pathname);
+  }, [debounced, key, pathname]);
 
   return [value, setValue, debounced];
 }

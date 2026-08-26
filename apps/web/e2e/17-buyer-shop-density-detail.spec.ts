@@ -92,7 +92,11 @@ test.describe("Buyer shop density + product detail", () => {
 
     // Select the seller — this both sets activeSeller (persisted to localStorage, so a plain
     // page.goto to a seller sub-route later still has it) and navigates to its /orders page.
-    const sellerCard = page.locator("[class*='seller'], [class*='card'] button").first();
+    // The clickable card is a plain <button> with no "seller"/"card" class token
+    // (see SellerCard in buyer/portal/page.tsx — `[class*='seller']` never matched this
+    // DOM), so match by text: an ACTIVE link renders the customer's business name,
+    // which is unique to this run.
+    const sellerCard = page.getByRole("button").filter({ hasText: businessName }).first();
     await expect(sellerCard).toBeVisible({ timeout: 15_000 });
     await sellerCard.click();
     await page.waitForURL(/\/buyer\/portal\/.+\/orders/, { timeout: 15_000 });
