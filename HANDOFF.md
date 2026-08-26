@@ -35,16 +35,25 @@ Three cross-branch regressions the rebases introduced were caught by the hook ga
 with specs (fulfillPath default-chain mocks, resolveDefaultTerms/deposit mocks, the
 deleteOrder↔cancelImpact finder split).
 
-## 🟡 IN FLIGHT this session — client-release-blockers (RESCOPED)
+## ✅ SHIPPED 2026-08-26 — #449 client-release-blockers (RESCOPED; CI green; deploy watched)
 
-Branch `fix/client-release-blockers` (worktree ap-client-fixes), plan
-`.claude/pipeline/plans/2026-08-25-client-release-blockers.md` **rescoped 2026-08-26**:
-WP2/WP3 (customer address edit) are SUPERSEDED — #442 phase 1 shipped full Addresses-tab
-CRUD and removed the silent-discard modal inputs, so that defect no longer exists. Remaining
-build: **WP1** (order edits never settle stock — `settleStockForEdit` with row locks + specs)
-and **WP4-reduced** (EditTerms terms→dueDate linkage; `calendarDaysUntil` for the two remaining
-LOCAL-time badge sites in `renderStatus` — the KPI half was already fixed inside #442).
-Sonnet implementers dispatched; Opus review + hook verify + PR to follow.
+Plan `.claude/pipeline/plans/2026-08-25-client-release-blockers.md` rescoped: WP2/WP3
+(customer address edit) SUPERSEDED — #442 phase 1's Addresses-tab CRUD already fixed that
+defect. Built + merged as **#449**: **WP1** — order edits SETTLE stock (`settleStockForEdit`:
+union deltas, product-row + Order-row `FOR UPDATE`, in-tx held snapshot, **delivered-clamp** —
+negative deltas credit only the undelivered portion, so cancelling a delivered line no longer
+inflates inventory; at-door approvals now settle too; specs a–j + at-door case, 253/253) and
+**WP4-reduced** — EditTerms terms→dueDate linkage from the ISSUE date (the "Net 60 shows
+Net 30" complaint) + `calendarDaysUntil` for the two remaining LOCAL-time badge sites
+(`renderStatus`); helpers extracted to `web/lib/invoice-terms.ts`. Pipeline: Fable plan →
+2 Sonnet implementers → Opus review (caught the delivered-clamp + stale-snapshot races) →
+Opus fixer → hook verify + CI green → merged. **The bb-distro NO_GO verdict's three blockers
+are now all closed** (terms↔date by #449, address edit by #442, stock settle by #449; the
+badge −1-day survivor also by #449).
+
+Same-day parallel session (from this session's task chip): E2E suite resurrection — all 5
+red specs root-caused (4 REAL web bugs incl. a router.replace swallowing row clicks on all
+13 list pages), PR #448 open — see memory `project_e2e_suite_resurrection_2026-08-26`.
 
 ## 🔴 OWNER ACTIONS (nothing else unblocks these)
 
