@@ -26,7 +26,7 @@ describe("MessagesService (run-chat)", () => {
   it("creates a run-chat message WITHOUT setting channel/threadId (both default)", async () => {
     // F2-006 participant gate: the DRIVER must be assigned to the run to write it.
     prisma.driver.findFirst.mockResolvedValue({ id: "drv-9" });
-    prisma.routeRun.findUnique.mockResolvedValue({ driverId: "drv-9" });
+    prisma.routeRun.findFirst.mockResolvedValue({ driverId: "drv-9" });
     await service.create({ runId: "run-1", text: "on my way" }, "user-9", "DRIVER");
 
     expect(prisma.message.create).toHaveBeenCalledTimes(1);

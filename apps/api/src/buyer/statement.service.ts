@@ -54,7 +54,7 @@ export class StatementService {
     const db = this.prisma.forTenant();
 
     const [customer, invoices, monthPayments, creditNotes] = await Promise.all([
-      db.customer.findUnique({
+      db.customer.findFirst({
         where: { id: customerId },
         select: { id: true, businessName: true },
       }),

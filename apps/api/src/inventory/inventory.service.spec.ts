@@ -399,7 +399,7 @@ describe("InventoryService", () => {
     const tx = () => prisma as any;
 
     it("writes the SALE movement with the average cost for AVCO products", async () => {
-      prisma.product.findUnique.mockResolvedValue(product());
+      prisma.product.findFirst.mockResolvedValue(product());
 
       const result = await service.recordSale("prod-1", D(4), "ORD-1", "user-1", tx());
 
@@ -414,7 +414,7 @@ describe("InventoryService", () => {
     });
 
     it("blends consumed lot costs for FIFO products and draws the lots down", async () => {
-      prisma.product.findUnique.mockResolvedValue(product({ costingMethod: "FIFO" }));
+      prisma.product.findFirst.mockResolvedValue(product({ costingMethod: "FIFO" }));
       prisma.stockLot.findMany.mockResolvedValue([
         { id: "lot-1", remainingQty: D(5), unitCost: D(1) },
         { id: "lot-2", remainingQty: D(10), unitCost: D(2) },
@@ -436,7 +436,7 @@ describe("InventoryService", () => {
     });
 
     it("falls back to the average cost when FIFO lots are missing (pre-fix data)", async () => {
-      prisma.product.findUnique.mockResolvedValue(product({ costingMethod: "FIFO" }));
+      prisma.product.findFirst.mockResolvedValue(product({ costingMethod: "FIFO" }));
       prisma.stockLot.findMany.mockResolvedValue([]);
 
       const result = await service.recordSale("prod-1", D(4), null, null, tx());
@@ -446,7 +446,7 @@ describe("InventoryService", () => {
     });
 
     it("uses standardCost for STANDARD products", async () => {
-      prisma.product.findUnique.mockResolvedValue(
+      prisma.product.findFirst.mockResolvedValue(
         product({ costingMethod: "STANDARD", standardCost: D(2.75) }),
       );
 
@@ -456,7 +456,7 @@ describe("InventoryService", () => {
     });
 
     it("uses the most recent PURCHASE movement's cost for LAST_COST products", async () => {
-      prisma.product.findUnique.mockResolvedValue(product({ costingMethod: "LAST_COST" }));
+      prisma.product.findFirst.mockResolvedValue(product({ costingMethod: "LAST_COST" }));
       // A newest bill @ 3.5; a later positive stock-count lot @ avg cost must NOT win.
       prisma.stockMovement.findFirst.mockResolvedValue({ unitCost: D(3.5) });
 
@@ -474,7 +474,7 @@ describe("InventoryService", () => {
     });
 
     it("falls back to the average cost for LAST_COST when there are no purchases", async () => {
-      prisma.product.findUnique.mockResolvedValue(product({ costingMethod: "LAST_COST" }));
+      prisma.product.findFirst.mockResolvedValue(product({ costingMethod: "LAST_COST" }));
       prisma.stockMovement.findFirst.mockResolvedValue(null);
 
       const result = await service.recordSale("prod-1", D(2), null, null, tx());
@@ -483,7 +483,7 @@ describe("InventoryService", () => {
     });
 
     it("never throws when stock goes negative", async () => {
-      prisma.product.findUnique.mockResolvedValue(product({ currentStock: D(1) }));
+      prisma.product.findFirst.mockResolvedValue(product({ currentStock: D(1) }));
 
       const result = await service.recordSale("prod-1", D(5), null, null, tx());
 
@@ -886,8 +886,8 @@ describe("InventoryService", () => {
     });
 
     it("snapshots expectedQty on FIRST count only, so later stock drift can't move the baseline", async () => {
-      prisma.stockCountSession.findUnique.mockResolvedValue({ id: "sess-1", status: "OPEN" });
-      prisma.product.findUnique.mockResolvedValue({
+      prisma.stockCountSession.findFirst.mockResolvedValue({ id: "sess-1", status: "OPEN" });
+      prisma.product.findFirst.mockResolvedValue({
         id: "prod-1",
         currentStock: D(10),
         unitsPerBox: null,
@@ -914,8 +914,8 @@ describe("InventoryService", () => {
     });
 
     it("increment adds to the running count; without it the value replaces", async () => {
-      prisma.stockCountSession.findUnique.mockResolvedValue({ id: "sess-1", status: "OPEN" });
-      prisma.product.findUnique.mockResolvedValue({
+      prisma.stockCountSession.findFirst.mockResolvedValue({ id: "sess-1", status: "OPEN" });
+      prisma.product.findFirst.mockResolvedValue({
         id: "prod-1",
         currentStock: D(10),
         unitsPerBox: null,
@@ -938,8 +938,8 @@ describe("InventoryService", () => {
     });
 
     it("recomputes qty from a boxes/pieces split instead of trusting a loose count", async () => {
-      prisma.stockCountSession.findUnique.mockResolvedValue({ id: "sess-1", status: "OPEN" });
-      prisma.product.findUnique.mockResolvedValue({
+      prisma.stockCountSession.findFirst.mockResolvedValue({ id: "sess-1", status: "OPEN" });
+      prisma.product.findFirst.mockResolvedValue({
         id: "prod-1",
         currentStock: D(0),
         unitsPerBox: 12,
@@ -959,7 +959,7 @@ describe("InventoryService", () => {
     });
 
     it("a committed session is not editable — it must be amended instead", async () => {
-      prisma.stockCountSession.findUnique.mockResolvedValue({
+      prisma.stockCountSession.findFirst.mockResolvedValue({
         id: "sess-1",
         status: "COMMITTED",
       });

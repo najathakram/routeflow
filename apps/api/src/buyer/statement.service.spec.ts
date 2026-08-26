@@ -92,7 +92,7 @@ describe("StatementService (P5-15 — monthly statement reconciliation)", () => 
     ];
 
     beforeEach(() => {
-      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.customer.findFirst.mockResolvedValue(MOCK_CUSTOMER);
       prisma.invoice.findMany.mockResolvedValue([INV_100, INV_101]);
       prisma.invoicePayment.findMany.mockResolvedValue(MONTH_PAYMENT_ROWS);
       prisma.creditNote.findMany.mockResolvedValue([]);
@@ -216,7 +216,7 @@ describe("StatementService (P5-15 — monthly statement reconciliation)", () => 
 
   describe("buildMonthlyStatement — customer not found", () => {
     it("throws NotFoundException when the customer does not exist", async () => {
-      prisma.customer.findUnique.mockResolvedValue(null);
+      prisma.customer.findFirst.mockResolvedValue(null);
       prisma.invoice.findMany.mockResolvedValue([]);
       prisma.invoicePayment.findMany.mockResolvedValue([]);
       prisma.creditNote.findMany.mockResolvedValue([]);

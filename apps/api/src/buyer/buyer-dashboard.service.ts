@@ -24,7 +24,7 @@ export class BuyerDashboardService {
     // Load customer pricing tier
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: customerId }, select: { pricingTier: true } });
+      .customer.findFirst({ where: { id: customerId }, select: { pricingTier: true } });
     const defaultTier = customer?.pricingTier ?? 1;
 
     // W7 gate: hide regulated products the buyer isn't licensed for on every product

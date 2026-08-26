@@ -693,8 +693,11 @@ describe("OrdersService", () => {
 
     /** Buyer-path mocks for a customer on `tier`, no promos, no overrides. */
     const seedBuyerTierMocks = (tier: number) => {
-      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
-      prisma.customer.findUnique.mockResolvedValue({ pricingTier: tier });
+      // customer.findFirst now serves BOTH the buyer's own-record lookup (where.userId)
+      // and the pricingTier read (where.id — findUnique's exclusive select dropped tenantId).
+      prisma.customer.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(where?.id ? { pricingTier: tier } : { id: "cust-1" }),
+      );
       prisma.customerPrice.findMany.mockResolvedValue([]);
       prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
       prisma.order.create.mockResolvedValue(MOCK_ORDER);
@@ -1729,6 +1732,7 @@ describe("OrdersService", () => {
 
     it("cancelling voids EVERY live invoice on the order, not just the draft", async () => {
       prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
+      prisma.order.findFirst.mockResolvedValue(MOCK_ORDER); // cancelImpact's own read
       prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "CANCELLED" });
       // cancelImpact's read, then the in-tx read of invoices to void.
       prisma.invoice.findMany
@@ -1752,6 +1756,7 @@ describe("OrdersService", () => {
 
     it("cancelling hands applied credits back before the invoices die", async () => {
       prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
+      prisma.order.findFirst.mockResolvedValue(MOCK_ORDER); // cancelImpact's own read
       prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "CANCELLED" });
       prisma.invoice.findMany
         .mockResolvedValueOnce([
@@ -1779,6 +1784,7 @@ describe("OrdersService", () => {
 
     it("refuses to cancel when real cash was taken, leaving the order untouched", async () => {
       prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
+      prisma.order.findFirst.mockResolvedValue(MOCK_ORDER); // cancelImpact's own read
       prisma.invoice.findMany.mockResolvedValueOnce([
         {
           id: "inv-cash",
@@ -2054,6 +2060,7 @@ describe("OrdersService", () => {
 
     it("CANCELLED fires no messaging trigger", async () => {
       prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
+      prisma.order.findFirst.mockResolvedValue(MOCK_ORDER); // cancelImpact's own read
       prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "CANCELLED" });
 
       await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload);
@@ -2319,7 +2326,7 @@ describe("OrdersService", () => {
         ],
       };
       prisma.order.findUnique.mockResolvedValue(upsoldOrder);
-      prisma.product.findUnique.mockResolvedValue({ pricePerUnit: 5 });
+      prisma.product.findFirst.mockResolvedValue({ pricePerUnit: 5 }); // catalog anchor read
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 18, status: "PENDING" }]);
 
       await service.updateOrderItems(
@@ -3086,7 +3093,7 @@ describe("OrdersService", () => {
         status: "DRAFT" as const,
         lineItems: [],
       });
-      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 }); // operatorTierCtx read
       prisma.customerPrice.findMany.mockResolvedValue([]);
       prisma.product.findUnique.mockResolvedValue(TIERED_PRODUCT);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
@@ -3154,7 +3161,7 @@ describe("OrdersService", () => {
         status: "DRAFT" as const,
         lineItems: [],
       });
-      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 }); // default tier 3 → tier price 8
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 }); // operatorTierCtx read; default tier 3 → tier price 8
       prisma.customerPrice.findMany.mockResolvedValue([
         { productId: "prod-1", pricingTier: null, msrp: 5 },
       ]);
@@ -3187,8 +3194,11 @@ describe("OrdersService", () => {
         customerId: "cust-1",
         lineItems: [],
       });
-      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
-      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
+      // customer.findFirst now serves BOTH the buyer ownership check (where.userId)
+      // and the buyerTierCtx pricingTier read (where.id).
+      prisma.customer.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(where?.id ? { pricingTier: 3 } : { id: "cust-1" }),
+      );
       prisma.customerPrice.findMany.mockResolvedValue([]);
       prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
@@ -3661,7 +3671,7 @@ describe("OrdersService", () => {
           },
         ],
       });
-      prisma.product.findUnique.mockResolvedValue({ id: "prod-box", unitsPerBox: 12 });
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-box", unitsPerBox: 12 }); // box-size resolve
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 63.79, status: "PENDING" }]);
 
       await service.updateOrderItems(
@@ -4025,7 +4035,7 @@ describe("OrdersService", () => {
 
   describe("updateShipment", () => {
     it("sets carrier + tracking on the order and mirrors them to non-void invoices", async () => {
-      prisma.order.findUnique.mockResolvedValue({ id: "ord-1", shippedAt: null });
+      prisma.order.findFirst.mockResolvedValue({ id: "ord-1", shippedAt: null });
       prisma.order.update.mockResolvedValue({ id: "ord-1" });
 
       await service.updateShipment(
@@ -4056,7 +4066,7 @@ describe("OrdersService", () => {
     });
 
     it("clears carrier, tracking and shippedAt when the tracking number is blank", async () => {
-      prisma.order.findUnique.mockResolvedValue({ id: "ord-1", shippedAt: new Date() });
+      prisma.order.findFirst.mockResolvedValue({ id: "ord-1", shippedAt: new Date() });
       prisma.order.update.mockResolvedValue({ id: "ord-1" });
 
       await service.updateShipment(
@@ -4465,7 +4475,7 @@ describe("OrdersService", () => {
     });
 
     it("over the limit blocks ALL roles and persists nothing (409 CREDIT_LIMIT_EXCEEDED)", async () => {
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.invoice.findMany.mockResolvedValue([
         { total: 200, orderId: null, payments: [{ amount: 80 }] }, // balance 120
       ]);
@@ -4486,7 +4496,7 @@ describe("OrdersService", () => {
 
     it("credit-limit guard receives the fee-inclusive projected total (order carries a stored shippingFee)", async () => {
       prisma.order.findUnique.mockResolvedValue({ ...editableOrder(), shippingFee: 5 });
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.invoice.findMany.mockResolvedValue([
         { total: 200, orderId: null, payments: [{ amount: 80 }] }, // balance 120
       ]);
@@ -4525,7 +4535,7 @@ describe("OrdersService", () => {
     });
 
     it("ignores VOID (bounced) payments when netting exposure — a bounce cannot slip under the limit", async () => {
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.invoice.findMany.mockResolvedValue([
         {
           total: 120,
@@ -4550,7 +4560,7 @@ describe("OrdersService", () => {
     });
 
     it("exposure exactly at the limit passes; one cent over blocks", async () => {
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.order.findMany.mockResolvedValue([]);
 
       prisma.invoice.findMany.mockResolvedValue([
@@ -4563,7 +4573,7 @@ describe("OrdersService", () => {
       prisma.order.findUnique.mockResolvedValue(editableOrder());
       prisma.orderItem.findMany.mockResolvedValue(postEditItems);
       prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.order.findMany.mockResolvedValue([]);
       prisma.invoice.findMany.mockResolvedValue([
         { total: 85.01, orderId: null, payments: [] }, // 100.01 → over
@@ -4588,9 +4598,11 @@ describe("OrdersService", () => {
     });
 
     it("blocks a CUSTOMER edit over the limit (buyer replace path)", async () => {
-      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" }); // ownership
-      // Serves BOTH the branch's pricingTier read and the guard's creditLimit read.
-      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1, creditLimit: 10 });
+      // customer.findFirst now serves the ownership check (where.userId), the
+      // buyerTierCtx pricingTier read, and the guard's creditLimit read (both where.id).
+      prisma.customer.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(where?.id ? { pricingTier: 1, creditLimit: 10 } : { id: "cust-1" }),
+      );
       prisma.product.findMany.mockResolvedValue([
         { ...MOCK_PRODUCT, id: "prod-1", unitsPerBox: null },
       ]);
@@ -4658,7 +4670,7 @@ describe("OrdersService", () => {
       prisma.order.findUnique.mockResolvedValue(editableOrder());
       prisma.orderItem.findMany.mockResolvedValue(postEditItems);
       prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.invoice.findMany.mockResolvedValue([
         { total: 200, orderId: null, payments: [{ amount: 80 }] }, // balance 120
       ]);
@@ -5005,14 +5017,16 @@ describe("OrdersService", () => {
       );
       prisma.order.findUnique.mockResolvedValue(baseOrder([line]));
       // Catalog price moved to 10 — the merge must NOT re-price the agreed line.
-      prisma.product.findUnique.mockResolvedValue({
+      const catalogProduct = {
         id: "prod-1",
         name: "Widget",
         pricePerUnit: 10,
         unitsPerBox: null,
         category: null,
         trackedCategoryId: null,
-      });
+      };
+      prisma.product.findUnique.mockResolvedValue(catalogProduct); // in-tx ADD_ITEM price read
+      prisma.product.findFirst.mockResolvedValue(catalogProduct); // pre-tx regulated guard read
       prisma.orderItem.findMany
         .mockResolvedValueOnce([]) // getCustomerPriceHistory (hoisted, pre-tx)
         .mockResolvedValue([
@@ -5045,8 +5059,9 @@ describe("OrdersService", () => {
         }),
       );
       prisma.order.findUnique.mockResolvedValue(baseOrder([])); // no existing line for prod-2
-      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 2, creditLimit: null });
-      prisma.product.findUnique.mockResolvedValue({
+      // Serves BOTH the buyerTier pricingTier read and the credit guard's creditLimit read.
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 2, creditLimit: null });
+      const catalogProduct = {
         id: "prod-2",
         name: "Basil",
         pricePerUnit: 10,
@@ -5054,7 +5069,9 @@ describe("OrdersService", () => {
         unitsPerBox: null,
         category: null,
         trackedCategoryId: null,
-      });
+      };
+      prisma.product.findUnique.mockResolvedValue(catalogProduct); // in-tx ADD_ITEM price read
+      prisma.product.findFirst.mockResolvedValue(catalogProduct); // pre-tx regulated guard read
       prisma.orderItem.create.mockResolvedValue({ id: "li-new" });
       prisma.orderItem.findMany
         .mockResolvedValueOnce([]) // getCustomerPriceHistory (hoisted, pre-tx)
@@ -5179,14 +5196,16 @@ describe("OrdersService", () => {
         }),
       );
       prisma.order.findUnique.mockResolvedValue(baseOrder([])); // held 0 — a brand-new line
-      prisma.product.findUnique.mockResolvedValue({
+      const catalogProduct = {
         id: "prod-3",
         name: "Basil",
         pricePerUnit: 10,
         unitsPerBox: null,
         category: null,
         trackedCategoryId: null,
-      });
+      };
+      prisma.product.findUnique.mockResolvedValue(catalogProduct); // in-tx ADD_ITEM price read
+      prisma.product.findFirst.mockResolvedValue(catalogProduct); // pre-tx regulated guard read
       prisma.orderItem.findMany
         .mockResolvedValueOnce([]) // getCustomerPriceHistory (hoisted, pre-tx)
         .mockResolvedValue([
@@ -5243,7 +5262,7 @@ describe("OrdersService", () => {
           trackedCategoryId: null,
         },
       ]);
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 10, pricingTier: 1 });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 10, pricingTier: 1 });
 
       await expect(
         service.approveChangeRequestAtStop("cr-1", operatorPayload, null),
@@ -5334,7 +5353,8 @@ describe("OrdersService", () => {
         }),
       );
       prisma.order.findUnique.mockResolvedValue(baseOrder([]));
-      prisma.product.findUnique.mockResolvedValue({ id: "prod-4", trackedCategoryId: "cat-1" });
+      prisma.product.findUnique.mockResolvedValue({ id: "prod-4", trackedCategoryId: "cat-1" }); // in-tx ADD_ITEM price read
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-4", trackedCategoryId: "cat-1" }); // pre-tx regulated guard read
       const authGuard = (service as any).authGuard;
       authGuard.assertAuthorizedOrThrow.mockRejectedValueOnce(
         new ConflictException({ code: "REGULATED_AUTH_REQUIRED" }),

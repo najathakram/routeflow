@@ -119,7 +119,7 @@ async function receiveLine(
 ) {
   const { service, prisma } = await makeService();
   prisma.vendorBill.findUnique.mockResolvedValueOnce(bill({ items: [linkedItem(item)] }));
-  prisma.product.findUnique.mockResolvedValue({ ...startingProduct, costingMethod: "AVCO" });
+  prisma.product.findFirst.mockResolvedValue({ ...startingProduct, costingMethod: "AVCO" });
 
   await service.receive("bill-1", undefined, "user-1");
 
@@ -155,7 +155,7 @@ async function revertLine(
       items: [linkedItem({ ...item, qtyReceived: receivedQty })],
     }),
   );
-  prisma.product.findUnique.mockResolvedValue(postReceiveProduct);
+  prisma.product.findFirst.mockResolvedValue(postReceiveProduct);
   prisma.stockLot.findMany.mockResolvedValue([]);
 
   await service.revertToDraft("bill-1");
@@ -184,7 +184,7 @@ async function voidLine(
       items: [linkedItem({ ...item, qtyReceived: receivedQty })],
     }),
   );
-  prisma.product.findUnique.mockResolvedValue(postReceiveProduct);
+  prisma.product.findFirst.mockResolvedValue(postReceiveProduct);
   prisma.stockLot.findMany.mockResolvedValue([]);
 
   await service.voidBill("bill-1", "user-1");

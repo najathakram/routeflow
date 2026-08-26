@@ -610,7 +610,7 @@ export class BookkeepingService implements OnModuleInit {
         }
 
         if (expense.vendorBillId) {
-          const linkedBill = await this.prisma.forTenant().vendorBill.findUnique({
+          const linkedBill = await this.prisma.forTenant().vendorBill.findFirst({
             where: { id: expense.vendorBillId },
             select: { id: true, billNumber: true },
           });

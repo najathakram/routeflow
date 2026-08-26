@@ -468,7 +468,7 @@ export class VendorBillsService {
     if (dto.scanId) {
       const scan = await this.prisma
         .forTenant()
-        .invoiceScan.findUnique({
+        .invoiceScan.findFirst({
           where: { id: dto.scanId },
           select: { lineFingerprint: true },
         })
@@ -487,7 +487,7 @@ export class VendorBillsService {
     billId: string,
     total: number,
   ): Promise<VendorBillDuplicateMatch | null> {
-    const bill = await this.prisma.forTenant().vendorBill.findUnique({
+    const bill = await this.prisma.forTenant().vendorBill.findFirst({
       where: { id: billId },
       select: {
         id: true,
@@ -583,7 +583,7 @@ export class VendorBillsService {
     const supplier = match.supplierId
       ? await this.prisma
           .forTenant()
-          .supplier.findUnique({ where: { id: match.supplierId }, select: { name: true } })
+          .supplier.findFirst({ where: { id: match.supplierId }, select: { name: true } })
       : null;
     return {
       billId: match.id,
@@ -821,7 +821,7 @@ export class VendorBillsService {
 
         // Read fresh state inside the tx so multi-line bills of the same
         // product compound correctly instead of using the pre-tx snapshot
-        const product = await tx.product.findUnique({
+        const product = await tx.product.findFirst({
           where: { id: item.productId },
           select: { currentStock: true, averageCost: true, costingMethod: true },
         });
@@ -975,7 +975,7 @@ export class VendorBillsService {
         });
 
         // Read current product state within the transaction for accurate AVCO reversal
-        const product = await tx.product.findUnique({
+        const product = await tx.product.findFirst({
           where: { id: item.productId },
           select: { currentStock: true, averageCost: true },
         });
@@ -1075,7 +1075,7 @@ export class VendorBillsService {
             packSize: item.packSize,
           });
 
-          const product = await tx.product.findUnique({
+          const product = await tx.product.findFirst({
             where: { id: item.productId },
             select: { currentStock: true, averageCost: true },
           });

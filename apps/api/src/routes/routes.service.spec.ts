@@ -576,7 +576,7 @@ describe("RoutesService", () => {
           update: jest.fn().mockResolvedValue({}),
         },
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
-        orderItem: { ...prisma.orderItem, findUnique: jest.fn().mockResolvedValue(null) },
+        orderItem: { ...prisma.orderItem, findFirst: jest.fn().mockResolvedValue(null) },
         deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
@@ -617,7 +617,7 @@ describe("RoutesService", () => {
         },
         routeRun: { ...prisma.routeRun, update: jest.fn() },
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
-        orderItem: { ...prisma.orderItem, findUnique: jest.fn().mockResolvedValue(null) },
+        orderItem: { ...prisma.orderItem, findFirst: jest.fn().mockResolvedValue(null) },
         deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
@@ -674,7 +674,7 @@ describe("RoutesService", () => {
         },
         routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-        orderItem: { ...prisma.orderItem, findUnique: jest.fn().mockResolvedValue(null) },
+        orderItem: { ...prisma.orderItem, findFirst: jest.fn().mockResolvedValue(null) },
         deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
@@ -724,7 +724,7 @@ describe("RoutesService", () => {
         },
         routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-        orderItem: { ...prisma.orderItem, findUnique: jest.fn().mockResolvedValue(null) },
+        orderItem: { ...prisma.orderItem, findFirst: jest.fn().mockResolvedValue(null) },
         deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
@@ -795,7 +795,7 @@ describe("RoutesService", () => {
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
         orderItem: {
           ...prisma.orderItem,
-          findUnique: jest.fn().mockResolvedValue({ orderId: "ord-1" }),
+          findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1" }),
           update: jest.fn().mockResolvedValue({}),
         },
         deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },

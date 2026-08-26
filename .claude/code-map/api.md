@@ -55,6 +55,11 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   `getTenantId()` (reads TenantContextService), `tenantTransaction(fn)` (sets session var
   `app.current_tenant_id` for RLS), `forTenant(tenantId)` proxy that auto-filters queries by
   tenant. **Bare `this.prisma.<model>` bypasses scoping — load-bearing convention.**
+  ⚠️ **findUnique is only POST-FILTERED** (tenantId can't be injected into a unique `where`; the
+  guard checks the RETURNED row's `tenantId`), so an exclusive `select` that omits `tenantId`
+  defeats it and returns cross-tenant rows. Rule (2026-08-24 sweep, 77 sites converted): a
+  tenant-scoped `findUnique` with an exclusive `select` must include `tenantId: true`, or use
+  `findFirst` (scoped via where-injection; identical semantics for an id lookup).
 - **`src/config/configuration.ts`** — env load: `DATABASE_URL`, `JWT_SECRET`,
   `JWT_REFRESH_SECRET` (required, crash on missing), `ENCRYPTION_KEY` (optional 64-hex),
   `STORAGE_URL_SIGNING_SECRET` (**required in prod — F5-001**; `resolveStorageSigningSecret` throws

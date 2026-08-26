@@ -749,7 +749,7 @@ export class BuyerController {
     // Ownership check: verify the template belongs to this buyer's customer
     const template = await this.prisma
       .forTenant()
-      .orderTemplate.findUnique({ where: { id }, select: { customerId: true } });
+      .orderTemplate.findFirst({ where: { id }, select: { customerId: true } });
     if (!template) throw new NotFoundException("Template not found");
     if (template.customerId !== ctx.customerId) {
       throw new ForbiddenException("This template does not belong to your account");
@@ -769,7 +769,7 @@ export class BuyerController {
   ) {
     const template = await this.prisma
       .forTenant()
-      .orderTemplate.findUnique({ where: { id }, select: { customerId: true } });
+      .orderTemplate.findFirst({ where: { id }, select: { customerId: true } });
     if (!template) throw new NotFoundException("Template not found");
     if (template.customerId !== ctx.customerId) {
       throw new ForbiddenException("This template does not belong to your account");

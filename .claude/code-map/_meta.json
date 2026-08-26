@@ -1,6 +1,6 @@
 {
   "mappedSha": "769bc1e9",
-  "generatedAt": "2026-08-26T03:47:43.377Z",
+  "generatedAt": "2026-08-26T03:52:06.059Z",
   "areas": [
     "api",
     "web",
@@ -8,5 +8,5 @@
     "packages"
   ],
   "fileCount": 898,
-  "notes": "**2026-08-22** — BUYER-CONNECT AUTH HARDENING (branch claude/distracted-saha-bb2eb4; NO schema change): F1 HIGH — a Google sign-in about to verify an account carrying an UNPROVEN password (passwordSet && !emailVerified) neutralizes the credential (placeholder hash, passwordSet:false) and revokes all buyer refresh tokens BEFORE linking/verifying, closing the squatted-account hijack (google-oauth.service handleBuyerPortalAuth). F2 — super-admin buyer email change deletes outstanding verification tokens + revokes sessions in the same tx (buyer-admin.service). F4 — getSellers omits customer identity unless the link is ACTIVE + 10/min throttle on POST /buyer/sellers/request; both portal clients null-guard customer and gate clicks on ACTIVE. F3 — read-only audit script apps/api/scripts/audit-buyer-verification-grandfather.mjs (NOT run here). Plan .claude/pipeline/plans/2026-08-22-buyer-connect || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "**2026-08-24** — TENANT-SCOPE FINDUNIQUE SWEEP (branch claude/relaxed-austin-6cd590; NO schema change): `forTenant()`/`tenantTransaction` findUnique post-filters on the RETURNED row's `tenantId` (prisma.service.ts :123-131/:144-153), so an exclusive `select` omitting `tenantId` returned cross-tenant rows unfiltered — existence/status oracle + data echo (vendor-bill duplicate payload, regulated category names in errors, credit-note details, customer contact info feeding SMS/WA sends). Converted **77 sites across 23 API files** to `findFirst` with identical where/select (behavior-identical for id lookups; findFirst gets `tenantId` injected into the where). NOT touched: raw `this.prisma.*` platform/auth/billing lookups (unscoped by design), compound uniques already carrying tenantId (import/external-ref), selects already including `tenantId`. New specs pin \"a cross-tenant id 404s\" (findUniq || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

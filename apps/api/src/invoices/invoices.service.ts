@@ -164,7 +164,7 @@ export class InvoicesService {
     if (customerId) {
       const customer = await this.prisma
         .forTenant()
-        .customer.findUnique({ where: { id: customerId }, select: { defaultPaymentTerms: true } });
+        .customer.findFirst({ where: { id: customerId }, select: { defaultPaymentTerms: true } });
       if (customer?.defaultPaymentTerms) {
         const terms = customer.defaultPaymentTerms;
         return { terms, dueDays: TERM_DAYS[terms] ?? 30 };
@@ -556,7 +556,7 @@ export class InvoicesService {
     }
 
     // RF-079: check customer tax-exempt status
-    const customer = await db.customer.findUnique({
+    const customer = await db.customer.findFirst({
       where: { id: order.customerId },
       select: { isTaxExempt: true },
     });
@@ -1162,7 +1162,7 @@ export class InvoicesService {
     await this.applyMsrpSnapshots(db, order.customerId, itemsData);
     const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
 
-    const customer = await db.customer.findUnique({
+    const customer = await db.customer.findFirst({
       where: { id: order.customerId },
       select: { isTaxExempt: true },
     });
@@ -1404,7 +1404,7 @@ export class InvoicesService {
     opts?: { preserveStatus?: boolean },
   ): Promise<any[]> {
     const tenantId = this.prisma.getTenantId();
-    const customer = await db.customer.findUnique({
+    const customer = await db.customer.findFirst({
       where: { id: order.customerId },
       select: { isTaxExempt: true },
     });
@@ -2158,7 +2158,7 @@ export class InvoicesService {
 
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: order.customerId }, select: { isTaxExempt: true } });
+      .customer.findFirst({ where: { id: order.customerId }, select: { isTaxExempt: true } });
     const isTaxExempt = !!(customer as any)?.isTaxExempt;
     const orderSubtotal = Number(order.subtotal) || 1;
     const proportion = subtotal / orderSubtotal;
@@ -2607,7 +2607,7 @@ export class InvoicesService {
       await this.applyMsrpSnapshots(this.prisma.forTenant(), inv.customerId, itemsData);
       const customerForTax = await this.prisma
         .forTenant()
-        .customer.findUnique({ where: { id: inv.customerId }, select: { isTaxExempt: true } });
+        .customer.findFirst({ where: { id: inv.customerId }, select: { isTaxExempt: true } });
       // Tax from each line's stored post-discount subtotal (same basis as the line).
       const isTaxExempt = !!(customerForTax as any)?.isTaxExempt;
       const regularTax = isTaxExempt
@@ -2737,7 +2737,7 @@ export class InvoicesService {
   async updateInvoiceShipment(id: string, dto: UpdateShipmentDto) {
     const inv = await this.prisma
       .forTenant()
-      .invoice.findUnique({ where: { id }, select: { id: true, status: true, shippedAt: true } });
+      .invoice.findFirst({ where: { id }, select: { id: true, status: true, shippedAt: true } });
     if (!inv) throw new NotFoundException("Invoice not found");
     if (inv.status === InvoiceStatus.VOID)
       throw new BadRequestException("Cannot update tracking on a voided invoice");
@@ -2855,7 +2855,7 @@ export class InvoicesService {
     deliveryBatchId: string | null;
   }): Promise<void> {
     if (!inv.orderId || inv.status !== InvoiceStatus.DRAFT || inv.deliveryBatchId != null) return;
-    const order = await this.prisma.forTenant().order.findUnique({
+    const order = await this.prisma.forTenant().order.findFirst({
       where: { id: inv.orderId },
       select: { status: true, orderNumber: true },
     });
@@ -3494,7 +3494,7 @@ export class InvoicesService {
 
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: inv.customerId }, select: { isTaxExempt: true } });
+      .customer.findFirst({ where: { id: inv.customerId }, select: { isTaxExempt: true } });
 
     // Duplicate carries each line's already-correct stored subtotal + boxes/pieces
     // split verbatim (recomputing qty*unitPrice would over-charge boxed lines).
@@ -4514,7 +4514,7 @@ export class InvoicesService {
                 }),
           },
         });
-        const invoice = await tx.invoice.findUnique({
+        const invoice = await tx.invoice.findFirst({
           where: { id: invoiceId },
           select: { invoiceNumber: true, customerId: true, status: true, total: true },
         });
