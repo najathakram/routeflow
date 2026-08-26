@@ -2669,6 +2669,20 @@ export class OrdersService implements OnApplicationBootstrap {
     // appendOrderRevision stay OUTSIDE (after commit), unchanged.
     const { subtotal, tax, total, shouldRevert, shippingFee } = await this.prisma.tenantTransaction(
       async (tx: any) => {
+        // WP1/F2: serialize concurrent edits of ONE order, then snapshot its
+        // pre-edit lines INSIDE the transaction. `order` above was read before
+        // the tx opened, so under a concurrent edit (this web PATCH racing an
+        // at-door approve of the same order) its lineItems are stale and the
+        // stock delta computed from them is the WRONG MAGNITUDE — a permanent
+        // inventory error, not just a lost update. The row lock makes the
+        // second writer wait; heldItems is then read post-lock and BEFORE any
+        // orderItem write below, so it is the true pre-edit state.
+        await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+        const heldItems = await tx.orderItem.findMany({
+          where: { orderId },
+          select: { productId: true, qty: true, deliveredQty: true, status: true },
+        });
+
         // Customer/Driver path: replace items by productId. A4: a DRIVER diff
         // payload skips this branch entirely — it merges below like an operator
         // edit (with prices already stripped), so untouched lines survive.
@@ -3429,13 +3443,20 @@ export class OrdersService implements OnApplicationBootstrap {
           : roundMoney(Number((order as any).shippingFee ?? 0));
         const total = roundMoney(subtotal + tax + categoryTax + shippingFee);
 
-        // P5-08b inline guards (completes P5-08 "credit / regulated / stock-
-        // violating edit blocked inline"). DRAFT edits are exempt, matching the
-        // regulated guard above and create()'s !isDraft stock gate — a draft
-        // edit isn't a sale yet. Order: stock first (more actionable message),
-        // then credit. A throw here rolls back the whole transaction.
+        // P5-08b + WP1 inline guards (completes P5-08 "credit / regulated /
+        // stock-violating edit blocked inline"). DRAFT edits are exempt,
+        // matching the regulated guard above and create()'s !isDraft stock
+        // gate — a draft edit isn't a sale yet (settleStockForEdit also
+        // no-ops on DRAFT internally — belt and suspenders for the other call
+        // site, which can't reach DRAFT). Order: stock first (more actionable
+        // message), then credit. A throw here rolls back the whole
+        // transaction, so no stock delta from this settle survives a
+        // subsequent credit-limit rejection. Applies on DELIVERED/
+        // OUT_FOR_DELIVERY orders too (R1 allows editing them) — a qty
+        // increase there means more goods physically went out, symmetric with
+        // create()'s decrement at order time.
         if (order.status !== "DRAFT") {
-          await this.assertStockAvailableForEdit(tx, order, activeItems, user);
+          await this.settleStockForEdit(tx, order, heldItems, activeItems, user);
           await this.assertWithinCreditLimit(
             tx,
             order.customerId,
@@ -3643,39 +3664,97 @@ export class OrdersService implements OnApplicationBootstrap {
   }
 
   /**
-   * P5-08b stock guard — VALIDATE-ONLY, delta-based. Never decrements stock.
+   * P5-08b + WP1 stock settle — validates the delta between the order's
+   * pre-edit line set and the edited (post-edit) active line set, THEN
+   * applies it to `Product.currentStock`.
    *
    * Lifecycle (why delta, not absolute): create() already decremented
    * Product.currentStock for every non-draft line under a row lock (RF-017,
-   * create() ~line 1196-1249), so the order's existing lines are already "out
-   * of" currentStock; delivery decrements separately via
-   * InventoryService.recordSale. Edits never touch stock. An edit therefore
-   * only needs the INCREASE over what the order already holds to be coverable;
-   * requiring the absolute qty would false-block any edit of an order whose
-   * own creation emptied the shelf (stock 10 → order of 10 → currentStock 0 →
-   * a same-qty edit would 409). Brand-new lines have held = 0, so they need
-   * full coverage — identical to create()'s check.
+   * create() ~line 1850-1902), so the order's existing lines are already "out
+   * of" currentStock. NOTHING ELSE decrements for delivery — completeStop
+   * writes no stock and InventoryService.recordSale has no caller — so
+   * `currentStock` is settled at order time and re-settled here on edit, and
+   * nowhere else. An edit therefore only needs to settle the
+   * CHANGE against what the order already holds:
+   *   - a product whose requested qty EXCEEDS its held qty needs the increase
+   *     validated against currentStock (same guard as before), then that
+   *     increase decremented;
+   *   - a product whose requested qty is LESS than held (line reduced,
+   *     removed, or zeroed) returns the difference to currentStock, CLAMPED
+   *     to the undelivered remainder (`held − deliveredQty`) — delivered
+   *     goods are gone and never come back via an edit. This is new; the
+   *     pre-refactor version only validated increases, it never wrote
+   *     anything.
+   * Held/requested are compared over the UNION of product ids on both sides
+   * (not just `requested`'s keys) so a product that disappears from the
+   * edited set entirely (line removed) still gets its stock credited back.
+   * A product with a ZERO delta (unchanged line) never enters the delta map
+   * at all — no lock, no read, no write for it (see the DELTA_MAP short
+   * circuit below), which is also why a same-qty edit never re-queries stock.
    *
    * Role semantics mirror create(): CUSTOMER/DRIVER hard-block (409
-   * INSUFFICIENT_STOCK), everyone else (operator/admin/undefined = internal
-   * caller) may knowingly oversell — warn-only log. Quantities compare in each
-   * line's own stored denomination (pieces for box-split lines, selling units
-   * otherwise) — the same mixed-denomination convention create() uses against
-   * currentStock. No SELECT ... FOR UPDATE: this guard reserves nothing, so a
-   * lock would close no race. Unknown/missing product rows and non-numeric
-   * quantities fail OPEN (skip) — same posture as create()'s `if (p && ...)`.
+   * INSUFFICIENT_STOCK) with NO write on a violation; everyone else
+   * (operator/admin/undefined = internal caller) may knowingly oversell —
+   * warn-only log, and then (unlike the old validate-only guard) the write
+   * still proceeds, matching create()'s oversell-writes-anyway posture.
+   * Quantities compare in each line's own stored denomination (pieces for
+   * box-split lines, selling units otherwise) — the same mixed-denomination
+   * convention create() uses against currentStock.
+   *
+   * `SELECT ... FOR UPDATE` locks the touched product rows FIRST, before
+   * reading currentStock — mirroring create()'s lock (:1863-1867). The old
+   * validate-only assert read unlocked because it reserved nothing; now that
+   * this method WRITES currentStock, the lock is load-bearing (closes the
+   * same concurrent-oversell race create() closes). No StockMovement rows are
+   * written — matches create(), which tracks currentStock only.
+   *
+   * Applies to DELIVERED/OUT_FOR_DELIVERY orders too: a qty increase on an
+   * already-dispatched order means more goods physically went out the door,
+   * symmetric with create() decrementing at order time.
+   *
+   * Skips ENTIRELY — no validation, no write, no query — when
+   * `order.status === "DRAFT"`: creation never decremented stock for a draft,
+   * so an edit of one must not either.
+   *
+   * Unknown/missing product rows and non-numeric quantities fail OPEN (skip)
+   * for VALIDATION only — same posture as create()'s `if (p && ...)`; the
+   * write still applies for every non-zero delta regardless (mirrors
+   * create()'s unconditional decrement loop).
+   *
+   * `heldItems` is the pre-edit line set and MUST be read INSIDE the caller's
+   * transaction, after that transaction has locked the order row
+   * (`SELECT id FROM "Order" … FOR UPDATE`) and BEFORE it writes any
+   * orderItem. Reading it from a pre-transaction `order.lineItems` snapshot
+   * made the delta stale under a concurrent edit of the same order (web PATCH
+   * racing an at-door approve), which settles a wrong-MAGNITUDE stock write —
+   * far worse than a lost update, because the error persists in inventory.
    */
-  private async assertStockAvailableForEdit(
+  private async settleStockForEdit(
     db: any,
-    order: { id: string; status: string; lineItems: any[] },
+    order: { id: string; status: string },
+    heldItems: Array<{ productId: string | null; qty: any; deliveredQty?: any; status?: string }>,
     finalActiveItems: Array<{ productId: string | null; qty: any }>,
     user?: JwtPayload,
   ): Promise<void> {
-    // Qty the order already holds per product (pre-edit, non-cancelled lines).
+    if (order.status === "DRAFT") return;
+
+    // Qty the order already holds per product (pre-edit, non-cancelled lines),
+    // plus — over the SAME line set — how much of it has already gone out the
+    // door. Delivered goods are physically gone: an edit that shrinks or drops
+    // a delivered line must NOT put them back on the shelf. This mirrors the
+    // at-door precedent, where a CHANGE_QTY/REMOVE_ITEM request against a line
+    // with deliveredQty > 0 is refused outright (LINE_ALREADY_DELIVERED,
+    // ~:4205) — the operator edit path allows the edit but credits back only
+    // the UNDELIVERED remainder.
     const held = new Map<string, number>();
-    for (const li of order.lineItems ?? []) {
+    const deliveredHeld = new Map<string, number>();
+    for (const li of heldItems ?? []) {
       if (li.productId && li.status !== "CANCELLED") {
         held.set(li.productId, (held.get(li.productId) ?? 0) + Number(li.qty));
+        deliveredHeld.set(
+          li.productId,
+          (deliveredHeld.get(li.productId) ?? 0) + Number(li.deliveredQty ?? 0),
+        );
       }
     }
     // Qty the edit requests per product (post-edit active line set).
@@ -3685,60 +3764,121 @@ export class OrdersService implements OnApplicationBootstrap {
         requested.set(li.productId, (requested.get(li.productId) ?? 0) + Number(li.qty));
       }
     }
-    const increases = [...requested.entries()]
-      .map(([productId, req]) => ({
-        productId,
-        requested: req,
-        delta: req - (held.get(productId) ?? 0),
-      }))
-      .filter((x) => x.delta > 0);
-    if (increases.length === 0) return;
 
+    // Delta per product over the UNION of both sides — a product present only
+    // in `held` (its line was removed/zeroed in the edit) still gets an entry
+    // here (delta = 0 − held < 0) so its stock is returned. Zero-delta
+    // products (untouched lines) are dropped, so they never trigger a lock, a
+    // stock read, or a write (DELTA_MAP short circuit).
+    // Qty is Decimal(10,3): subtracting two float-converted Decimals leaves
+    // binary residue (36 − 12.1 = 23.900000000000002), which `!== 0` reads as
+    // a real delta and would write a phantom 1e-15 stock adjustment. Round to
+    // the column's 3 decimals BEFORE the zero check, and write the ROUNDED
+    // value.
+    const deltas = new Map<string, number>();
+    for (const productId of new Set([...held.keys(), ...requested.keys()])) {
+      const raw = (requested.get(productId) ?? 0) - (held.get(productId) ?? 0);
+      const delta = Math.round(raw * 1000) / 1000;
+      if (delta !== 0) deltas.set(productId, delta);
+    }
+    if (deltas.size === 0) return;
+
+    const productIds = [...deltas.keys()];
+    // RF-017 parity: lock the touched product rows BEFORE reading
+    // currentStock, mirroring create()'s lock (:1863-1867).
+    await db.$executeRaw`
+      SELECT id FROM "Product"
+      WHERE id IN (${Prisma.join(productIds)})
+      FOR UPDATE
+    `;
     const products = await db.product.findMany({
-      where: { id: { in: increases.map((x) => x.productId) } },
+      where: { id: { in: productIds } },
       select: { id: true, name: true, currentStock: true },
     });
-    const violations: Array<{
-      productId: string;
-      name: string;
-      available: number;
-      requested: number;
-      delta: number;
-    }> = [];
-    for (const inc of increases) {
-      const p = products.find((lp: any) => lp.id === inc.productId);
-      if (p && Number(p.currentStock) < inc.delta) {
-        violations.push({
-          productId: inc.productId,
-          name: p.name,
-          available: Number(p.currentStock),
-          requested: inc.requested,
-          delta: inc.delta,
-        });
+
+    const increases = [...deltas.entries()]
+      .filter(([, delta]) => delta > 0)
+      .map(([productId, delta]) => ({
+        productId,
+        requested: requested.get(productId) ?? 0,
+        delta,
+      }));
+
+    if (increases.length > 0) {
+      const violations: Array<{
+        productId: string;
+        name: string;
+        available: number;
+        requested: number;
+        delta: number;
+      }> = [];
+      for (const inc of increases) {
+        const p = products.find((lp: any) => lp.id === inc.productId);
+        if (p && Number(p.currentStock) < inc.delta) {
+          violations.push({
+            productId: inc.productId,
+            name: p.name,
+            available: Number(p.currentStock),
+            requested: inc.requested,
+            delta: inc.delta,
+          });
+        }
+      }
+      if (violations.length > 0) {
+        if (user?.role !== UserRole.CUSTOMER && user?.role !== UserRole.DRIVER) {
+          // Operators/admins may oversell — matches create()'s warn-only path.
+          // Unlike the old validate-only guard, this does NOT return: the
+          // write below still applies so the oversell lands in currentStock,
+          // exactly like create()'s oversell write.
+          this.logger.warn(
+            `Operator edit of order ${order.id} will go below stock: ` +
+              violations
+                .map((v) => `${v.name} (available: ${v.available}, requested increase: ${v.delta})`)
+                .join("; "),
+          );
+        } else {
+          const first = violations[0];
+          throw new ConflictException({
+            code: "INSUFFICIENT_STOCK",
+            message:
+              `Not enough stock for ${first.name} ` +
+              `(available: ${first.available}, requested: ${first.requested}).`,
+            productId: first.productId,
+            available: first.available,
+            requested: first.requested,
+          });
+        }
       }
     }
-    if (violations.length === 0) return;
 
-    if (user?.role !== UserRole.CUSTOMER && user?.role !== UserRole.DRIVER) {
-      // Operators/admins may oversell — matches create()'s warn-only path.
-      this.logger.warn(
-        `Operator edit of order ${order.id} will go below stock: ` +
-          violations
-            .map((v) => `${v.name} (available: ${v.available}, requested increase: ${v.delta})`)
-            .join("; "),
+    // Apply: an increase decrements currentStock by the delta; a
+    // decrease/removal increments back only the UNDELIVERED portion of what
+    // the order held. Delivered goods never come back through an edit — the
+    // at-door path makes the same call by refusing the change outright
+    // (LINE_ALREADY_DELIVERED, ~:4205); crediting a delivered line's full qty
+    // would invent inventory that physically left the warehouse. Cap =
+    // max(0, held − deliveredHeld); a fully-delivered line's cap is 0, so it
+    // is skipped entirely (no write at all). No StockMovement rows — matches
+    // create(), which tracks currentStock only.
+    for (const [productId, delta] of deltas) {
+      if (delta > 0) {
+        await db.product.update({
+          where: { id: productId },
+          data: { currentStock: { decrement: delta } },
+        });
+        continue;
+      }
+      const undelivered = Math.max(
+        0,
+        (held.get(productId) ?? 0) - (deliveredHeld.get(productId) ?? 0),
       );
-      return;
+      const credit = Math.min(-delta, undelivered);
+      if (credit <= 0) continue;
+      await db.product.update({
+        where: { id: productId },
+        data: { currentStock: { increment: credit } },
+      });
     }
-    const first = violations[0];
-    throw new ConflictException({
-      code: "INSUFFICIENT_STOCK",
-      message:
-        `Not enough stock for ${first.name} ` +
-        `(available: ${first.available}, requested: ${first.requested}).`,
-      productId: first.productId,
-      available: first.available,
-      requested: first.requested,
-    });
   }
 
   /**
@@ -4020,6 +4160,17 @@ export class OrdersService implements OnApplicationBootstrap {
 
     const { subtotal, tax, total } = await this.prisma.tenantTransaction(
       async (tx: any) => {
+        // WP1/F2: same in-transaction snapshot as updateOrderItems — lock the
+        // order row so a concurrent web PATCH of this order serializes behind
+        // (or ahead of) this at-door merge, then read the pre-edit lines
+        // inside the tx. `order` above was fetched before the tx opened; its
+        // lineItems drive the stock delta and would otherwise be stale.
+        await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${order.id} FOR UPDATE`;
+        const heldItems = await tx.orderItem.findMany({
+          where: { orderId: order.id },
+          select: { productId: true, qty: true, deliveredQty: true, status: true },
+        });
+
         // ── G6 atomic claim: FIRST resolution wins and LOCKS ─────────────────
         const claimed = await tx.changeRequest.updateMany({
           where: { id: cr.id, status: ChangeRequestStatus.PENDING },
@@ -4305,7 +4456,11 @@ export class OrdersService implements OnApplicationBootstrap {
         // A throw rolls back the claim AND the merge. Resolver role drives the
         // stock guard's block/warn semantics (DRIVER hard-blocks; operators
         // warn-only, matching create()/edit posture). Credit blocks all roles.
-        await this.assertStockAvailableForEdit(tx, order, activeItems, resolver);
+        // WP1: this now also SETTLES the delta into currentStock (order.status
+        // is always PENDING/CONFIRMED/OUT_FOR_DELIVERY here — see the
+        // CHANGE_WINDOW_CLOSED guard above — so settleStockForEdit's internal
+        // DRAFT no-op never triggers on this call site).
+        await this.settleStockForEdit(tx, order, heldItems, activeItems, resolver);
         await this.assertWithinCreditLimit(
           tx,
           order.customerId,

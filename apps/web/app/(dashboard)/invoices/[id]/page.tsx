@@ -65,6 +65,7 @@ import { useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
+import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import { formatQtySplit } from "@/lib/pricing";
 import {
   SELECTABLE_PAYMENT_METHODS,
@@ -957,7 +958,18 @@ function EditTermsModal({
             <label className="mb-1.5 block text-sm font-medium text-navy/80">Terms</label>
             <select
               value={paymentTermsLabel}
-              onChange={(e) => setPaymentTermsLabel(e.target.value)}
+              onChange={(e) => {
+                const label = e.target.value;
+                setPaymentTermsLabel(label);
+                // The client-reported bug: changing the term used to leave the old due
+                // date in place, persisting "Net 60" over Net-30 arithmetic. A known term
+                // recomputes from the ISSUE date (the anchor the server itself uses);
+                // picking "Select terms…" leaves the date alone for a manual correction.
+                const days = getDaysForTerms(label);
+                if (days != null && invoice.issueDate) {
+                  setDueDate(addDaysIso(String(invoice.issueDate).slice(0, 10), days));
+                }
+              }}
               className={inputCls}
             >
               {EDIT_TERMS_OPTIONS.map((opt) => (
@@ -968,6 +980,15 @@ function EditTermsModal({
             </select>
           </div>
         </div>
+        {/* Only promise the recalculation when there IS an issue date to anchor
+            it — the onChange above is a no-op without one, so the copy would
+            otherwise describe behavior the user cannot get. */}
+        {invoice.issueDate ? (
+          <p className="text-xs text-navy/50">
+            Picking a term recalculates the due date from the issue date (
+            {fmtCalendarDate(invoice.issueDate)}).
+          </p>
+        ) : null}
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy/80">
             Reference / PO Number
