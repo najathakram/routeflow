@@ -38,7 +38,7 @@ function buildFakeDb(opts: {
     // don't have to restate the lifecycle gate every time; override `opts.agent`
     // to exercise PAUSED / STOPPED_FOR_NEW / soft-deleted specifically.
     salesAgent: {
-      findUnique: jest
+      findFirst: jest
         .fn()
         .mockResolvedValue(
           opts.agent ?? { status: "ACTIVE", deletedAt: null, stopNewBusinessAt: null },

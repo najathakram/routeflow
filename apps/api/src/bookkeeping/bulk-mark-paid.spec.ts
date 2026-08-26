@@ -214,6 +214,11 @@ describe("BookkeepingService.bulkMarkPaid", () => {
       { id: "expense-1", status: "PENDING", vendorBillId: "bill-linked" },
     ]);
     stubLedger([linkedBill]);
+    // The expense.vendorBillId -> VendorBill identity lookup (id + billNumber only).
+    prisma.vendorBill.findFirst.mockResolvedValue({
+      id: linkedBill.id,
+      billNumber: linkedBill.billNumber,
+    });
     // updateExpense's own lookup of the expense row
     prisma.expense.findFirst.mockResolvedValue({
       id: "expense-1",
@@ -268,6 +273,8 @@ describe("BookkeepingService.bulkMarkPaid", () => {
           })
         : null,
     );
+    // The expense.vendorBillId -> VendorBill identity lookup (id + billNumber only).
+    prisma.vendorBill.findFirst.mockResolvedValue({ id: "bill-linked", billNumber: "BILL-L" });
     prisma.expense.findFirst.mockResolvedValue({
       id: "expense-1",
       status: "PENDING",

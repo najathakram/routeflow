@@ -48,7 +48,7 @@ export function TripSkippedPanel({ rows, className }: TripSkippedPanelProps) {
 
       {rows.length === 0 ? (
         <p className="px-3 py-3 text-xs text-navy/70">
-          All selected orders are eligible for this trip.
+          All selected orders are eligible for this delivery.
         </p>
       ) : (
         <ul className="divide-y divide-surface-border">

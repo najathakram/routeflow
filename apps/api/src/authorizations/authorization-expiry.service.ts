@@ -196,7 +196,7 @@ export class AuthorizationExpiryService {
   ): Promise<void> {
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: auth.customerId }, select: { businessName: true } });
+      .customer.findFirst({ where: { id: auth.customerId }, select: { businessName: true } });
     const who = customer?.businessName ?? "A customer";
     const body = `Your license ${detail}`;
 

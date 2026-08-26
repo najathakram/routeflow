@@ -52,7 +52,7 @@ export interface BuyerSeller {
     id: string;
     businessName: string;
     email: string | null;
-  };
+  } | null;
 }
 
 interface BuyerAuthResponse {

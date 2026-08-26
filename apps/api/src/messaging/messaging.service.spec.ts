@@ -29,7 +29,7 @@ describe("MessagingService (P6-2 engine)", () => {
     service = mod.get(MessagingService);
 
     // Happy-path defaults: a fully-consented, reachable customer + a thread.
-    prisma.customer.findUnique.mockResolvedValue({
+    prisma.customer.findFirst.mockResolvedValue({
       id: "cust-1",
       phone: "+15550001111",
       mobile: null,
@@ -118,7 +118,7 @@ describe("MessagingService (P6-2 engine)", () => {
   });
 
   it("blocks WhatsApp/SMS when consent is missing", async () => {
-    prisma.customer.findUnique.mockResolvedValue({
+    prisma.customer.findFirst.mockResolvedValue({
       id: "cust-1",
       phone: "+15550001111",
       mobile: null,
@@ -140,7 +140,7 @@ describe("MessagingService (P6-2 engine)", () => {
   });
 
   it("skips a provider channel with no contact on file", async () => {
-    prisma.customer.findUnique.mockResolvedValue({
+    prisma.customer.findFirst.mockResolvedValue({
       id: "cust-1",
       phone: null,
       mobile: null,

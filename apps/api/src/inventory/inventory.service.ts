@@ -15,6 +15,7 @@ import {
   UpsertStockCountLineDto,
 } from "./dto/stock-count-session.dto";
 import { ListMovementsDto } from "./dto/list-movements.dto";
+import { ListPurchaseOrdersDto } from "./dto/list-purchase-orders.dto";
 import { CreateSupplierDto } from "./dto/create-supplier.dto";
 import { UpdateSupplierDto } from "./dto/update-supplier.dto";
 import { SetCostBasisDto } from "./dto/set-cost-basis.dto";
@@ -920,7 +921,7 @@ export class InventoryService {
     performedById: string | null,
     tx: Prisma.TransactionClient,
   ): Promise<{ unitCost: Prisma.Decimal; stockAfter: Prisma.Decimal }> {
-    const product = await tx.product.findUnique({
+    const product = await tx.product.findFirst({
       where: { id: productId },
       select: { costingMethod: true, averageCost: true, standardCost: true, currentStock: true },
     });
@@ -1072,7 +1073,7 @@ export class InventoryService {
     });
   }
 
-  async listPurchaseOrders(query: any) {
+  async listPurchaseOrders(query: ListPurchaseOrdersDto) {
     const { supplierId, status, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
@@ -1614,7 +1615,7 @@ export class InventoryService {
 
   /** Guard: a count can only be edited while it is still OPEN or in REVIEW. */
   private async loadEditableSession(id: string) {
-    const session = await this.prisma.forTenant().stockCountSession.findUnique({
+    const session = await this.prisma.forTenant().stockCountSession.findFirst({
       where: { id },
       select: { id: true, status: true },
     });
@@ -1644,7 +1645,7 @@ export class InventoryService {
   ) {
     await this.loadEditableSession(sessionId);
 
-    const product = await this.prisma.forTenant().product.findUnique({
+    const product = await this.prisma.forTenant().product.findFirst({
       where: { id: dto.productId },
       select: { id: true, currentStock: true, unitsPerBox: true },
     });
@@ -1922,7 +1923,7 @@ export class InventoryService {
   // now vendor-bill receive stamping at billDate) must replay the product so
   // later snapshots stay true.
   async recomputeProductInTx(tx: Prisma.TransactionClient, productId: string) {
-    const product = await tx.product.findUnique({
+    const product = await tx.product.findFirst({
       where: { id: productId },
       select: { id: true, name: true, currentStock: true, averageCost: true, costingMethod: true },
     });

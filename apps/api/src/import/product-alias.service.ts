@@ -42,7 +42,7 @@ export class ProductAliasService {
     // Supplier-specific alias wins over the any-supplier fallback.
     const chosen = rows.find((r) => r.supplierId === sid) ?? rows[0];
     if (chosen.productId) {
-      const exists = await this.prisma.forTenant().product.findUnique({
+      const exists = await this.prisma.forTenant().product.findFirst({
         where: { id: chosen.productId },
         select: { id: true },
       });

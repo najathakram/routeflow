@@ -371,7 +371,7 @@ export class AuthorizationsService {
   private async assertCustomer(customerId: string) {
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: customerId }, select: { id: true } });
+      .customer.findFirst({ where: { id: customerId }, select: { id: true } });
     if (!customer) throw new NotFoundException("Customer not found");
   }
 
@@ -381,7 +381,7 @@ export class AuthorizationsService {
   private async assertCategory(trackedCategoryId: string) {
     const cat = await this.prisma
       .forTenant()
-      .trackedCategory.findUnique({ where: { id: trackedCategoryId }, select: { id: true } });
+      .trackedCategory.findFirst({ where: { id: trackedCategoryId }, select: { id: true } });
     if (!cat) throw new NotFoundException("Tracked category not found");
   }
 
@@ -402,7 +402,7 @@ export class AuthorizationsService {
   /** Buyer submissions are only meaningful for license-gated categories. Returns
    *  the category (tenant-scoped, so a cross-tenant id 404s). */
   private async assertLicenseCategory(trackedCategoryId: string) {
-    const cat = await this.prisma.forTenant().trackedCategory.findUnique({
+    const cat = await this.prisma.forTenant().trackedCategory.findFirst({
       where: { id: trackedCategoryId },
       select: { id: true, name: true, requiresLicense: true },
     });
@@ -421,7 +421,7 @@ export class AuthorizationsService {
     const tenantId = this.prisma.getTenantId();
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: customerId }, select: { businessName: true } });
+      .customer.findFirst({ where: { id: customerId }, select: { businessName: true } });
     const who = customer?.businessName ?? "A customer";
     const operators = await this.prisma.user.findMany({
       where: { tenantId, role: { in: ["OPERATOR", "TENANT_ADMIN"] }, status: "ACTIVE" },

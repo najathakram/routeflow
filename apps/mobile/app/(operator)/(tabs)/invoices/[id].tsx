@@ -872,8 +872,16 @@ export default function InvoiceDetailScreen() {
             </View>
           ) : null}
 
-          {/* Carrier shipment — editable on any non-void invoice. */}
-          {!isVoid ? (
+          {/* Carrier shipment — editable on any non-void invoice, but only shown
+              for carrier-shipped rows. The invoice payload doesn't carry the
+              order's fulfillPath (admin.ts's AdminInvoice.order is status/
+              orderNumber only — not widened here), so an order-linked invoice
+              shows the section only once tracking exists — it's recorded on the
+              ORDER, which mirrors carrier/tracking down to its invoices. A
+              standalone invoice has no order to record it on, so it always keeps
+              the section (mirrors web's invoice detail gate). */}
+          {!isVoid &&
+          (!invoice.orderId || invoice.shippingCarrier || invoice.shippingTrackingNumber) ? (
             <ShipmentSection shipment={invoice} onEdit={() => setShipmentModal(true)} />
           ) : null}
 

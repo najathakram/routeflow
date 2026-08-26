@@ -15,7 +15,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavAction, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminCustomer, useAdminOrders, type AdminOrder } from "../../../../lib/api/admin";
 import { useProduct } from "../../../../lib/api/products";
-import { useDeveloperMode } from "../../../../lib/api/addons";
+import { useDeliveryAccess } from "../../../../lib/api/addons";
 import { useTripDraftStore } from "../../../../lib/trip-draft";
 import { DraftStrip } from "../../../../components/DraftStrip";
 import {
@@ -99,11 +99,12 @@ export default function OrdersListScreen() {
     resolveProductIdParam(params.productId),
   );
 
-  // Ad-hoc trips: multi-select is a hide-only affordance (the underlying
-  // POST /trips endpoint is already OPERATOR-role-gated server-side), so it
-  // keys off `enabled` rather than `resolved` — the same tenant-scoped hook
-  // (operator)/_layout.tsx uses to gate the /trips route itself.
-  const { enabled: devMode } = useDeveloperMode();
+  // Ad-hoc trips (order delivery, owner split 2026-08-25): multi-select is a
+  // hide-only affordance (the underlying POST /trips endpoint is already
+  // OPERATOR-role-gated server-side), so it keys off `enabled` rather than
+  // `resolved` — the same composed access hook (operator)/_layout.tsx uses
+  // to gate the /trips route itself (DELIVERY_SECTIONS).
+  const { enabled: deliveryEnabled } = useDeliveryAccess();
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const setTripOrderIds = useTripDraftStore((s) => s.setOrderIds);
@@ -170,7 +171,7 @@ export default function OrdersListScreen() {
       <NavBar
         largeTitle="Orders"
         leading={
-          devMode ? (
+          deliveryEnabled ? (
             <NavAction label={selectMode ? "Done" : "Select"} onPress={toggleSelectMode} />
           ) : undefined
         }

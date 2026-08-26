@@ -131,7 +131,7 @@ describe("ChangeRequestsService", () => {
     it("creates a PENDING ADD_ITEM change request on a dispatched order", async () => {
       prisma.order.findUnique.mockResolvedValue(dispatchedOrder);
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
-      prisma.product.findUnique.mockResolvedValue({ id: "prod-1", name: "Tomatoes" });
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", name: "Tomatoes" });
       prisma.changeRequest.create.mockResolvedValue({ id: "cr-new", status: "PENDING" });
 
       await service.create(
@@ -165,7 +165,7 @@ describe("ChangeRequestsService", () => {
     it("fires ORDER_CHANGED_AT_DOOR via MessagingService on ADD_ITEM creation", async () => {
       prisma.order.findUnique.mockResolvedValue(dispatchedOrder);
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
-      prisma.product.findUnique.mockResolvedValue({ id: "prod-1", name: "Tomatoes" });
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", name: "Tomatoes" });
       prisma.changeRequest.create.mockResolvedValue({ id: "cr-new", status: "PENDING" });
 
       await service.create(
@@ -262,7 +262,7 @@ describe("ChangeRequestsService", () => {
     });
 
     it("forbids a CUSTOMER listing another customer's order", async () => {
-      prisma.order.findUnique.mockResolvedValue({ id: "ord-1", customerId: "cust-1" });
+      prisma.order.findFirst.mockResolvedValue({ id: "ord-1", customerId: "cust-1" });
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-OTHER" });
       await expect(service.listForOrder("ord-1", customerUser)).rejects.toBeInstanceOf(
         ForbiddenException,
@@ -397,8 +397,8 @@ describe("ChangeRequestsService", () => {
         ...dispatchedOrder,
         routeRun: { driverId: "drv-1", status: "IN_PROGRESS" },
       });
-      prisma.product.findUnique.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
-      prisma.customer.findUnique.mockResolvedValue({ userId: "user-cust" });
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+      prisma.customer.findFirst.mockResolvedValue({ userId: "user-cust" });
       prisma.changeRequest.updateMany.mockResolvedValue({ count: 1 });
       prisma.changeRequest.findUnique.mockResolvedValue({ ...PENDING_CR, status: "APPROVED" });
     });

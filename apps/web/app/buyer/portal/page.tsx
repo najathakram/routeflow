@@ -59,6 +59,11 @@ function SellerCard({ seller, onClick }: { seller: BuyerSeller; onClick: () => v
   // to this seller's data until they approve. Rendering it clickable used to
   // send the buyer straight into a wall of 403s.
   const isPendingApproval = seller.linkStatus === "PENDING_SELLER_APPROVAL";
+  // Only an ACTIVE link can be opened (mirrors mobile's canOpenSeller and the
+  // portal sidebar). INVITED links carry no customer identity either — the API
+  // redacts it — so making one the active seller only yields a blank, 403-walled
+  // portal.
+  const canOpen = seller.linkStatus === "ACTIVE";
 
   const logo = (
     <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-xl border border-surface-border bg-surface-raised overflow-hidden">
@@ -81,7 +86,9 @@ function SellerCard({ seller, onClick }: { seller: BuyerSeller; onClick: () => v
   const info = (
     <div className="flex-1 min-w-0">
       <p className="text-base font-semibold text-navy truncate">{seller.tenant.name}</p>
-      <p className="text-sm text-navy/70 truncate">{seller.customer.businessName}</p>
+      {seller.customer ? (
+        <p className="text-sm text-navy/70 truncate">{seller.customer.businessName}</p>
+      ) : null}
       <div className="mt-1">
         <Badge variant={getLinkStatusVariant(seller.linkStatus)}>
           {formatLinkStatus(seller.linkStatus)}
@@ -95,7 +102,7 @@ function SellerCard({ seller, onClick }: { seller: BuyerSeller; onClick: () => v
     </div>
   );
 
-  if (isPendingApproval) {
+  if (!canOpen) {
     return (
       <div className="flex items-center gap-4 rounded-xl border border-surface-border bg-white p-4 text-left shadow-sm">
         {logo}

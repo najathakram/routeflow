@@ -22,12 +22,12 @@ export class AuthorizationOverridesService {
   async createOverride(customerId: string, dto: CreateOverrideDto, user: JwtPayload) {
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: customerId }, select: { id: true } });
+      .customer.findFirst({ where: { id: customerId }, select: { id: true } });
     if (!customer) throw new NotFoundException("Customer not found");
     // The category must belong to this tenant (forTenant → null for a cross-tenant id).
     const cat = await this.prisma
       .forTenant()
-      .trackedCategory.findUnique({ where: { id: dto.trackedCategoryId }, select: { id: true } });
+      .trackedCategory.findFirst({ where: { id: dto.trackedCategoryId }, select: { id: true } });
     if (!cat) throw new NotFoundException("Tracked category not found");
 
     // forTenant() injects tenantId at runtime; the create type still requires it, so cast.

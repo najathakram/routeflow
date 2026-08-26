@@ -220,7 +220,7 @@ export default function BuyerDashboardPage() {
       {/* Welcome */}
       <div>
         <h1 className="text-2xl font-bold text-navy">
-          Welcome back{activeSeller ? `, ${activeSeller.customer.businessName}` : ""}
+          Welcome back{activeSeller?.customer ? `, ${activeSeller.customer.businessName}` : ""}
         </h1>
         <p className="text-sm text-navy/70 mt-1">Your dashboard at {activeSeller?.tenant.name}</p>
       </div>

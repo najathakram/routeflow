@@ -271,6 +271,12 @@ export class CustomersController {
     return this.customersService.updateAddress(id, addrId, dto);
   }
 
+  @Delete(":id/addresses/:addrId")
+  @Roles(UserRole.OPERATOR)
+  deleteAddress(@Param("id") id: string, @Param("addrId") addrId: string) {
+    return this.customersService.deleteAddress(id, addrId);
+  }
+
   // ─── Tags (per customer) ──────────────────────────────────────────────────
 
   @Post(":id/tags")

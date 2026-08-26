@@ -96,7 +96,7 @@ export class ChangeRequestsService {
         }
         const product = await this.prisma
           .forTenant()
-          .product.findUnique({ where: { id: dto.productId }, select: { id: true, name: true } });
+          .product.findFirst({ where: { id: dto.productId }, select: { id: true, name: true } });
         if (!product) throw new BadRequestException("Product not found");
         productId = product.id;
         payload = {
@@ -187,7 +187,7 @@ export class ChangeRequestsService {
   async listForOrder(orderId: string, user: JwtPayload) {
     const order = await this.prisma
       .forTenant()
-      .order.findUnique({ where: { id: orderId }, select: { id: true, customerId: true } });
+      .order.findFirst({ where: { id: orderId }, select: { id: true, customerId: true } });
     if (!order) throw new NotFoundException("Order not found");
     if (user.role === UserRole.CUSTOMER) {
       const customer = await this.prisma
@@ -321,7 +321,7 @@ export class ChangeRequestsService {
       });
     }
 
-    const product = await this.prisma.forTenant().product.findUnique({
+    const product = await this.prisma.forTenant().product.findFirst({
       where: { id: productId },
       select: { id: true, trackedCategoryId: true },
     });
@@ -336,7 +336,7 @@ export class ChangeRequestsService {
     // Customer pseudo-user so create() prices via the buyer effective path.
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: order.customerId }, select: { userId: true } });
+      .customer.findFirst({ where: { id: order.customerId }, select: { userId: true } });
     if (!customer?.userId) throw new BadRequestException("Customer record not found");
     const pseudo: JwtPayload = {
       sub: customer.userId,

@@ -68,14 +68,21 @@ function SellerItem({
   isActive: boolean;
   onClick: () => void;
 }) {
+  // Only an ACTIVE link can be switched into (mirrors mobile's canOpenSeller).
+  // Pending/invited rows carry no customer identity (the API redacts it) and
+  // opening one would only walk the buyer into a wall of 403s.
+  const canOpen = seller.linkStatus === "ACTIVE";
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={canOpen ? onClick : undefined}
+      disabled={!canOpen}
       className={`w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${
         isActive
           ? "bg-buyer-500/20 text-buyer-100 ring-1 ring-buyer-400/30"
-          : "text-white/70 hover:bg-white/10 hover:text-white"
+          : canOpen
+            ? "text-white/70 hover:bg-white/10 hover:text-white"
+            : "text-white/50 cursor-default"
       }`}
     >
       <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-white/10 text-xs font-bold text-buyer-200">
@@ -87,7 +94,9 @@ function SellerItem({
         >
           {seller.tenant.name}
         </p>
-        <p className="text-xs text-buyer-300/70 truncate">{seller.customer.businessName}</p>
+        <p className="text-xs text-buyer-300/70 truncate">
+          {seller.customer ? seller.customer.businessName : "Pending approval"}
+        </p>
       </div>
       {isActive && <ChevronRight className="h-4 w-4 flex-shrink-0 text-buyer-400" />}
     </button>

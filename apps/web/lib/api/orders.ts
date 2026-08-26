@@ -290,6 +290,15 @@ export interface CreateSaleDto {
   }[];
   /** true = van/cash sale (order DELIVERED + invoice SENT). false = PENDING order + linked DRAFT invoice. */
   deliveredNow: boolean;
+  /**
+   * Delivery-date picker: when present it REPLACES `deliveredNow`'s binary.
+   *  - deliveredOn <= today (tenant-tz calendar compare) → behaves as deliveredNow=true
+   *    AND sets deliveredAt to that date (staff-only backdating).
+   *  - deliveredOn > today → behaves as deliveredNow=false and sets
+   *    requestedDeliveryDate = deliveredOn.
+   * `deliveredNow` is still sent for backward compat; when both are present, `deliveredOn` wins.
+   */
+  deliveredOn?: string;
   notes?: string;
   discountAmount?: number;
   shippingFee?: number;

@@ -439,7 +439,7 @@ export class CommissionEngineService {
     basisDate: Date,
   ): Promise<void> {
     if (!issued) return;
-    const agent = await db.salesAgent.findUnique({
+    const agent = await db.salesAgent.findFirst({
       where: { id: agentId },
       select: { status: true, deletedAt: true, stopNewBusinessAt: true },
     });

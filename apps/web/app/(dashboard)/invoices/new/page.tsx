@@ -42,7 +42,7 @@ import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { displayProductName } from "@/lib/product-display";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
-import { fmt } from "@/lib/formatting";
+import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import {
   computeLineSubtotal,
   getTierPrice,
@@ -665,6 +665,11 @@ export default function NewInvoicePage() {
   // New-sale only: are the goods going out today? Yes = van/cash sale (order
   // delivered + invoice sent now); No = bill before delivery (PENDING order + draft).
   const [deliveredNow, setDeliveredNow] = React.useState(true);
+  // Delivery-date picker (replaces the old delivered-today binary): past/today ⇒
+  // delivered semantics (deliveredAt = that date, backdated when before today);
+  // future ⇒ scheduled deliver-later with that requested date. Defaults to today,
+  // same as the "Yes, delivered today" starting state.
+  const [deliveredOn, setDeliveredOn] = React.useState(todayIso());
 
   // Track the draft id we've previewed so subsequent "Preview" clicks update
   // the same draft instead of creating a new one each time.
@@ -1292,6 +1297,9 @@ export default function NewInvoicePage() {
         customerId: customer!.id,
         items: saleItems,
         deliveredNow,
+        // The delivery-date picker: replaces deliveredNow's binary on the server
+        // (deliveredNow above is still sent for backward compat with older callers).
+        deliveredOn,
         notes: notes.trim() || undefined,
         ...(adjustment < 0 ? { discountAmount: Math.abs(adjustment) } : {}),
         ...(backdatedTo ? { orderDate: backdatedTo } : {}),
@@ -1406,15 +1414,20 @@ export default function NewInvoicePage() {
             <div>
               <p className="text-sm font-semibold text-navy">Going out today?</p>
               <p className="text-sm text-navy/70">
-                {deliveredNow
-                  ? "Delivered today — the order is marked delivered and the invoice is issued now."
-                  : "Deliver later — a draft invoice is created and mirrors the order; review and send it after the order is delivered."}
+                {deliveredOn > todayIso()
+                  ? `Scheduled — the order is created and delivers on ${fmtCalendarDate(deliveredOn)}.`
+                  : deliveredOn === todayIso()
+                    ? "Delivered today — the order is marked delivered and the invoice is issued now."
+                    : `Delivered — the order is marked delivered on ${fmtCalendarDate(deliveredOn)} and the invoice is issued now.`}
               </p>
             </div>
-            <div className="flex shrink-0 gap-2">
+            <div className="flex shrink-0 flex-wrap items-end gap-2">
               <button
                 type="button"
-                onClick={() => setDeliveredNow(true)}
+                onClick={() => {
+                  setDeliveredNow(true);
+                  setDeliveredOn(todayIso());
+                }}
                 className={cn(
                   "flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
                   deliveredNow
@@ -1426,7 +1439,12 @@ export default function NewInvoicePage() {
               </button>
               <button
                 type="button"
-                onClick={() => setDeliveredNow(false)}
+                onClick={() => {
+                  setDeliveredNow(false);
+                  // Deliver-later defaults to tomorrow, but only if the field isn't
+                  // already scheduled in the future — don't clobber a chosen date.
+                  setDeliveredOn((prev) => (prev > todayIso() ? prev : addDaysIso(todayIso(), 1)));
+                }}
                 className={cn(
                   "flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
                   !deliveredNow
@@ -1436,6 +1454,26 @@ export default function NewInvoicePage() {
               >
                 {!deliveredNow && <Check className="h-4 w-4" />} No, deliver later
               </button>
+              <div>
+                <label className="mb-1 block text-[11px] font-medium text-navy/60">
+                  Delivery date
+                </label>
+                <input
+                  type="date"
+                  value={deliveredOn}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (!value) return;
+                    // The date drives the semantics: a future pick auto-switches to
+                    // deliver-later, and stepping it back to today/the past switches
+                    // back to delivered (possibly backdated) — the two buttons above
+                    // just reflect this, they don't independently gate it.
+                    setDeliveredOn(value);
+                    setDeliveredNow(value <= todayIso());
+                  }}
+                  className="h-9 rounded-lg border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
             </div>
           </div>
         ) : (

@@ -512,15 +512,44 @@ export class GoogleOAuthService {
       // differ: Google proved profile.email, not the account email.
       const googleAttestsMailbox = buyer.email.toLowerCase() === profile.email;
 
-      // Auto-link googleId and send a security notification (fire-and-forget)
+      // SECURITY (buyer-connect account-takeover): registration issues tokens with no
+      // mailbox proof, so a password sitting on an account whose mailbox was NEVER
+      // verified is attacker-controlled by assumption — anyone could have registered
+      // under this email and chosen that password. When a Google sign-in is now about
+      // to VERIFY the mailbox, the rightful owner is the Google identity, not whoever
+      // set the password. Neutralize the squatted credential first: replace the hash
+      // with an unguessable placeholder (passwordSet:false, so the true owner can claim
+      // a real password via /buyer/auth/set-password) and revoke every existing session.
+      const squattedPassword = googleAttestsMailbox && buyer.passwordSet && !buyer.emailVerified;
+
       if (!buyer.googleId) {
-        await this.prisma.buyerAccount.update({
-          where: { id: buyer.id },
-          data: {
-            googleId: profile.googleId,
-            ...(googleAttestsMailbox ? { emailVerified: true } : {}),
-          },
-        });
+        if (squattedPassword) {
+          const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10);
+          buyer = await this.prisma.buyerAccount.update({
+            where: { id: buyer.id },
+            data: {
+              googleId: profile.googleId,
+              emailVerified: true,
+              passwordHash: placeholderHash,
+              passwordSet: false,
+            },
+          });
+          await this.prisma.buyerRefreshToken.deleteMany({
+            where: { buyerAccountId: buyer.id },
+          });
+          this.logger.warn(
+            `Buyer ${buyer.id} had an unverified password neutralized on first Google link ` +
+              `(mailbox now attested by Google; prior sessions revoked)`,
+          );
+        } else {
+          buyer = await this.prisma.buyerAccount.update({
+            where: { id: buyer.id },
+            data: {
+              googleId: profile.googleId,
+              ...(googleAttestsMailbox ? { emailVerified: true } : {}),
+            },
+          });
+        }
         void this.emailService
           .send({
             to: buyer.email,
@@ -530,11 +559,31 @@ export class GoogleOAuthService {
           .catch((e: Error) => this.logger.warn(`Google link notification failed: ${e.message}`));
       } else if (googleAttestsMailbox && !buyer.emailVerified) {
         // Already-linked account whose mailbox was never verified (e.g. password
-        // registration followed by Google linking before this gate existed).
-        await this.prisma.buyerAccount.update({
-          where: { id: buyer.id },
-          data: { emailVerified: true },
-        });
+        // registration followed by Google linking before this gate existed). Same
+        // squat exposure as the first-link path — neutralize the unproven password too.
+        if (squattedPassword) {
+          const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10);
+          buyer = await this.prisma.buyerAccount.update({
+            where: { id: buyer.id },
+            data: {
+              emailVerified: true,
+              passwordHash: placeholderHash,
+              passwordSet: false,
+            },
+          });
+          await this.prisma.buyerRefreshToken.deleteMany({
+            where: { buyerAccountId: buyer.id },
+          });
+          this.logger.warn(
+            `Buyer ${buyer.id} had an unverified password neutralized on Google sign-in ` +
+              `(already-linked; prior sessions revoked)`,
+          );
+        } else {
+          buyer = await this.prisma.buyerAccount.update({
+            where: { id: buyer.id },
+            data: { emailVerified: true },
+          });
+        }
       }
     } else {
       // Auto-create portal account with an unguessable password hash (Google-only).

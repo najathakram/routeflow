@@ -150,3 +150,45 @@ describe("ProductsService.clearAll — cross-tenant wipe regression", () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * bulkAssignParent's parent-existence check read via `forTenant().findUnique`
+ * with a select omitting tenantId, defeating the post-filter tenant guard — a
+ * cross-tenant parent id validated and the tenant's variants were re-parented
+ * onto another tenant's product. The check now uses the tenant-scoped
+ * `findFirst`; the pin: findUnique returns the foreign row (raw-DB behavior),
+ * findFirst returns null (scoped behavior) — a revert fails the test.
+ */
+describe("ProductsService.bulkAssignParent — cross-tenant parent id rejected", () => {
+  let service: ProductsService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    const mod = await Test.createTestingModule({
+      providers: [
+        ProductsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: StorageService, useValue: {} },
+        { provide: AddonService, useValue: {} },
+        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn() } },
+      ],
+    }).compile();
+    service = mod.get(ProductsService);
+  });
+
+  it("rejects a cross-tenant parentProductId and assigns nothing", async () => {
+    prisma.product.findUnique.mockResolvedValue({ id: "p-foreign", parentProductId: null });
+    prisma.product.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.bulkAssignParent({
+        parentProductId: "p-foreign",
+        assignments: [{ id: "p1" }],
+      } as any),
+    ).rejects.toThrow("Parent product not found");
+    expect(prisma.product.update).not.toHaveBeenCalled();
+  });
+});

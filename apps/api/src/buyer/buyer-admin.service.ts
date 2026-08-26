@@ -203,28 +203,43 @@ export class BuyerAdminService {
     const buyer = await this.prisma.buyerAccount.findUnique({ where: { id } });
     if (!buyer) throw new NotFoundException("Buyer account not found");
 
-    if (dto.email && dto.email !== buyer.email) {
-      const existing = await this.prisma.buyerAccount.findUnique({ where: { email: dto.email } });
+    const emailChanging = dto.email !== undefined && dto.email !== buyer.email;
+    if (emailChanging) {
+      const existing = await this.prisma.buyerAccount.findUnique({ where: { email: dto.email! } });
       if (existing) throw new ConflictException("Email is already in use by another account");
     }
 
-    const updated = await this.prisma.buyerAccount.update({
-      where: { id },
-      data: {
-        ...(dto.name !== undefined && { name: dto.name }),
-        ...(dto.email !== undefined && { email: dto.email, emailVerified: false }),
-        ...(dto.phone !== undefined && { phone: dto.phone }),
-        ...(dto.mobile !== undefined && { mobile: dto.mobile }),
-      },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        phone: true,
-        mobile: true,
-        status: true,
-        emailVerified: true,
-      },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const u = await tx.buyerAccount.update({
+        where: { id },
+        data: {
+          ...(dto.name !== undefined && { name: dto.name }),
+          // Keyed off `emailChanging`, not merely `dto.email !== undefined`: the admin UI
+          // always sends the current email, and a name/phone-only save must not de-verify
+          // the account (that would silently lock the buyer out of the requestSeller gate).
+          ...(emailChanging && { email: dto.email!, emailVerified: false }),
+          ...(dto.phone !== undefined && { phone: dto.phone }),
+          ...(dto.mobile !== undefined && { mobile: dto.mobile }),
+        },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          phone: true,
+          mobile: true,
+          status: true,
+          emailVerified: true,
+        },
+      });
+      if (emailChanging) {
+        // The new address is unverified; any verification token already mailed to the
+        // OLD address must die — verifyEmail binds a token to buyerAccountId, not to the
+        // address that was mailed, so a stale token could otherwise verify the NEW
+        // address. Revoke sessions too: the identity anchor just changed.
+        await tx.buyerEmailVerificationToken.deleteMany({ where: { buyerAccountId: id } });
+        await tx.buyerRefreshToken.deleteMany({ where: { buyerAccountId: id } });
+      }
+      return u;
     });
 
     return updated;

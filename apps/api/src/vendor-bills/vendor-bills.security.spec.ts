@@ -209,7 +209,7 @@ describe("check-duplicate — access control", () => {
     await mod.get(VendorBillsService).checkDuplicate({ supplierInvoiceNumber: "INV-1" });
 
     expect(prisma.forTenant).toHaveBeenCalled();
-    expect(prisma.supplier.findUnique).toHaveBeenCalledWith({
+    expect(prisma.supplier.findFirst).toHaveBeenCalledWith({
       where: { id: "sup-1" },
       select: { name: true },
     });

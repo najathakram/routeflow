@@ -1,9 +1,11 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useQueryClient } from "@tanstack/react-query";
 import { Modal, Input, Textarea, Select, Button, useToast, cn } from "@routeflow/ui/web";
 import { useCreateCustomer, useUpdateCustomer } from "@/lib/api/customers";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
@@ -11,6 +13,7 @@ import { isInternalEmail } from "@/lib/formatting";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON } from "@/lib/api/addons";
 import { useSalesAgents } from "@/lib/api/sales-agents";
+import { AgentFormModal } from "../../sales-agents/_components/AgentFormModal";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -178,6 +181,8 @@ function buildDefaultValues(
 
 export function CustomerFormModal({ isOpen, onClose, mode, initialData }: CustomerFormModalProps) {
   const { toast } = useToast();
+  const router = useRouter();
+  const qc = useQueryClient();
   const createCustomer = useCreateCustomer();
   const updateCustomer = useUpdateCustomer();
 
@@ -191,6 +196,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
   // inside the engine's create() only).
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
   const [salesAgentId, setSalesAgentId] = React.useState("");
+  const [isAgentModalOpen, setIsAgentModalOpen] = React.useState(false);
   const { data: salesAgents } = useSalesAgents(
     { status: "ACTIVE" },
     { enabled: isOpen && hasSalesAgents && mode === "add" },
@@ -221,6 +227,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
       setCityError("");
       setZipError("");
       setSalesAgentId("");
+      setIsAgentModalOpen(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialData]);
@@ -459,18 +466,30 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
               <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
                 Sales Agent
               </p>
-              <Select
-                label="Sales agent (optional)"
-                value={salesAgentId}
-                onChange={(e) => setSalesAgentId(e.target.value)}
-                options={[
-                  // A real selectable option, not `placeholder` — the shared Select
-                  // renders a placeholder as a DISABLED option, which would make a
-                  // picked agent impossible to un-pick.
-                  { value: "", label: "No agent" },
-                  ...(salesAgents ?? []).map((a) => ({ value: a.id, label: a.name })),
-                ]}
-              />
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
+                  <Select
+                    label="Sales agent (optional)"
+                    value={salesAgentId}
+                    onChange={(e) => setSalesAgentId(e.target.value)}
+                    options={[
+                      // A real selectable option, not `placeholder` — the shared Select
+                      // renders a placeholder as a DISABLED option, which would make a
+                      // picked agent impossible to un-pick.
+                      { value: "", label: "No agent" },
+                      ...(salesAgents ?? []).map((a) => ({ value: a.id, label: a.name })),
+                    ]}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsAgentModalOpen(true)}
+                >
+                  + New agent
+                </Button>
+              </div>
             </section>
           )}
 
@@ -558,70 +577,93 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
             </div>
           </section>
 
-          {/* ── Primary Delivery Address ─────────────────────────────────────── */}
-          <section className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-              Primary Delivery Address
-              {mode === "edit" && (
-                <span className="ml-1 font-normal normal-case text-navy/30">(optional)</span>
-              )}
-            </p>
-            <div className="flex gap-2">
-              {(["BILLING", "SHIPPING"] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setValue("addressType", t)}
-                  className={cn(
-                    "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
-                    watch("addressType") === t
-                      ? "border-brand-500 bg-brand-50 text-brand-600"
-                      : "border-surface-border bg-white text-navy/70 hover:border-brand-300",
-                  )}
-                >
-                  {t === "BILLING" ? "Billing" : "Shipping"}
-                </button>
-              ))}
-            </div>
-            <AddressAutocomplete
-              label="Street"
-              placeholder="123 Main St — start typing for suggestions"
-              value={watch("street") ?? ""}
-              onChange={(v) => setValue("street", v, { shouldDirty: true })}
-              onAddressSelect={({ street, city, state, zip }) => {
-                setValue("street", street, { shouldDirty: true });
-                setValue("city", city, { shouldDirty: true });
-                setValue("state", state, { shouldDirty: true });
-                setValue("zip", zip, { shouldDirty: true });
-                setStreetError("");
-                setCityError("");
-                setZipError("");
-              }}
-              error={errors.street?.message || streetError}
-            />
-            <div className="grid grid-cols-3 gap-3">
-              <div className="col-span-2">
+          {/* ── Primary Delivery Address (add mode only) ─────────────────────── */}
+          {/* Edit mode used to prefill from addresses[0] only and the submit payload
+              omitted address fields entirely — a silent discard of anything typed
+              here. Addresses are now a full CRUD surface on the customer's own
+              Addresses tab (mobile's CustomerForm already excludes them the same
+              way in edit mode), so edit mode gets an honest link there instead. */}
+          {mode === "add" ? (
+            <section className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
+                Primary Delivery Address
+              </p>
+              <div className="flex gap-2">
+                {(["BILLING", "SHIPPING"] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setValue("addressType", t)}
+                    className={cn(
+                      "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+                      watch("addressType") === t
+                        ? "border-brand-500 bg-brand-50 text-brand-600"
+                        : "border-surface-border bg-white text-navy/70 hover:border-brand-300",
+                    )}
+                  >
+                    {t === "BILLING" ? "Billing" : "Shipping"}
+                  </button>
+                ))}
+              </div>
+              <AddressAutocomplete
+                label="Street"
+                placeholder="123 Main St — start typing for suggestions"
+                value={watch("street") ?? ""}
+                onChange={(v) => setValue("street", v, { shouldDirty: true })}
+                onAddressSelect={({ street, city, state, zip }) => {
+                  setValue("street", street, { shouldDirty: true });
+                  setValue("city", city, { shouldDirty: true });
+                  setValue("state", state, { shouldDirty: true });
+                  setValue("zip", zip, { shouldDirty: true });
+                  setStreetError("");
+                  setCityError("");
+                  setZipError("");
+                }}
+                error={errors.street?.message || streetError}
+              />
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <Input
+                    label="City"
+                    placeholder="Austin"
+                    register={register("city")}
+                    error={errors.city?.message || cityError}
+                  />
+                </div>
                 <Input
-                  label="City"
-                  placeholder="Austin"
-                  register={register("city")}
-                  error={errors.city?.message || cityError}
+                  label="State"
+                  placeholder="TX"
+                  register={register("state")}
+                  error={errors.state?.message}
                 />
               </div>
               <Input
-                label="State"
-                placeholder="TX"
-                register={register("state")}
-                error={errors.state?.message}
+                label="ZIP Code"
+                placeholder="78701"
+                register={register("zip")}
+                error={errors.zip?.message || zipError}
               />
+            </section>
+          ) : (
+            <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised px-4 py-3">
+              <p className="text-sm text-navy/70">
+                Addresses are managed on the customer&apos;s{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    if (initialData?.id) {
+                      router.push(`/customers/${initialData.id}?tab=addresses`);
+                    }
+                  }}
+                  className="font-medium text-brand-500 hover:underline"
+                >
+                  Addresses tab
+                </button>
+                .
+              </p>
             </div>
-            <Input
-              label="ZIP Code"
-              placeholder="78701"
-              register={register("zip")}
-              error={errors.zip?.message || zipError}
-            />
-          </section>
+          )}
 
           {/* ── Notes ───────────────────────────────────────────────────────── */}
           <section className="space-y-2">
@@ -634,6 +676,17 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           </section>
         </div>
       </form>
+
+      {/* Sales-agent quick-create — an agent not yet in the system shouldn't force
+          leaving this form. Reuses the list page's create-only modal as-is. */}
+      <AgentFormModal
+        isOpen={isAgentModalOpen}
+        onClose={() => setIsAgentModalOpen(false)}
+        onCreated={(id) => {
+          qc.invalidateQueries({ queryKey: ["sales-agents"] });
+          setSalesAgentId(id);
+        }}
+      />
     </Modal>
   );
 }

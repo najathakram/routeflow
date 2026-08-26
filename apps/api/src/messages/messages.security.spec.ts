@@ -35,7 +35,7 @@ describe("MessagesService — F2-006 run-chat participant gate", () => {
 
   it("DRIVER cannot read a run they are NOT assigned to (403)", async () => {
     prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
-    prisma.routeRun.findUnique.mockResolvedValue({ driverId: "drv-2" });
+    prisma.routeRun.findFirst.mockResolvedValue({ driverId: "drv-2" });
 
     await expect(
       service.findByRun({ runId: "run-1" }, { sub: "drv-user", role: "DRIVER" }),
@@ -52,7 +52,7 @@ describe("MessagesService — F2-006 run-chat participant gate", () => {
 
   it("DRIVER CAN read the internal thread of a run they are assigned to", async () => {
     prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
-    prisma.routeRun.findUnique.mockResolvedValue({ driverId: "drv-1" });
+    prisma.routeRun.findFirst.mockResolvedValue({ driverId: "drv-1" });
 
     await service.findByRun({ runId: "run-1" }, { sub: "drv-user", role: "DRIVER" });
     expect(prisma.message.findMany).toHaveBeenCalledWith(
@@ -78,7 +78,7 @@ describe("MessagesService — F2-006 run-chat participant gate", () => {
 
   it("DRIVER cannot CREATE in a run they are NOT assigned to (403)", async () => {
     prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
-    prisma.routeRun.findUnique.mockResolvedValue({ driverId: "other-drv" });
+    prisma.routeRun.findFirst.mockResolvedValue({ driverId: "other-drv" });
     await expect(
       service.create({ runId: "run-1", text: "hi" }, "drv-user", "DRIVER"),
     ).rejects.toThrow(ForbiddenException);
@@ -87,7 +87,7 @@ describe("MessagesService — F2-006 run-chat participant gate", () => {
 
   it("assigned DRIVER and OPERATOR CAN create a run message", async () => {
     prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
-    prisma.routeRun.findUnique.mockResolvedValue({ driverId: "drv-1" });
+    prisma.routeRun.findFirst.mockResolvedValue({ driverId: "drv-1" });
     await service.create({ runId: "run-1", text: "on my way" }, "drv-user", "DRIVER");
     await service.create({ runId: "run-1", text: "ok" }, "op-user", "OPERATOR");
     expect(prisma.message.create).toHaveBeenCalledTimes(2);

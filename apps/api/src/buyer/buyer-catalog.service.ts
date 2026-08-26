@@ -179,7 +179,7 @@ export class BuyerCatalogService {
     // Load customer's pricing tier
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: customerId }, select: { pricingTier: true } });
+      .customer.findFirst({ where: { id: customerId }, select: { pricingTier: true } });
     const defaultTier = customer?.pricingTier ?? 1;
 
     // Load per-product tier overrides for all products in this page
@@ -360,7 +360,7 @@ export class BuyerCatalogService {
     // Resolve buyer pricing
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: customerId }, select: { pricingTier: true } });
+      .customer.findFirst({ where: { id: customerId }, select: { pricingTier: true } });
     const defaultTier = customer?.pricingTier ?? 1;
 
     // Deactivated variants must never reach a buyer: findOne includes them (it
@@ -467,7 +467,7 @@ export class BuyerCatalogService {
     // Load customer pricing tier + overrides
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: customerId }, select: { pricingTier: true } });
+      .customer.findFirst({ where: { id: customerId }, select: { pricingTier: true } });
     const defaultTier = customer?.pricingTier ?? 1;
 
     const productIds = activeFavorites.map((f) => f.productId);

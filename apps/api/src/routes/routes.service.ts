@@ -120,8 +120,20 @@ export class RoutesService {
       this.prisma.forTenant().route.findMany({
         where,
         include: {
-          _count: { select: { stops: true } },
-          runs: { take: 1, orderBy: { createdAt: "desc" } },
+          // _count + latest-run summary let the Deliveries history list render
+          // driver/date/status without a second round-trip per row.
+          _count: { select: { runs: true, stops: true } },
+          runs: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: {
+              id: true,
+              status: true,
+              scheduledDate: true,
+              completedAt: true,
+              driver: { select: { id: true, contactName: true } },
+            },
+          },
         },
         skip,
         take: limit,
@@ -1145,7 +1157,7 @@ export class RoutesService {
     if (user.role === UserRole.DRIVER) {
       const run = await this.prisma
         .forTenant()
-        .routeRun.findUnique({ where: { id: runId }, select: { driverId: true } });
+        .routeRun.findFirst({ where: { id: runId }, select: { driverId: true } });
       const driver = await this.prisma
         .forTenant()
         .driver.findFirst({ where: { userId: user.sub } });
@@ -1279,7 +1291,7 @@ export class RoutesService {
       // 2. Record delivery mutations if provided
       if (dto.deliveries && dto.deliveries.length > 0) {
         for (const d of dto.deliveries) {
-          const item = await tx.orderItem.findUnique({
+          const item = await tx.orderItem.findFirst({
             where: { id: d.orderItemId },
             select: { orderId: true, unitPrice: true },
           });
@@ -1462,7 +1474,7 @@ export class RoutesService {
       const deliveredOrderIdSet = new Set<string>();
       if (dto.deliveries && dto.deliveries.length > 0) {
         for (const d of dto.deliveries) {
-          const item = await tx.orderItem.findUnique({
+          const item = await tx.orderItem.findFirst({
             where: { id: d.orderItemId },
             select: { orderId: true },
           });
@@ -1842,7 +1854,7 @@ export class RoutesService {
           mutation.productId &&
           (mutation.type === "DELIVERED" || mutation.type === "PARTIAL")
         ) {
-          const product = await tx.product.findUnique({
+          const product = await tx.product.findFirst({
             where: { id: mutation.productId },
             select: { currentStock: true, averageCost: true },
           });

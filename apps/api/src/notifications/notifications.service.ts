@@ -143,7 +143,7 @@ export class NotificationsService implements OnModuleInit {
     body: string,
     data?: Record<string, string>,
   ): Promise<void> {
-    const customer = await this.prisma.forTenant().customer.findUnique({
+    const customer = await this.prisma.forTenant().customer.findFirst({
       where: { id: customerId },
       select: { userId: true },
     });
@@ -158,7 +158,7 @@ export class NotificationsService implements OnModuleInit {
     body: string,
     data?: Record<string, string>,
   ): Promise<void> {
-    const driver = await this.prisma.forTenant().driver.findUnique({
+    const driver = await this.prisma.forTenant().driver.findFirst({
       where: { id: driverId },
       select: { userId: true },
     });

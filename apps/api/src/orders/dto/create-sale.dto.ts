@@ -42,6 +42,17 @@ export class CreateSaleDto {
 
   @IsBoolean() deliveredNow: boolean;
 
+  /**
+   * Delivery-date picker: when present it REPLACES `deliveredNow`'s binary.
+   *  - deliveredOn <= today (tenant-tz calendar compare) → behaves as deliveredNow=true
+   *    AND sets deliveredAt to that date (staff-only backdating, same gate as orderDate).
+   *  - deliveredOn > today → behaves as deliveredNow=false and sets
+   *    requestedDeliveryDate = deliveredOn.
+   * `deliveredNow` is still accepted for backward compat (mobile/older clients); when
+   * both are present, `deliveredOn` wins.
+   */
+  @IsOptional() @IsDateString() deliveredOn?: string;
+
   @IsOptional() @StripHtml() @IsString() @MaxLength(5000) notes?: string;
   @IsOptional() @IsNumber() @Min(0) @Max(1_000_000) discountAmount?: number;
   /** Optional flat shipping fee added to the order total (never taxed). */

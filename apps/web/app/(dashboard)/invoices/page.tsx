@@ -31,6 +31,51 @@ import { useBookkeepingSummary } from "@/lib/api/bookkeeping";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { useAuth } from "@/lib/auth-context";
 
+/** Add calendar days to a YYYY-MM-DD date, in UTC end to end — mirrors
+ *  invoices/new/page.tsx's addDaysIso (local-getter math loses a day across a
+ *  DST boundary). */
+function addDaysIso(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return iso;
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * The VIEWER'S current calendar day as YYYY-MM-DD. Deliberately NOT
+ * `todayIso()` (which is `toISOString()`, i.e. the UTC day): the operator's
+ * "today" is their local day, and both the due-soon chips and the Due Today
+ * KPI tile must anchor on the same one — a UTC anchor rolls over hours early
+ * for every negative-UTC-offset viewer, so the tile and the chip it triggers
+ * would target different dates for part of every day. Mirrors
+ * dispatch/page.tsx's todayLocalISO.
+ */
+function todayLocalIso(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * The same "unpaid" status set the API's `isOverdue` filter composes
+ * server-side (invoices.service.ts findAll: SENT/VIEWED/PARTIAL/OVERDUE,
+ * i.e. everything except DRAFT/PAID/VOID/WRITTEN_OFF). The due-soon chips
+ * send this via the API's pre-existing `statuses` (plural) param so a
+ * due-window query doesn't surface invoices that are already settled or not
+ * yet issued — reusing the existing mechanism rather than inventing a new one.
+ */
+const UNPAID_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
+
+type DueChipKey = "today" | "tomorrow" | "7d";
+
+const DUE_CHIPS: { key: DueChipKey; label: string }[] = [
+  { key: "today", label: "Due Today" },
+  { key: "tomorrow", label: "Due Tomorrow" },
+  { key: "7d", label: "Next 7 Days" },
+];
+
 // ─── Contextual status display (Zoho-style) ───────────────────────────────────
 
 function renderStatus(status: InvoiceStatus, dueDate?: string | null): React.ReactNode {
@@ -129,6 +174,7 @@ function StatTile({
   valueClass,
   active,
   onClick,
+  ariaLabel,
 }: {
   label: string;
   value: string;
@@ -137,6 +183,7 @@ function StatTile({
   valueClass?: string;
   active?: boolean;
   onClick?: () => void;
+  ariaLabel?: string;
 }) {
   const content = (
     <>
@@ -161,9 +208,10 @@ function StatTile({
       <button
         type="button"
         onClick={onClick}
+        aria-label={ariaLabel}
         className={cn(
           base,
-          "transition-all hover:bg-surface-raised",
+          "cursor-pointer transition-all hover:bg-surface-raised",
           active ? "border-brand-200 ring-1 ring-inset ring-brand-200" : "border-surface-border",
         )}
       >
@@ -180,18 +228,27 @@ function StatTile({
 function PaymentSummaryBar({
   activeFilter,
   onFilter,
+  dueTodayActive,
+  onDueTodayClick,
 }: {
   activeFilter: string;
   onFilter: (status: string) => void;
+  dueTodayActive: boolean;
+  onDueTodayClick: () => void;
 }) {
   const { data: allData } = useInvoices({ limit: 999 });
   const all: Invoice[] = allData?.data ?? [];
 
   const kpis = React.useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const in30 = new Date(today);
-    in30.setDate(in30.getDate() + 30);
+    // Calendar-date basis, as YYYY-MM-DD strings (lexicographic = chronological):
+    // dueDate is stored at UTC midnight, so compare its UTC calendar day — the
+    // one the table renders via fmtCalendarDate — against the viewer's LOCAL
+    // calendar day, the same anchor the due-soon chips send to the server.
+    // Local-midnight Date math on a UTC-midnight timestamp shifts the day for
+    // every negative-UTC-offset viewer, which made this tile disagree with the
+    // chip it triggers.
+    const today = todayLocalIso();
+    const in30 = addDaysIso(today, 30);
 
     let totalOutstanding = 0;
     let dueToday = 0;
@@ -207,8 +264,7 @@ function PaymentSummaryBar({
         (inv.payments ?? []).reduce((s: number, p: any) => s + Number(p.amount), 0);
       const balance =
         inv.balanceDue !== undefined ? Number(inv.balanceDue) : Math.max(0, total - paid);
-      const due = inv.dueDate ? new Date(inv.dueDate) : null;
-      if (due) due.setHours(0, 0, 0, 0);
+      const due = inv.dueDate ? inv.dueDate.slice(0, 10) : null;
 
       if (
         inv.status !== "PAID" &&
@@ -224,7 +280,7 @@ function PaymentSummaryBar({
         (due && due < today && inv.status !== "PAID" && inv.status !== "VOID")
       ) {
         overdue += balance;
-      } else if (due && due.getTime() === today.getTime() && inv.status !== "PAID") {
+      } else if (due && due === today && inv.status !== "PAID") {
         dueToday += balance;
       } else if (
         due &&
@@ -256,37 +312,47 @@ function PaymentSummaryBar({
     {
       label: "Total Outstanding",
       value: fmt(kpis.totalOutstanding),
-      filter: "SENT",
       money: true,
       valueClass: undefined as string | undefined,
+      active: activeFilter === "SENT",
+      onClick: () => onFilter(activeFilter === "SENT" ? "" : "SENT"),
+      ariaLabel: undefined as string | undefined,
     },
     {
       label: "Due Today",
       value: fmt(kpis.dueToday),
-      filter: "",
       money: true,
       valueClass: kpis.dueToday > 0 ? "text-orange-500" : undefined,
+      active: dueTodayActive,
+      onClick: onDueTodayClick,
+      ariaLabel: "Filter invoices due today",
     },
     {
       label: "Due Within 30 Days",
       value: fmt(kpis.dueIn30),
-      filter: "",
       money: true,
       valueClass: undefined as string | undefined,
+      active: false,
+      onClick: undefined as (() => void) | undefined,
+      ariaLabel: undefined as string | undefined,
     },
     {
       label: "Overdue",
       value: fmt(kpis.overdue),
-      filter: "OVERDUE",
       money: true,
       valueClass: kpis.overdue > 0 ? "text-red-600" : undefined,
+      active: activeFilter === "OVERDUE",
+      onClick: () => onFilter(activeFilter === "OVERDUE" ? "" : "OVERDUE"),
+      ariaLabel: undefined as string | undefined,
     },
     {
       label: "Avg. Days to Get Paid",
       value: kpis.avgDays > 0 ? `${kpis.avgDays} Days` : "N/A",
-      filter: "PAID",
       money: false,
       valueClass: undefined as string | undefined,
+      active: activeFilter === "PAID",
+      onClick: () => onFilter(activeFilter === "PAID" ? "" : "PAID"),
+      ariaLabel: undefined as string | undefined,
     },
   ];
 
@@ -299,12 +365,9 @@ function PaymentSummaryBar({
           value={item.value}
           money={item.money}
           valueClass={item.valueClass}
-          active={!!item.filter && item.filter === activeFilter}
-          onClick={
-            item.filter
-              ? () => onFilter(item.filter === activeFilter ? "" : item.filter)
-              : undefined
-          }
+          active={item.active}
+          onClick={item.onClick}
+          ariaLabel={item.ariaLabel}
         />
       ))}
     </div>
@@ -345,10 +408,56 @@ export default function InvoicesPage() {
     status: "",
     dateFrom: "",
     dateTo: "",
+    dueFrom: "",
+    dueTo: "",
   });
   const statusFilter = (urlFilters.status as string) ?? "";
   const dateFrom = (urlFilters.dateFrom as string) ?? "";
   const dateTo = (urlFilters.dateTo as string) ?? "";
+  const dueFrom = (urlFilters.dueFrom as string) ?? "";
+  const dueTo = (urlFilters.dueTo as string) ?? "";
+
+  // Due-soon chip windows, computed fresh each render off the viewer's LOCAL
+  // calendar day — the same anchor the Due Today KPI tile uses, so the tile and
+  // the chip it applies always target the same date. The server compares these
+  // against dueDate, which is stored at UTC midnight, so a bare YYYY-MM-DD
+  // (parsed as UTC midnight) lines up with the stored calendar date exactly.
+  const todayStr = todayLocalIso();
+  const tomorrowStr = addDaysIso(todayStr, 1);
+  const in7Str = addDaysIso(todayStr, 7);
+
+  const activeDueChip: DueChipKey | "" =
+    !dueFrom && !dueTo
+      ? ""
+      : dueFrom === todayStr && dueTo === todayStr
+        ? "today"
+        : dueFrom === tomorrowStr && dueTo === tomorrowStr
+          ? "tomorrow"
+          : dueFrom === todayStr && dueTo === in7Str
+            ? "7d"
+            : "";
+
+  function handleDueChipClick(key: DueChipKey) {
+    if (activeDueChip === key) {
+      setFilters({ dueFrom: "", dueTo: "" });
+      return;
+    }
+    const window =
+      key === "today"
+        ? { dueFrom: todayStr, dueTo: todayStr }
+        : key === "tomorrow"
+          ? { dueFrom: tomorrowStr, dueTo: tomorrowStr }
+          : { dueFrom: todayStr, dueTo: in7Str };
+    setFilters(window);
+  }
+
+  // Due-soon chips imply "not yet settled" — when no explicit status tab is
+  // picked, compose the SAME unpaid status set the API's isOverdue filter
+  // already uses (server-side, invoices.service.ts findAll) via the
+  // pre-existing `statuses` (plural) param, so a due window never surfaces
+  // DRAFT/PAID/VOID/WRITTEN_OFF invoices. An explicit status tab still wins.
+  const dueWindowActive = Boolean(dueFrom || dueTo);
+  const composedStatuses = dueWindowActive && !statusFilter ? UNPAID_STATUSES : undefined;
   const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [page, setPage] = useUrlPage();
   const [limit, setLimit] = React.useState(20);
@@ -375,9 +484,12 @@ export default function InvoicesPage() {
 
   const { data, isLoading, isError } = useInvoices({
     status: statusFilter || undefined,
+    statuses: composedStatuses,
     search: debouncedSearch || undefined,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
+    dueFrom: dueFrom || undefined,
+    dueTo: dueTo || undefined,
     sortBy,
     sortOrder,
     page,
@@ -399,9 +511,12 @@ export default function InvoicesPage() {
       const res = await apiClient.get("/invoices", {
         params: {
           status: statusFilter || undefined,
+          statuses: composedStatuses,
           search: debouncedSearch || undefined,
           dateFrom: dateFrom || undefined,
           dateTo: dateTo || undefined,
+          dueFrom: dueFrom || undefined,
+          dueTo: dueTo || undefined,
           sortBy,
           sortOrder,
           page: 1,
@@ -499,7 +614,12 @@ export default function InvoicesPage() {
       />
 
       {/* Payment Summary — KPI stat tiles */}
-      <PaymentSummaryBar activeFilter={statusFilter} onFilter={handleFilterChange} />
+      <PaymentSummaryBar
+        activeFilter={statusFilter}
+        onFilter={handleFilterChange}
+        dueTodayActive={activeDueChip === "today"}
+        onDueTodayClick={() => handleDueChipClick("today")}
+      />
 
       {/* Status filter tabs */}
       <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide border-b border-surface-border">
@@ -515,6 +635,26 @@ export default function InvoicesPage() {
             )}
           >
             {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Due-soon chips */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium uppercase tracking-wider text-navy/70">Due:</span>
+        {DUE_CHIPS.map((chip) => (
+          <button
+            key={chip.key}
+            type="button"
+            onClick={() => handleDueChipClick(chip.key)}
+            className={cn(
+              "rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+              activeDueChip === chip.key
+                ? "border-brand-500 bg-brand-500 text-white"
+                : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+            )}
+          >
+            {chip.label}
           </button>
         ))}
       </div>
@@ -619,7 +759,7 @@ export default function InvoicesPage() {
             ) : invoices.length === 0 ? (
               <tr>
                 <td colSpan={8} className="p-0">
-                  {search || statusFilter || dateFrom || dateTo ? (
+                  {search || statusFilter || dateFrom || dateTo || dueFrom || dueTo ? (
                     <EmptyState
                       variant="invoices"
                       title="No matching invoices"
@@ -630,7 +770,13 @@ export default function InvoicesPage() {
                           size="sm"
                           onClick={() => {
                             setSearch("");
-                            setFilters({ status: "", dateFrom: "", dateTo: "" });
+                            setFilters({
+                              status: "",
+                              dateFrom: "",
+                              dateTo: "",
+                              dueFrom: "",
+                              dueTo: "",
+                            });
                           }}
                         >
                           Clear filters

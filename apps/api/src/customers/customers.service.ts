@@ -445,6 +445,9 @@ export class CustomersService {
           ...(dto.defaultPaymentTerms !== undefined && {
             defaultPaymentTerms: dto.defaultPaymentTerms || null,
           }),
+          ...(dto.defaultDepositPercent !== undefined && {
+            defaultDepositPercent: dto.defaultDepositPercent,
+          }),
         },
       });
 
@@ -664,6 +667,10 @@ export class CustomersService {
         ...(dto.defaultPaymentTerms !== undefined && {
           defaultPaymentTerms: dto.defaultPaymentTerms || null,
         }),
+        // null clears the deposit default; a number sets/replaces it.
+        ...(dto.defaultDepositPercent !== undefined && {
+          defaultDepositPercent: dto.defaultDepositPercent,
+        }),
       },
     });
   }
@@ -791,6 +798,47 @@ export class CustomersService {
         /* ignore */
       });
     return updated;
+  }
+
+  async deleteAddress(id: string, addrId: string) {
+    await this.findCustomerOrThrow(id);
+    const address = await this.prisma.forTenant().customerAddress.findFirst({
+      where: { id: addrId, customerId: id },
+    });
+    if (!address) throw new NotFoundException("Address not found");
+
+    // Deleting an address a live route stop points at would orphan the stop —
+    // block with a clear reason instead. Both RouteStop (the route template)
+    // and RouteRunStop (a scheduled run's per-stop instance) can reference it.
+    const [stopCount, runStopCount] = await Promise.all([
+      this.prisma.forTenant().routeStop.count({ where: { customerAddressId: addrId } }),
+      this.prisma.forTenant().routeRunStop.count({ where: { customerAddressId: addrId } }),
+    ]);
+    if (stopCount > 0 || runStopCount > 0) {
+      throw new ConflictException(
+        "This address is used by a delivery route stop — remove it from the route first.",
+      );
+    }
+
+    return this.prisma.tenantTransaction(async (tx) => {
+      await tx.customerAddress.delete({ where: { id: addrId, customerId: id } });
+      // Deleting the primary leaves the customer without one — promote the
+      // oldest remaining address so isDefault always resolves to exactly one
+      // row (or zero, if this was the last address).
+      if (address.isDefault) {
+        const oldestRemaining = await tx.customerAddress.findFirst({
+          where: { customerId: id },
+          orderBy: { createdAt: "asc" },
+        });
+        if (oldestRemaining) {
+          await tx.customerAddress.update({
+            where: { id: oldestRemaining.id },
+            data: { isDefault: true },
+          });
+        }
+      }
+      return { success: true };
+    });
   }
 
   private async findCustomerOrThrow(id: string) {

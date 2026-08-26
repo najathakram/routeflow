@@ -191,7 +191,7 @@ describe("VendorBillsService", () => {
           ],
         }),
       );
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
 
       await service.receive("bill-1", { acknowledgeUnlinked: true }, "user-1");
 
@@ -202,7 +202,7 @@ describe("VendorBillsService", () => {
 
     it("updates the weighted average, creates a StockLot, and stamps snapshots", async () => {
       prisma.vendorBill.findUnique.mockResolvedValueOnce(bill());
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
 
       await service.receive("bill-1", undefined, "user-1");
 
@@ -246,7 +246,7 @@ describe("VendorBillsService", () => {
       prisma.vendorBill.findUnique.mockResolvedValueOnce(
         bill({ items: [linkedItem({ qty: D(2), unitCost: D(12), packSize: 6 })] }),
       );
-      prisma.product.findUnique.mockResolvedValue({
+      prisma.product.findFirst.mockResolvedValue({
         currentStock: D(0),
         averageCost: null,
         costingMethod: "AVCO",
@@ -268,7 +268,7 @@ describe("VendorBillsService", () => {
 
     it("G7: a STANDARD product keeps its cost — averageCost untouched by receive", async () => {
       prisma.vendorBill.findUnique.mockResolvedValueOnce(bill());
-      prisma.product.findUnique.mockResolvedValue({
+      prisma.product.findFirst.mockResolvedValue({
         currentStock: D(10),
         averageCost: D(2),
         costingMethod: "STANDARD",
@@ -284,7 +284,7 @@ describe("VendorBillsService", () => {
 
     it("G7: stamps the PURCHASE movement at the bill date (matching the lot)", async () => {
       prisma.vendorBill.findUnique.mockResolvedValueOnce(bill());
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
 
       await service.receive("bill-1", undefined, "user-1");
 
@@ -296,7 +296,7 @@ describe("VendorBillsService", () => {
 
     it("G7: a backdated bill with later movements triggers the replay repair", async () => {
       prisma.vendorBill.findUnique.mockResolvedValueOnce(bill());
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
       prisma.stockMovement.count.mockResolvedValue(3); // newer movements exist
 
       await service.receive("bill-1", undefined, "user-1");
@@ -312,7 +312,7 @@ describe("VendorBillsService", () => {
           items: [linkedItem({ qty: D(5), unitCost: D(12), packSize: 6, qtyReceived: null })],
         }),
       );
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(0), averageCost: null });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(0), averageCost: null });
 
       await service.receive("bill-1", { items: [{ itemId: "item-1", qty: 2 }] }, "user-1");
 
@@ -338,7 +338,7 @@ describe("VendorBillsService", () => {
           items: [linkedItem({ qty: D(10), qtyReceived: D(4) })],
         }),
       );
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(4), averageCost: D(3.5) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(4), averageCost: D(3.5) });
 
       await service.receive("bill-1", undefined, "user-1");
 
@@ -388,7 +388,7 @@ describe("VendorBillsService", () => {
       prisma.vendorBill.findUnique.mockResolvedValue(
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
       prisma.stockLot.findMany.mockResolvedValue([]);
 
       await service.revertToDraft("bill-1");
@@ -402,7 +402,7 @@ describe("VendorBillsService", () => {
       prisma.vendorBill.findUnique.mockResolvedValue(
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(5), averageCost: D(3.5) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(5), averageCost: D(3.5) });
       prisma.stockLot.findMany.mockResolvedValue([]);
 
       await service.revertToDraft("bill-1");
@@ -416,7 +416,7 @@ describe("VendorBillsService", () => {
       prisma.vendorBill.findUnique.mockResolvedValue(
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
       prisma.stockLot.findMany.mockResolvedValue([
         { id: "lot-1", qty: D(5), remainingQty: D(5), notes: null },
         { id: "lot-2", qty: D(5), remainingQty: D(2), notes: null },
@@ -452,7 +452,7 @@ describe("VendorBillsService", () => {
           items: [linkedItem({ qty: D(2), unitCost: D(12), packSize: 6 })],
         }),
       );
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(12), averageCost: D(2) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(12), averageCost: D(2) });
       prisma.stockLot.findMany.mockResolvedValue([]);
 
       await service.revertToDraft("bill-1");
@@ -470,7 +470,7 @@ describe("VendorBillsService", () => {
           items: [linkedItem({ qty: D(10), qtyReceived: D(4) })],
         }),
       );
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(14), averageCost: D(2.5) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(14), averageCost: D(2.5) });
       prisma.stockLot.findMany.mockResolvedValue([]);
 
       await service.revertToDraft("bill-1");
@@ -491,7 +491,7 @@ describe("VendorBillsService", () => {
       prisma.vendorBill.findUnique.mockResolvedValue(
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(5), averageCost: D(3.5) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(5), averageCost: D(3.5) });
       prisma.stockLot.findMany.mockResolvedValue([]);
 
       await service.voidBill("bill-1", "user-1");
@@ -673,7 +673,7 @@ describe("VendorBillsService", () => {
     beforeEach(() => {
       prisma.vendorBill.findFirst.mockResolvedValue(null); // nextBillNumber
       prisma.vendorBill.create.mockResolvedValue(bill());
-      prisma.supplier.findUnique.mockResolvedValue({ name: "Acme Foods" });
+      prisma.supplier.findFirst.mockResolvedValue({ name: "Acme Foods" });
     });
 
     const scanned = (overrides: Record<string, unknown> = {}) => ({
@@ -749,7 +749,7 @@ describe("VendorBillsService", () => {
     describe("line-fingerprint match", () => {
       /** A posted scan of the same numbers, and the bill it became. */
       const postedElsewhere = (billOverrides: Record<string, unknown> = {}) => {
-        invoiceScan.findUnique.mockResolvedValue({ lineFingerprint: "fp-abc" });
+        invoiceScan.findFirst.mockResolvedValue({ lineFingerprint: "fp-abc" });
         dupMatch.findScanDuplicate.mockResolvedValue({
           id: "scan-old",
           status: "POSTED",
@@ -759,7 +759,7 @@ describe("VendorBillsService", () => {
           total: 100,
           matchedBy: "lines",
         });
-        prisma.vendorBill.findUnique.mockResolvedValue({
+        const matchedBill = {
           id: "vb-9",
           billNumber: "BILL-2026-0009",
           status: "RECEIVED",
@@ -769,7 +769,14 @@ describe("VendorBillsService", () => {
           supplierId: "sup-1",
           _count: { items: 4 },
           ...billOverrides,
-        });
+        };
+        // vendorBill.findFirst now serves BOTH nextBillNumber() (no where.id,
+        // mocked null by the outer beforeEach) AND the converted
+        // vendorBillMatchById lookup (where.id === the matched bill's id) —
+        // dispatch on the where clause so each read gets its own answer.
+        prisma.vendorBill.findFirst.mockImplementation(({ where }: any) =>
+          Promise.resolve(where?.id === matchedBill.id ? matchedBill : null),
+        );
       };
 
       const numberless = (overrides: Record<string, unknown> = {}) => ({
@@ -864,7 +871,7 @@ describe("VendorBillsService", () => {
           items: [{ description: "A", qty: 2, unitCost: 5 }],
         });
 
-        expect(invoiceScan.findUnique).not.toHaveBeenCalled();
+        expect(invoiceScan.findFirst).not.toHaveBeenCalled();
         const [args] = dupMatch.findScanDuplicate.mock.calls[0];
         expect(args.lineFingerprint).toMatch(/^[0-9a-f]{64}$/);
       });
@@ -938,7 +945,7 @@ describe("VendorBillsService", () => {
   describe("checkDuplicate", () => {
     it("maps a match to the wire payload, resolving the supplier name", async () => {
       dupMatch.findVendorBillDuplicate.mockResolvedValue(duplicateMatch({ status: "DRAFT" }));
-      prisma.supplier.findUnique.mockResolvedValue({ name: "Acme Foods" });
+      prisma.supplier.findFirst.mockResolvedValue({ name: "Acme Foods" });
 
       await expect(
         service.checkDuplicate({ supplierInvoiceNumber: "inv-1", total: 100 }),
@@ -966,7 +973,7 @@ describe("VendorBillsService", () => {
 
     it("still reports a fuzzy match so a client can warn before the operator commits", async () => {
       dupMatch.findVendorBillDuplicate.mockResolvedValue(duplicateMatch({ matchedBy: "fuzzy" }));
-      prisma.supplier.findUnique.mockResolvedValue({ name: "Acme Foods" });
+      prisma.supplier.findFirst.mockResolvedValue({ name: "Acme Foods" });
 
       await expect(
         service.checkDuplicate({ supplierId: "sup-1", billDate: "2026-06-01" }),

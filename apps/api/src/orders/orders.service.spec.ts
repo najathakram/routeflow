@@ -693,8 +693,11 @@ describe("OrdersService", () => {
 
     /** Buyer-path mocks for a customer on `tier`, no promos, no overrides. */
     const seedBuyerTierMocks = (tier: number) => {
-      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
-      prisma.customer.findUnique.mockResolvedValue({ pricingTier: tier });
+      // customer.findFirst now serves BOTH the buyer's own-record lookup (where.userId)
+      // and the pricingTier read (where.id — findUnique's exclusive select dropped tenantId).
+      prisma.customer.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(where?.id ? { pricingTier: tier } : { id: "cust-1" }),
+      );
       prisma.customerPrice.findMany.mockResolvedValue([]);
       prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
       prisma.order.create.mockResolvedValue(MOCK_ORDER);
@@ -1321,15 +1324,22 @@ describe("OrdersService", () => {
 
     // ── Ad-hoc trips + fulfillment mode: fulfillPath default chain ──────────
     describe("fulfillPath default chain", () => {
+      // customer.findFirst serves BOTH the buyer's own-record lookup (where.userId)
+      // and the pricing-tier/fulfillPath lookup (where.id) since the tenant-scope
+      // sweep converted the latter from findUnique.
+      let tierRecord: any;
       beforeEach(() => {
-        prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+        tierRecord = null;
+        prisma.customer.findFirst.mockImplementation(({ where }: any) =>
+          Promise.resolve(where?.userId ? { id: "cust-1" } : tierRecord),
+        );
         prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
         prisma.order.create.mockResolvedValue(MOCK_ORDER);
         (service as any).systemConfig.get.mockResolvedValue("0");
       });
 
       it("an explicit dto.fulfillPath wins over the customer's own default", async () => {
-        prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1, fulfillPath: "SHIP" });
+        tierRecord = { pricingTier: 1, fulfillPath: "SHIP" };
 
         await service.create(
           { items: [{ productId: "prod-1", qty: 1 }], fulfillPath: "ROUTE" } as any,
@@ -1342,7 +1352,7 @@ describe("OrdersService", () => {
       });
 
       it("falls back to the customer's own default when dto.fulfillPath is omitted", async () => {
-        prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1, fulfillPath: "SHIP" });
+        tierRecord = { pricingTier: 1, fulfillPath: "SHIP" };
 
         await service.create({ items: [{ productId: "prod-1", qty: 1 }] } as any, customerPayload);
 
@@ -1352,12 +1362,147 @@ describe("OrdersService", () => {
       });
 
       it("defaults to ROUTE when neither the dto nor the customer specify a path", async () => {
-        prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1, fulfillPath: null });
+        tierRecord = { pricingTier: 1, fulfillPath: null };
 
         await service.create({ items: [{ productId: "prod-1", qty: 1 }] } as any, customerPayload);
 
         expect(prisma.order.create).toHaveBeenCalledWith(
           expect.objectContaining({ data: expect.objectContaining({ fulfillPath: "ROUTE" }) }),
+        );
+      });
+    });
+
+    // ── WP1: boxed-payload qty-zeroing fix ───────────────────────────────────
+    // The web New-sale screen sends boxes:0/pieces:0 for plain-qty lines. The old
+    // `item.boxes != null || item.pieces != null` check treated an explicit zero
+    // the same as a real split and overwrote a valid qty with 0 (live bug: lines
+    // stored qty 0.000 at full unitPrice, order total $0, invoice ungeneratable).
+    describe("WP1 — boxes:0/pieces:0 payload no longer zeroes qty", () => {
+      const BOXED_PRODUCT = {
+        id: "prod-box",
+        name: "Cola Case",
+        pricePerUnit: 30,
+        unitsPerBox: 24,
+      };
+
+      beforeEach(() => {
+        prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+        prisma.order.create.mockResolvedValue(MOCK_ORDER);
+        (service as any).systemConfig.get.mockResolvedValue("0");
+      });
+
+      it("(a) non-boxed product: boxes:0/pieces:0 stores the real qty, not 0", async () => {
+        prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]); // pricePerUnit 4.99
+
+        await service.create(
+          { items: [{ productId: "prod-1", qty: 1, boxes: 0, pieces: 0 }] } as any,
+          customerPayload,
+        );
+
+        expect(prisma.order.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              lineItems: {
+                create: expect.arrayContaining([
+                  expect.objectContaining({ qty: 1, boxes: null, pieces: null, subtotal: 4.99 }),
+                ]),
+              },
+            }),
+          }),
+        );
+      });
+
+      it("(b) boxed product: boxes:0/pieces:0 stores a box-unaware qty-1 line (boxes/pieces null), priced at the box price — not a zeroed split", async () => {
+        prisma.product.findMany.mockResolvedValue([BOXED_PRODUCT]);
+
+        await service.create(
+          { items: [{ productId: "prod-box", qty: 1, boxes: 0, pieces: 0 }] } as any,
+          customerPayload,
+        );
+
+        expect(prisma.order.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              lineItems: {
+                create: expect.arrayContaining([
+                  expect.objectContaining({ qty: 1, boxes: null, pieces: null, subtotal: 30 }),
+                ]),
+              },
+            }),
+          }),
+        );
+      });
+
+      it("(c) regression guard: a real box/piece split still normalizes byte-identically", async () => {
+        prisma.product.findMany.mockResolvedValue([BOXED_PRODUCT]);
+
+        await service.create(
+          { items: [{ productId: "prod-box", qty: 1, boxes: 2, pieces: 0 }] } as any,
+          customerPayload,
+        );
+
+        expect(prisma.order.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              lineItems: {
+                create: expect.arrayContaining([
+                  expect.objectContaining({ qty: 48, boxes: 2, pieces: 0, subtotal: 60 }),
+                ]),
+              },
+            }),
+          }),
+        );
+      });
+
+      it("(d) an all-zero {qty:1, boxes:0, pieces:0} payload never throws", async () => {
+        prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+
+        await expect(
+          service.create(
+            { items: [{ productId: "prod-1", qty: 1, boxes: 0, pieces: 0 }] } as any,
+            customerPayload,
+          ),
+        ).resolves.toBeDefined();
+      });
+
+      it("(e) a crafted payload that derives qty 0 throws BadRequest — order NOT created", async () => {
+        // Defence in depth behind the DTO's @Min(1): an all-zero line has no box
+        // entry to fall back on, so the invariant is the only thing standing
+        // between it and a $0 line at full unitPrice (the live money bug's shape).
+        prisma.product.findMany.mockResolvedValue([BOXED_PRODUCT]);
+
+        await expect(
+          service.create(
+            { items: [{ productId: "prod-box", qty: 0, boxes: 0, pieces: 0 }] } as any,
+            customerPayload,
+          ),
+        ).rejects.toThrow(BadRequestException);
+        expect(prisma.order.create).not.toHaveBeenCalled();
+      });
+
+      it("(f) unitsPerBox 1: a boxes-carrying payload keeps the operator's qty (not zeroed, not rejected)", async () => {
+        // The web sends `boxes` whenever unitsPerBox is truthy — including 1, which
+        // is NOT case packaging. normalizeBoxesPieces' non-boxed branch reads `qty`,
+        // so the line must fall back to it rather than deriving 0 and tripping (e).
+        prisma.product.findMany.mockResolvedValue([
+          { id: "prod-single", name: "Single", pricePerUnit: 9, unitsPerBox: 1 },
+        ]);
+
+        await service.create(
+          { items: [{ productId: "prod-single", qty: 2, boxes: 2, pieces: 0 }] } as any,
+          customerPayload,
+        );
+
+        expect(prisma.order.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              lineItems: {
+                create: expect.arrayContaining([
+                  expect.objectContaining({ qty: 2, boxes: null, pieces: null, subtotal: 18 }),
+                ]),
+              },
+            }),
+          }),
         );
       });
     });
@@ -1509,6 +1654,124 @@ describe("OrdersService", () => {
         dueDate: undefined,
         terms: undefined,
       });
+    });
+
+    // ── WP4: the delivery-date picker (`deliveredOn` replaces the binary) ────
+
+    it("a past deliveredOn delivers on THAT date and issues the invoice, overriding deliveredNow", async () => {
+      const invoices = (service as any).invoicesService;
+      const past = isoDaysAgo(3);
+
+      await service.createSale({ ...baseDto, deliveredNow: false, deliveredOn: past }, user);
+
+      expect(prisma.forTenant().order.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: OrderStatus.DELIVERED,
+            deliveredAt: new Date(past),
+          }),
+        }),
+      );
+      expect(invoices.send).toHaveBeenCalledWith("inv-1");
+    });
+
+    it("a future deliveredOn schedules the order instead of delivering it", async () => {
+      const invoices = (service as any).invoicesService;
+      const future = isoDaysAgo(-4);
+
+      await service.createSale({ ...baseDto, deliveredNow: true, deliveredOn: future }, user);
+
+      expect(prisma.forTenant().order.update).not.toHaveBeenCalled();
+      expect(service.create).toHaveBeenCalledWith(
+        expect.objectContaining({ requestedDeliveryDate: future }),
+        user,
+        { skipAutoMerge: true },
+      );
+      expect(invoices.send).not.toHaveBeenCalled();
+    });
+
+    it("today's deliveredOn behaves exactly like deliveredNow", async () => {
+      const invoices = (service as any).invoicesService;
+
+      await service.createSale(
+        { ...baseDto, deliveredNow: false, deliveredOn: isoDaysAgo(0) },
+        user,
+      );
+
+      expect(prisma.forTenant().order.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: OrderStatus.DELIVERED }),
+        }),
+      );
+      expect(invoices.send).toHaveBeenCalledWith("inv-1");
+    });
+
+    it("a non-staff caller may not backdate via deliveredOn (parseOrderDate's rule)", async () => {
+      await expect(
+        service.createSale({ ...baseDto, deliveredOn: isoDaysAgo(3) }, {
+          sub: "drv-1",
+          role: UserRole.DRIVER,
+        } as any),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(service.create).not.toHaveBeenCalled();
+    });
+
+    it("omitting deliveredOn leaves the deliveredNow path byte-unchanged", async () => {
+      await service.createSale({ ...baseDto, requestedDeliveryDate: "2026-09-01" }, user);
+
+      expect(service.create).toHaveBeenCalledWith(
+        expect.objectContaining({ requestedDeliveryDate: "2026-09-01" }),
+        user,
+        { skipAutoMerge: true },
+      );
+    });
+  });
+
+  // ── WP1: createSale end-to-end through the REAL create() (not mocked away
+  // like the sibling describe above), proving the qty-zeroing fix reaches the
+  // full "New sale" flow and doesn't regress to the "invoice could not be
+  // generated" 500 the live bug produced. ──────────────────────────────────
+  describe("createSale — qty-zeroing fix, end-to-end (WP1)", () => {
+    it("a deliveredNow sale with boxes:0/pieces:0 lines prices from the real qty and generates its invoice", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        user: { status: "ACTIVE" },
+        pricingTier: 1,
+        fulfillPath: null,
+      });
+      prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]); // pricePerUnit 4.99
+      prisma.order.create.mockResolvedValue(MOCK_ORDER); // id "ord-1"
+      (service as any).systemConfig.get.mockResolvedValue("0");
+      const invoices = (service as any).invoicesService;
+
+      const result = await service.createSale(
+        {
+          customerId: "cust-1",
+          items: [{ productId: "prod-1", qty: 1, boxes: 0, pieces: 0 }],
+          deliveredNow: true,
+        } as any,
+        operatorPayload,
+      );
+
+      // The real create() must NOT have zeroed the qty (the live money bug this
+      // WP fixes) — the line prices at unitPrice × 1, not unitPrice × 0.
+      expect(prisma.order.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            lineItems: {
+              create: expect.arrayContaining([
+                expect.objectContaining({ qty: 1, boxes: null, pieces: null, subtotal: 4.99 }),
+              ]),
+            },
+          }),
+        }),
+      );
+      // The invoice is generated (non-empty) and issued — the flow completes
+      // instead of hitting the "order created but invoice could not be
+      // generated" InternalServerErrorException.
+      expect(invoices.createInvoiceFromOrder).toHaveBeenCalledTimes(1);
+      expect(invoices.send).toHaveBeenCalledWith("inv-1");
+      expect(result).toEqual(expect.objectContaining({ id: "inv-1" }));
     });
   });
 
@@ -1729,6 +1992,7 @@ describe("OrdersService", () => {
 
     it("cancelling voids EVERY live invoice on the order, not just the draft", async () => {
       prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
+      prisma.order.findFirst.mockResolvedValue(MOCK_ORDER); // cancelImpact's own read
       prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "CANCELLED" });
       // cancelImpact's read, then the in-tx read of invoices to void.
       prisma.invoice.findMany
@@ -1752,6 +2016,7 @@ describe("OrdersService", () => {
 
     it("cancelling hands applied credits back before the invoices die", async () => {
       prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
+      prisma.order.findFirst.mockResolvedValue(MOCK_ORDER); // cancelImpact's own read
       prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "CANCELLED" });
       prisma.invoice.findMany
         .mockResolvedValueOnce([
@@ -1779,6 +2044,7 @@ describe("OrdersService", () => {
 
     it("refuses to cancel when real cash was taken, leaving the order untouched", async () => {
       prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
+      prisma.order.findFirst.mockResolvedValue(MOCK_ORDER); // cancelImpact's own read
       prisma.invoice.findMany.mockResolvedValueOnce([
         {
           id: "inv-cash",
@@ -2054,11 +2320,239 @@ describe("OrdersService", () => {
 
     it("CANCELLED fires no messaging trigger", async () => {
       prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
+      prisma.order.findFirst.mockResolvedValue(MOCK_ORDER); // cancelImpact's own read
       prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "CANCELLED" });
 
       await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload);
 
       expect(messagingService.notifyEvent).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── WP3: universal one-step demotion + reopen DELIVERED ──────────────────
+
+  describe("changeStatus — one-step-back demotions (reopen DELIVERED)", () => {
+    const driverPayload = {
+      sub: "user-drv",
+      username: "driver1",
+      role: "DRIVER" as const,
+      status: "ACTIVE" as const,
+      forcePasswordChange: false,
+    };
+    const delivered = { ...MOCK_ORDER, status: "DELIVERED" as const, deliveredAt: new Date() };
+
+    it("PENDING → DRAFT is legal for staff with a reason", async () => {
+      prisma.order.findUnique.mockResolvedValue(MOCK_ORDER); // PENDING
+      prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "DRAFT" });
+
+      await service.changeStatus(
+        "ord-1",
+        { status: "DRAFT" as any, reason: "keyed too early" },
+        operatorPayload,
+      );
+
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "ord-1" },
+          data: expect.objectContaining({ status: "DRAFT" }),
+        }),
+      );
+    });
+
+    it("PENDING → DRAFT without a reason is refused and writes nothing", async () => {
+      prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
+
+      await expect(
+        service.changeStatus("ord-1", { status: "DRAFT" as any }, operatorPayload),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it("DELIVERED → CONFIRMED (Reopen Order) clears deliveredAt", async () => {
+      prisma.order.findUnique.mockResolvedValue(delivered);
+      prisma.order.update.mockResolvedValue({ ...delivered, status: "CONFIRMED" });
+
+      await service.changeStatus(
+        "ord-1",
+        { status: "CONFIRMED" as any, reason: "goods came back on the van" },
+        operatorPayload,
+      );
+
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: "CONFIRMED", deliveredAt: null }),
+        }),
+      );
+    });
+
+    it("DELIVERED → PARTIALLY_DELIVERED is legal and also clears deliveredAt", async () => {
+      prisma.order.findUnique.mockResolvedValue(delivered);
+      prisma.order.update.mockResolvedValue({ ...delivered, status: "PARTIALLY_DELIVERED" });
+
+      await service.changeStatus(
+        "ord-1",
+        { status: "PARTIALLY_DELIVERED" as any, reason: "two cases short" },
+        operatorPayload,
+      );
+
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: "PARTIALLY_DELIVERED",
+            deliveredAt: null,
+          }),
+        }),
+      );
+    });
+
+    it("a DELIVERED demotion without a reason is refused", async () => {
+      prisma.order.findUnique.mockResolvedValue(delivered);
+
+      await expect(
+        service.changeStatus("ord-1", { status: "CONFIRMED" as any }, operatorPayload),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    // The DELIVERED branch (draft reconcile / auto-invoice / credit settle) is
+    // keyed on dto.status === DELIVERED — a demotion AWAY from DELIVERED must
+    // fire none of it, or reopening would re-invoice the order.
+    it("a DELIVERED demotion fires none of the DELIVERED branch's invoicing side effects", async () => {
+      const invoices = (service as any).invoicesService;
+      prisma.order.findUnique.mockResolvedValue(delivered);
+      prisma.order.update.mockResolvedValue({ ...delivered, status: "CONFIRMED" });
+
+      await service.changeStatus(
+        "ord-1",
+        { status: "CONFIRMED" as any, reason: "reopen" },
+        operatorPayload,
+      );
+
+      expect(invoices.findOpenOrderDraft).not.toHaveBeenCalled();
+      expect(invoices.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
+      expect(invoices.createInvoiceFromOrderWithTenant).not.toHaveBeenCalled();
+    });
+
+    it("drivers may not reopen a delivered order", async () => {
+      prisma.order.findUnique.mockResolvedValue(delivered);
+
+      await expect(
+        service.changeStatus("ord-1", { status: "CONFIRMED" as any, reason: "x" }, driverPayload),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it("409s when the order was delivered on a COMPLETED route-run stop", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...delivered, routeRunStopId: "stop-1" });
+      prisma.routeRunStop.findUnique.mockResolvedValue({ status: "COMPLETED" });
+
+      await expect(
+        service.changeStatus(
+          "ord-1",
+          { status: "CONFIRMED" as any, reason: "reopen" },
+          operatorPayload,
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it("a stale, non-COMPLETED stop link does not block the reopen", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...delivered, routeRunStopId: "stop-1" });
+      prisma.routeRunStop.findUnique.mockResolvedValue({ status: "PENDING" });
+      prisma.order.update.mockResolvedValue({ ...delivered, status: "CONFIRMED" });
+
+      await service.changeStatus(
+        "ord-1",
+        { status: "CONFIRMED" as any, reason: "reopen" },
+        operatorPayload,
+      );
+
+      expect(prisma.order.update).toHaveBeenCalled();
+    });
+  });
+
+  // ─── WP3: delete-any (money, not status, is the gate) ─────────────────────
+
+  describe("deleteOrder — delete-any", () => {
+    const deliveredOrder = {
+      ...MOCK_ORDER,
+      status: "DELIVERED" as const,
+      invoices: [{ id: "d1" }],
+      transaction: null,
+    };
+
+    beforeEach(() => {
+      // deleteOrder's own lookup is order.findUnique (full include), but the
+      // cancelImpact() it delegates the payment check to uses order.findFirst
+      // since the tenant-scope sweep — both must see the order.
+      prisma.order.findFirst.mockResolvedValue(deliveredOrder);
+    });
+
+    it("staff may delete a DELIVERED order, cascading its unpaid invoice", async () => {
+      prisma.order.findUnique.mockResolvedValue(deliveredOrder);
+
+      await expect(service.deleteOrder("ord-1", operatorPayload)).resolves.toEqual({
+        success: true,
+      });
+
+      expect(prisma.invoice.delete).toHaveBeenCalledWith({ where: { id: "d1" } });
+      expect(prisma.order.delete).toHaveBeenCalledWith({ where: { id: "ord-1" } });
+    });
+
+    it("409s when a linked invoice has recorded (external) payments", async () => {
+      prisma.order.findUnique.mockResolvedValue(deliveredOrder);
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "d1",
+          invoiceNumber: "INV-1",
+          status: "PAID",
+          total: 50,
+          payments: [{ method: "CASH", amount: 50, status: "PAID" }],
+        },
+      ]);
+
+      await expect(service.deleteOrder("ord-1", operatorPayload)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(prisma.order.delete).not.toHaveBeenCalled();
+    });
+
+    // #341's wallet behaviour must survive the liberalization: credit-note money
+    // is handed back and the delete proceeds — only real cash blocks it.
+    it("a wallet-only PAID invoice still deletes and returns the credit", async () => {
+      prisma.order.findUnique.mockResolvedValue(deliveredOrder);
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "d1",
+          invoiceNumber: "INV-1",
+          status: "PAID",
+          total: 50,
+          payments: [{ method: "CREDIT_NOTE", amount: 50, status: "PAID" }],
+        },
+      ]);
+
+      await service.deleteOrder("ord-1", operatorPayload);
+
+      expect(creditNotesService.releaseOrderCreditsInTx).toHaveBeenCalled();
+      expect(prisma.order.delete).toHaveBeenCalledWith({ where: { id: "ord-1" } });
+    });
+
+    it("409s when returns are recorded against the order (restrict-linked)", async () => {
+      prisma.order.findUnique.mockResolvedValue(deliveredOrder);
+      prisma.return.count.mockResolvedValue(1);
+
+      await expect(service.deleteOrder("ord-1", operatorPayload)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(prisma.order.delete).not.toHaveBeenCalled();
+    });
+
+    it("non-staff callers keep the old DRAFT/PENDING/CANCELLED allowlist", async () => {
+      prisma.order.findUnique.mockResolvedValue(deliveredOrder);
+
+      await expect(service.deleteOrder("ord-1", customerPayload as any)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(prisma.order.delete).not.toHaveBeenCalled();
     });
   });
 
@@ -2319,7 +2813,7 @@ describe("OrdersService", () => {
         ],
       };
       prisma.order.findUnique.mockResolvedValue(upsoldOrder);
-      prisma.product.findUnique.mockResolvedValue({ pricePerUnit: 5 });
+      prisma.product.findFirst.mockResolvedValue({ pricePerUnit: 5 }); // catalog anchor read
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 18, status: "PENDING" }]);
 
       await service.updateOrderItems(
@@ -3086,7 +3580,7 @@ describe("OrdersService", () => {
         status: "DRAFT" as const,
         lineItems: [],
       });
-      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 }); // operatorTierCtx read
       prisma.customerPrice.findMany.mockResolvedValue([]);
       prisma.product.findUnique.mockResolvedValue(TIERED_PRODUCT);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
@@ -3154,7 +3648,7 @@ describe("OrdersService", () => {
         status: "DRAFT" as const,
         lineItems: [],
       });
-      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 }); // default tier 3 → tier price 8
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 }); // operatorTierCtx read; default tier 3 → tier price 8
       prisma.customerPrice.findMany.mockResolvedValue([
         { productId: "prod-1", pricingTier: null, msrp: 5 },
       ]);
@@ -3187,8 +3681,11 @@ describe("OrdersService", () => {
         customerId: "cust-1",
         lineItems: [],
       });
-      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
-      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
+      // customer.findFirst now serves BOTH the buyer ownership check (where.userId)
+      // and the buyerTierCtx pricingTier read (where.id).
+      prisma.customer.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(where?.id ? { pricingTier: 3 } : { id: "cust-1" }),
+      );
       prisma.customerPrice.findMany.mockResolvedValue([]);
       prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
@@ -3240,6 +3737,106 @@ describe("OrdersService", () => {
             priceType: "STANDARD",
             subtotal: 20,
           }),
+        }),
+      );
+    });
+  });
+
+  // ── WP1 (phase 2): the SAME boxes:0/pieces:0 trap that zeroed create()'s qty
+  // existed in three updateOrderItems branches (replace-all, merge/add, and an
+  // existing-line qty edit) — each read `item.boxes != null || item.pieces !=
+  // null` and treated an explicit zero as a real split. Fixed with the same
+  // positive check as create(). ────────────────────────────────────────────
+  describe("updateOrderItems — boxes:0/pieces:0 no longer zeroes/drops a line (WP1 phase 2)", () => {
+    it("replace-all: boxes:0/pieces:0 on a plain-qty line keeps the real qty (not zeroed)", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [],
+      });
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1 });
+      prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]); // pricePerUnit 4.99, no unitsPerBox
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 9.98, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-1", qty: 2, boxes: 0, pieces: 0 }], replaceAll: true },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            qty: 2,
+            boxes: null,
+            pieces: null,
+            subtotal: 9.98,
+          }),
+        }),
+      );
+    });
+
+    it("merge/add: boxes:0/pieces:0 on a NEW plain-qty line keeps the real qty (old code derived qty 0 and silently dropped the line)", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [],
+      });
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findUnique.mockResolvedValue(MOCK_PRODUCT);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 9.98, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-1", qty: 2, boxes: 0, pieces: 0 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-1",
+            qty: 2,
+            boxes: null,
+            pieces: null,
+            subtotal: 9.98,
+          }),
+        }),
+      );
+    });
+
+    it("existing-line edit: boxes:0/pieces:0 sent alongside a real qty is not silently discarded (old code derived qty 0 and skipped the update)", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 3,
+            unitPrice: 4.99,
+            subtotal: 14.97,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+          },
+        ],
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 24.95, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", action: "UPDATE" as const, qty: 5, boxes: 0, pieces: 0 }] },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-1" },
+          data: expect.objectContaining({ qty: 5, boxes: null, pieces: null, subtotal: 24.95 }),
         }),
       );
     });
@@ -3661,7 +4258,7 @@ describe("OrdersService", () => {
           },
         ],
       });
-      prisma.product.findUnique.mockResolvedValue({ id: "prod-box", unitsPerBox: 12 });
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-box", unitsPerBox: 12 }); // box-size resolve
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 63.79, status: "PENDING" }]);
 
       await service.updateOrderItems(
@@ -4025,7 +4622,7 @@ describe("OrdersService", () => {
 
   describe("updateShipment", () => {
     it("sets carrier + tracking on the order and mirrors them to non-void invoices", async () => {
-      prisma.order.findUnique.mockResolvedValue({ id: "ord-1", shippedAt: null });
+      prisma.order.findFirst.mockResolvedValue({ id: "ord-1", shippedAt: null });
       prisma.order.update.mockResolvedValue({ id: "ord-1" });
 
       await service.updateShipment(
@@ -4056,7 +4653,7 @@ describe("OrdersService", () => {
     });
 
     it("clears carrier, tracking and shippedAt when the tracking number is blank", async () => {
-      prisma.order.findUnique.mockResolvedValue({ id: "ord-1", shippedAt: new Date() });
+      prisma.order.findFirst.mockResolvedValue({ id: "ord-1", shippedAt: new Date() });
       prisma.order.update.mockResolvedValue({ id: "ord-1" });
 
       await service.updateShipment(
@@ -4465,7 +5062,7 @@ describe("OrdersService", () => {
     });
 
     it("over the limit blocks ALL roles and persists nothing (409 CREDIT_LIMIT_EXCEEDED)", async () => {
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.invoice.findMany.mockResolvedValue([
         { total: 200, orderId: null, payments: [{ amount: 80 }] }, // balance 120
       ]);
@@ -4486,7 +5083,7 @@ describe("OrdersService", () => {
 
     it("credit-limit guard receives the fee-inclusive projected total (order carries a stored shippingFee)", async () => {
       prisma.order.findUnique.mockResolvedValue({ ...editableOrder(), shippingFee: 5 });
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.invoice.findMany.mockResolvedValue([
         { total: 200, orderId: null, payments: [{ amount: 80 }] }, // balance 120
       ]);
@@ -4525,7 +5122,7 @@ describe("OrdersService", () => {
     });
 
     it("ignores VOID (bounced) payments when netting exposure — a bounce cannot slip under the limit", async () => {
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.invoice.findMany.mockResolvedValue([
         {
           total: 120,
@@ -4550,7 +5147,7 @@ describe("OrdersService", () => {
     });
 
     it("exposure exactly at the limit passes; one cent over blocks", async () => {
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.order.findMany.mockResolvedValue([]);
 
       prisma.invoice.findMany.mockResolvedValue([
@@ -4563,7 +5160,7 @@ describe("OrdersService", () => {
       prisma.order.findUnique.mockResolvedValue(editableOrder());
       prisma.orderItem.findMany.mockResolvedValue(postEditItems);
       prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.order.findMany.mockResolvedValue([]);
       prisma.invoice.findMany.mockResolvedValue([
         { total: 85.01, orderId: null, payments: [] }, // 100.01 → over
@@ -4588,9 +5185,11 @@ describe("OrdersService", () => {
     });
 
     it("blocks a CUSTOMER edit over the limit (buyer replace path)", async () => {
-      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" }); // ownership
-      // Serves BOTH the branch's pricingTier read and the guard's creditLimit read.
-      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1, creditLimit: 10 });
+      // customer.findFirst now serves the ownership check (where.userId), the
+      // buyerTierCtx pricingTier read, and the guard's creditLimit read (both where.id).
+      prisma.customer.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(where?.id ? { pricingTier: 1, creditLimit: 10 } : { id: "cust-1" }),
+      );
       prisma.product.findMany.mockResolvedValue([
         { ...MOCK_PRODUCT, id: "prod-1", unitsPerBox: null },
       ]);
@@ -4658,7 +5257,7 @@ describe("OrdersService", () => {
       prisma.order.findUnique.mockResolvedValue(editableOrder());
       prisma.orderItem.findMany.mockResolvedValue(postEditItems);
       prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 100 });
       prisma.invoice.findMany.mockResolvedValue([
         { total: 200, orderId: null, payments: [{ amount: 80 }] }, // balance 120
       ]);
@@ -5005,14 +5604,16 @@ describe("OrdersService", () => {
       );
       prisma.order.findUnique.mockResolvedValue(baseOrder([line]));
       // Catalog price moved to 10 — the merge must NOT re-price the agreed line.
-      prisma.product.findUnique.mockResolvedValue({
+      const catalogProduct = {
         id: "prod-1",
         name: "Widget",
         pricePerUnit: 10,
         unitsPerBox: null,
         category: null,
         trackedCategoryId: null,
-      });
+      };
+      prisma.product.findUnique.mockResolvedValue(catalogProduct); // in-tx ADD_ITEM price read
+      prisma.product.findFirst.mockResolvedValue(catalogProduct); // pre-tx regulated guard read
       prisma.orderItem.findMany
         .mockResolvedValueOnce([]) // getCustomerPriceHistory (hoisted, pre-tx)
         .mockResolvedValue([
@@ -5045,8 +5646,9 @@ describe("OrdersService", () => {
         }),
       );
       prisma.order.findUnique.mockResolvedValue(baseOrder([])); // no existing line for prod-2
-      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 2, creditLimit: null });
-      prisma.product.findUnique.mockResolvedValue({
+      // Serves BOTH the buyerTier pricingTier read and the credit guard's creditLimit read.
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 2, creditLimit: null });
+      const catalogProduct = {
         id: "prod-2",
         name: "Basil",
         pricePerUnit: 10,
@@ -5054,7 +5656,9 @@ describe("OrdersService", () => {
         unitsPerBox: null,
         category: null,
         trackedCategoryId: null,
-      });
+      };
+      prisma.product.findUnique.mockResolvedValue(catalogProduct); // in-tx ADD_ITEM price read
+      prisma.product.findFirst.mockResolvedValue(catalogProduct); // pre-tx regulated guard read
       prisma.orderItem.create.mockResolvedValue({ id: "li-new" });
       prisma.orderItem.findMany
         .mockResolvedValueOnce([]) // getCustomerPriceHistory (hoisted, pre-tx)
@@ -5179,14 +5783,16 @@ describe("OrdersService", () => {
         }),
       );
       prisma.order.findUnique.mockResolvedValue(baseOrder([])); // held 0 — a brand-new line
-      prisma.product.findUnique.mockResolvedValue({
+      const catalogProduct = {
         id: "prod-3",
         name: "Basil",
         pricePerUnit: 10,
         unitsPerBox: null,
         category: null,
         trackedCategoryId: null,
-      });
+      };
+      prisma.product.findUnique.mockResolvedValue(catalogProduct); // in-tx ADD_ITEM price read
+      prisma.product.findFirst.mockResolvedValue(catalogProduct); // pre-tx regulated guard read
       prisma.orderItem.findMany
         .mockResolvedValueOnce([]) // getCustomerPriceHistory (hoisted, pre-tx)
         .mockResolvedValue([
@@ -5243,7 +5849,7 @@ describe("OrdersService", () => {
           trackedCategoryId: null,
         },
       ]);
-      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 10, pricingTier: 1 });
+      prisma.customer.findFirst.mockResolvedValue({ creditLimit: 10, pricingTier: 1 });
 
       await expect(
         service.approveChangeRequestAtStop("cr-1", operatorPayload, null),
@@ -5334,7 +5940,8 @@ describe("OrdersService", () => {
         }),
       );
       prisma.order.findUnique.mockResolvedValue(baseOrder([]));
-      prisma.product.findUnique.mockResolvedValue({ id: "prod-4", trackedCategoryId: "cat-1" });
+      prisma.product.findUnique.mockResolvedValue({ id: "prod-4", trackedCategoryId: "cat-1" }); // in-tx ADD_ITEM price read
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-4", trackedCategoryId: "cat-1" }); // pre-tx regulated guard read
       const authGuard = (service as any).authGuard;
       authGuard.assertAuthorizedOrThrow.mockRejectedValueOnce(
         new ConflictException({ code: "REGULATED_AUTH_REQUIRED" }),

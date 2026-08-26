@@ -1,7 +1,7 @@
 {
   "mappedSha": "769bc1e9",
-  "generatedAt": "2026-08-25T22:02:26.089Z",
+  "generatedAt": "2026-08-26T04:17:20.260Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 898,
-  "notes": "2026-08-25 (PR #437) — platform-admin AVAILABLE_ADDONS gained driver_payments (+ dev-mode copy mentions the trip builder; toggleError banner replaces the silent catch); demo-seed teardown walks the commission chain before invoices (CommissionAccrual FKs Invoice; the refresh died half-cleared) + clears DeliveryMutation/Batch before orders; seeds depot COORDS on Route+RouteRun, SystemConfig route.defaultDepot*, driver home bases, and order fulfillPath from customer so the ad-hoc trip builder demos with no Maps key. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "2026-08-25 (branch claude/quizzical-dirac-58e99b, rebased post-#438) — iOS CSV SHARE ACTIVATION: the CSV share path gains the same lost-transient-activation retap recovery #438 gave the PDF path (share() NotAllowedError routes to the tap-again sheet instead of a dead toast). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

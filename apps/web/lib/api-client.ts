@@ -13,7 +13,15 @@ import { parsePlanGate, type PlanGateBody } from "./plan-gate";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
 
-export const apiClient = axios.create({ baseURL: BASE_URL });
+export const apiClient = axios.create({
+  baseURL: BASE_URL,
+  // Serialize array params as repeated keys (?statuses=A&statuses=B) instead of
+  // axios's default bracket notation (?statuses[]=A&statuses[]=B). Express's
+  // `simple` query parser doesn't unwrap brackets, so the API sees the literal
+  // key "statuses[]" and the global ValidationPipe (forbidNonWhitelisted) 400s.
+  // Mirrors `buyerApiClient` in apps/mobile/lib/buyer-auth.ts.
+  paramsSerializer: { indexes: null },
+});
 
 /** Read the username from the operator access token payload, even if expired
  *  (used to label the re-auth sheet). Returns null if unreadable. */
@@ -60,14 +68,32 @@ function isOnMarketingRoute(): boolean {
   return MARKETING_ROUTES.has(window.location.pathname);
 }
 
+/**
+ * Platform-admin surfaces (`/admin`, `/admin-login`, …). These pages are owned
+ * by `superAdminClient` (lib/admin-api.ts), which keeps its OWN token pair and
+ * redirects to `/admin-login` on its own auth failure. This operator client
+ * must therefore never redirect away from them: a super admin routinely has a
+ * stale (or absent) operator token — and often a buyer session in the same
+ * browser — so a background operator call 401'ing here used to bounce a
+ * perfectly valid admin session to `/buyer/login` or `/login`, seemingly at
+ * random. The trigger is idle time: TanStack Query refetches on window focus,
+ * so returning to an idle admin tab fired exactly that request.
+ */
+function isOnSuperAdminRoute(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.location.pathname.startsWith("/admin");
+}
+
 /** Operator surfaces only — the in-place re-auth sheet must never appear over
- *  the buyer portal or the auth pages (a stale operator token can coexist with
- *  a buyer session, RF-220). Buyer/marketing keep the redirect fallback. */
+ *  the buyer portal, the platform-admin panel, or the auth pages (a stale
+ *  operator token can coexist with a buyer or super-admin session, RF-220).
+ *  Buyer/marketing keep the redirect fallback. */
 function isOperatorSurface(): boolean {
   if (typeof window === "undefined") return false;
   const path = window.location.pathname;
   if (isOnMarketingRoute()) return false;
-  if (path.startsWith("/buyer") || path === "/login" || path === "/admin-login") return false;
+  if (isOnSuperAdminRoute()) return false;
+  if (path.startsWith("/buyer") || path === "/login") return false;
   return true;
 }
 
@@ -222,7 +248,16 @@ apiClient.interceptors.response.use(
       // API call 401'd against a stale token — let them keep browsing the
       // marketing site. Tokens are now cleared, so the next dashboard click
       // will go through the normal login flow.
-      if (!isOnMarketingRoute()) {
+      //
+      // Same for the platform-admin panel, for a stronger reason: that session
+      // lives in a DIFFERENT token pair (superAdminClient) which is still
+      // perfectly valid, so redirecting here would evict a signed-in super
+      // admin over an unrelated operator 401 — landing them on `/buyer/login`
+      // whenever they also had a buyer session (the same Google account can be
+      // both), or `/login` otherwise. That is the intermittent "my admin page
+      // switches me to the buyer/sign-in page after idling" bug: nothing about
+      // the admin session expired, and superAdminClient handles its own 401s.
+      if (!isOnMarketingRoute() && !isOnSuperAdminRoute()) {
         window.location.href = buyerToken && !opToken ? "/buyer/login" : "/login";
       }
       return Promise.reject(refreshError);

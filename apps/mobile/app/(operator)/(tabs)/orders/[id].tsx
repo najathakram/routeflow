@@ -499,9 +499,15 @@ export default function OrderDetailScreen() {
   };
 
   const handleDelete = () => {
+    // Staff can delete an order in ANY status now (owner: "delete any order")
+    // — the server's only remaining block is a linked invoice with recorded
+    // payments, which 409s and is toasted below via the same err-message read
+    // every other mutation on this screen uses.
     confirm(
-      "Delete order?",
-      "This permanently removes the order.",
+      order.status === "DELIVERED" ? "Delete this delivered order?" : "Delete order?",
+      order.status === "DELIVERED"
+        ? "Its delivery record is removed permanently. This cannot be undone."
+        : "This permanently removes the order.",
       () =>
         deleteMut.mutate(order.id, {
           onSuccess: () => {
@@ -840,8 +846,11 @@ export default function OrderDetailScreen() {
             </View>
           ) : null}
 
-          {/* Carrier shipment */}
-          <ShipmentSection shipment={order} onEdit={() => setShipmentModal(true)} />
+          {/* Carrier shipment — only for carrier-shipped orders, or rows that
+              already carry tracking data recorded before this gate existed. */}
+          {order.fulfillPath === "SHIP" || order.shippingCarrier || order.shippingTrackingNumber ? (
+            <ShipmentSection shipment={order} onEdit={() => setShipmentModal(true)} />
+          ) : null}
 
           {/* Status transitions */}
           {actions.length > 0 ? (
@@ -954,9 +963,11 @@ export default function OrderDetailScreen() {
                   <Text style={styles.actionBtnText}>View customer</Text>
                 </Pressable>
               ) : null}
-              {/* The server allows deleting only DRAFT/PENDING/CANCELLED, so the
-                  tile is hidden elsewhere rather than earning a guaranteed 400
-                  after a destructive-looking confirm. Cancel is the live-order path. */}
+              {/* 2026-08-25: staff may delete an order in any status now — the
+                  server only blocks a linked invoice with recorded payments
+                  (409, toasted in handleDelete). `canDeleteOrder` always
+                  returns true today; kept as the gate so a future
+                  client-visible block has somewhere to slot in. */}
               {canDeleteOrder(order.status) ? (
                 <Pressable
                   style={[styles.actionBtn, styles.dangerAction]}

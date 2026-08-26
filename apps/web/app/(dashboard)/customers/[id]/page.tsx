@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import * as Tabs from "@radix-ui/react-tabs";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -80,6 +80,8 @@ import {
   useUpdateCustomer,
   useUpdateCustomerStatus,
   useAddCustomerAddress,
+  useUpdateCustomerAddress,
+  useDeleteCustomerAddress,
   useCustomerStatement,
   useCustomerAdvancePayments,
   useCreateAdvancePayment,
@@ -342,41 +344,71 @@ function timeAgo(dateStr: string): string {
   return fmtDate(dateStr);
 }
 
-// ── Add Address Modal ─────────────────────────────────────────────────────────
+// ── Address Form Modal (add + edit) ────────────────────────────────────────
 
-interface AddAddressFormValues {
+interface AddressFormValues {
   label: string;
   line1: string;
   line2?: string;
   city: string;
   state: string;
   zip: string;
-  isDefault?: boolean;
   addressType: string;
 }
 
-function AddAddressModal({
+interface InitialAddress {
+  label?: string;
+  line1?: string;
+  line2?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  addressType?: string;
+  /** Not user-editable here — "Set primary" on the card is the mechanism. Carried
+   *  through purely so callers can pass the raw address row without stripping it. */
+  isDefault?: boolean;
+}
+
+function buildAddressFormValues(initialAddress?: InitialAddress): AddressFormValues {
+  return {
+    label: initialAddress?.label ?? "",
+    line1: initialAddress?.line1 ?? "",
+    line2: initialAddress?.line2 ?? "",
+    city: initialAddress?.city ?? "",
+    state: initialAddress?.state ?? "",
+    zip: initialAddress?.zip ?? "",
+    addressType: initialAddress?.addressType ?? "BILLING",
+  };
+}
+
+function AddressFormModal({
   isOpen,
   onClose,
   onSave,
   isSaving,
+  mode,
+  initialAddress,
 }: {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (values: AddAddressFormValues) => void;
+  onSave: (values: AddressFormValues) => void;
   isSaving: boolean;
+  mode: "add" | "edit";
+  initialAddress?: InitialAddress;
 }) {
-  const [form, setForm] = React.useState<AddAddressFormValues>({
-    label: "",
-    line1: "",
-    city: "",
-    state: "",
-    zip: "",
-    addressType: "BILLING",
-  });
+  const [form, setForm] = React.useState<AddressFormValues>(() =>
+    buildAddressFormValues(initialAddress),
+  );
+
+  // Re-seed every time the modal opens — covers both a fresh "Add" (blank) and
+  // "Edit" (prefilled from the clicked card); one modal now serves both modes.
+  React.useEffect(() => {
+    if (isOpen) setForm(buildAddressFormValues(initialAddress));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, initialAddress]);
 
   const handleChange =
-    (field: keyof AddAddressFormValues) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    (field: keyof AddressFormValues) => (e: React.ChangeEvent<HTMLInputElement>) =>
       setForm((prev) => ({ ...prev, [field]: e.target.value }));
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -388,19 +420,19 @@ function AddAddressModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Add Address"
+      title={mode === "add" ? "Add Address" : "Edit Address"}
       footer={
         <>
           <Button variant="secondary" type="button" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" form="add-address-form" loading={isSaving}>
-            Save Address
+          <Button type="submit" form="address-form" loading={isSaving}>
+            {mode === "add" ? "Save Address" : "Save Changes"}
           </Button>
         </>
       }
     >
-      <form id="add-address-form" onSubmit={handleSubmit} noValidate>
+      <form id="address-form" onSubmit={handleSubmit} noValidate>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -892,6 +924,7 @@ const CUSTOMER_TERMS_OPTIONS = [
 function SpecialPricesTab({ customerId }: { customerId: string }) {
   const { data: customer } = useCustomer(customerId);
   const updateCustomer = useUpdateCustomer();
+  const { toast } = useToast();
   const { user } = useAuth();
   // TENANT_ADMIN satisfies OPERATOR server-side (ROLE_SATISFIES in roles.guard.ts), so the
   // @Roles(OPERATOR) customer endpoints accept it — gating the UI on OPERATOR alone hid
@@ -980,6 +1013,42 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
     deletePrice.mutate({ customerId, priceId }, { onSuccess: () => setDeletingPriceId(null) });
   };
 
+  // Deposit % is free text, so — unlike the sibling <select>s — it must NOT
+  // PATCH per keystroke: typing "50" would persist 5 first and the server value
+  // would fight the field mid-typing. Hold it locally, re-seed from the server,
+  // and commit once on blur/Enter (clamped to the DTO's 0–100).
+  const serverDeposit =
+    customer?.defaultDepositPercent != null ? Number(customer.defaultDepositPercent) : null;
+  const [depositInput, setDepositInput] = React.useState("");
+  React.useEffect(() => {
+    setDepositInput(serverDeposit != null ? String(serverDeposit) : "");
+  }, [serverDeposit]);
+
+  const commitDeposit = () => {
+    const raw = depositInput.trim();
+    const parsed = raw === "" ? null : Number(raw);
+    if (parsed != null && !Number.isFinite(parsed)) {
+      setDepositInput(serverDeposit != null ? String(serverDeposit) : "");
+      return;
+    }
+    const next = parsed == null ? null : Math.min(100, Math.max(0, parsed));
+    setDepositInput(next != null ? String(next) : "");
+    if (next === serverDeposit) return;
+    updateCustomer.mutate(
+      { id: customerId, defaultDepositPercent: next },
+      {
+        onError: (err: any) => {
+          setDepositInput(serverDeposit != null ? String(serverDeposit) : "");
+          toast({
+            title: "Couldn't save deposit",
+            description: err?.response?.data?.message ?? "",
+            variant: "error",
+          });
+        },
+      },
+    );
+  };
+
   const priceList: CustomerPrice[] = prices ?? [];
 
   return (
@@ -1049,6 +1118,47 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             <p className="text-sm font-semibold text-navy">
               {customer?.defaultPaymentTerms || "Tenant default"}
             </p>
+          )}
+        </div>
+
+        {/* Deposit — auto-applies to every invoice GENERATED for this customer
+            (order flows); computeDepositFields derives the amount at read time,
+            untouched here. A manual invoice's own deposit still wins. */}
+        <div className="mt-3 flex items-center justify-between gap-4 border-t border-surface-border pt-3">
+          <div>
+            <p className="text-sm font-medium text-navy">Deposit</p>
+            <p className="mt-0.5 text-[11px] leading-snug text-navy/70">
+              Deposit due on invoice date; the remainder follows the terms above. Applies to new
+              invoices automatically.
+            </p>
+          </div>
+          {isOperator ? (
+            <div className="flex items-center gap-1">
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                placeholder="—"
+                value={depositInput}
+                onChange={(e) => setDepositInput(e.target.value)}
+                onBlur={commitDeposit}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    e.currentTarget.blur();
+                  }
+                }}
+                className="w-16 rounded border border-surface-border bg-white px-2 py-1 text-right text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+              <span className="text-sm text-navy/70">%</span>
+            </div>
+          ) : (
+            customer?.defaultDepositPercent != null && (
+              <p className="text-sm font-semibold text-navy">
+                {Number(customer.defaultDepositPercent)}%
+              </p>
+            )
           )}
         </div>
       </Card>
@@ -1781,7 +1891,7 @@ type CustomerStatus = (typeof STATUS_CYCLE)[number];
  *  single enum value (a comma-list 400s) — so it's filtered client-side. */
 const OUTSTANDING_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
 
-export default function CustomerDetailPage({ params }: { params: { id: string } }) {
+function CustomerDetailPageInner({ params }: { params: { id: string } }) {
   const { setTitle } = usePageTitle();
   const router = useRouter();
   const { user } = useAuth();
@@ -1819,6 +1929,8 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
   const updateStatus = useUpdateCustomerStatus();
   const updateCustomer = useUpdateCustomer();
   const addAddress = useAddCustomerAddress();
+  const updateAddress = useUpdateCustomerAddress();
+  const deleteAddress = useDeleteCustomerAddress();
   const updateTemplate = useUpdateOrderTemplate();
   const deleteTemplate = useDeleteOrderTemplate();
   const generateOrder = useGenerateTemplateOrder();
@@ -1912,9 +2024,25 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
 
   const [isEditOpen, setIsEditOpen] = React.useState(false);
   const [isAddAddressOpen, setIsAddAddressOpen] = React.useState(false);
+  // Non-null = the address card being edited (edit mode of AddressFormModal);
+  // null = the modal (when isAddAddressOpen) is in "add" mode.
+  const [editingAddress, setEditingAddress] = React.useState<any | null>(null);
+  // Inline two-tap delete confirm, keyed by address id (the suppliers-page idiom).
+  const [deleteAddressConfirmId, setDeleteAddressConfirmId] = React.useState<string | null>(null);
   const [isAssignRouteOpen, setIsAssignRouteOpen] = React.useState(false);
   const [orderStatusFilter, setOrderStatusFilter] = React.useState("");
   const [pendingStatus, setPendingStatus] = React.useState<CustomerStatus | null>(null);
+
+  // Controlled Tabs so the Edit Customer modal's "Addresses tab" link (the honest
+  // replacement for the modal's old silent-discard address section) can switch to
+  // it — including a query-string entry (`?tab=addresses`) so the SAME link works
+  // when the modal was opened from the customers LIST page and lands here fresh.
+  const searchParams = useSearchParams();
+  const [activeTab, setActiveTab] = React.useState("profile");
+  React.useEffect(() => {
+    const tab = searchParams.get("tab");
+    if (tab) setActiveTab(tab);
+  }, [searchParams]);
 
   // Delivery time window
   const [windowStart, setWindowStart] = React.useState(customer?.deliveryWindowStart ?? "");
@@ -2040,10 +2168,75 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
     );
   };
 
-  const handleSaveAddress = (values: AddAddressFormValues) => {
-    addAddress.mutate(
-      { id: params.id, ...values },
-      { onSuccess: () => setIsAddAddressOpen(false) },
+  const handleSaveAddress = (values: AddressFormValues) => {
+    if (editingAddress) {
+      updateAddress.mutate(
+        { id: params.id, addrId: editingAddress.id, ...values },
+        {
+          onSuccess: () => {
+            toast({ title: "Address updated", variant: "success" });
+            // Close BEFORE clearing editingAddress — the modal is open on
+            // isAddAddressOpen and derives its mode from editingAddress, so
+            // leaving it open would flip it into a blank "Add Address" form.
+            setIsAddAddressOpen(false);
+            setEditingAddress(null);
+          },
+          onError: (err: any) =>
+            toast({
+              title: "Update failed",
+              description: err?.response?.data?.message ?? "",
+              variant: "error",
+            }),
+        },
+      );
+    } else {
+      addAddress.mutate(
+        { id: params.id, ...values },
+        {
+          onSuccess: () => {
+            toast({ title: "Address added", variant: "success" });
+            setIsAddAddressOpen(false);
+          },
+          onError: (err: any) =>
+            toast({
+              title: "Couldn't add address",
+              description: err?.response?.data?.message ?? "",
+              variant: "error",
+            }),
+        },
+      );
+    }
+  };
+
+  const handleSetPrimaryAddress = (addrId: string) => {
+    updateAddress.mutate(
+      { id: params.id, addrId, isDefault: true },
+      {
+        onError: (err: any) =>
+          toast({
+            title: "Couldn't set primary",
+            description: err?.response?.data?.message ?? "",
+            variant: "error",
+          }),
+      },
+    );
+  };
+
+  const handleDeleteAddress = (addrId: string) => {
+    setDeleteAddressConfirmId(null);
+    deleteAddress.mutate(
+      { id: params.id, addrId },
+      {
+        onSuccess: () => toast({ title: "Address deleted", variant: "success" }),
+        // The server 409s (ConflictException) with a specific reason when a route
+        // stop still references this address — surface it, don't swallow it.
+        onError: (err: any) =>
+          toast({
+            title: "Couldn't delete address",
+            description: err?.response?.data?.message ?? "This address couldn't be deleted.",
+            variant: "error",
+          }),
+      },
     );
   };
 
@@ -2136,7 +2329,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
       </div>
 
       {/* Tabs */}
-      <Tabs.Root defaultValue="profile" className="flex flex-col">
+      <Tabs.Root value={activeTab} onValueChange={setActiveTab} className="flex flex-col">
         <Tabs.List className="flex border-b border-surface-border">
           <TabTrigger value="profile">Profile</TabTrigger>
           <TabTrigger value="orders">
@@ -3043,7 +3236,10 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
               <Button
                 size="sm"
                 leftIcon={<Plus className="h-4 w-4" />}
-                onClick={() => setIsAddAddressOpen(true)}
+                onClick={() => {
+                  setEditingAddress(null);
+                  setIsAddAddressOpen(true);
+                }}
               >
                 Add Address
               </Button>
@@ -3108,11 +3304,66 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                                   {addr.zip}
                                 </p>
                               </div>
-                              {addr.isDefault && (
-                                <span className="shrink-0 rounded-full bg-brand-100 px-2 py-0.5 text-xs font-medium text-brand-700">
-                                  Primary
-                                </span>
-                              )}
+                              <div className="flex shrink-0 flex-col items-end gap-1.5">
+                                {addr.isDefault && (
+                                  <span className="rounded-full bg-brand-100 px-2 py-0.5 text-xs font-medium text-brand-700">
+                                    Primary
+                                  </span>
+                                )}
+                                {deleteAddressConfirmId === addr.id ? (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-danger">Delete?</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteAddress(addr.id)}
+                                      disabled={deleteAddress.isPending}
+                                      className="text-xs font-medium text-danger hover:underline disabled:opacity-40"
+                                    >
+                                      Delete
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setDeleteAddressConfirmId(null)}
+                                      className="text-xs text-navy/70 hover:text-navy transition-colors"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-1">
+                                    {!addr.isDefault && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSetPrimaryAddress(addr.id)}
+                                        disabled={updateAddress.isPending}
+                                        title="Set as primary"
+                                        className="rounded p-1 text-navy/30 transition-colors hover:bg-warning/10 hover:text-warning disabled:opacity-40"
+                                      >
+                                        <Star className="h-3.5 w-3.5" />
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingAddress(addr);
+                                        setIsAddAddressOpen(true);
+                                      }}
+                                      title="Edit"
+                                      className="rounded p-1 text-navy/30 transition-colors hover:bg-surface-raised hover:text-navy"
+                                    >
+                                      <Pencil className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setDeleteAddressConfirmId(addr.id)}
+                                      title="Delete"
+                                      className="rounded p-1 text-navy/30 transition-colors hover:bg-danger/10 hover:text-danger"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
                             </li>
                           ))}
                         </ul>
@@ -3856,11 +4107,16 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
         mode="edit"
         initialData={customer}
       />
-      <AddAddressModal
+      <AddressFormModal
         isOpen={isAddAddressOpen}
-        onClose={() => setIsAddAddressOpen(false)}
+        onClose={() => {
+          setIsAddAddressOpen(false);
+          setEditingAddress(null);
+        }}
         onSave={handleSaveAddress}
-        isSaving={addAddress.isPending}
+        isSaving={editingAddress ? updateAddress.isPending : addAddress.isPending}
+        mode={editingAddress ? "edit" : "add"}
+        initialAddress={editingAddress ?? undefined}
       />
       <AssignRouteModal
         isOpen={isAssignRouteOpen}
@@ -4001,5 +4257,22 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
            document is viewable too, not just images ─────────────────────────────── */}
       <DocumentViewer doc={taxDocLightbox} onClose={() => setTaxDocLightbox(null)} />
     </div>
+  );
+}
+
+/** `useSearchParams` (the `?tab=addresses` deep link the Edit Customer modal's
+ *  honest "Addresses tab" link uses) needs a Suspense boundary above it — same
+ *  wrapper `suppliers/[id]/page.tsx` uses for its `?paymentGroup=` deep link. */
+export default function CustomerDetailPage({ params }: { params: { id: string } }) {
+  return (
+    <React.Suspense
+      fallback={
+        <div className="flex h-64 items-center justify-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-500 border-t-transparent" />
+        </div>
+      }
+    >
+      <CustomerDetailPageInner params={params} />
+    </React.Suspense>
   );
 }

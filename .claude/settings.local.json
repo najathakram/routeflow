@@ -52,7 +52,9 @@
       "Bash(ls -la /c/ClaudeCode/routeflow/apps/web/app/\\\\\\(dashboard\\\\\\)/)",
       "Bash(powershell -Command \"Stop-Process -Id 26340 -Force\")",
       "Bash(gh repo *)",
-      "Bash(echo \"visibility=$\\(gh repo view najathakram/routeflow --json visibility -q .visibility\\)\")"
+      "Bash(railway run:*)",
+      "Bash(echo \"visibility=$\\(gh repo view najathakram/routeflow --json visibility -q .visibility\\)\")",
+      "Bash(cd C:/ClaudeCode/rf-autopilot && ls -la prompts/ && echo \"--- runner:\" && wc -l run-autopilot.ps1 && grep -n 'dangerously-skip-permissions\\\\|bypassPermissions' run-autopilot.ps1)"
     ]
   }
 }

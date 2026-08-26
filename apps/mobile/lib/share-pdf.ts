@@ -3,6 +3,8 @@ import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { showToast } from "./toast";
 import { chooseAction } from "./confirm";
+import { classifyShareError } from "./share-error";
+import { createPendingCache } from "./pending-cache";
 
 export interface SharePdfOptions {
   /** Fully-qualified (signed) PDF URL returned by `GET /invoices/:id/pdf`. */
@@ -60,7 +62,10 @@ export const ACTIVATION_BUDGET_MS = 3000;
  *  - `"opened-tab"` — no file-share capability (or the file couldn't be
  *    downloaded for one); the PDF opened in a new tab instead.
  *  - `"ready-await-tap"` — the PDF wasn't ready inside the activation
- *    budget. Nothing was shared or opened. A caller that passed
+ *    budget, OR `share()` itself rejected with NotAllowedError (iOS Safari's
+ *    transient activation not surviving the fetch — see share-error.ts; the
+ *    file IS downloaded and cached, so the recovery is identical: one fresh
+ *    tap). Nothing was shared or opened. A caller that passed
  *    `retapHandled` should flip its control to a "PDF ready — tap to share"
  *    state; calling `sharePdf` again with the SAME `url` is cheap (the fetch
  *    is cached module-wide) and, once the fetch has actually finished,
@@ -113,58 +118,38 @@ export function openPdfInTab(url: string): void {
 }
 
 // Per-url fetch cache. Lets a "second tap" (after the first timed out against
-// ACTIVATION_BUDGET_MS) reuse the in-flight/finished download instead of
+// ACTIVATION_BUDGET_MS, or share() lost its transient activation — see
+// share-error.ts) reuse the in-flight/finished download instead of
 // re-fetching, and — once resolved — hand `navigator.share()` an
 // already-in-hand File synchronously rather than a fresh network fetch.
-//
-// Every terminal outcome releases its own entry (see `releasePdfFile`), but
-// some attempts simply never come back — the operator dismisses the retap
-// dialog, or navigates away mid-fetch — and each entry pins a whole PDF's
-// bytes in memory on a long-lived Expo Web session. Callers that re-mint a
-// signed url per tap also key a NEW entry every time. So the map is capped
-// LRU-style: only the most recent handful of shares can still be awaiting a
-// second tap, and anything older is already unreachable.
-const PDF_CACHE_MAX = 3;
-const pdfFileCache = new Map<string, Promise<File>>();
+// Callers that re-mint a signed url per tap key a NEW entry every time, so
+// the LRU cap matters; the full eviction contract lives (and is unit-tested)
+// in pending-cache.ts. The PDF and CSV paths get SEPARATE instances so a
+// burst of one kind can never evict the other kind's download while it's
+// still awaiting its second tap.
+const SHARE_FILE_CACHE_MAX = 3;
+const pdfFileCache = createPendingCache<File>(SHARE_FILE_CACHE_MAX);
 
 function fetchPdfFile(url: string, filename: string): Promise<File> {
-  const cached = pdfFileCache.get(url);
-  if (cached) {
-    // Re-insert to mark it as most-recently-used (Map iterates in insertion
-    // order, so the eviction below always drops the oldest entry).
-    pdfFileCache.delete(url);
-    pdfFileCache.set(url, cached);
-    return cached;
-  }
-  const pending = fetch(url)
-    .then((res) => {
-      if (!res.ok) throw new Error(`PDF fetch failed (${res.status})`);
-      return res.blob();
-    })
-    .then((blob) => new File([blob], sanitizeFilename(filename), { type: "application/pdf" }));
-  pdfFileCache.set(url, pending);
-  // Don't poison the cache with a failed attempt — the next tap should retry.
-  // Identity-checked so a late rejection can't evict a newer entry for the
-  // same url that a retry has since put in its place.
-  pending.catch(() => {
-    if (pdfFileCache.get(url) === pending) pdfFileCache.delete(url);
-  });
-  while (pdfFileCache.size > PDF_CACHE_MAX) {
-    const oldest = pdfFileCache.keys().next().value;
-    if (oldest === undefined) break;
-    pdfFileCache.delete(oldest);
-  }
-  return pending;
+  return pdfFileCache.get(url, () =>
+    fetch(url)
+      .then((res) => {
+        if (!res.ok) throw new Error(`PDF fetch failed (${res.status})`);
+        return res.blob();
+      })
+      .then((blob) => new File([blob], sanitizeFilename(filename), { type: "application/pdf" })),
+  );
 }
 
 /**
  * Free a cached PDF's bytes once its share attempt has reached a TERMINAL
  * outcome (shared, dismissed, unshareable, or failed). Deliberately NOT
- * called on the budget-expiry path — that's the one case the cache exists
- * for, since the operator's second tap has to find the download waiting.
+ * called on the budget-expiry or lost-activation paths — those are the cases
+ * the cache exists for, since the operator's second tap has to find the
+ * download waiting.
  */
 function releasePdfFile(url: string): void {
-  pdfFileCache.delete(url);
+  pdfFileCache.release(url);
 }
 
 const BUDGET_EXPIRED = Symbol("pdf-share-budget-expired");
@@ -299,11 +284,28 @@ async function sharePdfWeb(options: SharePdfOptions): Promise<ShareOutcome> {
         // This exact file isn't shareable (rare) — fall through to opening it.
         releasePdfFile(url);
       } catch (err: any) {
-        releasePdfFile(url);
-        // User dismissed the OS share sheet — not an error.
-        if (err?.name === "AbortError") return "shared";
-        showToast("Couldn't share the PDF.");
-        return "failed";
+        switch (classifyShareError(err?.name)) {
+          case "dismissed":
+            // User dismissed the OS share sheet — not an error.
+            releasePdfFile(url);
+            return "shared";
+          case "retap": {
+            // iOS Safari: share() rejected with NotAllowedError because the
+            // transient-activation window didn't survive the PDF fetch — even
+            // though the fetch is DONE and the File is in hand. This is the
+            // customer-visible "share works on desktop, fails on my phone"
+            // bug. Recover exactly like a budget expiry: KEEP the cached file
+            // (do NOT release it — the whole point is that the next tap
+            // shares it synchronously under its own fresh activation) and
+            // hand the operator one explicit tap.
+            if (!retapHandled) offerRetapShare(options);
+            return "ready-await-tap";
+          }
+          case "failed":
+            releasePdfFile(url);
+            showToast("Couldn't share the PDF.");
+            return "failed";
+        }
       }
     }
   }
@@ -356,7 +358,11 @@ export interface ShareCsvOptions {
  * Share a CSV straight to the OS / browser share sheet, mirroring {@link sharePdf}
  * but for `text/csv` artifacts (e.g. a regulated filing's presigned CSV URL). Kept
  * as a standalone sibling rather than a generic parameter on `sharePdf` so the
- * existing, widely-used PDF path is untouched.
+ * existing, widely-used PDF path is untouched. The web path shares the PDF path's
+ * iOS recovery: when share() loses its transient activation over the CSV fetch
+ * (NotAllowedError — see share-error.ts) the downloaded File stays cached and the
+ * operator gets a "tap again to share" dialog instead of a silently popup-blocked
+ * window.open.
  */
 export async function shareCsv({ url, filename, dialogTitle }: ShareCsvOptions): Promise<void> {
   if (Platform.OS === "web") {
@@ -376,21 +382,86 @@ export async function shareCsv({ url, filename, dialogTitle }: ShareCsvOptions):
   });
 }
 
+// CSV sibling of `pdfFileCache` — same contract (see pending-cache.ts), its
+// own instance. Exists for the same reason: the retap dialog's fresh tap must
+// find the FIRST tap's download waiting so share() is reached synchronously.
+const csvFileCache = createPendingCache<File>(SHARE_FILE_CACHE_MAX);
+
+function fetchCsvFile(url: string, filename: string): Promise<File> {
+  return csvFileCache.get(url, () =>
+    fetch(url)
+      .then((res) => {
+        if (!res.ok) throw new Error(`CSV fetch failed (${res.status})`);
+        return res.blob();
+      })
+      .then((blob) => new File([blob], sanitizeCsvFilename(filename), { type: "text/csv" })),
+  );
+}
+
+/**
+ * CSV twin of {@link offerRetapShare}: share() lost its transient activation
+ * over the CSV fetch (iOS Safari — see share-error.ts), but the file IS
+ * downloaded and cached, so the dialog button's press is a FRESH gesture that
+ * re-enters `shareCsvWeb` with the SAME url and reaches share() on a
+ * microtask. No `retapHandled` equivalent: none of the CSV callers drive
+ * their own "ready — tap to share" control, so the dialog is always ours.
+ */
+function offerRetapCsvShare(url: string, filename: string, dialogTitle?: string): void {
+  chooseAction("CSV ready", "It took a moment too long to share automatically.", [
+    {
+      label: "Share CSV",
+      style: "default",
+      onPress: () => {
+        // Backstop: this press has no caller left to catch a rejection, so a
+        // throw here would be the exact silence this dialog exists to avoid.
+        void shareCsvWeb(url, filename, dialogTitle).catch(() => {
+          showToast("Couldn't share the CSV.");
+        });
+      },
+    },
+    { label: "Dismiss", style: "cancel" },
+  ]);
+}
+
 async function shareCsvWeb(url: string, filename: string, dialogTitle?: string): Promise<void> {
   const nav: any = typeof navigator !== "undefined" ? navigator : undefined;
 
   if (nav?.share && nav?.canShare) {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`CSV fetch failed (${res.status})`);
-      const blob = await res.blob();
-      const file = new File([blob], sanitizeCsvFilename(filename), { type: "text/csv" });
-      if (nav.canShare({ files: [file] })) {
-        await nav.share({ files: [file], title: dialogTitle ?? filename });
-        return;
+    // Fetch failures (expired signature, offline, CORS) fall through to
+    // opening the plain url — which needs no fetch of ours — same recovery
+    // this path has always used. The cache already evicted the rejection.
+    const file = await fetchCsvFile(url, filename).catch(() => null);
+    if (file) {
+      try {
+        if (nav.canShare({ files: [file] })) {
+          await nav.share({ files: [file], title: dialogTitle ?? filename });
+          csvFileCache.release(url); // no further need — free the bytes
+          return;
+        }
+        // This exact file isn't shareable (rare) — fall through to opening it.
+        csvFileCache.release(url);
+      } catch (err: any) {
+        switch (classifyShareError(err?.name)) {
+          case "dismissed":
+            // User dismissed the OS share sheet — not an error.
+            csvFileCache.release(url);
+            return;
+          case "retap":
+            // iOS Safari: the transient-activation window didn't survive the
+            // CSV fetch, so BOTH share() and the window.open fallback below
+            // are dead — falling through would silently popup-block (the
+            // exact bug fixed for sharePdfWeb). KEEP the cached file and hand
+            // the operator one explicit tap that shares it under its own
+            // fresh activation.
+            offerRetapCsvShare(url, filename, dialogTitle);
+            return;
+          case "failed":
+            // A real share() failure rejects immediately — activation is
+            // still live, so the plain-url fallback below still works.
+            csvFileCache.release(url);
+            break;
+        }
       }
-    } catch (err: any) {
-      if (err?.name === "AbortError") return;
     }
   }
 

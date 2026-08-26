@@ -105,7 +105,7 @@ export class CreditNotesService {
         }> = [];
 
         if (dto.invoiceId) {
-          const invoice = await tx.invoice.findUnique({
+          const invoice = await tx.invoice.findFirst({
             where: { id: dto.invoiceId },
             select: {
               total: true,
@@ -570,7 +570,7 @@ export class CreditNotesService {
   async voidCreditNote(id: string) {
     return this.prisma.tenantTransaction(
       async (tx: any) => {
-        const cn = await tx.creditNote.findUnique({
+        const cn = await tx.creditNote.findFirst({
           where: { id },
           select: { status: true, amountUsed: true },
         });
@@ -802,7 +802,7 @@ export class CreditNotesService {
       const number =
         prev?.creditNoteNumber ??
         (
-          await tx.creditNote.findUnique({
+          await tx.creditNote.findFirst({
             where: { id: p.creditNoteId },
             select: { creditNoteNumber: true },
           })
@@ -1029,7 +1029,7 @@ export class CreditNotesService {
           restored = roundMoney(restored + (await this.restoreCreditFromPaymentInTx(tx, p)));
         }
 
-        const invoice = await tx.invoice.findUnique({
+        const invoice = await tx.invoice.findFirst({
           where: { id: invoiceId },
           select: { orderId: true },
         });

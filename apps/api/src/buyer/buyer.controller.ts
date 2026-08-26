@@ -13,6 +13,7 @@ import {
   UseInterceptors,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiHeader } from "@nestjs/swagger";
+import { Throttle } from "@nestjs/throttler";
 import { OrderStatus, UserRole, UserStatus } from "@prisma/client";
 import { BuyerService } from "./buyer.service";
 import { BuyerCatalogService } from "./buyer-catalog.service";
@@ -126,6 +127,10 @@ export class BuyerController {
 
   @Post("sellers/request")
   @HttpCode(HttpStatus.OK)
+  // F4: this endpoint is an email-enumeration surface (a matching customer at the
+  // seller is a connect request; a non-match is a 404). Tighten beyond the global
+  // throttle. 10/min still comfortably covers a buyer connecting to several sellers.
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @ApiOperation({ summary: "Request to connect with a seller by slug" })
   requestSeller(@CurrentBuyer() buyer: BuyerJwtPayload, @Body() dto: RequestSellerDto) {
     return this.buyerService.requestSeller(buyer.sub, dto);
@@ -744,7 +749,7 @@ export class BuyerController {
     // Ownership check: verify the template belongs to this buyer's customer
     const template = await this.prisma
       .forTenant()
-      .orderTemplate.findUnique({ where: { id }, select: { customerId: true } });
+      .orderTemplate.findFirst({ where: { id }, select: { customerId: true } });
     if (!template) throw new NotFoundException("Template not found");
     if (template.customerId !== ctx.customerId) {
       throw new ForbiddenException("This template does not belong to your account");
@@ -764,7 +769,7 @@ export class BuyerController {
   ) {
     const template = await this.prisma
       .forTenant()
-      .orderTemplate.findUnique({ where: { id }, select: { customerId: true } });
+      .orderTemplate.findFirst({ where: { id }, select: { customerId: true } });
     if (!template) throw new NotFoundException("Template not found");
     if (template.customerId !== ctx.customerId) {
       throw new ForbiddenException("This template does not belong to your account");

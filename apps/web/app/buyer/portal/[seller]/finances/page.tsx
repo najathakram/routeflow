@@ -138,7 +138,7 @@ export default function FinancesPage() {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-navy">Finances</h1>
-        {activeSeller && (
+        {activeSeller?.customer && (
           <p className="text-sm text-navy/70 mt-1">
             {activeSeller.customer.businessName} at {activeSeller.tenant.name}
           </p>

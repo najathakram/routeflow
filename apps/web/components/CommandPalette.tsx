@@ -33,7 +33,7 @@ import { cn } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { apiClient } from "@/lib/api-client";
 import { useI18n } from "@/lib/i18n";
-import { useDeveloperMode } from "@/lib/api/addons";
+import { useDeveloperMode, useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
 
 /**
  * `?action=new` for a list route, preserving that list's own query state when
@@ -66,11 +66,18 @@ interface CommandItem {
 
 // ─── Static command definitions ───────────────────────────────────────────────
 
-/** Command ids for in-development dispatch/driver/route surfaces — hidden without developer_mode */
-const DEV_MODE_COMMAND_IDS = ["nav-routes", "nav-drivers", "act-new-route", "act-plan-trip"];
+/**
+ * Command ids gated per-feature addon (owner decision 2026-08-25: recurring
+ * routes and ad-hoc order delivery are separate addons; devMode still unlocks
+ * both).
+ */
+const ROUTES_COMMAND_IDS = ["nav-routes", "nav-drivers", "act-new-route"];
+const DELIVERY_COMMAND_IDS = ["act-plan-trip", "nav-deliveries"];
 
 function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] {
   const { enabled: devMode } = useDeveloperMode();
+  const { enabled: routesAccess } = useRoutesAccess();
+  const { enabled: deliveryAccess } = useDeliveryAccess();
   return React.useMemo(
     () =>
       [
@@ -96,6 +103,13 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
           label: "Returns",
           icon: RotateCcw,
           action: () => router.push("/returns"),
+        },
+        {
+          id: "nav-deliveries",
+          group: "Navigate",
+          label: "Deliveries",
+          icon: Package,
+          action: () => router.push("/deliveries"),
         },
         {
           id: "nav-routes",
@@ -239,7 +253,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
           group: "Actions",
           label: "Plan delivery trip",
           icon: RouteIcon,
-          action: () => router.push("/routes/trips/new"),
+          action: () => router.push("/deliveries/new"),
           keywords: "adhoc trip dispatch delivery",
         },
         {
@@ -258,8 +272,12 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
           action: () => router.push(createHref("/products")),
           keywords: "create add product",
         },
-      ].filter((c) => devMode || !DEV_MODE_COMMAND_IDS.includes(c.id)),
-    [router, devMode],
+      ].filter((c) => {
+        if (ROUTES_COMMAND_IDS.includes(c.id)) return devMode || routesAccess;
+        if (DELIVERY_COMMAND_IDS.includes(c.id)) return devMode || deliveryAccess;
+        return true;
+      }),
+    [router, devMode, routesAccess, deliveryAccess],
   );
 }
 

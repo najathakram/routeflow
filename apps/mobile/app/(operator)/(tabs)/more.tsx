@@ -6,12 +6,23 @@ import { ios } from "@routeflow/ui/tokens";
 import { ListGroup, ListRow, NavBar } from "@routeflow/ui/mobile/ios";
 import { useAuthStore } from "../../../lib/auth-store";
 import { useTenantStore } from "../../../lib/tenant-store";
-import { useDeveloperMode } from "../../../lib/api/addons";
+import { useDeliveryAccess, useDeveloperMode, useRoutesAccess } from "../../../lib/api/addons";
 
 export default function OperatorMoreScreen() {
   const router = useRouter();
   const { user, logout, setActiveRole } = useAuthStore();
   const tenantName = useTenantStore((s) => s.branding?.businessName);
+  // Owner split 2026-08-25: the MANAGE rows below mirror (operator)/_layout.tsx's
+  // section sets, so a tenant that bought only one addon still reaches its own
+  // surfaces — Routes/Fleet are recurring-routes screens, Drivers is shared by
+  // both features (EITHER_SECTIONS). Each helper folds in developer_mode, so a
+  // dev tenant regresses zero.
+  const routesAccess = useRoutesAccess();
+  const deliveryAccess = useDeliveryAccess();
+  const driversAccess = routesAccess.enabled || deliveryAccess.enabled;
+  // Drive mode keeps the RAW dev switch: the (driver) app is still gated on
+  // developer_mode in app/_layout.tsx, so widening this row would hand an
+  // addon-only operator a button that bounces them straight back.
   const { enabled: devMode } = useDeveloperMode();
 
   const initials =
@@ -150,7 +161,7 @@ export default function OperatorMoreScreen() {
             onPress={() => router.push("/(operator)/expenses")}
             chevron
           />
-          {devMode ? (
+          {routesAccess.enabled ? (
             <ListRow
               icon={<Ionicons name="git-branch-outline" size={16} color={ios.brand} />}
               iconBg={ios.brandWash}
@@ -160,7 +171,7 @@ export default function OperatorMoreScreen() {
               chevron
             />
           ) : null}
-          {devMode ? (
+          {routesAccess.enabled ? (
             <ListRow
               icon={<Ionicons name="map-outline" size={16} color={ios.system.purpleInk} />}
               iconBg={ios.system.purpleWash}
@@ -170,7 +181,7 @@ export default function OperatorMoreScreen() {
               chevron
             />
           ) : null}
-          {devMode ? (
+          {driversAccess ? (
             <ListRow
               icon={<Ionicons name="people-outline" size={16} color={ios.system.greenInk} />}
               iconBg={ios.system.greenWash}

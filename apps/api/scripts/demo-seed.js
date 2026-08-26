@@ -426,6 +426,36 @@ async function ensureTenant(existing) {
   });
   console.log("   ✓ Driver payments addon active (at-door collection demo)");
 
+  // Order-delivery split (2026-08-25): dispatch's ad-hoc trip builder and
+  // recurring route templates are now separate per-tenant addons, independent
+  // of each other and of developer_mode. Grant both so the demo's dispatch
+  // walkthrough shows every surface.
+  await prisma.tenantAddon.upsert({
+    where: { tenantId_addonKey: { tenantId: DEMO_TENANT_ID, addonKey: "recurring_routes" } },
+    create: {
+      tenantId: DEMO_TENANT_ID,
+      addonKey: "recurring_routes",
+      stripePriceId: null,
+      stripeItemId: null,
+      active: true,
+    },
+    update: { active: true },
+  });
+  console.log("   ✓ Recurring routes addon active (route templates demo)");
+
+  await prisma.tenantAddon.upsert({
+    where: { tenantId_addonKey: { tenantId: DEMO_TENANT_ID, addonKey: "order_delivery" } },
+    create: {
+      tenantId: DEMO_TENANT_ID,
+      addonKey: "order_delivery",
+      stripePriceId: null,
+      stripeItemId: null,
+      active: true,
+    },
+    update: { active: true },
+  });
+  console.log("   ✓ Order delivery addon active (ad-hoc trips demo)");
+
   // Tenant-wide default depot. route-optimization's resolveDepot() reads these
   // SystemConfig keys as its tier-2 fallback, and the trip builder's "tenant
   // depot" origin resolves the same way — seeding them means neither needs a
@@ -683,6 +713,15 @@ async function ensureRoutes(customers, driverIds) {
         depotAddress: DEMO_DEPOT.address,
       },
     });
+
+    // Stops are keyed by stable id, but (routeId, stopNumber) is UNIQUE — when the
+    // demo customer list shifts between seed versions, an old stop with a different
+    // id can still hold this route's stopNumber and the id-keyed upsert collides.
+    // ensureRoutes runs BEFORE clearTransactions, so last refresh's RouteRunStops
+    // still FK these stops — clear them first (DeliveryMutation/Batch links are
+    // ON DELETE SET NULL, and clearTransactions rebuilds every run right after).
+    await prisma.routeRunStop.deleteMany({ where: { routeStop: { routeId } } });
+    await prisma.routeStop.deleteMany({ where: { routeId } });
 
     let stopNumber = 0;
     const stops = [];
