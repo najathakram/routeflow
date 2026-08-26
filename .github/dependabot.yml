@@ -1,0 +1,28 @@
+# Dependabot: weekly dependency PRs, grouped to keep noise low.
+# The monorepo uses npm workspaces with a single root lockfile, so one npm
+# entry at "/" covers every workspace. Security updates always open
+# individually regardless of grouping.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # Majors need a deliberate migration (Prisma, Nest, Next, Expo pin their
+      # ecosystems) — surface them but never auto-PR a major bump.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
