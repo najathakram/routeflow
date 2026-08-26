@@ -1324,15 +1324,22 @@ describe("OrdersService", () => {
 
     // ── Ad-hoc trips + fulfillment mode: fulfillPath default chain ──────────
     describe("fulfillPath default chain", () => {
+      // customer.findFirst serves BOTH the buyer's own-record lookup (where.userId)
+      // and the pricing-tier/fulfillPath lookup (where.id) since the tenant-scope
+      // sweep converted the latter from findUnique.
+      let tierRecord: any;
       beforeEach(() => {
-        prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+        tierRecord = null;
+        prisma.customer.findFirst.mockImplementation(({ where }: any) =>
+          Promise.resolve(where?.userId ? { id: "cust-1" } : tierRecord),
+        );
         prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
         prisma.order.create.mockResolvedValue(MOCK_ORDER);
         (service as any).systemConfig.get.mockResolvedValue("0");
       });
 
       it("an explicit dto.fulfillPath wins over the customer's own default", async () => {
-        prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1, fulfillPath: "SHIP" });
+        tierRecord = { pricingTier: 1, fulfillPath: "SHIP" };
 
         await service.create(
           { items: [{ productId: "prod-1", qty: 1 }], fulfillPath: "ROUTE" } as any,
@@ -1345,7 +1352,7 @@ describe("OrdersService", () => {
       });
 
       it("falls back to the customer's own default when dto.fulfillPath is omitted", async () => {
-        prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1, fulfillPath: "SHIP" });
+        tierRecord = { pricingTier: 1, fulfillPath: "SHIP" };
 
         await service.create({ items: [{ productId: "prod-1", qty: 1 }] } as any, customerPayload);
 
@@ -1355,7 +1362,7 @@ describe("OrdersService", () => {
       });
 
       it("defaults to ROUTE when neither the dto nor the customer specify a path", async () => {
-        prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1, fulfillPath: null });
+        tierRecord = { pricingTier: 1, fulfillPath: null };
 
         await service.create({ items: [{ productId: "prod-1", qty: 1 }] } as any, customerPayload);
 
