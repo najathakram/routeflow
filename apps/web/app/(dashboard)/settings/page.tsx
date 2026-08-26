@@ -2448,6 +2448,26 @@ function InvoicingTab() {
     );
   };
 
+  const handleHideOriginalPriceChange = (checked: boolean) => {
+    updateSettings.mutate(
+      { hideOriginalPrice: !checked },
+      {
+        onSuccess: () =>
+          toast({
+            title: "Invoice settings saved",
+            description: "Original price display updated successfully.",
+            variant: "success",
+          }),
+        onError: () =>
+          toast({
+            title: "Failed to save",
+            description: "Could not update invoice settings.",
+            variant: "error",
+          }),
+      },
+    );
+  };
+
   const handleSaveDefaults = async () => {
     setSavingDefaults(true);
     try {
@@ -2493,6 +2513,28 @@ function InvoicingTab() {
                 ))}
               </select>
             </div>
+          </div>
+
+          <div className="flex items-center gap-4 rounded-lg border border-surface-border bg-surface-raised p-4">
+            <div className="flex-1 space-y-1">
+              <p className="text-sm font-semibold text-navy">
+                Show original price on discounted lines
+              </p>
+              <p className="text-xs text-navy/70">
+                When off, invoices show only the final unit price — no struck-through original price
+                or badge.
+              </p>
+            </div>
+            <label className="inline-flex shrink-0 cursor-pointer items-center">
+              <input
+                type="checkbox"
+                aria-label="Show original price on discounted lines"
+                checked={!invoiceSettings?.hideOriginalPrice}
+                onChange={(e) => handleHideOriginalPriceChange(e.target.checked)}
+                disabled={isLoading || updateSettings.isPending}
+                className="h-4 w-4 rounded border-surface-border"
+              />
+            </label>
           </div>
         </div>
       </Card>

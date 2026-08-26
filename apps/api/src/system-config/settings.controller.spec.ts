@@ -69,3 +69,57 @@ describe("SettingsController — PATCH /settings taxRate validation", () => {
     expect(svc.set).toHaveBeenCalledWith("settings.logoUrl", "https://example.com/logo.png");
   });
 });
+
+// WP4: hideOriginalPrice is stored in SystemConfig (KV, no schema change) as
+// the string "true"/"false" like every other boolean setting in this file
+// (e.g. email.smtpSecure) — read back via a strict "true" string comparison.
+describe("SettingsController — GET/PATCH /settings/invoice hideOriginalPrice", () => {
+  let controller: SettingsController;
+  let svc: { get: jest.Mock; set: jest.Mock; getAll: jest.Mock };
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    svc = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+      getAll: jest.fn().mockResolvedValue({}),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [SettingsController],
+      providers: [
+        { provide: SystemConfigService, useValue: svc },
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: PrismaService, useValue: prisma },
+        { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+      ],
+    }).compile();
+
+    controller = module.get<SettingsController>(SettingsController);
+  });
+
+  it("GET returns hideOriginalPrice: false when unset", async () => {
+    const result = await controller.getInvoiceSettings();
+    expect(result.hideOriginalPrice).toBe(false);
+  });
+
+  it('GET returns hideOriginalPrice: true when stored "true"', async () => {
+    svc.get.mockImplementation((key: string) =>
+      key === "invoice.hideOriginalPrice" ? Promise.resolve("true") : Promise.resolve(null),
+    );
+    const result = await controller.getInvoiceSettings();
+    expect(result.hideOriginalPrice).toBe(true);
+  });
+
+  it("PATCH {hideOriginalPrice:true} calls svc.set(invoice.hideOriginalPrice, true)", async () => {
+    await controller.updateInvoiceSettings({ hideOriginalPrice: true });
+    expect(svc.set).toHaveBeenCalledWith("invoice.hideOriginalPrice", "true");
+  });
+
+  it("PATCH without hideOriginalPrice does not touch that key", async () => {
+    await controller.updateInvoiceSettings({ defaultTerms: "Net 15" });
+    expect(svc.set).toHaveBeenCalledWith("invoice.defaultTerms", "Net 15");
+    expect(svc.set).not.toHaveBeenCalledWith("invoice.hideOriginalPrice", expect.anything());
+  });
+});

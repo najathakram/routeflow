@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsIn } from "class-validator";
+import { IsOptional, IsString, IsIn, IsBoolean } from "class-validator";
 
 // Canonical payment-terms allow-list. Imported by the customer/supplier
 // default-terms DTOs (which append "" for "clear the override"), so adding a
@@ -11,4 +11,8 @@ export class UpdateInvoiceSettingsDto {
   @IsString()
   @IsIn(VALID_TERMS, { message: "defaultTerms must be one of: " + VALID_TERMS.join(", ") })
   defaultTerms?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  hideOriginalPrice?: boolean;
 }

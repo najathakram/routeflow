@@ -1401,6 +1401,10 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const { toast } = useToast();
 
   const { data: invoice, isLoading, isError } = useInvoice(params.id);
+  // Sourced from the invoice payload, NOT useInvoiceSettings(): /settings/invoice
+  // is operator-only, and CUSTOMER-role users view this same document — the very
+  // audience the tenant is hiding the struck-through original price from.
+  const hideOriginal = invoice?.hideOriginalPrice === true;
   const sendInvoice = useSendInvoice();
   const sendInvoiceEmail = useSendInvoiceEmail();
   const sendInvoiceReminder = useSendInvoiceReminder();
@@ -2410,7 +2414,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                           )}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          {item.priceType === "SPECIAL" ? (
+                          {item.priceType === "SPECIAL" && !hideOriginal ? (
                             <div className="flex flex-col items-end gap-0.5">
                               <span className="strike text-xs">
                                 {fmt(Number(item.originalPrice))}
@@ -2422,7 +2426,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                                 Special price
                               </span>
                             </div>
-                          ) : item.priceType === "DISCOUNTED" ? (
+                          ) : item.priceType === "DISCOUNTED" && !hideOriginal ? (
                             <div className="flex flex-col items-end gap-0.5">
                               <span className="strike text-xs">
                                 {fmt(Number(item.originalPrice))}
@@ -2434,7 +2438,9 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                                 Discounted price
                               </span>
                             </div>
-                          ) : item.priceType === "PROMO" && item.originalPrice != null ? (
+                          ) : item.priceType === "PROMO" &&
+                            item.originalPrice != null &&
+                            !hideOriginal ? (
                             <div className="flex flex-col items-end gap-0.5">
                               <span className="strike text-xs">
                                 {fmt(Number(item.originalPrice))}
@@ -2459,7 +2465,9 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                                 Upsell
                               </span>
                             </div>
-                          ) : item.priceType === "MANUAL" && item.originalPrice != null ? (
+                          ) : item.priceType === "MANUAL" &&
+                            item.originalPrice != null &&
+                            !hideOriginal ? (
                             <div className="flex flex-col items-end gap-0.5">
                               <span className="strike text-xs">
                                 {fmt(Number(item.originalPrice))}

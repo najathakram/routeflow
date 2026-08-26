@@ -2632,7 +2632,19 @@ export class InvoicesService {
       dueDateIso != null &&
       dueDateIso < new Date().toISOString().slice(0, 10);
     const { depositAmount, depositOverdue } = this.computeDepositFields(inv as any, paidAmount);
-    return { ...inv, balanceDue, paidAmount, isOverdue, depositAmount, depositOverdue };
+    // Rides the invoice payload (not /settings/invoice, which is operator-only)
+    // so CUSTOMER viewers of this same document honor the tenant's
+    // hide-original-price preference too.
+    const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
+    return {
+      ...inv,
+      balanceDue,
+      paidAmount,
+      isOverdue,
+      depositAmount,
+      depositOverdue,
+      hideOriginalPrice,
+    };
   }
 
   async update(id: string, dto: Partial<CreateInvoiceDto>) {
