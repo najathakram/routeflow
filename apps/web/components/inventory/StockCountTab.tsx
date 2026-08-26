@@ -282,6 +282,12 @@ export function StockCountTab() {
     try {
       const res = await startStockCount.mutateAsync(amendsSessionId ? { amendsSessionId } : {});
       resetLocalSession();
+      // A fresh session is created EMPTY server-side, so there is nothing to
+      // hydrate — and letting the detail query's empty line list through would
+      // wipe a row added in the same breath (scan → local row → hydration
+      // replaces rows with []). Amend sessions ARE seeded server-side from the
+      // amended count's lines, so those must still hydrate.
+      if (!amendsSessionId) hydratedSessionRef.current = res.id;
       setSessionId(res.id);
       if (res.otherOpenSessions?.length) {
         setOtherOpenWarning(res.otherOpenSessions.filter((s) => s.id !== res.id));

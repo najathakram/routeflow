@@ -158,6 +158,10 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   2026-08-19). **2026-08-20:** `ensureDeveloperMode(tenantId)` upserts an ACTIVE
   `developer_mode` TenantAddon in BOTH the existing-tenant and fresh-create paths — the web
   suite exercises `/routes`, which is hidden without it (web e2e OP-03b is the canary).
+  **2026-08-26:** the catch prints the WHOLE error (Prisma wraps connection failures in an
+  "Invalid invocation" whose `.message` is empty — CI logged a blank cause for a week). In CI
+  the seed only runs when the `E2E_SEED_DATABASE_URL` secret is set (see
+  `apps/web/e2e/setup/global.setup.ts` for the full seeding contract).
 - **`scripts/demo-seed.js` + `demo-seed-images.js` + `demo-verify.js` + `lib/demo-ids.js`**
   (2026-08-20) — the standing sales-demo tenant `routeflow-demo` (on the test-tenant allow-list;
   operator `routeflow_demo`/`routeflow_demo`). `demo-seed.js` copies a catalog from the tenant

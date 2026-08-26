@@ -206,7 +206,9 @@ async function main() {
 
 main()
   .catch((e) => {
-    console.error("\n❌ E2E seed failed:", e.message ?? e);
+    // Print the WHOLE error: Prisma wraps connection failures in an
+    // "Invalid invocation" whose .message can be empty, hiding the cause.
+    console.error("\n❌ E2E seed failed:", e);
     process.exit(1);
   })
   .finally(async () => {

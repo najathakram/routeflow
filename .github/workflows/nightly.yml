@@ -107,6 +107,10 @@ jobs:
         env:
           PLAYWRIGHT_BASE_URL: ${{ env.WEB_URL }}
           PLAYWRIGHT_TENANT_SLUG: ${{ secrets.PLAYWRIGHT_TENANT_SLUG || 'e2e-routeflow' }}
+          # Optional — when set, global.setup re-seeds `e2e-routeflow` (failure
+          # fails the job); when absent, seeding skips with a notice and the
+          # standing tenant is assumed pre-seeded. See ci.yml's e2e job comment.
+          E2E_SEED_DATABASE_URL: ${{ secrets.E2E_SEED_DATABASE_URL }}
           # Super-admin specs skip when these secrets are absent (never hardcoded).
           PLAYWRIGHT_SA_USERNAME: ${{ secrets.PLAYWRIGHT_SA_USERNAME }}
           PLAYWRIGHT_SA_PASSWORD: ${{ secrets.PLAYWRIGHT_SA_PASSWORD }}

@@ -104,7 +104,10 @@ function SellerCard({ seller, onClick }: { seller: BuyerSeller; onClick: () => v
 
   if (!canOpen) {
     return (
-      <div className="flex items-center gap-4 rounded-xl border border-surface-border bg-white p-4 text-left shadow-sm">
+      <div
+        data-testid="seller-card"
+        className="flex items-center gap-4 rounded-xl border border-surface-border bg-white p-4 text-left shadow-sm"
+      >
         {logo}
         {info}
       </div>
@@ -114,6 +117,7 @@ function SellerCard({ seller, onClick }: { seller: BuyerSeller; onClick: () => v
   return (
     <button
       type="button"
+      data-testid="seller-card"
       onClick={onClick}
       className="group flex items-center gap-4 rounded-xl border border-surface-border bg-white p-4 text-left shadow-sm transition-all hover:border-buyer-300 hover:shadow-md"
     >
