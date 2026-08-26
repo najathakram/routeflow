@@ -21,9 +21,32 @@
  *   railway run --service postgres node apps/api/scripts/audit-buyer-verification-grandfather.mjs
  */
 import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+import pg from "pg";
+
+// Same connection pattern as demo-seed.js/prod-migrate.mjs: under
+// `railway run --service postgres` the proxy vars are injected; build the URL
+// from them (Prisma 7 requires explicit options — a bare constructor throws).
+function resolveDbUrl() {
+  const e = process.env;
+  if (
+    e.RAILWAY_TCP_PROXY_DOMAIN &&
+    e.RAILWAY_TCP_PROXY_PORT &&
+    e.POSTGRES_USER &&
+    e.POSTGRES_PASSWORD &&
+    e.POSTGRES_DB
+  ) {
+    return (
+      `postgresql://${e.POSTGRES_USER}:${encodeURIComponent(e.POSTGRES_PASSWORD)}` +
+      `@${e.RAILWAY_TCP_PROXY_DOMAIN}:${e.RAILWAY_TCP_PROXY_PORT}/${e.POSTGRES_DB}`
+    );
+  }
+  return e.DATABASE_URL ?? "postgresql://user:pass@localhost:5432/routeflow_dev";
+}
 
 const CUTOFF = new Date("2026-08-24T00:00:00.000Z");
-const prisma = new PrismaClient();
+const pool = new pg.Pool({ connectionString: resolveDbUrl() });
+const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
 async function main() {
   const suspects = await prisma.buyerAccount.findMany({
