@@ -92,20 +92,12 @@ const OPERATOR_NAV: NavEntry[] = [
   },
   {
     kind: "group",
-    label: "Deliveries",
-    icon: Package,
-    children: [
-      { kind: "leaf", label: "Plan delivery", href: "/deliveries/new", icon: MapPin },
-      { kind: "leaf", label: "Delivery history", href: "/deliveries", icon: FileText },
-    ],
-  },
-  {
-    kind: "group",
     label: "Dispatch",
     icon: Truck,
     children: [
       { kind: "leaf", label: "Overview", href: "/dispatch", icon: LayoutDashboard },
       { kind: "leaf", label: "Routes", href: "/routes", icon: MapPin },
+      { kind: "leaf", label: "Order delivery", href: "/deliveries", icon: Package },
       { kind: "leaf", label: "Drivers", href: "/drivers", icon: Truck },
     ],
   },
@@ -193,47 +185,31 @@ function getNavForRole(
     return DRIVER_NAV;
   }
 
-  const showDispatch = devMode || routesAccess;
-  const showDeliveries = devMode || deliveryAccess;
-
-  // Tenants without either addon (and no devMode) never see the Dispatch or
-  // Deliveries groups — both are gated per-feature.
+  // Tenants without either addon (and no devMode) never see the Dispatch
+  // group — it's gated on having at least one of the two features.
+  const showDispatchGroup = devMode || routesAccess || deliveryAccess;
   let baseNav = OPERATOR_NAV.filter(
-    (entry) =>
-      !(
-        entry.kind === "group" &&
-        ((entry.label === "Dispatch" && !showDispatch) ||
-          (entry.label === "Deliveries" && !showDeliveries))
-      ),
-  );
+    (entry) => !(entry.kind === "group" && entry.label === "Dispatch" && !showDispatchGroup),
+  ).map((entry): NavEntry => {
+    if (entry.kind !== "group" || entry.label !== "Dispatch") return entry;
+    // Inside a visible Dispatch group, the routes/delivery leaves are each
+    // gated on their own feature; Overview and Drivers are shared by both
+    // and always render once the group itself is showing.
+    return {
+      ...entry,
+      children: entry.children.filter((c) => {
+        if (c.href === "/routes") return devMode || routesAccess;
+        if (c.href === "/deliveries") return devMode || deliveryAccess;
+        return true;
+      }),
+    };
+  });
 
-  // Drivers are needed by both features: when Dispatch is hidden but
-  // Deliveries is visible, its "Drivers" leaf moves into Deliveries instead
-  // of disappearing.
-  if (!showDispatch && showDeliveries) {
+  // Operators who can also act as drivers get "My Routes" inside the
+  // Dispatch group instead of as a stand-alone top-level item.
+  if (canActAsDriver && showDispatchGroup) {
     baseNav = baseNav.map((entry): NavEntry => {
-      if (entry.kind === "group" && entry.label === "Deliveries") {
-        const alreadyHasDrivers = entry.children.some((c) => c.href === "/drivers");
-        if (alreadyHasDrivers) return entry;
-        return {
-          ...entry,
-          children: [
-            ...entry.children,
-            { kind: "leaf", label: "Drivers", href: "/drivers", icon: Truck },
-          ],
-        };
-      }
-      return entry;
-    });
-  }
-
-  // Operators who can also act as drivers get "My Routes" inside whichever
-  // dispatch-ish group is visible — Dispatch when it's shown (as before),
-  // else Deliveries — instead of as a stand-alone top-level item.
-  if (canActAsDriver && (showDispatch || showDeliveries)) {
-    const targetLabel = showDispatch ? "Dispatch" : "Deliveries";
-    baseNav = baseNav.map((entry): NavEntry => {
-      if (entry.kind === "group" && entry.label === targetLabel) {
+      if (entry.kind === "group" && entry.label === "Dispatch") {
         const alreadyHasMyRoutes = entry.children.some((c) => c.href === "/routes/my-runs");
         if (alreadyHasMyRoutes) return entry;
         return {
@@ -263,7 +239,7 @@ const DRIVER_ALLOWED: string[] = ["/dashboard", "/routes", "/settings"];
  * still unlocks both). `/drivers` is shared by both features ("either").
  */
 const GATED_PREFIXES: { prefix: string; need: "routes" | "delivery" | "either" }[] = [
-  { prefix: "/dispatch", need: "routes" },
+  { prefix: "/dispatch", need: "either" },
   { prefix: "/routes", need: "routes" },
   { prefix: "/deliveries", need: "delivery" },
   { prefix: "/drivers", need: "either" },
