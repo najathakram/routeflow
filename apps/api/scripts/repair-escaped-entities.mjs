@@ -104,6 +104,15 @@ const decode = (s) =>
     .replace(/&#39;/g, "'")
     .replace(/&amp;/g, "&");
 
+// Prisma error messages often open with blank lines — report the first non-empty one.
+const errorReason = (err) =>
+  String(err?.message ?? err)
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean) ??
+  err?.name ??
+  "unknown error";
+
 const pool = new Pool({ connectionString: resolveDbUrl() });
 const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
@@ -122,19 +131,18 @@ const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
   let total = 0;
   for (const { model, field } of TARGETS) {
-    // BuyerAccount is not tenant-scoped by tenantId in the same way — its link
-    // is via customers; the census counts it globally. Scope it via customers'
-    // tenant when possible; otherwise skip with a note (0 affected today).
+    // BuyerAccount carries no tenantId — its tenant link is the customerLinks
+    // relation (CustomerLink rows hold tenantId). The census counts it globally.
     const where =
       model === "buyerAccount"
-        ? { customers: { some: { tenantId: tenant.id } }, [field]: { contains: "&" } }
+        ? { customerLinks: { some: { tenantId: tenant.id } }, [field]: { contains: "&" } }
         : { tenantId: tenant.id, [field]: { contains: "&" } };
 
     let rows;
     try {
       rows = await prisma[model].findMany({ where, select: { id: true, [field]: true } });
     } catch (err) {
-      console.log(`  (skipped ${model}.${field}: ${err.message.split("\n")[0]})`);
+      console.log(`  (skipped ${model}.${field}: ${errorReason(err)})`);
       continue;
     }
     const hits = rows.filter((r) => r[field] && ENTITY_RE.test(r[field]));
