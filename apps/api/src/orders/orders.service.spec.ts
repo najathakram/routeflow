@@ -1506,6 +1506,58 @@ describe("OrdersService", () => {
         );
       });
     });
+
+    // WP1 (client-release-blockers): pins the boxed-line qty BASIS the stock
+    // decrement uses on create() — box-split lines decrement in PIECES, a
+    // bare-qty line on the same boxed product decrements in SELLING UNITS.
+    // This is a regression guard, not a semantic change: the finding that
+    // motivated WP1's settleStockForEdit refactor flagged this mixed-basis
+    // contract, and settle must reproduce it exactly (held/requested are
+    // compared in each line's own stored denomination) — so this spec
+    // documents what create() already does today.
+    describe("WP1 — boxed-line qty basis on CREATE (regression, no behavior change)", () => {
+      const BOXED_12 = {
+        id: "prod-box12",
+        name: "Water Case",
+        pricePerUnit: 24,
+        unitsPerBox: 12,
+        currentStock: 500,
+      };
+
+      beforeEach(() => {
+        prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+        prisma.order.create.mockResolvedValue(MOCK_ORDER);
+        (service as any).systemConfig.get.mockResolvedValue("0");
+      });
+
+      it("a box/piece split ({boxes:2, pieces:3}) decrements 27 — the PIECES basis", async () => {
+        prisma.product.findMany.mockResolvedValue([BOXED_12]);
+
+        await service.create(
+          { items: [{ productId: "prod-box12", qty: 1, boxes: 2, pieces: 3 }] } as any,
+          customerPayload,
+        );
+
+        expect(prisma.product.update).toHaveBeenCalledWith({
+          where: { id: "prod-box12" },
+          data: { currentStock: { decrement: 27 } },
+        });
+      });
+
+      it("the same boxed product ordered legacy-style with bare qty:2 (no boxes/pieces keys) decrements 2 — the SELLING-UNITS basis", async () => {
+        prisma.product.findMany.mockResolvedValue([BOXED_12]);
+
+        await service.create(
+          { items: [{ productId: "prod-box12", qty: 2 }] } as any,
+          customerPayload,
+        );
+
+        expect(prisma.product.update).toHaveBeenCalledWith({
+          where: { id: "prod-box12" },
+          data: { currentStock: { decrement: 2 } },
+        });
+      });
+    });
   });
 
   // ─── createSale (order + invoice in one step) ─────────────────────────────
@@ -5324,7 +5376,7 @@ describe("OrdersService", () => {
     });
   });
 
-  describe("updateOrderItems — stock guard (P5-08b, validate-only, delta-based)", () => {
+  describe("updateOrderItems — stock guard + settle (P5-08b + WP1, delta-based)", () => {
     // PENDING order already holding qty 5 of prod-1 (create() decremented that
     // 5 from currentStock at order time — only INCREASES need coverage).
     const stockOrder = () => ({
@@ -5346,6 +5398,20 @@ describe("OrdersService", () => {
       ],
     });
 
+    // WP1/F2: the settle no longer derives the PRE-edit qtys from the pre-tx
+    // `order.lineItems` — it consumes a snapshot read INSIDE the transaction
+    // (after the order row is locked), which is the only read in the path that
+    // selects `deliveredQty`. Route THAT read to the order's held lines and
+    // let every other orderItem.findMany (the hoisted price-history read, the
+    // post-edit totals recompute) return whatever the test stubs via
+    // `setPostEditItems`. Stubbing both from one mockResolvedValue would make
+    // held === requested and silently neuter every case in this block.
+    const heldSnapshot = [{ productId: "prod-1", qty: 5, deliveredQty: 0, status: "PENDING" }];
+    let postEditItems: any[] = [];
+    const setPostEditItems = (items: any[]) => {
+      postEditItems = items;
+    };
+
     beforeEach(() => {
       prisma.order.findUnique.mockResolvedValue(stockOrder());
       prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
@@ -5353,13 +5419,17 @@ describe("OrdersService", () => {
       prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1, creditLimit: null });
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
       prisma.customerPrice.findMany.mockResolvedValue([]);
+      postEditItems = [];
+      prisma.orderItem.findMany.mockImplementation((args: any) =>
+        Promise.resolve(args?.select?.deliveredQty ? heldSnapshot : postEditItems),
+      );
     });
 
     it("blocks a CUSTOMER increase beyond available stock (delta 3 > available 2)", async () => {
       prisma.product.findMany.mockResolvedValue([
         { ...MOCK_PRODUCT, id: "prod-1", currentStock: 2, unitsPerBox: null },
       ]);
-      prisma.orderItem.findMany.mockResolvedValue([
+      setPostEditItems([
         { id: "li-1", productId: "prod-1", qty: 8, unitPrice: 5, subtotal: 40, status: "PENDING" },
       ]);
 
@@ -5380,7 +5450,7 @@ describe("OrdersService", () => {
       prisma.product.findMany.mockResolvedValue([
         { ...MOCK_PRODUCT, id: "prod-1", currentStock: 3, unitsPerBox: null },
       ]);
-      prisma.orderItem.findMany.mockResolvedValue([
+      setPostEditItems([
         { id: "li-1", productId: "prod-1", qty: 8, unitPrice: 5, subtotal: 40, status: "PENDING" },
       ]);
 
@@ -5398,7 +5468,7 @@ describe("OrdersService", () => {
       prisma.product.findMany.mockResolvedValue([
         { ...MOCK_PRODUCT, id: "prod-1", currentStock: 0, unitsPerBox: null },
       ]);
-      prisma.orderItem.findMany.mockResolvedValue([
+      setPostEditItems([
         { id: "li-1", productId: "prod-1", qty: 5, unitPrice: 5, subtotal: 25, status: "PENDING" },
       ]);
 
@@ -5415,7 +5485,7 @@ describe("OrdersService", () => {
         { ...MOCK_PRODUCT, id: "prod-1", currentStock: 99, unitsPerBox: null },
         { ...MOCK_PRODUCT, id: "prod-2", name: "Basil", currentStock: 3, unitsPerBox: null },
       ]);
-      prisma.orderItem.findMany.mockResolvedValue([
+      setPostEditItems([
         { id: "li-1", productId: "prod-1", qty: 5, unitPrice: 5, subtotal: 25, status: "PENDING" },
         { id: "li-2", productId: "prod-2", qty: 4, unitPrice: 2, subtotal: 8, status: "PENDING" },
       ]);
@@ -5441,7 +5511,7 @@ describe("OrdersService", () => {
       prisma.product.findMany.mockResolvedValue([
         { ...MOCK_PRODUCT, id: "prod-1", currentStock: 1, unitsPerBox: null },
       ]);
-      prisma.orderItem.findMany.mockResolvedValue([
+      setPostEditItems([
         {
           id: "li-1",
           productId: "prod-1",
@@ -5464,11 +5534,17 @@ describe("OrdersService", () => {
       warnSpy.mockRestore();
     });
 
-    it("never decrements currentStock on edit (validate-only)", async () => {
+    it("WP1: an increase is no longer validate-only — the delta is decremented from currentStock", async () => {
+      // held 5 (stockOrder's existing line) → requested 8 → delta 3 written.
+      // This test previously asserted the OPPOSITE (validate-only, never
+      // decrements) — that was the exact defect WP1 fixes: an edit that
+      // increases a boxed line's qty validated against stock but never
+      // touched it, so an edit could sell inventory that create()'s
+      // decrement-on-order-time accounting never reflected.
       prisma.product.findMany.mockResolvedValue([
         { ...MOCK_PRODUCT, id: "prod-1", currentStock: 100, unitsPerBox: null },
       ]);
-      prisma.orderItem.findMany.mockResolvedValue([
+      setPostEditItems([
         { id: "li-1", productId: "prod-1", qty: 8, unitPrice: 5, subtotal: 40, status: "PENDING" },
       ]);
 
@@ -5478,7 +5554,185 @@ describe("OrdersService", () => {
         customerPayload,
       );
 
-      expect(prisma.product.update).not.toHaveBeenCalled();
+      expect(prisma.product.update).toHaveBeenCalledWith({
+        where: { id: "prod-1" },
+        data: { currentStock: { decrement: 3 } },
+      });
+    });
+  });
+
+  // ─── WP1: settleStockForEdit — applies stock deltas over the union ────────
+  //
+  // Called directly (same pattern as the linePieceQty specs below) rather
+  // than threaded through updateOrderItems/approveChangeRequestAtStop: those
+  // callers exercise plenty of unrelated pricing/promo/invoice machinery to
+  // reach this guard, which would make each case's exact qty numbers fragile
+  // to unrelated changes elsewhere in the edit path. A fake `db` with just
+  // $executeRaw + product.findMany/update isolates the settle contract itself.
+  describe("WP1 settleStockForEdit — applies deltas over the union (validate THEN write)", () => {
+    let fakeDb: {
+      $executeRaw: jest.Mock;
+      product: { findMany: jest.Mock; update: jest.Mock };
+    };
+
+    // WP1/F2: settle takes the PRE-edit lines as their own argument — the
+    // callers now snapshot them inside their transaction (post order-row
+    // lock) instead of reusing the pre-transaction order.lineItems.
+    const settle = (order: any, finalActiveItems: any[], user?: any) =>
+      (service as any).settleStockForEdit(
+        fakeDb,
+        order,
+        order.lineItems ?? [],
+        finalActiveItems,
+        user,
+      );
+
+    const orderWith = (lineItems: any[], status = "PENDING") => ({
+      id: "ord-1",
+      status,
+      lineItems,
+    });
+
+    beforeEach(() => {
+      fakeDb = {
+        $executeRaw: jest.fn().mockResolvedValue(0),
+        product: {
+          findMany: jest.fn().mockResolvedValue([]),
+          update: jest.fn().mockResolvedValue({}),
+        },
+      };
+    });
+
+    it("(a) increase 1→3 boxes (qty 12→36) decrements 24", async () => {
+      fakeDb.product.findMany.mockResolvedValue([
+        { id: "prod-box", name: "Water Case", currentStock: 500 },
+      ]);
+      const order = orderWith([{ productId: "prod-box", qty: 12, status: "PENDING" }]);
+
+      await settle(order, [{ productId: "prod-box", qty: 36 }], operatorPayload);
+
+      expect(fakeDb.product.update).toHaveBeenCalledWith({
+        where: { id: "prod-box" },
+        data: { currentStock: { decrement: 24 } },
+      });
+    });
+
+    it("(b) decrease 3→1 boxes (qty 36→12) increments 24 back", async () => {
+      fakeDb.product.findMany.mockResolvedValue([
+        { id: "prod-box", name: "Water Case", currentStock: 500 },
+      ]);
+      const order = orderWith([{ productId: "prod-box", qty: 36, status: "PENDING" }]);
+
+      await settle(order, [{ productId: "prod-box", qty: 12 }], operatorPayload);
+
+      expect(fakeDb.product.update).toHaveBeenCalledWith({
+        where: { id: "prod-box" },
+        data: { currentStock: { increment: 24 } },
+      });
+    });
+
+    it("(c) a removed line returns its full held qty", async () => {
+      const order = orderWith([{ productId: "prod-1", qty: 10, status: "PENDING" }]);
+
+      // The product no longer appears in the post-edit active set at all.
+      await settle(order, [], operatorPayload);
+
+      expect(fakeDb.product.update).toHaveBeenCalledWith({
+        where: { id: "prod-1" },
+        data: { currentStock: { increment: 10 } },
+      });
+    });
+
+    it("(d) an added line decrements its full requested qty", async () => {
+      fakeDb.product.findMany.mockResolvedValue([
+        { id: "prod-2", name: "Basil", currentStock: 500 },
+      ]);
+      const order = orderWith([]); // held nothing
+
+      await settle(order, [{ productId: "prod-2", qty: 7 }], operatorPayload);
+
+      expect(fakeDb.product.update).toHaveBeenCalledWith({
+        where: { id: "prod-2" },
+        data: { currentStock: { decrement: 7 } },
+      });
+    });
+
+    it("(e) a DRAFT order's edit writes nothing (no validation, no query, no write)", async () => {
+      const order = orderWith([{ productId: "prod-1", qty: 5, status: "PENDING" }], "DRAFT");
+
+      await settle(order, [{ productId: "prod-1", qty: 20 }], operatorPayload);
+
+      expect(fakeDb.$executeRaw).not.toHaveBeenCalled();
+      expect(fakeDb.product.findMany).not.toHaveBeenCalled();
+      expect(fakeDb.product.update).not.toHaveBeenCalled();
+    });
+
+    it("(f) non-staff increase beyond stock throws INSUFFICIENT_STOCK and writes nothing", async () => {
+      fakeDb.product.findMany.mockResolvedValue([
+        { id: "prod-1", name: "Tomatoes", currentStock: 2 },
+      ]);
+      const order = orderWith([{ productId: "prod-1", qty: 5, status: "PENDING" }]);
+
+      await expect(
+        settle(order, [{ productId: "prod-1", qty: 10 }], customerPayload),
+      ).rejects.toMatchObject({
+        response: { code: "INSUFFICIENT_STOCK", productId: "prod-1", available: 2, requested: 10 },
+      });
+      expect(fakeDb.product.update).not.toHaveBeenCalled();
+    });
+
+    it("(g) staff increase beyond stock warns and the write still proceeds (stock goes negative)", async () => {
+      const warnSpy = jest.spyOn((service as any).logger, "warn").mockImplementation();
+      fakeDb.product.findMany.mockResolvedValue([
+        { id: "prod-1", name: "Tomatoes", currentStock: 2 },
+      ]);
+      const order = orderWith([{ productId: "prod-1", qty: 5, status: "PENDING" }]);
+
+      await settle(order, [{ productId: "prod-1", qty: 10 }], operatorPayload);
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("below stock"));
+      expect(fakeDb.product.update).toHaveBeenCalledWith({
+        where: { id: "prod-1" },
+        data: { currentStock: { decrement: 5 } },
+      });
+      warnSpy.mockRestore();
+    });
+
+    it("(h) unchanged lines produce zero product.update calls (and never query stock)", async () => {
+      const order = orderWith([{ productId: "prod-1", qty: 5, status: "PENDING" }]);
+
+      await settle(order, [{ productId: "prod-1", qty: 5 }], operatorPayload);
+
+      expect(fakeDb.product.findMany).not.toHaveBeenCalled();
+      expect(fakeDb.product.update).not.toHaveBeenCalled();
+    });
+
+    // F1: a negative delta credits back only the UNDELIVERED remainder.
+    // Delivered goods physically left the warehouse — the at-door path refuses
+    // such an edit outright (LINE_ALREADY_DELIVERED); the operator edit path
+    // allows it but must not invent inventory by crediting delivered units.
+    it("(i) a FULLY delivered line removed writes nothing — delivered goods never come back", async () => {
+      const order = orderWith([
+        { productId: "prod-box", qty: 24, deliveredQty: 24, status: "PENDING" },
+      ]);
+
+      await settle(order, [], operatorPayload);
+
+      expect(fakeDb.product.update).not.toHaveBeenCalled();
+    });
+
+    it("(j) a PARTIALLY delivered line (24, of which 10 delivered) reduced to 0 credits back exactly 14", async () => {
+      const order = orderWith([
+        { productId: "prod-box", qty: 24, deliveredQty: 10, status: "PENDING" },
+      ]);
+
+      await settle(order, [], operatorPayload);
+
+      expect(fakeDb.product.update).toHaveBeenCalledTimes(1);
+      expect(fakeDb.product.update).toHaveBeenCalledWith({
+        where: { id: "prod-box" },
+        data: { currentStock: { increment: 14 } },
+      });
     });
   });
 
@@ -5795,6 +6049,7 @@ describe("OrdersService", () => {
       prisma.product.findFirst.mockResolvedValue(catalogProduct); // pre-tx regulated guard read
       prisma.orderItem.findMany
         .mockResolvedValueOnce([]) // getCustomerPriceHistory (hoisted, pre-tx)
+        .mockResolvedValueOnce([]) // WP1/F2 in-tx held snapshot — held 0
         .mockResolvedValue([
           {
             id: "li-new",
@@ -5814,6 +6069,62 @@ describe("OrdersService", () => {
 
       expect(invoicesService.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
       expect(prisma.orderRevision.create).not.toHaveBeenCalled();
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    // EXTRA-1: the at-door call site WRITES stock now. Before WP1 this path
+    // only validated the delta — an approved door increase sold goods that
+    // currentStock never accounted for. CHANGE_QTY keeps the reads simple:
+    // no price history (ADD_ITEM only) and no BOGO snapshot, so the two in-tx
+    // orderItem.findMany calls are the held snapshot then the recompute.
+    it("EXTRA-1: an approved at-door qty INCREASE decrements currentStock by the delta", async () => {
+      const line = {
+        id: "li-1",
+        orderId: "ord-1",
+        productId: "prod-1",
+        qty: 12,
+        boxes: 1,
+        pieces: 0,
+        unitsPerBox: 12,
+        unitPrice: 24,
+        subtotal: 24,
+        status: "PENDING",
+        deliveredQty: 0,
+      };
+      prisma.changeRequest.findUnique.mockResolvedValue(
+        baseCr({
+          type: "CHANGE_QTY",
+          orderItemId: "li-1",
+          payload: { orderItemId: "li-1", newQty: 36 },
+        }),
+      );
+      prisma.order.findUnique.mockResolvedValue(baseOrder([line]));
+      prisma.orderItem.findMany
+        .mockResolvedValueOnce([
+          // WP1/F2 in-tx held snapshot (post order-row lock, pre-mutation).
+          { productId: "prod-1", qty: 12, deliveredQty: 0, status: "PENDING" },
+        ])
+        .mockResolvedValue([
+          {
+            id: "li-1",
+            productId: "prod-1",
+            qty: 36,
+            unitPrice: 24,
+            subtotal: 72,
+            status: "PENDING",
+            trackedCategoryId: null,
+          },
+        ]);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-1", name: "Water Case", currentStock: 500 },
+      ]);
+
+      await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
+
+      expect(prisma.product.update).toHaveBeenCalledWith({
+        where: { id: "prod-1" },
+        data: { currentStock: { decrement: 24 } },
+      });
     });
 
     it("credit guard blocks all roles when the merge would exceed the customer's credit limit", async () => {

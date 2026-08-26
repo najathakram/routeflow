@@ -70,6 +70,23 @@ export function todayIso(): string {
 }
 
 /**
+ * Whole calendar days from the viewer's LOCAL today until a stored
+ * UTC-midnight calendar date. Negative = that many days overdue. The due
+ * date's day is read in UTC (it is a calendar value — see fmtCalendarDate);
+ * "today" is the viewer's local calendar day. Mixing the two the other way
+ * round is the badge variant of the −1-day bug.
+ */
+export function calendarDaysUntil(d?: string | null): number | null {
+  if (!d) return null;
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return null;
+  const dueUTC = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
+  const now = new Date();
+  const todayUTC = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((dueUTC - todayUTC) / 86_400_000);
+}
+
+/**
  * True for the internal, non-routable email sentinels we mint when a customer has no address:
  * `no-email+<uuid>@placeholder.local` (User.email is required + unique per tenant) and
  * `<username>@imported.local` (CSV import). Never render one of these to a user.
