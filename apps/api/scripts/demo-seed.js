@@ -714,6 +714,15 @@ async function ensureRoutes(customers, driverIds) {
       },
     });
 
+    // Stops are keyed by stable id, but (routeId, stopNumber) is UNIQUE — when the
+    // demo customer list shifts between seed versions, an old stop with a different
+    // id can still hold this route's stopNumber and the id-keyed upsert collides.
+    // ensureRoutes runs BEFORE clearTransactions, so last refresh's RouteRunStops
+    // still FK these stops — clear them first (DeliveryMutation/Batch links are
+    // ON DELETE SET NULL, and clearTransactions rebuilds every run right after).
+    await prisma.routeRunStop.deleteMany({ where: { routeStop: { routeId } } });
+    await prisma.routeStop.deleteMany({ where: { routeId } });
+
     let stopNumber = 0;
     const stops = [];
     for (const ck of r.customers) {
