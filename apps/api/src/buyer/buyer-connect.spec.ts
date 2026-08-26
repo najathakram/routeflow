@@ -507,3 +507,97 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
     expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
   });
 });
+
+describe("BuyerService.getSellers — non-ACTIVE customer redaction (security)", () => {
+  let service: BuyerService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let emailService: { send: jest.Mock };
+  let gateway: { emitBuyerAutoLinked: jest.Mock; emitBuyerConnectRequest: jest.Mock };
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    emailService = { send: jest.fn().mockResolvedValue({ delivered: true }) };
+    gateway = { emitBuyerAutoLinked: jest.fn(), emitBuyerConnectRequest: jest.fn() };
+
+    prisma.tenant.findUnique.mockResolvedValue(TENANT as any);
+    prisma.tenantConfig.findFirst.mockResolvedValue(null);
+    prisma.user.findMany.mockResolvedValue([{ email: "ops@acme-foods.example" }] as any);
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BuyerService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: EmailService, useValue: emailService },
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: RouteFlowGateway, useValue: gateway },
+      ],
+    }).compile();
+
+    service = module.get(BuyerService);
+  });
+
+  it("ACTIVE link -> customer identity is populated", async () => {
+    prisma.customerLink.findMany.mockResolvedValue([
+      {
+        id: "l1",
+        status: "ACTIVE",
+        linkedAt: new Date(),
+        tenantId: "t1",
+        tenant: { id: "t1", name: "Acme", slug: "acme" },
+        customer: { id: "c1", businessName: "Retail Corner", email: "c@x.com" },
+      },
+    ] as any);
+
+    const result = await service.getSellers("buyer-1");
+
+    expect(result).toHaveLength(1);
+    expect(result[0].linkStatus).toBe("ACTIVE");
+    expect(result[0].customer).toEqual({
+      id: "c1",
+      businessName: "Retail Corner",
+      email: "c@x.com",
+    });
+    expect(result[0].tenant.name).toBe("Acme");
+  });
+
+  it("PENDING_SELLER_APPROVAL link -> customer identity is redacted, tenant branding stays", async () => {
+    prisma.customerLink.findMany.mockResolvedValue([
+      {
+        id: "l2",
+        status: "PENDING_SELLER_APPROVAL",
+        linkedAt: null,
+        tenantId: "t1",
+        tenant: { id: "t1", name: "Acme", slug: "acme" },
+        customer: { id: "c1", businessName: "Retail Corner", email: "c@x.com" },
+      },
+    ] as any);
+
+    const result = await service.getSellers("buyer-2");
+
+    expect(result).toHaveLength(1);
+    expect(result[0].linkStatus).toBe("PENDING_SELLER_APPROVAL");
+    expect(result[0].customer).toBeNull();
+    expect(result[0].tenant.name).toBe("Acme");
+    expect(result[0].tenant.slug).toBe("acme");
+  });
+
+  it("INVITED link -> customer identity is redacted, tenant branding stays", async () => {
+    prisma.customerLink.findMany.mockResolvedValue([
+      {
+        id: "l3",
+        status: "INVITED",
+        linkedAt: null,
+        tenantId: "t1",
+        tenant: { id: "t1", name: "Acme", slug: "acme" },
+        customer: { id: "c1", businessName: "Retail Corner", email: "c@x.com" },
+      },
+    ] as any);
+
+    const result = await service.getSellers("buyer-3");
+
+    expect(result).toHaveLength(1);
+    expect(result[0].linkStatus).toBe("INVITED");
+    expect(result[0].customer).toBeNull();
+    expect(result[0].tenant.name).toBe("Acme");
+  });
+});

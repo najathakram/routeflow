@@ -71,7 +71,7 @@ export default function BuyerAccountPage() {
       {/* Page header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-navy">Account</h1>
-        {activeSeller && (
+        {activeSeller?.customer && (
           <p className="text-sm text-navy/70 mt-1">
             {activeSeller.customer.businessName} at {activeSeller.tenant.name}
           </p>
@@ -124,10 +124,10 @@ export default function BuyerAccountPage() {
               <div className="flex items-center justify-between py-3">
                 <dt className="text-sm text-navy/70">Your Business</dt>
                 <dd className="text-sm font-medium text-navy">
-                  {activeSeller.customer.businessName}
+                  {activeSeller.customer?.businessName ?? "N/A"}
                 </dd>
               </div>
-              {activeSeller.customer.email && (
+              {activeSeller.customer?.email && (
                 <div className="flex items-center justify-between py-3">
                   <dt className="text-sm text-navy/70">Business Email</dt>
                   <dd className="text-sm font-medium text-navy">{activeSeller.customer.email}</dd>
