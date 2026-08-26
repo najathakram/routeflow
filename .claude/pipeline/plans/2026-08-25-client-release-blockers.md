@@ -3,11 +3,11 @@
 > ## ⚠️ WORKTREE
 >
 > ALL work happens in `C:\ClaudeCode\routeflow\.claude\worktrees\ap-client-fixes`
-> (branch `fix/client-release-blockers`, master `754df625`). `cd` there before any command;
+> (branch `fix/client-release-blockers`, rebased onto master post-#447). `cd` there before any command;
 > absolute paths under the worktree for every edit. Do not commit/stage/push — the
 > orchestrator does. **NO Prisma schema change, NO migration.**
 
-> Authored by Fable 5 on 2026-08-25. Status: READY.
+> Authored by Fable 5 on 2026-08-25. Status: READY (RESCOPED 2026-08-26 against master post-#442/#446 — see SCOPE CHANGES).
 > Grounded in a 6-agent release-verification sweep (2026-08-25) whose three HIGH findings the
 > orchestrator re-confirmed by hand against master `754df625`. Anchors below are from that
 > re-confirmation; if a line drifted, re-find by the quoted symbol, never by number.
@@ -86,7 +86,30 @@ Four confirmed defects that reproduce a paying client's complaints:
   stored basis, so per-product deltas are internally consistent. Do NOT change this
   contract in this PR — pin it with a regression spec (WP1 item 4).
 
-## Work packages (files disjoint; WP3 dependsOn WP2)
+## SCOPE CHANGES (2026-08-26, verified against merged master)
+
+- **WP2 and WP3 are SUPERSEDED — do NOT build them.** #442 Phase 1 shipped full
+  Addresses-tab CRUD (edit all fields incl. state/zip, set-primary, delete w/ 409)
+  on web AND mobile, and deliberately REMOVED the edit modal's inline address
+  inputs (the silent-discard trap) in favor of a link to the Addresses tab
+  (CustomerFormModal ~:581 comment). The defect 'no working way to correct an
+  address on web' no longer exists. update-customer.dto.ts still has no
+  addresses field BY DESIGN — addresses go through the dedicated endpoints.
+- **WP4 is HALF DONE**: #442's review fixes already fixed the KPI bucket math
+  (PaymentSummaryBar compares dueDate.slice(0,10) calendar strings; the old
+  :192/:211 setHours sites are gone). Remaining: (a) the terms↔dueDate linkage
+  in EditTermsModal (select at ~:958-968 still ONLY setPaymentTermsLabel), and
+  (b) renderStatus's two LOCAL-time sites — now :83 (today.setHours) and :107
+  (due.setHours) — replace with calendarDaysUntil per the original brief.
+  fmtCalendarDate/todayIso live in apps/web/lib/formatting.ts as before.
+- **WP1 anchors moved** (post #442-Phase-2 + #446 sweep): assertStockAvailableForEdit
+  :3668; call sites :3339→:3438 and :4208→:4308. Everything else in the WP1 brief
+  holds — re-verified by symbol. NOTE: #442 Phase 2 added deleteOrder/changeStatus
+  logic nearby; do not disturb it. The sweep converted several order/customer
+  lookups to findFirst — any NEW spec must mock the finder the code actually calls.
+- Only WP1 and WP4 (reduced) are to be built. WP4 has no dependency on WP1.
+
+## Work packages (ORIGINAL TEXT below — WP2/WP3 superseded, WP4 reduced per SCOPE CHANGES)
 
 ### WP1 — API: order edits settle stock deltas
 
@@ -183,7 +206,7 @@ label: "Main", addressType }]` — with the SAME required-field validation add m
      copies are deleted. Zero behavior change on the new-invoice page.
   2. **EditTermsModal linkage** (`[id]/page.tsx` :958-968): when the Terms select changes
      to a term with known days, recompute the due date from the invoice's ISSUE date:
-     ```tsx
+     `tsx
      onChange={(e) => {
        const label = e.target.value;
        setPaymentTermsLabel(label);
@@ -196,7 +219,7 @@ label: "Main", addressType }]` — with the SAME required-field validation add m
          setDueDate(addDaysIso(String(invoice.issueDate).slice(0, 10), days));
        }
      }}
-     ```
+     `
      The user may still hand-adjust the date AFTER picking a term (explicit correction —
      the server accepts both fields as sent). Add a small muted helper line under the
      grid: `Picking a term recalculates the due date from the issue date
