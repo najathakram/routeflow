@@ -1,7 +1,7 @@
 {
-  "mappedSha": "cb29237e",
-  "generatedAt": "2026-08-26T19:05:00.000Z",
+  "mappedSha": "afc84e24",
+  "generatedAt": "2026-08-26T22:35:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 898,
-  "notes": "2026-08-26 (worktree batch-0826) — 6-PR batch: (A) adaptive Dispatch nav merge + overview adaptation + runs `kind`; (B) branding-by-session (TenantProvider keys off the JWT, cookie self-heal); (C) invoice.hideOriginalPrice KV setting riding the invoice payload; (F) CSP fix unblocking Google Maps (every dashboard map had been blank since 2026-06-18); (G1) Sentry DSN-optional api/web/mobile; (G2) dependabot.yml. Opus-review fixes folded in. See CHANGELOG top bullet. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "2026-08-26 (branch fix/audit-p0-batch, rebased onto the merged 6-PR batch) — AUDIT P0 BATCH: customers :id/orders 403 fix (+roles reflection spec), overdue unification (isOverdue filter / all-ages finance card / DRAFT+WRITTEN_OFF KPI exclusions), NEW lib/impersonation.ts single-source impersonation state (login/logout clear, expiry handling, refresh-race guard, legacy accessToken write removed), delete demotion (invoice trash DRAFT-only; run delete removed), NEW lib/format.ts display kit (run dates stay on fmtCalendarDate — UTC trap), scrub-demo-contacts.mjs + demo-seed email guard, customer Orders tab error/empty states. Landed after the same-day 6-PR batch (#451–#456: adaptive Dispatch, branding-by-session, hideOriginalPrice, CSP maps fix, Sentry, dependabot). Full detail in CHANGELOG.md top bullets. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

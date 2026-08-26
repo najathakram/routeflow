@@ -2,6 +2,7 @@ import { apiClient } from "./api-client";
 import { setTenantCookie, clearTenantCookie } from "./tenant-cookie";
 import { OP_KEYS } from "./auth-keys";
 import { setOpPresenceCookie, clearOpPresenceCookie } from "./presence-cookies";
+import { getImpersonation, clearImpersonation } from "./impersonation";
 
 export { OP_PRESENCE_COOKIE, clearOpPresenceCookie } from "./presence-cookies";
 
@@ -66,9 +67,10 @@ function parseJwtPayload(token: string): Record<string, unknown> | null {
 
 export function getStoredUser(): AuthUser | null {
   if (typeof window === "undefined") return null;
-  // Prefer impersonation token when active, fall back to namespaced operator token
-  const token =
-    localStorage.getItem("impersonationToken") ?? localStorage.getItem(OP_KEYS.accessToken);
+  // Prefer impersonation token when active and not expired, fall back to the
+  // namespaced operator token.
+  const imp = getImpersonation();
+  const token = imp && !imp.expired ? imp.token : localStorage.getItem(OP_KEYS.accessToken);
   if (!token) return null;
   const payload = parseJwtPayload(token);
   if (!payload) return null;
@@ -84,8 +86,7 @@ export function getStoredUser(): AuthUser | null {
     forcePasswordChange: payload.forcePasswordChange as boolean,
     isAdmin: (payload.isAdmin as boolean) ?? false,
     canActAsDriver: (payload.canActAsDriver as boolean) ?? false,
-    tenantSlug:
-      (payload.tenantSlug as string) ?? localStorage.getItem("impersonationTenantSlug") ?? null,
+    tenantSlug: (payload.tenantSlug as string) ?? (imp && !imp.expired ? imp.slug : null),
   };
 }
 
@@ -104,6 +105,10 @@ export async function login(username: string, password: string): Promise<AuthRes
   localStorage.setItem(OP_KEYS.accessToken, data.accessToken);
   localStorage.setItem(OP_KEYS.refreshToken, data.refreshToken);
   setOpPresenceCookie();
+  // A stale impersonation must never carry into a fresh login — both
+  // api-client.ts and getStoredUser() prefer it over the operator token,
+  // which would otherwise hijack this brand-new session.
+  clearImpersonation();
   // Correct the tenant cookie to match the authenticated user's actual tenant.
   // This ensures that even if the browser had a stale cookie from a previous
   // session or impersonation, all subsequent API calls use the correct tenant.
@@ -123,6 +128,7 @@ export async function logout(): Promise<void> {
   localStorage.removeItem(OP_KEYS.refreshToken);
   clearOpPresenceCookie();
   clearTenantCookie();
+  clearImpersonation();
   window.location.href = "/login";
 }
 

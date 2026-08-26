@@ -570,7 +570,7 @@ export default function DashboardPage() {
   );
   const { data: financeData, isLoading: financeLoading } = useFinanceDashboard(POLL);
   const { data: overdueData, isLoading: overdueLoading } = useInvoices(
-    { status: "OVERDUE", limit: 5, sortBy: "dueDate", sortOrder: "asc" },
+    { isOverdue: true, limit: 5, sortBy: "dueDate", sortOrder: "asc" },
     POLL,
   );
 

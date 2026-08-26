@@ -54,6 +54,12 @@ import { TenantLogo } from "@/components/TenantLogo";
 import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
 import { useAuth } from "@/lib/auth-context";
 import { clearTenantCookie } from "@/lib/tenant-cookie";
+import {
+  getImpersonation,
+  clearImpersonation,
+  subscribeImpersonation,
+  type ImpersonationState,
+} from "@/lib/impersonation";
 import { PageTitleProvider, usePageTitle } from "@/lib/page-title-context";
 import { useRealtimeUpdates } from "@/lib/hooks/useRealtimeUpdates";
 import { useNotifications, type AppNotification } from "@/lib/hooks/useNotifications";
@@ -949,35 +955,44 @@ function Header({
 
 function ImpersonationBanner() {
   const router = useRouter();
-  const [tenantSlug, setTenantSlug] = React.useState<string | null>(null);
+  const pathname = usePathname();
+  const [imp, setImp] = React.useState<ImpersonationState | null>(null);
 
   React.useEffect(() => {
-    if (typeof window === "undefined") return;
-    const imp = localStorage.getItem("impersonationToken");
-    if (imp) {
-      setTenantSlug(localStorage.getItem("impersonationTenantSlug") ?? "unknown");
-    }
+    const read = () => setImp(getImpersonation());
+    read();
+    return subscribeImpersonation(read);
   }, []);
+  React.useEffect(() => {
+    setImp(getImpersonation());
+  }, [pathname]);
 
-  if (!tenantSlug) return null;
+  if (!imp) return null;
 
-  const exitImpersonation = () => {
+  const exit = () => {
     clearTenantCookie();
-    localStorage.removeItem("impersonationToken");
-    localStorage.removeItem("impersonationTenantSlug");
+    clearImpersonation();
     router.push("/admin/tenants");
   };
 
   return (
     <div className="flex items-center justify-between bg-red-600 px-4 py-2 text-sm text-white">
       <span>
-        ⚠️ Impersonating <strong>{tenantSlug}</strong> — acting as Tenant Admin
+        {imp.expired ? (
+          <>
+            ⚠️ Impersonation of <strong>{imp.slug}</strong> has expired
+          </>
+        ) : (
+          <>
+            ⚠️ Impersonating <strong>{imp.slug}</strong> — acting as Tenant Admin
+          </>
+        )}
       </span>
       <button
-        onClick={exitImpersonation}
+        onClick={exit}
         className="rounded bg-white/20 px-3 py-1 text-xs font-semibold hover:bg-white/30 transition-colors"
       >
-        Exit impersonation
+        {imp.expired ? "Return to admin" : "Exit impersonation"}
       </button>
     </div>
   );

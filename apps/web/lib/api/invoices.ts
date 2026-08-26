@@ -187,6 +187,12 @@ export function useInvoices(
     limit?: number;
     /** When true, return ONLY invoices that have a tracking number (shipments list). */
     shipped?: boolean;
+    /**
+     * Derived-overdue filter: status in SENT/VIEWED/PARTIAL/OVERDUE AND dueDate
+     * in the past — broader than `status: "OVERDUE"` alone (mirrors the API's
+     * `ListInvoicesDto.isOverdue`).
+     */
+    isOverdue?: boolean;
   },
   options?: { refetchInterval?: number; enabled?: boolean },
 ) {
