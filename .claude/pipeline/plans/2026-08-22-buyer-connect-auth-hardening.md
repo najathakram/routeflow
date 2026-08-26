@@ -182,7 +182,7 @@ Notes for the implementer:
      attested the mailbox)"**. Its account is `{ googleId:null, passwordSet:true, emailVerified:false,
 email:"new-buyer@example.com" }` (matches `profile.email`). It is now a squat â†’ assert
      neutralization instead of a bare verify:
-     ```ts
+     `ts
      expect(prisma.buyerAccount.update).toHaveBeenCalledWith({
        where: { id: "buyer-1" },
        data: expect.objectContaining({
@@ -195,7 +195,7 @@ email:"new-buyer@example.com" }` (matches `profile.email`). It is now a squat â†
      expect(prisma.buyerRefreshToken.deleteMany).toHaveBeenCalledWith({
        where: { buyerAccountId: "buyer-1" },
      });
-     ```
+     `
      Have `prisma.buyerAccount.update.mockResolvedValue({ id:"buyer-1", email:"new-buyer@example.com",
 name:"Existing", passwordSet:false, emailVerified:true, googleId:"google-1", status:"ACTIVE" })`
      so the reassigned `buyer` is well-formed, and mock `prisma.buyerRefreshToken.deleteMany`.

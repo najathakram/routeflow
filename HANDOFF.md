@@ -1,11 +1,74 @@
 # HANDOFF — current state & what to pick up next
 
-**Written:** 2026-08-24 (post-ship, morning window complete) · **Visibility:** private ·
-**CI:** GitHub Actions is DEAD on the free plan while private (billing declined; jobs die in 2s
-with 0 steps). **Owner decision 2026-08-23: stay on the free plan — the public-flip routine in
-CLAUDE.md is canonical again** (public → push/CI → merge → wait for Railway `BUILDING` → private).
-Until a public window, the **pre-push hook running the FULL `npm run verify` is the authoritative
-gate** — never `SKIP_VERIFY=1` without an explicit green verify of the exact pushed state.
+**Written:** 2026-08-26 (early AM — the 2026-08-25 queue SHIPPED in one window) · **Visibility:**
+private (verified by read-back) · **CI:** GitHub Actions billing is STILL broken account-wide;
+today's window used the free-public-minutes flow (flip public → rerun/trigger → merge → private).
+Master's final run: Test/TypeCheck/Lint/Security ALL GREEN — the E2E (Playwright) job fails in
+global-setup seed and has NEVER been green recently (nightlies red since ≥2026-08-22, pre-existing
+infra — task chip filed). The pre-push hook's full `npm run verify` remains the authoritative gate.
+
+## ✅ SHIPPED + LIVE 2026-08-26 window — NINE PRs merged, migration 20260905 applied, all deploys SUCCESS
+
+Sequence executed: validated 12.15MB backup (126==126 CREATE TABLE) → migration
+`20260905000000_customer_deposit_default` applied via prod-migrate.mjs → public window →
+CI green per branch → serial rebase→hook-verify→merge pipeline → deploys SUCCESS → private
+(read-back confirmed) → `post-deploy-check` GREEN → `feature-smoke` GREEN (write paths) →
+demo reseed complete (59 orders / 51 invoices / 8 runs).
+
+| PR   | What                                                                                                                                                                                                                                                                                                                      |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #438 | iOS invoice (PDF) share — lost-transient-activation retap recovery                                                                                                                                                                                                                                                        |
+| #439 | Same for the CSV share path (retargeted to master BEFORE base delete — doctrine held)                                                                                                                                                                                                                                     |
+| #440 | Idle super-admin cross-client 401 redirect hijack fixed; kills the /auth/refresh storms                                                                                                                                                                                                                                   |
+| #441 | Purchase-orders list DTO coercion (`take:"20"` 500)                                                                                                                                                                                                                                                                       |
+| #432 | repair-escaped-entities buyerAccount scoping via customerLinks + errorReason()                                                                                                                                                                                                                                            |
+| #445 | **Buyer-connect auth hardening (HIGH)** — Google-merge squat hijack neutralized pre-link; email-change token/session revoke; roster-oracle redaction + request throttle; F3 audit script (owner runs read-only)                                                                                                           |
+| #446 | **Tenant-scope findUnique sweep** — 79 sites / 23 files to findFirst; cross-tenant existence-oracle + data-echo closed; RULE recorded in the code map                                                                                                                                                                     |
+| #442 | Customer-feedback batch phases 1+2 — address CRUD, agent quick-create, deposit defaults (migration `20260905`), due chips, qty-zeroing MONEY fix + zero-qty invariant, order-discount carried onto generated invoices, DELIVERED reopen + one-step-back demotions, delete-any behind the money gate, `deliveredOn` picker |
+| #443 | `recurring_routes` / `order_delivery` split into independent addons; deploys dark                                                                                                                                                                                                                                         |
+| #447 | demo-seed: clean route-stop rebuild on customer-map drift (found live during the reseed)                                                                                                                                                                                                                                  |
+
+**Recovered from dead sessions before the window** (committed, rebased, hook-verified, then
+merged above): the two uncommitted security batches (#445 — 24 files, #446 — 51 files) and
+#442's fully-implemented phase 2 (21 files) — nothing from the interrupted sessions was lost.
+Three cross-branch regressions the rebases introduced were caught by the hook gate and fixed
+with specs (fulfillPath default-chain mocks, resolveDefaultTerms/deposit mocks, the
+deleteOrder↔cancelImpact finder split).
+
+## ✅ SHIPPED 2026-08-26 — #449 client-release-blockers (RESCOPED; CI green; deploy watched)
+
+Plan `.claude/pipeline/plans/2026-08-25-client-release-blockers.md` rescoped: WP2/WP3
+(customer address edit) SUPERSEDED — #442 phase 1's Addresses-tab CRUD already fixed that
+defect. Built + merged as **#449**: **WP1** — order edits SETTLE stock (`settleStockForEdit`:
+union deltas, product-row + Order-row `FOR UPDATE`, in-tx held snapshot, **delivered-clamp** —
+negative deltas credit only the undelivered portion, so cancelling a delivered line no longer
+inflates inventory; at-door approvals now settle too; specs a–j + at-door case, 253/253) and
+**WP4-reduced** — EditTerms terms→dueDate linkage from the ISSUE date (the "Net 60 shows
+Net 30" complaint) + `calendarDaysUntil` for the two remaining LOCAL-time badge sites
+(`renderStatus`); helpers extracted to `web/lib/invoice-terms.ts`. Pipeline: Fable plan →
+2 Sonnet implementers → Opus review (caught the delivered-clamp + stale-snapshot races) →
+Opus fixer → hook verify + CI green → merged. **The bb-distro NO_GO verdict's three blockers
+are now all closed** (terms↔date by #449, address edit by #442, stock settle by #449; the
+badge −1-day survivor also by #449).
+
+Same-day parallel session (from this session's task chip): E2E suite resurrection — all 5
+red specs root-caused (4 REAL web bugs incl. a router.replace swallowing row clicks on all
+13 list pages), PR #448 open — see memory `project_e2e_suite_resurrection_2026-08-26`.
+
+## 🔴 OWNER ACTIONS (nothing else unblocks these)
+
+1. **Fix GitHub billing** (Settings → Billing & plans) — Actions still refuses jobs outside
+   free public windows; nightly regression red since 2026-08-22.
+2. **Enable `driver_payments` for affa** (Admin → Tenants → affa → Addons) — until flipped,
+   affa drivers 403 on at-door collection ($0/on-account unaffected).
+3. After #443: assign `recurring_routes` / `order_delivery` per tenant as sold.
+4. Run the #445 F3 audit read-only:
+   `railway run --service postgres node apps/api/scripts/audit-buyer-verification-grandfather.mjs`.
+5. Google-key hygiene: restrict the new key to Geocoding + Places; delete stray project
+   routeflow-489906.
+6. E2E-on-master infra (task chip filed): the Playwright job's global-setup seed fails against
+   the CI database; make the job meaningful again, then stop tolerating seed errors in
+   `global.setup.ts`.
 
 ## ✅ SHIPPED + LIVE 2026-08-24 (evening) — #433 addon hygiene · #434 tobacco consolidation
 
