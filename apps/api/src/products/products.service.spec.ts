@@ -806,7 +806,6 @@ describe("ProductsService", () => {
       });
       prisma.product.findFirst.mockResolvedValue(null);
       prisma.trackedCategory.findFirst.mockResolvedValue({ id: "tobacco-cat", name: "Tobacco" });
-      prisma.trackedCategory.findUnique.mockResolvedValue({ name: "Tobacco" });
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
       await service.update("prod-1", { isTobacco: true } as any);
@@ -826,9 +825,12 @@ describe("ProductsService", () => {
       addonService.hasAddon.mockResolvedValue(true);
       prisma.product.findUnique.mockResolvedValue({ ...MOCK_PRODUCT, trackedCategoryId: null });
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findFirst.mockResolvedValue(null); // no existing Tobacco type
+      // Name lookup (no existing Tobacco type) → null; the id lookup the mirror
+      // derivation makes after create sees the new row.
+      prisma.trackedCategory.findFirst.mockImplementation((args: any) =>
+        Promise.resolve(args?.where?.id ? { name: "Tobacco" } : null),
+      );
       prisma.trackedCategory.create.mockResolvedValue({ id: "new-tobacco-cat" });
-      prisma.trackedCategory.findUnique.mockResolvedValue({ name: "Tobacco" });
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
       await service.update("prod-1", { isTobacco: true } as any);
@@ -927,7 +929,13 @@ describe("ProductsService", () => {
         trackedSubcategoryId: null,
       });
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findFirst.mockResolvedValue({ id: "tobacco-cat", name: "Tobacco" });
+      // Name lookup → the tenant's Tobacco type exists; the mirror derivation's
+      // id lookup of "sec-other" → a non-Tobacco section.
+      prisma.trackedCategory.findFirst.mockImplementation((args: any) =>
+        Promise.resolve(
+          args?.where?.id ? { name: "Other" } : { id: "tobacco-cat", name: "Tobacco" },
+        ),
+      );
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
       await service.update("prod-1", { isTobacco: false } as any);
@@ -946,12 +954,12 @@ describe("ProductsService", () => {
         trackedSubcategoryId: null,
       });
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findUnique.mockResolvedValue({ name: "Produce" });
+      prisma.trackedCategory.findFirst.mockResolvedValue({ name: "Produce" });
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
       await service.update("prod-1", { trackedCategoryId: "sec-produce" } as any);
 
-      expect(prisma.trackedCategory.findUnique).toHaveBeenCalledWith({
+      expect(prisma.trackedCategory.findFirst).toHaveBeenCalledWith({
         where: { id: "sec-produce" },
         select: { name: true },
       });
@@ -966,7 +974,7 @@ describe("ProductsService", () => {
         trackedSubcategoryId: null,
       });
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findUnique.mockResolvedValue({ name: "Tobacco" });
+      prisma.trackedCategory.findFirst.mockResolvedValue({ name: "Tobacco" });
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
       await service.update("prod-1", { trackedCategoryId: "tobacco-cat" } as any);
@@ -1534,7 +1542,7 @@ describe("ProductsService", () => {
         regUomUnit: "CP",
       });
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findUnique.mockResolvedValue({ name: "Produce" });
+      prisma.trackedCategory.findFirst.mockResolvedValue({ name: "Produce" });
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
       await expect(
@@ -1600,14 +1608,14 @@ describe("ProductsService", () => {
         regUomUnit: null,
       });
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findUnique.mockResolvedValue({ name: "Produce" });
+      prisma.trackedCategory.findFirst.mockResolvedValue({ name: "Produce" });
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
       await expect(
         service.update("prod-1", { trackedCategoryId: "sec-generic" } as any),
       ).resolves.toBeDefined();
 
-      expect(prisma.trackedCategory.findUnique).toHaveBeenCalledWith(
+      expect(prisma.trackedCategory.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: "sec-generic" } }),
       );
       const data = prisma.product.update.mock.calls[0][0].data;

@@ -626,7 +626,7 @@ export class ProductsService {
       regulated.trackedCategoryId = tobacco.id;
       isTobacco = true;
     } else if (regulated.trackedCategoryId != null) {
-      const cat = await this.prisma.forTenant().trackedCategory.findUnique({
+      const cat = await this.prisma.forTenant().trackedCategory.findFirst({
         where: { id: regulated.trackedCategoryId },
         select: { name: true },
       });
@@ -918,7 +918,7 @@ export class ProductsService {
       if (effectiveCategoryId == null) {
         data.isTobacco = false;
       } else {
-        const cat = await this.prisma.forTenant().trackedCategory.findUnique({
+        const cat = await this.prisma.forTenant().trackedCategory.findFirst({
           where: { id: effectiveCategoryId },
           select: { name: true },
         });
