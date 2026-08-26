@@ -1,11 +1,75 @@
 # HANDOFF — current state & what to pick up next
 
-**Written:** 2026-08-24 (post-ship, morning window complete) · **Visibility:** private ·
-**CI:** GitHub Actions is DEAD on the free plan while private (billing declined; jobs die in 2s
-with 0 steps). **Owner decision 2026-08-23: stay on the free plan — the public-flip routine in
-CLAUDE.md is canonical again** (public → push/CI → merge → wait for Railway `BUILDING` → private).
-Until a public window, the **pre-push hook running the FULL `npm run verify` is the authoritative
-gate** — never `SKIP_VERIFY=1` without an explicit green verify of the exact pushed state.
+**Written:** 2026-08-25 (late evening; two ship windows done, five PRs queued, one pipeline in
+flight) · **Visibility:** private · **CI:** GitHub Actions billing is BROKEN account-wide
+("recent account payments have failed") — jobs refuse to start even in public windows until the
+owner fixes GitHub **Settings → Billing** — BUT free public-window minutes still work, which is
+how today's merges got green CI (flip public → `gh run rerun` the billing-refused run → green →
+merge → wait `BUILDING` → private). Same-day discovery: **Google Cloud billing is ALSO dead**
+(same payment method?) — see Owner Actions. The pre-push hook's full `npm run verify` remains
+the authoritative local gate.
+
+## ✅ SHIPPED + LIVE 2026-08-25 — #435 ad-hoc trips + fulfillment + driver payments · #437 follow-ups
+
+Two windows, both: CI green → squash-merge → `BUILDING` → private verified → deploys SUCCESS →
+post-deploy green.
+
+- **#435**: ad-hoc order trips (multi-select orders → trip builder → optimize → dispatch;
+  `Route.kind ADHOC`, driver run flow inherited untouched) + `Order.fulfillPath ROUTE|SHIP`
+  (reuses the dormant enum; `Customer.fulfillPath` live as the new-order default; SHIP excluded
+  from dispatch with visible reasons; invoicing parity spec-pinned) + **driver_payments opt-in**
+  (body-aware `DriverPaymentsGuard` on complete-with-payment: only `payment.amount > 0` needs
+  the addon; $0/on-account closes work for every tenant). Migration `20260904` applied
+  (validated 11.9MB backup first; SHIP-customer audit CLEAN — only the demo seed).
+  Sweep hardening (`fulfillPath: ROUTE` in the dispatch sweep) shipped with a clean audit —
+  no live tenant affected.
+- **#437**: demo-seed commission-chain teardown fix + trip-demo readiness (synthetic coords —
+  optimize works keylessly via the local fallback) + platform-admin **Driver payments toggle**
+  (consequence-stating copy) + addon-toggle failures now surface (was a silent `catch {}`).
+- Live feature probe green: `/trips/eligibility` serving, `fulfillPath` on payloads,
+  `driver_payments`+`developer_mode` active on `routeflow-demo`.
+
+## 🟡 OPEN PRs — all verify-green, queued for the next windows (merge order matters)
+
+| PR   | Branch                       | What                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Notes                                                                                                                                                                                                                                            |
+| ---- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| #438 | fix/ios-share-activation     | iOS invoice sharing: `NotAllowedError` (transient activation lost during PDF fetch) now routes to the tap-again recovery instead of a dead toast                                                                                                                                                                                                                                                                                                                                                                                                                         | Land FIRST                                                                                                                                                                                                                                       |
+| #439 | (stacked on #438)            | Same fix for the CSV share path (parallel session)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | **RETARGET to master after #438 merges, before deleting the base branch**                                                                                                                                                                        |
+| #440 | fix/admin-session-hijack     | Idle super-admin page bounced to buyer/login pages: operator+buyer clients redirected on 401s from surfaces they don't own; both now redirect only on their own surfaces                                                                                                                                                                                                                                                                                                                                                                                                 | Also kills the `/auth/refresh` rate-limit storms in prod logs                                                                                                                                                                                    |
+| #443 | feat/order-delivery-split    | Recurring routes vs Order delivery = two independent addons (`recurring_routes`, `order_delivery`); web `/deliveries` (Plan delivery + history); `/routes` un-mixed; mobile mirrored; `developer_mode` stays master switch                                                                                                                                                                                                                                                                                                                                               | No migration; deploys dark                                                                                                                                                                                                                       |
+| #442 | feat/customer-feedback-batch | Phase 1 committed: address CRUD+primary (+ new DELETE endpoint w/ route-stop 409), agent quick-create, per-customer deposit defaults, Due today/tomorrow/7d chips, shipment-panel gating. **Phase 2 pipeline IN FLIGHT** (wf_9e0b7132): boxes:0/pieces:0 **qty-zeroing money bug** + zero-qty invariant, order-discount carried onto generated invoices (was DROPPED — over-billing), reopen DELIVERED + one-step-back demotions from any state, delete-any-order behind warning (payments-attached invoices still block), New-sale delivery-date picker (`deliveredOn`) | ⚠️ **Migration `20260905000000_customer_deposit_default` must be applied BEFORE this deploy** (one nullable column, additive). Phase 3 queued: tenant setting to show tier prices plainly on invoices (no strikethrough) — recon done, plan next |
+
+## 🔴 Root-caused live bugs covered by the queue (evidence in the PR bodies)
+
+1. **"Order created but invoice could not be generated" / "$0 orders"** = the New-sale screen
+   sends `boxes:0, pieces:0` and the server let that overwrite qty with 0 (verified on a live
+   order: lines `qty 0.000` at full unitPrice). Phase-2 fix + invariant. The damaged live order
+   becomes self-repairable after deploy: Reopen → Edit Items → invoice re-syncs.
+2. **Order-level discount silently dropped** on invoice generation (demo-proven $20/$20 → $20
+   invoice). Phase-2 proration fix.
+3. **Idle admin page hijack** (#440) — cross-client 401 redirect bleed, not session expiry.
+4. **Phone invoice sharing** (#438/#439) — iOS transient-activation, spec-confirmed.
+5. Purchase-orders list crash (`take: "20"` string) — spawned as its own task/PR by the owner.
+
+## 🔴 OWNER ACTIONS (nothing else unblocks these)
+
+1. **Fix GitHub billing** (Settings → Billing & plans) — Actions refuses jobs account-wide.
+2. **Fix Google Cloud billing** on the maps project — `GOOGLE_MAPS_API_KEY` IS set and served
+   to the web app; Geocoding/Places return `REQUEST_DENIED: enable Billing`. Until then:
+   geocoding + address autocomplete are dead on prod; optimizer falls back to stored coords.
+3. **Enable `driver_payments` for affa** (Admin → Tenants → affa → Addons) — until flipped,
+   affa drivers get a clear 403 on at-door collection ($0/on-account completions unaffected).
+4. After #443 deploys: assign `recurring_routes` / `order_delivery` per tenant as sold.
+5. Merge windows for the five queued PRs (assistant can run them on request — order per table).
+
+## Deploy runbook for the queued batch
+
+1. Backup → `railway run --service postgres node apps/api/scripts/prod-migrate.mjs`
+   (applies `20260905`; `20260904` is already live). ⚠️ bare `railway run pg_dump` writes a
+   0-byte dump — use the postgres-service proxy vars (see memory / #435 runbook).
+2. Public window: rerun CI per PR → merge in table order (#438 → retarget #439 → #440 → #443 →
+   #442) → wait `BUILDING` → private (verify read-back) → deploys SUCCESS → post-deploy-check.
+3. Demo refresh (`demo-seed.js --live`) after #442 to exercise deposit defaults + due chips.
 
 ## ✅ SHIPPED + LIVE 2026-08-24 (evening) — #433 addon hygiene · #434 tobacco consolidation
 
