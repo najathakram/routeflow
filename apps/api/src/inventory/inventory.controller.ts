@@ -22,6 +22,7 @@ import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
 import { CommitStockCountDto } from "./dto/commit-stock-count.dto";
 import { ListMovementsDto } from "./dto/list-movements.dto";
+import { ListPurchaseOrdersDto } from "./dto/list-purchase-orders.dto";
 import { CreateSupplierDto } from "./dto/create-supplier.dto";
 import { UpdateSupplierDto } from "./dto/update-supplier.dto";
 import { SetCostBasisDto } from "./dto/set-cost-basis.dto";
@@ -175,7 +176,7 @@ export class InventoryController {
 
   @Get("purchase-orders")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
-  listPOs(@Query() query: any) {
+  listPOs(@Query() query: ListPurchaseOrdersDto) {
     return this.inventoryService.listPurchaseOrders(query);
   }
 

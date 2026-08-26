@@ -1,7 +1,12 @@
 {
   "mappedSha": "769bc1e9",
-  "generatedAt": "2026-08-25T19:23:15.483Z",
-  "areas": ["api", "web", "mobile", "packages"],
+  "generatedAt": "2026-08-26T03:43:24.394Z",
+  "areas": [
+    "api",
+    "web",
+    "mobile",
+    "packages"
+  ],
   "fileCount": 898,
-  "notes": "2026-08-25 (PR #437) — platform-admin AVAILABLE_ADDONS gained driver_payments (+ dev-mode copy mentions the trip builder; toggleError banner replaces the silent catch); demo-seed teardown walks the commission chain before invoices (CommissionAccrual FKs Invoice; the refresh died half-cleared) + clears DeliveryMutation/Batch before orders; seeds depot COORDS on Route+RouteRun, SystemConfig route.defaultDepot*, driver home bases, and order fulfillPath from customer so the ad-hoc trip builder demos with no Maps key. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "**2026-08-25** — PO LIST DTO COERCION (branch fix/po-list-dto-coercion): prod 500 `PrismaClientValidationError take: \"20\"` at `InventoryService.listPurchaseOrders` — GET `/inventory/purchase-orders` had no DTO (`@Query() query: any`), so `page`/`limit` reached Prisma as strings. New `inventory/dto/list-purchase-orders.dto.ts` mirroring `ListOrdersDto` (`@Type(() => Number) @IsInt @Min(1)` page/limit, defaults 1/20; `@IsEnum(PurchaseOrderStatus)` status; supplierId; `from`/`to` whitelisted-but-unfiltered because the web POs tab sends them and global `forbidNonWhitelisted` would 400 the request), wired into controller + service signature. Spec `dto/list-purchase-orders.dto.spec.ts`. Checked the `limit=0` fetch-all sentinel trap — no PO caller uses it (web sends 20/50, mobile sends none). ⚠️ Found in passing: mobile `useOpenPurchaseOrders` sends `status=PARTIALLY_RECEIVED` which is not in ` || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

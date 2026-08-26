@@ -15,6 +15,7 @@ import {
   UpsertStockCountLineDto,
 } from "./dto/stock-count-session.dto";
 import { ListMovementsDto } from "./dto/list-movements.dto";
+import { ListPurchaseOrdersDto } from "./dto/list-purchase-orders.dto";
 import { CreateSupplierDto } from "./dto/create-supplier.dto";
 import { UpdateSupplierDto } from "./dto/update-supplier.dto";
 import { SetCostBasisDto } from "./dto/set-cost-basis.dto";
@@ -1072,7 +1073,7 @@ export class InventoryService {
     });
   }
 
-  async listPurchaseOrders(query: any) {
+  async listPurchaseOrders(query: ListPurchaseOrdersDto) {
     const { supplierId, status, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
