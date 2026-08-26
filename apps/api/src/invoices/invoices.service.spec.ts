@@ -1902,6 +1902,190 @@ describe("InvoicesService", () => {
       expect(Number(result[0].shippingFee)).toBe(4); // fee still applies
       expect(Number(result[0].total)).toBe(24); // 20 + 0 + 4
     });
+
+    // ─── Order discount carry (WP2 — sale integrity phase 2) ──────────────────
+    // createSplitInvoices allocates order.discountAmount across sibling groups
+    // proportionally by subtotal, MIRRORING the regular-tax allocator directly
+    // above: roundMoney each share, largest-subtotal group absorbs the rounding
+    // remainder, and each group's total subtracts its own discount share.
+
+    it("fully discounts a single-group order: invoice discount 20, total 0", async () => {
+      setupSplitSpies();
+      prisma.trackedCategory.findMany.mockResolvedValue([]);
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-disc1",
+        customerId: "cust-1",
+        orderNumber: "ORD-DISC1",
+        subtotal: 20,
+        tax: 0,
+        discountAmount: 20,
+        lineItems: [line("std", null, "Widget")],
+      });
+
+      const result = (await service.createInvoiceFromOrder("ord-disc1")) as any[];
+      expect(result).toHaveLength(1);
+      expect(Number(result[0].discount)).toBe(20);
+      expect(Number(result[0].total)).toBe(0);
+    });
+
+    it("prorates the order discount across split siblings — shares sum to the order total", async () => {
+      setupSplitSpies();
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        {
+          id: "cat-tob",
+          name: "Tobacco",
+          invoiceTreatment: "SEPARATE_INVOICE",
+          taxType: "NONE",
+          rate: 0,
+        },
+      ]);
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-disc2",
+        customerId: "cust-1",
+        orderNumber: "ORD-DISC2",
+        subtotal: 30,
+        tax: 3,
+        discountAmount: 15,
+        lineItems: [line("std", null, "Widget"), line("tob", "cat-tob", "Cigarillos")],
+      });
+
+      const result = (await service.createInvoiceFromOrder("ord-disc2")) as any[];
+      expect(result).toHaveLength(2);
+      const [primary, sibling] = result;
+      // Standard group $20 of $30 subtotal → discount 15 × 20/30 = 10.
+      expect(Number(primary.discount)).toBe(10);
+      // Tobacco group $10 of $30 subtotal → discount 15 × 10/30 = 5.
+      expect(Number(sibling.discount)).toBe(5);
+      // Σ sibling discounts == the order's discountAmount exactly.
+      expect(Number(primary.discount) + Number(sibling.discount)).toBe(15);
+      // primary total = 20 subtotal + 2 tax − 10 discount = 12.
+      expect(Number(primary.total)).toBe(12);
+      // sibling total = 10 subtotal + 1 tax − 5 discount = 6.
+      expect(Number(sibling.total)).toBe(6);
+      // INVARIANT: Σ sibling totals == order total (30 + 3 tax − 15 discount = 18).
+      expect(Number(primary.total) + Number(sibling.total)).toBe(18);
+    });
+
+    it("gives the rounding remainder to the largest-subtotal group, same as the tax allocator", async () => {
+      setupSplitSpies();
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        {
+          id: "cat-a",
+          name: "Alcohol",
+          invoiceTreatment: "SEPARATE_INVOICE",
+          taxType: "NONE",
+          rate: 0,
+        },
+        {
+          id: "cat-b",
+          name: "CRV",
+          invoiceTreatment: "SEPARATE_INVOICE",
+          taxType: "NONE",
+          rate: 0,
+        },
+      ]);
+      const mkLine = (id: string, catId: string | null, unitPrice: number) => ({
+        id,
+        productId: `p-${id}`,
+        qty: 1,
+        invoicedQty: 0,
+        unitPrice,
+        priceType: "STANDARD",
+        trackedCategoryId: catId,
+        categoryTaxAmount: 0,
+        product: { name: id, unitsPerBox: 0, trackedCategoryId: catId },
+      });
+      // Three equal-subtotal groups ($10 each) — naive proportional rounding
+      // (10 × 10/30 = 3.333…) rounds every share to $3.33, leaving a $0.01
+      // remainder that must land on exactly one group, never dropped.
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-disc3",
+        customerId: "cust-1",
+        orderNumber: "ORD-DISC3",
+        subtotal: 30,
+        tax: 0,
+        discountAmount: 10,
+        lineItems: [mkLine("std", null, 10), mkLine("a", "cat-a", 10), mkLine("b", "cat-b", 10)],
+      });
+
+      const result = (await service.createInvoiceFromOrder("ord-disc3")) as any[];
+      expect(result).toHaveLength(3);
+      const discounts = result.map((inv: any) => Number(inv.discount)).sort((a, b) => a - b);
+      expect(discounts).toEqual([3.33, 3.33, 3.34]);
+      const discountSum = result.reduce((s: number, inv: any) => s + Number(inv.discount), 0);
+      expect(Number(discountSum.toFixed(2))).toBe(10);
+    });
+
+    // A partially-invoiced order bills only `qty − invoicedQty`, so the discount
+    // target must be scaled to the portion being billed — the SAME scaling the
+    // regular-tax allocator does (totalRegularTax). Measuring the rounding
+    // remainder against the FULL order discount dumped the whole discount onto
+    // this second invoice: discount 20 on a $10 subtotal → total −10, and the
+    // discount counted twice across siblings.
+    it("only carries the REMAINING share of the discount when part of the order is already invoiced", async () => {
+      setupSplitSpies();
+      prisma.trackedCategory.findMany.mockResolvedValue([]);
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-disc4",
+        customerId: "cust-1",
+        orderNumber: "ORD-DISC4",
+        subtotal: 20,
+        tax: 0,
+        discountAmount: 20,
+        lineItems: [
+          {
+            id: "std",
+            productId: "p-std",
+            qty: 2,
+            invoicedQty: 1, // half the line already billed on a partial invoice
+            unitPrice: 10,
+            priceType: "STANDARD",
+            trackedCategoryId: null,
+            categoryTaxAmount: 0,
+            product: { name: "Widget", unitsPerBox: 0, trackedCategoryId: null },
+          },
+        ],
+      });
+
+      const result = (await service.createInvoiceFromOrder("ord-disc4")) as any[];
+      expect(result).toHaveLength(1);
+      expect(Number(result[0].subtotal)).toBe(10); // remaining qty 1 × $10
+      expect(Number(result[0].discount)).toBe(10); // 20 × 10/20 — not the full 20
+      expect(Number(result[0].total)).toBe(0); // never negative
+    });
+
+    it("zero/undefined discountAmount produces byte-identical invoice.create payloads", async () => {
+      setupSplitSpies();
+      prisma.trackedCategory.findMany.mockResolvedValue([]);
+      const baseOrder = {
+        id: "ord-disc0",
+        customerId: "cust-1",
+        orderNumber: "ORD-DISC0",
+        subtotal: 20,
+        tax: 2,
+        lineItems: [line("std", null, "Widget")],
+      };
+
+      // Call 1: no discountAmount field at all (today's callers before this order
+      // field existed / a draft order that never set one).
+      prisma.order.findUnique.mockResolvedValueOnce({ ...baseOrder });
+      await service.createInvoiceFromOrder("ord-disc0");
+      const withoutField = prisma.invoice.create.mock.calls[0][0].data;
+
+      prisma.invoice.create.mockClear();
+      prisma.orderItem.update.mockClear();
+
+      // Call 2: discountAmount explicitly 0.
+      prisma.order.findUnique.mockResolvedValueOnce({ ...baseOrder, discountAmount: 0 });
+      await service.createInvoiceFromOrder("ord-disc0");
+      const withZeroField = prisma.invoice.create.mock.calls[0][0].data;
+
+      // DEEP-EQUAL: the discount allocator must not perturb a single byte of the
+      // create payload when there is nothing to allocate.
+      expect(withZeroField).toEqual(withoutField);
+      expect(withZeroField.discount).toBe(0);
+      expect(Number(withZeroField.total)).toBe(22); // 20 subtotal + 2 tax − 0 discount
+    });
   });
 
   describe("updateInvoiceShipment", () => {
@@ -4815,7 +4999,7 @@ describe("InvoicesService", () => {
       });
 
       it("createPartialFromOrder: applies the customer's deposit default to a split invoice", async () => {
-        prisma.customer.findUnique.mockResolvedValue({
+        prisma.customer.findFirst.mockResolvedValue({
           isTaxExempt: false,
           defaultPaymentTerms: "Net 60",
           defaultDepositPercent: 50,
@@ -4831,7 +5015,7 @@ describe("InvoicesService", () => {
       });
 
       it("createPartialFromOrder: customer WITHOUT a default omits the deposit keys entirely (byte-identical guard)", async () => {
-        prisma.customer.findUnique.mockResolvedValue({
+        prisma.customer.findFirst.mockResolvedValue({
           isTaxExempt: false,
           defaultPaymentTerms: null,
           defaultDepositPercent: null,
@@ -4848,7 +5032,7 @@ describe("InvoicesService", () => {
       });
 
       it("createPartialFromOrder: an explicit dto deposit wins over the customer default", async () => {
-        prisma.customer.findUnique.mockResolvedValue({
+        prisma.customer.findFirst.mockResolvedValue({
           isTaxExempt: false,
           defaultPaymentTerms: "Net 60",
           defaultDepositPercent: 50,

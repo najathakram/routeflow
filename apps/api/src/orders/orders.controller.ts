@@ -210,9 +210,13 @@ export class OrdersController {
     return this.ordersService.findOne(id, user);
   }
 
+  // Staff-only demotions (incl. the DELIVERED → CONFIRMED "Reopen Order" action
+  // and PENDING → DRAFT) are gated by role INSIDE changeStatus — TENANT_ADMIN
+  // must be allowed through here too, or the RolesGuard 403s before the service
+  // ever gets a chance to allow it.
   @Patch(":id/status")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN, UserRole.CUSTOMER, UserRole.DRIVER)
   changeStatus(
     @Param("id") id: string,
     @Body() dto: ChangeOrderStatusDto,
@@ -342,17 +346,20 @@ export class OrdersController {
     return this.ordersService.forceConsolidateCustomer(customerId);
   }
 
+  // Delete-any: staff (OPERATOR/TENANT_ADMIN) may delete an order in any status;
+  // the service 409s when a linked invoice has recorded payments. `user` is
+  // threaded through so the service can apply its per-role delete rules.
   @Delete("bulk")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
-  bulkDelete(@Body() dto: { ids: string[] }) {
-    return this.ordersService.bulkDeleteOrders(dto.ids);
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  bulkDelete(@Body() dto: { ids: string[] }, @CurrentUser() user: JwtPayload) {
+    return this.ordersService.bulkDeleteOrders(dto.ids, user);
   }
 
   @Delete(":id")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
-  remove(@Param("id") id: string) {
-    return this.ordersService.deleteOrder(id);
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  remove(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.ordersService.deleteOrder(id, user);
   }
 }

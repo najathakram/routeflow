@@ -445,6 +445,30 @@ AgentFormModal` in a nested modal (`isAgentModalOpen` state); on create it selec
   order to record it on and keeps the card as its only entry point (this page is the sole caller of
   `useUpdateInvoiceShipment`; `/shipments` is read-only).
 
+### 2026-08-25 — sale-integrity phase 2 WP5: Reopen restored + delete-any + new-sale date picker (⚠️ server not caught up)
+
+- **SUPERSEDES the BUG-ORD-01 bullet above** — item 3 of the phase-2 plan restores the DELIVERED
+  "Reopen Order" button (`orders/[id]/page.tsx`) wired to the existing `DemoteReasonModal` /
+  `setDemoteTarget("CONFIRMED")` machinery (the same reasoned-demotion flow `OUT_FOR_DELIVERY`'s
+  "Return to Confirmed" already used), keeping the prior helper text as its subtext, reworded to
+  point run-delivered orders at their route stop instead. Server 409s (route-stop-completed) surface
+  via the standard error toast.
+  - **"Delete order"** — a staff-only inline two-tap confirm action added for ANY order status
+    (reusing the page/bulkbar's existing inline-confirm idiom), copy warning the delivery record is
+    permanently removed for a DELIVERED order; server 409s (invoice has payments) toast the message.
+  - **`invoices/new/page.tsx`** — the "Going out today?" binary gained a **Delivery date** input
+    driving a new `deliveredOn` field sent alongside `deliveredNow` (kept for back-compat): past/
+    today ⇒ delivered semantics (defaults to today), a future date auto-switches to deliver-later
+    copy ("Scheduled — the order is created and delivers on {date}"). The items payload no longer
+    sends `boxes: 0, pieces: 0` for plain-qty lines — the keys are omitted unless the operator used
+    box entry (the server now tolerates the old zero payload per WP1, but the payload is honest).
+  - **`lib/api/orders.ts`** — no new endpoints; verified the delete hook already surfaces server
+    error messages for the 409 case above.
+- These web changes ride on the server transition-map liberalization, delete-any rule, and
+  `deliveredOn` semantics in `apps/api/src/orders/orders.service.ts` (`changeStatus` /
+  `deleteOrder(id, user?)` / `createSale`) — see `api.md` `orders/` section for the exact rules,
+  including the run-stop-completed 409 the Reopen button surfaces through the global error toast.
+
 ### `(platform-admin)/` — super-admin panel (role-guarded)
 
 - `admin/dashboard/page.tsx` — platform stats (tenants, users, plans, MRR).

@@ -132,9 +132,27 @@ function routeStatusActions(current: OrderStatus): StatusAction[] {
           confirmMessage: "Cancel this order?",
         },
       ];
-    // Note: DELIVERED has NO reopen — the API deliberately blocks
-    // DELIVERED→CONFIRMED (removed as BUG-ORD-01); it would always 400. Only a
-    // CANCELLED order can be reopened, via the dedicated /reopen endpoint below.
+    case "DELIVERED":
+      // BUG-ORD-01 reversed by owner 2026-08-25: DELIVERED→CONFIRMED is now a
+      // legal staff-only reasoned demotion server-side (`orders.service.ts`
+      // changeStatus), not the always-400 dead end it used to be. The server
+      // additionally 409s when the order was delivered on a route stop that's
+      // already COMPLETED — reopen that stop from its run instead; the
+      // screen surfaces that as a toast. `demotionRequiresReason`
+      // (lib/order-status-flow.ts) already covers this pair, so the detail
+      // screen routes it through the ReasonSheet before PATCH /status fires.
+      return [
+        {
+          label: "Reopen order",
+          toStatus: "CONFIRMED",
+          style: "warning",
+          icon: "refresh-outline",
+          confirmMessage:
+            "Reopen this delivered order back to Confirmed? Its delivered date is cleared.",
+        },
+      ];
+    // CANCELLED reopens through the dedicated /reopen endpoint below
+    // (reopenCancelled), not PATCH /status like DELIVERED's reopen above.
     case "CANCELLED":
       // POST /orders/:id/reopen → PENDING (OPERATOR-only; server 400s if a
       // paid/partial/written-off invoice exists).

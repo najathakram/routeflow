@@ -990,6 +990,7 @@ export class InvoicesService {
         subtotal,
         categoryTax,
         regularTax: 0,
+        discount: 0,
         taxAmount: 0,
         shippingFee: 0,
         total: 0,
@@ -1027,6 +1028,37 @@ export class InvoicesService {
         groupData[maxIdx].regularTax = roundMoney(groupData[maxIdx].regularTax + remainder);
       }
     }
+    // Order-level discount: allocate proportionally by subtotal — SAME shape as
+    // the regular-tax allocator above (never invent a new scheme) — so a fully
+    // discounted order zeroes its invoice(s) and a split order's sibling
+    // discounts sum to the order's discountAmount exactly. Largest-subtotal
+    // group absorbs the rounding remainder, same recipient rule as the tax
+    // remainder. A zero/null discountAmount leaves every group at 0, so the
+    // create payload stays byte-identical to before this allocator existed.
+    const orderDiscount = roundMoney(Number((order as any).discountAmount ?? 0));
+    if (orderDiscount > 0 && groupData.length > 0) {
+      // The remainder is measured against the discount owed on the portion being
+      // BILLED (totalSubtotal / orderSubtotal), exactly like totalRegularTax above —
+      // never against the full order discount. A second-pass generation bills only
+      // `qty − invoicedQty`, so an unscaled target would force the entire order
+      // discount onto that invoice (double-counted across siblings, and a total
+      // that can go negative).
+      const totalDiscount = roundMoney(orderDiscount * (totalSubtotal / orderSubtotal));
+      let allocatedDiscount = 0;
+      groupData.forEach((gd) => {
+        gd.discount = roundMoney(orderDiscount * (gd.subtotal / orderSubtotal));
+        allocatedDiscount = roundMoney(allocatedDiscount + gd.discount);
+      });
+      const discountRemainder = roundMoney(totalDiscount - allocatedDiscount);
+      if (discountRemainder !== 0) {
+        let maxDiscountIdx = 0;
+        for (let i = 1; i < groupData.length; i++)
+          if (groupData[i].subtotal > groupData[maxDiscountIdx].subtotal) maxDiscountIdx = i;
+        groupData[maxDiscountIdx].discount = roundMoney(
+          groupData[maxDiscountIdx].discount + discountRemainder,
+        );
+      }
+    }
     // Order-level shipping fee: the WHOLE remaining fee rides on exactly ONE
     // sibling — the largest-subtotal group (same recipient rule as the tax
     // rounding remainder). Never prorated, so Σ(sibling totals) still equals the
@@ -1051,7 +1083,9 @@ export class InvoicesService {
     }
     groupData.forEach((gd) => {
       gd.taxAmount = roundMoney(gd.regularTax + gd.categoryTax);
-      gd.total = roundMoney(gd.subtotal + gd.taxAmount + gd.shippingFee);
+      // subtotal + taxes − discount, same composition as the single-invoice
+      // and reconcileOrderDraftInvoice totals.
+      gd.total = roundMoney(gd.subtotal + gd.taxAmount + gd.shippingFee - gd.discount);
     });
 
     const multi = groupData.length > 1;
@@ -1076,7 +1110,7 @@ export class InvoicesService {
             status: InvoiceStatus.DRAFT,
             subtotal: gd.subtotal,
             taxAmount: gd.taxAmount,
-            discount: 0,
+            discount: gd.discount,
             shippingFee: gd.shippingFee,
             total: gd.total,
             ...(invoiceGroupId ? { invoiceGroupId } : {}),

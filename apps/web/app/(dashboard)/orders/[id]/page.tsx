@@ -2080,6 +2080,53 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     );
   };
 
+  /**
+   * Shared "Delete order" trigger + inline two-tap confirm, reused across every
+   * status block below (delete-any: staff may delete an order in any status —
+   * the server 409s only when a linked invoice has recorded payments). No local
+   * onError toast here: an error just collapses the confirm back to the trigger
+   * and the global mutation-error toast (app/providers.tsx) already surfaces the
+   * server's message (e.g. "void the invoice first"), which a hand-written
+   * `error.message` here would only shadow with a generic HTTP status string.
+   */
+  const renderDeleteOrderAction = (confirmMessage: string, successTitle = "Order deleted") =>
+    showDeleteConfirm ? (
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-danger font-medium">{confirmMessage}</span>
+        <Button
+          size="sm"
+          variant="danger"
+          loading={deleteOrder.isPending}
+          onClick={() => {
+            deleteOrder.mutate(order.id, {
+              onSuccess: () => {
+                toast({ title: successTitle, variant: "success" });
+                router.push("/orders");
+              },
+              onError: () => setShowDeleteConfirm(false),
+            });
+          }}
+        >
+          Confirm Delete
+        </Button>
+        <button
+          onClick={() => setShowDeleteConfirm(false)}
+          className="text-sm text-navy/70 hover:text-navy transition-colors"
+        >
+          No
+        </button>
+      </div>
+    ) : (
+      <Button
+        size="sm"
+        variant="ghost"
+        leftIcon={<Trash2 className="h-4 w-4" />}
+        onClick={() => setShowDeleteConfirm(true)}
+      >
+        Delete order
+      </Button>
+    );
+
   // ── Estimated totals in edit mode ──────────────────────────────────────────
 
   const editSubtotal = isEditing
@@ -2360,6 +2407,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
               >
                 Cancel Order
               </Button>
+              {renderDeleteOrderAction("Delete this order? This can't be undone.")}
             </>
           )}
 
@@ -2390,21 +2438,39 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
               >
                 Cancel Order
               </Button>
+              {renderDeleteOrderAction(
+                "Delete this order? It's out for delivery — this can't be undone.",
+              )}
             </>
           )}
 
-          {/* DELIVERED actions — no Reopen here. Mirrors mobile's
-              order-actions.ts: DELIVERED has NO reopen — the API deliberately
-              blocks DELIVERED→CONFIRMED (removed as BUG-ORD-01; the server's
-              transition map is `DELIVERED: []`, so it always 400s). Only a
-              CANCELLED order can be reopened, via the dedicated /reopen
-              endpoint below. OUT_FOR_DELIVERY's "Return to Confirmed" demotion
-              above is unaffected — the map allows that one. */}
+          {/* DELIVERED actions — owner reversed policy 2026-08-25: reopening a
+              delivered order is now a legal staff-only reasoned demotion
+              (DELIVERED → CONFIRMED), wired through the same DemoteReasonModal
+              as every other one-step-back transition. A route-delivered order
+              (routeRunStopId on a COMPLETED stop) 409s server-side — that
+              surfaces via the standard error toast (app/providers.tsx), no
+              special-cased UI needed here. */}
           {localStatus === "DELIVERED" && (
-            <p className="text-xs text-navy/50">
-              Delivered orders can&apos;t be reopened. Adjust items with Edit Items (the invoice
-              re-syncs), or reopen the delivery stop from its route run.
-            </p>
+            <>
+              <div className="flex flex-col items-start gap-1">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<RotateCcw className="h-4 w-4" />}
+                  onClick={() => setDemoteTarget("CONFIRMED")}
+                >
+                  Reopen Order
+                </Button>
+                <p className="text-[11px] text-navy/50">
+                  Reopening keeps the invoice — Edit Items re-syncs it. Route-delivered orders
+                  reopen from their run stop.
+                </p>
+              </div>
+              {renderDeleteOrderAction(
+                "Delete this DELIVERED order? Its delivery record is removed permanently.",
+              )}
+            </>
           )}
 
           {/* CANCELLED */}
