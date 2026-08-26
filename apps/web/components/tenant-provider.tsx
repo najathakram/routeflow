@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { getSessionTenantSlug } from "@/lib/auth";
+import { setTenantCookie } from "@/lib/tenant-cookie";
 
 export interface TenantBranding {
   slug: string;
@@ -30,6 +32,25 @@ function getTenantSlugFromCookie(): string | null {
   if (typeof document === "undefined") return null;
   const match = document.cookie.match(/(?:^|;\s*)tenant-slug=([^;]+)/);
   return match ? decodeURIComponent(match[1]) : null;
+}
+
+/**
+ * The session (JWT) wins over the cookie. A disagreeing cookie is stale —
+ * self-heal it so it never brands the app as another tenant, and so it stops
+ * feeding the wrong X-Tenant-Slug header on subsequent API calls.
+ * Safe during SSR: getSessionTenantSlug/getTenantSlugFromCookie both guard
+ * their respective globals, so jwtSlug is null and setTenantCookie is never
+ * reached when window/document are undefined.
+ */
+function resolveTenantSlug(): string | null {
+  const jwtSlug = getSessionTenantSlug();
+  const cookieSlug = getTenantSlugFromCookie();
+  if (jwtSlug && cookieSlug !== jwtSlug) {
+    // Self-heal: a stale cookie must not brand the app as another tenant,
+    // and it also feeds the X-Tenant-Slug header on every API call.
+    setTenantCookie(jwtSlug);
+  }
+  return jwtSlug ?? cookieSlug;
 }
 
 const DEFAULT_PRIMARY = "#14a39f"; // Ledger --brand-500 (teal operator default)
@@ -74,14 +95,22 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
   const [branding, setBranding] = React.useState<TenantBranding | null>(null);
   const [slug, setSlug] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);
+  // Mirrors `slug` for the focus/visibility recheck below, which must compare
+  // against the LATEST resolved slug even though the effect that calls it only
+  // ever closes over the mount-time fetchBranding (see the empty-deps effect).
+  const slugRef = React.useRef<string | null>(null);
 
   // Wrapped in useCallback so the Settings page (or any caller) can invoke
   // `refresh()` after a logo / colour change to re-pull the branding without
   // a hard page reload.
   const fetchBranding = React.useCallback(async () => {
-    const tenantSlug = slug ?? getTenantSlugFromCookie();
+    // Re-resolve on every call (never short-circuit on the stale `slug`
+    // state) so a re-check after a tenant switch refetches the NEW tenant's
+    // branding and re-applies its CSS vars.
+    const tenantSlug = resolveTenantSlug();
     if (!tenantSlug) return;
-    if (!slug) setSlug(tenantSlug);
+    slugRef.current = tenantSlug;
+    if (tenantSlug !== slug) setSlug(tenantSlug);
     setIsLoading(true);
     try {
       const apiBase =
@@ -122,6 +151,20 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     void fetchBranding();
+    // Re-check on tab focus / visibility so a multi-tab impersonation switch
+    // (localStorage/cookie changed underneath a mounted app) picks up the new
+    // tenant's branding without requiring a hard reload. Only refetches when
+    // the resolved slug actually changed — never on every focus event.
+    const recheck = () => {
+      const next = resolveTenantSlug();
+      if (next && next !== slugRef.current) void fetchBranding();
+    };
+    window.addEventListener("focus", recheck);
+    document.addEventListener("visibilitychange", recheck);
+    return () => {
+      window.removeEventListener("focus", recheck);
+      document.removeEventListener("visibilitychange", recheck);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
