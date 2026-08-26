@@ -115,7 +115,9 @@ export default function SellersScreen() {
                         {seller.tenant.name}
                       </Text>
                       <Text style={styles.cardSub} numberOfLines={1}>
-                        as {seller.customer.businessName}
+                        {seller.customer
+                          ? `as ${seller.customer.businessName}`
+                          : "Pending approval"}
                         {isCurrent ? " · Current" : ""}
                       </Text>
                     </View>

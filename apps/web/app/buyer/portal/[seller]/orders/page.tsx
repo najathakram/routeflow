@@ -99,7 +99,7 @@ export default function BuyerOrdersPage() {
       {/* Page header */}
       <div className="mb-4">
         <h1 className="text-2xl font-bold text-navy">Orders</h1>
-        {activeSeller && (
+        {activeSeller?.customer && (
           <p className="text-sm text-navy/70 mt-1">
             {activeSeller.customer.businessName} at {activeSeller.tenant.name}
           </p>

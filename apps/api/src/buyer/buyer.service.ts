@@ -57,7 +57,11 @@ export class BuyerService {
             logoKey: config?.logoKey ?? null,
             primaryColor: config?.primaryColor ?? null,
           },
-          customer: link.customer,
+          // SECURITY (F4 roster oracle): a buyer's own un-approved request must not
+          // confirm the seller's customer identity back to them. Reveal customer
+          // identity only once the link is ACTIVE; pending/invited rows show the
+          // seller branding + status badge only.
+          customer: link.status === "ACTIVE" ? link.customer : null,
         };
       }),
     );

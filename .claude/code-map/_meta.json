@@ -1,6 +1,6 @@
 {
   "mappedSha": "769bc1e9",
-  "generatedAt": "2026-08-26T03:46:07.398Z",
+  "generatedAt": "2026-08-26T03:47:43.377Z",
   "areas": [
     "api",
     "web",
@@ -8,5 +8,5 @@
     "packages"
   ],
   "fileCount": 898,
-  "notes": "2026-08-24 (branch fix/repair-escaped-entities-buyer-scope, rebased 2026-08-25) — REPAIR-SCRIPT BUYER SCOPE FIX: repair-escaped-entities.mjs buyerAccount branch scoped via customerLinks:{some:{tenantId}} + errorReason() so a skipped target always states why. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "**2026-08-22** — BUYER-CONNECT AUTH HARDENING (branch claude/distracted-saha-bb2eb4; NO schema change): F1 HIGH — a Google sign-in about to verify an account carrying an UNPROVEN password (passwordSet && !emailVerified) neutralizes the credential (placeholder hash, passwordSet:false) and revokes all buyer refresh tokens BEFORE linking/verifying, closing the squatted-account hijack (google-oauth.service handleBuyerPortalAuth). F2 — super-admin buyer email change deletes outstanding verification tokens + revokes sessions in the same tx (buyer-admin.service). F4 — getSellers omits customer identity unless the link is ACTIVE + 10/min throttle on POST /buyer/sellers/request; both portal clients null-guard customer and gate clicks on ACTIVE. F3 — read-only audit script apps/api/scripts/audit-buyer-verification-grandfather.mjs (NOT run here). Plan .claude/pipeline/plans/2026-08-22-buyer-connect || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

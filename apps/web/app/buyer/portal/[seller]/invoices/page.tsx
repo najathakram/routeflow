@@ -126,7 +126,7 @@ export default function BuyerInvoicesPage() {
       {/* Page header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-navy">Invoices</h1>
-        {activeSeller && (
+        {activeSeller?.customer && (
           <p className="text-sm text-navy/70 mt-1">
             {activeSeller.customer.businessName} at {activeSeller.tenant.name}
           </p>

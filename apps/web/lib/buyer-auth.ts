@@ -23,7 +23,7 @@ export interface BuyerSeller {
     logoKey: string | null;
     primaryColor: string | null;
   };
-  customer: { id: string; businessName: string; email: string | null };
+  customer: { id: string; businessName: string; email: string | null } | null;
 }
 
 interface BuyerAuthResponse {
