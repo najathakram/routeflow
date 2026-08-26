@@ -960,7 +960,7 @@ describe("InvoicesService", () => {
         status: InvoiceStatus.DRAFT,
         deliveryBatchId: null,
       });
-      prisma.order.findUnique.mockResolvedValue({ status: "PENDING", orderNumber: "O1" });
+      prisma.order.findFirst.mockResolvedValue({ status: "PENDING", orderNumber: "O1" });
       await expect(service.send("i1")).rejects.toThrow(BadRequestException);
       expect(prisma.invoice.update).not.toHaveBeenCalled();
     });
@@ -972,7 +972,7 @@ describe("InvoicesService", () => {
         status: InvoiceStatus.DRAFT,
         deliveryBatchId: null,
       });
-      prisma.order.findUnique.mockResolvedValue({ status: "DELIVERED", orderNumber: "O1" });
+      prisma.order.findFirst.mockResolvedValue({ status: "DELIVERED", orderNumber: "O1" });
       prisma.invoice.update.mockResolvedValue({
         id: "i1",
         invoiceNumber: "INV-1",
@@ -998,7 +998,7 @@ describe("InvoicesService", () => {
         total: 10,
       });
       await expect(service.send("i1")).resolves.toBeDefined();
-      expect(prisma.order.findUnique).not.toHaveBeenCalled();
+      expect(prisma.order.findFirst).not.toHaveBeenCalled();
     });
 
     it("fires INVOICE_SENT once on the DRAFT→SENT flip", async () => {
@@ -1131,7 +1131,7 @@ describe("InvoicesService", () => {
         status: InvoiceStatus.DRAFT,
         deliveryBatchId: null,
       });
-      prisma.order.findUnique.mockResolvedValue({ status: "DELIVERED", orderNumber: "O2" });
+      prisma.order.findFirst.mockResolvedValue({ status: "DELIVERED", orderNumber: "O2" });
       prisma.invoice.update.mockResolvedValueOnce({
         id: "i2",
         invoiceNumber: "INV-2",
@@ -1561,7 +1561,7 @@ describe("InvoicesService", () => {
         .spyOn(service as any, "resolveTenantInvoiceDefaults")
         .mockResolvedValue({ notes: null, terms: null, timezone: null });
       jest.spyOn(service as any, "generateInvoiceNumber").mockResolvedValue("INV-2026-0042");
-      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
       // Echo the create data back so we can assert numbers / numbering / groupId.
       prisma.invoice.create.mockImplementation((args: any) =>
         Promise.resolve({ ...args.data, items: [], payments: [], customer: {} }),
@@ -1760,7 +1760,7 @@ describe("InvoicesService", () => {
 
     it("RF-4: a tax-exempt customer owes $0 of BOTH regular AND category tax", async () => {
       setupSplitSpies();
-      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: true });
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: true });
       prisma.trackedCategory.findMany.mockResolvedValue([
         {
           id: "cat-alc",
@@ -1885,7 +1885,7 @@ describe("InvoicesService", () => {
 
     it("tax-exempt customer: the fee is STILL charged even though tax is zeroed", async () => {
       setupSplitSpies();
-      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: true });
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: true });
       prisma.trackedCategory.findMany.mockResolvedValue([]);
       prisma.order.findUnique.mockResolvedValue({
         id: "ord-fee3",
@@ -1906,7 +1906,7 @@ describe("InvoicesService", () => {
 
   describe("updateInvoiceShipment", () => {
     it("sets carrier + tracking + shippedAt on a non-void invoice", async () => {
-      prisma.invoice.findUnique.mockResolvedValue({ id: "inv-1", status: "SENT", shippedAt: null });
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1", status: "SENT", shippedAt: null });
       prisma.invoice.update.mockResolvedValue({ id: "inv-1" });
 
       await service.updateInvoiceShipment("inv-1", {
@@ -1927,7 +1927,7 @@ describe("InvoicesService", () => {
     });
 
     it("refuses to update a voided invoice", async () => {
-      prisma.invoice.findUnique.mockResolvedValue({ id: "inv-1", status: "VOID", shippedAt: null });
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1", status: "VOID", shippedAt: null });
       await expect(
         service.updateInvoiceShipment("inv-1", { shippingTrackingNumber: "X" }),
       ).rejects.toThrow(BadRequestException);
@@ -2187,7 +2187,7 @@ describe("InvoicesService", () => {
 
     it("DEPOSITED stamps checkStatus+depositedAt, keeps status PAID, no invoice.update", async () => {
       prisma.invoicePayment.findFirst.mockResolvedValue(basePayment);
-      prisma.invoice.findUnique.mockResolvedValue({
+      prisma.invoice.findFirst.mockResolvedValue({
         invoiceNumber: "INV-0001",
         customerId: "cust-1",
         status: InvoiceStatus.PAID,
@@ -2211,7 +2211,7 @@ describe("InvoicesService", () => {
         ...basePayment,
         checkStatus: CheckStatus.DEPOSITED,
       });
-      prisma.invoice.findUnique.mockResolvedValue({
+      prisma.invoice.findFirst.mockResolvedValue({
         invoiceNumber: "INV-0001",
         customerId: "cust-1",
         status: InvoiceStatus.PAID,
@@ -2385,7 +2385,7 @@ describe("InvoicesService", () => {
 
     it("treats a legacy null checkStatus as RECORDED (RECORDED -> DEPOSITED is legal)", async () => {
       prisma.invoicePayment.findFirst.mockResolvedValue({ ...basePayment, checkStatus: null });
-      prisma.invoice.findUnique.mockResolvedValue({
+      prisma.invoice.findFirst.mockResolvedValue({
         invoiceNumber: "INV-0001",
         customerId: "cust-1",
         status: InvoiceStatus.PAID,
@@ -4277,7 +4277,7 @@ describe("InvoicesService", () => {
       };
 
       const seedInvoiceLookup = () =>
-        prisma.invoice.findUnique.mockResolvedValue({
+        prisma.invoice.findFirst.mockResolvedValue({
           invoiceNumber: "INV-0001",
           customerId: "cust-1",
           status: InvoiceStatus.PAID,
@@ -4497,7 +4497,7 @@ describe("InvoicesService", () => {
 
     describe("resolveDefaultTerms(customerId) — customer default beats tenant default", () => {
       it("uses the customer's defaultPaymentTerms when set, ignoring the tenant SystemConfig", async () => {
-        prisma.customer.findUnique.mockResolvedValue({ defaultPaymentTerms: "Net 60" });
+        prisma.customer.findFirst.mockResolvedValue({ defaultPaymentTerms: "Net 60" });
         mockSystemConfig.get.mockResolvedValue("Net 30"); // tenant default — must be beaten
         // mockSystemConfig is a shared jest.fn() across the whole spec file (never
         // reset between tests), so clear ITS call history right before the act —
@@ -4513,7 +4513,7 @@ describe("InvoicesService", () => {
       });
 
       it("falls back to the tenant default when the customer has no override", async () => {
-        prisma.customer.findUnique.mockResolvedValue({ defaultPaymentTerms: null });
+        prisma.customer.findFirst.mockResolvedValue({ defaultPaymentTerms: null });
         mockSystemConfig.get.mockResolvedValue("Net 45");
 
         const result = await service.resolveDefaultTerms("cust-1");
@@ -4527,7 +4527,7 @@ describe("InvoicesService", () => {
         const result = await service.resolveDefaultTerms();
 
         expect(result).toEqual({ terms: "Net 30", dueDays: 30 });
-        expect(prisma.customer.findUnique).not.toHaveBeenCalled();
+        expect(prisma.customer.findFirst).not.toHaveBeenCalled();
       });
     });
 
@@ -4559,8 +4559,10 @@ describe("InvoicesService", () => {
           .spyOn(service as any, "resolveTenantInvoiceDefaults")
           .mockResolvedValue({ notes: null, terms: null, timezone: null });
         jest.spyOn(service as any, "generateInvoiceNumber").mockResolvedValue("INV-T1");
-        // Customer override resolves the default term to "Net 45" (45 days).
-        prisma.customer.findUnique.mockResolvedValue({ defaultPaymentTerms: "Net 45" });
+        // Customer override resolves the default term to "Net 45" (45 days). Both
+        // the isTaxExempt read (createInvoiceFromOrder) and the defaultPaymentTerms
+        // read (resolveDefaultTerms) hit the same converted customer.findFirst mock.
+        prisma.customer.findFirst.mockResolvedValue({ defaultPaymentTerms: "Net 45" });
         prisma.order.findUnique.mockResolvedValue(orderWith());
         prisma.invoice.create.mockImplementation((args: any) =>
           Promise.resolve({ ...args.data, items: [], payments: [], customer: {} }),
@@ -4582,7 +4584,7 @@ describe("InvoicesService", () => {
           .spyOn(service as any, "resolveTenantInvoiceDefaults")
           .mockResolvedValue({ notes: null, terms: null, timezone: null });
         jest.spyOn(service as any, "generateInvoiceNumber").mockResolvedValue("INV-T2");
-        prisma.customer.findUnique.mockResolvedValue({ defaultPaymentTerms: null });
+        prisma.customer.findFirst.mockResolvedValue({ defaultPaymentTerms: null });
         mockSystemConfig.get.mockResolvedValue(null); // tenant default -> "Net 30", unused here
         prisma.order.findUnique.mockResolvedValue(orderWith());
         prisma.invoice.create.mockImplementation((args: any) =>
@@ -4606,7 +4608,7 @@ describe("InvoicesService", () => {
           .mockResolvedValue({ notes: null, terms: null, timezone: null });
         jest.spyOn(service as any, "generateInvoiceNumber").mockResolvedValue("INV-T3");
         // Resolved default is "Net 45" — it must NOT be stamped on a hand-typed date.
-        prisma.customer.findUnique.mockResolvedValue({ defaultPaymentTerms: "Net 45" });
+        prisma.customer.findFirst.mockResolvedValue({ defaultPaymentTerms: "Net 45" });
         prisma.order.findUnique.mockResolvedValue(orderWith());
         prisma.invoice.create.mockImplementation((args: any) =>
           Promise.resolve({ ...args.data, items: [], payments: [], customer: {} }),

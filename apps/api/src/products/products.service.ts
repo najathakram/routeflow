@@ -556,7 +556,7 @@ export class ProductsService {
     // cost, tobacco flag (mirrors the import module's variant resolution, so ALL
     // clients get the same behavior). DTO-explicit values always win.
     const parent = dto.parentProductId
-      ? await this.prisma.forTenant().product.findUnique({
+      ? await this.prisma.forTenant().product.findFirst({
           where: { id: dto.parentProductId },
           select: {
             priceTier2: true,
@@ -626,7 +626,7 @@ export class ProductsService {
       regulated.trackedCategoryId = tobacco.id;
       isTobacco = true;
     } else if (regulated.trackedCategoryId != null) {
-      const cat = await this.prisma.forTenant().trackedCategory.findUnique({
+      const cat = await this.prisma.forTenant().trackedCategory.findFirst({
         where: { id: regulated.trackedCategoryId },
         select: { name: true },
       });
@@ -647,7 +647,7 @@ export class ProductsService {
     // (filters, analytics, buyer facets) shows "Zyn", never the type name.
     let syncedCategory: string | undefined;
     if (regulated.trackedSubcategoryId) {
-      const sub = await this.prisma.forTenant().trackedSubcategory.findUnique({
+      const sub = await this.prisma.forTenant().trackedSubcategory.findFirst({
         where: { id: regulated.trackedSubcategoryId },
         select: { name: true },
       });
@@ -887,7 +887,7 @@ export class ProductsService {
       // Structured category being SET/CHANGED — its name wins over any
       // dto.category sent in the same request (the form never sends both;
       // imports/legacy clients shouldn't be able to desync the axis).
-      const sub = await this.prisma.forTenant().trackedSubcategory.findUnique({
+      const sub = await this.prisma.forTenant().trackedSubcategory.findFirst({
         where: { id: dto.trackedSubcategoryId },
         select: { name: true },
       });
@@ -918,7 +918,7 @@ export class ProductsService {
       if (effectiveCategoryId == null) {
         data.isTobacco = false;
       } else {
-        const cat = await this.prisma.forTenant().trackedCategory.findUnique({
+        const cat = await this.prisma.forTenant().trackedCategory.findFirst({
           where: { id: effectiveCategoryId },
           select: { name: true },
         });
@@ -990,7 +990,7 @@ export class ProductsService {
     if (categoryId == null) {
       throw new BadRequestException("A regulated subcategory requires a section.");
     }
-    const sub = await this.prisma.forTenant().trackedSubcategory.findUnique({
+    const sub = await this.prisma.forTenant().trackedSubcategory.findFirst({
       where: { id: subcategoryId },
       select: { trackedCategoryId: true },
     });
@@ -1015,7 +1015,7 @@ export class ProductsService {
     if (!trackedCategoryId) {
       throw new BadRequestException("Regulatory reporting configuration requires a regulated type");
     }
-    const cat = await this.prisma.forTenant().trackedCategory.findUnique({
+    const cat = await this.prisma.forTenant().trackedCategory.findFirst({
       where: { id: trackedCategoryId },
       select: { name: true, reportTemplate: true },
     });
@@ -1063,7 +1063,7 @@ export class ProductsService {
   async bulkAssignParent(
     dto: BulkAssignParentDto,
   ): Promise<{ succeeded: string[]; failed: { id: string; reason: string }[] }> {
-    const parent = await this.prisma.forTenant().product.findUnique({
+    const parent = await this.prisma.forTenant().product.findFirst({
       where: { id: dto.parentProductId },
       select: { id: true, parentProductId: true },
     });

@@ -25,11 +25,11 @@ describe("AuthorizationOverridesService", () => {
     prisma.authorizationOverride.create.mockImplementation((a: any) =>
       Promise.resolve({ id: "ovr-1", ...a.data }),
     );
-    prisma.trackedCategory.findUnique.mockResolvedValue({ id: "cat-1" });
+    prisma.trackedCategory.findFirst.mockResolvedValue({ id: "cat-1" });
   });
 
   it("createOverride writes the append-only row AND an immutable audit log", async () => {
-    prisma.customer.findUnique.mockResolvedValue({ id: "c1" });
+    prisma.customer.findFirst.mockResolvedValue({ id: "c1" });
     const ovr = await service.createOverride(
       "c1",
       {
@@ -55,7 +55,7 @@ describe("AuthorizationOverridesService", () => {
   });
 
   it("createOverride 404s an unknown customer", async () => {
-    prisma.customer.findUnique.mockResolvedValue(null);
+    prisma.customer.findFirst.mockResolvedValue(null);
     await expect(
       service.createOverride(
         "nope",

@@ -496,8 +496,12 @@ describe("ProductsService", () => {
     };
 
     beforeEach(() => {
-      prisma.product.findFirst.mockResolvedValue(null); // no name/SKU/barcode conflicts
-      prisma.product.findUnique.mockResolvedValue(MOCK_PARENT); // parent load
+      // product.findFirst now serves BOTH the name/SKU/barcode conflict checks
+      // (no where.id) AND the converted parent load (where.id === parentProductId)
+      // — dispatch on the where clause so each read gets its own answer.
+      prisma.product.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(where?.id === "parent-1" ? MOCK_PARENT : null),
+      );
       prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
     });
 
@@ -565,7 +569,9 @@ describe("ProductsService", () => {
     });
 
     it("inherits isTobacco from the parent WITHOUT re-checking the addon", async () => {
-      prisma.product.findUnique.mockResolvedValue({ ...MOCK_PARENT, isTobacco: true });
+      prisma.product.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(where?.id === "parent-1" ? { ...MOCK_PARENT, isTobacco: true } : null),
+      );
       addonService.hasAddon.mockResolvedValue(false); // would reject a DTO-flagged create
 
       await service.create({ ...VARIANT_DTO } as any);
@@ -579,7 +585,11 @@ describe("ProductsService", () => {
     it("leaves standalone creates unchanged (tiers default to pricePerUnit)", async () => {
       await service.create({ name: "Solo", unit: "kg", pricePerUnit: "5", sku: "SOL-1" } as any);
 
-      expect(prisma.product.findUnique).not.toHaveBeenCalled(); // no parent load
+      // no parent load — findFirst is still called for the SKU check, but never
+      // with the id-keyed where the parent lookup uses
+      expect(prisma.product.findFirst).not.toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ id: expect.anything() }) }),
+      );
       expect(prisma.product.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
@@ -600,7 +610,7 @@ describe("ProductsService", () => {
 
   describe("bulkAssignParent", () => {
     it("rejects when the parent does not exist", async () => {
-      prisma.product.findUnique.mockResolvedValue(null);
+      prisma.product.findFirst.mockResolvedValue(null);
 
       await expect(
         service.bulkAssignParent({
@@ -611,7 +621,7 @@ describe("ProductsService", () => {
     });
 
     it("rejects when the parent is itself a variant", async () => {
-      prisma.product.findUnique.mockResolvedValue({ id: "child", parentProductId: "root" });
+      prisma.product.findFirst.mockResolvedValue({ id: "child", parentProductId: "root" });
 
       await expect(
         service.bulkAssignParent({
@@ -622,7 +632,7 @@ describe("ProductsService", () => {
     });
 
     it("isolates per-item failures — surfaces validation messages, masks raw errors (F8-003)", async () => {
-      prisma.product.findUnique.mockResolvedValue({ id: "parent-1", parentProductId: null });
+      prisma.product.findFirst.mockResolvedValue({ id: "parent-1", parentProductId: null });
       const update = jest
         .spyOn(service, "update")
         .mockResolvedValueOnce({} as any)
@@ -796,7 +806,6 @@ describe("ProductsService", () => {
       });
       prisma.product.findFirst.mockResolvedValue(null);
       prisma.trackedCategory.findFirst.mockResolvedValue({ id: "tobacco-cat", name: "Tobacco" });
-      prisma.trackedCategory.findUnique.mockResolvedValue({ name: "Tobacco" });
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
       await service.update("prod-1", { isTobacco: true } as any);
@@ -816,9 +825,12 @@ describe("ProductsService", () => {
       addonService.hasAddon.mockResolvedValue(true);
       prisma.product.findUnique.mockResolvedValue({ ...MOCK_PRODUCT, trackedCategoryId: null });
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findFirst.mockResolvedValue(null); // no existing Tobacco type
+      // Name lookup (no existing Tobacco type) → null; the id lookup the mirror
+      // derivation makes after create sees the new row.
+      prisma.trackedCategory.findFirst.mockImplementation((args: any) =>
+        Promise.resolve(args?.where?.id ? { name: "Tobacco" } : null),
+      );
       prisma.trackedCategory.create.mockResolvedValue({ id: "new-tobacco-cat" });
-      prisma.trackedCategory.findUnique.mockResolvedValue({ name: "Tobacco" });
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
       await service.update("prod-1", { isTobacco: true } as any);
@@ -917,7 +929,13 @@ describe("ProductsService", () => {
         trackedSubcategoryId: null,
       });
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findFirst.mockResolvedValue({ id: "tobacco-cat", name: "Tobacco" });
+      // Name lookup → the tenant's Tobacco type exists; the mirror derivation's
+      // id lookup of "sec-other" → a non-Tobacco section.
+      prisma.trackedCategory.findFirst.mockImplementation((args: any) =>
+        Promise.resolve(
+          args?.where?.id ? { name: "Other" } : { id: "tobacco-cat", name: "Tobacco" },
+        ),
+      );
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
       await service.update("prod-1", { isTobacco: false } as any);
@@ -936,12 +954,12 @@ describe("ProductsService", () => {
         trackedSubcategoryId: null,
       });
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findUnique.mockResolvedValue({ name: "Produce" });
+      prisma.trackedCategory.findFirst.mockResolvedValue({ name: "Produce" });
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
       await service.update("prod-1", { trackedCategoryId: "sec-produce" } as any);
 
-      expect(prisma.trackedCategory.findUnique).toHaveBeenCalledWith({
+      expect(prisma.trackedCategory.findFirst).toHaveBeenCalledWith({
         where: { id: "sec-produce" },
         select: { name: true },
       });
@@ -956,7 +974,7 @@ describe("ProductsService", () => {
         trackedSubcategoryId: null,
       });
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findUnique.mockResolvedValue({ name: "Tobacco" });
+      prisma.trackedCategory.findFirst.mockResolvedValue({ name: "Tobacco" });
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
       await service.update("prod-1", { trackedCategoryId: "tobacco-cat" } as any);
@@ -1009,7 +1027,7 @@ describe("ProductsService", () => {
   describe("regulated section + subcategory", () => {
     it("tags a product with a valid section + subcategory", async () => {
       prisma.product.findFirst.mockResolvedValue(null); // name + sku checks
-      prisma.trackedSubcategory.findUnique.mockResolvedValue({ trackedCategoryId: "sec-1" });
+      prisma.trackedSubcategory.findFirst.mockResolvedValue({ trackedCategoryId: "sec-1" });
       prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
 
       await service.create({
@@ -1021,7 +1039,7 @@ describe("ProductsService", () => {
         trackedSubcategoryId: "sub-1",
       } as any);
 
-      expect(prisma.trackedSubcategory.findUnique).toHaveBeenCalledWith({
+      expect(prisma.trackedSubcategory.findFirst).toHaveBeenCalledWith({
         where: { id: "sub-1" },
         select: { trackedCategoryId: true },
       });
@@ -1037,7 +1055,7 @@ describe("ProductsService", () => {
 
     it("rejects a subcategory that belongs to a different section", async () => {
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedSubcategory.findUnique.mockResolvedValue({ trackedCategoryId: "OTHER" });
+      prisma.trackedSubcategory.findFirst.mockResolvedValue({ trackedCategoryId: "OTHER" });
 
       await expect(
         service.create({
@@ -1064,7 +1082,7 @@ describe("ProductsService", () => {
           trackedSubcategoryId: "sub-1",
         } as any),
       ).rejects.toThrow(BadRequestException);
-      expect(prisma.trackedSubcategory.findUnique).not.toHaveBeenCalled();
+      expect(prisma.trackedSubcategory.findFirst).not.toHaveBeenCalled();
     });
 
     it("clears the subcategory when the section is cleared on update", async () => {
@@ -1084,8 +1102,9 @@ describe("ProductsService", () => {
     });
 
     it("a variant inherits the parent's section + subcategory when the DTO omits them", async () => {
-      prisma.product.findFirst.mockResolvedValue(null); // name / sku
-      prisma.product.findUnique.mockResolvedValue({
+      // product.findFirst serves both the name/sku conflict checks (no where.id)
+      // and the converted parent load (where.id === parentProductId).
+      const PARENT = {
         priceTier2: 1,
         priceTier3: 1,
         priceTier4: 1,
@@ -1097,8 +1116,11 @@ describe("ProductsService", () => {
         isTobacco: false,
         trackedCategoryId: "sec-1",
         trackedSubcategoryId: "sub-1",
-      });
-      prisma.trackedSubcategory.findUnique.mockResolvedValue({ trackedCategoryId: "sec-1" });
+      };
+      prisma.product.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(where?.id === "parent-1" ? PARENT : null),
+      );
+      prisma.trackedSubcategory.findFirst.mockResolvedValue({ trackedCategoryId: "sec-1" });
       prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
 
       await service.create({
@@ -1141,12 +1163,12 @@ describe("ProductsService", () => {
         pricePerUnit: "2",
       } as any);
 
-      expect(prisma.trackedCategory.findUnique).not.toHaveBeenCalled();
+      expect(prisma.trackedCategory.findFirst).not.toHaveBeenCalled();
     });
 
     it("persists valid TX Comptroller codes", async () => {
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findUnique.mockResolvedValue(TX_CATEGORY);
+      prisma.trackedCategory.findFirst.mockResolvedValue(TX_CATEGORY);
       prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
 
       await service.create({
@@ -1160,7 +1182,7 @@ describe("ProductsService", () => {
         regUomUnit: "CP",
       } as any);
 
-      expect(prisma.trackedCategory.findUnique).toHaveBeenCalledWith(
+      expect(prisma.trackedCategory.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: "sec-tx" } }),
       );
       expect(prisma.product.create).toHaveBeenCalledWith(
@@ -1186,13 +1208,13 @@ describe("ProductsService", () => {
           regItemType: "1",
         } as any),
       ).rejects.toThrow(BadRequestException);
-      expect(prisma.trackedCategory.findUnique).not.toHaveBeenCalled();
+      expect(prisma.trackedCategory.findFirst).not.toHaveBeenCalled();
       expect(prisma.product.create).not.toHaveBeenCalled();
     });
 
     it("rejects an invalid item type", async () => {
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findUnique.mockResolvedValue(TX_CATEGORY);
+      prisma.trackedCategory.findFirst.mockResolvedValue(TX_CATEGORY);
 
       await expect(
         service.create({
@@ -1209,7 +1231,7 @@ describe("ProductsService", () => {
 
     it("rejects a UoM that is not valid for the chosen item type", async () => {
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findUnique.mockResolvedValue(TX_CATEGORY);
+      prisma.trackedCategory.findFirst.mockResolvedValue(TX_CATEGORY);
 
       await expect(
         service.create({
@@ -1227,7 +1249,7 @@ describe("ProductsService", () => {
 
     it("rejects a UoM that belongs to a DIFFERENT item type when the item type is set", async () => {
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findUnique.mockResolvedValue(TX_CATEGORY);
+      prisma.trackedCategory.findFirst.mockResolvedValue(TX_CATEGORY);
 
       await expect(
         service.create({
@@ -1245,7 +1267,7 @@ describe("ProductsService", () => {
 
     it("rejects regulatory config on a section whose template has no per-product config", async () => {
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findUnique.mockResolvedValue(GENERIC_CATEGORY);
+      prisma.trackedCategory.findFirst.mockResolvedValue(GENERIC_CATEGORY);
 
       await expect(
         service.create({
@@ -1261,8 +1283,7 @@ describe("ProductsService", () => {
     });
 
     it("a variant inherits the parent's regulatory trio when the DTO omits the section", async () => {
-      prisma.product.findFirst.mockResolvedValue(null);
-      prisma.product.findUnique.mockResolvedValue({
+      const PARENT = {
         priceTier2: 1,
         priceTier3: 1,
         priceTier4: 1,
@@ -1277,8 +1298,11 @@ describe("ProductsService", () => {
         regItemType: "1",
         regUomCase: "CC",
         regUomUnit: "CP",
-      });
-      prisma.trackedCategory.findUnique.mockResolvedValue(TX_CATEGORY);
+      };
+      prisma.product.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(where?.id === "parent-tx" ? PARENT : null),
+      );
+      prisma.trackedCategory.findFirst.mockResolvedValue(TX_CATEGORY);
       prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
 
       await service.create({
@@ -1302,8 +1326,7 @@ describe("ProductsService", () => {
     });
 
     it("an explicit DTO value on one field beats inheritance while the others still inherit", async () => {
-      prisma.product.findFirst.mockResolvedValue(null);
-      prisma.product.findUnique.mockResolvedValue({
+      const PARENT = {
         priceTier2: 1,
         priceTier3: 1,
         priceTier4: 1,
@@ -1318,8 +1341,11 @@ describe("ProductsService", () => {
         regItemType: "1",
         regUomCase: "CC",
         regUomUnit: "CP",
-      });
-      prisma.trackedCategory.findUnique.mockResolvedValue(TX_CATEGORY);
+      };
+      prisma.product.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(where?.id === "parent-tx" ? PARENT : null),
+      );
+      prisma.trackedCategory.findFirst.mockResolvedValue(TX_CATEGORY);
       prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
 
       await service.create({
@@ -1360,7 +1386,7 @@ describe("ProductsService", () => {
       expect(data.regItemType).toBeNull();
       expect(data.regUomCase).toBeNull();
       expect(data.regUomUnit).toBeNull();
-      expect(prisma.trackedCategory.findUnique).not.toHaveBeenCalled();
+      expect(prisma.trackedCategory.findFirst).not.toHaveBeenCalled();
     });
 
     // ─── fix round: unconditional section-clear + narrowed validation gate ────
@@ -1427,7 +1453,7 @@ describe("ProductsService", () => {
 
       await expect(service.update("prod-1", { name: "Renamed" } as any)).resolves.toBeDefined();
 
-      expect(prisma.trackedCategory.findUnique).not.toHaveBeenCalled();
+      expect(prisma.trackedCategory.findFirst).not.toHaveBeenCalled();
       const data = prisma.product.update.mock.calls[0][0].data;
       expect(data.regItemType).toBeUndefined();
       expect(data.regUomCase).toBeUndefined();
@@ -1444,12 +1470,12 @@ describe("ProductsService", () => {
         regUomUnit: null,
       });
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findUnique.mockResolvedValue(TX_CATEGORY);
+      prisma.trackedCategory.findFirst.mockResolvedValue(TX_CATEGORY);
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
       await service.update("prod-1", { regItemType: "1", regUomUnit: "CP" } as any);
 
-      expect(prisma.trackedCategory.findUnique).toHaveBeenCalledWith(
+      expect(prisma.trackedCategory.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: "sec-tx" } }),
       );
       const data = prisma.product.update.mock.calls[0][0].data;
@@ -1469,7 +1495,7 @@ describe("ProductsService", () => {
         regUomUnit: "CP",
       });
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findUnique.mockResolvedValue(TX_CATEGORY);
+      prisma.trackedCategory.findFirst.mockResolvedValue(TX_CATEGORY);
 
       await expect(
         service.update("prod-1", { regUomUnit: "WO" } as any), // Tobacco-only UoM, invalid for item type "1"
@@ -1494,7 +1520,7 @@ describe("ProductsService", () => {
         regUomUnit: "CP",
       });
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findUnique.mockResolvedValue(GENERIC_CATEGORY);
+      prisma.trackedCategory.findFirst.mockResolvedValue(GENERIC_CATEGORY);
 
       await expect(
         service.update("prod-1", { trackedCategoryId: "sec-generic" } as any),
@@ -1516,7 +1542,7 @@ describe("ProductsService", () => {
         regUomUnit: "CP",
       });
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findUnique.mockResolvedValue({ name: "Produce" });
+      prisma.trackedCategory.findFirst.mockResolvedValue({ name: "Produce" });
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
       await expect(
@@ -1548,7 +1574,7 @@ describe("ProductsService", () => {
         regUomUnit: "CP",
       });
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findUnique.mockResolvedValue(TX_CATEGORY);
+      prisma.trackedCategory.findFirst.mockResolvedValue(TX_CATEGORY);
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
       await expect(
@@ -1560,7 +1586,7 @@ describe("ProductsService", () => {
         } as any),
       ).resolves.toBeDefined();
 
-      expect(prisma.trackedCategory.findUnique).toHaveBeenCalledWith(
+      expect(prisma.trackedCategory.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: "sec-tx-2" } }),
       );
       const data = prisma.product.update.mock.calls[0][0].data;
@@ -1582,14 +1608,14 @@ describe("ProductsService", () => {
         regUomUnit: null,
       });
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedCategory.findUnique.mockResolvedValue({ name: "Produce" });
+      prisma.trackedCategory.findFirst.mockResolvedValue({ name: "Produce" });
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
       await expect(
         service.update("prod-1", { trackedCategoryId: "sec-generic" } as any),
       ).resolves.toBeDefined();
 
-      expect(prisma.trackedCategory.findUnique).toHaveBeenCalledWith(
+      expect(prisma.trackedCategory.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: "sec-generic" } }),
       );
       const data = prisma.product.update.mock.calls[0][0].data;
@@ -1620,7 +1646,7 @@ describe("ProductsService", () => {
         } as any),
       ).resolves.toBeDefined();
 
-      expect(prisma.trackedCategory.findUnique).not.toHaveBeenCalled();
+      expect(prisma.trackedCategory.findFirst).not.toHaveBeenCalled();
     });
 
     it("rejects a reg code sent for a product that already has no section", async () => {
@@ -1696,7 +1722,7 @@ describe("ProductsService", () => {
   describe("category sync — create", () => {
     it("a structured subcategory's name WINS the category resolution over dto.category", async () => {
       prisma.product.findFirst.mockResolvedValue(null); // name/sku checks
-      prisma.trackedSubcategory.findUnique
+      prisma.trackedSubcategory.findFirst
         .mockResolvedValueOnce({ trackedCategoryId: "sec-1" }) // assertSubcategoryInSection
         .mockResolvedValueOnce({ name: "Zyn" }); // sync fetch
       prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
@@ -1731,7 +1757,7 @@ describe("ProductsService", () => {
         trackedCategoryId: "sec-1",
       } as any);
 
-      expect(prisma.trackedSubcategory.findUnique).not.toHaveBeenCalled();
+      expect(prisma.trackedSubcategory.findFirst).not.toHaveBeenCalled();
       expect(prisma.product.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ category: "Rolling" }),
@@ -1751,15 +1777,14 @@ describe("ProductsService", () => {
         category: "Hardware",
       } as any);
 
-      expect(prisma.trackedSubcategory.findUnique).not.toHaveBeenCalled();
+      expect(prisma.trackedSubcategory.findFirst).not.toHaveBeenCalled();
       expect(prisma.product.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ category: "Hardware" }) }),
       );
     });
 
     it("a variant inheriting the parent's regulated pair also gets the synced category name", async () => {
-      prisma.product.findFirst.mockResolvedValue(null);
-      prisma.product.findUnique.mockResolvedValue({
+      const PARENT = {
         priceTier2: 1,
         priceTier3: 1,
         priceTier4: 1,
@@ -1771,8 +1796,11 @@ describe("ProductsService", () => {
         isTobacco: false,
         trackedCategoryId: "sec-1",
         trackedSubcategoryId: "sub-1",
-      });
-      prisma.trackedSubcategory.findUnique
+      };
+      prisma.product.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(where?.id === "parent-1" ? PARENT : null),
+      );
+      prisma.trackedSubcategory.findFirst
         .mockResolvedValueOnce({ trackedCategoryId: "sec-1" }) // assertSubcategoryInSection
         .mockResolvedValueOnce({ name: "Mint Vape" }); // sync fetch
       prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
@@ -1801,7 +1829,7 @@ describe("ProductsService", () => {
         trackedSubcategoryId: null,
       });
       prisma.product.findFirst.mockResolvedValue(null);
-      prisma.trackedSubcategory.findUnique
+      prisma.trackedSubcategory.findFirst
         .mockResolvedValueOnce({ trackedCategoryId: "sec-1" }) // assertSubcategoryInSection
         .mockResolvedValueOnce({ name: "Juul Pods" }); // sync fetch
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
@@ -1862,7 +1890,7 @@ describe("ProductsService", () => {
       });
       prisma.product.findFirst.mockResolvedValue(null);
       // Re-validation of the unchanged pair on every update() call.
-      prisma.trackedSubcategory.findUnique.mockResolvedValue({ trackedCategoryId: "sec-1" });
+      prisma.trackedSubcategory.findFirst.mockResolvedValue({ trackedCategoryId: "sec-1" });
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
       await service.update("prod-1", { category: "Vapes" } as any);
@@ -1880,7 +1908,7 @@ describe("ProductsService", () => {
 
       const data = prisma.product.update.mock.calls[0][0].data;
       expect(data.category).toBe("Groceries");
-      expect(prisma.trackedSubcategory.findUnique).not.toHaveBeenCalled();
+      expect(prisma.trackedSubcategory.findFirst).not.toHaveBeenCalled();
     });
   });
 });

@@ -260,7 +260,7 @@ export class ReturnsService {
           if (item.restock) {
             // Restock at the current average — leaves the average unchanged but
             // records the cost so COGS/valuation reporting stays complete
-            const product = await tx.product.findUnique({
+            const product = await tx.product.findFirst({
               where: { id: item.productId },
               select: { currentStock: true, averageCost: true },
             });
@@ -479,7 +479,7 @@ export class ReturnsService {
     // deleted credit note — see WP0's schema note), so the lookup is manual and tolerant of a miss.
     let creditNote: any = null;
     if (ret.creditNoteId) {
-      creditNote = await this.prisma.forTenant().creditNote.findUnique({
+      creditNote = await this.prisma.forTenant().creditNote.findFirst({
         where: { id: ret.creditNoteId },
         select: { id: true, creditNoteNumber: true, amount: true, status: true },
       });

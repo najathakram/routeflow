@@ -1510,7 +1510,7 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     // Load customer's pricing tier (+ default fulfillment path for new orders)
-    const customerRecord = await this.prisma.forTenant().customer.findUnique({
+    const customerRecord = await this.prisma.forTenant().customer.findFirst({
       where: { id: customerId },
       select: { pricingTier: true, fulfillPath: true },
     });
@@ -2289,7 +2289,7 @@ export class OrdersService implements OnApplicationBootstrap {
     if (messagingEvent) {
       let driverName = "your driver";
       if (messagingEvent === NotificationEvent.OUT_FOR_DELIVERY && order.routeRunId) {
-        const run = await this.prisma.forTenant().routeRun.findUnique({
+        const run = await this.prisma.forTenant().routeRun.findFirst({
           where: { id: order.routeRunId },
           select: { driver: { select: { contactName: true } } },
         });
@@ -2334,7 +2334,7 @@ export class OrdersService implements OnApplicationBootstrap {
    * rule can never disagree.
    */
   async cancelImpact(id: string) {
-    const order = await this.prisma.forTenant().order.findUnique({
+    const order = await this.prisma.forTenant().order.findFirst({
       where: { id },
       select: { id: true, status: true, orderNumber: true },
     });
@@ -2609,7 +2609,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // the buyer merge billed LIST price, ignoring the customer's tier.
           const isBuyerEdit = user.role === UserRole.CUSTOMER;
           const buyerTierCtx = isBuyerEdit
-            ? await tx.customer.findUnique({
+            ? await tx.customer.findFirst({
                 where: { id: order.customerId },
                 select: { pricingTier: true },
               })
@@ -2785,7 +2785,7 @@ export class OrdersService implements OnApplicationBootstrap {
             ? ([...new Set(dto.items.map((i) => i.productId).filter(Boolean))] as string[])
             : [];
           const operatorTierCtx = isStaffEdit
-            ? await tx.customer.findUnique({
+            ? await tx.customer.findFirst({
                 where: { id: order.customerId },
                 select: { pricingTier: true },
               })
@@ -3175,7 +3175,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // math (per-piece × BOX price → overcharge) and left stale boxes/pieces.
                 let unitsPerBox: number | null = (li as any).unitsPerBox ?? null;
                 if (unitsPerBox == null && li.productId && (editHasSplit || wasBoxSplit)) {
-                  const product = await tx.product.findUnique({
+                  const product = await tx.product.findFirst({
                     where: { id: li.productId },
                     select: { unitsPerBox: true },
                   });
@@ -3227,7 +3227,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // bogus "was" price to the customer/operator.
                 let catalogPrice = existingUnitPrice;
                 if (isManualOverride && !isUnlisted && li.productId) {
-                  const prod = await tx.product.findUnique({
+                  const prod = await tx.product.findFirst({
                     where: { id: li.productId },
                     select: { pricePerUnit: true },
                   });
@@ -3245,7 +3245,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 const storedFreeUnits = Number((li as any).promoFreeUnits ?? 0);
                 let promoCategory: string | null = null;
                 if (storedFreeUnits > 0 && !isManualOverride && li.productId) {
-                  const prod = await tx.product.findUnique({
+                  const prod = await tx.product.findFirst({
                     where: { id: li.productId },
                     select: { category: true },
                   });
@@ -3724,7 +3724,7 @@ export class OrdersService implements OnApplicationBootstrap {
   ): Promise<void> {
     if (!creditCheckEnabled) return;
 
-    const customer = await db.customer.findUnique({
+    const customer = await db.customer.findFirst({
       where: { id: customerId },
       select: { creditLimit: true },
     });
@@ -3885,7 +3885,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // Regulated license guard re-runs on approval for the incoming product
     // (mirrors updateOrderItems :1642-1658; ORDER-scoped §8 overrides apply).
     if (cr.type === ChangeRequestType.ADD_ITEM) {
-      const prod = await this.prisma.forTenant().product.findUnique({
+      const prod = await this.prisma.forTenant().product.findFirst({
         where: { id: (cr.productId ?? payload.productId) as string },
         select: { id: true, trackedCategoryId: true },
       });
@@ -3986,7 +3986,7 @@ export class OrdersService implements OnApplicationBootstrap {
             }
             let upb = Number((li as any).unitsPerBox ?? 0);
             if (upb === 0 && li.productId && li.boxes != null) {
-              const p = await tx.product.findUnique({
+              const p = await tx.product.findFirst({
                 where: { id: li.productId },
                 select: { unitsPerBox: true },
               });
@@ -4005,7 +4005,7 @@ export class OrdersService implements OnApplicationBootstrap {
             const storedFreeUnits = Number((li as any).promoFreeUnits ?? 0);
             let promoCategory: string | null = null;
             if (storedFreeUnits > 0 && li.productId) {
-              const prod = await tx.product.findUnique({
+              const prod = await tx.product.findFirst({
                 where: { id: li.productId },
                 select: { category: true },
               });
@@ -4123,7 +4123,7 @@ export class OrdersService implements OnApplicationBootstrap {
             // applies uniformly.
             const buyerTier =
               (
-                await tx.customer.findUnique({
+                await tx.customer.findFirst({
                   where: { id: order.customerId },
                   select: { pricingTier: true },
                 })
@@ -4277,7 +4277,7 @@ export class OrdersService implements OnApplicationBootstrap {
   async updateShipment(orderId: string, dto: UpdateShipmentDto, _user?: JwtPayload) {
     const order = await this.prisma
       .forTenant()
-      .order.findUnique({ where: { id: orderId }, select: { id: true, shippedAt: true } });
+      .order.findFirst({ where: { id: orderId }, select: { id: true, shippedAt: true } });
     if (!order) throw new NotFoundException("Order not found");
 
     const carrier = dto.shippingCarrier?.trim() || null;

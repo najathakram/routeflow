@@ -43,7 +43,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
   const invoiceWith = (items: any[]) => ({ total: 100, customerId: "c1", items });
 
   it("reverses the ledger ONLY for an explicitly credited regulated line (line linkage)", async () => {
-    prisma.invoice.findUnique.mockResolvedValue(
+    prisma.invoice.findFirst.mockResolvedValue(
       invoiceWith([
         { id: "ii-1", subtotal: 30, qty: 3, trackedCategoryId: "cat-A", categoryTaxAmount: 6 },
         { id: "ii-2", subtotal: 70, qty: 7, trackedCategoryId: null, categoryTaxAmount: 0 },
@@ -75,7 +75,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
   });
 
   it("does NOT reverse the regulated ledger for a lump-sum credit with no line linkage", async () => {
-    prisma.invoice.findUnique.mockResolvedValue(
+    prisma.invoice.findFirst.mockResolvedValue(
       invoiceWith([
         { id: "ii-1", subtotal: 100, qty: 10, trackedCategoryId: "cat-A", categoryTaxAmount: 0 },
       ]),
@@ -87,7 +87,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
   });
 
   it("crediting only a NON-regulated line never reverses regulated excise (no misattribution)", async () => {
-    prisma.invoice.findUnique.mockResolvedValue(
+    prisma.invoice.findFirst.mockResolvedValue(
       invoiceWith([
         { id: "ii-reg", subtotal: 50, qty: 5, trackedCategoryId: "cat-A", categoryTaxAmount: 0 },
         { id: "ii-std", subtotal: 50, qty: 5, trackedCategoryId: null, categoryTaxAmount: 0 },
@@ -105,7 +105,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
   });
 
   it("rejects line amounts that do not reconcile to the credit-note total", async () => {
-    prisma.invoice.findUnique.mockResolvedValue(
+    prisma.invoice.findFirst.mockResolvedValue(
       invoiceWith([
         { id: "ii-1", subtotal: 30, qty: 3, trackedCategoryId: "cat-A", categoryTaxAmount: 0 },
       ]),
@@ -122,7 +122,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
   });
 
   it("rejects a credit line that is not on the source invoice", async () => {
-    prisma.invoice.findUnique.mockResolvedValue(
+    prisma.invoice.findFirst.mockResolvedValue(
       invoiceWith([
         { id: "ii-1", subtotal: 30, qty: 3, trackedCategoryId: "cat-A", categoryTaxAmount: 0 },
       ]),
@@ -141,7 +141,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
   it("merges duplicate line references and REJECTS when the combined amount exceeds the line", async () => {
     // Two-line, $200 invoice so the header cap passes and the MERGED per-line cap is
     // what rejects the over-credit (the exact duplicate-invoiceItemId over-reversal vector).
-    prisma.invoice.findUnique.mockResolvedValue({
+    prisma.invoice.findFirst.mockResolvedValue({
       total: 200,
       customerId: "c1",
       items: [
@@ -168,7 +168,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
     // untouched. A new $100 credit of ii-1 passes the header cap ($100 prior + $100 = $200
     // ≤ $200, since ii-2's slack absorbs it) but must be rejected by the per-line cumulative
     // cap — otherwise ii-1 is credited $200 against a $100 subtotal (over-refund/over-reverse).
-    prisma.invoice.findUnique.mockResolvedValue({
+    prisma.invoice.findFirst.mockResolvedValue({
       total: 200,
       customerId: "c1",
       items: [
@@ -189,7 +189,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
   });
 
   it("merges duplicate line references into a single CreditNoteItem when within the line", async () => {
-    prisma.invoice.findUnique.mockResolvedValue(
+    prisma.invoice.findFirst.mockResolvedValue(
       invoiceWith([
         { id: "ii-1", subtotal: 100, qty: 10, trackedCategoryId: "cat-A", categoryTaxAmount: 0 },
       ]),
@@ -216,7 +216,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
   });
 
   it("rejects a credit that would exceed the invoice total", async () => {
-    prisma.invoice.findUnique.mockResolvedValue({ total: 100, customerId: "c1", items: [] });
+    prisma.invoice.findFirst.mockResolvedValue({ total: 100, customerId: "c1", items: [] });
     prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 80 } }); // 80 already credited
     await expect(
       service.create({ customerId: "c1", invoiceId: "inv-1", amount: 30 }),
@@ -224,7 +224,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
   });
 
   it("voidCreditNote un-reverses the ledger for an unused (ISSUED) credit", async () => {
-    prisma.creditNote.findUnique.mockResolvedValue({ status: "ISSUED", amountUsed: 0 });
+    prisma.creditNote.findFirst.mockResolvedValue({ status: "ISSUED", amountUsed: 0 });
     prisma.creditNote.updateMany.mockResolvedValue({ count: 1 }); // race-free flip succeeds
     await service.voidCreditNote("cn-1");
     expect(prisma.creditNote.updateMany).toHaveBeenCalledWith(
@@ -240,14 +240,14 @@ describe("CreditNotesService — W5c regulated reversal", () => {
 
   it("refuses the void when a concurrent apply already consumed the credit (0 rows flipped)", async () => {
     // Guard read sees ISSUED/unused, but the race-free updateMany matches 0 rows.
-    prisma.creditNote.findUnique.mockResolvedValue({ status: "ISSUED", amountUsed: 0 });
+    prisma.creditNote.findFirst.mockResolvedValue({ status: "ISSUED", amountUsed: 0 });
     prisma.creditNote.updateMany.mockResolvedValue({ count: 0 });
     await expect(service.voidCreditNote("cn-1")).rejects.toThrow(/un-apply/i);
     expect(ledger.unreverseCreditNoteEntries).not.toHaveBeenCalled();
   });
 
   it("blocks voiding an APPLIED credit note (must un-apply first) — no ledger touch", async () => {
-    prisma.creditNote.findUnique.mockResolvedValue({ status: "APPLIED", amountUsed: 110 });
+    prisma.creditNote.findFirst.mockResolvedValue({ status: "APPLIED", amountUsed: 110 });
     await expect(service.voidCreditNote("cn-1")).rejects.toThrow(/un-apply/i);
     expect(ledger.unreverseCreditNoteEntries).not.toHaveBeenCalled();
     expect(prisma.creditNote.updateMany).not.toHaveBeenCalled();
@@ -633,7 +633,9 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
         { id: "pay-a", invoiceId: "inv-1", creditNoteId: "cn-1", amount: 30, status: "PAID" },
         { id: "pay-b", invoiceId: "inv-2", creditNoteId: "cn-1", amount: 20, status: "PAID" },
       ]);
-      // restoreCreditFromPaymentInTx reads the note then the invoice, per payment.
+      // restoreCreditFromPaymentInTx reads the note then the invoice, per payment;
+      // releaseCreditsInTx separately looks up the creditNoteNumber (once per note,
+      // memoized after the first payment) via the converted findFirst.
       prisma.creditNote.findUnique
         .mockResolvedValueOnce({
           id: "cn-1",
@@ -642,7 +644,6 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
           status: "ISSUED",
           appliedToInvoiceId: null,
         })
-        .mockResolvedValueOnce({ creditNoteNumber: "CN-1" })
         .mockResolvedValueOnce({
           id: "cn-1",
           amount: 100,
@@ -650,6 +651,7 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
           status: "ISSUED",
           appliedToInvoiceId: null,
         });
+      prisma.creditNote.findFirst.mockResolvedValueOnce({ creditNoteNumber: "CN-1" });
       prisma.invoice.findUnique
         .mockResolvedValueOnce({
           id: "inv-1",
@@ -684,15 +686,14 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       prisma.invoicePayment.findMany.mockResolvedValueOnce([
         { id: "pay-v", invoiceId: "inv-void", creditNoteId: "cn-9", amount: 25, status: "PAID" },
       ]);
-      prisma.creditNote.findUnique
-        .mockResolvedValueOnce({
-          id: "cn-9",
-          amount: 25,
-          amountUsed: 25,
-          status: "APPLIED",
-          appliedToInvoiceId: "inv-void",
-        })
-        .mockResolvedValueOnce({ creditNoteNumber: "CN-9" });
+      prisma.creditNote.findUnique.mockResolvedValueOnce({
+        id: "cn-9",
+        amount: 25,
+        amountUsed: 25,
+        status: "APPLIED",
+        appliedToInvoiceId: "inv-void",
+      });
+      prisma.creditNote.findFirst.mockResolvedValueOnce({ creditNoteNumber: "CN-9" });
       prisma.invoice.findUnique.mockResolvedValueOnce({
         id: "inv-void",
         total: 25,
@@ -717,16 +718,15 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       prisma.invoicePayment.findMany.mockResolvedValueOnce([
         { id: "pay-x", invoiceId: "inv-x", creditNoteId: "cn-x", amount: 15, status: "PAID" },
       ]);
-      prisma.creditNote.findUnique
-        .mockResolvedValueOnce({
-          id: "cn-x",
-          amount: 15,
-          amountUsed: 15,
-          status: "APPLIED",
-          appliedToInvoiceId: "inv-x",
-          expiresAt: new Date("2020-01-01"), // long past
-        })
-        .mockResolvedValueOnce({ creditNoteNumber: "CN-X" });
+      prisma.creditNote.findUnique.mockResolvedValueOnce({
+        id: "cn-x",
+        amount: 15,
+        amountUsed: 15,
+        status: "APPLIED",
+        appliedToInvoiceId: "inv-x",
+        expiresAt: new Date("2020-01-01"), // long past
+      });
+      prisma.creditNote.findFirst.mockResolvedValueOnce({ creditNoteNumber: "CN-X" });
       prisma.invoice.findUnique.mockResolvedValueOnce({
         id: "inv-x",
         total: 15,
@@ -751,16 +751,15 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       prisma.invoicePayment.findMany.mockResolvedValueOnce([
         { id: "pay-f", invoiceId: "inv-f", creditNoteId: "cn-f", amount: 10, status: "PAID" },
       ]);
-      prisma.creditNote.findUnique
-        .mockResolvedValueOnce({
-          id: "cn-f",
-          amount: 10,
-          amountUsed: 10,
-          status: "APPLIED",
-          appliedToInvoiceId: "inv-f",
-          expiresAt: future,
-        })
-        .mockResolvedValueOnce({ creditNoteNumber: "CN-F" });
+      prisma.creditNote.findUnique.mockResolvedValueOnce({
+        id: "cn-f",
+        amount: 10,
+        amountUsed: 10,
+        status: "APPLIED",
+        appliedToInvoiceId: "inv-f",
+        expiresAt: future,
+      });
+      prisma.creditNote.findFirst.mockResolvedValueOnce({ creditNoteNumber: "CN-F" });
       prisma.invoice.findUnique.mockResolvedValueOnce({
         id: "inv-f",
         total: 10,
@@ -844,17 +843,16 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
           appliedToInvoiceId: "inv-1",
         })
         .mockResolvedValueOnce({ id: "cn-1", amount: 40, amountUsed: 0, status: "ISSUED" });
-      // 1st invoice.findUnique: inside restoreCreditFromPaymentInTx (recompute status).
-      // 2nd: unapplyFromInvoice's own orderId lookup.
-      prisma.invoice.findUnique
-        .mockResolvedValueOnce({
-          id: "inv-1",
-          total: 100,
-          dueDate: null,
-          status: "PAID",
-          payments: [],
-        })
-        .mockResolvedValueOnce({ orderId: null });
+      // invoice.findUnique: inside restoreCreditFromPaymentInTx (recompute status).
+      // invoice.findFirst: unapplyFromInvoice's own orderId lookup (converted read).
+      prisma.invoice.findUnique.mockResolvedValueOnce({
+        id: "inv-1",
+        total: 100,
+        dueDate: null,
+        status: "PAID",
+        payments: [],
+      });
+      prisma.invoice.findFirst.mockResolvedValueOnce({ orderId: null });
 
       const result = await service.unapplyFromInvoice("cn-1", "inv-1");
 
@@ -889,15 +887,14 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
           appliedToInvoiceId: null,
         })
         .mockResolvedValueOnce({ id: "cn-2", amount: 100, amountUsed: 30, status: "ISSUED" });
-      prisma.invoice.findUnique
-        .mockResolvedValueOnce({
-          id: "inv-2",
-          total: 50,
-          dueDate: null,
-          status: "PARTIAL",
-          payments: [],
-        })
-        .mockResolvedValueOnce({ orderId: null });
+      prisma.invoice.findUnique.mockResolvedValueOnce({
+        id: "inv-2",
+        total: 50,
+        dueDate: null,
+        status: "PARTIAL",
+        payments: [],
+      });
+      prisma.invoice.findFirst.mockResolvedValueOnce({ orderId: null });
 
       await service.unapplyFromInvoice("cn-2", "inv-2");
 
@@ -935,15 +932,14 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
           appliedToInvoiceId: null,
         })
         .mockResolvedValueOnce({ id: "cn-4", amount: 100, amountUsed: 0, status: "ISSUED" });
-      prisma.invoice.findUnique
-        .mockResolvedValueOnce({
-          id: "inv-4",
-          total: 25,
-          dueDate: null,
-          status: "SENT",
-          payments: [],
-        })
-        .mockResolvedValueOnce({ orderId: "order-4" });
+      prisma.invoice.findUnique.mockResolvedValueOnce({
+        id: "inv-4",
+        total: 25,
+        dueDate: null,
+        status: "SENT",
+        payments: [],
+      });
+      prisma.invoice.findFirst.mockResolvedValueOnce({ orderId: "order-4" });
       prisma.orderCreditNote.findFirst.mockResolvedValueOnce({
         id: "ocn-4",
         orderId: "order-4",

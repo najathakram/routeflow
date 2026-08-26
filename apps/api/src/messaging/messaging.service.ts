@@ -89,7 +89,7 @@ export class MessagingService {
     if (isInvoicePolicyViolation(eventKey, channel)) return skip("INVOICE_POLICY");
 
     const db = this.prisma.forTenant();
-    const customer = await db.customer.findUnique({
+    const customer = await db.customer.findFirst({
       where: { id: customerId },
       select: {
         id: true,
@@ -248,7 +248,7 @@ export class MessagingService {
       }
       let vars = args.vars ?? {};
       if (vars.customerName === undefined) {
-        const customer = await this.prisma.forTenant().customer.findUnique({
+        const customer = await this.prisma.forTenant().customer.findFirst({
           where: { id: args.customerId },
           select: { businessName: true },
         });

@@ -33,8 +33,8 @@ describe("AuthorizationsService", () => {
       ],
     }).compile();
     service = mod.get(AuthorizationsService);
-    prisma.customer.findUnique.mockResolvedValue({ id: "c1" });
-    prisma.trackedCategory.findUnique.mockResolvedValue({ id: "cat-1" });
+    prisma.customer.findFirst.mockResolvedValue({ id: "c1" });
+    prisma.trackedCategory.findFirst.mockResolvedValue({ id: "cat-1" });
     prisma.customerAuthorization.create.mockImplementation((a: any) =>
       Promise.resolve({ id: "a1", ...a.data }),
     );
@@ -118,7 +118,7 @@ describe("AuthorizationsService", () => {
   });
 
   it("create 404s a cross-tenant / unknown category", async () => {
-    prisma.trackedCategory.findUnique.mockResolvedValue(null); // forTenant → null for cross-tenant id
+    prisma.trackedCategory.findFirst.mockResolvedValue(null); // forTenant → null for cross-tenant id
     await expect(
       service.create("c1", { trackedCategoryId: "cat-other-tenant" }, user),
     ).rejects.toBeInstanceOf(NotFoundException);
@@ -158,7 +158,7 @@ describe("AuthorizationsService", () => {
   };
 
   it("submit → PENDING_REVIEW + RETAILER_SUBMITTED, no verifier stamp, notifies operators", async () => {
-    prisma.trackedCategory.findUnique.mockResolvedValue({
+    prisma.trackedCategory.findFirst.mockResolvedValue({
       id: "cat-1",
       name: "Tobacco",
       requiresLicense: true,
@@ -191,7 +191,7 @@ describe("AuthorizationsService", () => {
   });
 
   it("submit blocks a non-license category", async () => {
-    prisma.trackedCategory.findUnique.mockResolvedValue({
+    prisma.trackedCategory.findFirst.mockResolvedValue({
       id: "cat-1",
       name: "CRV",
       requiresLicense: false,
@@ -201,7 +201,7 @@ describe("AuthorizationsService", () => {
   });
 
   it("submit will not clobber a live VERIFIED authorization", async () => {
-    prisma.trackedCategory.findUnique.mockResolvedValue({
+    prisma.trackedCategory.findFirst.mockResolvedValue({
       id: "cat-1",
       name: "Tobacco",
       requiresLicense: true,
@@ -216,7 +216,7 @@ describe("AuthorizationsService", () => {
   });
 
   it("submit's P2002 race path won't clobber a concurrently-verified license", async () => {
-    prisma.trackedCategory.findUnique.mockResolvedValue({
+    prisma.trackedCategory.findFirst.mockResolvedValue({
       id: "cat-1",
       name: "Tobacco",
       requiresLicense: true,
@@ -232,7 +232,7 @@ describe("AuthorizationsService", () => {
   });
 
   it("submit re-submits over an EXPIRED authorization", async () => {
-    prisma.trackedCategory.findUnique.mockResolvedValue({
+    prisma.trackedCategory.findFirst.mockResolvedValue({
       id: "cat-1",
       name: "Tobacco",
       requiresLicense: true,
@@ -253,7 +253,7 @@ describe("AuthorizationsService", () => {
   });
 
   it("submit treats a VERIFIED-but-past-expiry row as renewable (not a live block)", async () => {
-    prisma.trackedCategory.findUnique.mockResolvedValue({
+    prisma.trackedCategory.findFirst.mockResolvedValue({
       id: "cat-1",
       name: "Tobacco",
       requiresLicense: true,
