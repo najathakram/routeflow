@@ -10,7 +10,7 @@
  *    deliberately routes through POST /reopen instead of PATCH /status).
  */
 import { statusActions } from "../lib/order-actions";
-import { canTransitionOrder } from "../lib/order-status-flow";
+import { canTransitionOrder, ORDER_STATUS_TRANSITIONS } from "../lib/order-status-flow";
 import type { OrderStatus } from "../lib/api/orders";
 
 const ALL_STATUSES: OrderStatus[] = [
@@ -154,8 +154,17 @@ describe("statusActions — ROUTE (default) is byte-identical to the pre-extract
     ]);
   });
 
-  it("DELIVERED — terminal, no actions", () => {
-    expect(statusActions("DELIVERED")).toEqual([]);
+  it("DELIVERED — Reopen order (2026-08-25: BUG-ORD-01 reversed by owner)", () => {
+    expect(statusActions("DELIVERED")).toEqual([
+      {
+        label: "Reopen order",
+        toStatus: "CONFIRMED",
+        style: "warning",
+        icon: "refresh-outline",
+        confirmMessage:
+          "Reopen this delivered order back to Confirmed? Its delivered date is cleared.",
+      },
+    ]);
   });
 });
 
@@ -196,7 +205,9 @@ describe("statusActions — SHIP relabels + drops Partial delivery", () => {
     expect(statusActions("DRAFT", "SHIP")).toEqual(statusActions("DRAFT", "ROUTE"));
     expect(statusActions("PENDING", "SHIP")).toEqual(statusActions("PENDING", "ROUTE"));
     expect(statusActions("CANCELLED", "SHIP")).toEqual(statusActions("CANCELLED", "ROUTE"));
-    expect(statusActions("DELIVERED", "SHIP")).toEqual([]);
+    // DELIVERED's "Reopen order" targets CONFIRMED, not OUT_FOR_DELIVERY/DELIVERED,
+    // so none of SHIP's relabeling rules touch it — same list either way.
+    expect(statusActions("DELIVERED", "SHIP")).toEqual(statusActions("DELIVERED", "ROUTE"));
   });
 
   it("ROUTE and SHIP produce independently-labeled lists for the same status", () => {
@@ -228,5 +239,27 @@ describe("statusActions × canTransitionOrder cross-check", () => {
 
   it("the CANCELLED reopen action is deliberately absent from the /status transition table", () => {
     expect(canTransitionOrder("CANCELLED", "PENDING")).toBe(false);
+  });
+});
+
+describe("map parity — mirrors the server's universal one-step demotion (2026-08-25)", () => {
+  it("PENDING can step back to DRAFT (no UI action yet, map-only)", () => {
+    expect(ORDER_STATUS_TRANSITIONS.PENDING).toContain("DRAFT");
+    expect(canTransitionOrder("PENDING", "DRAFT")).toBe(true);
+  });
+
+  it("DELIVERED demotes to CONFIRMED (the Reopen order button above) and PARTIALLY_DELIVERED", () => {
+    expect(ORDER_STATUS_TRANSITIONS.DELIVERED).toEqual(
+      expect.arrayContaining(["CONFIRMED", "PARTIALLY_DELIVERED"]),
+    );
+    expect(canTransitionOrder("DELIVERED", "CONFIRMED")).toBe(true);
+    expect(canTransitionOrder("DELIVERED", "PARTIALLY_DELIVERED")).toBe(true);
+  });
+
+  it("DELIVERED still can't jump to a status that isn't one step back", () => {
+    expect(canTransitionOrder("DELIVERED", "OUT_FOR_DELIVERY")).toBe(false);
+    expect(canTransitionOrder("DELIVERED", "PENDING")).toBe(false);
+    expect(canTransitionOrder("DELIVERED", "DRAFT")).toBe(false);
+    expect(canTransitionOrder("DELIVERED", "CANCELLED")).toBe(false);
   });
 });

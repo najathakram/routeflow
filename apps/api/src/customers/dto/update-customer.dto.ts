@@ -1,4 +1,15 @@
-import { IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
+import {
+  IsBoolean,
+  IsEnum,
+  IsIn,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+  ValidateIf,
+} from "class-validator";
 import { Transform } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
@@ -44,4 +55,14 @@ export class UpdateCustomerDto {
     message: "defaultPaymentTerms must be one of: " + VALID_CUSTOMER_TERMS.join(", "),
   })
   defaultPaymentTerms?: string;
+  /**
+   * Per-customer default deposit percent ("50% upfront, remainder on terms").
+   * `null` clears the default back to "no deposit"; a number sets/replaces it.
+   */
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  defaultDepositPercent?: number | null;
 }

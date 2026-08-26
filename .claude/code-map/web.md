@@ -57,7 +57,7 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   Inter fallback), `<Providers>` + `<TenantProvider>` + SW registry.
 - **`app/providers.tsx`** — QueryClient/TanStack Query, Zustand, toast container.
 - **`next.config.mjs`** — standalone output (Docker), CSP headers, X-Frame-Options DENY, image domains. **CSP `frame-src 'self' blob: https:`** (2026-08-21) — without it iframes fell back to `default-src 'self'` and every blob:/API-origin PDF preview (invoice scan, invoice builder, customer docs) rendered blank while `<img>` previews worked; `data:` deliberately excluded from frames. **`Permissions-Policy: camera=(self), geolocation=(self)`** — `camera=()` previously disabled the in-browser barcode/invoice scanner on Android Chrome ("access denied"; iOS Safari ignored it).
-- **`lib/api-client.ts`** — axios instance, `getTenantSlugFromCookie()`, token+tenant interceptors, refresh queue.
+- **`lib/api-client.ts`** — axios instance, `getTenantSlugFromCookie()`, token+tenant interceptors, refresh queue. **`paramsSerializer: { indexes: null }`** (mirrors mobile's `buyerApiClient`) — array query params must go out as repeated keys (`?statuses=A&statuses=B`); axios's default `statuses[]=` survives Express's `simple` query parser as a literal `statuses[]` key and the global ValidationPipe (`forbidNonWhitelisted`) 400s it.
 - **`lib/auth.ts`** — operator auth types + `migrateLegacyOpToken()`.
 - **`lib/tenant-cookie.ts`** — shared cookie util (non-httpOnly — JS-readable required).
 - **`lib/socket.ts`** — Socket.io singleton, token auth, reconnect.
@@ -397,6 +397,77 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   - **Order commission override** — `CreateOrderModal` grows a `DecimalInput` in the Options section gated `isStaff && hasSalesAgents`; the payload spread is `commissionRatePct != null` so **`0` (exempt) is sent and `null` is not**, and `OrderDraftPayload.commissionRatePct?: number | null` (`lib/drafts.ts`, optional so parked drafts predating it still hydrate) round-trips it through park/resume. `orders/[id]/page.tsx` Summary `<dl>` renders Default / Exempt (0%) / N% (override) with a staff-only Edit modal on `usePatchOrderCommissionRate` (incl. "Clear override" → `null`).
   - **Money discipline:** these pages render **STORED amounts only** — `accruedAmount`/`payableAmount`/`claimedAmount`/`totalAmount`/`paidAmount`/line `amount` and the API-computed `drift` (rendered verbatim as "Unclaimed") and `adjustmentsTotal`. No `base × rate` anywhere. The only client arithmetic is the display-time `total − paid` remaining in the payout modal, which the server re-derives and caps in-tx.
 - **Other:** `dispatch/page.tsx`, `bookkeeping/page.tsx` + `[transactionId]/page.tsx`.
+
+### 2026-08-25 — customer-feedback batch (address CRUD, agent quick-create, deposit defaults, due-soon chips, dead reopen, shipment gating)
+
+- **Address CRUD + primary (`customers/[id]/page.tsx`)** — full edit (all fields incl. type/
+  label) via `useUpdateCustomerAddress`; delete via new `useDeleteCustomerAddress`
+  (`DELETE :id/addresses/:addrId`) behind an inline two-tap confirm keyed by address id (the
+  suppliers-page idiom, `deleteAddressConfirmId` state) — a 409 from the server (address used by a
+  route stop) surfaces `err.response.data.message` verbatim in the failure toast; "Set as primary"
+  (`handleSetPrimaryAddress`) patches `isDefault` on the target address. `lib/api/customers.ts`
+  gained the `useDeleteCustomerAddress` mutation hook.
+- **`CustomerFormModal.tsx` — edit mode drops the inline address inputs entirely** (was silently
+  discarding edits since address is multi-row now); edit mode instead links to the Addresses tab.
+  Add mode is unchanged (still creates the customer's first address inline).
+- **"+ New agent" quick-create** — next to the "Sales agent (optional)" `Select` (add mode only,
+  behind `hasSalesAgents`), a ghost button opens the existing `sales-agents/_components/
+AgentFormModal` in a nested modal (`isAgentModalOpen` state); on create it selects the new agent
+  into `salesAgentId` without closing/leaving the customer form. No new endpoint — reuses
+  `AgentFormModal`'s existing create mutation.
+- **Per-customer deposit default** — `CustomerFormModal` gains a `defaultDepositPercent` field
+  (mirrors the existing `defaultPaymentTerms` control) threaded into `useCreateCustomer`/
+  `useUpdateCustomer` payloads (`lib/api/customers.ts`); server auto-applies it to every invoice
+  GENERATED for that customer (see api.md `invoices/` 2026-08-25 entry). Explicit per-invoice
+  deposits still win — this page never computes deposit amounts client-side.
+- **Due-soon chips + DUE TODAY tile (`invoices/page.tsx`)** — `DUE_CHIPS` (`today`/`tomorrow`/
+  `7d`) compute a `[dueFrom, dueTo]` ISO window via the new `addDaysIso` helper (UTC-safe, mirrors
+  `invoices/new/page.tsx`'s date math) and are sent as the API's new `dueFrom`/`dueTo` list params
+  ALONGSIDE the existing `statuses` filter (`UNPAID_STATUSES` — SENT/VIEWED/PARTIAL/OVERDUE, the
+  same set `isOverdue` composes server-side) — reuses the existing filter mechanism rather than a
+  new one. The "Due Today" `StatTile` in `PaymentSummaryBar` is now clickable
+  (`dueTodayActive`/`onDueTodayClick` props) and toggles the `today` chip; `StatTile` gained an
+  `ariaLabel` prop. **Both anchor on `todayLocalIso()` — the viewer's LOCAL calendar day, NOT
+  `todayIso()`/UTC** (mirrors `dispatch/page.tsx`'s `todayLocalISO`): `PaymentSummaryBar`'s KPI
+  math now compares `dueDate.slice(0,10)` (the UTC calendar day the table renders via
+  `fmtCalendarDate`) as YYYY-MM-DD strings instead of local-midnight `Date`s, so the tile and the
+  chip it applies can't target different dates for negative-UTC-offset viewers.
+- **BUG-ORD-01, web parity (`orders/[id]/page.tsx`)** — the DELIVERED-status "Reopen Order" button
+  is removed (server's transition map is `DELIVERED: []` — it always 400'd; mobile never showed
+  it). Replaced with static helper text pointing at Edit Items / the route run. `OUT_FOR_DELIVERY`'s
+  "Return to Confirmed" demotion button is unaffected.
+- **Shipment card gating (`orders/[id]/page.tsx`, `invoices/[id]/page.tsx`)** — `ShipmentCard` now
+  renders only when `order.fulfillPath === "SHIP"` or the row already carries a
+  `shippingCarrier`/`shippingTrackingNumber` (historical rows), instead of unconditionally.
+  The invoice page can't see `fulfillPath` (its `order` select doesn't carry it, deliberately not
+  widened), so it gates on `!invoice.orderId || carrier || trackingNumber`: an order-linked invoice
+  gets tracking mirrored down from `orders.service.updateShipment`, but a STANDALONE invoice has no
+  order to record it on and keeps the card as its only entry point (this page is the sole caller of
+  `useUpdateInvoiceShipment`; `/shipments` is read-only).
+
+### 2026-08-25 — sale-integrity phase 2 WP5: Reopen restored + delete-any + new-sale date picker (⚠️ server not caught up)
+
+- **SUPERSEDES the BUG-ORD-01 bullet above** — item 3 of the phase-2 plan restores the DELIVERED
+  "Reopen Order" button (`orders/[id]/page.tsx`) wired to the existing `DemoteReasonModal` /
+  `setDemoteTarget("CONFIRMED")` machinery (the same reasoned-demotion flow `OUT_FOR_DELIVERY`'s
+  "Return to Confirmed" already used), keeping the prior helper text as its subtext, reworded to
+  point run-delivered orders at their route stop instead. Server 409s (route-stop-completed) surface
+  via the standard error toast.
+  - **"Delete order"** — a staff-only inline two-tap confirm action added for ANY order status
+    (reusing the page/bulkbar's existing inline-confirm idiom), copy warning the delivery record is
+    permanently removed for a DELIVERED order; server 409s (invoice has payments) toast the message.
+  - **`invoices/new/page.tsx`** — the "Going out today?" binary gained a **Delivery date** input
+    driving a new `deliveredOn` field sent alongside `deliveredNow` (kept for back-compat): past/
+    today ⇒ delivered semantics (defaults to today), a future date auto-switches to deliver-later
+    copy ("Scheduled — the order is created and delivers on {date}"). The items payload no longer
+    sends `boxes: 0, pieces: 0` for plain-qty lines — the keys are omitted unless the operator used
+    box entry (the server now tolerates the old zero payload per WP1, but the payload is honest).
+  - **`lib/api/orders.ts`** — no new endpoints; verified the delete hook already surfaces server
+    error messages for the 409 case above.
+- These web changes ride on the server transition-map liberalization, delete-any rule, and
+  `deliveredOn` semantics in `apps/api/src/orders/orders.service.ts` (`changeStatus` /
+  `deleteOrder(id, user?)` / `createSale`) — see `api.md` `orders/` section for the exact rules,
+  including the run-stop-completed 409 the Reopen button surfaces through the global error toast.
 
 ### `(platform-admin)/` — super-admin panel (role-guarded)
 

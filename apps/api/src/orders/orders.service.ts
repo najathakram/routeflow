@@ -1652,17 +1652,36 @@ export class OrdersService implements OnApplicationBootstrap {
       // Normalize to integers and roll loose pieces >= unitsPerBox into boxes.
       const upb = Number(product.unitsPerBox ?? 0);
       let qty = item.qty;
-      let boxes = item.boxes ?? null;
-      let pieces = item.pieces ?? null;
-      if (item.boxes != null || item.pieces != null) {
+      let boxes: number | null = null;
+      let pieces: number | null = null;
+      // A zero boxes+pieces payload is "not using box entry", not "zero quantity" —
+      // the web sale screen sends boxes:0/pieces:0 for plain-qty lines, and the old
+      // non-null check let that overwrite a valid qty with 0 (live money bug: lines
+      // stored qty 0.000 at full unitPrice, order total $0, invoice ungeneratable).
+      // `qty` is threaded through so a product that isn't case-packed (unitsPerBox
+      // 0/1 — the web still sends boxes:1 for unitsPerBox:1) keeps the operator's
+      // qty instead of falling into normalizeBoxesPieces' non-boxed branch with no
+      // qty at all, which derives 0 and trips the invariant below.
+      if ((item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0) {
         const split = normalizeBoxesPieces({
           boxes: item.boxes,
           pieces: item.pieces,
+          qty: item.qty,
           unitsPerBox: upb,
         });
         qty = split.qty;
         boxes = split.boxes;
         pieces = split.pieces;
+      }
+
+      // Every catalog line must persist a positive quantity — a zero-qty line can
+      // only come from an invalid box/piece payload (e.g. boxes/pieces sent for a
+      // product that isn't case-packed), and must fail loudly rather than silently
+      // billing $0 for a real product (the exact shape of the live money bug above).
+      if (!(Number(qty) > 0)) {
+        throw new BadRequestException(
+          `Line quantity must be greater than zero${product?.name ? ` (${product.name})` : ""}.`,
+        );
       }
 
       // Resolve tier: per-product override > customer default tier
@@ -2012,12 +2031,46 @@ export class OrdersService implements OnApplicationBootstrap {
    *  - deliveredNow=true  → mark the order DELIVERED and issue the invoice (SENT) — van/cash sale.
    *  - deliveredNow=false → leave the order PENDING with a DRAFT invoice linked; send now only if
    *                         dto.send is set, otherwise it stays a draft until the order is delivered.
+   *  - deliveredOn        → the delivery-date picker; when present it replaces the binary above
+   *                         (past/today = delivered on that date, future = scheduled for it).
    *
    * The order is always created in isolation (skipAutoMerge) so a discrete sale never folds into an
    * existing open order.
    */
   async createSale(dto: CreateSaleDto, user: JwtPayload) {
     const orderDate = this.parseOrderDate(dto.orderDate, user.role);
+
+    // Delivery-date picker (owner 2026-08-25): `deliveredOn` REPLACES
+    // `deliveredNow`'s binary when present — past/today is a (back)dated
+    // delivered sale, a future date is a scheduled deliver-later order carrying
+    // that requested date. `deliveredNow` is still honoured on its own for older
+    // clients; when both are sent, `deliveredOn` wins.
+    let deliveredNow = dto.deliveredNow;
+    let deliveredAt = orderDate;
+    let requestedDeliveryDate = dto.requestedDeliveryDate;
+    if (dto.deliveredOn != null) {
+      const parsed = new Date(dto.deliveredOn);
+      if (Number.isNaN(parsed.getTime())) throw new BadRequestException("Invalid delivery date");
+      const now = new Date();
+      const endOfToday = Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate(),
+        23,
+        59,
+        59,
+        999,
+      );
+      if (parsed.getTime() > endOfToday) {
+        deliveredNow = false;
+        requestedDeliveryDate = dto.deliveredOn;
+      } else {
+        // Past/today: the sale happened on that day, so it goes through the same
+        // staff-only gate and 2-year floor backdating has always had.
+        deliveredNow = true;
+        deliveredAt = this.parseOrderDate(dto.deliveredOn, user.role);
+      }
+    }
 
     // 1. Create the backing order (reuses pricing tiers/overrides + stock lock/decrement).
     const order = await this.create(
@@ -2027,7 +2080,7 @@ export class OrdersService implements OnApplicationBootstrap {
         notes: dto.notes,
         discountAmount: dto.discountAmount,
         shippingFee: dto.shippingFee,
-        requestedDeliveryDate: dto.requestedDeliveryDate,
+        requestedDeliveryDate,
         orderDate: dto.orderDate,
         status: "PENDING",
         appliedCreditNotes: dto.appliedCreditNotes,
@@ -2042,10 +2095,10 @@ export class OrdersService implements OnApplicationBootstrap {
     // 2. Van sale: mark the order DELIVERED *directly*. We intentionally bypass changeStatus()
     //    here — changeStatus fires a fire-and-forget DRAFT invoice on DELIVERED, which would
     //    double-invoice this sale. (It also sidesteps the PENDING->DELIVERED transition guard.)
-    if (dto.deliveredNow) {
+    if (deliveredNow) {
       await this.prisma.forTenant().order.update({
         where: { id: order.id },
-        data: { status: OrderStatus.DELIVERED, deliveredAt: orderDate ?? new Date() },
+        data: { status: OrderStatus.DELIVERED, deliveredAt: deliveredAt ?? new Date() },
       });
     }
 
@@ -2074,7 +2127,7 @@ export class OrdersService implements OnApplicationBootstrap {
     //    DRAFT, auto-syncs to order edits, and is reconciled to the delivered qty
     //    at delivery, after which staff review & send it. (dto.send is ignored
     //    for deliver-later; sending before delivery is blocked server-side.)
-    if (dto.deliveredNow) {
+    if (deliveredNow) {
       // Issue every sibling; return the primary (standard/first) invoice.
       let primary: any = null;
       for (const inv of invoices) {
@@ -2110,26 +2163,53 @@ export class OrdersService implements OnApplicationBootstrap {
       throw new ForbiddenException("Only operators can change order status");
     }
 
+    // Owner reversed policy 2026-08-25: EVERY state may step back one stage, so
+    // `PENDING → DRAFT` and `DELIVERED → CONFIRMED` (the "Reopen Order" action,
+    // previously removed as BUG-ORD-01) / `DELIVERED → PARTIALLY_DELIVERED`
+    // ("it wasn't fully delivered after all") are legal. The role gates above
+    // already make them staff-only — CUSTOMER may only cancel, DRIVER may only
+    // confirm. Mirrored EXACTLY by `apps/mobile/lib/order-status-flow.ts`.
     const allowed: Record<string, string[]> = {
       DRAFT: ["PENDING", "CANCELLED"],
-      PENDING: ["CONFIRMED", "CANCELLED"],
+      PENDING: ["CONFIRMED", "CANCELLED", "DRAFT"],
       CONFIRMED: ["OUT_FOR_DELIVERY", "DELIVERED", "PENDING", "CANCELLED"],
       OUT_FOR_DELIVERY: ["DELIVERED", "PARTIALLY_DELIVERED", "CONFIRMED", "CANCELLED"],
       PARTIALLY_DELIVERED: ["OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"],
-      DELIVERED: [],
+      DELIVERED: ["CONFIRMED", "PARTIALLY_DELIVERED"],
     };
     if (!(allowed[order.status] ?? []).includes(dto.status)) {
       throw new BadRequestException(`Cannot transition from ${order.status} to ${dto.status}`);
     }
 
     // Demotions require a reason
+    const isDeliveredDemotion =
+      order.status === OrderStatus.DELIVERED &&
+      (dto.status === OrderStatus.CONFIRMED || dto.status === OrderStatus.PARTIALLY_DELIVERED);
     const isDemotion =
       (order.status === "CONFIRMED" && dto.status === "PENDING") ||
       (order.status === "OUT_FOR_DELIVERY" &&
         (dto.status === "PENDING" || dto.status === "CONFIRMED")) ||
-      (order.status === "PARTIALLY_DELIVERED" && dto.status === "OUT_FOR_DELIVERY");
+      (order.status === "PARTIALLY_DELIVERED" && dto.status === "OUT_FOR_DELIVERY") ||
+      (order.status === "PENDING" && dto.status === "DRAFT") ||
+      isDeliveredDemotion;
     if (isDemotion && !dto.reason?.trim()) {
       throw new BadRequestException("A reason is required when demoting an order");
+    }
+
+    // Reopening a route-delivered order from here would leave the run stop
+    // COMPLETED while the order says otherwise — the stop owns the stock and
+    // payment reversal, so send staff there instead. One extra lookup, and only
+    // on this transition.
+    if (isDeliveredDemotion && order.routeRunStopId) {
+      const stop = await this.prisma.forTenant().routeRunStop.findUnique({
+        where: { id: order.routeRunStopId },
+        select: { status: true },
+      });
+      if (stop?.status === "COMPLETED") {
+        throw new ConflictException(
+          "This order was delivered on a route run. Reopen its stop from the run instead — that reverses stock and payments correctly.",
+        );
+      }
     }
 
     const noteAppend = dto.reason
@@ -2176,6 +2256,9 @@ export class OrdersService implements OnApplicationBootstrap {
         ...(dto.status === OrderStatus.DELIVERED
           ? { deliveredAt: order.deliveredAt ?? order.orderDate ?? new Date() }
           : {}),
+        // A reopened order is no longer delivered — a stale deliveredAt would
+        // keep it in delivered-on-date reports and reconcile passes.
+        ...(isDeliveredDemotion ? { deliveredAt: null } : {}),
         ...(noteAppend ? { notes: (order.notes ?? "") + noteAppend } : {}),
       },
     });
@@ -2841,13 +2924,17 @@ export class OrdersService implements OnApplicationBootstrap {
               // Recompute qty from boxes/pieces when the operator split a boxed
               // product (matches createOrder's authority). Normalize to integers and
               // roll loose pieces >= unitsPerBox into boxes. Falls back to plain qty.
+              // A zero boxes+pieces payload is "not using box entry", not "zero
+              // quantity" (see create()) — a POSITIVE check keeps it from zeroing a
+              // real qty, and boxes/pieces stay null (box-unaware) instead of 0.
               let qty = item.qty ?? 0;
-              let boxes = item.boxes ?? null;
-              let pieces = item.pieces ?? null;
-              if (item.boxes != null || item.pieces != null) {
+              let boxes: number | null = null;
+              let pieces: number | null = null;
+              if ((item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0) {
                 const split = normalizeBoxesPieces({
                   boxes: item.boxes,
                   pieces: item.pieces,
+                  qty,
                   unitsPerBox: product.unitsPerBox,
                 });
                 qty = split.qty;
@@ -2957,18 +3044,25 @@ export class OrdersService implements OnApplicationBootstrap {
                 });
                 continue;
               }
-              // New item (no id, has productId; qty OR boxes/pieces)
-              const newQtyHint = item.boxes != null || item.pieces != null ? 1 : (item.qty ?? 0);
+              // New item (no id, has productId; qty OR boxes/pieces). A zero
+              // boxes+pieces payload is "not using box entry", not "zero quantity"
+              // (see create()) — a POSITIVE check keeps it from masking/zeroing a
+              // real qty or falling into box-priced math with an empty split.
+              const hasBoxSplit = (item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0;
+              const newQtyHint = hasBoxSplit ? 1 : (item.qty ?? 0);
               if (!item.id && item.productId && newQtyHint > 0) {
                 const product = await tx.product.findUnique({ where: { id: item.productId } });
                 if (!product) continue;
                 // Recompute qty from boxes/pieces when present.
                 let qty = item.qty ?? 0;
-                if (item.boxes != null || item.pieces != null) {
+                if (hasBoxSplit) {
                   const upb = Number(product.unitsPerBox ?? 0);
                   qty = (item.boxes ?? 0) * upb + (item.pieces ?? 0);
                 }
                 if (qty <= 0) continue;
+                // Store null (box-unaware), never 0, when box entry wasn't used.
+                const boxesForLine = hasBoxSplit ? (item.boxes ?? null) : null;
+                const piecesForLine = hasBoxSplit ? (item.pieces ?? null) : null;
                 const catalogPrice = Number(product.pricePerUnit);
                 const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
                 // An explicit price DIFFERENT from catalog is a genuine operator override
@@ -2979,8 +3073,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 const isManualOverride = overridePrice !== null && overridePrice !== catalogPrice;
                 const unitsPerBoxNum = Number(product.unitsPerBox ?? 0);
                 const qtyPieces =
-                  item.boxes != null ? qty : unitsPerBoxNum > 1 ? qty * unitsPerBoxNum : qty;
-                const qtyUnits = item.boxes != null ? item.boxes : qty;
+                  boxesForLine != null ? qty : unitsPerBoxNum > 1 ? qty * unitsPerBoxNum : qty;
+                const qtyUnits = boxesForLine != null ? boxesForLine : qty;
                 const priced =
                   overridePrice !== null
                     ? {
@@ -3007,8 +3101,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 const subtotal = computeLineSubtotal({
                   unitPrice,
                   qty,
-                  boxes: item.boxes ?? null,
-                  pieces: item.pieces ?? null,
+                  boxes: boxesForLine,
+                  pieces: piecesForLine,
                   unitsPerBox: product.unitsPerBox,
                 });
                 await tx.orderItem.create({
@@ -3016,11 +3110,11 @@ export class OrdersService implements OnApplicationBootstrap {
                     orderId,
                     productId: item.productId,
                     qty,
-                    boxes: item.boxes ?? null,
-                    pieces: item.pieces ?? null,
+                    boxes: boxesForLine,
+                    pieces: piecesForLine,
                     // Snapshot the sale-time box size on box-split lines (see create()).
                     unitsPerBox:
-                      item.boxes != null && Number(product.unitsPerBox ?? 0) > 1
+                      boxesForLine != null && Number(product.unitsPerBox ?? 0) > 1
                         ? Number(product.unitsPerBox)
                         : null,
                     unitPrice,
@@ -3167,7 +3261,11 @@ export class OrdersService implements OnApplicationBootstrap {
                 const li = order.lineItems.find((li) => li.id === item.id);
                 if (!li) continue;
                 const isUnlisted = !li.productId;
-                const editHasSplit = item.boxes != null || item.pieces != null;
+                // A zero boxes+pieces payload is "not using box entry", not "zero
+                // quantity" (see create()) — a POSITIVE check keeps it from
+                // silently discarding a real item.qty typed alongside it (the
+                // `if (editHasSplit)` branch below ignores item.qty entirely).
+                const editHasSplit = (item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0;
                 const wasBoxSplit = li.boxes != null;
                 // Resolve the box size for a catalog line even on a qty-ONLY edit —
                 // prefer the line's sale-time snapshot, fall back to the live product.
@@ -3195,6 +3293,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   const split = normalizeBoxesPieces({
                     boxes: item.boxes,
                     pieces: item.pieces,
+                    qty: item.qty ?? Number(li.qty),
                     unitsPerBox: upb,
                   });
                   qty = split.qty;
@@ -4136,6 +4235,7 @@ export class OrdersService implements OnApplicationBootstrap {
               ? normalizeBoxesPieces({
                   boxes: payload.boxes,
                   pieces: payload.pieces,
+                  qty: addQty,
                   unitsPerBox: upb,
                 })
               : { qty: addQty, boxes: null as number | null, pieces: null as number | null };
@@ -4433,21 +4533,42 @@ export class OrdersService implements OnApplicationBootstrap {
     };
   }
 
-  async deleteOrder(id: string) {
+  /**
+   * Delete-any (owner 2026-08-25): staff may delete an order in ANY status —
+   * DELIVERED included — behind the client's explicit warning. Money, not
+   * status, is the gate now. `user` is optional so internal callers keep
+   * working (change-requests' abandoned-draft cleanup passes none).
+   */
+  async deleteOrder(id: string, user?: JwtPayload) {
     const order = await this.prisma.forTenant().order.findUnique({
       where: { id },
       include: { invoices: { select: { id: true } }, transaction: { select: { id: true } } },
     });
     if (!order) throw new NotFoundException("Order not found");
 
-    const deletableStatuses: OrderStatus[] = [
-      OrderStatus.DRAFT,
-      OrderStatus.PENDING,
-      OrderStatus.CANCELLED,
-    ];
-    if (!deletableStatuses.includes(order.status)) {
-      throw new BadRequestException(
-        `Only DRAFT, PENDING, or CANCELLED orders can be deleted. This order is ${order.status}.`,
+    const isStaff =
+      user == null || user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
+    if (!isStaff) {
+      const deletableStatuses: OrderStatus[] = [
+        OrderStatus.DRAFT,
+        OrderStatus.PENDING,
+        OrderStatus.CANCELLED,
+      ];
+      if (!deletableStatuses.includes(order.status)) {
+        throw new BadRequestException(
+          `Only DRAFT, PENDING, or CANCELLED orders can be deleted. This order is ${order.status}.`,
+        );
+      }
+    }
+
+    // Every other child row either cascades (revisions, change requests, order
+    // credit notes) or is deleted in the transaction below — `Return` is the one
+    // restrict-linked relation, and a DELIVERED order is exactly the kind that
+    // has one. Refuse with an explanation instead of a raw FK error.
+    const returnCount = await this.prisma.forTenant().return.count({ where: { orderId: id } });
+    if (returnCount > 0) {
+      throw new ConflictException(
+        "This order has returns recorded against it. Delete those returns first.",
       );
     }
 
@@ -4455,8 +4576,18 @@ export class OrdersService implements OnApplicationBootstrap {
     // credit notes — the credit stayed consumed with nothing left pointing at it,
     // so the customer's money vanished with no audit trail. Give wallet money back
     // first; external payments block the delete for the same reason they block a
-    // cancel (software can't un-take cash).
-    await this.assertCancellableOrThrow(id);
+    // cancel (software can't un-take cash). Wallet-only invoices (credit notes,
+    // advances) still delete and hand the money back — that is #341's behaviour
+    // and it is preserved for the newly-deletable statuses too.
+    const impact = await this.cancelImpact(id);
+    if (impact.blockingPayments.length > 0) {
+      const detail = impact.blockingPayments
+        .map((b) => `${formatMoney(b.amount)} on ${b.invoiceNumber || "an invoice"}`)
+        .join(", ");
+      throw new ConflictException(
+        `This order's invoice has recorded payments (${detail}) — void the invoice first.`,
+      );
+    }
 
     await this.prisma.tenantTransaction(async (tx) => {
       await this.creditNotes.releaseOrderCreditsInTx(tx, id);
@@ -4517,8 +4648,8 @@ export class OrdersService implements OnApplicationBootstrap {
     });
   }
 
-  async bulkDeleteOrders(ids: string[]) {
-    const results = await Promise.allSettled(ids.map((id) => this.deleteOrder(id)));
+  async bulkDeleteOrders(ids: string[], user?: JwtPayload) {
+    const results = await Promise.allSettled(ids.map((id) => this.deleteOrder(id, user)));
     const deleted = results.filter((r) => r.status === "fulfilled").length;
     const errors = results
       .map((r, i) => (r.status === "rejected" ? `${ids[i]}: ${r.reason?.message}` : null))

@@ -27,11 +27,19 @@ describe("canTransitionOrder", () => {
     }
   });
 
-  it("treats DELIVERED as terminal — the bug behind the stale reopen docstring", () => {
-    expect(ORDER_STATUS_TRANSITIONS.DELIVERED).toEqual([]);
-    for (const to of ["CONFIRMED", "PENDING", "OUT_FOR_DELIVERY", "CANCELLED"]) {
+  // Owner reversed policy 2026-08-25: DELIVERED is no longer terminal — it steps
+  // back one stage like every other status. Still exactly one stage, though.
+  it("lets DELIVERED step back one stage, and no further", () => {
+    expect(ORDER_STATUS_TRANSITIONS.DELIVERED).toEqual(["CONFIRMED", "PARTIALLY_DELIVERED"]);
+    expect(canTransitionOrder("DELIVERED", "CONFIRMED")).toBe(true);
+    expect(canTransitionOrder("DELIVERED", "PARTIALLY_DELIVERED")).toBe(true);
+    for (const to of ["PENDING", "DRAFT", "OUT_FOR_DELIVERY", "CANCELLED"]) {
       expect(canTransitionOrder("DELIVERED", to)).toBe(false);
     }
+  });
+
+  it("lets PENDING step back to DRAFT", () => {
+    expect(canTransitionOrder("PENDING", "DRAFT")).toBe(true);
   });
 
   it("rejects OUT_FOR_DELIVERY → PENDING (skips a step) and unknown statuses", () => {
@@ -64,23 +72,30 @@ describe("demotionRequiresReason", () => {
     expect(demotionRequiresReason("CONFIRMED", "CANCELLED")).toBe(false);
   });
 
-  it("never offers a demotion out of DELIVERED", () => {
-    for (const to of ["CONFIRMED", "PENDING", "OUT_FOR_DELIVERY"]) {
-      expect(demotionRequiresReason("DELIVERED", to)).toBe(false);
-    }
+  it("treats both DELIVERED demotions and PENDING → DRAFT as reasoned", () => {
+    expect(demotionRequiresReason("DELIVERED", "CONFIRMED")).toBe(true);
+    expect(demotionRequiresReason("DELIVERED", "PARTIALLY_DELIVERED")).toBe(true);
+    expect(demotionRequiresReason("PENDING", "DRAFT")).toBe(true);
+    // Not a one-step-back move, so not in the server's isDemotion set either.
+    expect(demotionRequiresReason("DELIVERED", "PENDING")).toBe(false);
   });
 });
 
 describe("canDeleteOrder", () => {
-  it("allows only the server's deletable statuses", () => {
-    expect(canDeleteOrder("DRAFT")).toBe(true);
-    expect(canDeleteOrder("PENDING")).toBe(true);
-    expect(canDeleteOrder("CANCELLED")).toBe(true);
-  });
-
-  it("blocks the live statuses the tile used to 400 on", () => {
-    for (const s of ["CONFIRMED", "OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "DELIVERED"]) {
-      expect(canDeleteOrder(s)).toBe(false);
+  // Delete-any (2026-08-25): status stopped being the gate server-side — money
+  // is. The only remaining block (a linked invoice with recorded payments) is
+  // invisible from the status alone, so the action shows and the 409 toasts.
+  it("allows every status — the server gates on payments, not status", () => {
+    for (const s of [
+      "DRAFT",
+      "PENDING",
+      "CONFIRMED",
+      "OUT_FOR_DELIVERY",
+      "PARTIALLY_DELIVERED",
+      "DELIVERED",
+      "CANCELLED",
+    ]) {
+      expect(canDeleteOrder(s)).toBe(true);
     }
   });
 });

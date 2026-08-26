@@ -4,6 +4,7 @@ import {
   IsEnum,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -65,6 +66,13 @@ export class CreateCustomerDto {
     message: "defaultPaymentTerms must be one of: " + VALID_CUSTOMER_TERMS.join(", "),
   })
   defaultPaymentTerms?: string;
+  /**
+   * Per-customer default deposit percent ("50% upfront, remainder on terms").
+   * Auto-applied (depositDueDate = issueDate) to invoices generated from
+   * orders that don't already carry an explicit depositPercent. Omitted
+   * leaves the customer without a deposit default.
+   */
+  @IsOptional() @IsNumber() @Min(0) @Max(100) defaultDepositPercent?: number;
   /**
    * Sales agents & commissions: opens the customer's first attribution window
    * (AgentAssignment, effectiveFrom = now) inside the create tx.

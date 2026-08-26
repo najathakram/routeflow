@@ -762,6 +762,12 @@ model Customer {
   // Empty string clears an override; null means "use the tenant default". Wins
   // over the tenant SystemConfig default in resolveDefaultTerms().
   defaultPaymentTerms   String?
+  // Per-customer default deposit percent ("50% upfront, remainder on terms").
+  // null = no deposit default. Auto-applied (depositDueDate = issueDate) to
+  // invoices generated from orders that don't already carry an explicit
+  // depositPercent — see resolveDefaultTerms()/createInvoiceFromOrder* in
+  // invoices.service.ts. computeDepositFields still does the read-time math.
+  defaultDepositPercent Decimal?    @db.Decimal(5, 2)
   // P6-1 (F0): per-channel messaging consent (only the STOP-gated SMS/WA channels
   // carry consent; EMAIL/PORTAL don't). Additive — existing rows backfill to false.
   smsConsent            Boolean     @default(false)

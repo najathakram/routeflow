@@ -246,7 +246,7 @@ export default function OrdersPage() {
       const result = await bulkDelete.mutateAsync(Array.from(selected));
       if (result.errors.length > 0) {
         toast({
-          title: `${result.deleted} deleted, ${result.errors.length} failed (only PENDING/CANCELLED orders can be deleted)`,
+          title: `${result.deleted} deleted, ${result.errors.length} failed (orders whose invoice has recorded payments must be voided first)`,
           variant: "error",
         });
       } else {
@@ -529,7 +529,7 @@ export default function OrdersPage() {
             </button>
           )}
           <span className="ml-auto text-[11.5px] text-white/45">
-            Only PENDING / CANCELLED orders can be deleted
+            Orders with recorded payments can&apos;t be deleted
           </span>
         </div>
       )}

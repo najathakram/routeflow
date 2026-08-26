@@ -2080,6 +2080,53 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     );
   };
 
+  /**
+   * Shared "Delete order" trigger + inline two-tap confirm, reused across every
+   * status block below (delete-any: staff may delete an order in any status —
+   * the server 409s only when a linked invoice has recorded payments). No local
+   * onError toast here: an error just collapses the confirm back to the trigger
+   * and the global mutation-error toast (app/providers.tsx) already surfaces the
+   * server's message (e.g. "void the invoice first"), which a hand-written
+   * `error.message` here would only shadow with a generic HTTP status string.
+   */
+  const renderDeleteOrderAction = (confirmMessage: string, successTitle = "Order deleted") =>
+    showDeleteConfirm ? (
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-danger font-medium">{confirmMessage}</span>
+        <Button
+          size="sm"
+          variant="danger"
+          loading={deleteOrder.isPending}
+          onClick={() => {
+            deleteOrder.mutate(order.id, {
+              onSuccess: () => {
+                toast({ title: successTitle, variant: "success" });
+                router.push("/orders");
+              },
+              onError: () => setShowDeleteConfirm(false),
+            });
+          }}
+        >
+          Confirm Delete
+        </Button>
+        <button
+          onClick={() => setShowDeleteConfirm(false)}
+          className="text-sm text-navy/70 hover:text-navy transition-colors"
+        >
+          No
+        </button>
+      </div>
+    ) : (
+      <Button
+        size="sm"
+        variant="ghost"
+        leftIcon={<Trash2 className="h-4 w-4" />}
+        onClick={() => setShowDeleteConfirm(true)}
+      >
+        Delete order
+      </Button>
+    );
+
   // ── Estimated totals in edit mode ──────────────────────────────────────────
 
   const editSubtotal = isEditing
@@ -2360,6 +2407,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
               >
                 Cancel Order
               </Button>
+              {renderDeleteOrderAction("Delete this order? This can't be undone.")}
             </>
           )}
 
@@ -2390,19 +2438,39 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
               >
                 Cancel Order
               </Button>
+              {renderDeleteOrderAction(
+                "Delete this order? It's out for delivery — this can't be undone.",
+              )}
             </>
           )}
 
-          {/* DELIVERED actions */}
+          {/* DELIVERED actions — owner reversed policy 2026-08-25: reopening a
+              delivered order is now a legal staff-only reasoned demotion
+              (DELIVERED → CONFIRMED), wired through the same DemoteReasonModal
+              as every other one-step-back transition. A route-delivered order
+              (routeRunStopId on a COMPLETED stop) 409s server-side — that
+              surfaces via the standard error toast (app/providers.tsx), no
+              special-cased UI needed here. */}
           {localStatus === "DELIVERED" && (
-            <Button
-              size="sm"
-              variant="secondary"
-              leftIcon={<RefreshCcw className="h-4 w-4" />}
-              onClick={() => setDemoteTarget("CONFIRMED")}
-            >
-              Reopen Order
-            </Button>
+            <>
+              <div className="flex flex-col items-start gap-1">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<RotateCcw className="h-4 w-4" />}
+                  onClick={() => setDemoteTarget("CONFIRMED")}
+                >
+                  Reopen Order
+                </Button>
+                <p className="text-[11px] text-navy/50">
+                  Reopening keeps the invoice — Edit Items re-syncs it. Route-delivered orders
+                  reopen from their run stop.
+                </p>
+              </div>
+              {renderDeleteOrderAction(
+                "Delete this DELIVERED order? Its delivery record is removed permanently.",
+              )}
+            </>
           )}
 
           {/* CANCELLED */}
@@ -3162,15 +3230,21 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           </Card>
 
           {/* Carrier shipment — operator records carrier + tracking when goods ship
-              via a carrier instead of our own route. */}
-          <ShipmentCard
-            carrier={order.shippingCarrier}
-            trackingNumber={order.shippingTrackingNumber}
-            shippedAt={order.shippedAt}
-            isSaving={updateShipment.isPending}
-            onSave={(values) => updateShipment.mutateAsync({ id: order.id, ...values })}
-            openSignal={shipmentOpenSignal}
-          />
+              via a carrier instead of our own route. Gated so it doesn't render on
+              every order: only carrier-shipped (fulfillPath === "SHIP") orders, or
+              historical rows that already carry tracking data. */}
+          {(order.fulfillPath === "SHIP" ||
+            order.shippingCarrier ||
+            order.shippingTrackingNumber) && (
+            <ShipmentCard
+              carrier={order.shippingCarrier}
+              trackingNumber={order.shippingTrackingNumber}
+              shippedAt={order.shippedAt}
+              isSaving={updateShipment.isPending}
+              onSave={(values) => updateShipment.mutateAsync({ id: order.id, ...values })}
+              openSignal={shipmentOpenSignal}
+            />
+          )}
 
           {/* Invoice card — show for any non-draft, non-cancelled order so the operator
               can split into multiple invoices any time after the order is confirmed. */}

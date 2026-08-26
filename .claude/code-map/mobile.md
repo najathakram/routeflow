@@ -759,3 +759,48 @@ enabled)` against the PR-D read endpoint `GET /sales-agents/assignments/current?
 - **`app/(operator)/customers/[id].tsx`** — one read-only `Row label="Sales agent"` directly after
   the "Pricing tier" row, rendered only when `hasSalesAgents && currentAgent?.assignment`.
   **Absence is the empty state** — unflagged or unassigned shows no row at all, no placeholder.
+
+### 2026-08-25 — customer-feedback batch (address CRUD, dead reopen, shipment gating)
+
+- **`app/(operator)/customers/[id]/addresses.tsx`** — full CRUD: edit (all fields incl. label/
+  `addressType`), delete, and set-primary, mirroring web's `customers/[id]/page.tsx` Addresses
+  tab. `lib/api/customers.ts` gained `useDeleteCustomerAddress({customerId, addressId})` →
+  `DELETE :id/addresses/:addrId` (invalidates `["customers", customerId]` on success; surfaces the
+  server's 409 reason when a route stop still references the address). `CustomerAddressDto` gained
+  `label` (required by the server's `CreateAddressDto` — empty string is valid) and `addressType`
+  (update route validates against `["BILLING","SHIPPING","DELIVERY"]`); `CustomerDetail.addresses[]`
+  gained matching `label?`/`addressType?` read fields.
+- **BUG-ORD-01 was already fixed on mobile** (`order-actions.ts` never rendered a DELIVERED
+  reopen affordance) — this batch only brought web into parity; no mobile change here.
+- **Shipment gating** — `orders/[id].tsx`: `ShipmentSection` renders only when
+  `order.fulfillPath === "SHIP"` or the order already carries `shippingCarrier`/
+  `shippingTrackingNumber`. `invoices/[id].tsx`: same section, but gated on tracking data being
+  PRESENT rather than `fulfillPath` — the invoice payload's `order` field (`admin.ts`
+  `AdminInvoice.order`) is status/orderNumber only and was deliberately not widened just for this
+  gate, so the check is
+  `!isVoid && (!invoice.orderId || invoice.shippingCarrier || invoice.shippingTrackingNumber)` —
+  order-linked invoices inherit tracking from the order (`orders.service.updateShipment` mirrors it
+  down), while a standalone invoice has no order to record it on and keeps the section. Mirrors
+  web's `invoices/[id]/page.tsx` gate.
+
+### 2026-08-25 — sale-integrity phase 2 WP6: mirror reopen/demote/delete (⚠️ server not caught up)
+
+- **`lib/order-status-flow.ts`** — `ORDER_STATUS_TRANSITIONS` gained `PENDING: [...,"DRAFT"]` and
+  `DELIVERED: ["CONFIRMED","PARTIALLY_DELIVERED"]` (was `[]` — DELIVERED was deliberately terminal);
+  `demotionRequiresReason` gained the matching `PENDING→DRAFT` and `DELIVERED→(CONFIRMED|
+PARTIALLY_DELIVERED)` cases (staff-only, same set as the pre-existing demotions). `canDeleteOrder`
+  now always returns `true` (was `DRAFT|PENDING|CANCELLED` only) — delete-any is now a server-side
+  rule keyed on invoice payment state, not order status, so the client can't gate on status alone;
+  kept as a named function so a future client-visible block can slot back in.
+- **`lib/order-actions.ts`** — DELIVERED case gained a "Reopen order" action (`toStatus: "CONFIRMED"`,
+  `style: "warning"`, confirm copy naming the cleared `deliveredAt`); the old BUG-ORD-01 comment
+  (DELIVERED had no reopen because the API always 400'd it) is replaced with a note that the policy
+  reversed 2026-08-25 and the transition is now legal server-side with a run-stop-completed 409 guard.
+- **Tests** — `__tests__/order-actions.test.ts` asserts the new actions pass `canTransitionOrder` and
+  DELIVERED offers exactly `[Reopen order, …]`; `order-status-flow.ts` map-parity spot-checks extended.
+  `__tests__/order-status-flow.test.ts` was flipped off the old policy it pinned (DELIVERED terminal,
+  no DELIVERED demotion, `canDeleteOrder` false on live statuses) onto the reversed one — DELIVERED
+  steps back exactly one stage, `PENDING → DRAFT` is reasoned, `canDeleteOrder` is true everywhere.
+- These mirror the server transition map/delete rules in `apps/api/src/orders/orders.service.ts`
+  (`changeStatus`'s `allowed` map + `deleteOrder(id, user?)`) — see `api.md` `orders/` section.
+  `order-status-flow.ts` must stay byte-parallel with that map.
