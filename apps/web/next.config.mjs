@@ -63,7 +63,11 @@ const nextConfig = {
     const isDev = process.env.NODE_ENV !== "production";
     const csp = [
       "default-src 'self'",
-      `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
+      // Google Maps: @vis.gl/react-google-maps injects the Maps JS API script
+      // tag; without these two hosts EVERY dashboard map (trip builder, route
+      // create/detail) loads a permanently blank <Map> — the CSP added in
+      // 8aacd2d7 post-dated the Maps integration and silently broke them all.
+      `script-src 'self' 'unsafe-inline' https://maps.googleapis.com https://maps.gstatic.com${isDev ? " 'unsafe-eval'" : ""}`,
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com data:",
       "img-src 'self' data: blob: https:",
@@ -78,6 +82,10 @@ const nextConfig = {
       // not. `data:` is deliberately excluded: data: URIs in frames are an XSS
       // vector, and nothing here needs them.
       "frame-src 'self' blob: https:",
+      // Google's vector-map renderer (Advanced Markers use a mapId) can spin
+      // up a blob: worker; without this it falls back to default-src 'self'
+      // and marker pins never render even once the script loads.
+      "worker-src 'self' blob:",
       "frame-ancestors 'none'",
       "object-src 'none'",
       "base-uri 'self'",
