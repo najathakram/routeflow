@@ -45,7 +45,7 @@ export interface Route {
 export interface RouteRun {
   id: string;
   routeId: string;
-  route?: { id: string; name: string };
+  route?: { id: string; name: string; kind?: "SCHEDULED" | "ADHOC" };
   driverId?: string;
   driver?: { id: string; contactName: string };
   status: "SCHEDULED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";

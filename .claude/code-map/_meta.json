@@ -1,12 +1,7 @@
 {
-  "mappedSha": "0f43f308",
-  "generatedAt": "2026-08-26T08:42:07.186Z",
-  "areas": [
-    "api",
-    "web",
-    "mobile",
-    "packages"
-  ],
+  "mappedSha": "cb29237e",
+  "generatedAt": "2026-08-26T19:05:00.000Z",
+  "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 898,
-  "notes": "2026-08-26 (branch fix/audit-script-connection) — F3 AUDIT SCRIPT CONNECTION FIX: audit-buyer-verification-grandfather.mjs bare new PrismaClient() threw under Prisma 7 + resolved a stale root client (script had never run); now proxy-URL + PrismaPg adapter like demo-seed/prod-migrate. First real run executed read-only: 16 suspects, 12 e2e fixtures, 1 high-risk account reported to owner. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "2026-08-26 (worktree batch-0826) — 6-PR batch: (A) adaptive Dispatch nav merge + overview adaptation + runs `kind`; (B) branding-by-session (TenantProvider keys off the JWT, cookie self-heal); (C) invoice.hideOriginalPrice KV setting riding the invoice payload; (F) CSP fix unblocking Google Maps (every dashboard map had been blank since 2026-06-18); (G1) Sentry DSN-optional api/web/mobile; (G2) dependabot.yml. Opus-review fixes folded in. See CHANGELOG top bullet. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

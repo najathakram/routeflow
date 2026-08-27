@@ -36,7 +36,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 
 ## Bootstrap & cross-cutting
 
-- **`src/main.ts`** — ⚠️ NEVER `app.use(json())` here: it consumes the body before Nest captures `rawBody` and silently breaks EVERY Stripe webhook signature (#400 — the 2mb body limit goes through Nest's parser options). startup: `assertSecrets()` (JWT required in all envs; **`STORAGE_URL_SIGNING_SECRET` now FATAL in production too — F5-001 fail-closed**; `ENCRYPTION_KEY` still warn-only), `runStartupMigration()`
+- **`src/main.ts`** — ⚠️ NEVER `app.use(json())` here: it consumes the body before Nest captures `rawBody` and silently breaks EVERY Stripe webhook signature (#400 — the 2mb body limit goes through Nest's parser options). **Sentry (2026-08-26, DSN-optional):** `import "./instrument"` is the FIRST import (`src/instrument.ts` — `Sentry.init` with `enabled: !!process.env.SENTRY_DSN`, inert otherwise); global filters registered as `useGlobalFilters(new SentryExceptionFilter(httpAdapter), new ThrottlerExceptionFilter())` — Nest reverses the array so the specific throttler filter still wins for ThrottlerException; `src/common/sentry-exception.filter.ts` captures ONLY ≥500s with `tenant`/user/path tags then defers to `super.catch`. startup: `assertSecrets()` (JWT required in all envs; **`STORAGE_URL_SIGNING_SECRET` now FATAL in production too — F5-001 fail-closed**; `ENCRYPTION_KEY` still warn-only), `runStartupMigration()`
   (idempotent TenantConfig columns), helmet, trust proxy 2 (Railway CDN), CORS wildcard
   patterns, global `ValidationPipe` (whitelist/forbidNonWhitelisted/transform),
   **⚠️ the 2mb body limit MUST go through `app.useBodyParser("json", {limit})` on a
@@ -900,6 +900,12 @@ candidates)` — earlier candidate wins, then barcode > sku > unitSku, ties on `
   that string as `paymentTermsLabel` — label and arithmetic can never disagree; a hand-edited due
   date clears the label (falls to the server's null branch) on the create page, the sale flow,
   order-generated invoices, and both web + mobile split screens.
+- **Invoice settings KV (`system-config/settings.controller.ts` `GET/PATCH /settings/invoice`)** —
+  `invoice.defaultTerms` (see resolveDefaultTerms below) + **`invoice.hideOriginalPrice`
+  (2026-08-26, client request)**: boolean stored as `"true"`/`"false"` in SystemConfig,
+  returned as a real boolean; when true the WEB invoice document renders only the net unit
+  price on SPECIAL/DISCOUNTED/PROMO lines (no strike/badge — display-only, server PDF never
+  showed the struck price anyway). DTO `UpdateInvoiceSettingsDto.hideOriginalPrice`.
 - **`invoices.service.ts` `resolveDefaultTerms(customerId?): {terms, dueDays}`** — the customer's
   own `defaultPaymentTerms` (when set) wins over the tenant `SystemConfig` default
   (`invoice.defaultTerms`, falls back to "Net 30"); `TERM_DAYS[terms] ?? 30` maps the label to a

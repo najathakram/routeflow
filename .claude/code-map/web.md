@@ -46,7 +46,11 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   promise first] + **Forgot password?** link — the Google-only escape hatch); `lib/api-client.ts` 401
   handler pauses the failed request and calls `requestReauth()` before falling back to the /login
   redirect. Playwright `e2e/07-auth-password.spec.ts` (AP-01..08) covers the sheet + reset pages.
-  Dev-only CSP relax in `next.config.mjs` (`connect-src http://localhost:*` in dev). `lib/i18n/`
+  Dev-only CSP relax in `next.config.mjs` (`connect-src http://localhost:*` in dev). **CSP fix
+  2026-08-26: `script-src` now allows `maps.googleapis.com` + `maps.gstatic.com` and
+  `worker-src 'self' blob:` exists — the F11-001 CSP (8aacd2d7) had silently blanked EVERY
+  dashboard Google Map (trip builder, route create/detail) since 2026-06-18 by blocking the
+  Maps JS script `@vis.gl/react-google-maps` injects.** `lib/i18n/`
   (`messages.ts` en/es catalog, `index.tsx` `I18nProvider`/`useI18n()`/`t()`) — per-user locale via
   `UserPreference` + localStorage; avatar-menu Language toggle. `CommandPalette.tsx` — Jump-to/Actions/
   Results sections, `? shortcuts`, localized. All mounted in `app/providers.tsx`
@@ -320,14 +324,16 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   **UI-only — no controller gained `@RequireAddon`** (a leftover surface degrades to an empty
   state, never a 403 toast) and `lib/drive-mode.tsx` is untouched; only its entry points are gated.
   **Launch reversal = grep `useRoutesAccess`/`useDeliveryAccess`** and delete the conditions.
-  - `layout.tsx`: `getNavForRole(role, canActAsDriver, access)` (was a bare `devMode` bool, now
-    `{devMode, routesAccess, deliveryAccess}`) filters the **"Dispatch" group** on
-    `devMode || routesAccess` and a NEW **"Deliveries" group** (`/deliveries`, `/deliveries/new`)
-    on `devMode || deliveryAccess`; when Dispatch is hidden but Deliveries is visible, the
-    "Drivers" leaf moves into Deliveries instead of disappearing (both features need driver
-    records). `DRIVER_NAV`'s `/routes` leaf now needs `devMode || routesAccess || deliveryAccess`
+  - `layout.tsx` (**2026-08-26 owner-spec nav merge — ONE adaptive Dispatch group**): the
+    standalone "Deliveries" group is GONE. Dispatch children = Overview `/dispatch` · Routes
+    `/routes` (routesAccess-gated leaf) · Order delivery `/deliveries` (deliveryAccess-gated
+    leaf) · Drivers `/drivers`; the group itself shows on
+    `devMode || routesAccess || deliveryAccess`, leaves filtered per-feature inside it, and the
+    `canActAsDriver` "My Routes" injection always targets Dispatch. `DRIVER_NAV`'s `/routes`
+    leaf still needs `devMode || routesAccess || deliveryAccess`
     (a driver runs stops from either kind of route). `RouteGuard` swaps `DEV_MODE_PREFIXES` for
-    `GATED_PREFIXES` — `/dispatch` + `/routes` (`need:"routes"`), `/deliveries`
+    `GATED_PREFIXES` — `/dispatch` (`need:"either"` since the merge), `/routes`
+    (`need:"routes"`), `/deliveries`
     (`need:"delivery"`), `/drivers` (`need:"either"`) — resolved by `matchGatedPrefix()`, which
     (a) skips `/routes/trips*` entirely so a delivery-only tenant reaches the trips→deliveries
     redirect stub instead of bouncing to /dashboard, and (b) downgrades every `/routes` path
@@ -410,7 +416,12 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   - **Customer detail (`customers/[id]/page.tsx`)** — a `Card title="Sales Agent"` directly above "Account Status", fed by `useCustomerCurrentAgent(customerId, { enabled: hasSalesAgents })` (the PR-D read endpoint). Shows the holding agent + "since" date + the customer rate; operators get Assign / Reassign (local modal → `useAddAssignment`) and Remove (`useCloseAssignment`). `CustomerFormModal` gains a "Sales agent (optional)" select in **add mode only** (`salesAgentId` threaded into the create payload) — edit mode gets nothing, because reassignment lives in the agent box.
   - **Order commission override** — `CreateOrderModal` grows a `DecimalInput` in the Options section gated `isStaff && hasSalesAgents`; the payload spread is `commissionRatePct != null` so **`0` (exempt) is sent and `null` is not**, and `OrderDraftPayload.commissionRatePct?: number | null` (`lib/drafts.ts`, optional so parked drafts predating it still hydrate) round-trips it through park/resume. `orders/[id]/page.tsx` Summary `<dl>` renders Default / Exempt (0%) / N% (override) with a staff-only Edit modal on `usePatchOrderCommissionRate` (incl. "Clear override" → `null`).
   - **Money discipline:** these pages render **STORED amounts only** — `accruedAmount`/`payableAmount`/`claimedAmount`/`totalAmount`/`paidAmount`/line `amount` and the API-computed `drift` (rendered verbatim as "Unclaimed") and `adjustmentsTotal`. No `base × rate` anywhere. The only client arithmetic is the display-time `total − paid` remaining in the payout modal, which the server re-derives and caps in-tx.
-- **Other:** `dispatch/page.tsx`, `bookkeeping/page.tsx` + `[transactionId]/page.tsx`.
+- **Other:** `dispatch/page.tsx` (**2026-08-26 adaptive overview** — reads
+  `useRoutesAccess`/`useDeliveryAccess`/`useDeveloperMode`; three-way subtitle, "Plan delivery"
+  `PageHeader` action when delivery access, "Delivery" chip on `route.kind === "ADHOC"` runs
+  ONLY when both features on, delivery-flavored empty copy; runs feed already includes ADHOC
+  trips — `findAllRuns` has no kind filter, its route select now returns `kind`),
+  `bookkeeping/page.tsx` + `[transactionId]/page.tsx`.
 
 ### 2026-08-25 — customer-feedback batch (address CRUD, agent quick-create, deposit defaults, due-soon chips, dead reopen, shipment gating)
 
@@ -634,7 +645,16 @@ total}`) — types live in `lib/api/vendor-bills.ts` as `PriorScanSummary`/`Scan
   `finance/expenses`'s CreateBillModal now parses 409s with `getDuplicateVendorBillError` and renders
   the same duplicate banner (amber resumable / danger hard, "View existing bill" + "Create anyway" →
   re-post with `allowDuplicate`) instead of swallowing the server message in a generic toast.
-- `tenant-provider.tsx` (branding CSS vars), `CommandPalette.tsx` (Cmd+K nav/search),
+- `SentryInit.tsx` (2026-08-26): client component mounted in root `app/layout.tsx` — inert
+  unless `NEXT_PUBLIC_SENTRY_DSN` set; dynamic-imports `@sentry/react`, tags `tenant` from the
+  slug cookie.
+- `tenant-provider.tsx` (branding CSS vars; **2026-08-26 branding-by-session** — slug resolves
+  JWT-first via `lib/auth.ts getSessionTenantSlug()` (module-level, NOT a hook: the provider
+  mounts OUTSIDE the auth context), a disagreeing `tenant-slug` cookie is REWRITTEN (self-heal
+  — it also feeds the X-Tenant-Slug header), and branding re-resolves+refetches on window
+  focus/visibilitychange when the resolved slug changed (multi-tab impersonation switches);
+  `refreshTokens()` in auth.ts also re-syncs the cookie. Root cause fixed: a stale cookie
+  could brand one tenant's invoice letterhead with another tenant's name), `CommandPalette.tsx` (Cmd+K nav/search),
   `BarcodeScannerButton.tsx`, `DocumentLetterhead.tsx` (PDF header), `ScanInvoiceModal.tsx` (OCR),
   `BatchItemReviewModal.tsx` (`settings/batch-import` — per-line product remap + supplier link;
   the review gate for `resolveItem`, see api.md's P5 batch-queue defect-fixes note),

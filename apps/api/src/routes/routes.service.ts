@@ -822,7 +822,7 @@ export class RoutesService {
       this.prisma.forTenant().routeRun.findMany({
         where,
         include: {
-          route: { select: { id: true, name: true } },
+          route: { select: { id: true, name: true, kind: true } },
           driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
           _count: { select: { stops: true } },
           stops: {
