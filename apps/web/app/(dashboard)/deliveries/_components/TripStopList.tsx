@@ -16,6 +16,13 @@ export interface TripStopListProps {
   orderLookup: Record<string, TripStopOrderInfo>;
   /** Omit to render read-only (used for the BUILT-phase review list). */
   onRemoveCustomer?: (customerId: string) => void;
+  /**
+   * Removes a single order from a multi-order customer group without
+   * dropping the whole stop. Omit to render read-only (BUILT-phase review
+   * list); groups with exactly one order never show this control — the
+   * whole-customer remove above already covers that case.
+   */
+  onRemoveOrder?: (orderId: string) => void;
   emptyMessage?: string;
   className?: string;
 }
@@ -29,6 +36,7 @@ export function TripStopList({
   groups,
   orderLookup,
   onRemoveCustomer,
+  onRemoveOrder,
   emptyMessage = "No stops yet.",
   className,
 }: TripStopListProps) {
@@ -51,10 +59,11 @@ export function TripStopList({
     <ul className={cn("space-y-2", className)}>
       {groups.map((group, index) => {
         const orderCount = group.orderIds.length;
-        const orderLabels = group.orderIds.map((id) => {
+        const orderLabel = (id: string) => {
           const info = orderLookup[id];
           return info?.orderNumber ? `#${info.orderNumber}` : `#${id.slice(0, 8).toUpperCase()}`;
-        });
+        };
+        const orderLabels = group.orderIds.map(orderLabel);
         return (
           <li
             key={group.customerId}
@@ -67,9 +76,33 @@ export function TripStopList({
               <p className="truncate text-sm font-medium text-navy">
                 {group.customerName ?? "Unknown customer"}
               </p>
-              <p className="mt-0.5 truncate text-xs text-navy/70">
-                {orderCount} order{orderCount !== 1 ? "s" : ""} · {orderLabels.join(", ")}
-              </p>
+              {onRemoveOrder && orderCount > 1 ? (
+                // Per-order removal only makes sense once there's more than one
+                // order to choose between — a single-order group keeps the plain
+                // summary line below and relies on the customer-level remove.
+                <ul className="mt-1 space-y-1">
+                  {group.orderIds.map((id) => (
+                    <li
+                      key={id}
+                      className="flex items-center justify-between gap-2 rounded bg-surface-raised px-2 py-1"
+                    >
+                      <span className="truncate text-xs text-navy/70">{orderLabel(id)}</span>
+                      <button
+                        onClick={() => onRemoveOrder(id)}
+                        className="shrink-0 rounded p-0.5 text-navy/30 hover:bg-danger-bg hover:text-danger transition-colors"
+                        aria-label={`Remove order ${orderLabel(id)}`}
+                        title={`Remove order ${orderLabel(id)}`}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-0.5 truncate text-xs text-navy/70">
+                  {orderCount} order{orderCount !== 1 ? "s" : ""} · {orderLabels.join(", ")}
+                </p>
+              )}
             </div>
             {onRemoveCustomer && (
               <div

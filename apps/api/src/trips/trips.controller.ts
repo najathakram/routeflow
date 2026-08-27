@@ -9,6 +9,7 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { CreateTripDto } from "./dto/create-trip.dto";
 import { TripEligibilityQueryDto } from "./dto/trip-eligibility.dto";
+import { EligibleOrdersQueryDto } from "./dto/eligible-orders.dto";
 
 @ApiTags("trips")
 @ApiBearerAuth()
@@ -21,6 +22,11 @@ export class TripsController {
   @Get("eligibility")
   getEligibility(@Query() query: TripEligibilityQueryDto, @CurrentUser() user: JwtPayload) {
     return this.tripsService.getEligibility(user.tenantId!, query.orderIds);
+  }
+
+  @Get("eligible-orders")
+  getEligibleOrders(@Query() query: EligibleOrdersQueryDto, @CurrentUser() user: JwtPayload) {
+    return this.tripsService.getEligibleOrders(user.tenantId!, query);
   }
 
   @Post()
