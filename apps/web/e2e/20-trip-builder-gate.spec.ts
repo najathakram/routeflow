@@ -52,21 +52,20 @@ test("delivery-trip-builder surfaces follow the developer_mode/order_delivery ad
     await expect(planTripAction).toBeVisible({ timeout: 15_000 });
     // Deep-link renders the builder, not a bounce or a crash. No draft was
     // ever saved (the bulkbar action above was asserted visible, never
-    // clicked), so the builder shows its instructive empty state rather than
-    // the picking/build/send flow — assert-visibility-only, Build is never
-    // reachable in this state by construction.
+    // clicked), so the builder opens with the IN-PAGE ORDER PICKER (batch-d:
+    // the old "go to Orders" dead-end was replaced) — assert-visibility-only:
+    // nothing is added, Build stays at zero orders and is never clicked.
     await page.goto("/deliveries/new");
     await expect(page).toHaveURL(/\/deliveries\/new/);
-    // Match the empty-state body copy specifically, not just "Plan a delivery" —
-    // the dashboard shell's page-title <h1> now reads that exact same string
-    // (both were updated to "Plan a delivery" when this builder moved off
-    // /routes/trips/new), so a bare text match on that phrase would resolve to
-    // two elements and violate Playwright's strict mode.
-    await expect(page.getByText(/select orders from the orders list/i)).toBeVisible({
-      timeout: 15_000,
-    });
-    await expect(page.getByRole("button", { name: /go to orders/i })).toBeVisible();
-    await expect(page.getByRole("button", { name: /^build/i })).toHaveCount(0);
+    await expect(page.getByText("Add orders")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByPlaceholder(/search order # or customer/i)).toBeVisible();
+    // The bulkbar path still exists and is mentioned as a hint, not a dead-end.
+    await expect(page.getByText(/you can also select orders on the orders list/i)).toBeVisible();
+    // Build always renders in PICKING phase, and canBuild requires >0 stops —
+    // with no orders added it must be disabled. Assert-visibility-only: never
+    // click Build/Send.
+    const buildBtn = page.getByRole("button", { name: /^build/i });
+    await expect(buildBtn).toBeDisabled();
 
     // Legacy URL still redirects to the new one (moved off /routes/trips/new
     // when order delivery became its own addon-gated surface, separate from

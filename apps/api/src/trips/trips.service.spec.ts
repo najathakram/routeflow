@@ -444,4 +444,127 @@ describe("TripsService", () => {
       expect(prisma.route.create).not.toHaveBeenCalled();
     });
   });
+
+  // ─── GET /trips/eligible-orders ─────────────────────────────────────────────
+
+  describe("getEligibleOrders", () => {
+    function makeRow(overrides: Partial<Record<string, unknown>> = {}) {
+      return {
+        ...makeOrder(overrides),
+        total: 125.5,
+        requestedDeliveryDate: new Date("2026-09-01T00:00:00Z"),
+        _count: { lineItems: 3 },
+        ...overrides,
+      };
+    }
+
+    it("maps eligible rows to the picker shape and filters out anything checkEligibility rejects — even if the DB where clause let it through", async () => {
+      // Mirrors the service's rationale: the SQL `where` can't cheaply express
+      // NO_ADDRESS, so a no-address order is included here (as the DB might
+      // return it) to prove the app-level checkEligibility() pass still
+      // strips it before it reaches the response.
+      const eligible = makeRow({
+        id: "order-pick-1",
+        orderNumber: "ORD-P1",
+        customerId: "cust-p1",
+        total: 200,
+        _count: { lineItems: 2 },
+      });
+      const noAddress = makeRow({
+        id: "order-pick-noaddr",
+        customerId: "cust-p2",
+        customer: { id: "cust-p2", businessName: "No Address Co", addresses: [] },
+      });
+      prisma.order.findMany.mockResolvedValue([eligible, noAddress]);
+      prisma.order.count.mockResolvedValue(2);
+
+      const result = await service.getEligibleOrders(tenantId, {});
+
+      expect(result.data).toEqual([
+        {
+          orderId: "order-pick-1",
+          orderNumber: "ORD-P1",
+          customerId: "cust-p1",
+          customerName: "Acme Co",
+          total: 200,
+          itemCount: 2,
+          deliveryDate: eligible.requestedDeliveryDate,
+          eligible: true,
+        },
+      ]);
+      // meta.total reflects the (unfiltered) DB count, not the post-filter length —
+      // an accepted imperfection documented on the service method.
+      expect(result.meta).toEqual({ page: 1, limit: 20, total: 2, totalPages: 1 });
+    });
+
+    it("excludes SHIP-fulfillment orders via the where clause", async () => {
+      prisma.order.findMany.mockResolvedValue([]);
+
+      await service.getEligibleOrders(tenantId, {});
+
+      const where = prisma.order.findMany.mock.calls[0][0].where;
+      expect(where.fulfillPath).toEqual({ not: FulfillPath.SHIP });
+      expect(where.status).toEqual({
+        in: [OrderStatus.PENDING, OrderStatus.CONFIRMED, OrderStatus.PARTIALLY_DELIVERED],
+      });
+    });
+
+    // checkEligibility rejects EVERY row with a non-null routeRunStopId (active
+    // run or stale link alike), so the DB filter is a plain equality — not an OR
+    // that also admits stale-run rows just to have checkEligibility filter them
+    // back out in-memory (that wasted page slots and inflated meta.total).
+    it("filters routeRunStopId: null at the DB rather than OR-ing in stale-run rows", async () => {
+      prisma.order.findMany.mockResolvedValue([]);
+
+      await service.getEligibleOrders(tenantId, {});
+
+      const where = prisma.order.findMany.mock.calls[0][0].where;
+      expect(where.routeRunStopId).toBeNull();
+      expect(where.OR).toBeUndefined();
+    });
+
+    it("passes `exclude` through as an id notIn filter", async () => {
+      prisma.order.findMany.mockResolvedValue([]);
+
+      await service.getEligibleOrders(tenantId, { exclude: ["order-a", "order-b"] } as any);
+
+      const where = prisma.order.findMany.mock.calls[0][0].where;
+      expect(where.id).toEqual({ notIn: ["order-a", "order-b"] });
+    });
+
+    it("omits the id filter entirely when exclude is absent/empty", async () => {
+      prisma.order.findMany.mockResolvedValue([]);
+
+      await service.getEligibleOrders(tenantId, {});
+
+      const where = prisma.order.findMany.mock.calls[0][0].where;
+      expect(where.id).toBeUndefined();
+    });
+
+    it("search filters on orderNumber OR customer.businessName, case-insensitive", async () => {
+      prisma.order.findMany.mockResolvedValue([]);
+
+      await service.getEligibleOrders(tenantId, { search: "acme" } as any);
+
+      const where = prisma.order.findMany.mock.calls[0][0].where;
+      expect(where.AND).toEqual([
+        {
+          OR: [
+            { orderNumber: { contains: "acme", mode: "insensitive" } },
+            { customer: { businessName: { contains: "acme", mode: "insensitive" } } },
+          ],
+        },
+      ]);
+    });
+
+    it("paginates with the requested page/limit and orders newest first", async () => {
+      prisma.order.findMany.mockResolvedValue([]);
+
+      await service.getEligibleOrders(tenantId, { page: 3, limit: 10 } as any);
+
+      expect(prisma.order.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 20, take: 10, orderBy: { createdAt: "desc" } }),
+      );
+    });
+  });
 });

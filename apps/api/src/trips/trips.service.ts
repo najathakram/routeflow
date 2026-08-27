@@ -14,6 +14,7 @@ import { geocodeAddress } from "../common/geocode.util";
 // be imported at runtime from the API (raw-TS entry point, see that file's header).
 import { groupOrdersForTrip } from "../common/trip-grouping";
 import { CreateTripDto, TripOriginDto, TripOriginType } from "./dto/create-trip.dto";
+import { EligibleOrdersQueryDto } from "./dto/eligible-orders.dto";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -50,6 +51,24 @@ export interface TripIneligibleOrder {
   customerName: string | null;
   reason: TripIneligibleReason;
   detail?: string;
+}
+
+// GET /trips/eligible-orders row — only ADDABLE orders are ever returned
+// (checkEligibility already ran server-side), so `eligible` is always true.
+export interface EligibleOrderRow {
+  orderId: string;
+  orderNumber: string | null;
+  customerId: string;
+  customerName: string | null;
+  total: number;
+  itemCount: number;
+  deliveryDate: Date | null;
+  eligible: true;
+}
+
+export interface EligibleOrdersResult {
+  data: EligibleOrderRow[];
+  meta: { page: number; limit: number; total: number; totalPages: number };
 }
 
 const TRIP_ELIGIBLE_STATUSES: OrderStatus[] = [
@@ -120,6 +139,81 @@ export class TripsService {
         ...(result.ok ? {} : { reason: result.reason, detail: result.detail }),
       };
     });
+  }
+
+  /**
+   * GET /trips/eligible-orders — powers the in-builder order picker. The DB
+   * `where` is a superset filter mirroring everything checkEligibility can
+   * express in SQL (status, fulfillment path, active/stale route-run link);
+   * NO_ADDRESS has no cheap SQL equivalent worth maintaining twice, so each
+   * row is run back through the SAME checkEligibility() predicate POST
+   * /trips uses before it's allowed into the response. That means this list
+   * can never offer an order that POST /trips would then reject — filtered
+   * rows just make the returned page occasionally shorter than `limit`
+   * rather than risk disagreeing with the create path.
+   */
+  async getEligibleOrders(
+    tenantId: string,
+    query: EligibleOrdersQueryDto,
+  ): Promise<EligibleOrdersResult> {
+    const { search, exclude } = query;
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.OrderWhereInput = {
+      tenantId,
+      status: { in: TRIP_ELIGIBLE_STATUSES },
+      fulfillPath: { not: FulfillPath.SHIP },
+      // checkEligibility rejects EVERY row with a non-null routeRunStopId
+      // (ON_ACTIVE_RUN or PREVIOUSLY_DISPATCHED, stale link included), so
+      // admitting stale-run rows here just to filter them back out in-memory
+      // wastes page slots and inflates meta.total. Filter them at the DB.
+      routeRunStopId: null,
+      ...(exclude && exclude.length > 0 ? { id: { notIn: exclude } } : {}),
+      ...(search
+        ? {
+            AND: [
+              {
+                OR: [
+                  { orderNumber: { contains: search, mode: "insensitive" as const } },
+                  {
+                    customer: {
+                      businessName: { contains: search, mode: "insensitive" as const },
+                    },
+                  },
+                ],
+              },
+            ],
+          }
+        : {}),
+    };
+
+    const [orders, total] = await Promise.all([
+      this.prisma.order.findMany({
+        where,
+        include: { ...TRIP_ORDER_INCLUDE, _count: { select: { lineItems: true } } },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      this.prisma.order.count({ where }),
+    ]);
+
+    const data: EligibleOrderRow[] = orders
+      .filter((order) => checkEligibility(order).ok)
+      .map((order) => ({
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        customerId: order.customerId,
+        customerName: order.customer?.businessName ?? null,
+        total: Number(order.total),
+        itemCount: order._count.lineItems,
+        deliveryDate: order.requestedDeliveryDate,
+        eligible: true as const,
+      }));
+
+    return { data, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
   }
 
   /**

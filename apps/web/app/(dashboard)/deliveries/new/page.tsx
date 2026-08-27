@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Loader2,
@@ -26,7 +26,7 @@ import {
   type TripOrigin,
 } from "@/lib/api/routes";
 import { useDrivers } from "@/lib/api/drivers";
-import { loadTripDraft, clearTripDraft } from "@/lib/trip-draft";
+import { loadTripDraft, saveTripDraft, clearTripDraft } from "@/lib/trip-draft";
 import { groupOrdersForTrip, type TripStopGroup } from "@routeflow/types";
 import { TemplateRouteMap } from "../../routes/templates/[id]/TemplateRouteMap";
 import {
@@ -36,6 +36,7 @@ import {
 } from "../_components/TripOriginPicker";
 import { TripStopList } from "../_components/TripStopList";
 import { TripSkippedPanel, type TripSkippedRow } from "../_components/TripSkippedPanel";
+import { OrderPickerPanel } from "../_components/OrderPickerPanel";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -57,7 +58,6 @@ type Phase = "PICKING" | "BUILT";
 
 export default function NewTripPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
@@ -65,20 +65,30 @@ export default function NewTripPage() {
     setTitle("Plan a delivery");
   }, [setTitle]);
 
-  // ── Draft (from the orders-list "Plan delivery trip" bulkbar action) ──
-  // Read client-side only — sessionStorage isn't available during the SSR
-  // pass, so undefined = "not checked yet" avoids flashing the empty state.
-  const [draft, setDraft] = React.useState<ReturnType<typeof loadTripDraft> | undefined>(undefined);
+  // ── Order selection (from the orders-list "Plan delivery trip" bulkbar
+  //    action, OR built up in-page via OrderPickerPanel) ──
+  // orderIds is the real source of truth — every add/remove persists via
+  // saveTripDraft so a refresh keeps the selection. Seeded ONCE from
+  // loadTripDraft() client-side only (sessionStorage isn't available during
+  // the SSR pass) — `hydrated` gates the initial render so we never flash an
+  // empty picker before a real draft has had a chance to load.
+  const [hydrated, setHydrated] = React.useState(false);
+  const [orderIds, setOrderIds] = React.useState<string[]>([]);
   React.useEffect(() => {
-    setDraft(loadTripDraft());
+    setOrderIds(loadTripDraft()?.orderIds ?? []);
+    setHydrated(true);
   }, []);
+
+  function persistOrderIds(next: string[]) {
+    setOrderIds(next);
+    saveTripDraft(next);
+  }
 
   // ── Phase / created-route state ──
   const [phase, setPhase] = React.useState<Phase>("PICKING");
   const [routeId, setRouteId] = React.useState<string | null>(null);
 
   // ── Form state (PICKING) ──
-  const [removedCustomerIds, setRemovedCustomerIds] = React.useState<Set<string>>(new Set());
   const [driverId, setDriverId] = React.useState("");
   const [originKind, setOriginKind] = React.useState<TripOriginKind>("TENANT");
   const [address, setAddress] = React.useState<TripOriginAddress>({
@@ -103,7 +113,6 @@ export default function NewTripPage() {
   const [frozenOriginKind, setFrozenOriginKind] = React.useState<TripOriginKind>("TENANT");
 
   // ── Data ──
-  const orderIds = draft?.orderIds ?? [];
   const {
     data: eligibility,
     isLoading: eligLoading,
@@ -181,10 +190,11 @@ export default function NewTripPage() {
     return map;
   }, [eligibility]);
 
-  const pickingGroups = React.useMemo(
-    () => grouping.groups.filter((g) => !removedCustomerIds.has(g.customerId)),
-    [grouping.groups, removedCustomerIds],
-  );
+  // orderIds (the persisted draft) IS the picking selection now — grouping
+  // already reflects it end-to-end via the eligibility query, so there's no
+  // separate client-side exclusion set to intersect here (removal mutates
+  // orderIds directly; see handleRemoveCustomer/handleRemoveOrder below).
+  const pickingGroups = grouping.groups;
   const remainingIds = React.useMemo(
     () => pickingGroups.flatMap((g) => g.orderIds),
     [pickingGroups],
@@ -235,7 +245,19 @@ export default function NewTripPage() {
   }
 
   function handleRemoveCustomer(customerId: string) {
-    setRemovedCustomerIds((prev) => new Set(prev).add(customerId));
+    const group = pickingGroups.find((g) => g.customerId === customerId);
+    if (!group) return;
+    const toRemove = new Set(group.orderIds);
+    persistOrderIds(orderIds.filter((id) => !toRemove.has(id)));
+  }
+
+  function handleRemoveOrder(orderId: string) {
+    persistOrderIds(orderIds.filter((id) => id !== orderId));
+  }
+
+  function handleAddOrder(orderId: string) {
+    if (orderIds.includes(orderId)) return;
+    persistOrderIds([...orderIds, orderId]);
   }
 
   function handleBuild() {
@@ -383,30 +405,16 @@ export default function NewTripPage() {
     );
   }
 
-  // ── Empty / expired states (Design directive 4 — no dead ends) ──
+  // ── Loading (Design directive 4 — no dead ends): direct navigation with no
+  //    (or an expired) draft no longer dead-ends into a separate empty-state
+  //    screen — it falls straight into the same builder below with orderIds
+  //    starting empty, OrderPickerPanel expanded, and a hint pointing back to
+  //    the Orders list bulk action. ──
 
-  if (draft === undefined) {
+  if (!hydrated) {
     return (
       <div className="flex h-[calc(100vh-64px)] items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-      </div>
-    );
-  }
-
-  if (draft === null) {
-    const expired = Number(searchParams.get("n") ?? "0") > 0;
-    return (
-      <div className="flex h-[calc(100vh-64px)] flex-col items-center justify-center gap-4 p-8 text-center">
-        <MapPin className="h-10 w-10 text-navy/20" />
-        <p className="text-base font-medium text-navy">
-          {expired ? "Your delivery selection expired" : "Plan a delivery"}
-        </p>
-        <p className="max-w-sm text-sm text-navy/70">
-          {expired
-            ? "Selections expire after 30 minutes. Go back to Orders and select them again."
-            : 'Select orders from the Orders list, then choose "Plan delivery trip" to start building a delivery here.'}
-        </p>
-        <Button onClick={() => router.push("/orders")}>Go to Orders</Button>
       </div>
     );
   }
@@ -601,6 +609,19 @@ export default function NewTripPage() {
             </div>
           )}
 
+          {phase === "PICKING" && (
+            <OrderPickerPanel
+              excludeIds={orderIds}
+              onAdd={handleAddOrder}
+              defaultOpen={orderIds.length === 0}
+              hint={
+                orderIds.length === 0
+                  ? 'You can also select orders on the Orders list and choose "Plan delivery trip".'
+                  : undefined
+              }
+            />
+          )}
+
           <div>
             <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-navy/70">
               Stops ({displayGroups.length})
@@ -622,6 +643,7 @@ export default function NewTripPage() {
                 groups={displayGroups}
                 orderLookup={orderLookup}
                 onRemoveCustomer={phase === "PICKING" ? handleRemoveCustomer : undefined}
+                onRemoveOrder={phase === "PICKING" ? handleRemoveOrder : undefined}
                 emptyMessage="No eligible stops selected."
               />
             )}
