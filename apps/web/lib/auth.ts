@@ -89,6 +89,11 @@ export function getStoredUser(): AuthUser | null {
   };
 }
 
+/** Tenant slug of the CURRENT session (JWT beats any cookie); null when logged out. */
+export function getSessionTenantSlug(): string | null {
+  return getStoredUser()?.tenantSlug ?? null;
+}
+
 // ─── Auth functions ───────────────────────────────────────────────────────────
 
 export async function login(username: string, password: string): Promise<AuthResponse> {
@@ -134,6 +139,9 @@ export async function refreshTokens(): Promise<AuthResponse | null> {
     // Sliding window: keep the middleware-visible presence signal alive only
     // as long as the session actually refreshes.
     setOpPresenceCookie();
+    // Re-sync the tenant cookie in case it drifted (impersonation, multi-tab
+    // tenant switch) while this session's access token was still valid.
+    if (data.user?.tenantSlug) setTenantCookie(data.user.tenantSlug);
     return data;
   } catch (err) {
     // The session is dead (token rejected) → drop the presence signal so the

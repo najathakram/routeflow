@@ -13,6 +13,7 @@
 import path from "path";
 import { test, expect } from "@playwright/test";
 import { loginAsOperator, logout } from "./helpers/auth";
+import { TENANT_SLUG } from "./helpers/constants";
 
 /** Operator storage state written by the setup project (cookies + localStorage). */
 const OPERATOR_STATE = path.join(__dirname, "setup/.auth/operator.json");
@@ -173,5 +174,51 @@ test.describe("Auth & password flows", () => {
     await page.getByLabel("Email").fill(`e2e_nobody_${Date.now()}@example.com`);
     await page.getByRole("button", { name: "Send reset link" }).click();
     await expect(page.getByText("Check your inbox")).toBeVisible();
+  });
+
+  // ── Tenant cookie self-heal ─────────────────────────────────────────────────
+
+  test("AP-09 stale tenant cookie is corrected on login", async ({ page, context }) => {
+    const baseURL =
+      process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
+    // Seed a wrong tenant-slug cookie directly (not via the shared
+    // setTenantCookie(context) helper — see the suite header note above: that
+    // helper injects an x-tenant-slug HEADER, which collides with the one
+    // axios already derives from the cookie during real form login).
+    await context.addCookies([
+      {
+        name: "tenant-slug",
+        value: "qa-wrong-tenant",
+        domain: new URL(baseURL).hostname,
+        path: "/",
+      },
+    ]);
+    await loginAsOperator(page);
+    const cookies = await context.cookies();
+    const tenantCookie = cookies.find((c) => c.name === "tenant-slug");
+    // Login must self-heal the cookie to the JWT's actual tenant — a stale
+    // cookie must never keep branding (or the X-Tenant-Slug header) pointed
+    // at the wrong tenant. Business-name text is not asserted: not stable
+    // across environments.
+    expect(tenantCookie?.value).toBe(TENANT_SLUG);
+
+    // The stronger half: corrupt the cookie AFTER login (the multi-tab /
+    // impersonation drift case — no login form left in the loop to fix it)
+    // and reload the dashboard. TenantProvider itself must resolve the JWT's
+    // tenant over the cookie and REWRITE the cookie on mount.
+    await context.addCookies([
+      {
+        name: "tenant-slug",
+        value: "qa-wrong-tenant",
+        domain: new URL(baseURL).hostname,
+        path: "/",
+      },
+    ]);
+    await page.goto("/dashboard");
+    await expect
+      .poll(async () => (await context.cookies()).find((c) => c.name === "tenant-slug")?.value, {
+        timeout: 10_000,
+      })
+      .toBe(TENANT_SLUG);
   });
 });
