@@ -1492,10 +1492,10 @@ export default function AdminTenantDetailPage() {
           try {
             const res = await superAdminClient.post(`/platform-admin/tenants/${id}/impersonate`);
             // Impersonation state lives ONLY in lib/impersonation.ts. The old
-            // legacy "accessToken" write here leaked the impersonation token into
-            // the operator slot via migrateLegacyOpToken — the exact contamination
-            // that hijacked fresh logins. Cost of removal: realtime sockets (which
-            // read OP_KEYS directly) stay silent during impersonation.
+            // legacy "accessToken" write here leaked the impersonation token to
+            // legacy-key readers (e.g. the settings Google-link fetch) — the exact
+            // contamination that hijacked fresh logins. Cost of removal: realtime
+            // sockets (which read OP_KEYS directly) stay silent during impersonation.
             setImpersonation(res.data.accessToken, tenant.slug);
             setTenantCookie(tenant.slug);
             window.location.href = "/dashboard";

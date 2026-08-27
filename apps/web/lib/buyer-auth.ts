@@ -32,30 +32,9 @@ interface BuyerAuthResponse {
   buyer: BuyerUser;
 }
 
-// Legacy keys used before NEW-m2-1 / RF-077
+// Legacy pre-NEW-m2-1/RF-077 key — still written by the Google OAuth callback
+// (for unmigrated readers) and read as a fallback by getBuyerAccessToken().
 const LEGACY_BUYER_ACCESS = "buyerAccessToken";
-const LEGACY_BUYER_REFRESH = "buyerRefreshToken";
-const LEGACY_BUYER_SELLER = "buyerActiveSeller";
-
-/**
- * One-time migration: copy legacy buyerAccessToken → rf:buyer:accessToken then
- * delete the legacy keys. Idempotent — safe to call on every page load.
- */
-export function migrateLegacyBuyerToken(): void {
-  if (typeof window === "undefined") return;
-  const legacy = localStorage.getItem(LEGACY_BUYER_ACCESS);
-  if (!legacy) return;
-  if (!localStorage.getItem(BUYER_KEYS.accessToken)) {
-    localStorage.setItem(BUYER_KEYS.accessToken, legacy);
-    const legacyRefresh = localStorage.getItem(LEGACY_BUYER_REFRESH);
-    if (legacyRefresh) localStorage.setItem(BUYER_KEYS.refreshToken, legacyRefresh);
-    const legacySeller = localStorage.getItem(LEGACY_BUYER_SELLER);
-    if (legacySeller) localStorage.setItem(BUYER_KEYS.activeSeller, legacySeller);
-  }
-  localStorage.removeItem(LEGACY_BUYER_ACCESS);
-  localStorage.removeItem(LEGACY_BUYER_REFRESH);
-  localStorage.removeItem(LEGACY_BUYER_SELLER);
-}
 
 function parseJwtPayload(token: string): Record<string, unknown> | null {
   try {
