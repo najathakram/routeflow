@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { PageHeader, Badge, Select, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { humanizeEnum } from "@/lib/format";
 import { useOrders, useUpdateOrderStatus, useBulkDeleteOrders, type Order } from "@/lib/api/orders";
 import { useProduct } from "@/lib/api/products";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
@@ -59,6 +60,13 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "DELIVERED", label: "Delivered" },
   { value: "CANCELLED", label: "Cancelled" },
 ];
+
+// Row status badge label — reuse the filter-pill copy above so the two stay in
+// sync; fall back to humanizeEnum for any status this list doesn't know about
+// yet (never render the raw enum with underscores).
+function orderStatusLabel(status: string): string {
+  return STATUS_OPTIONS.find((o) => o.value === status)?.label ?? humanizeEnum(status);
+}
 
 // ─── Fulfillment filter options ───────────────────────────────────────────────
 
@@ -880,7 +888,7 @@ export default function OrdersPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
-                        <Badge status={order.status} />
+                        <Badge status={order.status} label={orderStatusLabel(order.status)} />
                         {order.fulfillPath === "SHIP" && (
                           <span
                             title="Shipped by supplier/carrier — won't appear on delivery routes"

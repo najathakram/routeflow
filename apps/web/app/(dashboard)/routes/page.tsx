@@ -22,13 +22,16 @@ import {
   useCreateRouteRun,
   useDeleteRoute,
   useUpdateRouteRunStatus,
-  useDeleteRouteRun,
   type Route,
   type RouteRun,
 } from "@/lib/api/routes";
 import { useDrivers } from "@/lib/api/drivers";
 import { useQueryClient } from "@tanstack/react-query";
 import { EditRunModal } from "./_components/EditRunModal";
+import { formatDate } from "@/lib/format";
+// Calendar dates stored at UTC midnight (run `scheduledDate`) need the UTC
+// renderer; `formatDate` above is the local-time one, correct for `createdAt`.
+import { fmtCalendarDate } from "@/lib/formatting";
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
 
@@ -200,7 +203,7 @@ function useTemplateColumns(
         cell: ({ row }) => (
           <span className="flex items-center gap-1.5 text-navy">
             <Calendar className="h-3.5 w-3.5" />
-            {new Date(row.original.createdAt).toLocaleDateString()}
+            {formatDate(row.original.createdAt)}
           </span>
         ),
       },
@@ -245,10 +248,8 @@ export default function RoutesPage() {
   // Inline-action state for active-run cards
   const [editingRun, setEditingRun] = React.useState<RouteRun | null>(null);
   const [cancellingRun, setCancellingRun] = React.useState<RouteRun | null>(null);
-  const [deletingRun, setDeletingRun] = React.useState<RouteRun | null>(null);
   const deleteRoute = useDeleteRoute();
   const updateRunStatus = useUpdateRouteRunStatus();
-  const deleteRun = useDeleteRouteRun();
   const qc = useQueryClient();
   const { toast } = useToast();
 
@@ -268,19 +269,6 @@ export default function RoutesPage() {
           toast({ title: "Cancel failed", description: err.message, variant: "error" }),
       },
     );
-  };
-
-  const handleConfirmDeleteRun = () => {
-    if (!deletingRun) return;
-    if (deleteRun.isPending) return;
-    deleteRun.mutate(deletingRun.id, {
-      onSuccess: () => {
-        toast({ title: "Run deleted", variant: "success" });
-        setDeletingRun(null);
-      },
-      onError: (err) =>
-        toast({ title: "Delete failed", description: err.message, variant: "error" }),
-    });
   };
 
   const toggleSelect = (id: string) =>
@@ -402,35 +390,6 @@ export default function RoutesPage() {
         </p>
       </Modal>
 
-      <Modal
-        open={!!deletingRun}
-        onClose={() => setDeletingRun(null)}
-        title="Delete this run?"
-        description={
-          deletingRun
-            ? `Delete the scheduled run for ${deletingRun.route?.name ?? "this route"}? This permanently removes it.`
-            : ""
-        }
-        footer={
-          <>
-            <Button
-              variant="secondary"
-              onClick={() => setDeletingRun(null)}
-              disabled={deleteRun.isPending}
-            >
-              Keep run
-            </Button>
-            <Button variant="danger" onClick={handleConfirmDeleteRun} loading={deleteRun.isPending}>
-              Delete run
-            </Button>
-          </>
-        }
-      >
-        <p className="text-sm text-navy/70">
-          Stops and any delivery records on this run will be lost. This cannot be undone.
-        </p>
-      </Modal>
-
       <PageHeader
         title="Routes"
         action={
@@ -484,7 +443,11 @@ export default function RoutesPage() {
                 const todayStr = new Date().toISOString().slice(0, 10);
                 const runStr = d.toISOString().slice(0, 10);
                 if (runStr === todayStr) return "Today";
-                return d.toLocaleDateString();
+                // `scheduledDate` is a calendar date at UTC midnight, and the
+                // Today check above compares UTC days — so the fallback must
+                // render UTC too, or a negative-offset viewer sees the day
+                // BEFORE the one that just failed the "Today" test.
+                return fmtCalendarDate(run.scheduledDate);
               })();
               const startTime = run.startedAt
                 ? new Date(run.startedAt).toLocaleTimeString([], {
@@ -517,7 +480,8 @@ export default function RoutesPage() {
                     {endTime && <span>Finished {endTime}</span>}
                   </div>
                   {/* Inline actions: View · Edit / Reschedule (SCHEDULED) ·
-                      Cancel (SCHEDULED + IN_PROGRESS) · Delete (SCHEDULED) */}
+                      Cancel (SCHEDULED + IN_PROGRESS). Runs are cancelled, never
+                      deleted from here — this list only shows active runs. */}
                   <div className="flex flex-wrap items-center gap-1.5">
                     <Link
                       href={`/routes/${run.id}`}
@@ -542,15 +506,6 @@ export default function RoutesPage() {
                         title="Cancel this run"
                       >
                         <Ban className="h-3.5 w-3.5" /> Cancel
-                      </button>
-                    )}
-                    {run.status === "SCHEDULED" && (
-                      <button
-                        onClick={() => setDeletingRun(run)}
-                        className="inline-flex items-center gap-1 rounded-lg border border-surface-border bg-white px-2.5 py-1.5 text-xs font-medium text-danger hover:border-danger/40 hover:bg-danger/5 transition-colors"
-                        title="Delete this run permanently"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" /> Delete
                       </button>
                     )}
                   </div>

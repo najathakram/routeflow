@@ -146,7 +146,8 @@ export default function FinanceDashboardPage() {
   const totalAr = ar?.total ?? 0;
 
   // Derived AR headline figures (all from existing bindings — no re-derivation of money).
-  const overdue30plus = (ar?.days31_45 ?? 0) + (ar?.days45plus ?? 0);
+  const pastDueTotal =
+    (ar?.days1_15 ?? 0) + (ar?.days16_30 ?? 0) + (ar?.days31_45 ?? 0) + (ar?.days45plus ?? 0);
   const collectedThisWeek = table?.thisWeek?.receipts ?? 0;
 
   // AR aging bar percentages
@@ -166,7 +167,7 @@ export default function FinanceDashboardPage() {
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
         <div className="shrink">
-          <h2 className="text-2xl font-bold text-navy">Receivables Overview</h2>
+          <h2 className="text-2xl font-bold text-navy">Finance Overview</h2>
           <p className="mt-1 text-sm text-navy/70">
             One finance home, AR position, aging and collections.
           </p>
@@ -195,9 +196,9 @@ export default function FinanceDashboardPage() {
             Overdue
           </p>
           <p className="mt-1.5 font-mono tabular-nums text-2xl font-semibold tracking-[-0.02em] text-danger">
-            {fmt(overdue30plus)}
+            {fmt(pastDueTotal)}
           </p>
-          <p className="mt-1 text-xs text-navy/70">Past 30 days</p>
+          <p className="mt-1 text-xs text-navy/70">Past due — all ages</p>
         </div>
         <div className="rounded-card border border-success/40 bg-paper p-4 shadow-card ring-2 ring-success/10">
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">

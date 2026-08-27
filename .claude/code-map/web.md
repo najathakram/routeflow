@@ -86,6 +86,31 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   `orders/[id]/page.tsx` cpMap and `orders/_components/CreateOrderModal.tsx` cpMap (both
   `Map<string, number | null>`; their `.get(id) ?? customerTier` consumption was already null-safe).
   Admin toggle: `(platform-admin)/admin/tenants/[id]/page.tsx` `AVAILABLE_ADDONS` += `msrp`.
+- **`lib/format.ts`** (new 2026-08-26, audit P0 batch) — display formatter: `formatMoney`
+  (Intl USD, thousands separators), `formatQty` (bare integers, ≤2dp fractions), `formatDate`
+  ("Aug 27, 2026", **LOCAL time — for UTC-midnight calendar dates use `lib/formatting.ts`
+  `fmtCalendarDate` instead**, e.g. `RouteRun.scheduledDate` on routes/dispatch), `humanizeEnum`
+  ("PARTIALLY_DELIVERED" → "Partially Delivered"). Display ONLY — money math stays in
+  `lib/pricing.ts`. Never inline `toFixed(2)`/`toLocaleDateString()` for user-visible money/dates.
+  First adopters: orders/[id] (line/summary money, total qty), inventory (Stock Value KPI),
+  orders list (status badge via label prop), routes templates Created. ⚠️ Near-duplicate of the
+  older `lib/formatting.ts` (`fmt`/`fmtDate`/`fmtCalendarDate`) — consolidation queued for the
+  audit follow-up batch; until then prefer format.ts for new code EXCEPT calendar dates.
+- **`lib/impersonation.ts`** (new 2026-08-26, audit P0 batch — security-relevant) — **THE single
+  reader/writer of the super-admin impersonation localStorage keys** (`getImpersonation()` —
+  parses JWT exp → `{token, slug, expired}`; `setImpersonation`/`clearImpersonation`;
+  `subscribeImpersonation` for the banner). Nothing else may touch those keys (grep-gated).
+  Consumers: `lib/api-client.ts` (request interceptor prefers a NON-EXPIRED impersonation token,
+  expired → clear + redirect `/admin/tenants?impersonation=expired`; a 401 while impersonating
+  NEVER enters the operator refresh path — clear + redirect instead; the refresh catch also
+  carries a concurrent-rotation race guard retrying with a raced fresh token before opening the
+  ReAuth sheet), `lib/auth.ts` (`login()`/`logout()` clear impersonation; `getStoredUser` ignores
+  expired tokens), `(dashboard)/layout.tsx` `ImpersonationBanner` (live-subscribed + pathname
+  re-check, expired variant, always-available Exit), platform-admin tenants list + [id]
+  Impersonate actions (the [id] page's legacy bare `accessToken` write was REMOVED — it leaked the
+  impersonation token into the operator slot via `migrateLegacyOpToken`; cost: realtime sockets
+  read OP_KEYS directly and stay silent during impersonation). Buyer impersonation flow is
+  separate and untouched.
 - **`lib/payment-methods.ts`** (new 2026-08-21) — **THE single source for payment-method lists in web.**
   `SELECTABLE_PAYMENT_METHODS` (`CASH,CHECK,ZELLE,ACH,CREDIT_CARD,OTHER` — pickers) vs
   `ALL_PAYMENT_METHODS` (+`CREDIT_NOTE`,`ADVANCE` — display/filters ONLY; the server rejects

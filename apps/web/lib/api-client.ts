@@ -10,6 +10,7 @@ import { OP_KEYS, BUYER_KEYS } from "./auth-keys";
 import { setOpPresenceCookie, clearOpPresenceCookie } from "./presence-cookies";
 import { hasReauthHandler, requestReauth } from "./session-expiry";
 import { parsePlanGate, type PlanGateBody } from "./plan-gate";
+import { getImpersonation, clearImpersonation } from "./impersonation";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
 
@@ -101,16 +102,19 @@ function isOperatorSurface(): boolean {
 
 apiClient.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
-    // Prefer impersonation token over regular access token when present
-    const impersonationToken = localStorage.getItem("impersonationToken");
-    const token = impersonationToken || localStorage.getItem(OP_KEYS.accessToken);
+    const imp = getImpersonation();
+    // An EXPIRED impersonation token must never fall through to the operator
+    // token — that silently switches identities. End the impersonation instead.
+    if (imp?.expired) {
+      clearImpersonation();
+      if (!window.location.pathname.startsWith("/admin")) {
+        window.location.assign("/admin/tenants?impersonation=expired");
+      }
+    }
+    const active = imp && !imp.expired ? imp : null;
+    const token = active?.token ?? localStorage.getItem(OP_KEYS.accessToken);
     if (token) config.headers.Authorization = `Bearer ${token}`;
-
-    // Tell the API which tenant this request belongs to.
-    // Prefer the impersonation slug (set when super admin impersonates a tenant)
-    // over the cookie, as defense-in-depth against stale cookies.
-    const impersonationSlug = localStorage.getItem("impersonationTenantSlug");
-    const slug = impersonationSlug || getTenantSlugFromCookie();
+    const slug = active?.slug ?? getTenantSlugFromCookie();
     if (slug) config.headers["X-Tenant-Slug"] = slug;
   }
   return config;
@@ -182,6 +186,17 @@ apiClient.interceptors.response.use(
       return Promise.reject(error);
     }
 
+    if (typeof window !== "undefined" && getImpersonation()) {
+      // An impersonation token is not refreshable — retrying the operator
+      // refresh flow here would silently switch who the user is. End the
+      // impersonation instead.
+      clearImpersonation();
+      if (!window.location.pathname.startsWith("/admin")) {
+        window.location.assign("/admin/tenants?impersonation=expired");
+      }
+      return Promise.reject(error);
+    }
+
     if (isRefreshing) {
       return new Promise((resolve, reject) => {
         failedQueue.push({
@@ -215,6 +230,20 @@ apiClient.interceptors.response.use(
       processQueue(null, data.accessToken);
       return apiClient(original);
     } catch (refreshError) {
+      // Concurrent-refresh race: another request/tab may have already rotated
+      // the pair. If a fresh access token exists that differs from the one
+      // this request sent, retry with it instead of declaring the session
+      // dead. isRefreshing resets in the finally block below, same as every
+      // other exit path through this catch.
+      const raced =
+        typeof window !== "undefined" ? localStorage.getItem(OP_KEYS.accessToken) : null;
+      const sent = String(original.headers.Authorization ?? "").replace(/^Bearer\s+/, "");
+      if (raced && raced !== sent) {
+        original.headers.Authorization = `Bearer ${raced}`;
+        processQueue(null, raced);
+        return apiClient(original);
+      }
+
       // Refresh failed. Before bouncing to /login (which discards drafts),
       // offer an in-place re-auth sheet when one is mounted (operator surfaces).
       // The failed request stays queued until the user unlocks or declines.

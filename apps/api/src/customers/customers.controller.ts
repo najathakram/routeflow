@@ -181,6 +181,7 @@ export class CustomersController {
   }
 
   @Get(":id/orders")
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
   findOrders(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.findOrders(id, user);
   }
