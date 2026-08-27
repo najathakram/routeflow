@@ -447,8 +447,10 @@ export class SettingsController {
   @Get("invoice")
   async getInvoiceSettings() {
     const defaultTerms = await this.svc.get("invoice.defaultTerms");
+    const hideOriginalPriceRaw = await this.svc.get("invoice.hideOriginalPrice");
     return {
       defaultTerms: defaultTerms ?? "Net 30",
+      hideOriginalPrice: hideOriginalPriceRaw === "true",
     };
   }
 
@@ -457,6 +459,9 @@ export class SettingsController {
   async updateInvoiceSettings(@Body() dto: UpdateInvoiceSettingsDto) {
     if (dto.defaultTerms !== undefined) {
       await this.svc.set("invoice.defaultTerms", dto.defaultTerms);
+    }
+    if (dto.hideOriginalPrice !== undefined) {
+      await this.svc.set("invoice.hideOriginalPrice", String(dto.hideOriginalPrice));
     }
     return this.getInvoiceSettings();
   }

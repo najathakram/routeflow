@@ -122,6 +122,8 @@ export interface Invoice {
   depositDueDate?: string | null;
   depositAmount?: number | null;
   depositOverdue?: boolean;
+  /** Tenant display preference (rides the payload so CUSTOMER viewers get it too). */
+  hideOriginalPrice?: boolean;
   pdfUrl?: string;
   writeOffReason?: string;
   writtenOffAt?: string;
@@ -950,6 +952,7 @@ export interface PriceAdjustmentDto {
 
 export interface InvoiceSettings {
   defaultTerms: string;
+  hideOriginalPrice?: boolean;
 }
 
 export function useInvoiceSettings() {
