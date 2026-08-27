@@ -20,6 +20,9 @@ import { useTenantStore } from "../lib/tenant-store";
 import { useBuyerSessionStore } from "../lib/buyer-session-store";
 import { useDeveloperMode } from "../lib/api/addons";
 import { ConfirmModal } from "../components/ConfirmModal";
+import { initSentry } from "../lib/sentry";
+
+initSentry();
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({

@@ -4,6 +4,7 @@ import "./globals.css";
 import { Providers } from "./providers";
 import { TenantProvider } from "@/components/tenant-provider";
 import { ServiceWorkerRegistry } from "@/components/ServiceWorkerRegistry";
+import { SentryInit } from "@/components/SentryInit";
 
 // Ledger UI typeface. Drives `font-sans` app-wide via --font-spline.
 const splineSans = Spline_Sans({
@@ -93,6 +94,7 @@ export default function RootLayout({
         <TenantProvider>
           <Providers>{children}</Providers>
           <ServiceWorkerRegistry />
+          <SentryInit />
         </TenantProvider>
       </body>
     </html>
