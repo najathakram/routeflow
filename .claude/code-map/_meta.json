@@ -1,7 +1,7 @@
 {
-  "mappedSha": "afc84e24",
-  "generatedAt": "2026-08-26T22:35:00.000Z",
+  "mappedSha": "53bda4b4",
+  "generatedAt": "2026-08-27T02:30:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
-  "fileCount": 898,
-  "notes": "2026-08-26 (branch fix/audit-p0-batch, rebased onto the merged 6-PR batch) — AUDIT P0 BATCH: customers :id/orders 403 fix (+roles reflection spec), overdue unification (isOverdue filter / all-ages finance card / DRAFT+WRITTEN_OFF KPI exclusions), NEW lib/impersonation.ts single-source impersonation state (login/logout clear, expiry handling, refresh-race guard, legacy accessToken write removed), delete demotion (invoice trash DRAFT-only; run delete removed), NEW lib/format.ts display kit (run dates stay on fmtCalendarDate — UTC trap), scrub-demo-contacts.mjs + demo-seed email guard, customer Orders tab error/empty states. Landed after the same-day 6-PR batch (#451–#456: adaptive Dispatch, branding-by-session, hideOriginalPrice, CSP maps fix, Sentry, dependabot). Full detail in CHANGELOG.md top bullets. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "fileCount": 899,
+  "notes": "2026-08-26 (night, branch fix/maps-auth-failure-containment) — MAPS ROOT CAUSE + CRASH CONTAINMENT: post-#454 residual root-caused in a REAL browser as (1) dead prod GOOGLE_MAPS_API_KEY (InvalidKeyMapError; owner must mint/replace the key in Google Cloud routeflow-506615 + Railway env — resources 200 so network checks look green) and (2) vis.gl 1.7.1 auth-failure teardown crashing AdvancedMarker's `set map` inside React's commit, which let the dashboard error boundary eat the whole /routes/[id] page. NEW web components/GoogleMapsGate.tsx (MapsApiGate status fallback inside APIProvider + MapErrorBoundary) wraps RouteMap/TemplateRouteMap/CreateRouteMap with maps-failed placeholders. Claude browser pane can NEVER render Google Maps (hidden document, no RAF) — maps verification requires a real browser. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

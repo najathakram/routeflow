@@ -50,7 +50,22 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   2026-08-26: `script-src` now allows `maps.googleapis.com` + `maps.gstatic.com` and
   `worker-src 'self' blob:` exists — the F11-001 CSP (8aacd2d7) had silently blanked EVERY
   dashboard Google Map (trip builder, route create/detail) since 2026-06-18 by blocking the
-  Maps JS script `@vis.gl/react-google-maps` injects.** `lib/i18n/`
+  Maps JS script `@vis.gl/react-google-maps` injects.** **Maps post-CSP root cause (2026-08-26
+  night): prod's `GOOGLE_MAPS_API_KEY` is a DEAD key — Google fires `InvalidKeyMapError` +
+  `gm_authFailure` at runtime (script/module fetches still 200, so network checks look green);
+  owner must mint/restore a browser key (Maps JavaScript API enabled, referer-restricted) in
+  Google Cloud `routeflow-506615` and update the Railway API env. Worse, the auth-failure
+  teardown made vis.gl's `AdvancedMarker.map` setter throw (`getRootNode` of undefined) inside
+  React's commit — the dashboard error boundary then replaced the ENTIRE `/routes/[id]` page
+  with "Something went wrong". `components/GoogleMapsGate.tsx` (`MapsApiGate` = swaps in a
+  fallback on `AUTH_FAILURE`/`FAILED` load status, must sit INSIDE `APIProvider`;
+  `MapErrorBoundary` = class boundary for what the gate can't pre-empt) now wraps all three map
+  surfaces — `routes/[id]/RouteMap.tsx`, `routes/templates/[id]/TemplateRouteMap.tsx`,
+  `routes/create/CreateRouteMap.tsx` — each rendering its own `MapPlaceholder` with a
+  `maps-failed` reason, so a maps/key failure costs the map pane only. NOTE: the Claude
+  browser pane can NEVER render a Google Map (document stays `hidden`, requestAnimationFrame
+  never fires — Maps builds its DOM in RAF), so "no `.gm-style`" observed there is an artifact;
+  verify maps in a real browser.** `lib/i18n/`
   (`messages.ts` en/es catalog, `index.tsx` `I18nProvider`/`useI18n()`/`t()`) — per-user locale via
   `UserPreference` + localStorage; avatar-menu Language toggle. `CommandPalette.tsx` — Jump-to/Actions/
   Results sections, `? shortcuts`, localized. All mounted in `app/providers.tsx`

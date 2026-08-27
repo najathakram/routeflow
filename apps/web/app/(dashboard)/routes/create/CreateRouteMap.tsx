@@ -13,6 +13,7 @@ import { Home, MapPin, Plus, Minus, Loader2 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { StopEntry, CustomerForMap } from "./page";
 import { useGoogleMapsKey } from "@/hooks/useGoogleMapsKey";
+import { MapErrorBoundary, MapsApiGate } from "@/components/GoogleMapsGate";
 import { apiClient } from "@/lib/api-client";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -239,7 +240,7 @@ function MapPlaceholder({
   reason,
 }: {
   customerCount: number;
-  reason: "no-key" | "no-geocoded";
+  reason: "no-key" | "no-geocoded" | "maps-failed";
 }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-4 bg-surface-raised">
@@ -247,12 +248,14 @@ function MapPlaceholder({
         <MapPin className="h-10 w-10 text-navy/20" />
         <div>
           <p className="font-semibold text-navy">
-            {reason === "no-key" ? "Map unavailable" : "No addresses to map"}
+            {reason === "no-geocoded" ? "No addresses to map" : "Map unavailable"}
           </p>
           <p className="mt-1 text-sm text-navy/70">
             {reason === "no-key"
               ? "Google Maps API key not configured. Contact your administrator."
-              : "None of your customers have geocoded addresses yet. Add addresses with coordinates to see them on the map."}
+              : reason === "maps-failed"
+                ? "Google Maps couldn't start — the site's API key was rejected or the Maps script was blocked. Contact your administrator."
+                : "None of your customers have geocoded addresses yet. Add addresses with coordinates to see them on the map."}
           </p>
         </div>
         <span className="rounded-full border border-surface-border bg-surface-raised px-3 py-1 text-xs font-medium text-navy/70">
@@ -347,96 +350,103 @@ export function CreateRouteMap({
   if (geoCustomers.length === 0)
     return <MapPlaceholder customerCount={customers.length} reason="no-geocoded" />;
 
+  const failedFallback = <MapPlaceholder customerCount={customers.length} reason="maps-failed" />;
+
   return (
-    <APIProvider apiKey={MAPS_KEY}>
-      <div style={{ position: "relative", width: "100%", height: "100%" }}>
-        {isGeocoding && (
-          <div className="absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full border border-brand-200 bg-white/95 px-4 py-1.5 shadow-md backdrop-blur-sm">
-            <div className="flex items-center gap-2">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-brand-500" />
-              <span className="text-xs font-medium text-navy/70">
-                Geocoding {needsGeocodingCount} more address{needsGeocodingCount !== 1 ? "es" : ""}…
-              </span>
-            </div>
-          </div>
-        )}
-        <Map
-          mapId="CREATE_ROUTE_MAP"
-          defaultCenter={{ lat: 37.7749, lng: -122.4194 }}
-          defaultZoom={12}
-          gestureHandling="greedy"
-          disableDefaultUI={false}
-          style={{ width: "100%", height: "100%" }}
-          onClick={() => setSelectedCustomerId(null)}
-        >
-          <FitBoundsLayer geoCustomers={geoCustomers} />
-          <PolylineLayer stops={stops} depot={depot} />
+    <MapErrorBoundary fallback={failedFallback}>
+      <APIProvider apiKey={MAPS_KEY}>
+        <MapsApiGate fallback={failedFallback}>
+          <div style={{ position: "relative", width: "100%", height: "100%" }}>
+            {isGeocoding && (
+              <div className="absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full border border-brand-200 bg-white/95 px-4 py-1.5 shadow-md backdrop-blur-sm">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-brand-500" />
+                  <span className="text-xs font-medium text-navy/70">
+                    Geocoding {needsGeocodingCount} more address
+                    {needsGeocodingCount !== 1 ? "es" : ""}…
+                  </span>
+                </div>
+              </div>
+            )}
+            <Map
+              mapId="CREATE_ROUTE_MAP"
+              defaultCenter={{ lat: 37.7749, lng: -122.4194 }}
+              defaultZoom={12}
+              gestureHandling="greedy"
+              disableDefaultUI={false}
+              style={{ width: "100%", height: "100%" }}
+              onClick={() => setSelectedCustomerId(null)}
+            >
+              <FitBoundsLayer geoCustomers={geoCustomers} />
+              <PolylineLayer stops={stops} depot={depot} />
 
-          {/* Depot marker */}
-          {depot && (
-            <>
-              <AdvancedMarker position={depot} onClick={() => setDepotInfoOpen((v) => !v)}>
-                <DepotMarkerBubble />
-              </AdvancedMarker>
-              {depotInfoOpen && (
-                <InfoWindow
-                  position={depot}
-                  onCloseClick={() => setDepotInfoOpen(false)}
-                  pixelOffset={[0, -42]}
-                >
-                  <div style={{ padding: "4px 0", minWidth: 140 }}>
-                    <p style={{ fontWeight: 700, fontSize: 13, margin: 0, color: "#0f172a" }}>
-                      Depot
-                    </p>
-                    {depotAddress && (
-                      <p style={{ fontSize: 11, color: "#64748b", margin: "2px 0 0" }}>
-                        {depotAddress}
-                      </p>
-                    )}
-                  </div>
-                </InfoWindow>
+              {/* Depot marker */}
+              {depot && (
+                <>
+                  <AdvancedMarker position={depot} onClick={() => setDepotInfoOpen((v) => !v)}>
+                    <DepotMarkerBubble />
+                  </AdvancedMarker>
+                  {depotInfoOpen && (
+                    <InfoWindow
+                      position={depot}
+                      onCloseClick={() => setDepotInfoOpen(false)}
+                      pixelOffset={[0, -42]}
+                    >
+                      <div style={{ padding: "4px 0", minWidth: 140 }}>
+                        <p style={{ fontWeight: 700, fontSize: 13, margin: 0, color: "#0f172a" }}>
+                          Depot
+                        </p>
+                        {depotAddress && (
+                          <p style={{ fontSize: 11, color: "#64748b", margin: "2px 0 0" }}>
+                            {depotAddress}
+                          </p>
+                        )}
+                      </div>
+                    </InfoWindow>
+                  )}
+                </>
               )}
-            </>
-          )}
 
-          {geoCustomers.map((gc) => {
-            const stopIdx = stops.findIndex((s) => s.customerId === gc.customer.id);
-            const isStop = stopIdx >= 0;
+              {geoCustomers.map((gc) => {
+                const stopIdx = stops.findIndex((s) => s.customerId === gc.customer.id);
+                const isStop = stopIdx >= 0;
 
-            return (
-              <AdvancedMarker
-                key={gc.customer.id}
-                position={{ lat: gc.lat, lng: gc.lng }}
-                onClick={() => {
-                  setSelectedCustomerId((prev) =>
-                    prev === gc.customer.id ? null : gc.customer.id,
-                  );
-                }}
-              >
-                <MarkerBubble selected={isStop} stopNumber={isStop ? stopIdx + 1 : undefined} />
-              </AdvancedMarker>
-            );
-          })}
+                return (
+                  <AdvancedMarker
+                    key={gc.customer.id}
+                    position={{ lat: gc.lat, lng: gc.lng }}
+                    onClick={() => {
+                      setSelectedCustomerId((prev) =>
+                        prev === gc.customer.id ? null : gc.customer.id,
+                      );
+                    }}
+                  >
+                    <MarkerBubble selected={isStop} stopNumber={isStop ? stopIdx + 1 : undefined} />
+                  </AdvancedMarker>
+                );
+              })}
 
-          {selectedGc && (
-            <CustomerInfoWindow
-              gc={selectedGc}
-              isSelected={isSelectedAdded}
-              stopNumber={isSelectedAdded ? selectedStopIdx + 1 : undefined}
-              routeAssigns={assignments[selectedGc.customer.id]}
-              onAdd={() => {
-                onAddStop(selectedGc.customer);
-                setSelectedCustomerId(null);
-              }}
-              onRemove={() => {
-                onRemoveStop(selectedGc.customer.id);
-                setSelectedCustomerId(null);
-              }}
-              onClose={() => setSelectedCustomerId(null)}
-            />
-          )}
-        </Map>
-      </div>
-    </APIProvider>
+              {selectedGc && (
+                <CustomerInfoWindow
+                  gc={selectedGc}
+                  isSelected={isSelectedAdded}
+                  stopNumber={isSelectedAdded ? selectedStopIdx + 1 : undefined}
+                  routeAssigns={assignments[selectedGc.customer.id]}
+                  onAdd={() => {
+                    onAddStop(selectedGc.customer);
+                    setSelectedCustomerId(null);
+                  }}
+                  onRemove={() => {
+                    onRemoveStop(selectedGc.customer.id);
+                    setSelectedCustomerId(null);
+                  }}
+                  onClose={() => setSelectedCustomerId(null)}
+                />
+              )}
+            </Map>
+          </div>
+        </MapsApiGate>
+      </APIProvider>
+    </MapErrorBoundary>
   );
 }

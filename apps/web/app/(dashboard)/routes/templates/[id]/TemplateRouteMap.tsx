@@ -13,6 +13,7 @@ import { Home, MapPin, Trash2 } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 import type { RouteTemplateStop } from "@/lib/api/routes";
 import { useGoogleMapsKey } from "@/hooks/useGoogleMapsKey";
+import { MapErrorBoundary, MapsApiGate } from "@/components/GoogleMapsGate";
 
 // ─── Numbered stop bubble ──────────────────────────────────────────────────────
 
@@ -286,26 +287,34 @@ export function TemplateRouteMap({
     ? { lat: depotLat!, lng: depotLng! }
     : { lat: geoStops[0].customerAddress!.lat!, lng: geoStops[0].customerAddress!.lng! };
 
+  const failedFallback = (
+    <MapPlaceholder message="Google Maps couldn't start — the site's API key was rejected or the Maps script was blocked. Contact your administrator." />
+  );
+
   return (
-    <APIProvider apiKey={MAPS_KEY}>
-      <Map
-        defaultCenter={center}
-        defaultZoom={11}
-        mapId="template-route-map"
-        gestureHandling="greedy"
-        disableDefaultUI={false}
-        style={{ width: "100%", height: "100%" }}
-      >
-        <MapContent
-          stops={stops}
-          selectedStopId={selectedStopId}
-          onSelectStop={onSelectStop}
-          onRemoveStop={onRemoveStop}
-          depotLat={depotLat}
-          depotLng={depotLng}
-          depotAddress={depotAddress}
-        />
-      </Map>
-    </APIProvider>
+    <MapErrorBoundary fallback={failedFallback}>
+      <APIProvider apiKey={MAPS_KEY}>
+        <MapsApiGate fallback={failedFallback}>
+          <Map
+            defaultCenter={center}
+            defaultZoom={11}
+            mapId="template-route-map"
+            gestureHandling="greedy"
+            disableDefaultUI={false}
+            style={{ width: "100%", height: "100%" }}
+          >
+            <MapContent
+              stops={stops}
+              selectedStopId={selectedStopId}
+              onSelectStop={onSelectStop}
+              onRemoveStop={onRemoveStop}
+              depotLat={depotLat}
+              depotLng={depotLng}
+              depotAddress={depotAddress}
+            />
+          </Map>
+        </MapsApiGate>
+      </APIProvider>
+    </MapErrorBoundary>
   );
 }

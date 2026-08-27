@@ -12,6 +12,7 @@ import {
 import { MapPin } from "lucide-react";
 import type { RouteRunStop } from "@/lib/api/routes";
 import { useGoogleMapsKey } from "@/hooks/useGoogleMapsKey";
+import { MapErrorBoundary, MapsApiGate } from "@/components/GoogleMapsGate";
 
 // ─── Marker colour by stop status ────────────────────────────────────────────
 
@@ -189,7 +190,7 @@ function MapPlaceholder({
   reason,
 }: {
   stops: RouteRunStop[];
-  reason: "no-key" | "no-geocoded";
+  reason: "no-key" | "no-geocoded" | "maps-failed";
 }) {
   const done = stops.filter((s) => s.status === "COMPLETED" || s.status === "SKIPPED").length;
   const active = stops.filter((s) => s.status === "IN_PROGRESS").length;
@@ -201,12 +202,14 @@ function MapPlaceholder({
         <MapPin className="h-10 w-10 text-navy/20" />
         <div>
           <p className="font-semibold text-navy">
-            {reason === "no-key" ? "Map view unavailable" : "No geocoded stops"}
+            {reason === "no-geocoded" ? "No geocoded stops" : "Map view unavailable"}
           </p>
           <p className="mt-1 text-sm text-navy/70">
             {reason === "no-key"
               ? "Google Maps API key not configured. Contact your administrator."
-              : "None of the stops on this route have geocoded addresses yet."}
+              : reason === "maps-failed"
+                ? "Google Maps couldn't start — the site's API key was rejected or the Maps script was blocked. Contact your administrator."
+                : "None of the stops on this route have geocoded addresses yet."}
           </p>
         </div>
         <div className="flex flex-wrap justify-center gap-2">
@@ -252,37 +255,43 @@ export function RouteMap({ stops }: { stops: RouteRunStop[] }) {
   // instead of rendering an empty map with default San Francisco center
   if (stopsWithCoords.length === 0) return <MapPlaceholder stops={stops} reason="no-geocoded" />;
 
+  const failedFallback = <MapPlaceholder stops={stops} reason="maps-failed" />;
+
   return (
     <>
       <style>{`@keyframes routemap-ping { 75%, 100% { transform: scale(2); opacity: 0; } }`}</style>
-      <APIProvider apiKey={MAPS_KEY}>
-        <Map
-          mapId="DEMO_MAP_ID"
-          defaultCenter={{ lat: 37.7749, lng: -122.4194 }}
-          defaultZoom={12}
-          gestureHandling="greedy"
-          disableDefaultUI={false}
-          style={{ width: "100%", height: "100%" }}
-          onClick={() => setSelectedId(null)}
-        >
-          <PolylineLayer stops={stopsWithCoords} />
-          <FitBoundsLayer stops={stopsWithCoords} />
-
-          {stopsWithCoords.map((stop) => (
-            <AdvancedMarker
-              key={stop.id}
-              position={{ lat: stop.customerAddress!.lat!, lng: stop.customerAddress!.lng! }}
-              onClick={() => setSelectedId((prev) => (prev === stop.id ? null : stop.id))}
+      <MapErrorBoundary fallback={failedFallback}>
+        <APIProvider apiKey={MAPS_KEY}>
+          <MapsApiGate fallback={failedFallback}>
+            <Map
+              mapId="DEMO_MAP_ID"
+              defaultCenter={{ lat: 37.7749, lng: -122.4194 }}
+              defaultZoom={12}
+              gestureHandling="greedy"
+              disableDefaultUI={false}
+              style={{ width: "100%", height: "100%" }}
+              onClick={() => setSelectedId(null)}
             >
-              <MarkerBubble stop={stop} selected={selectedId === stop.id} />
-            </AdvancedMarker>
-          ))}
+              <PolylineLayer stops={stopsWithCoords} />
+              <FitBoundsLayer stops={stopsWithCoords} />
 
-          {selectedStop && (
-            <StopInfoWindow stop={selectedStop} onClose={() => setSelectedId(null)} />
-          )}
-        </Map>
-      </APIProvider>
+              {stopsWithCoords.map((stop) => (
+                <AdvancedMarker
+                  key={stop.id}
+                  position={{ lat: stop.customerAddress!.lat!, lng: stop.customerAddress!.lng! }}
+                  onClick={() => setSelectedId((prev) => (prev === stop.id ? null : stop.id))}
+                >
+                  <MarkerBubble stop={stop} selected={selectedId === stop.id} />
+                </AdvancedMarker>
+              ))}
+
+              {selectedStop && (
+                <StopInfoWindow stop={selectedStop} onClose={() => setSelectedId(null)} />
+              )}
+            </Map>
+          </MapsApiGate>
+        </APIProvider>
+      </MapErrorBoundary>
     </>
   );
 }
