@@ -959,6 +959,13 @@ export interface PriceAdjustmentDto {
 export interface InvoiceSettings {
   defaultTerms: string;
   hideOriginalPrice?: boolean;
+  /** Tenant-wide deposit default (0–100). null/absent = no tenant deposit policy;
+   *  a customer's own `defaultDepositPercent` still wins when set. */
+  depositDefaultPercent?: number | null;
+  /** When true, an order's mirror invoice is ISSUED (SENT, no email) at
+   *  placement so the deposit can be paid immediately; the order stays
+   *  editable until delivery. */
+  depositCollectAtOrder?: boolean;
 }
 
 export function useInvoiceSettings() {

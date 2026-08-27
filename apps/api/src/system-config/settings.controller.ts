@@ -448,9 +448,18 @@ export class SettingsController {
   async getInvoiceSettings() {
     const defaultTerms = await this.svc.get("invoice.defaultTerms");
     const hideOriginalPriceRaw = await this.svc.get("invoice.hideOriginalPrice");
+    const depositDefaultPercentRaw = await this.svc.get("invoice.depositDefaultPercent");
+    const depositCollectAtOrderRaw = await this.svc.get("invoice.depositCollectAtOrder");
     return {
       defaultTerms: defaultTerms ?? "Net 30",
       hideOriginalPrice: hideOriginalPriceRaw === "true",
+      // WP-D1: absent/unset -> null (no tenant deposit default) rather than 0, so the
+      // web settings form can tell "never configured" apart from "explicitly 0".
+      depositDefaultPercent:
+        depositDefaultPercentRaw != null && depositDefaultPercentRaw !== ""
+          ? Number(depositDefaultPercentRaw)
+          : null,
+      depositCollectAtOrder: depositCollectAtOrderRaw === "true",
     };
   }
 
@@ -462,6 +471,15 @@ export class SettingsController {
     }
     if (dto.hideOriginalPrice !== undefined) {
       await this.svc.set("invoice.hideOriginalPrice", String(dto.hideOriginalPrice));
+    }
+    if (dto.depositDefaultPercent !== undefined) {
+      await this.svc.set(
+        "invoice.depositDefaultPercent",
+        dto.depositDefaultPercent == null ? "" : String(dto.depositDefaultPercent),
+      );
+    }
+    if (dto.depositCollectAtOrder !== undefined) {
+      await this.svc.set("invoice.depositCollectAtOrder", String(dto.depositCollectAtOrder));
     }
     return this.getInvoiceSettings();
   }

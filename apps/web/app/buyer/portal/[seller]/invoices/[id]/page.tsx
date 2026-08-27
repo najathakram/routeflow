@@ -50,6 +50,31 @@ function invoicePaymentTermsLabel(invoice: { id: string }): string | null {
 }
 
 /**
+ * WP-D deposit schedule (`depositPercent`/`depositDueDate`/`depositAmount`) —
+ * `depositAmount` is server-computed at read time from the CURRENT total, never
+ * stored. Same narrow-cast pattern as `itemMsrp`/`invoicePaymentTermsLabel`
+ * above: `BuyerInvoiceDetail` (lib/api/buyer.ts) isn't part of this package's
+ * file set, so these fields are read off the payload without widening that
+ * shared type. `depositPercent == null` means the invoice has no deposit
+ * schedule — callers must render nothing in that case.
+ */
+function invoiceDepositFields(invoice: {
+  id: string;
+}): { depositPercent: number; depositDueDate: string | null; depositAmount: number } | null {
+  const v = invoice as unknown as {
+    depositPercent?: number | string | null;
+    depositDueDate?: string | null;
+    depositAmount?: number | string | null;
+  };
+  if (v.depositPercent == null) return null;
+  return {
+    depositPercent: Number(v.depositPercent),
+    depositDueDate: v.depositDueDate ?? null,
+    depositAmount: Number(v.depositAmount ?? 0),
+  };
+}
+
+/**
  * Payment `paidAt`/`createdAt` are real timestamps (default `now()`, meaningful
  * time-of-day) rather than UTC-midnight calendar dates, so displaying them in the
  * viewer's local timezone is correct as-is — unlike `invoice.issueDate`/`dueDate`
@@ -159,6 +184,7 @@ export default function BuyerInvoiceDetailPage() {
       .reduce((s, p) => s + Number(p.amount), 0) ?? 0;
   const balanceDue = Number(invoice.total) - totalPaid;
   const paymentTermsLabel = invoicePaymentTermsLabel(invoice);
+  const deposit = invoiceDepositFields(invoice);
 
   return (
     <div className="p-6 max-w-4xl">
@@ -215,6 +241,17 @@ export default function BuyerInvoiceDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Deposit schedule — only when the invoice carries one (WP-D). */}
+      {deposit && (
+        <div className="mb-6 flex items-center gap-2 rounded-xl border border-buyer-200 bg-buyer-50 px-4 py-3 text-sm font-medium text-buyer-700">
+          <Clock className="h-4 w-4 shrink-0" />
+          <span>
+            Deposit due {fmtCalendarDate(deposit.depositDueDate)}: {fmt(deposit.depositAmount)}
+            {" · "}Remainder due {fmtCalendarDate(invoice.dueDate)}
+          </span>
+        </div>
+      )}
 
       {/* Summary cards */}
       <div className="grid grid-cols-4 gap-4 mb-6">

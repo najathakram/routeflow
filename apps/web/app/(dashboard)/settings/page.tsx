@@ -2468,6 +2468,71 @@ function InvoicingTab() {
     );
   };
 
+  // Deposit % is free text, so — like customers/[id]/page.tsx's
+  // defaultDepositPercent field — it must NOT PATCH per keystroke: typing "50"
+  // would persist 5 first and the server value would fight the field
+  // mid-typing. Hold it locally, re-seed from the server, and commit once on
+  // blur/Enter (clamped to the DTO's 0–100).
+  const serverDepositPercent =
+    invoiceSettings?.depositDefaultPercent != null
+      ? Number(invoiceSettings.depositDefaultPercent)
+      : null;
+  const [depositPercentInput, setDepositPercentInput] = React.useState("");
+  React.useEffect(() => {
+    setDepositPercentInput(serverDepositPercent != null ? String(serverDepositPercent) : "");
+  }, [serverDepositPercent]);
+
+  const commitDepositPercent = () => {
+    const raw = depositPercentInput.trim();
+    const parsed = raw === "" ? null : Number(raw);
+    if (parsed != null && !Number.isFinite(parsed)) {
+      setDepositPercentInput(serverDepositPercent != null ? String(serverDepositPercent) : "");
+      return;
+    }
+    const next = parsed == null ? null : Math.min(100, Math.max(0, parsed));
+    setDepositPercentInput(next != null ? String(next) : "");
+    if (next === serverDepositPercent) return;
+    updateSettings.mutate(
+      { depositDefaultPercent: next },
+      {
+        onSuccess: () =>
+          toast({
+            title: "Invoice settings saved",
+            description: "Default deposit updated successfully.",
+            variant: "success",
+          }),
+        onError: (err: any) => {
+          setDepositPercentInput(serverDepositPercent != null ? String(serverDepositPercent) : "");
+          toast({
+            title: "Failed to save",
+            description: err?.response?.data?.message ?? "Could not update invoice settings.",
+            variant: "error",
+          });
+        },
+      },
+    );
+  };
+
+  const handleDepositCollectAtOrderChange = (checked: boolean) => {
+    updateSettings.mutate(
+      { depositCollectAtOrder: checked },
+      {
+        onSuccess: () =>
+          toast({
+            title: "Invoice settings saved",
+            description: "Deposit collection setting updated successfully.",
+            variant: "success",
+          }),
+        onError: () =>
+          toast({
+            title: "Failed to save",
+            description: "Could not update invoice settings.",
+            variant: "error",
+          }),
+      },
+    );
+  };
+
   const handleSaveDefaults = async () => {
     setSavingDefaults(true);
     try {
@@ -2535,6 +2600,68 @@ function InvoicingTab() {
                 className="h-4 w-4 rounded border-surface-border"
               />
             </label>
+          </div>
+
+          <div className="border-t border-surface-border pt-4">
+            <p className="mb-3 text-sm font-semibold text-navy">Deposits</p>
+            <div className="space-y-4">
+              <div className="flex items-center gap-4 rounded-lg border border-surface-border bg-surface-raised p-4">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50">
+                  <Landmark className="h-5 w-5 text-brand-500" />
+                </div>
+                <div className="flex-1 space-y-1">
+                  <p className="text-sm font-semibold text-navy">
+                    Default deposit (% of order total)
+                  </p>
+                  <p className="text-xs text-navy/70">
+                    Customers with their own deposit % override this; 0 on a customer disables it.
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    max={100}
+                    placeholder="—"
+                    value={depositPercentInput}
+                    onChange={(e) => setDepositPercentInput(e.target.value)}
+                    onBlur={commitDepositPercent}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        e.currentTarget.blur();
+                      }
+                    }}
+                    disabled={isLoading || updateSettings.isPending}
+                    className="w-16 rounded border border-surface-border bg-white px-2 py-1 text-right text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                  <span className="text-sm text-navy/70">%</span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 rounded-lg border border-surface-border bg-surface-raised p-4">
+                <div className="flex-1 space-y-1">
+                  <p className="text-sm font-semibold text-navy">
+                    Collect deposit at order placement
+                  </p>
+                  <p className="text-xs text-navy/70">
+                    Issues the order&apos;s invoice immediately so the deposit can be paid; the
+                    order stays editable until delivery.
+                  </p>
+                </div>
+                <label className="inline-flex shrink-0 cursor-pointer items-center">
+                  <input
+                    type="checkbox"
+                    aria-label="Collect deposit at order placement"
+                    checked={!!invoiceSettings?.depositCollectAtOrder}
+                    onChange={(e) => handleDepositCollectAtOrderChange(e.target.checked)}
+                    disabled={isLoading || updateSettings.isPending}
+                    className="h-4 w-4 rounded border-surface-border"
+                  />
+                </label>
+              </div>
+            </div>
           </div>
         </div>
       </Card>

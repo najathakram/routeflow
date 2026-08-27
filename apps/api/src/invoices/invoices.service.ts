@@ -163,11 +163,24 @@ export class InvoicesService {
    * Also carries back the customer's `defaultDepositPercent` (or null) from the
    * SAME customer row — order-generation callers use it to auto-apply the
    * customer's "50% upfront" deposit default without a second query.
+   *
+   * Also resolves `effectiveDepositPercent`: the tenant-wide deposit default
+   * (`invoice.depositDefaultPercent`, WP-D1) folded against the customer's own
+   * override. The customer ALWAYS wins when it's explicitly set — a positive
+   * value is their percent, an explicit 0 is an opt-out — and only a customer
+   * with NO override (null/undefined) inherits the tenant default. Callers that
+   * generate an invoice FROM an order use this (not customerDepositPercent) to
+   * decide the deposit that actually applies.
    */
-  async resolveDefaultTerms(
-    customerId?: string,
-  ): Promise<{ terms: string; dueDays: number; customerDepositPercent: number | null }> {
+  async resolveDefaultTerms(customerId?: string): Promise<{
+    terms: string;
+    dueDays: number;
+    customerDepositPercent: number | null;
+    effectiveDepositPercent: number | null;
+  }> {
     let customerDepositPercent: number | null = null;
+    let terms: string;
+    let dueDays: number;
     if (customerId) {
       const customer = await this.prisma.forTenant().customer.findFirst({
         where: { id: customerId },
@@ -176,13 +189,31 @@ export class InvoicesService {
       customerDepositPercent =
         customer?.defaultDepositPercent != null ? Number(customer.defaultDepositPercent) : null;
       if (customer?.defaultPaymentTerms) {
-        const terms = customer.defaultPaymentTerms;
-        return { terms, dueDays: TERM_DAYS[terms] ?? 30, customerDepositPercent };
+        terms = customer.defaultPaymentTerms;
+        dueDays = TERM_DAYS[terms] ?? 30;
+      } else {
+        const stored = await this.systemConfig.get("invoice.defaultTerms");
+        terms = stored || "Net 30";
+        dueDays = TERM_DAYS[terms] ?? 30;
       }
+    } else {
+      const stored = await this.systemConfig.get("invoice.defaultTerms");
+      terms = stored || "Net 30";
+      dueDays = TERM_DAYS[terms] ?? 30;
     }
-    const stored = await this.systemConfig.get("invoice.defaultTerms");
-    const terms = stored || "Net 30";
-    return { terms, dueDays: TERM_DAYS[terms] ?? 30, customerDepositPercent };
+    // Customer wins when SET: >0 = their percent, 0 = explicit opt-out.
+    // null/undefined = inherit the tenant default (if any).
+    const tenantDepositRaw = await this.systemConfig.get("invoice.depositDefaultPercent");
+    const tenantDepositPercent = tenantDepositRaw ? Number(tenantDepositRaw) : null;
+    const effectiveDepositPercent =
+      customerDepositPercent != null
+        ? customerDepositPercent > 0
+          ? customerDepositPercent
+          : null
+        : tenantDepositPercent && tenantDepositPercent > 0
+          ? tenantDepositPercent
+          : null;
+    return { terms, dueDays, customerDepositPercent, effectiveDepositPercent };
   }
 
   /**
@@ -582,11 +613,12 @@ export class InvoicesService {
     // Due date from configured payment terms (e.g. "Net 30"), unless the caller
     // (e.g. the "New sale" flow) supplied an explicit override. Customer-aware:
     // the customer's own defaultPaymentTerms (when set) wins over the tenant default.
-    // Also carries the customer's defaultDepositPercent off the SAME row (no extra query).
+    // Also resolves effectiveDepositPercent — the customer's own deposit default when
+    // set, else the tenant-wide deposit default (WP-D1) — off the same call.
     const {
       terms: defaultTerms,
       dueDays,
-      customerDepositPercent,
+      effectiveDepositPercent,
     } = await this.resolveDefaultTerms(order.customerId);
     // Customer-facing invoice Notes and T&C from tenant settings
     const tenantDefaults = await this.resolveTenantInvoiceDefaults();
@@ -610,15 +642,17 @@ export class InvoicesService {
     // participates in the dueDate computation, so it is not a candidate.)
     const paymentTermsLabel =
       overrides?.paymentTermsLabel?.trim() || (overrides?.dueDate ? null : defaultTerms);
-    // Per-customer deposit default ("50% upfront, remainder on terms"): applies ONLY
-    // when this invoice doesn't already carry an explicit deposit — an explicit
-    // caller-supplied deposit (overrides.depositPercent, e.g. a future "New sale"
-    // deposit field) always wins and is never clobbered. The deposit is due
-    // immediately (depositDueDate = issueDate); the remainder still rides the
-    // terms-label dueDate resolved above. computeDepositFields does all the
-    // read-time math — nothing derived is stored here. A customer with no default
-    // (customerDepositPercent null/0) leaves these keys OUT of extraInvoiceData
-    // entirely, so the create payload is byte-identical to before this change.
+    // Deposit default ("X% upfront, remainder on terms"): applies ONLY when this
+    // invoice doesn't already carry an explicit deposit — an explicit caller-supplied
+    // deposit (overrides.depositPercent, e.g. a future "New sale" deposit field)
+    // always wins and is never clobbered. Otherwise falls back to
+    // effectiveDepositPercent (WP-D1: customer override when set, else the
+    // tenant-wide default) — already null-or-positive, so no extra >0 guard is
+    // needed here. The deposit is due immediately (depositDueDate = issueDate); the
+    // remainder still rides the terms-label dueDate resolved above.
+    // computeDepositFields does all the read-time math — nothing derived is stored
+    // here. No effective deposit leaves these keys OUT of extraInvoiceData entirely,
+    // so the create payload is byte-identical to before this change.
     const depositFields: Record<string, any> =
       overrides?.depositPercent != null
         ? {
@@ -627,8 +661,8 @@ export class InvoicesService {
               ? new Date(overrides.depositDueDate)
               : issueDate,
           }
-        : customerDepositPercent != null && customerDepositPercent > 0
-          ? { depositPercent: customerDepositPercent, depositDueDate: issueDate }
+        : effectiveDepositPercent != null
+          ? { depositPercent: effectiveDepositPercent, depositDueDate: issueDate }
           : {};
 
     const extraInvoiceData: Record<string, any> = {
@@ -652,7 +686,7 @@ export class InvoicesService {
     // Phase 4 (W4): split by regulated category — one invoice per SEPARATE_INVOICE
     // category + the standard invoice (siblings share invoiceGroupId, numbered
     // base / -R1 / -R2). A single-group order creates exactly one invoice as before.
-    return this.createSplitInvoices({
+    const created = await this.createSplitInvoices({
       order,
       remainingItems,
       isTaxExempt: !!customer?.isTaxExempt,
@@ -667,6 +701,61 @@ export class InvoicesService {
         payments: true,
       },
     });
+
+    // Issuance at order placement (WP-D1): when the tenant collects a deposit at
+    // order placement, the mirror invoice(s) just created above are issued (SENT)
+    // right here instead of staying a DRAFT — so the deposit can be recorded right
+    // away — while the ORDER stays fully editable until delivery
+    // (reconcileOrderDraftInvoice is widened to keep a SENT deposit mirror in
+    // lockstep with those edits). Gated on ALL of: this invoice actually carries a
+    // deposit (depositFields is only non-empty when one applies — a plain
+    // operator-issued invoice is NEVER auto-sent by this), the order hasn't already
+    // been delivered (the van/immediate-sale path issues via its own explicit
+    // send() in orders.service — this is the deliver-later path only), and the
+    // tenant has the collect-at-order flag on. Every row in `created` is a FRESH
+    // DRAFT straight out of createSplitInvoices above, so this only ever runs on
+    // the create path — a reconcile/rebuild updates existing rows in place and
+    // never reaches this code. `send()` (not sendEmail()) flips DRAFT → SENT
+    // without emailing anyone — the same "issue without notifying" precedent the
+    // van-sale flow already relies on.
+    //
+    // S6 — `!txClient`: this method also runs INSIDE a caller's transaction (the
+    // `txClient` param, e.g. recordDeliveryPaymentInTx's delivery tx). `send()` runs
+    // on `this.prisma.forTenant()` and opens its OWN transaction — a SEPARATE
+    // connection that cannot see the caller's uncommitted rows, so sending the
+    // invoice we just created inside that tx would either 404 (findOneOrThrow) or
+    // block until the outer tx times out. Issuance is therefore create-path-only
+    // (no caller tx); every in-transaction caller is a delivery-time path, where the
+    // order is DELIVERED and the gate below excludes it anyway.
+    //
+    // S1 — `created.length === 1`: a regulated SEPARATE_INVOICE order splits into
+    // base + -R# siblings, and every sibling-aware rebuild path
+    // (reconcileSplitOrderDrafts / reconcileOrderDeliveredInvoices) only ever
+    // rebuilds open DRAFTs. Issuing the siblings here would freeze them against
+    // later order edits. DELIBERATE LIMITATION: a split order keeps DRAFT mirrors
+    // and collects its deposit the normal way (after delivery); only a
+    // single-invoice order gets deposit-at-placement issuance.
+    if (
+      !txClient &&
+      created.length === 1 &&
+      depositFields.depositPercent != null &&
+      order.status !== "DELIVERED" &&
+      (await this.systemConfig.get("invoice.depositCollectAtOrder")) === "true"
+    ) {
+      const issued: any[] = [];
+      for (const inv of created) {
+        // assertOrderInvoiceUnlocked normally refuses to send an order-linked DRAFT
+        // before its order is delivered (the pending-mirror lock) — allowPreDelivery
+        // is the narrow, send()-only escape hatch for exactly this feature: a
+        // deposit mirror is MEANT to be sendable pre-delivery. It does not relax
+        // update()'s separate "only DRAFT invoices can be edited" rule, so hand-editing
+        // stays blocked — the order remains the only edit surface, as designed.
+        issued.push(await this.send(inv.id, { allowPreDelivery: true }));
+      }
+      return issued;
+    }
+
+    return created;
   }
 
   /**
@@ -1193,6 +1282,19 @@ export class InvoicesService {
    * base never folds in a sibling's line (which would double-bill). It only handles a
    * clean split; a single-group order (or any unclean case) falls through to the legacy
    * single-draft rebuild below, byte-identical to before.
+   *
+   * WP-D1 widening: a plain pending mirror is always an open DRAFT, but a
+   * deposit-collect-at-order mirror is issued (SENT) at placement — it has no open
+   * draft to find, yet the ORDER is still its edit surface (update() refuses to
+   * hand-edit a non-DRAFT invoice), so an order edit needs this reconcile just the
+   * same. When there's no open draft, ALSO reconcile an order-linked invoice that is
+   * the order's ONLY non-void invoice, carries a deposit (`depositPercent != null` —
+   * a plain operator-issued SENT invoice is NEVER touched by this), is in a status a
+   * deposit mirror can realistically be in (SENT/VIEWED/PARTIAL/OVERDUE), and whose
+   * order hasn't reached DELIVERED/CANCELLED (post-delivery edits are
+   * resyncOrderInvoicesForEdit's job instead). Requiring it to be the order's sole
+   * invoice keeps this OUT of split/partial territory — never fold every order line
+   * onto just one of several sibling/partial invoices.
    */
   async reconcileOrderDraftInvoice(
     orderId: string,
@@ -1202,7 +1304,35 @@ export class InvoicesService {
     const split = await this.reconcileSplitOrderDrafts(orderId, opts.basis, db);
     if (split) return split;
 
-    const draft = await this.findOpenOrderDraft(orderId, db);
+    let draft = await this.findOpenOrderDraft(orderId, db);
+    let isDepositMirror = false;
+    if (!draft) {
+      const orderGate = await db.order.findFirst({
+        where: { id: orderId },
+        select: { status: true },
+      });
+      if (orderGate && orderGate.status !== "DELIVERED" && orderGate.status !== "CANCELLED") {
+        const nonVoid = await db.invoice.findMany({
+          where: { orderId, status: { not: InvoiceStatus.VOID } },
+          include: { payments: true },
+        });
+        const DEPOSIT_MIRROR_STATUSES: InvoiceStatus[] = [
+          InvoiceStatus.SENT,
+          InvoiceStatus.VIEWED,
+          InvoiceStatus.PARTIAL,
+          InvoiceStatus.OVERDUE,
+        ];
+        if (
+          nonVoid.length === 1 &&
+          nonVoid[0].deliveryBatchId == null &&
+          nonVoid[0].depositPercent != null &&
+          DEPOSIT_MIRROR_STATUSES.includes(nonVoid[0].status)
+        ) {
+          draft = nonVoid[0];
+          isDepositMirror = true;
+        }
+      }
+    }
     if (!draft) return null;
 
     const order = await db.order.findUnique({
@@ -1265,6 +1395,28 @@ export class InvoicesService {
     );
     const total = roundMoney(subtotal - Number(draft.discount ?? 0) + draftFee + taxAmount);
 
+    // WP-D1: a plain pending-mirror DRAFT keeps forcing DRAFT (byte-identical to
+    // before). A deposit mirror already ISSUED (SENT/VIEWED/PARTIAL/OVERDUE) instead
+    // re-runs the existing status recompute against its UNTOUCHED payments and the
+    // NEW total — so an edit that shrinks the order can correctly land PARTIAL or
+    // PAID. If the edit drops the total below what's already been paid,
+    // recomputeStatus lands PAID and the balanceDue math (findAll/findOne) floors at
+    // 0 — the overpayment itself is surfaced by the existing credit-note workflow,
+    // not by this reconcile. depositDueDate/dueDate are never part of this update —
+    // they anchor to placement/terms, not to edits, so they're preserved verbatim.
+    const nextStatus = isDepositMirror
+      ? this.recomputeStatus(
+          roundMoney(
+            ((draft as any).payments ?? [])
+              .filter((p: any) => p.status !== "VOID")
+              .reduce((s: number, p: any) => s + Number(p.amount), 0),
+          ),
+          total,
+          (draft as any).dueDate ?? null,
+          draft.status,
+        )
+      : InvoiceStatus.DRAFT;
+
     await db.invoiceItem.deleteMany({ where: { invoiceId: draft.id } });
     const updated = await db.invoice.update({
       where: { id: draft.id },
@@ -1273,7 +1425,7 @@ export class InvoicesService {
         taxAmount,
         shippingFee: draftFee,
         total,
-        status: InvoiceStatus.DRAFT,
+        status: nextStatus,
         pdfUrl: null,
         items: { create: itemsData },
       },
@@ -1283,6 +1435,23 @@ export class InvoicesService {
         payments: true,
       },
     });
+
+    // S2: an ISSUED deposit mirror just had its MONEY rewritten, so it must re-sync
+    // commission and tell the UI — exactly what rebuildSiblingDrafts does for a
+    // preserveStatus rebuild (`nextStatus !== DRAFT` → syncInvoiceCommissionSafe).
+    // Without this the agent's accrual keeps pointing at the pre-edit total. A plain
+    // pending-mirror DRAFT targets zero commission and emits nothing, exactly as
+    // before — this whole block is deposit-mirror-only.
+    if (isDepositMirror && nextStatus !== InvoiceStatus.DRAFT) {
+      await this.commissionEngine.syncInvoiceCommissionSafe(draft.id, db);
+      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+        invoiceId: updated.id,
+        invoiceNumber: updated.invoiceNumber,
+        customerId: updated.customerId,
+        status: nextStatus,
+        total,
+      });
+    }
 
     // NOTE: the ledger is re-synced ONLY on the sibling-aware paths (rebuildSiblingDrafts).
     // This legacy single-draft rebuild is group-UNAWARE — for a bailed split it folds the
@@ -1415,6 +1584,93 @@ export class InvoicesService {
       return { draft: d, lines: memberIds.map((id) => lineById.get(id)).filter(Boolean) };
     });
     return this.rebuildSiblingDrafts(order, pairs, "delivered", db);
+  }
+
+  /**
+   * B2 / WP-D1 — the delivered-basis rebuild for a deposit mirror that was ISSUED at
+   * order placement. Every other delivered-basis path keys off an open DRAFT
+   * (findOpenOrderDraft / reconcileOrderDeliveredInvoices), and a deposit mirror has
+   * none: it is SENT from the moment the order was placed. Without this, a short or
+   * refused delivery left the mirror billing the FULL pre-delivery order — the
+   * customer is charged for goods they never received.
+   *
+   * Fence (mirrors reconcileOrderDraftInvoice's widened branch): the order's SOLE
+   * non-void invoice, no deliveryBatchId, `depositPercent != null` (a plain
+   * operator-issued invoice is never touched), and a status a live deposit mirror can
+   * be in. PAID is included on purpose — a fully-prepaid order that is short-delivered
+   * must still be restated to what was delivered; the overpayment is then surfaced by
+   * the existing credit-note workflow, exactly as the widened reconcile documents.
+   * DRAFT can't reach here (findOpenOrderDraft would have caught it) and WRITTEN_OFF /
+   * VOID stay terminal.
+   *
+   * Being the order's only invoice makes the (invoice → all its order lines) partition
+   * trivially clean, so this reuses `rebuildSiblingDrafts` with `preserveStatus: true`
+   * — the SAME mechanism resyncOrderInvoicesForEdit uses for an already-issued
+   * invoice: payments are untouched, status/balance recompute from them against the
+   * new delivered total, the regulated ledger re-syncs, and commission re-syncs.
+   * Returns null (no-op) whenever the fence doesn't hold.
+   */
+  private async rebuildIssuedDepositMirrorOnDelivery(
+    orderId: string,
+    db: any,
+  ): Promise<any[] | null> {
+    const nonVoid = await db.invoice.findMany({
+      where: { orderId, status: { not: InvoiceStatus.VOID } },
+      select: {
+        id: true,
+        status: true,
+        deliveryBatchId: true,
+        depositPercent: true,
+        discount: true,
+        shippingFee: true,
+        dueDate: true,
+        payments: { select: { amount: true, status: true } },
+      },
+    });
+    if (nonVoid.length !== 1) return null;
+    const mirror = nonVoid[0];
+    const REBUILDABLE: InvoiceStatus[] = [
+      InvoiceStatus.SENT,
+      InvoiceStatus.VIEWED,
+      InvoiceStatus.PARTIAL,
+      InvoiceStatus.OVERDUE,
+      InvoiceStatus.PAID,
+    ];
+    if (
+      mirror.deliveryBatchId != null ||
+      mirror.depositPercent == null ||
+      !REBUILDABLE.includes(mirror.status)
+    ) {
+      return null;
+    }
+
+    const order = await db.order.findUnique({
+      where: { id: orderId },
+      include: {
+        lineItems: {
+          where: { status: { not: "CANCELLED" } },
+          include: {
+            product: {
+              select: {
+                name: true,
+                unitsPerBox: true,
+                trackedCategoryId: true,
+                trackedSubcategoryId: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!order) return null;
+
+    return this.rebuildSiblingDrafts(
+      order,
+      [{ draft: mirror, lines: order.lineItems }],
+      "delivered",
+      db,
+      { preserveStatus: true },
+    );
   }
 
   /**
@@ -2157,9 +2413,32 @@ export class InvoicesService {
     // null when an explicit dueDate override means no term string drove it.
     const paymentTermsLabel =
       overrides?.paymentTermsLabel?.trim() || (overrides?.dueDate ? null : defaultTerms);
-    // Per-customer deposit default — see createInvoiceFromOrder for the full
-    // rationale. Explicit overrides.depositPercent wins; a customer without a
-    // default leaves these keys out entirely (byte-identical to before).
+    // Deposit resolution — the SAME rule as resolveDefaultTerms/createInvoiceFromOrder
+    // (customer wins when SET: >0 = their percent, 0 = explicit opt-out; null/undefined
+    // inherits the tenant default), adapted for this explicit-tenantId path: there is no
+    // AsyncLocalStorage here, so the tenant key is read straight off SystemConfig by
+    // tenantId, exactly like invoice.defaultTerms above. Without this the tenant-wide
+    // deposit policy would apply ONLY to the awaited "New sale" flow and silently skip
+    // every regular order placement (buyer portal + operator create), which is the
+    // mainline case.
+    let tenantDepositPercent: number | null = null;
+    if (tenantId && customerDepositPercent == null) {
+      const depCfg = await this.prisma.systemConfig.findFirst({
+        where: { tenantId, key: "invoice.depositDefaultPercent" },
+        select: { value: true },
+      });
+      tenantDepositPercent = depCfg?.value ? Number(depCfg.value) : null;
+    }
+    const effectiveDepositPercent =
+      customerDepositPercent != null
+        ? customerDepositPercent > 0
+          ? customerDepositPercent
+          : null
+        : tenantDepositPercent && tenantDepositPercent > 0
+          ? tenantDepositPercent
+          : null;
+    // Explicit overrides.depositPercent wins; no effective deposit leaves these keys
+    // out entirely (byte-identical to before).
     const depositFields: Record<string, any> =
       overrides?.depositPercent != null
         ? {
@@ -2168,8 +2447,8 @@ export class InvoicesService {
               ? new Date(overrides.depositDueDate)
               : issueDate,
           }
-        : customerDepositPercent != null && customerDepositPercent > 0
-          ? { depositPercent: customerDepositPercent, depositDueDate: issueDate }
+        : effectiveDepositPercent != null
+          ? { depositPercent: effectiveDepositPercent, depositDueDate: issueDate }
           : {};
     const extraInvoiceData: Record<string, any> = {
       dueDate,
@@ -2182,7 +2461,7 @@ export class InvoicesService {
 
     // W4: split by regulated category (fire-and-forget path). db = unscoped prisma
     // with an explicit tenantId, exactly as this method already used it.
-    return this.createSplitInvoices({
+    const created = await this.createSplitInvoices({
       order,
       remainingItems,
       isTaxExempt: !!customerForTax?.isTaxExempt,
@@ -2197,6 +2476,50 @@ export class InvoicesService {
         payments: true,
       },
     });
+
+    // Issuance at order placement for the REGULAR-order path (buyer portal + operator
+    // create), gated identically to createInvoiceFromOrder: a deposit actually applies,
+    // exactly ONE invoice was created (a SEPARATE_INVOICE split keeps DRAFT mirrors —
+    // only open DRAFTs get sibling-aware rebuilds; see createInvoiceFromOrder for the
+    // full rationale), the order isn't already delivered, and the tenant flag is on.
+    //
+    // The flip is done INLINE rather than through send(): send() runs on
+    // this.prisma.forTenant(), and this method exists precisely because there is NO
+    // request context here (fire-and-forget → AsyncLocalStorage is gone), so it would
+    // resolve the wrong tenant or none at all. Status SENT + sentAt is everything
+    // payability needs (web/mobile canRecordPayment is status-driven, and
+    // recomputeStatus can advance a SENT invoice), so the mirror is fully payable.
+    // Deliberately NOT replicated from send(): the INVOICE_SENT notification and the
+    // socket emit — placement-issuance on this path is notification-less by design
+    // (nothing is emailed; the buyer sees the deposit on the invoice itself), matching
+    // the "issue without notifying" precedent the van-sale flow already relies on.
+    // Credit auto-apply is likewise skipped: it is send()-scoped and still runs the
+    // moment a payment/credit is applied through the normal flows.
+    if (created.length === 1 && depositFields.depositPercent != null && tenantId) {
+      const collectRaw = await this.prisma.systemConfig.findFirst({
+        where: { tenantId, key: "invoice.depositCollectAtOrder" },
+        select: { value: true },
+      });
+      if (collectRaw?.value === "true" && (order as any).status !== "DELIVERED") {
+        // Update by primary key of the row this method just created for this tenant —
+        // safe without a tenant filter (the id came from our own create), and the
+        // unscoped client is the same handle the rest of this method uses.
+        const issued = await this.prisma.invoice.update({
+          where: { id: created[0].id },
+          data: { status: InvoiceStatus.SENT, sentAt: new Date() },
+          include: {
+            customer: {
+              select: { id: true, businessName: true, email: true, phone: true, mobile: true },
+            },
+            items: true,
+            payments: true,
+          },
+        });
+        return [issued];
+      }
+    }
+
+    return created;
   }
 
   /**
@@ -2296,7 +2619,7 @@ export class InvoicesService {
     const {
       terms: defaultTerms,
       dueDays,
-      customerDepositPercent,
+      effectiveDepositPercent,
     } = await this.resolveDefaultTerms(order.customerId);
     const tenantDefaults = await this.resolveTenantInvoiceDefaults();
     // A backdated order bills on its business date, and the payment term runs from
@@ -2320,10 +2643,12 @@ export class InvoicesService {
       dto.paymentTermsLabel?.trim() ||
       overrides?.paymentTermsLabel?.trim() ||
       (dto.dueDate || overrides?.dueDate ? null : defaultTerms);
-    // Per-customer deposit default — see createInvoiceFromOrder for the full
-    // rationale. An explicit deposit (dto.depositPercent, or a caller override)
-    // wins over the customer's default and is never clobbered; a customer without
-    // a default leaves these keys out entirely (byte-identical to before).
+    // Deposit default — see createInvoiceFromOrder for the full rationale. An explicit
+    // deposit (dto.depositPercent, or a caller override) wins and is never clobbered;
+    // otherwise the EFFECTIVE percent applies (customer override when set, else the
+    // tenant-wide default), so a partial is consistent with the mirror it splits out
+    // of. No effective deposit leaves these keys out entirely (byte-identical to
+    // before). NO issuance here: partials are cut at delivery time, never at placement.
     const explicitDepositPercent = (dto as any)?.depositPercent ?? overrides?.depositPercent;
     const explicitDepositDueDate = (dto as any)?.depositDueDate ?? overrides?.depositDueDate;
     const depositFields: Record<string, any> =
@@ -2332,8 +2657,8 @@ export class InvoicesService {
             depositPercent: explicitDepositPercent,
             depositDueDate: explicitDepositDueDate ? new Date(explicitDepositDueDate) : issueDate,
           }
-        : customerDepositPercent != null && customerDepositPercent > 0
-          ? { depositPercent: customerDepositPercent, depositDueDate: issueDate }
+        : effectiveDepositPercent != null
+          ? { depositPercent: effectiveDepositPercent, depositDueDate: issueDate }
           : {};
     const tenantId = this.prisma.getTenantId();
     const invoiceNumber = await this.generateInvoiceNumber();
@@ -3007,13 +3332,25 @@ export class InvoicesService {
    * order has been delivered. Pre-delivery the invoice mirrors the order — staff
    * edit the order, not the invoice. Van sales (delivered now) and standalone
    * no-order invoices are unaffected.
+   *
+   * `opts.allowPreDelivery` (WP-D1) is a narrow escape hatch used ONLY by
+   * createInvoiceFromOrder's deposit-collect-at-order issuance: a tenant-configured
+   * deposit mirror is DESIGNED to be sendable (SENT, no email) before delivery so the
+   * deposit can be paid right away — that is the feature, not a bypass of it. It is
+   * never set by the public send()/sendEmail() callers (controller, "New sale"
+   * van-sale flow, reminders), so a plain pending mirror keeps refusing to be sent
+   * pre-delivery exactly as before.
    */
-  private async assertOrderInvoiceUnlocked(inv: {
-    orderId: string | null;
-    status: InvoiceStatus;
-    deliveryBatchId: string | null;
-  }): Promise<void> {
+  private async assertOrderInvoiceUnlocked(
+    inv: {
+      orderId: string | null;
+      status: InvoiceStatus;
+      deliveryBatchId: string | null;
+    },
+    opts?: { allowPreDelivery?: boolean },
+  ): Promise<void> {
     if (!inv.orderId || inv.status !== InvoiceStatus.DRAFT || inv.deliveryBatchId != null) return;
+    if (opts?.allowPreDelivery) return;
     const order = await this.prisma.forTenant().order.findFirst({
       where: { id: inv.orderId },
       select: { status: true, orderNumber: true },
@@ -3025,11 +3362,11 @@ export class InvoicesService {
     }
   }
 
-  async send(id: string) {
+  async send(id: string, opts?: { allowPreDelivery?: boolean }) {
     const inv = await this.findOneOrThrow(id);
     if (inv.status === InvoiceStatus.VOID)
       throw new BadRequestException("Cannot send a voided invoice");
-    await this.assertOrderInvoiceUnlocked(inv);
+    await this.assertOrderInvoiceUnlocked(inv, opts);
     // P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic operation.
     // Idempotent on re-send. If the tx throws, the send fails — money first.
     const { updated, auto } = await this.prisma.tenantTransaction(
@@ -3179,6 +3516,10 @@ export class InvoicesService {
       })),
       pdfUrl,
       isReminder: false,
+      // Deposit schedule (display-only): derive with the same read-time math the
+      // detail endpoint uses; null when the invoice carries no deposit.
+      depositAmount: this.computeDepositFields(inv as any, 0).depositAmount,
+      depositDueDate: inv.depositDueDate ? formatDate(inv.depositDueDate) : null,
     });
 
     // R5: the email server was configured but the actual send did NOT succeed
@@ -3556,6 +3897,19 @@ export class InvoicesService {
    * (deliveryBatchId != null, only on delivered orders) are never touched. Returns
    * the reverted invoice ids (empty when there's nothing to revert). Call BEFORE
    * mutating the order, so a payment-block aborts the whole edit cleanly.
+   *
+   * WP-D1 EXEMPTION (B1): a deposit mirror issued at ORDER PLACEMENT is SENT on
+   * purpose and must survive an edit. Reverting it would be IRREVERSIBLE — a
+   * pre-delivery order-linked DRAFT can never be re-sent (assertOrderInvoiceUnlocked
+   * refuses without the create-path-only `allowPreDelivery` hatch), so the deposit
+   * the customer was asked to pay would silently un-issue. It doesn't need reverting
+   * either: reconcileOrderDraftInvoice's widened branch keeps exactly this invoice in
+   * lockstep with the edit while it stays SENT. The exemption therefore mirrors that
+   * branch's fence EXACTLY — deposit-carrying, the order's SOLE non-void invoice, and
+   * the order not yet DELIVERED/CANCELLED — so an invoice is skipped here only when
+   * the reconcile provably picks it up. Anything outside the fence (split/partial
+   * siblings, a delivered order) keeps the legacy revert, including its
+   * throw-on-payments guard.
    */
   async revertLinkedInvoicesForOrderEdit(orderId: string, tx?: any): Promise<string[]> {
     const db = tx ?? this.prisma.forTenant();
@@ -3565,12 +3919,30 @@ export class InvoicesService {
         deliveryBatchId: null,
         status: { in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.OVERDUE] },
       },
-      select: { id: true, invoiceNumber: true, internalNotes: true },
+      select: { id: true, invoiceNumber: true, internalNotes: true, depositPercent: true },
     });
     if (linked.length === 0) return [];
 
+    // Only pay for the fence reads when a deposit invoice is actually in play — an
+    // order with no deposit mirror issues the exact same queries as before.
+    let depositMirrorExempt = false;
+    if (linked.some((inv: any) => inv.depositPercent != null)) {
+      const order = await db.order.findFirst({ where: { id: orderId }, select: { status: true } });
+      const nonVoidCount = await db.invoice.count({
+        where: { orderId, status: { not: InvoiceStatus.VOID } },
+      });
+      depositMirrorExempt =
+        !!order &&
+        order.status !== "DELIVERED" &&
+        order.status !== "CANCELLED" &&
+        nonVoidCount === 1;
+    }
+
     const reverted: string[] = [];
     for (const inv of linked) {
+      // Exempt (see above): leave it SENT — the widened reconcile re-syncs it, and
+      // its payments (if any) stay attached to a still-issued document.
+      if (depositMirrorExempt && inv.depositPercent != null) continue;
       const paymentCount = await db.invoicePayment.count({ where: { invoiceId: inv.id } });
       if (paymentCount > 0) {
         throw new BadRequestException(
@@ -4079,7 +4451,14 @@ export class InvoicesService {
           draft = await this.findOpenOrderDraft(orderId, tx);
         }
       }
-      if (draft && reconcileSet.has(orderId)) {
+      if (!draft && reconcileSet.has(orderId)) {
+        // B2 / WP-D1: no open DRAFT, but the order may carry a deposit mirror that was
+        // ISSUED (SENT) at placement — it has no draft to find, yet it is still the
+        // order's live bill and MUST be restated to what was actually delivered before
+        // the cash below lands on it. Otherwise a short/refused delivery collects
+        // against the full pre-delivery total. No-op for every other shape.
+        await this.rebuildIssuedDepositMirrorOnDelivery(orderId, tx);
+      } else if (draft && reconcileSet.has(orderId)) {
         // Rebuild the order's open DRAFT(s) on the delivered qty, SIBLING-AWARE: a
         // regulated SEPARATE_INVOICE order (base + -R#) has each draft rebuilt from
         // ONLY its own lines, so a short/refused line bills its delivered qty on its

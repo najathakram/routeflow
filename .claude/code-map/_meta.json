@@ -1,7 +1,7 @@
 {
   "mappedSha": "53bda4b4",
-  "generatedAt": "2026-08-27T02:30:00.000Z",
+  "generatedAt": "2026-08-27T04:15:41.689Z",
   "areas": ["api", "web", "mobile", "packages"],
-  "fileCount": 899,
-  "notes": "2026-08-26 (night, branch fix/maps-auth-failure-containment) — MAPS ROOT CAUSE + CRASH CONTAINMENT: post-#454 residual root-caused in a REAL browser as (1) dead prod GOOGLE_MAPS_API_KEY (InvalidKeyMapError; owner must mint/replace the key in Google Cloud routeflow-506615 + Railway env — resources 200 so network checks look green) and (2) vis.gl 1.7.1 auth-failure teardown crashing AdvancedMarker's `set map` inside React's commit, which let the dashboard error boundary eat the whole /routes/[id] page. NEW web components/GoogleMapsGate.tsx (MapsApiGate status fallback inside APIProvider + MapErrorBoundary) wraps RouteMap/TemplateRouteMap/CreateRouteMap with maps-failed placeholders. Claude browser pane can NEVER render Google Maps (hidden document, no RAF) — maps verification requires a real browser. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "fileCount": 898,
+  "notes": "2026-08-26 (worktree batch-d, IN FLIGHT) — PR-D split-payment deposits (tenant policy, issue-at-placement, editable-order reconcile, PDF/email/portal visibility) + PR-E trip-builder order picker (GET /trips/eligible-orders + in-page add/remove). Landed so far: PDF deposit rows, eligible-orders endpoint. Full detail in CHANGELOG top bullet. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
