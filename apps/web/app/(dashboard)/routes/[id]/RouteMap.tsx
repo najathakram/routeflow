@@ -13,6 +13,7 @@ import { MapPin } from "lucide-react";
 import type { RouteRunStop } from "@/lib/api/routes";
 import { useGoogleMapsKey } from "@/hooks/useGoogleMapsKey";
 import { MapErrorBoundary, MapsApiGate } from "@/components/GoogleMapsGate";
+import { DrivingPathLayer } from "@/components/DrivingPathLayer";
 
 // ─── Marker colour by stop status ────────────────────────────────────────────
 
@@ -73,35 +74,21 @@ function MarkerBubble({ stop, selected }: { stop: RouteRunStop; selected: boolea
   );
 }
 
-// ─── Polyline connecting stops in order ───────────────────────────────────────
+// ─── Driving route connecting stops in order ─────────────────────────────────
 
 function PolylineLayer({ stops }: { stops: RouteRunStop[] }) {
-  const map = useMap();
-  const mapsLib = useMapsLibrary("maps");
+  const path = React.useMemo(
+    () =>
+      [...stops]
+        .sort((a, b) => a.stopNumber - b.stopNumber)
+        .filter((s) => s.customerAddress?.lat != null && s.customerAddress?.lng != null)
+        .map((s) => ({ lat: s.customerAddress!.lat!, lng: s.customerAddress!.lng! })),
+    [stops],
+  );
 
-  React.useEffect(() => {
-    if (!map || !mapsLib) return;
+  if (path.length < 2) return null;
 
-    const path = [...stops]
-      .sort((a, b) => a.stopNumber - b.stopNumber)
-      .filter((s) => s.customerAddress?.lat != null && s.customerAddress?.lng != null)
-      .map((s) => ({ lat: s.customerAddress!.lat!, lng: s.customerAddress!.lng! }));
-
-    if (path.length < 2) return;
-
-    const polyline = new mapsLib.Polyline({
-      path,
-      geodesic: true,
-      strokeColor: "#3b82f6",
-      strokeOpacity: 0.7,
-      strokeWeight: 3,
-      map,
-    });
-
-    return () => polyline.setMap(null);
-  }, [map, mapsLib, stops]);
-
-  return null;
+  return <DrivingPathLayer waypoints={path} strokeColor="#3b82f6" strokeOpacity={0.7} />;
 }
 
 // ─── Auto-fit bounds to all markers ──────────────────────────────────────────

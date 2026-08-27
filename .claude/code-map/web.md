@@ -65,7 +65,16 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   `maps-failed` reason, so a maps/key failure costs the map pane only. NOTE: the Claude
   browser pane can NEVER render a Google Map (document stays `hidden`, requestAnimationFrame
   never fires — Maps builds its DOM in RAF), so "no `.gm-style`" observed there is an artifact;
-  verify maps in a real browser.** `lib/i18n/`
+  verify maps in a real browser.** **Driving routes (2026-08-26 night, stacked on the gate
+  branch): `components/DrivingPathLayer.tsx` replaces the straight stop-to-stop polylines on
+  all three map surfaces (each `PolylineLayer` now just builds its ordered waypoints — RouteMap
+  = stops by stopNumber; Template/Create = depot → stops → depot — and renders the shared
+  layer). It POSTs Routes API `computeRoutes` (browser-side, same key, `TRAFFIC_UNAWARE` =
+  cheapest tier, order preserved, ≤25 intermediates per request with chunking + seam dedupe),
+  decodes via the `geometry` library, and draws the road polyline; a straight geodesic line
+  renders instantly and stays as the fallback on any failure (failures are cached per waypoint
+  set per session so a broken API can't re-bill). Requires "Routes API" enabled + in the key's
+  API restrictions (done in GCloud 2026-08-26 — key now allows 4 APIs).** `lib/i18n/`
   (`messages.ts` en/es catalog, `index.tsx` `I18nProvider`/`useI18n()`/`t()`) — per-user locale via
   `UserPreference` + localStorage; avatar-menu Language toggle. `CommandPalette.tsx` — Jump-to/Actions/
   Results sections, `? shortcuts`, localized. All mounted in `app/providers.tsx`
