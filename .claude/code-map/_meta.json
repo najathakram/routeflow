@@ -1,7 +1,7 @@
 {
-  "mappedSha": "53bda4b4",
-  "generatedAt": "2026-08-27T07:15:00.000Z",
+  "mappedSha": "35afd0dd",
+  "generatedAt": "2026-08-27T07:39:01.830Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 900,
-  "notes": "2026-08-26 (night, branch feat/driving-route-paths stacked on fix/maps-auth-failure-containment) — DRIVING ROUTE PATHS: NEW web components/DrivingPathLayer.tsx draws the real road polyline (Routes API computeRoutes, browser-side, TRAFFIC_UNAWARE, order preserved, chunked >25, per-session cache incl. failures, straight-geodesic instant render + fallback) — all three map surfaces' PolylineLayers reduced to waypoint-builders rendering it. GCloud: Routes API enabled + key restrictions now 4 APIs. Maps themselves FIXED live this session: the dead key was the web build's baked NEXT_PUBLIC_GOOGLE_MAPS_KEY — owner deleted it from the Railway web service + redeployed; runtime /public/places/config path now serves the valid key. Earlier same night: GoogleMapsGate containment (PR #464). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "2026-08-27 (post-train review) — FIVE-PR TRAIN #464→#468 merged+deployed; map verified CURRENT against master 35afd0dd: #466 (trips order picker) carried no .claude files but its entries were pre-written by batch-d inside the #465 commit (api.md trips controller/eligible-orders + web.md picker block incl. TripStopList/lib-api-trips); #467/#468 carried their own map edits. This bump only re-anchors mappedSha. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
