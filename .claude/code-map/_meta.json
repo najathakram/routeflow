@@ -1,7 +1,7 @@
 {
   "mappedSha": "53bda4b4",
-  "generatedAt": "2026-08-27T04:15:41.689Z",
+  "generatedAt": "2026-08-27T07:15:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
-  "fileCount": 898,
-  "notes": "2026-08-26 (worktree batch-d, IN FLIGHT) — PR-D split-payment deposits (tenant policy, issue-at-placement, editable-order reconcile, PDF/email/portal visibility) + PR-E trip-builder order picker (GET /trips/eligible-orders + in-page add/remove). Landed so far: PDF deposit rows, eligible-orders endpoint. Full detail in CHANGELOG top bullet. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "fileCount": 900,
+  "notes": "2026-08-26 (night, branch feat/driving-route-paths stacked on fix/maps-auth-failure-containment) — DRIVING ROUTE PATHS: NEW web components/DrivingPathLayer.tsx draws the real road polyline (Routes API computeRoutes, browser-side, TRAFFIC_UNAWARE, order preserved, chunked >25, per-session cache incl. failures, straight-geodesic instant render + fallback) — all three map surfaces' PolylineLayers reduced to waypoint-builders rendering it. GCloud: Routes API enabled + key restrictions now 4 APIs. Maps themselves FIXED live this session: the dead key was the web build's baked NEXT_PUBLIC_GOOGLE_MAPS_KEY — owner deleted it from the Railway web service + redeployed; runtime /public/places/config path now serves the valid key. Earlier same night: GoogleMapsGate containment (PR #464). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

@@ -14,6 +14,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { StopEntry, CustomerForMap } from "./page";
 import { useGoogleMapsKey } from "@/hooks/useGoogleMapsKey";
 import { MapErrorBoundary, MapsApiGate } from "@/components/GoogleMapsGate";
+import { DrivingPathLayer } from "@/components/DrivingPathLayer";
 import { apiClient } from "@/lib/api-client";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -102,7 +103,7 @@ function DepotMarkerBubble() {
   );
 }
 
-// ─── Polyline connecting selected stops (with depot) ───────────────────────────
+// ─── Driving route connecting selected stops (with depot) ─────────────────────
 
 function PolylineLayer({
   stops,
@@ -111,37 +112,22 @@ function PolylineLayer({
   stops: StopEntry[];
   depot?: { lat: number; lng: number } | null;
 }) {
-  const map = useMap();
-  const mapsLib = useMapsLibrary("maps");
-
-  React.useEffect(() => {
-    if (!map || !mapsLib) return;
-
+  const path = React.useMemo(() => {
     const stopCoords = stops
       .filter((s) => s.lat != null && s.lng != null)
       .map((s) => ({ lat: s.lat!, lng: s.lng! }));
 
     // Build path: depot → stops → depot (if depot)
-    const path: Array<{ lat: number; lng: number }> = [];
-    if (depot) path.push({ lat: depot.lat, lng: depot.lng });
-    path.push(...stopCoords);
-    if (depot && stopCoords.length > 0) path.push({ lat: depot.lat, lng: depot.lng });
+    const out: Array<{ lat: number; lng: number }> = [];
+    if (depot) out.push({ lat: depot.lat, lng: depot.lng });
+    out.push(...stopCoords);
+    if (depot && stopCoords.length > 0) out.push({ lat: depot.lat, lng: depot.lng });
+    return out;
+  }, [stops, depot]);
 
-    if (path.length < 2) return;
+  if (path.length < 2) return null;
 
-    const polyline = new mapsLib.Polyline({
-      path,
-      geodesic: true,
-      strokeColor: "#3b82f6",
-      strokeOpacity: 0.7,
-      strokeWeight: 3,
-      map,
-    });
-
-    return () => polyline.setMap(null);
-  }, [map, mapsLib, stops, depot]);
-
-  return null;
+  return <DrivingPathLayer waypoints={path} strokeColor="#3b82f6" strokeOpacity={0.7} />;
 }
 
 // ─── Auto-fit bounds ───────────────────────────────────────────────────────────

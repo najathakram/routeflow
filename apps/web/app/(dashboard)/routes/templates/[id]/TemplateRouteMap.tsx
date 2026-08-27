@@ -14,6 +14,7 @@ import { cn } from "@routeflow/ui/web";
 import type { RouteTemplateStop } from "@/lib/api/routes";
 import { useGoogleMapsKey } from "@/hooks/useGoogleMapsKey";
 import { MapErrorBoundary, MapsApiGate } from "@/components/GoogleMapsGate";
+import { DrivingPathLayer } from "@/components/DrivingPathLayer";
 
 // ─── Numbered stop bubble ──────────────────────────────────────────────────────
 
@@ -66,7 +67,7 @@ function DepotMarkerBubble() {
   );
 }
 
-// ─── Polyline between stops (with depot round-trip) ───────────────────────────
+// ─── Driving route between stops (with depot round-trip) ──────────────────────
 
 function PolylineLayer({
   stops,
@@ -75,37 +76,23 @@ function PolylineLayer({
   stops: RouteTemplateStop[];
   depot?: { lat: number; lng: number } | null;
 }) {
-  const map = useMap();
-  const mapsLib = useMapsLibrary("maps");
-  const polylineRef = React.useRef<google.maps.Polyline | null>(null);
-
-  React.useEffect(() => {
-    if (!map || !mapsLib) return;
+  const coords = React.useMemo(() => {
     const stopCoords = stops
       .filter((s) => s.customerAddress?.lat != null && s.customerAddress?.lng != null)
       .sort((a, b) => a.stopNumber - b.stopNumber)
       .map((s) => ({ lat: s.customerAddress!.lat!, lng: s.customerAddress!.lng! }));
 
     // Build path: depot → stops → depot (if depot exists)
-    const coords: Array<{ lat: number; lng: number }> = [];
-    if (depot) coords.push({ lat: depot.lat, lng: depot.lng });
-    coords.push(...stopCoords);
-    if (depot && stopCoords.length > 0) coords.push({ lat: depot.lat, lng: depot.lng });
+    const out: Array<{ lat: number; lng: number }> = [];
+    if (depot) out.push({ lat: depot.lat, lng: depot.lng });
+    out.push(...stopCoords);
+    if (depot && stopCoords.length > 0) out.push({ lat: depot.lat, lng: depot.lng });
+    return out;
+  }, [stops, depot]);
 
-    if (polylineRef.current) polylineRef.current.setMap(null);
-    polylineRef.current = new mapsLib.Polyline({
-      path: coords,
-      strokeColor: "#3b82f6",
-      strokeOpacity: 0.8,
-      strokeWeight: 3,
-      map,
-    });
-    return () => {
-      polylineRef.current?.setMap(null);
-    };
-  }, [map, mapsLib, stops, depot]);
+  if (coords.length < 2) return null;
 
-  return null;
+  return <DrivingPathLayer waypoints={coords} strokeColor="#3b82f6" strokeOpacity={0.8} />;
 }
 
 // ─── Auto-fit bounds ───────────────────────────────────────────────────────────
