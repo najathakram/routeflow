@@ -355,7 +355,7 @@ homeAddress` (the driver-home origin), and orders inherit `fulfillPath` from the
 
 ### `trips/` (ad-hoc order trips, 2026-08-24, dev-mode-gated — NEW module)
 
-- **controller** `trips` `@Roles(OPERATOR)` — `GET /trips/eligibility` (query orderIds) + `POST /trips` (build+dispatch), both sharing ONE `checkEligibility` predicate.
+- **controller** `trips` `@Roles(OPERATOR)` — `GET /trips/eligibility` (query orderIds) + `POST /trips` (build+dispatch), both sharing ONE `checkEligibility` predicate. **NEW 2026-08-26 batch-d: `GET /trips/eligible-orders`** (search/page/limit/exclude; `dto/eligible-orders.dto.ts`) — paginated CANDIDATE list for the builder's in-page order picker; final verdict per row still comes from the same `checkEligibility`, ineligible rows filtered server-side so the picker can never disagree with `POST /trips`.
 - **service** `TripsService` — **`checkEligibility(order)`**: eligible = `status ∈ {PENDING, CONFIRMED, PARTIALLY_DELIVERED}` ∧ `fulfillPath: ROUTE` ∧ `routeRunStopId: null` ∧ ≥1 `CustomerAddress` row; a non-null `routeRunStopId` distinguishes `ON_ACTIVE_RUN` (run SCHEDULED/IN_PROGRESS, includes run/driver detail) from `PREVIOUSLY_DISPATCHED`; `NO_ADDRESS` only fires on zero address rows. **`groupOrdersForTrip`** (imported from the local mirror `common/trip-grouping.ts`, NOT from `@routeflow/types` — see that file's header + the `no-runtime-workspace-imports.spec.ts` guard; the shared original lives at `packages/types/trip-grouping.ts`, also mirrored at `apps/mobile/lib/trip-grouping.ts`) groups by `customerId` into one stop per distinct customer, tie-broken by `isDefault desc, createdAt asc` when picking the address; orders with no customer land in `skipped[]` with reason `NO_CUSTOMER`. **`resolveOrigin(dto)`** — three tiers: `DRIVER` (400 naming the driver if no `homeLat`/`homeLng`), `ADDRESS` (geocodes via the shared `common/geocode.util.ts`; a geocode failure 400s and **`route.create` is never called** — the HTTP geocode call happens OUTSIDE the create transaction so a bad address can't leave a half-built route), `TENANT` (mirrors `routes.service.ts` `resolveDepot` tiers 2-3 — tenant depot address/coords). `POST /trips`: any ineligible order → 409 listing `{orderId, orderNumber, customerName, reason, detail}` per order (whole-request all-or-nothing, no partial trip); `dto.driverId` (the trip's assigned driver) is tenant-checked with the same `driver.findFirst({ id, tenantId })` + 404 as `resolveOrigin`'s DRIVER tier, so a cross-tenant driver can't be pinned onto the route/run FK; on success creates exactly ONE `Route` (`kind: ADHOC`, depot\* = resolved origin, one stop per distinct customer, `stopNumber` 1..n) and performs **ZERO** writes to any `Order` row (orders keep `fulfillPath: ROUTE`/`routeRunStopId: null` until a later `POST /route-runs` dispatch — trip creation is purely a routing/grouping step, not a dispatch).
 - side effects: Route/RouteStop writes only (no Order/RouteRun writes — dispatch is the existing `createRun` flow above, unchanged).
 
@@ -926,7 +926,33 @@ candidates)` — earlier candidate wins, then barcode > sku > unitSku, ties on `
   `createInvoiceFromOrderWithTenant`, `createPartialFromOrder`) and by the "New sale" flow.
 - **Deposit v1 (50% up front / 50% on terms)** — `depositAmount` is DERIVED at read time
   (`roundMoney(total * depositPercent / 100)`), never stored; `depositOverdue` is a derived flag.
-  `recomputeStatus`/AR-aging are BYTE-UNTOUCHED by the deposit fields.
+  `recomputeStatus`/AR-aging are BYTE-UNTOUCHED by the deposit fields. **2026-08-26 batch-d
+  (deposit v2 — "X% at order placement"):** tenant policy keys
+  `invoice.depositDefaultPercent` + `invoice.depositCollectAtOrder` (SystemConfig, via
+  GET/PATCH /settings/invoice); `resolveDefaultTerms` returns `effectiveDepositPercent`
+  (customer SET wins — >0 = theirs, 0 = explicit opt-out; null inherits tenant);
+  `createInvoiceFromOrder` uses the effective percent and, when the collect-at-order flag is
+  on + order not DELIVERED, ISSUES the fresh mirror via `send(id, {allowPreDelivery:true})`
+  — a NARROW escape hatch on `assertOrderInvoiceUnlocked` used ONLY there (every other send
+  path still blocks pre-delivery mirrors); `reconcileOrderDraftInvoice` now also syncs a
+  SENT/VIEWED/PARTIAL/OVERDUE deposit-mirror (guards: sole non-void invoice of the order,
+  `depositPercent != null`, order not DELIVERED/CANCELLED; payments + dueDate/depositDueDate
+  preserved, status recomputed) — ⚠️ regulated SEPARATE_INVOICE split + deposit deliberately
+  NO-OPs on edit-reconcile (delivery-time rebuild trues up). PDF renders "Deposit due"/
+  "Remainder due" rows after Total; the send-email path adds a deposit banner
+  (`email.service.ts buildInvoiceEmail` `depositAmount/depositDueDate` optional params —
+  reminder path intentionally without). All render-paths null-guarded: no deposit ⇒
+  byte-identical output. **Review-fix pass:** `revertLinkedInvoicesForOrderEdit` EXEMPTS a
+  deposit mirror (deposit + sole-non-void + order not DELIVERED/CANCELLED — the exact set the
+  widened reconcile rebuilds) so a pre-delivery edit can never un-issue it; delivery with no
+  open draft runs `rebuildSiblingDrafts(…,"delivered",{preserveStatus:true})` against a sole
+  deposit invoice (incl. PAID — short-delivery restates, overpayment → credit notes) via
+  `rebuildIssuedDepositMirrorOnDelivery`; widened reconcile re-syncs commission + emits
+  invoice-updated; issuance gated `created.length===1 && !txClient`;
+  `createInvoiceFromOrderWithTenant` (fire-and-forget regular orders) resolves the tenant
+  percent by captured tenantId and issues via an INLINE `status:SENT,sentAt` flip
+  (notification-less by design — no request context); `createPartialFromOrder` resolves
+  effective percent, never issues.
 - **Narrow `PATCH /invoices/:id/terms`** — corrects `dueDate`/`paymentTermsLabel`/`reference`/
   `subject` on any status except VOID/WRITTEN_OFF, re-runs `recomputeStatus`, leaves an
   `internalNotes` breadcrumb (same convention as `applyPriceAdjustment`); spec pins that it never

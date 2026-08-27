@@ -6,6 +6,7 @@ import { StorageService } from "../storage/storage.service";
 import { InvoicePdfTemplate } from "./invoice-pdf-template";
 import { deriveInvoiceVariant, type InvoicePdfVariant } from "./invoice-pdf-variant";
 import { invoiceItemCode } from "./invoice-item-code";
+import { roundMoney } from "../common/pricing";
 
 import bwipjs from "bwip-js";
 
@@ -155,12 +156,21 @@ export class InvoicePdfService {
       }),
     );
 
+    // Deposit schedule (Tier 1): the dollar amount is derived from the CURRENT
+    // total, never stored — same convention as invoices.service's
+    // computeDepositFields. Null depositPercent means no deposit lines render.
+    const depositAmount =
+      inv.depositPercent != null
+        ? roundMoney((Number(inv.total) * Number(inv.depositPercent)) / 100)
+        : null;
+
     const invWithBarcodes = {
       ...inv,
       items: itemsWithBarcodes,
       tenant: tenantInfo,
       variant,
       generatedAt: new Date(),
+      depositAmount,
     };
 
     let pdfBuffer: Buffer;

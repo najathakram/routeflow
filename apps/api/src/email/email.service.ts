@@ -682,6 +682,9 @@ export class EmailService {
     }[];
     pdfUrl?: string;
     isReminder?: boolean;
+    /** Deposit schedule (display-only, derived server-side) — null/absent renders nothing. */
+    depositAmount?: number | null;
+    depositDueDate?: string | null;
   }) {
     const businessName = await this.getTenantBusinessName();
     const subject = params.isReminder
@@ -854,6 +857,9 @@ export class EmailService {
       }[];
       pdfUrl?: string;
       isReminder?: boolean;
+      /** Deposit schedule (display-only, derived server-side) — null/absent renders nothing. */
+      depositAmount?: number | null;
+      depositDueDate?: string | null;
     },
     businessName: string,
   ): string {
@@ -883,6 +889,18 @@ export class EmailService {
          </div>`
       : "";
 
+    // Deposit schedule banner — only when the invoice carries a deposit. The
+    // remainder anchors to the invoice due date; amounts arrive pre-derived.
+    const depositBanner =
+      params.depositAmount != null
+        ? `<div style="background:#eef2ff;border-left:4px solid #6366f1;padding:12px 16px;margin-bottom:24px;border-radius:4px;">
+           <p style="margin:0;font-size:14px;color:#3730a3;font-weight:600;">Deposit due${
+             params.depositDueDate ? ` by ${params.depositDueDate}` : ""
+           }: ${fmt(params.depositAmount)}</p>
+           <p style="margin:4px 0 0;font-size:13px;color:#3730a3;">Remainder due by ${params.dueDate}.</p>
+         </div>`
+        : "";
+
     const pdfButton = params.pdfUrl
       ? `<a href="${params.pdfUrl}" style="display:inline-block;margin-top:8px;background:#f3f4f6;color:#374151;padding:8px 20px;border-radius:6px;font-size:13px;text-decoration:none;font-weight:500;">Download PDF</a>`
       : "";
@@ -904,6 +922,7 @@ export class EmailService {
         <!-- Body -->
         <tr><td style="padding:32px;">
           ${reminderBanner}
+          ${depositBanner}
           <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Dear ${params.customerName},</p>
           <p style="margin:0 0 24px;font-size:15px;color:#374151;">
             ${params.isReminder ? "This is a reminder that the following invoice is outstanding." : "Please find your invoice details below."}
