@@ -90,7 +90,19 @@ export type ShareOutcome = "shared" | "opened-tab" | "ready-await-tap" | "failed
 export function canShareFilesHere(): boolean {
   if (Platform.OS !== "web") return true;
   const nav: any = typeof navigator !== "undefined" ? navigator : undefined;
-  return !!(nav?.share && nav?.canShare);
+  if (!nav?.share || !nav?.canShare) return false;
+  // Probe FILE support specifically — canShare is synchronous and needs no
+  // user activation. Samsung Internet (and some WebViews) expose share() and
+  // canShare() but return false for files; treating them as file-capable sent
+  // every share down a path that ended in a silently popup-blocked
+  // window.open. With an honest false here, the WhatsApp channel picks its
+  // text-link mode up front and the share/open flows take the tab route.
+  try {
+    const probe = new File([""], "probe.pdf", { type: "application/pdf" });
+    return nav.canShare({ files: [probe] }) === true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -108,13 +120,40 @@ export function canShareFilesHere(): boolean {
 export function openPdfInTab(url: string): void {
   if (Platform.OS === "web") {
     if (typeof window !== "undefined") {
-      window.open(url, "_blank", "noopener");
+      openTabOrOffer(url);
       return;
     }
     showToast("Couldn't open the PDF.");
     return;
   }
   Linking.openURL(url).catch(() => showToast("Couldn't open the PDF."));
+}
+
+/**
+ * window.open that can never fail SILENTLY: popup blockers (Samsung Internet
+ * especially, once any await separated the tap from the open) make
+ * `window.open` return null instead of throwing. When that happens, hand the
+ * operator an explicit "Open PDF" button — its press is a fresh gesture and
+ * the open inside it is synchronous, which every blocker allows.
+ */
+function openTabOrOffer(url: string): boolean {
+  if (typeof window === "undefined") {
+    showToast("Couldn't open the PDF.");
+    return false;
+  }
+  const win = window.open(url, "_blank", "noopener");
+  if (win != null) return true;
+  chooseAction("PDF ready", "Your browser blocked opening it automatically.", [
+    {
+      label: "Open PDF",
+      style: "default",
+      onPress: () => {
+        if (typeof window !== "undefined") window.open(url, "_blank", "noopener");
+      },
+    },
+    { label: "Dismiss", style: "cancel" },
+  ]);
+  return false;
 }
 
 // Per-url fetch cache. Lets a "second tap" (after the first timed out against
@@ -251,8 +290,50 @@ async function sharePdfWeb(options: SharePdfOptions): Promise<ShareOutcome> {
   const nav: any = typeof navigator !== "undefined" ? navigator : undefined;
   const deadline = Date.now() + Math.max(0, budgetMs);
 
-  // Web Share API level 2 — share the file directly, no download step.
-  if (nav?.share && nav?.canShare) {
+  // ── Synchronous retap fast path ─────────────────────────────────────────
+  // A second tap whose file already finished downloading must reach its
+  // terminal action with ZERO intervening awaits: stricter activation models
+  // treat even a microtask gap as leaving the gesture, and on browsers
+  // without file-level Web Share (Samsung Internet) the only reliable action
+  // is a window.open issued synchronously inside the tap — the silent
+  // "PDF ready → tap → nothing" dead-end was exactly this path popup-blocked.
+  const cachedFile = pdfFileCache.peek(url);
+  if (cachedFile != null) {
+    if (nav?.share && nav?.canShare?.({ files: [cachedFile] })) {
+      try {
+        await nav.share({ files: [cachedFile], text, title: dialogTitle ?? filename });
+        releasePdfFile(url);
+        return "shared";
+      } catch (err: any) {
+        switch (classifyShareError(err?.name)) {
+          case "dismissed":
+            releasePdfFile(url);
+            return "shared";
+          case "retap":
+            // Even a gesture-synchronous share() was refused — this browser
+            // will never cooperate. Do NOT loop the tap-to-share dance again;
+            // hand the operator the tab route instead (openTabOrOffer raises
+            // its own fresh-gesture button if the popup is blocked).
+            releasePdfFile(url);
+            return openTabOrOffer(url) ? "opened-tab" : "failed";
+          case "failed":
+            releasePdfFile(url);
+            showToast("Couldn't share the PDF.");
+            return "failed";
+        }
+      }
+    }
+    // File sharing unsupported here: open the tab NOW, still synchronously
+    // inside the tap, before any await can burn the gesture.
+    releasePdfFile(url);
+    return openTabOrOffer(url) ? "opened-tab" : "failed";
+  }
+
+  // Web Share API level 2 — share the file directly, no download step. Gated
+  // on the FILE-support probe, not bare API presence: a browser that exposes
+  // share()/canShare() but rejects files (Samsung Internet) would otherwise
+  // download the whole PDF only to fall through to the tab route anyway.
+  if (canShareFilesHere() && nav?.share && nav?.canShare) {
     // The DOWNLOAD's own failures (non-2xx signed url, expired signature,
     // offline, CORS) happen before share() is ever reached, so the share
     // catch below can't see them. Catch them here instead: toast — no
@@ -332,8 +413,7 @@ async function sharePdfWeb(options: SharePdfOptions): Promise<ShareOutcome> {
     return "failed";
   }
   if (typeof window !== "undefined") {
-    window.open(url, "_blank", "noopener");
-    return "opened-tab";
+    return openTabOrOffer(url) ? "opened-tab" : "failed";
   }
   showToast("Couldn't open the PDF.");
   return "failed";
@@ -466,7 +546,7 @@ async function shareCsvWeb(url: string, filename: string, dialogTitle?: string):
   }
 
   if (typeof window !== "undefined") {
-    window.open(url, "_blank", "noopener");
+    openTabOrOffer(url);
   }
 }
 

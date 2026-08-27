@@ -75,4 +75,48 @@ describe("createPendingCache", () => {
     const bRemade = Promise.resolve(20);
     expect(cache.get("b", () => bRemade)).toBe(bRemade);
   });
+
+  describe("peek", () => {
+    it("returns undefined while pending, the value once resolved, undefined after release", async () => {
+      const cache = createPendingCache<string>(3);
+      let resolve!: (v: string) => void;
+      const p = new Promise<string>((r) => (resolve = r));
+      cache.get("url", () => p);
+
+      expect(cache.peek("url")).toBeUndefined();
+      resolve("file-bytes");
+      await p;
+      await Promise.resolve();
+      expect(cache.peek("url")).toBe("file-bytes");
+
+      cache.release("url");
+      expect(cache.peek("url")).toBeUndefined();
+    });
+
+    it("a late resolve cannot resurrect a value for a replaced entry", async () => {
+      const cache = createPendingCache<string>(3);
+      let resolveFirst!: (v: string) => void;
+      const first = new Promise<string>((r) => (resolveFirst = r));
+      cache.get("url", () => first);
+      cache.release("url");
+      cache.get("url", () => new Promise<string>(() => {}));
+
+      resolveFirst("stale");
+      await first;
+      await Promise.resolve();
+      expect(cache.peek("url")).toBeUndefined();
+    });
+
+    it("LRU eviction clears the resolved value too", async () => {
+      const cache = createPendingCache<number>(1);
+      const a = Promise.resolve(1);
+      cache.get("a", () => a);
+      await a;
+      await Promise.resolve();
+      expect(cache.peek("a")).toBe(1);
+
+      cache.get("b", () => Promise.resolve(2));
+      expect(cache.peek("a")).toBeUndefined();
+    });
+  });
 });
