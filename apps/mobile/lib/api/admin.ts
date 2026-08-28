@@ -837,14 +837,22 @@ export interface TopCustomer {
   totalRevenue: number;
   orderCount: number;
 }
-export interface RoutePerformance {
+/** Stop-level operational metrics on route/driver performance rows (mirrors
+ *  web). Null = no measurable data in the window (no completed stops / no runs
+ *  with both start and finish stamps) — distinct from a real 0. */
+export interface RunOpsMetrics {
+  onTimeRate: number | null;
+  stopsPerHour: number | null;
+  avgRunDurationMinutes: number | null;
+}
+export interface RoutePerformance extends RunOpsMetrics {
   id: string;
   name: string;
   totalRuns: number;
   completedRuns: number;
   completionRate: number;
 }
-export interface DriverPerformance {
+export interface DriverPerformance extends RunOpsMetrics {
   id: string;
   name: string;
   totalDeliveries: number;
@@ -908,23 +916,23 @@ export function useAnalyticsTopCustomers() {
     staleTime: 120_000,
   });
 }
-export function useAnalyticsRoutePerformance() {
+export function useAnalyticsRoutePerformance(from?: string, to?: string) {
   return useQuery<RoutePerformance[]>({
-    queryKey: ["analytics", "routes", "performance"],
+    queryKey: ["analytics", "routes", "performance", from, to],
     queryFn: () =>
       apiClient
-        .get("/analytics/routes/performance")
+        .get("/analytics/routes/performance", { params: { from, to } })
         .then((r) => r.data)
         .catch(() => []),
     staleTime: 120_000,
   });
 }
-export function useAnalyticsDriverPerformance() {
+export function useAnalyticsDriverPerformance(from?: string, to?: string) {
   return useQuery<DriverPerformance[]>({
-    queryKey: ["analytics", "drivers", "performance"],
+    queryKey: ["analytics", "drivers", "performance", from, to],
     queryFn: () =>
       apiClient
-        .get("/analytics/drivers/performance")
+        .get("/analytics/drivers/performance", { params: { from, to } })
         .then((r) => r.data)
         .catch(() => []),
     staleTime: 120_000,
