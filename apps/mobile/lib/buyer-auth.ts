@@ -61,32 +61,6 @@ interface BuyerAuthResponse {
   buyer: BuyerUser;
 }
 
-// ─── Legacy key migration (NEW-m2-1 / RF-077) ────────────────────────────────
-
-const LEGACY_ACCESS = "buyerAccessToken";
-const LEGACY_REFRESH = "buyerRefreshToken";
-const LEGACY_SELLER = "buyerActiveSeller";
-
-/**
- * One-time migration: copy legacy buyerAccessToken → rf:buyer:accessToken then
- * delete the legacy keys. Idempotent — safe to call on every app start.
- */
-export async function migrateLegacyBuyerToken(): Promise<void> {
-  const legacy = await storage.get(LEGACY_ACCESS);
-  if (!legacy) return;
-  const existing = await storage.get(BUYER_KEYS.accessToken);
-  if (!existing) {
-    await storage.set(BUYER_KEYS.accessToken, legacy);
-    const legacyRefresh = await storage.get(LEGACY_REFRESH);
-    if (legacyRefresh) await storage.set(BUYER_KEYS.refreshToken, legacyRefresh);
-    const legacySeller = await storage.get(LEGACY_SELLER);
-    if (legacySeller) await storage.set(BUYER_KEYS.activeSeller, legacySeller);
-  }
-  await storage.del(LEGACY_ACCESS);
-  await storage.del(LEGACY_REFRESH);
-  await storage.del(LEGACY_SELLER);
-}
-
 // ─── Session-expired callback (set by buyer-session-store on init) ───────────
 //
 // BUG-B1-1: when a buyer 401 refresh fails, simply clearing the storage tokens

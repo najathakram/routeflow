@@ -1,7 +1,7 @@
 {
-  "mappedSha": "b8c40147",
-  "generatedAt": "2026-08-27T12:00:00.000Z",
+  "mappedSha": "35afd0dd",
+  "generatedAt": "2026-08-28T04:10:59.262Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 900,
-  "notes": "2026-08-27 — DEAD RF-077 MIGRATION HELPERS DELETED (branch claude/objective-booth-6581c7): web migrateLegacyOpToken/migrateLegacyBuyerToken deleted (never called since 2026-05-01; pre-RF-077 sessions expired ~May 31; wiring them NOW would break settings Google-link + could resurrect logged-out OAuth sessions — legacy bare keys are STILL live via OAuth-callback double-writes). auth-isolation.spec.ts trimmed to cross-tab + key-isolation tests. Follow-ups flagged: verify-email writes ONLY legacy keys (broken flow); mobile's migrate helpers equally dead. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "2026-08-27 (branch fix/auth-token-hygiene, rescue PR) — settings Link-Google moved onto apiClient (legacy bare accessToken read + hardcoded URL removed; button was dead post-#457); mobile never-called migrateLegacyToken/migrateLegacyBuyerToken deleted (mirror of web #470). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
