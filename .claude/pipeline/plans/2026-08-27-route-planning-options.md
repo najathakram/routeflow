@@ -1,6 +1,6 @@
 # Route planning options — start/end points, tolls, time-vs-distance, variants, Google Maps export
 
-Status: PLANNED
+Status: IMPLEMENTED — PR #472 (all 7 packages + 18 review fixes; suite green api 3090 / mobile 1236)
 Date: 2026-08-27
 Branch: `feat/route-planning-options` (single PR; base master). NO merge, NO prod migration — owner's merge window.
 Scale: major
