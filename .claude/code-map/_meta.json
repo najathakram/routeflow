@@ -1,7 +1,7 @@
 {
   "mappedSha": "35afd0dd",
-  "generatedAt": "2026-08-28T04:10:59.262Z",
+  "generatedAt": "2026-08-28T04:00:41.096Z",
   "areas": ["api", "web", "mobile", "packages"],
-  "fileCount": 900,
-  "notes": "2026-08-27 (branch fix/auth-token-hygiene, rescue PR) — settings Link-Google moved onto apiClient (legacy bare accessToken read + hardcoded URL removed; button was dead post-#457); mobile never-called migrateLegacyToken/migrateLegacyBuyerToken deleted (mirror of web #470). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "fileCount": 908,
+  "notes": "2026-08-27 (branch feat/route-planning-options, PR pending) — ROUTE PLANNING OPTIONS batch: Route schema migration 20260907000000 (origin/end/tolls/optimizeBy/plannedPolyline), cost-matrix optimizer (Google computeRouteMatrix + LRU cache + billing telemetry, ORS demoted), variants endpoints (apply = sole plannedPolyline writer, optional runId run-sync), PATCH /trips/routes/:routeId/planning, RoutePlanningControls/RouteVariantsPanel web UI (TripOriginPicker DELETED), gmaps-export deep links web+mobile driver. 7-package pipeline + Opus review (18 findings ALL fixed). Suite green api 3090 / mobile 1236. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

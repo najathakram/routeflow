@@ -18,15 +18,38 @@ export interface RouteTemplateStop {
   notes?: string;
 }
 
+// ─── Route planning options (start/end points, tolls, objective) ─────────────
+// All optional/nullable for backward compat: legacy rows predate these
+// columns (null), and endpoints that don't select them omit them entirely.
+
+export type RouteOriginKind = "TENANT" | "DRIVER" | "ADDRESS";
+export type RouteEndKind = "NONE" | "RETURN_TO_START" | "DRIVER_HOME" | "ADDRESS";
+export type RouteOptimizeMetric = "TIME" | "DISTANCE";
+
 export interface Route {
   id: string;
   name: string;
   isActive: boolean;
   kind: "SCHEDULED" | "ADHOC";
   createdAt: string;
+  /** The TEMPLATE's default driver — distinct from a given run's driver, which
+   *  can be swapped per run. `originKind: "DRIVER"` resolves against this one. */
+  driverId?: string | null;
   depotLat?: number | null;
   depotLng?: number | null;
   depotAddress?: string | null;
+  /** How depotLat/depotLng/depotAddress were chosen; null on legacy rows. */
+  originKind?: RouteOriginKind | null;
+  endKind?: RouteEndKind | null;
+  endLat?: number | null;
+  endLng?: number | null;
+  endAddress?: string | null;
+  avoidTolls?: boolean | null;
+  optimizeBy?: RouteOptimizeMetric | null;
+  /** Encoded road polyline of the currently chosen route — map views render
+   *  this instead of re-calling Google. Any stop reorder outside the variant
+   *  "apply" endpoint nulls it out (stale polyline is worse than none). */
+  plannedPolyline?: string | null;
   // findAllRoutes (the list endpoint) carries a run summary + counts so the
   // Deliveries history page can render driver/date/status without a second
   // round-trip per row — narrower than RouteRun since the API `select`s only
@@ -102,11 +125,26 @@ export function useRoute(id: string) {
   });
 }
 
+/** `origin`/`end`/`avoidTolls`/`optimizeBy` are optional planning fields
+ *  (WP5's additive extension of POST /routes) — omit them to create exactly
+ *  as before. TENANT origin is resolved client-side (send resolved
+ *  depotLat/depotLng/depotAddress alongside `origin: {type: "TENANT"}`);
+ *  DRIVER/ADDRESS origins resolve server-side. */
 export function useCreateRoute() {
   return useMutation<
     Route,
     Error,
-    { name: string; driverId?: string; depotLat?: number; depotLng?: number; depotAddress?: string }
+    {
+      name: string;
+      driverId?: string;
+      depotLat?: number;
+      depotLng?: number;
+      depotAddress?: string;
+      origin?: TripOrigin;
+      end?: RoutePlanningEndDto;
+      avoidTolls?: boolean;
+      optimizeBy?: RouteOptimizeMetric;
+    }
   >({
     mutationFn: (dto) => apiClient.post("/routes", dto).then((r) => r.data),
     // NOTE: No auto-invalidation — caller must invalidate after stops are added
@@ -328,7 +366,11 @@ export type OptimizeFallbackReason =
   | "ORS_NOT_CONFIGURED"
   | "ORS_RATE_LIMITED"
   | "ORS_HTTP_ERROR"
-  | "ORS_NETWORK_ERROR";
+  | "ORS_NETWORK_ERROR"
+  // Google was the primary source (a Maps key is configured) but
+  // computeRouteMatrix failed or came back sparse, so straight-line estimates
+  // were used. The ORS pathway wasn't reached at all — don't offer ORS advice.
+  | "GOOGLE_MATRIX_FALLBACK";
 
 export interface OptimizeResult {
   stopOrder: Array<{ stopId: string; stopNumber: number }>;
@@ -446,16 +488,124 @@ export function useTripEligibility(orderIds: string[]) {
 }
 
 /** Creates a DRAFT ad-hoc route (kind ADHOC) from a set of orders. Performs
- *  ZERO order writes — orders attach to it only at dispatch (useCreateRouteRun). */
+ *  ZERO order writes — orders attach to it only at dispatch (useCreateRouteRun).
+ *  `end`/`avoidTolls`/`optimizeBy` are optional planning fields (WP2's
+ *  create-path changes on POST /trips) — omit them to build exactly as before. */
 export function useCreateTrip() {
   const qc = useQueryClient();
   return useMutation<
     Route,
     Error,
-    { orderIds: string[]; name?: string; driverId?: string; origin: TripOrigin }
+    {
+      orderIds: string[];
+      name?: string;
+      driverId?: string;
+      origin: TripOrigin;
+      end?: RoutePlanningEndDto;
+      avoidTolls?: boolean;
+      optimizeBy?: RouteOptimizeMetric;
+    }
   >({
     mutationFn: (dto) => apiClient.post("/trips", dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["routes"] }),
+  });
+}
+
+// ─── Route Planning (start/end points, tolls, objective, variants) ───────────
+
+export type RoutePlanningEndType = "NONE" | "RETURN_TO_START" | "DRIVER_HOME" | "ADDRESS";
+
+export interface RoutePlanningEndDto {
+  type: RoutePlanningEndType;
+  /** DRIVER_HOME — defaults server-side to the route's assigned driver. */
+  driverId?: string;
+  /** ADDRESS */
+  line1?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+}
+
+export interface UpdateRoutePlanningDto {
+  routeId: string;
+  origin?: TripOrigin;
+  end?: RoutePlanningEndDto;
+  avoidTolls?: boolean;
+  optimizeBy?: RouteOptimizeMetric;
+}
+
+export interface UpdateRoutePlanningResult extends Route {
+  /** True whenever origin/end/optimizeBy/avoidTolls changed — the endpoint
+   *  never reorders stops itself, so the caller should offer a re-optimize. */
+  reoptimizeRecommended?: boolean;
+}
+
+/** PATCH /trips/routes/:routeId/planning — edits start/end/tolls/objective on
+ *  an existing route. 409s if the route has an IN_PROGRESS run. */
+export function useUpdateRoutePlanning() {
+  const qc = useQueryClient();
+  return useMutation<UpdateRoutePlanningResult, Error, UpdateRoutePlanningDto>({
+    mutationFn: ({ routeId, ...dto }) =>
+      apiClient.patch(`/trips/routes/${routeId}/planning`, dto).then((r) => r.data),
+    onSuccess: (_, { routeId }) => {
+      qc.invalidateQueries({ queryKey: ["routes", routeId] });
+      qc.invalidateQueries({ queryKey: ["routes"] });
+    },
+  });
+}
+
+export interface RouteVariant {
+  key: "FASTEST" | "SHORTEST" | "NO_TOLLS";
+  stopIds: string[];
+  durationSec: number;
+  distanceMeters: number;
+  hasTolls: boolean;
+  encodedPolyline: string | null;
+}
+
+export interface RouteVariantsResult {
+  variants: RouteVariant[];
+}
+
+/** POST /routes/:id/variants — solves the SAME stops under Fastest/Shortest/
+ *  No-tolls settings for the user to compare and pick. Never rejects on a
+ *  Google failure (falls back to a single solver-only result with
+ *  `encodedPolyline: null`) — always check for an empty array, not a thrown
+ *  error, when deciding whether to show the comparison UI. */
+export function useRouteVariants() {
+  return useMutation<RouteVariantsResult, Error, string>({
+    mutationFn: (routeId) =>
+      apiClient.post<RouteVariantsResult>(`/routes/${routeId}/variants`).then((r) => r.data),
+  });
+}
+
+export interface ApplyRouteVariantDto {
+  routeId: string;
+  key: RouteVariant["key"];
+  stopIds: string[];
+  optimizeBy: RouteOptimizeMetric;
+  avoidTolls: boolean;
+  encodedPolyline?: string | null;
+  /** SCHEDULED run to re-number to the same order in the same transaction.
+   *  Omit to persist onto the route template only (future runs). The server
+   *  409s if the named run isn't SCHEDULED, and — when omitted — if any run of
+   *  the route is IN_PROGRESS. */
+  runId?: string;
+}
+
+/** POST /routes/:id/variants/apply — persists the chosen variant's stop
+ *  order, objective/tolls, and polyline onto the route (and, with `runId`,
+ *  re-numbers that run's stops to match). Returns `{ applied }`, not a Route. */
+export function useApplyRouteVariant() {
+  const qc = useQueryClient();
+  return useMutation<{ applied: boolean }, Error, ApplyRouteVariantDto>({
+    mutationFn: ({ routeId, ...dto }) =>
+      apiClient.post(`/routes/${routeId}/variants/apply`, dto).then((r) => r.data),
+    onSuccess: (_, { routeId, runId }) => {
+      qc.invalidateQueries({ queryKey: ["routes", routeId] });
+      qc.invalidateQueries({ queryKey: ["routes"] });
+      if (runId) qc.invalidateQueries({ queryKey: ["route-runs", runId] });
+    },
   });
 }
 

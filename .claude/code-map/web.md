@@ -74,13 +74,29 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   decodes via the `geometry` library, and draws the road polyline; a straight geodesic line
   renders instantly and stays as the fallback on any failure (failures are cached per waypoint
   set per session so a broken API can't re-bill). Requires "Routes API" enabled + in the key's
-  API restrictions (done in GCloud 2026-08-26 — key now allows 4 APIs).** `lib/i18n/`
-  (`messages.ts` en/es catalog, `index.tsx` `I18nProvider`/`useI18n()`/`t()`) — per-user locale via
-  `UserPreference` + localStorage; avatar-menu Language toggle. `CommandPalette.tsx` — Jump-to/Actions/
-  Results sections, `? shortcuts`, localized. All mounted in `app/providers.tsx`
-  (`ToastProvider > I18nProvider > ReAuthProvider > QueryProviders`). Customer delete
-  (`customers/[id]/page.tsx`) is now a reversible soft-delete with Undo (`useSoftDeleteCustomer`/
-  `useRestoreCustomer`).
+  API restrictions (done in GCloud 2026-08-26 — key now allows 4 APIs).** **Route planning
+  (2026-08-27 batch):** NEW `components/RoutePlanningControls.tsx` (start TENANT/DRIVER/ADDRESS
+  - end NONE/RETURN_TO_START/DRIVER_HOME/ADDRESS + avoidTolls switch + TIME|DISTANCE segmented;
+    REPLACED+DELETED `deliveries/_components/TripOriginPicker.tsx`) and
+    `components/RouteVariantsPanel.tsx` (Fastest/Shortest/Avoids-tolls cards). `lib/api/routes.ts`
+    += planning fields on Route (+driverId), `useUpdateRoutePlanning`/`useRouteVariants`/
+    `useApplyRouteVariant` (apply takes optional runId → run stops re-numbered server-side, data
+    `{applied}`), `GOOGLE_MATRIX_FALLBACK` in the fallback union. `lib/gmaps-export.ts`
+    `buildGoogleMapsLegs` (≤9 waypoints/leg, shared handoff) → export buttons on routes/[id] +
+    dispatch. RouteMap/TemplateRouteMap take `variantOverlays` (`EncodedPolylineLayer`) and
+    thread `plannedPolyline` → DrivingPathLayer `precomputedPolyline` (stored routes = zero
+    Google calls per view). routes/[id] planning card snapshot-diffs EVERY field before PATCH
+    (unchanged fields omitted — a no-op save must not trigger reoptimize hints or polyline
+    nulls); DRIVER origin resolves the TEMPLATE's driver, never the run's. Builders
+    (deliveries/new + routes/create) send planning on create; variants auto-fetch post-Build
+    with FASTEST default; endReady gates Build. Full detail: code-map CHANGELOG 2026-08-27.\*\*
+    `lib/i18n/`
+    (`messages.ts` en/es catalog, `index.tsx` `I18nProvider`/`useI18n()`/`t()`) — per-user locale via
+    `UserPreference` + localStorage; avatar-menu Language toggle. `CommandPalette.tsx` — Jump-to/Actions/
+    Results sections, `? shortcuts`, localized. All mounted in `app/providers.tsx`
+    (`ToastProvider > I18nProvider > ReAuthProvider > QueryProviders`). Customer delete
+    (`customers/[id]/page.tsx`) is now a reversible soft-delete with Undo (`useSoftDeleteCustomer`/
+    `useRestoreCustomer`).
 - **`app/layout.tsx`** — root metadata, fonts (Spline Sans + Spline Sans Mono + Instrument Serif +
   Inter fallback), `<Providers>` + `<TenantProvider>` + SW registry.
 - **`app/providers.tsx`** — QueryClient/TanStack Query, Zustand, toast container.

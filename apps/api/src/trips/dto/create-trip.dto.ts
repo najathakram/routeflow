@@ -3,7 +3,9 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsEnum,
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -12,6 +14,7 @@ import {
   ValidateIf,
   ValidateNested,
 } from "class-validator";
+import { TripEndDto } from "./route-planning.dto";
 
 export enum TripOriginType {
   TENANT = "TENANT",
@@ -54,4 +57,12 @@ export class CreateTripDto {
   @ValidateNested()
   @Type(() => TripOriginDto)
   origin!: TripOriginDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => TripEndDto)
+  end?: TripEndDto;
+
+  @IsOptional() @IsBoolean() avoidTolls?: boolean;
+  @IsOptional() @IsIn(["TIME", "DISTANCE"]) optimizeBy?: "TIME" | "DISTANCE";
 }

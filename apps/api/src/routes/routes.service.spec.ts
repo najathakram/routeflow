@@ -5,6 +5,7 @@ import {
   NotFoundException,
   ForbiddenException,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { RouteKind, OrderStatus, FulfillPath } from "@prisma/client";
 import { RoutesService } from "./routes.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -12,7 +13,10 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { InvoicesService } from "../invoices/invoices.service";
+import { geocodeAddress } from "../common/geocode.util";
 import { createMockPrisma } from "../testing/prisma-mock";
+
+jest.mock("../common/geocode.util", () => ({ geocodeAddress: jest.fn() }));
 
 const MOCK_ROUTE = {
   id: "route-1",
@@ -103,6 +107,7 @@ describe("RoutesService", () => {
         { provide: NotificationsService, useValue: notifications },
         { provide: MessagingService, useValue: messaging },
         { provide: InvoicesService, useValue: invoicesService },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue("test-key") } },
       ],
     }).compile();
 
@@ -206,10 +211,140 @@ describe("RoutesService", () => {
   });
 
   describe("createRoute", () => {
-    it("should create a route with just a name", async () => {
+    beforeEach(() => {
+      (geocodeAddress as jest.Mock).mockReset();
+    });
+
+    it("should create a route with just a name (no planning fields — unchanged behavior)", async () => {
       prisma.route.create.mockResolvedValue(MOCK_ROUTE);
-      const result = await service.createRoute({ name: "Downtown Route" });
+      await service.createRoute({ name: "Downtown Route" });
       expect(prisma.route.create).toHaveBeenCalledWith({ data: { name: "Downtown Route" } });
+    });
+
+    it("should persist depot* as-is + originKind=TENANT for a TENANT origin (no server geocode)", async () => {
+      prisma.route.create.mockResolvedValue(MOCK_ROUTE);
+      await service.createRoute({
+        name: "Downtown Route",
+        depotLat: 30.1,
+        depotLng: -97.1,
+        depotAddress: "123 Main St",
+        origin: { type: "TENANT" } as any,
+      });
+      expect(geocodeAddress).not.toHaveBeenCalled();
+      expect(prisma.route.create).toHaveBeenCalledWith({
+        data: {
+          name: "Downtown Route",
+          depotLat: 30.1,
+          depotLng: -97.1,
+          depotAddress: "123 Main St",
+          originKind: "TENANT",
+        },
+      });
+    });
+
+    it("should resolve a DRIVER origin from the driver's home base", async () => {
+      prisma.driver.findFirst.mockResolvedValue({
+        id: "drv-1",
+        contactName: "Sam",
+        homeLat: 31.0,
+        homeLng: -98.0,
+        homeAddress: "Sam's home",
+      });
+      prisma.route.create.mockResolvedValue(MOCK_ROUTE);
+      await service.createRoute({
+        name: "Downtown Route",
+        origin: { type: "DRIVER", driverId: "drv-1" } as any,
+      });
+      expect(prisma.route.create).toHaveBeenCalledWith({
+        data: {
+          name: "Downtown Route",
+          depotLat: 31.0,
+          depotLng: -98.0,
+          depotAddress: "Sam's home",
+          originKind: "DRIVER",
+        },
+      });
+    });
+
+    it("should 400 a DRIVER origin when the driver has no home base", async () => {
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1", contactName: "Sam", homeLat: null });
+      await expect(
+        service.createRoute({
+          name: "Downtown Route",
+          origin: { type: "DRIVER", driverId: "drv-1" } as any,
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.route.create).not.toHaveBeenCalled();
+    });
+
+    it("should geocode an ADDRESS origin", async () => {
+      (geocodeAddress as jest.Mock).mockResolvedValue({ lat: 30.27, lng: -97.74 });
+      prisma.route.create.mockResolvedValue(MOCK_ROUTE);
+      await service.createRoute({
+        name: "Downtown Route",
+        origin: { type: "ADDRESS", line1: "1 Congress Ave", city: "Austin", state: "TX" } as any,
+      });
+      expect(prisma.route.create).toHaveBeenCalledWith({
+        data: {
+          name: "Downtown Route",
+          depotLat: 30.27,
+          depotLng: -97.74,
+          depotAddress: "1 Congress Ave, Austin, TX",
+          originKind: "ADDRESS",
+        },
+      });
+    });
+
+    it("should 400 when an ADDRESS origin fails to geocode", async () => {
+      (geocodeAddress as jest.Mock).mockResolvedValue(null);
+      await expect(
+        service.createRoute({
+          name: "Downtown Route",
+          origin: { type: "ADDRESS", line1: "nowhere" } as any,
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.route.create).not.toHaveBeenCalled();
+    });
+
+    it("should persist a RETURN_TO_START end mirroring the resolved origin coords", async () => {
+      prisma.route.create.mockResolvedValue(MOCK_ROUTE);
+      await service.createRoute({
+        name: "Downtown Route",
+        depotLat: 30.1,
+        depotLng: -97.1,
+        depotAddress: "123 Main St",
+        origin: { type: "TENANT" } as any,
+        end: { type: "RETURN_TO_START" } as any,
+      });
+      expect(prisma.route.create).toHaveBeenCalledWith({
+        data: {
+          name: "Downtown Route",
+          depotLat: 30.1,
+          depotLng: -97.1,
+          depotAddress: "123 Main St",
+          originKind: "TENANT",
+          endKind: "RETURN_TO_START",
+          endLat: 30.1,
+          endLng: -97.1,
+          endAddress: "123 Main St",
+        },
+      });
+    });
+
+    it("should persist avoidTolls/optimizeBy when provided", async () => {
+      prisma.route.create.mockResolvedValue(MOCK_ROUTE);
+      await service.createRoute({
+        name: "Downtown Route",
+        avoidTolls: true,
+        optimizeBy: "DISTANCE",
+      });
+      expect(prisma.route.create).toHaveBeenCalledWith({
+        data: {
+          name: "Downtown Route",
+          avoidTolls: true,
+          optimizeBy: "DISTANCE",
+        },
+      });
     });
   });
 
@@ -227,6 +362,78 @@ describe("RoutesService", () => {
     it("should throw NotFoundException when stop does not belong to route", async () => {
       prisma.routeStop.findFirst.mockResolvedValue(null);
       await expect(service.removeStop("route-1", "stop-x")).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ─── plannedPolyline invalidation ─────────────────────────────────────────
+  //
+  // The map renders Route.plannedPolyline verbatim and deliberately SKIPS its
+  // Routes API fetch while one is present. So any change to which stops are on
+  // a route — or what order they're in — must clear it, or the map keeps
+  // drawing the old path with no way to self-correct. applyRouteVariant
+  // (route-optimization.service.ts) is the only writer.
+
+  describe("plannedPolyline invalidation on stop mutations", () => {
+    const polylineCleared = () =>
+      prisma.route.update.mock.calls.some(
+        ([args]: any) => args?.data?.plannedPolyline === null && args?.where?.id === "route-1",
+      );
+
+    beforeEach(() => {
+      prisma.route.findUnique.mockResolvedValue(MOCK_ROUTE);
+      prisma.route.findFirst.mockResolvedValue(MOCK_ROUTE);
+    });
+
+    it("addStop clears it", async () => {
+      prisma.routeStop.findFirst.mockResolvedValue({ stopNumber: 3 });
+      prisma.customerAddress.findFirst.mockResolvedValue({ id: "addr-1" });
+      prisma.routeStop.create.mockResolvedValue({ id: "stop-new" });
+
+      await service.addStop("route-1", { customerId: "cust-1" } as any);
+
+      expect(polylineCleared()).toBe(true);
+    });
+
+    it("removeStop clears it", async () => {
+      prisma.routeStop.findFirst.mockResolvedValue({ id: "stop-1", routeId: "route-1" });
+      prisma.routeRunStop.findFirst.mockResolvedValue(null);
+      prisma.routeStop.delete.mockResolvedValue({});
+
+      await service.removeStop("route-1", "stop-1");
+
+      expect(polylineCleared()).toBe(true);
+    });
+
+    it("reorderStops clears it in the same transaction", async () => {
+      prisma.routeStop.findMany.mockResolvedValue([
+        { id: "stop-1", stopNumber: 1 },
+        { id: "stop-2", stopNumber: 2 },
+      ]);
+      prisma.$transaction = jest.fn().mockResolvedValue([]);
+
+      await service.reorderStops("route-1", [
+        { id: "stop-2", stopNumber: 1 },
+        { id: "stop-1", stopNumber: 2 },
+      ]);
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(polylineCleared()).toBe(true);
+    });
+
+    it("reorderRunStops clears the PARENT route's polyline — it's what the run map draws", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...MOCK_RUN, routeId: "route-1" });
+      prisma.routeRunStop.findMany.mockResolvedValue([
+        { id: "runstop-1", stopNumber: 1 },
+        { id: "runstop-2", stopNumber: 2 },
+      ]);
+      prisma.$transaction = jest.fn().mockResolvedValue([]);
+
+      await service.reorderRunStops("run-1", [
+        { id: "runstop-2", stopNumber: 1 },
+        { id: "runstop-1", stopNumber: 2 },
+      ]);
+
+      expect(polylineCleared()).toBe(true);
     });
   });
 

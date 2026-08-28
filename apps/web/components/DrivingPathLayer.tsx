@@ -92,11 +92,18 @@ export function DrivingPathLayer({
   strokeColor = "#3b82f6",
   strokeOpacity = 0.7,
   strokeWeight = 3,
+  precomputedPolyline,
 }: {
   waypoints: LatLng[];
   strokeColor?: string;
   strokeOpacity?: number;
   strokeWeight?: number;
+  /** Encoded road polyline already computed server-side (e.g. `Route.plannedPolyline`
+   *  or a chosen variant's `encodedPolyline`). When set, decode and render it
+   *  directly and skip the Routes API fetch entirely — a stored route never
+   *  re-bills Google per view. The straight-line fallback still applies if
+   *  decoding fails. */
+  precomputedPolyline?: string | null;
 }) {
   const map = useMap();
   const mapsLib = useMapsLibrary("maps");
@@ -119,10 +126,27 @@ export function DrivingPathLayer({
   const pathKey = React.useMemo(() => cacheKeyFor(cleaned), [cleaned]);
   const [road, setRoad] = React.useState<{ key: string; path: LatLng[] } | null>(null);
 
+  // A precomputed polyline (server-solved route, or a chosen variant) is
+  // decoded locally instead of calling the Routes API. Decode failure falls
+  // through to the straight-line fallback below — it does NOT trigger a fetch.
+  React.useEffect(() => {
+    if (!geometryLib || !precomputedPolyline) return;
+    try {
+      const decoded = geometryLib.encoding
+        .decodePath(precomputedPolyline)
+        .map((p) => ({ lat: p.lat(), lng: p.lng() }));
+      if (decoded.length >= 2) setRoad({ key: pathKey, path: decoded });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("Precomputed polyline decode failed, keeping straight line:", err);
+    }
+  }, [geometryLib, precomputedPolyline, pathKey]);
+
   // Fetch the road path (debounced — CreateRouteMap re-renders per stop
   // toggle and each distinct waypoint set should cost at most one request).
+  // Skipped entirely when a precomputed polyline was supplied.
   React.useEffect(() => {
-    if (!geometryLib || !apiKey || cleaned.length < 2) return;
+    if (precomputedPolyline || !geometryLib || !apiKey || cleaned.length < 2) return;
 
     const cached = roadPathCache.get(pathKey);
     if (cached !== undefined) {
@@ -149,7 +173,7 @@ export function DrivingPathLayer({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [geometryLib, apiKey, pathKey, cleaned]);
+  }, [geometryLib, apiKey, pathKey, cleaned, precomputedPolyline]);
 
   const isRoad = road?.key === pathKey;
   const renderPath = isRoad ? road!.path : cleaned;

@@ -18,6 +18,9 @@ import {
   Pencil,
   Trash2,
   DoorOpen,
+  Settings2,
+  GitCompare,
+  ExternalLink,
 } from "lucide-react";
 import {
   DndContext,
@@ -46,11 +49,132 @@ import {
   useReorderRunStops,
   useDeleteRouteRun,
   useUpdateRouteRunStatus,
+  useRoute,
+  useRouteSettings,
+  useUpdateRoutePlanning,
+  useRouteVariants,
+  useApplyRouteVariant,
   type RouteRunStop,
+  type Route,
+  type RouteVariant,
+  type RouteOptimizeMetric,
+  type TripOrigin,
+  type RoutePlanningEndDto,
 } from "@/lib/api/routes";
+import { useDrivers, useDriver } from "@/lib/api/drivers";
+import {
+  RoutePlanningControls,
+  EMPTY_PLANNING_ADDRESS,
+  type RoutePlanningValue,
+  type RoutePlanningDriverOption,
+} from "@/components/RoutePlanningControls";
+import { RouteVariantsPanel } from "@/components/RouteVariantsPanel";
+import { buildGoogleMapsLegs, type GmapsPoint } from "@/lib/gmaps-export";
 import { EditRunModal } from "../_components/EditRunModal";
-import { RouteMap } from "./RouteMap";
+import { RouteMap, type VariantOverlay } from "./RouteMap";
 import { ArrivedStopSheet } from "@/components/ArrivedStopSheet";
+
+// ─── Open in Google Maps export ───────────────────────────────────────────────
+//
+// Pure client-side URL building (lib/gmaps-export.ts) — no server call, no key.
+// A single leg renders as a plain link; a long stop list chunks into
+// sequential legs behind a small dropdown so a driver can tap through them.
+
+function GmapsExportButton({ points }: { points: GmapsPoint[] }) {
+  const [open, setOpen] = React.useState(false);
+  const legs = React.useMemo(() => buildGoogleMapsLegs(points), [points]);
+
+  if (legs.length === 0) return null;
+
+  const linkClass =
+    "flex items-center gap-1.5 rounded border border-surface-border px-2.5 py-1.5 text-xs font-medium text-navy/70 shadow-card transition-colors hover:border-brand-300 hover:text-navy";
+
+  if (legs.length === 1) {
+    return (
+      <a
+        href={legs[0].url}
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Stop order is preserved — Google Maps re-checks roads live."
+        className={linkClass}
+      >
+        <ExternalLink className="h-3.5 w-3.5" />
+        Open in Google Maps
+      </a>
+    );
+  }
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title="Stop order is preserved — Google Maps re-checks roads live."
+        className={linkClass}
+      >
+        <ExternalLink className="h-3.5 w-3.5" />
+        Open in Google Maps
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <ul className="absolute right-0 top-full z-20 mt-1 w-36 overflow-hidden rounded-lg border border-surface-border bg-white shadow-lg">
+            {legs.map((leg) => (
+              <li key={leg.label}>
+                <a
+                  href={leg.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setOpen(false)}
+                  className="block px-3 py-2 text-xs font-medium text-navy hover:bg-surface-raised transition-colors"
+                >
+                  {leg.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Route planning summaries ─────────────────────────────────────────────────
+
+function planningOriginLabel(route?: Route | null): string {
+  if (!route) return "Loading…";
+  if (route.originKind === "DRIVER") return route.depotAddress || "Driver's home base";
+  if (route.originKind === "ADDRESS") return route.depotAddress || "Custom address";
+  return route.depotAddress || "Tenant depot";
+}
+
+function planningEndLabel(route?: Route | null): string {
+  if (!route) return "Loading…";
+  switch (route.endKind) {
+    case "RETURN_TO_START":
+      return "Return to start";
+    case "DRIVER_HOME":
+      return route.endAddress || "Driver's home";
+    case "ADDRESS":
+      return route.endAddress || "Custom address";
+    default:
+      return "End at last stop";
+  }
+}
+
+/** Mirrors the server's variant configs (route-optimization.service.ts §WP3) so
+ *  the client can round-trip optimizeBy/avoidTolls when applying a chosen
+ *  variant — `RouteVariant` itself only carries stopIds/duration/distance/etc.
+ *  When the route already enforces avoidTolls, every config (including
+ *  Fastest/Shortest) is solved under avoidTolls too — mirror that here. */
+function variantSettings(
+  key: RouteVariant["key"],
+  currentAvoidTolls: boolean,
+): { optimizeBy: RouteOptimizeMetric; avoidTolls: boolean } {
+  if (key === "NO_TOLLS") return { optimizeBy: "TIME", avoidTolls: true };
+  if (key === "SHORTEST") return { optimizeBy: "DISTANCE", avoidTolls: currentAvoidTolls };
+  return { optimizeBy: "TIME", avoidTolls: currentAvoidTolls };
+}
 
 // ─── Stop status icon ─────────────────────────────────────────────────────────
 
@@ -243,6 +367,65 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
     if (run?.stops) setLocalStops(run.stops);
   }, [run?.stops]);
 
+  // ── Route planning (start/end/tolls/objective) + variants + Google Maps export ──
+  const { data: route } = useRoute(run?.routeId ?? "");
+  const { data: routeSettings } = useRouteSettings();
+  // The ROUTE's driver, not the run's: a "start from driver's home" origin is a
+  // property of the template and must not follow a per-run driver swap.
+  const { data: routeDriver } = useDriver(route?.driverId ?? "");
+  const { data: activeDriversData } = useDrivers({ status: "ACTIVE", limit: 100 });
+  const updatePlanning = useUpdateRoutePlanning();
+  const routeVariants = useRouteVariants();
+  const applyVariant = useApplyRouteVariant();
+
+  const [planningCardOpen, setPlanningCardOpen] = React.useState(false);
+  const [showPlanningModal, setShowPlanningModal] = React.useState(false);
+  const [planningValue, setPlanningValue] = React.useState<RoutePlanningValue | null>(null);
+  // What the modal was seeded with. `origin`/`end` are re-resolved server-side
+  // (geocode / driver lookup) on every PATCH that carries them, so sending an
+  // untouched one can hard-400 an unrelated toll toggle — or silently move the
+  // depot. Diffing against this snapshot keeps the PATCH to what changed.
+  const [planningSnapshot, setPlanningSnapshot] = React.useState<RoutePlanningValue | null>(null);
+  const [showVariants, setShowVariants] = React.useState(false);
+  const [selectedVariantKey, setSelectedVariantKey] = React.useState<RouteVariant["key"] | null>(
+    null,
+  );
+
+  const gmapsPoints: GmapsPoint[] = React.useMemo(() => {
+    const points: GmapsPoint[] = [];
+    if (route?.depotLat != null && route?.depotLng != null) {
+      points.push({ lat: route.depotLat, lng: route.depotLng });
+    }
+    const orderedStops = localStops.length ? localStops : (run?.stops ?? []);
+    [...orderedStops]
+      .sort((a, b) => a.stopNumber - b.stopNumber)
+      .forEach((s) => {
+        if (s.customerAddress?.lat != null && s.customerAddress?.lng != null) {
+          points.push({ lat: s.customerAddress.lat, lng: s.customerAddress.lng });
+        }
+      });
+    if (
+      route?.endKind &&
+      route.endKind !== "NONE" &&
+      route.endLat != null &&
+      route.endLng != null
+    ) {
+      points.push({ lat: route.endLat, lng: route.endLng });
+    }
+    return points;
+  }, [route, localStops, run?.stops]);
+
+  const mapVariantOverlays: VariantOverlay[] = React.useMemo(() => {
+    if (!showVariants) return [];
+    return (routeVariants.data?.variants ?? [])
+      .filter((v): v is RouteVariant & { encodedPolyline: string } => !!v.encodedPolyline)
+      .map((v) => ({
+        encodedPolyline: v.encodedPolyline,
+        color: "#3b82f6",
+        selected: v.key === selectedVariantKey,
+      }));
+  }, [showVariants, routeVariants.data, selectedVariantKey]);
+
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -289,6 +472,8 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
             "Couldn't reach route intelligence (server error). Used estimated distance instead.",
           ORS_NETWORK_ERROR:
             "Couldn't reach route intelligence (network error). Used estimated distance instead.",
+          GOOGLE_MATRIX_FALLBACK:
+            "Live road distances were unavailable — used estimated distances instead. Check the Google Maps key / Routes API.",
         };
         const hint =
           (result.fallbackReason && fallbackHints[result.fallbackReason]) ??
@@ -331,6 +516,189 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
     );
   };
 
+  const planningDriverOptions: RoutePlanningDriverOption[] = (activeDriversData?.data ?? []).map(
+    (d) => ({
+      id: d.id,
+      name: d.contactName,
+      hasHome: d.homeLat != null && d.homeLng != null,
+    }),
+  );
+
+  const buildPlanningValue = (): RoutePlanningValue => {
+    const originKind = (route?.originKind ?? "TENANT") as RoutePlanningValue["originKind"];
+    const endKind = route?.endKind ?? "NONE";
+    return {
+      originKind,
+      originAddress:
+        originKind === "ADDRESS"
+          ? { ...EMPTY_PLANNING_ADDRESS, line1: route?.depotAddress ?? "" }
+          : EMPTY_PLANNING_ADDRESS,
+      originSummary: {
+        depotAddress: routeSettings?.depotAddress ?? null,
+        hasDepot: routeSettings?.depotLat != null && routeSettings?.depotLng != null,
+        driverName: routeDriver?.contactName ?? null,
+        hasDriver: !!route?.driverId,
+        hasDriverHome: routeDriver?.homeLat != null && routeDriver?.homeLng != null,
+        driverHref: route?.driverId ? `/drivers/${route.driverId}` : null,
+      },
+      end: {
+        type: endKind,
+        driverId: undefined,
+        address:
+          endKind === "ADDRESS"
+            ? { ...EMPTY_PLANNING_ADDRESS, line1: route?.endAddress ?? "" }
+            : EMPTY_PLANNING_ADDRESS,
+      },
+      avoidTolls: route?.avoidTolls ?? false,
+      optimizeBy: route?.optimizeBy ?? "TIME",
+    };
+  };
+
+  const handleOpenPlanningModal = () => {
+    const seeded = buildPlanningValue();
+    setPlanningValue(seeded);
+    setPlanningSnapshot(seeded);
+    setShowPlanningModal(true);
+  };
+
+  const handleSavePlanning = () => {
+    if (!planningValue || !run?.routeId) return;
+    const originChanged =
+      !planningSnapshot ||
+      planningValue.originKind !== planningSnapshot.originKind ||
+      JSON.stringify(planningValue.originAddress) !==
+        JSON.stringify(planningSnapshot.originAddress);
+    const endChanged =
+      !planningSnapshot ||
+      planningValue.end.type !== planningSnapshot.end.type ||
+      planningValue.end.driverId !== planningSnapshot.end.driverId ||
+      JSON.stringify(planningValue.end.address) !== JSON.stringify(planningSnapshot.end.address);
+
+    // The DRIVER origin means "the route template's driver's home" — reading it
+    // off the RUN would silently retarget the depot to a substitute driver's
+    // house after a Change Driver.
+    const origin: TripOrigin | undefined = !originChanged
+      ? undefined
+      : planningValue.originKind === "TENANT"
+        ? { type: "TENANT" }
+        : planningValue.originKind === "DRIVER"
+          ? { type: "DRIVER", driverId: route?.driverId ?? "" }
+          : { type: "ADDRESS", ...planningValue.originAddress };
+    const end: RoutePlanningEndDto | undefined = !endChanged
+      ? undefined
+      : planningValue.end.type === "DRIVER_HOME"
+        ? { type: "DRIVER_HOME", driverId: planningValue.end.driverId }
+        : planningValue.end.type === "ADDRESS"
+          ? { type: "ADDRESS", ...planningValue.end.address }
+          : { type: planningValue.end.type };
+    // Same snapshot-diff for the scalar settings — a no-op save must not claim
+    // "re-optimize recommended" or null the stored polyline server-side.
+    const avoidTolls =
+      !planningSnapshot || planningValue.avoidTolls !== planningSnapshot.avoidTolls
+        ? planningValue.avoidTolls
+        : undefined;
+    const optimizeBy =
+      !planningSnapshot || planningValue.optimizeBy !== planningSnapshot.optimizeBy
+        ? planningValue.optimizeBy
+        : undefined;
+
+    updatePlanning.mutate(
+      {
+        routeId: run.routeId,
+        origin,
+        end,
+        avoidTolls,
+        optimizeBy,
+      },
+      {
+        onSuccess: (result) => {
+          setShowPlanningModal(false);
+          setShowVariants(false);
+          setSelectedVariantKey(null);
+          toast({
+            title: "Route planning updated",
+            description: result.reoptimizeRecommended
+              ? "Re-optimize to apply the new settings to stop order."
+              : undefined,
+            variant: "success",
+            action: result.reoptimizeRecommended
+              ? { label: "Re-optimize now", onClick: handleOptimize }
+              : undefined,
+          });
+        },
+        onError: (err: any) =>
+          toast({
+            title: "Couldn't update route planning",
+            description: err?.response?.data?.message ?? err.message,
+            variant: "error",
+          }),
+      },
+    );
+  };
+
+  const handleCompareRoutes = () => {
+    if (!run?.routeId) return;
+    setShowVariants(true);
+    setSelectedVariantKey(null);
+    routeVariants.mutate(run.routeId, {
+      onSuccess: (result) => {
+        // Default to Fastest; fall back to whatever came back first (the
+        // solver-only fallback returns a single variant of a different key).
+        const preferred = result.variants.find((v) => v.key === "FASTEST") ?? result.variants[0];
+        if (preferred) setSelectedVariantKey(preferred.key);
+      },
+      onError: (err: any) => {
+        toast({
+          title: "Couldn't compare routes",
+          description: err?.response?.data?.message ?? err.message,
+          variant: "error",
+        });
+        setShowVariants(false);
+      },
+    });
+  };
+
+  const handleApplyVariant = (variant: RouteVariant) => {
+    if (!run?.routeId) return;
+    const settings = variantSettings(variant.key, route?.avoidTolls ?? false);
+    // The variant is solved against the route TEMPLATE, but this page shows the
+    // RUN's stop list. Naming the run makes the server re-number both in ONE
+    // transaction — no follow-up optimize (which would null the polyline the
+    // apply just stored) and no window where list and map disagree.
+    const reorderRun = run.status === "SCHEDULED";
+    applyVariant.mutate(
+      {
+        routeId: run.routeId,
+        key: variant.key,
+        stopIds: variant.stopIds,
+        optimizeBy: settings.optimizeBy,
+        avoidTolls: settings.avoidTolls,
+        encodedPolyline: variant.encodedPolyline,
+        ...(reorderRun ? { runId: params.id } : {}),
+      },
+      {
+        onSuccess: () => {
+          setShowVariants(false);
+          setSelectedVariantKey(null);
+          queryClient.invalidateQueries({ queryKey: ["route-runs", params.id] });
+          toast({
+            title: "Route updated",
+            description: reorderRun
+              ? "The chosen route is now saved and this run's stops were reordered to match."
+              : "The chosen route is saved for this route's future runs.",
+            variant: "success",
+          });
+        },
+        onError: (err: any) =>
+          toast({
+            title: "Couldn't apply route",
+            description: err?.response?.data?.message ?? err.message,
+            variant: "error",
+          }),
+      },
+    );
+  };
+
   const name = run?.route?.name ?? "Route";
   React.useEffect(() => {
     setTitle(name);
@@ -367,6 +735,9 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
   const canEdit = isOperator && run.status !== "COMPLETED" && run.status !== "CANCELLED";
   const canDelete = isOperator && run.status === "SCHEDULED";
   const canCancel = isOperator && (run.status === "IN_PROGRESS" || run.status === "SCHEDULED");
+
+  const selectedVariant =
+    routeVariants.data?.variants.find((v) => v.key === selectedVariantKey) ?? null;
 
   return (
     <div className="flex h-[calc(100vh-64px)] flex-col overflow-hidden">
@@ -426,6 +797,41 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
         <p className="text-sm text-navy/70">
           This will permanently remove this scheduled run. Stops and delivery records will be lost.
         </p>
+      </Modal>
+
+      <Modal
+        open={showPlanningModal}
+        onClose={() => setShowPlanningModal(false)}
+        title="Route planning"
+        description="Choose where this route starts and ends, tolls, and the optimization objective."
+        className="max-h-[85vh] overflow-y-auto"
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => setShowPlanningModal(false)}
+              disabled={updatePlanning.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSavePlanning}
+              loading={updatePlanning.isPending}
+              disabled={!planningValue}
+            >
+              Save
+            </Button>
+          </>
+        }
+      >
+        {planningValue && (
+          <RoutePlanningControls
+            value={planningValue}
+            onChange={setPlanningValue}
+            drivers={planningDriverOptions}
+            disabled={updatePlanning.isPending}
+          />
+        )}
       </Modal>
 
       {/* Top bar */}
@@ -510,6 +916,9 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
               </Button>
             )}
 
+            {/* Open in Google Maps */}
+            <GmapsExportButton points={gmapsPoints} />
+
             {/* Dispatch Panel */}
             <Button variant="primary" size="sm" href={`/routes/${run.id}/dispatch`}>
               Dispatch Panel
@@ -558,9 +967,109 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
           )}
         </div>
 
-        {/* ── Right: Map (60%) ── */}
+        {/* ── Right: Route planning + Map (60%) ── */}
         <div className="flex flex-1 flex-col overflow-hidden">
-          <RouteMap stops={stops} />
+          <div className="shrink-0 border-b border-surface-border bg-white">
+            <button
+              type="button"
+              onClick={() => setPlanningCardOpen((v) => !v)}
+              className="flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left"
+            >
+              <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-navy/70">
+                <Settings2 className="h-3.5 w-3.5" />
+                Route planning
+              </span>
+              {planningCardOpen ? (
+                <ChevronDown className="h-4 w-4 text-navy/40" />
+              ) : (
+                <ChevronRight className="h-4 w-4 text-navy/40" />
+              )}
+            </button>
+            {planningCardOpen && (
+              <div className="space-y-3 px-4 pb-3">
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs text-navy/80">
+                  <div>
+                    <span className="font-medium text-navy">Start:</span>{" "}
+                    {planningOriginLabel(route)}
+                  </div>
+                  <div>
+                    <span className="font-medium text-navy">End:</span> {planningEndLabel(route)}
+                  </div>
+                  <div>
+                    <span className="font-medium text-navy">Tolls:</span>{" "}
+                    {route?.avoidTolls ? "Avoided" : "Allowed"}
+                  </div>
+                  <div>
+                    <span className="font-medium text-navy">Optimize by:</span>{" "}
+                    {route?.optimizeBy === "DISTANCE" ? "Shortest distance" : "Fastest time"}
+                  </div>
+                </div>
+
+                {canEdit && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleOpenPlanningModal}
+                      disabled={!route}
+                    >
+                      <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                      Edit
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleCompareRoutes}
+                      disabled={!route || routeVariants.isPending}
+                    >
+                      <GitCompare className="mr-1.5 h-3.5 w-3.5" />
+                      {routeVariants.isPending ? "Comparing…" : "Compare routes"}
+                    </Button>
+                  </div>
+                )}
+
+                {showVariants && (
+                  <div className="space-y-2 rounded-lg border border-surface-border bg-surface-raised p-3">
+                    <RouteVariantsPanel
+                      variants={routeVariants.data?.variants ?? []}
+                      selectedKey={selectedVariantKey}
+                      onSelect={(v) => setSelectedVariantKey(v.key)}
+                      loading={routeVariants.isPending}
+                    />
+                    {!routeVariants.isPending &&
+                      (routeVariants.data?.variants.length ?? 0) === 0 && (
+                        <p className="text-xs text-navy/70">
+                          No route comparison available for this route.
+                        </p>
+                      )}
+                    {!routeVariants.isPending && selectedVariant && (
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setShowVariants(false)}
+                        >
+                          Close
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() => handleApplyVariant(selectedVariant)}
+                          disabled={applyVariant.isPending}
+                        >
+                          {applyVariant.isPending ? "Applying…" : "Use this route"}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <RouteMap
+            stops={stops}
+            plannedPolyline={route?.plannedPolyline}
+            variantOverlays={mapVariantOverlays}
+          />
         </div>
       </div>
     </div>

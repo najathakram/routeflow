@@ -75,7 +75,17 @@ export interface RouteRunStop {
 
 export interface RouteRun {
   id: string;
-  route?: { id: string; name: string };
+  route?: {
+    id: string;
+    name: string;
+    kind?: "SCHEDULED" | "ADHOC";
+    depotLat?: number | null;
+    depotLng?: number | null;
+    depotAddress?: string | null;
+    endKind?: "NONE" | "RETURN_TO_START" | "DRIVER_HOME" | "ADDRESS";
+    endLat?: number | null;
+    endLng?: number | null;
+  };
   driver?: { id: string; contactName: string };
   status: "SCHEDULED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
   scheduledDate: string;

@@ -258,94 +258,94 @@ File ownership is disjoint; WP2 pins the client API layer every page WP compiles
   `apps/web/lib/api/orders.ts`
 - **dependsOn:** — (WP1 is a runtime dependency only; the response shape is pinned above)
 - **brief:**
-  1. `addons.ts` — append after `MSRP_ADDON` (:27), same comment style:
+  1.  `addons.ts` — append after `MSRP_ADDON` (:27), same comment style:
 
-     ```ts
-     // ─── Sales agents & commissions (flag.sales_agents) ───────────────────────
-     //
-     // Read with `useHasAddon(SALES_AGENTS_ADDON)` (lib/api/tobacco.ts) to gate the
-     // sales-agents / commissions surfaces. UX gate only — every /sales-agents and
-     // /commission-statements route independently 403s via PlanFlagGuard.
-     export const SALES_AGENTS_ADDON = "sales_agents";
-     ```
+      ```ts
+      // ─── Sales agents & commissions (flag.sales_agents) ───────────────────────
+      //
+      // Read with `useHasAddon(SALES_AGENTS_ADDON)` (lib/api/tobacco.ts) to gate the
+      // sales-agents / commissions surfaces. UX gate only — every /sales-agents and
+      // /commission-statements route independently 403s via PlanFlagGuard.
+      export const SALES_AGENTS_ADDON = "sales_agents";
+      ```
 
-  2. `lib/api/sales-agents.ts` (new) — ALL types + hooks for both page families. Types
-     (money/rate fields typed `number | string` — Prisma Decimal over JSON):
-     `SalesAgent` (+ list extras `openAssignmentCount`, `currentRatePct`),
-     `SalesAgentRate`, `AgentAssignmentOpen` (`{id, effectiveFrom, customer?: {id, businessName}}`),
-     `SalesAgentDetail` (`SalesAgent & {rates, assignments, accrualTotals}`),
-     `CommissionAccrualRow` (`{…, invoice: {id, invoiceNumber}, customer: {id, businessName},
+  2.  `lib/api/sales-agents.ts` (new) — ALL types + hooks for both page families. Types
+      (money/rate fields typed `number | string` — Prisma Decimal over JSON):
+      `SalesAgent` (+ list extras `openAssignmentCount`, `currentRatePct`),
+      `SalesAgentRate`, `AgentAssignmentOpen` (`{id, effectiveFrom, customer?: {id, businessName}}`),
+      `SalesAgentDetail` (`SalesAgent & {rates, assignments, accrualTotals}`),
+      `CommissionAccrualRow` (`{…, invoice: {id, invoiceNumber}, customer: {id, businessName},
 adjustmentsTotal, drift, status, rateSource, basisDate}`),
-     `CurrentAssignment` (`{assignment: {id, effectiveFrom, agent: {id, name, status, deletedAt}} | null,
+      `CurrentAssignment` (`{assignment: {id, effectiveFrom, agent: {id, name, status, deletedAt}} | null,
 customerRatePct: number | null}`),
-     `CommissionStatement` (`{…, agent: {id, name}, totalAmount, paidAmount, status,
+      `CommissionStatement` (`{…, agent: {id, name}, totalAmount, paidAmount, status,
 periodFrom, periodTo, approvedAt}`), `CommissionStatementDetail` (+ `lines[]`,
-     `payouts[]`), `CommissionStatementLine`
-     (`{kind: "CLAIM"|"ADJUSTMENT"|"CARRYFORWARD", amount, description, accrual?, adjustment?, carriedFrom?}`),
-     `CommissionPayout`. Plus display maps:
-     `RATE_SOURCE_LABELS = { ORDER_OVERRIDE: "Order override", CUSTOMER_RATE: "Customer rate", AGENT_DEFAULT: "Agent default", NONE: "No rate" }`
-     and a `pctLabel(v: number | string)` helper returning `Number(v) + "%"`.
-     **Every query hook takes an `opts?: { enabled?: boolean }` gate** — exact pattern:
+      `payouts[]`), `CommissionStatementLine`
+      (`{kind: "CLAIM"|"ADJUSTMENT"|"CARRYFORWARD", amount, description, accrual?, adjustment?, carriedFrom?}`),
+      `CommissionPayout`. Plus display maps:
+      `RATE_SOURCE_LABELS = { ORDER_OVERRIDE: "Order override", CUSTOMER_RATE: "Customer rate", AGENT_DEFAULT: "Agent default", NONE: "No rate" }`
+      and a `pctLabel(v: number | string)` helper returning `Number(v) + "%"`.
+      **Every query hook takes an `opts?: { enabled?: boolean }` gate** — exact pattern:
 
-     ```ts
-     export function useSalesAgents(
-       params?: { status?: string; search?: string; includeDeleted?: boolean },
-       opts?: { enabled?: boolean },
-     ) {
-       return useQuery<SalesAgent[]>({
-         queryKey: ["sales-agents", params],
-         queryFn: () => apiClient.get("/sales-agents", { params }).then((r) => r.data),
-         // NEVER fire while the tenant lacks the addon — a gated GET 403s and the
-         // PLAN_GATE bridge (api-client.ts) would toast on every page load.
-         enabled: opts?.enabled !== false,
-       });
-     }
+                       ```ts
+                       export function useSalesAgents(
+                         params?: { status?: string; search?: string; includeDeleted?: boolean },
+                         opts?: { enabled?: boolean },
+                       ) {
+                         return useQuery<SalesAgent[]>({
+                           queryKey: ["sales-agents", params],
+                           queryFn: () => apiClient.get("/sales-agents", { params }).then((r) => r.data),
+                           // NEVER fire while the tenant lacks the addon — a gated GET 403s and the
+                           // PLAN_GATE bridge (api-client.ts) would toast on every page load.
+                           enabled: opts?.enabled !== false,
+                         });
+                       }
 
-     export function useCustomerCurrentAgent(customerId: string, opts?: { enabled?: boolean }) {
-       return useQuery<CurrentAssignment>({
-         queryKey: ["sales-agents", "current-assignment", customerId],
-         queryFn: () =>
-           apiClient
-             .get("/sales-agents/assignments/current", { params: { customerId } })
-             .then((r) => r.data),
-         enabled: !!customerId && opts?.enabled !== false,
-       });
-     }
-     ```
+                       export function useCustomerCurrentAgent(customerId: string, opts?: { enabled?: boolean }) {
+                         return useQuery<CurrentAssignment>({
+                           queryKey: ["sales-agents", "current-assignment", customerId],
+                           queryFn: () =>
+                             apiClient
+                               .get("/sales-agents/assignments/current", { params: { customerId } })
+                               .then((r) => r.data),
+                           enabled: !!customerId && opts?.enabled !== false,
+                         });
+                       }
+                       ```
 
-     Remaining hooks (same shapes; mutations follow `useUpdateCustomer`'s invalidate
-     style, lib/api/customers.ts:109-119): `useSalesAgent(id, opts)`,
-     `useAgentAccruals(id, params, opts)`, `useCreateSalesAgent`, `useUpdateSalesAgent`,
-     `useUpdateSalesAgentStatus`, `useDeleteSalesAgent`, `useAddAgentRate`,
-     `useRemoveAgentRate`, `useAddCustomerRate`, `useAddAssignment(agentId)`,
-     `useBulkAssign(agentId)`, `useCloseAssignment`, `useRecomputeAgent`,
-     `useCommissionStatements(params, opts)`, `useCommissionStatement(id, opts)`,
-     `useGenerateStatement`, `useApproveStatement`, `useVoidStatement`,
-     `useRecordCommissionPayout`. Invalidation rules: agent/rate/status mutations →
-     `["sales-agents"]`; assignment mutations → `["sales-agents"]` AND
-     `["sales-agents", "current-assignment", customerId]`; statement mutations →
-     `["commission-statements"]` AND `["sales-agents"]` (claims move accrual state).
-     Rate/assignment mutation results may carry `recompute?: { invoicesSynced: number }`
-     — type it so pages can toast it.
+                       Remaining hooks (same shapes; mutations follow `useUpdateCustomer`'s invalidate
+                       style, lib/api/customers.ts:109-119): `useSalesAgent(id, opts)`,
+                       `useAgentAccruals(id, params, opts)`, `useCreateSalesAgent`, `useUpdateSalesAgent`,
+                       `useUpdateSalesAgentStatus`, `useDeleteSalesAgent`, `useAddAgentRate`,
+                       `useRemoveAgentRate`, `useAddCustomerRate`, `useAddAssignment(agentId)`,
+                       `useBulkAssign(agentId)`, `useCloseAssignment`, `useRecomputeAgent`,
+                       `useCommissionStatements(params, opts)`, `useCommissionStatement(id, opts)`,
+                       `useGenerateStatement`, `useApproveStatement`, `useVoidStatement`,
+                       `useRecordCommissionPayout`. Invalidation rules: agent/rate/status mutations →
+                       `["sales-agents"]`; assignment mutations → `["sales-agents"]` AND
+                       `["sales-agents", "current-assignment", customerId]`; statement mutations →
+                       `["commission-statements"]` AND `["sales-agents"]` (claims move accrual state).
+                       Rate/assignment mutation results may carry `recompute?: { invoicesSynced: number }`
+                       — type it so pages can toast it.
 
-  3. `lib/api/orders.ts` — three additive edits: `Order` gains
-     `commissionRatePct?: number | string | null` (beside `orderDate`, :31);
-     `useCreateOrder`'s dto (:242-267) gains
-     `/** Staff-only per-order commission override; 0 = exempt. */ commissionRatePct?: number;`;
-     new hook:
+  3.  `lib/api/orders.ts` — three additive edits: `Order` gains
+      `commissionRatePct?: number | string | null` (beside `orderDate`, :31);
+      `useCreateOrder`'s dto (:242-267) gains
+      `/** Staff-only per-order commission override; 0 = exempt. */ commissionRatePct?: number;`;
+      new hook:
 
-     ```ts
-     export function usePatchOrderCommissionRate() {
-       const qc = useQueryClient();
-       return useMutation<Order, Error, { id: string; commissionRatePct: number | null }>({
-         mutationFn: ({ id, commissionRatePct }) =>
-           apiClient
-             .patch(`/orders/${id}/commission-rate`, { commissionRatePct })
-             .then((r) => r.data),
-         onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["orders", vars.id] }),
-       });
-     }
-     ```
+      ```ts
+      export function usePatchOrderCommissionRate() {
+        const qc = useQueryClient();
+        return useMutation<Order, Error, { id: string; commissionRatePct: number | null }>({
+          mutationFn: ({ id, commissionRatePct }) =>
+            apiClient
+              .patch(`/orders/${id}/commission-rate`, { commissionRatePct })
+              .then((r) => r.data),
+          onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["orders", vars.id] }),
+        });
+      }
+      ```
 
 ### WP3 — Nav wiring (dashboard shell)
 
