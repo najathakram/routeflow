@@ -6,12 +6,12 @@ import {
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import Anthropic from "@anthropic-ai/sdk";
 import sharp from "sharp";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import { DuplicateMatchService } from "../import/duplicate-match.service";
 import { StorageService } from "../storage/storage.service";
 import { matchSupplier } from "../import/supplier-match";
@@ -85,8 +85,8 @@ export class SupplierStatementsService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly configService: ConfigService,
     private readonly systemConfig: SystemConfigService,
+    private readonly platformConfig: PlatformConfigService,
     // Standalone module, imported directly — importing ImportModule or
     // VendorBillsModule here would deadlock the injector (see
     // duplicate-match.module.ts).
@@ -107,12 +107,9 @@ export class SupplierStatementsService {
     const prior = await this.findScanByHash(fileHash);
     if (prior) return this.rematchStoredScan(prior);
 
-    // DB-stored key takes precedence over env var.
-    const storedKey = await this.systemConfig.get("anthropic.apiKey");
-    const apiKey =
-      storedKey && storedKey.length > 0
-        ? storedKey
-        : this.configService.get<string>("ANTHROPIC_API_KEY");
+    // Key priority: tenant key (SystemConfig) → platform key → env var.
+    const tenantKey = await this.systemConfig.get("anthropic.apiKey");
+    const apiKey = await this.platformConfig.resolveAnthropicKey(tenantKey);
     if (!apiKey || apiKey.length === 0) {
       throw new BadRequestException(
         "AI statement scanning is not available. Please contact your system administrator to configure the ANTHROPIC_API_KEY.",
@@ -213,6 +210,12 @@ IMPORTANT: "amount" is always a positive magnitude — use "kind" to say whether
     } catch (err) {
       const status = (err as { status?: number })?.status;
       this.logger.error(`scanStatement: Anthropic call failed (status ${status}): ${String(err)}`);
+      await this.platformConfig.recordAiUsage({
+        tenantId: this.prisma.getTenantId(),
+        feature: "ocr.supplier_statement",
+        model: STATEMENT_MODEL,
+        success: false,
+      });
       if (status === 401 || status === 403) {
         throw new BadRequestException({
           message:
@@ -236,6 +239,16 @@ IMPORTANT: "amount" is always a positive magnitude — use "kind" to say whether
       });
     }
     const scanDurationMs = Date.now() - startedAt;
+
+    // The call succeeded, so the spend is real — record it even if parsing
+    // the response fails below.
+    await this.platformConfig.recordAiUsage({
+      tenantId: this.prisma.getTenantId(),
+      feature: "ocr.supplier_statement",
+      model: STATEMENT_MODEL,
+      inputTokens: message.usage?.input_tokens ?? 0,
+      outputTokens: message.usage?.output_tokens ?? 0,
+    });
 
     const content = message.content[0];
     if (content.type !== "text") {

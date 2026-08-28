@@ -1,5 +1,4 @@
 import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { PrismaService } from "../prisma/prisma.service";
 import {
@@ -25,9 +24,17 @@ import { InvoiceService } from "./invoice.service";
 import { StorageService } from "../storage/storage.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import Anthropic from "@anthropic-ai/sdk";
 import { compressDocument } from "../storage/compress.util";
 import { IRS_SYSTEM_CATEGORIES } from "./irs-categories.constant";
+
+/**
+ * Receipt-extraction model. Receipts are small documents where a misread line
+ * lands directly in the books, so this path pays for the most capable model;
+ * kept as its own constant so it can diverge from the OCR scanners'.
+ */
+const RECEIPT_MODEL = "claude-opus-4-5-20251101";
 
 // Cash-basis window on InvoicePayment: the settled (bank) date when one is recorded,
 // otherwise the recorded payment date — legacy rows carry no settledAt and therefore
@@ -43,8 +50,8 @@ export class BookkeepingService implements OnModuleInit {
     private readonly invoiceService: InvoiceService,
     private readonly storage: StorageService,
     private readonly vendorBillsService: VendorBillsService,
-    private readonly configService: ConfigService,
     private readonly systemConfig: SystemConfigService,
+    private readonly platformConfig: PlatformConfigService,
     private readonly commissionEngine: CommissionEngineService,
   ) {}
 
@@ -770,11 +777,9 @@ export class BookkeepingService implements OnModuleInit {
     const receiptBuffer = await this.storage.download(expense.receiptKey);
     const mimeType = (expense as any).receiptMimeType ?? "image/jpeg";
 
-    // Retrieve Anthropic API key
-    const storedKey = await this.systemConfig.get("anthropic.apiKey");
-    const apiKey = storedKey?.length
-      ? storedKey
-      : this.configService.get<string>("ANTHROPIC_API_KEY");
+    // Key priority: tenant key (SystemConfig) → platform key → env var.
+    const tenantKey = await this.systemConfig.get("anthropic.apiKey");
+    const apiKey = await this.platformConfig.resolveAnthropicKey(tenantKey);
     if (!apiKey) throw new BadRequestException("Anthropic API key not configured");
 
     const anthropic = new Anthropic({ apiKey });
@@ -788,21 +793,42 @@ export class BookkeepingService implements OnModuleInit {
         } as any)
       : { type: "image", source: { type: "base64", media_type: mimeType, data: base64 } };
 
-    const response = await anthropic.messages.create({
-      model: "claude-opus-4-5-20251101",
-      max_tokens: 2048,
-      messages: [
-        {
-          role: "user",
-          content: [
-            fileBlock,
-            {
-              type: "text",
-              text: `Extract all line items from this receipt/invoice. Return valid JSON only:\n{"vendor":"...","date":"YYYY-MM-DD or null","total":0.00,"items":[{"description":"...","qty":1,"unitCost":0.00,"amount":0.00}]}`,
-            },
-          ],
-        },
-      ],
+    let response: Anthropic.Message;
+    try {
+      response = await anthropic.messages.create({
+        model: RECEIPT_MODEL,
+        max_tokens: 2048,
+        messages: [
+          {
+            role: "user",
+            content: [
+              fileBlock,
+              {
+                type: "text",
+                text: `Extract all line items from this receipt/invoice. Return valid JSON only:\n{"vendor":"...","date":"YYYY-MM-DD or null","total":0.00,"items":[{"description":"...","qty":1,"unitCost":0.00,"amount":0.00}]}`,
+              },
+            ],
+          },
+        ],
+      });
+    } catch (err) {
+      await this.platformConfig.recordAiUsage({
+        tenantId: this.prisma.getTenantId(),
+        feature: "ocr.expense_receipt",
+        model: RECEIPT_MODEL,
+        success: false,
+      });
+      throw err;
+    }
+
+    // The call succeeded, so the spend is real — record it even if parsing
+    // the response fails below.
+    await this.platformConfig.recordAiUsage({
+      tenantId: this.prisma.getTenantId(),
+      feature: "ocr.expense_receipt",
+      model: RECEIPT_MODEL,
+      inputTokens: response.usage?.input_tokens ?? 0,
+      outputTokens: response.usage?.output_tokens ?? 0,
     });
 
     let parsed: any = {};

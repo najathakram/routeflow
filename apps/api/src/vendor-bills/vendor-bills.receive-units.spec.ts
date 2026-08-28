@@ -1,5 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { ConfigService } from "@nestjs/config";
+import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import { Prisma } from "@prisma/client";
 import { VendorBillsService } from "./vendor-bills.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -86,7 +86,13 @@ async function makeService(): Promise<{
     providers: [
       VendorBillsService,
       { provide: PrismaService, useValue: prisma },
-      { provide: ConfigService, useValue: { get: jest.fn() } },
+      {
+        provide: PlatformConfigService,
+        useValue: {
+          resolveAnthropicKey: jest.fn().mockResolvedValue(null),
+          recordAiUsage: jest.fn(),
+        },
+      },
       { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
       {
         provide: DuplicateMatchService,

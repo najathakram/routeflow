@@ -1,6 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
-import { ConfigService } from "@nestjs/config";
+import { PlatformConfigService } from "../platform-admin/platform-config.service";
 
 // Mock invoice.service.ts to avoid loading @react-pdf/renderer (ESM-only)
 jest.mock("./invoice.service", () => ({
@@ -57,7 +57,13 @@ describe("BookkeepingService.bulkMarkPaid", () => {
           provide: VendorBillsService,
           useValue: { createFromExpense: jest.fn().mockResolvedValue(undefined) },
         },
-        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(null) } },
+        {
+          provide: PlatformConfigService,
+          useValue: {
+            resolveAnthropicKey: jest.fn().mockResolvedValue(null),
+            recordAiUsage: jest.fn(),
+          },
+        },
         {
           provide: SystemConfigService,
           useValue: {

@@ -11,6 +11,8 @@ import { InventoryModule } from "../inventory/inventory.module";
 // EntitlementsModule depends only on the global PrismaService — it supplies
 // PlanFlagGuard for the controller's @RequirePlanFlag("flag.ap_bills") gate.
 import { EntitlementsModule } from "../billing/entitlements.module";
+// Supplies PlatformConfigService: unified Anthropic key resolution + AI usage metering.
+import { PlatformAdminModule } from "../platform-admin/platform-admin.module";
 
 @Module({
   imports: [
@@ -22,6 +24,7 @@ import { EntitlementsModule } from "../billing/entitlements.module";
     StorageModule,
     InventoryModule,
     EntitlementsModule,
+    PlatformAdminModule,
   ],
   controllers: [VendorBillsController],
   providers: [VendorBillsService],

@@ -5,11 +5,11 @@ import {
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { VendorBillsService } from "./vendor-bills.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import { DuplicateMatchService } from "../import/duplicate-match.service";
 import { ProductAliasService } from "../import/product-alias.service";
 import { StorageService } from "../storage/storage.service";
@@ -127,7 +127,13 @@ describe("VendorBillsService", () => {
       providers: [
         VendorBillsService,
         { provide: PrismaService, useValue: prisma },
-        { provide: ConfigService, useValue: { get: jest.fn() } },
+        {
+          provide: PlatformConfigService,
+          useValue: {
+            resolveAnthropicKey: jest.fn().mockResolvedValue(null),
+            recordAiUsage: jest.fn(),
+          },
+        },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: DuplicateMatchService, useValue: dupMatch },
         { provide: StorageService, useValue: storage },
@@ -1174,14 +1180,22 @@ describe("VendorBillsService", () => {
 
   describe("scanInvoice", () => {
     const jpegPage = { buffer: Buffer.from("img"), mimeType: "image/jpeg" };
+    let recordAiUsage: jest.Mock;
 
     beforeEach(async () => {
+      recordAiUsage = jest.fn();
       // Provide an API key so the scan reaches the Anthropic call.
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           VendorBillsService,
           { provide: PrismaService, useValue: prisma },
-          { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue("test-key") } },
+          {
+            provide: PlatformConfigService,
+            useValue: {
+              resolveAnthropicKey: jest.fn().mockResolvedValue("test-key"),
+              recordAiUsage,
+            },
+          },
           { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
           { provide: DuplicateMatchService, useValue: dupMatch },
           { provide: StorageService, useValue: storage },
@@ -1243,6 +1257,34 @@ describe("VendorBillsService", () => {
         constructor: UnprocessableEntityException,
         response: expect.objectContaining({ code: "AI_PARSE_FAILED" }),
       });
+    });
+
+    it("records a tenant-tagged AiUsageEvent with the response's token counts on success", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [{ type: "text", text: JSON.stringify({ supplier: "Acme", items: [] }) }],
+        usage: { input_tokens: 1111, output_tokens: 222 },
+      });
+
+      await service.scanInvoice([jpegPage]);
+
+      expect(recordAiUsage).toHaveBeenCalledWith({
+        tenantId: "test-tenant",
+        feature: "ocr.vendor_bill",
+        model: "claude-haiku-4-5",
+        inputTokens: 1111,
+        outputTokens: 222,
+      });
+    });
+
+    it("records a failed AiUsageEvent when the Anthropic call itself errors", async () => {
+      mockAnthropicCreate.mockRejectedValue({ status: 529 });
+
+      await expect(service.scanInvoice([jpegPage])).rejects.toBeInstanceOf(
+        ServiceUnavailableException,
+      );
+      expect(recordAiUsage).toHaveBeenCalledWith(
+        expect.objectContaining({ feature: "ocr.vendor_bill", success: false }),
+      );
     });
 
     it("skips an unreadable HEIC page and discloses it in notes instead of failing the scan", async () => {

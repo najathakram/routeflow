@@ -1,8 +1,13 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NotFoundException } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
+
+const mockAnthropicCreate = jest.fn();
+jest.mock("@anthropic-ai/sdk", () => ({
+  __esModule: true,
+  default: jest.fn(() => ({ messages: { create: mockAnthropicCreate } })),
+}));
 
 // Mock invoice.service.ts to avoid loading @react-pdf/renderer (ESM-only)
 jest.mock("./invoice.service", () => ({
@@ -22,6 +27,7 @@ import { InvoiceService } from "./invoice.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { StorageService } from "../storage/storage.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
@@ -58,10 +64,13 @@ describe("BookkeepingService", () => {
   let service: BookkeepingService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let invoiceService: { getPresignedUrl: jest.Mock };
+  let recordAiUsage: jest.Mock;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
     invoiceService = { getPresignedUrl: jest.fn() };
+    recordAiUsage = jest.fn();
+    mockAnthropicCreate.mockReset();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -81,6 +90,7 @@ describe("BookkeepingService", () => {
           useValue: {
             upload: jest.fn().mockResolvedValue("https://example.com/file"),
             getSignedUrl: jest.fn().mockResolvedValue("https://example.com/signed"),
+            download: jest.fn().mockResolvedValue(Buffer.from("receipt-bytes")),
             delete: jest.fn().mockResolvedValue(undefined),
           },
         },
@@ -91,8 +101,8 @@ describe("BookkeepingService", () => {
           },
         },
         {
-          provide: ConfigService,
-          useValue: { get: jest.fn().mockReturnValue(null) },
+          provide: PlatformConfigService,
+          useValue: { resolveAnthropicKey: jest.fn().mockResolvedValue("test-key"), recordAiUsage },
         },
         {
           provide: SystemConfigService,
@@ -607,6 +617,70 @@ describe("BookkeepingService", () => {
       const result = await service.getProfitAndLoss("2026-06-01", "2026-06-30");
 
       expect(result.cogs).toBe(1.01); // 3 × 0.335 = 1.005 → cents
+    });
+  });
+
+  // ─── extractExpenseItems (AI receipt extraction) ──────────────────────────
+
+  describe("extractExpenseItems", () => {
+    const RECEIPT_MODEL = "claude-opus-4-5-20251101";
+
+    /** `createMockPrisma` predates ExpenseLineItem — graft it onto the object forTenant() returns. */
+    const graftExpenseLineItem = () => {
+      const model = {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        createMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findMany: jest.fn().mockResolvedValue([]),
+      };
+      (prisma as any).expenseLineItem = model;
+      (prisma.forTenant() as any).expenseLineItem = model;
+      return model;
+    };
+
+    beforeEach(() => {
+      graftExpenseLineItem();
+      prisma.expense.findFirst.mockResolvedValue({
+        id: "exp-1",
+        receiptKey: "expenses/exp-1/receipt.jpg",
+        receiptMimeType: "image/jpeg",
+        description: null,
+      });
+      prisma.expense.update.mockResolvedValue({ id: "exp-1", isItemized: true });
+    });
+
+    it("records a tenant-tagged AiUsageEvent with the response's token counts", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              vendor: "Acme",
+              total: 12,
+              items: [{ description: "Widget", qty: 1, unitCost: 12, amount: 12 }],
+            }),
+          },
+        ],
+        usage: { input_tokens: 555, output_tokens: 66 },
+      });
+
+      await service.extractExpenseItems("exp-1");
+
+      expect(recordAiUsage).toHaveBeenCalledWith({
+        tenantId: "test-tenant",
+        feature: "ocr.expense_receipt",
+        model: RECEIPT_MODEL,
+        inputTokens: 555,
+        outputTokens: 66,
+      });
+    });
+
+    it("records a failed AiUsageEvent and rethrows when the Anthropic call errors", async () => {
+      mockAnthropicCreate.mockRejectedValue(new Error("overloaded"));
+
+      await expect(service.extractExpenseItems("exp-1")).rejects.toThrow("overloaded");
+      expect(recordAiUsage).toHaveBeenCalledWith(
+        expect.objectContaining({ feature: "ocr.expense_receipt", success: false }),
+      );
     });
   });
 });

@@ -16,7 +16,7 @@
 import "reflect-metadata";
 import { Test } from "@nestjs/testing";
 import { BadRequestException } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
+import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import { UserRole } from "@prisma/client";
 import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
@@ -54,7 +54,13 @@ describe("VendorBillsService — F10-004 payment amount guard", () => {
       providers: [
         VendorBillsService,
         { provide: PrismaService, useValue: prisma },
-        { provide: ConfigService, useValue: { get: jest.fn() } },
+        {
+          provide: PlatformConfigService,
+          useValue: {
+            resolveAnthropicKey: jest.fn().mockResolvedValue(null),
+            recordAiUsage: jest.fn(),
+          },
+        },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: DuplicateMatchService, useValue: dupMatch },
         { provide: StorageService, useValue: storage },
@@ -183,7 +189,13 @@ describe("check-duplicate — access control", () => {
       providers: [
         VendorBillsService,
         { provide: PrismaService, useValue: prisma },
-        { provide: ConfigService, useValue: { get: jest.fn() } },
+        {
+          provide: PlatformConfigService,
+          useValue: {
+            resolveAnthropicKey: jest.fn().mockResolvedValue(null),
+            recordAiUsage: jest.fn(),
+          },
+        },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: DuplicateMatchService, useValue: dupMatch },
         { provide: StorageService, useValue: storage },

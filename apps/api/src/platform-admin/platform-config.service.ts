@@ -173,9 +173,10 @@ export class PlatformConfigService implements OnModuleInit {
   // ─── AI usage metering + connection test ────────────────────────────────────
 
   /**
-   * Append a usage row. Exposed for the AI call sites (OCR / forecasting) to
-   * record token usage — those modules are out of this session's scope, so this
-   * isn't wired yet; the usage panel reports whatever has been recorded.
+   * Append a usage row. Called by every Anthropic call site: vendor-bill scan
+   * (`ocr.vendor_bill`), supplier-statement scan (`ocr.supplier_statement`),
+   * expense-receipt extraction (`ocr.expense_receipt`), and route insights
+   * (`insights.route`). Never throws — metering must not fail the feature.
    */
   async recordAiUsage(evt: {
     tenantId?: string | null;
@@ -225,6 +226,7 @@ export class PlatformConfigService implements OnModuleInit {
 
     let ocrScans = 0;
     let forecastRuns = 0;
+    let insightRuns = 0;
     let tokensIn = 0;
     let tokensOut = 0;
     let totalCalls = 0;
@@ -238,8 +240,9 @@ export class PlatformConfigService implements OnModuleInit {
       failures += Number(r.failures);
       tokensIn += inTok;
       tokensOut += outTok;
-      if (r.feature === "ocr") ocrScans += calls;
-      if (r.feature === "forecast") forecastRuns += calls;
+      if (r.feature === "ocr" || r.feature.startsWith("ocr.")) ocrScans += calls;
+      if (r.feature === "forecast" || r.feature.startsWith("forecast.")) forecastRuns += calls;
+      if (r.feature.startsWith("insights.")) insightRuns += calls;
       const price = modelPrice(r.model);
       estSpendUsd += (inTok / 1e6) * price.in + (outTok / 1e6) * price.out;
     }
@@ -248,6 +251,7 @@ export class PlatformConfigService implements OnModuleInit {
       days,
       ocrScans,
       forecastRuns,
+      insightRuns,
       tokensIn,
       tokensOut,
       estSpendUsd: Math.round(estSpendUsd * 100) / 100,
