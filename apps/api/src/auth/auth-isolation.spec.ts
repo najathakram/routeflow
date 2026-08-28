@@ -1,9 +1,12 @@
 /**
- * Unit tests for NEW-m2-1 / RF-077 per-role token isolation helpers.
+ * Unit tests for NEW-m2-1 / RF-077 per-role token isolation.
  *
- * These helpers live in client-side lib files (apps/web/lib/auth.ts and
- * apps/mobile/lib/auth.ts) but their logic is pure and easily unit-tested
- * without a browser. We simulate localStorage here.
+ * The key-namespace constants and the cross-tab listener live in client-side
+ * lib files (apps/web/lib/auth-keys.ts and apps/web/lib/auth.ts) but their
+ * logic is pure and easily unit-tested without a browser. We simulate
+ * localStorage here. The legacy-key migration helpers this file used to
+ * mirror were deleted 2026-08-27 (never wired up; pre-RF-077 sessions
+ * expired within the 30d refresh TTL).
  */
 
 // ─── Minimal localStorage mock ────────────────────────────────────────────────
@@ -47,56 +50,6 @@ const BUYER_KEYS = {
   activeSeller: "rf:buyer:activeSeller",
 } as const;
 
-// ─── Migration helpers (mirrors apps/web/lib/auth.ts) ────────────────────────
-
-function parseJwtPayload(token: string): Record<string, unknown> | null {
-  try {
-    const part = token.split(".")[1];
-    return JSON.parse(Buffer.from(part.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString());
-  } catch {
-    return null;
-  }
-}
-
-function migrateLegacyOpToken(ls: Storage): void {
-  const legacy = ls.getItem("accessToken");
-  if (!legacy) return;
-  const payload = parseJwtPayload(legacy);
-  const role = payload?.role as string | undefined;
-  if (role && ["OPERATOR", "TENANT_ADMIN", "CUSTOMER", "SUPER_ADMIN"].includes(role)) {
-    if (!ls.getItem(OP_KEYS.accessToken)) {
-      ls.setItem(OP_KEYS.accessToken, legacy);
-      const legacyRefresh = ls.getItem("refreshToken");
-      if (legacyRefresh) ls.setItem(OP_KEYS.refreshToken, legacyRefresh);
-    }
-  }
-  ls.removeItem("accessToken");
-  ls.removeItem("refreshToken");
-}
-
-function migrateLegacyBuyerToken(ls: Storage): void {
-  const legacy = ls.getItem("buyerAccessToken");
-  if (!legacy) return;
-  if (!ls.getItem(BUYER_KEYS.accessToken)) {
-    ls.setItem(BUYER_KEYS.accessToken, legacy);
-    const legacyRefresh = ls.getItem("buyerRefreshToken");
-    if (legacyRefresh) ls.setItem(BUYER_KEYS.refreshToken, legacyRefresh);
-    const legacySeller = ls.getItem("buyerActiveSeller");
-    if (legacySeller) ls.setItem(BUYER_KEYS.activeSeller, legacySeller);
-  }
-  ls.removeItem("buyerAccessToken");
-  ls.removeItem("buyerRefreshToken");
-  ls.removeItem("buyerActiveSeller");
-}
-
-// ─── Minimal JWT builder (unsigned — only the payload matters for migration) ──
-
-function makeJwt(payload: Record<string, unknown>): string {
-  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
-  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  return `${header}.${body}.fakesig`;
-}
-
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe("NEW-m2-1 / RF-077 — per-role token isolation", () => {
@@ -104,94 +57,6 @@ describe("NEW-m2-1 / RF-077 — per-role token isolation", () => {
 
   beforeEach(() => {
     ls = makeLocalStorage();
-  });
-
-  // ── Migration helper — operator token ──────────────────────────────────────
-
-  describe("migrateLegacyOpToken", () => {
-    it("copies OPERATOR token from legacy key to rf:op: key and removes legacy key", () => {
-      const token = makeJwt({ sub: "u1", role: "OPERATOR", exp: 9999999999 });
-      const refresh = "legacy-refresh-op";
-      ls.setItem("accessToken", token);
-      ls.setItem("refreshToken", refresh);
-
-      migrateLegacyOpToken(ls);
-
-      expect(ls.getItem(OP_KEYS.accessToken)).toBe(token);
-      expect(ls.getItem(OP_KEYS.refreshToken)).toBe(refresh);
-      expect(ls.getItem("accessToken")).toBeNull();
-      expect(ls.getItem("refreshToken")).toBeNull();
-    });
-
-    it("copies TENANT_ADMIN token to rf:op: key", () => {
-      const token = makeJwt({ sub: "u2", role: "TENANT_ADMIN", exp: 9999999999 });
-      ls.setItem("accessToken", token);
-      migrateLegacyOpToken(ls);
-      expect(ls.getItem(OP_KEYS.accessToken)).toBe(token);
-    });
-
-    it("does NOT overwrite rf:op:accessToken if it already exists (idempotent)", () => {
-      const existingToken = makeJwt({ sub: "u1", role: "OPERATOR", exp: 9999999999 });
-      const legacyToken = makeJwt({ sub: "u2", role: "OPERATOR", exp: 9999999999 });
-      ls.setItem(OP_KEYS.accessToken, existingToken);
-      ls.setItem("accessToken", legacyToken);
-
-      migrateLegacyOpToken(ls);
-
-      // Existing namespaced token must not be overwritten
-      expect(ls.getItem(OP_KEYS.accessToken)).toBe(existingToken);
-      // Legacy key still removed
-      expect(ls.getItem("accessToken")).toBeNull();
-    });
-
-    it("skips migration but cleans up legacy key if role is not recognized", () => {
-      // A DRIVER token stored under legacy key (shouldn't happen normally)
-      const token = makeJwt({ sub: "d1", role: "DRIVER", exp: 9999999999 });
-      ls.setItem("accessToken", token);
-      migrateLegacyOpToken(ls);
-      // Should NOT be placed in op slot
-      expect(ls.getItem(OP_KEYS.accessToken)).toBeNull();
-      // Legacy key still cleaned up
-      expect(ls.getItem("accessToken")).toBeNull();
-    });
-
-    it("is a no-op when no legacy key exists", () => {
-      migrateLegacyOpToken(ls); // must not throw
-      expect(ls.getItem(OP_KEYS.accessToken)).toBeNull();
-    });
-  });
-
-  // ── Migration helper — buyer token ─────────────────────────────────────────
-
-  describe("migrateLegacyBuyerToken", () => {
-    it("copies buyer token from legacy key to rf:buyer: key and removes legacy key", () => {
-      const token = "buyer-access-token";
-      const refresh = "buyer-refresh-token";
-      const seller = JSON.stringify({ linkId: "s1" });
-      ls.setItem("buyerAccessToken", token);
-      ls.setItem("buyerRefreshToken", refresh);
-      ls.setItem("buyerActiveSeller", seller);
-
-      migrateLegacyBuyerToken(ls);
-
-      expect(ls.getItem(BUYER_KEYS.accessToken)).toBe(token);
-      expect(ls.getItem(BUYER_KEYS.refreshToken)).toBe(refresh);
-      expect(ls.getItem(BUYER_KEYS.activeSeller)).toBe(seller);
-      expect(ls.getItem("buyerAccessToken")).toBeNull();
-      expect(ls.getItem("buyerRefreshToken")).toBeNull();
-      expect(ls.getItem("buyerActiveSeller")).toBeNull();
-    });
-
-    it("does NOT overwrite rf:buyer:accessToken if it already exists (idempotent)", () => {
-      const existingToken = "existing-buyer-token";
-      ls.setItem(BUYER_KEYS.accessToken, existingToken);
-      ls.setItem("buyerAccessToken", "legacy-buyer-token");
-
-      migrateLegacyBuyerToken(ls);
-
-      expect(ls.getItem(BUYER_KEYS.accessToken)).toBe(existingToken);
-      expect(ls.getItem("buyerAccessToken")).toBeNull();
-    });
   });
 
   // ── Cross-tab storage event listener ──────────────────────────────────────

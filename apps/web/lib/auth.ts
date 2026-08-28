@@ -25,35 +25,6 @@ export interface AuthResponse {
   user: AuthUser;
 }
 
-// ─── Legacy key migration (NEW-m2-1 / RF-077) ────────────────────────────────
-
-const LEGACY_ACCESS = "accessToken";
-const LEGACY_REFRESH = "refreshToken";
-
-/**
- * One-time migration: if the legacy `accessToken` key exists and holds an
- * operator/customer/admin role token, copy it to the namespaced key then
- * delete the legacy entry. Idempotent — safe to call on every page load.
- */
-export function migrateLegacyOpToken(): void {
-  if (typeof window === "undefined") return;
-  const legacy = localStorage.getItem(LEGACY_ACCESS);
-  if (!legacy) return;
-  const payload = parseJwtPayload(legacy);
-  const role = payload?.role as string | undefined;
-  // Only migrate operator-flavoured tokens (driver tokens belong to rf:driver: slot)
-  if (role && ["OPERATOR", "TENANT_ADMIN", "CUSTOMER", "SUPER_ADMIN"].includes(role)) {
-    if (!localStorage.getItem(OP_KEYS.accessToken)) {
-      localStorage.setItem(OP_KEYS.accessToken, legacy);
-      const legacyRefresh = localStorage.getItem(LEGACY_REFRESH);
-      if (legacyRefresh) localStorage.setItem(OP_KEYS.refreshToken, legacyRefresh);
-    }
-  }
-  // Remove legacy keys regardless (avoids collisions going forward)
-  localStorage.removeItem(LEGACY_ACCESS);
-  localStorage.removeItem(LEGACY_REFRESH);
-}
-
 // ─── Token helpers ────────────────────────────────────────────────────────────
 
 function parseJwtPayload(token: string): Record<string, unknown> | null {

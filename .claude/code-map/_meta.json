@@ -1,7 +1,7 @@
 {
-  "mappedSha": "35afd0dd",
-  "generatedAt": "2026-08-27T07:39:01.830Z",
+  "mappedSha": "b8c40147",
+  "generatedAt": "2026-08-27T12:00:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 900,
-  "notes": "2026-08-27 (post-train review) — FIVE-PR TRAIN #464→#468 merged+deployed; map verified CURRENT against master 35afd0dd: #466 (trips order picker) carried no .claude files but its entries were pre-written by batch-d inside the #465 commit (api.md trips controller/eligible-orders + web.md picker block incl. TripStopList/lib-api-trips); #467/#468 carried their own map edits. This bump only re-anchors mappedSha. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "2026-08-27 — DEAD RF-077 MIGRATION HELPERS DELETED (branch claude/objective-booth-6581c7): web migrateLegacyOpToken/migrateLegacyBuyerToken deleted (never called since 2026-05-01; pre-RF-077 sessions expired ~May 31; wiring them NOW would break settings Google-link + could resurrect logged-out OAuth sessions — legacy bare keys are STILL live via OAuth-callback double-writes). auth-isolation.spec.ts trimmed to cross-tab + key-isolation tests. Follow-ups flagged: verify-email writes ONLY legacy keys (broken flow); mobile's migrate helpers equally dead. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
