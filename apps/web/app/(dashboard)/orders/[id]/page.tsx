@@ -318,7 +318,17 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type ApiOrderStatus =
-  "DRAFT" | "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
+  | "DRAFT"
+  | "PENDING"
+  | "CONFIRMED"
+  | "OUT_FOR_DELIVERY"
+  | "DELIVERED"
+  // Not (yet) rendered as its own status block below — included so the shared
+  // "Delete order" gate (renderDeleteOrderAction, further down this file) can
+  // compare against it without a type error; a route can leave an order
+  // PARTIALLY_DELIVERED and it must be treated as no-longer-open.
+  | "PARTIALLY_DELIVERED"
+  | "CANCELLED";
 
 interface EditItemState {
   id: string; // real DB id for existing items; temp "new-{uuid}" for new items
@@ -2078,15 +2088,25 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
 
   /**
    * Shared "Delete order" trigger + inline two-tap confirm, reused across every
-   * status block below (delete-any: staff may delete an order in any status —
-   * the server 409s only when a linked invoice has recorded payments). No local
-   * onError toast here: an error just collapses the confirm back to the trigger
-   * and the global mutation-error toast (app/providers.tsx) already surfaces the
-   * server's message (e.g. "void the invoice first"), which a hand-written
+   * still-open status block below. The server also 409s if a linked invoice has
+   * recorded payments — that's a distinct, deeper backstop (e.g. a DRAFT order
+   * whose invoice somehow already has a payment); no local onError toast here,
+   * an error just collapses the confirm back to the trigger and the global
+   * mutation-error toast (app/providers.tsx) already surfaces the server's
+   * message (e.g. "void the invoice first"), which a hand-written
    * `error.message` here would only shadow with a generic HTTP status string.
+   *
+   * Delivered orders (and any order past a real invoice, not just its DRAFT
+   * pending-mirror) are no longer "operationally open" — deleting them would
+   * destroy a fulfilled/billed record. "Reopen Order" is the sanctioned undo
+   * for those; hide the trigger entirely rather than let it 409. Reuses the
+   * same `order.invoices` the Invoice card below already renders — no new query.
    */
+  const hasPostedInvoice = order.invoices?.some((inv) => inv.status !== "DRAFT") ?? false;
+  const orderOperationallyOpen =
+    localStatus !== "DELIVERED" && localStatus !== "PARTIALLY_DELIVERED";
   const renderDeleteOrderAction = (confirmMessage: string, successTitle = "Order deleted") =>
-    showDeleteConfirm ? (
+    !orderOperationallyOpen || hasPostedInvoice ? null : showDeleteConfirm ? (
       <div className="flex items-center gap-2">
         <span className="text-sm text-danger font-medium">{confirmMessage}</span>
         <Button
@@ -2459,8 +2479,8 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                   Reopen Order
                 </Button>
                 <p className="text-[11px] text-navy/50">
-                  Reopening keeps the invoice — Edit Items re-syncs it. Route-delivered orders
-                  reopen from their run stop.
+                  Reopening keeps the invoice in sync while you edit. Orders delivered on a route
+                  reopen at their original stop.
                 </p>
               </div>
               {renderDeleteOrderAction(

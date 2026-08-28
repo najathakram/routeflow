@@ -382,7 +382,7 @@ export default function FinanceDashboardPage() {
               <p className="text-xs text-navy/70">This Year</p>
             </div>
             <Link
-              href="/finance/expenses"
+              href="/vendor-bills"
               className="text-[12.5px] font-medium text-brand-500 hover:underline"
             >
               View all
@@ -478,7 +478,7 @@ export default function FinanceDashboardPage() {
         </Link>
 
         <Link
-          href="/purchases?tab=expenses"
+          href="/vendor-bills?tab=other"
           className="group rounded-card border border-line bg-paper p-4 shadow-card transition-all hover:border-red-200 hover:shadow-dropdown"
         >
           <div className="flex items-center justify-between">

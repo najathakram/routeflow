@@ -34,7 +34,6 @@ import {
   CreditCard,
   BarChart3,
   PieChart,
-  ShoppingBag,
   ClipboardList,
   Megaphone,
   Search,
@@ -82,7 +81,10 @@ import { useDriveMode } from "@/lib/drive-mode";
 
 type NavLeaf = { kind: "leaf"; label: string; href: string; icon: LucideIcon };
 type NavGroup = { kind: "group"; label: string; icon: LucideIcon; children: NavLeaf[] };
-type NavEntry = NavLeaf | NavGroup;
+/** Placeholder row held at a gated entry's position while its addon/entitlement
+ *  query is still resolving, so the rail never grows once the answer lands. */
+type NavSkeleton = { kind: "skeleton"; key: string };
+type NavEntry = NavLeaf | NavGroup | NavSkeleton;
 
 /** Full operator nav — all sections visible */
 const OPERATOR_NAV: NavEntry[] = [
@@ -137,7 +139,6 @@ const OPERATOR_NAV: NavEntry[] = [
         href: "/finance/payment-requests",
         icon: DollarSign,
       },
-      { kind: "leaf", label: "Expenses", href: "/finance/expenses", icon: ShoppingBag },
       {
         kind: "leaf",
         label: "Supplier Statements",
@@ -533,7 +534,8 @@ function SidebarNav({
   // active route stays open regardless.
   const activeGroupLabel =
     navStructure.find(
-      (e) => e.kind === "group" && e.children.some((c) => pathname.startsWith(c.href)),
+      (e): e is NavGroup =>
+        e.kind === "group" && e.children.some((c) => pathname.startsWith(c.href)),
     )?.label ?? null;
   const [openGroup, setOpenGroup] = React.useState<string | null>(activeGroupLabel);
 
@@ -546,7 +548,22 @@ function SidebarNav({
   return (
     <ul className="flex flex-col gap-0.5">
       {navStructure.map((entry) =>
-        entry.kind === "leaf" ? (
+        entry.kind === "skeleton" ? (
+          // Held at a gated entry's position while its addon/entitlement query
+          // resolves — same row height/padding as a group header, so nothing
+          // shifts once the real group or leaf replaces it.
+          <li key={entry.key} aria-hidden="true">
+            <div
+              className={cn(
+                "flex items-center gap-3 rounded-lg px-3 py-2",
+                collapsed && "justify-center px-0",
+              )}
+            >
+              <div className="skeleton h-4 w-4 shrink-0 rounded" />
+              {!collapsed && <div className="skeleton h-3 w-24 rounded-full" />}
+            </div>
+          </li>
+        ) : entry.kind === "leaf" ? (
           <li key={entry.href}>
             <NavLink
               item={entry}
@@ -838,7 +855,7 @@ function Header({
                     <Bell className="h-8 w-8 text-navy/20" />
                     <p className="text-sm text-navy/70">No notifications yet</p>
                     <p className="text-xs text-navy/30">
-                      Urgent orders, driver updates, and low-stock alerts will appear here
+                      Order, delivery, and account alerts will appear here.
                     </p>
                   </div>
                 ) : notifications.length > 0 ? (
@@ -1004,26 +1021,56 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
-  const { enabled: devMode } = useDeveloperMode();
+  // devMode/routesAccess/deliveryAccess/hasSalesAgents all read the same
+  // underlying tenant-addons query (react-query dedupes on queryKey), so this
+  // one `isLoading` is that single shared fetch's in-flight state — used below
+  // to hold a skeleton for every addon-gated nav entry (Dispatch, Sales Agents)
+  // until the real answer is in, instead of the group just popping into
+  // existence. Deliberately NOT `!resolved` (= `!isSuccess`): useTenantAddons
+  // is `retry: false`, so one 5xx would leave `resolved` false forever and
+  // strand the placeholders as permanent shimmer. `isLoading` settles either
+  // way, and a failed fetch degrades to the pre-existing "gate stays hidden".
+  const { enabled: devMode, isLoading: addonsLoading } = useDeveloperMode();
   const { enabled: routesAccess } = useRoutesAccess();
   const { enabled: deliveryAccess } = useDeliveryAccess();
   // Only OPERATOR/TENANT_ADMIN see regulated nav; skip the fetch for CUSTOMER/DRIVER.
   const isStaff = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
-  const { data: regulatedSections } = useTrackedCategories({ active: true }, { enabled: isStaff });
+  const { data: regulatedSections, isLoading: regulatedLoading } = useTrackedCategories(
+    { active: true },
+    { enabled: isStaff },
+  );
   const navStructure = React.useMemo(() => {
     const nav = getNavForRole(user?.role, (user as any)?.canActAsDriver, {
       devMode,
       routesAccess,
       deliveryAccess,
     });
-    if (!isStaff) return nav;
+
+    // CUSTOMER/DRIVER nav has neither a Dispatch nor a Sales Agents entry, so
+    // the skeleton splicing below only applies to the operator-ish (isStaff)
+    // branch. While the shared addons fetch is in flight, `enabled` defaults
+    // false and getNavForRole already omitted Dispatch — hold a skeleton at
+    // its position (right before Customers) so the rail doesn't grow once the
+    // real answer resolves.
+    let base = nav;
+    if (isStaff && addonsLoading) {
+      const idx = base.findIndex((e) => e.kind === "leaf" && e.href === "/customers");
+      const skeleton: NavEntry = { kind: "skeleton", key: "dispatch-skeleton" };
+      base =
+        idx === -1 ? [...base, skeleton] : [...base.slice(0, idx), skeleton, ...base.slice(idx)];
+    }
+
+    if (!isStaff) return base;
 
     // "Regulated Items" nav group — one child per active regulated section, each
     // opening that section's dashboard. Shown whenever the tenant has ≥1 section
-    // (an empty group is never spliced).
+    // (an empty group is never spliced); a skeleton holds its place while the
+    // tracked-categories fetch is still in flight.
     const inject: NavEntry[] = [];
     const sections = regulatedSections ?? [];
-    if (sections.length > 0) {
+    if (regulatedLoading) {
+      inject.push({ kind: "skeleton", key: "regulated-skeleton" });
+    } else if (sections.length > 0) {
       inject.push({
         kind: "group",
         label: "Regulated Items",
@@ -1036,8 +1083,18 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         })),
       });
     }
-    let base = nav;
-    if (hasSalesAgents) {
+
+    if (addonsLoading) {
+      // Sales Agents (+ its Commissions child inside Finance) pops in off the
+      // same addons fetch as Dispatch — hold a skeleton at the leaf's position
+      // (right after Customers) meanwhile.
+      const idx = base.findIndex((e) => e.kind === "leaf" && e.href === "/customers");
+      const skeleton: NavEntry = { kind: "skeleton", key: "sales-agents-skeleton" };
+      base =
+        idx === -1
+          ? [...base, skeleton]
+          : [...base.slice(0, idx + 1), skeleton, ...base.slice(idx + 1)];
+    } else if (hasSalesAgents) {
       // "Sales Agents" as a top-level leaf right after Customers; "Commissions"
       // inside the Finance group after Supplier Statements. Same splice style as
       // the canActAsDriver Dispatch rewrite above — never mutate OPERATOR_NAV.
@@ -1072,7 +1129,17 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     return idx === -1
       ? [...base, ...inject]
       : [...base.slice(0, idx + 1), ...inject, ...base.slice(idx + 1)];
-  }, [user, isStaff, hasSalesAgents, regulatedSections, devMode, routesAccess, deliveryAccess]);
+  }, [
+    user,
+    isStaff,
+    hasSalesAgents,
+    regulatedSections,
+    regulatedLoading,
+    devMode,
+    routesAccess,
+    deliveryAccess,
+    addonsLoading,
+  ]);
   const [collapsed, setCollapsed] = React.useState(() => {
     if (typeof window !== "undefined") {
       // Auto-collapse on small screens, otherwise respect saved preference

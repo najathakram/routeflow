@@ -12,7 +12,7 @@ function PurchasesRedirectContent() {
   useEffect(() => {
     // Map old tab names to new ones
     const mapped = tab === "bills" ? "inventory" : tab === "expenses" ? "other" : null;
-    router.replace(mapped ? `/finance/expenses?tab=${mapped}` : "/finance/expenses");
+    router.replace(mapped ? `/vendor-bills?tab=${mapped}` : "/vendor-bills");
   }, [router, tab]);
 
   return null;

@@ -231,8 +231,8 @@ function StatementsPageInner() {
             />
           </div>
           <p className="mt-4 text-center text-xs text-navy/70">
-            <Sparkles className="inline h-3 w-3" /> Powered by Claude AI — matching happens in code
-            afterward, deterministically, never by asking the model to decide.
+            <Sparkles className="inline h-3 w-3" /> AI reads the statement; every match is then
+            verified line-by-line before anything is applied.
           </p>
         </Card>
       )}

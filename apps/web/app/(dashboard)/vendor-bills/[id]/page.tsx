@@ -783,7 +783,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
     return (
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Vendor bill not found.</p>
-        <Button variant="secondary" href="/purchases">
+        <Button variant="secondary" href="/vendor-bills">
           Back to Vendor Bills
         </Button>
       </div>
@@ -973,7 +973,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
     <div className="space-y-5 p-6">
       {/* Back */}
       <Link
-        href="/purchases"
+        href="/vendor-bills"
         className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />

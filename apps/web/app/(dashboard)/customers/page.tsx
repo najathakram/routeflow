@@ -639,8 +639,8 @@ export default function CustomersPage() {
         title="Customers"
         subtitle={
           meta?.total != null
-            ? `${meta.total} customer${meta.total !== 1 ? "s" : ""} · filters live in the URL, so views are shareable.`
-            : "Filters live in the URL, so views are shareable."
+            ? `${meta.total} customer${meta.total !== 1 ? "s" : ""} · your current filters are saved in the page link — copy the URL to share this view.`
+            : "Your current filters are saved in the page link — copy the URL to share this view."
         }
         action={
           <div className="flex items-center gap-2">
@@ -901,7 +901,7 @@ export default function CustomersPage() {
           </div>
         ) : (
           <Table
-            className="border-0 rounded-none"
+            className="border-0 rounded-none overflow-x-auto"
             data={visibleCustomers}
             columns={columns}
             onRowClick={(row) => {

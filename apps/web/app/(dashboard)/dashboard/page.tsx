@@ -277,9 +277,11 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
 
 function OverdueInvoicesPanel({
   invoices,
+  totalCount,
   isLoading,
 }: {
   invoices: Invoice[];
+  totalCount: number;
   isLoading: boolean;
 }) {
   if (isLoading) {
@@ -302,7 +304,7 @@ function OverdueInvoicesPanel({
       <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
         <div className="flex items-center gap-2">
           <h3 className="text-base font-semibold text-navy">Overdue Invoices</h3>
-          {invoices.length > 0 && <Badge variant="danger" label={`${invoices.length}`} />}
+          {totalCount > 0 && <Badge variant="danger" label={`${totalCount}`} />}
         </div>
         <Link
           href="/invoices?status=OVERDUE"
@@ -844,7 +846,11 @@ export default function DashboardPage() {
           ) : null}
 
           {/* Overdue invoices action list */}
-          <OverdueInvoicesPanel invoices={overdueInvoices} isLoading={overdueLoading} />
+          <OverdueInvoicesPanel
+            invoices={overdueInvoices}
+            totalCount={overdueCount}
+            isLoading={overdueLoading}
+          />
         </div>
       )}
 
