@@ -1,7 +1,7 @@
 {
-  "mappedSha": "35afd0dd",
-  "generatedAt": "2026-08-28T04:00:41.096Z",
+  "mappedSha": "f2acbcc5",
+  "generatedAt": "2026-08-27T07:25:35.000Z",
   "areas": ["api", "web", "mobile", "packages"],
-  "fileCount": 908,
-  "notes": "2026-08-27 (branch feat/route-planning-options, PR pending) — ROUTE PLANNING OPTIONS batch: Route schema migration 20260907000000 (origin/end/tolls/optimizeBy/plannedPolyline), cost-matrix optimizer (Google computeRouteMatrix + LRU cache + billing telemetry, ORS demoted), variants endpoints (apply = sole plannedPolyline writer, optional runId run-sync), PATCH /trips/routes/:routeId/planning, RoutePlanningControls/RouteVariantsPanel web UI (TripOriginPicker DELETED), gmaps-export deep links web+mobile driver. 7-package pipeline + Opus review (18 findings ALL fixed). Suite green api 3090 / mobile 1236. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "fileCount": 899,
+  "notes": "2026-08-27 (branch claude/gifted-snyder-e93398) — VERIFY-EMAIL TOKEN NAMESPACE FIX: app/verify-email/page.tsx wrote fresh tokens to the LEGACY accessToken/refreshToken localStorage keys (dead since RF-077 — every operator reader uses OP_KEYS only), so a verified signup was never signed in and any stale rf:op: token won. Now mirrors lib/auth.ts login(): OP_KEYS writes + setOpPresenceCookie() + tenant cookie, and router.push → FULL window.location.replace('/dashboard') (root AuthProvider reads localStorage only on mount — the (auth)/callback constraint). Legacy dual-writes in the two OAuth callback pages intentionally untouched. New 'Signup email verify' row in web.md. migrateLegacyOpToken() currently has NO caller in apps/web. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
