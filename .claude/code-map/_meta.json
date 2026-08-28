@@ -1,7 +1,7 @@
 {
-  "mappedSha": "cb29237e",
-  "generatedAt": "2026-08-26T19:05:00.000Z",
+  "mappedSha": "b71d680c",
+  "generatedAt": "2026-08-28T11:00:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 898,
-  "notes": "2026-08-26 (worktree batch-0826) — 6-PR batch: (A) adaptive Dispatch nav merge + overview adaptation + runs `kind`; (B) branding-by-session (TenantProvider keys off the JWT, cookie self-heal); (C) invoice.hideOriginalPrice KV setting riding the invoice payload; (F) CSP fix unblocking Google Maps (every dashboard map had been blank since 2026-06-18); (G1) Sentry DSN-optional api/web/mobile; (G2) dependabot.yml. Opus-review fixes folded in. See CHANGELOG top bullet. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "2026-08-28 (worktree loving-pare) — dependabot #463 remediation, versions only, no source edits: sanitize-html pinned exact 2.17.5 in apps/api (≥2.17.6 = ESM-only htmlparser2 12 Jest can't load + requires Node ≥22.12 vs node:20 prod; behavior verified to still round-trip every strip-html spec case); mobile native-module set pinned back into Expo SDK 55 range (RN 0.83.10, reanimated ~4.2.2, worklets 0.7.4, gesture-handler ~2.30.0, screens ~4.24.0, safe-area ~5.7.0, maps ~1.27.1, svg 15.15.3) — the RN 0.87 bump caused ALL the mobile typecheck errors; dependabot.yml ignore rules added for both; lockfile regenerated from scratch. See CHANGELOG top bullet. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
