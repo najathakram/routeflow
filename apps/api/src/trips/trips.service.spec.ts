@@ -1,13 +1,14 @@
 import { Test } from "@nestjs/testing";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { FulfillPath, OrderStatus, RouteKind } from "@prisma/client";
+import { FulfillPath, OrderStatus, RouteEndKind, RouteKind, RouteRunStatus } from "@prisma/client";
 import { groupOrdersForTrip } from "@routeflow/types";
 import { TripsService, TripIneligibleOrder } from "./trips.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { geocodeAddress } from "../common/geocode.util";
 import { TripOriginType } from "./dto/create-trip.dto";
+import { TripEndType } from "./dto/route-planning.dto";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 jest.mock("../common/geocode.util", () => ({ geocodeAddress: jest.fn() }));
@@ -565,6 +566,315 @@ describe("TripsService", () => {
       expect(prisma.order.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ skip: 20, take: 10, orderBy: { createdAt: "desc" } }),
       );
+    });
+  });
+
+  // ─── resolveEnd (exercised via createTrip, same as resolveOrigin above) ────
+
+  describe("resolveEnd — end point resolution", () => {
+    const eligibleOrder = makeOrder({ id: "order-end-1" });
+
+    beforeEach(() => {
+      prisma.order.findMany.mockResolvedValue([eligibleOrder]);
+      systemConfig.get.mockImplementation(async (key: string) =>
+        key === "route.defaultDepotLat" ? "30.5" : key === "route.defaultDepotLng" ? "-97.6" : null,
+      );
+    });
+
+    it("NONE (or omitted) persists endKind NONE with null coords", async () => {
+      await service.createTrip(tenantId, {
+        orderIds: [eligibleOrder.id],
+        origin: { type: TripOriginType.TENANT } as any,
+      });
+
+      expect(prisma.route.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            endKind: RouteEndKind.NONE,
+            endLat: null,
+            endLng: null,
+            endAddress: null,
+          }),
+        }),
+      );
+    });
+
+    it("RETURN_TO_START copies the resolved origin coords/address (stored, not re-derived)", async () => {
+      await service.createTrip(tenantId, {
+        orderIds: [eligibleOrder.id],
+        origin: { type: TripOriginType.TENANT } as any,
+        end: { type: TripEndType.RETURN_TO_START } as any,
+      });
+
+      expect(prisma.route.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            endKind: RouteEndKind.RETURN_TO_START,
+            endLat: 30.5,
+            endLng: -97.6,
+            endAddress: "",
+          }),
+        }),
+      );
+    });
+
+    it("DRIVER_HOME falls back to the trip's own driver when end.driverId is omitted", async () => {
+      prisma.driver.findFirst.mockResolvedValue({
+        id: "drv-trip",
+        contactName: "Jamie Doe",
+        homeLat: 30.1,
+        homeLng: -97.5,
+        homeAddress: "42 Home Way",
+      });
+
+      await service.createTrip(tenantId, {
+        orderIds: [eligibleOrder.id],
+        driverId: "drv-trip",
+        origin: { type: TripOriginType.TENANT } as any,
+        end: { type: TripEndType.DRIVER_HOME } as any,
+      });
+
+      expect(prisma.route.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            endKind: RouteEndKind.DRIVER_HOME,
+            endLat: 30.1,
+            endLng: -97.5,
+            endAddress: "42 Home Way",
+          }),
+        }),
+      );
+    });
+
+    it("DRIVER_HOME 400s when neither end.driverId nor a trip driver is set", async () => {
+      await expect(
+        service.createTrip(tenantId, {
+          orderIds: [eligibleOrder.id],
+          origin: { type: TripOriginType.TENANT } as any,
+          end: { type: TripEndType.DRIVER_HOME } as any,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.route.create).not.toHaveBeenCalled();
+    });
+
+    it("DRIVER_HOME 400s naming the driver when it has no home base set (mirrors resolveOrigin's DRIVER message)", async () => {
+      prisma.driver.findFirst.mockResolvedValue({
+        id: "drv-nohome",
+        contactName: "Sam Rivera",
+        homeLat: null,
+        homeLng: null,
+        homeAddress: null,
+      });
+
+      await expect(
+        service.createTrip(tenantId, {
+          orderIds: [eligibleOrder.id],
+          origin: { type: TripOriginType.TENANT } as any,
+          end: { type: TripEndType.DRIVER_HOME, driverId: "drv-nohome" } as any,
+        }),
+      ).rejects.toThrow(/Sam Rivera/);
+    });
+
+    it("ADDRESS geocodes the end address and persists the formatted string", async () => {
+      (geocodeAddress as jest.Mock).mockResolvedValue({ lat: 31.0, lng: -98.0 });
+
+      await service.createTrip(tenantId, {
+        orderIds: [eligibleOrder.id],
+        origin: { type: TripOriginType.TENANT } as any,
+        end: {
+          type: TripEndType.ADDRESS,
+          line1: "9 End St",
+          city: "Dallas",
+          state: "TX",
+          zip: "75201",
+        } as any,
+      });
+
+      expect(prisma.route.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            endKind: RouteEndKind.ADDRESS,
+            endLat: 31.0,
+            endLng: -98.0,
+            endAddress: "9 End St, Dallas, TX, 75201",
+          }),
+        }),
+      );
+    });
+
+    it("ADDRESS hard-stops with 400 when geocoding fails, and never creates the route", async () => {
+      (geocodeAddress as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.createTrip(tenantId, {
+          orderIds: [eligibleOrder.id],
+          origin: { type: TripOriginType.TENANT } as any,
+          end: { type: TripEndType.ADDRESS, line1: "9 End St" } as any,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.route.create).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── PATCH /trips/routes/:routeId/planning ─────────────────────────────────
+
+  describe("updatePlanning", () => {
+    function makeRoute(overrides: Partial<Record<string, unknown>> = {}) {
+      return {
+        id: "route-1",
+        tenantId,
+        driverId: "drv-route",
+        depotLat: 30.5,
+        depotLng: -97.6,
+        depotAddress: "Warehouse",
+        endKind: RouteEndKind.NONE,
+        endLat: null,
+        endLng: null,
+        endAddress: null,
+        avoidTolls: false,
+        optimizeBy: "TIME",
+        ...overrides,
+      };
+    }
+
+    it("404s when the route doesn't exist for this tenant", async () => {
+      prisma.route.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.updatePlanning(tenantId, "route-missing", {} as any),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.route.update).not.toHaveBeenCalled();
+    });
+
+    it("409s when the route has an IN_PROGRESS run, and never writes the route", async () => {
+      prisma.route.findFirst.mockResolvedValue(makeRoute());
+      prisma.routeRun.findFirst.mockResolvedValue({ id: "run-active" });
+
+      await expect(
+        service.updatePlanning(tenantId, "route-1", { avoidTolls: true } as any),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.routeRun.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            routeId: "route-1",
+            status: RouteRunStatus.IN_PROGRESS,
+          }),
+        }),
+      );
+      expect(prisma.route.update).not.toHaveBeenCalled();
+    });
+
+    it("refreshes RETURN_TO_START end coords when only origin changes", async () => {
+      prisma.route.findFirst.mockResolvedValue(
+        makeRoute({
+          endKind: RouteEndKind.RETURN_TO_START,
+          endLat: 30.5,
+          endLng: -97.6,
+          endAddress: "Warehouse",
+        }),
+      );
+      prisma.routeRun.findFirst.mockResolvedValue(null);
+      (geocodeAddress as jest.Mock).mockResolvedValue({ lat: 31.2, lng: -98.3 });
+
+      const result = await service.updatePlanning(tenantId, "route-1", {
+        origin: {
+          type: TripOriginType.ADDRESS,
+          line1: "1 New St",
+          city: "Austin",
+          state: "TX",
+          zip: "78701",
+        },
+      } as any);
+
+      expect(prisma.route.update).toHaveBeenCalledWith({
+        where: { id: "route-1" },
+        data: expect.objectContaining({
+          depotLat: 31.2,
+          depotLng: -98.3,
+          depotAddress: "1 New St, Austin, TX, 78701",
+          endLat: 31.2,
+          endLng: -98.3,
+          endAddress: "1 New St, Austin, TX, 78701",
+        }),
+      });
+      expect(result.reoptimizeRecommended).toBe(true);
+    });
+
+    it("does NOT touch end coords when origin changes but stored endKind isn't RETURN_TO_START", async () => {
+      prisma.route.findFirst.mockResolvedValue(makeRoute({ endKind: RouteEndKind.NONE }));
+      prisma.routeRun.findFirst.mockResolvedValue(null);
+      (geocodeAddress as jest.Mock).mockResolvedValue({ lat: 31.2, lng: -98.3 });
+
+      await service.updatePlanning(tenantId, "route-1", {
+        origin: {
+          type: TripOriginType.ADDRESS,
+          line1: "1 New St",
+          city: "Austin",
+          state: "TX",
+          zip: "78701",
+        },
+      } as any);
+
+      const data = prisma.route.update.mock.calls[0][0].data;
+      expect(data.endLat).toBeUndefined();
+      expect(data.endLng).toBeUndefined();
+      expect(data.endAddress).toBeUndefined();
+    });
+
+    it("persists avoidTolls/optimizeBy and recommends re-optimizing", async () => {
+      prisma.route.findFirst.mockResolvedValue(makeRoute());
+      prisma.routeRun.findFirst.mockResolvedValue(null);
+
+      const result = await service.updatePlanning(tenantId, "route-1", {
+        avoidTolls: true,
+        optimizeBy: "DISTANCE",
+      } as any);
+
+      expect(prisma.route.update).toHaveBeenCalledWith({
+        where: { id: "route-1" },
+        data: { avoidTolls: true, optimizeBy: "DISTANCE", plannedPolyline: null },
+      });
+      expect(result.reoptimizeRecommended).toBe(true);
+    });
+
+    it("reoptimizeRecommended is false when the body changes nothing planning-relevant", async () => {
+      prisma.route.findFirst.mockResolvedValue(makeRoute());
+      prisma.routeRun.findFirst.mockResolvedValue(null);
+
+      const result = await service.updatePlanning(tenantId, "route-1", {} as any);
+
+      expect(result.reoptimizeRecommended).toBe(false);
+      expect(prisma.route.update).toHaveBeenCalledWith({ where: { id: "route-1" }, data: {} });
+    });
+
+    // The map renders Route.plannedPolyline verbatim and skips its Routes API
+    // fetch while one is present, so a planning change that doesn't clear it
+    // leaves the old path drawn from the old depot, forever.
+    it("nulls plannedPolyline whenever a planning field actually changed", async () => {
+      prisma.route.findFirst.mockResolvedValue(makeRoute());
+      prisma.routeRun.findFirst.mockResolvedValue(null);
+      (geocodeAddress as jest.Mock).mockResolvedValue({ lat: 31.2, lng: -98.3 });
+
+      await service.updatePlanning(tenantId, "route-1", {
+        origin: {
+          type: TripOriginType.ADDRESS,
+          line1: "1 New St",
+          city: "Austin",
+          state: "TX",
+          zip: "78701",
+        },
+      } as any);
+
+      expect(prisma.route.update.mock.calls[0][0].data.plannedPolyline).toBeNull();
+    });
+
+    it("leaves plannedPolyline alone on a no-op body (nothing to invalidate)", async () => {
+      prisma.route.findFirst.mockResolvedValue(makeRoute());
+      prisma.routeRun.findFirst.mockResolvedValue(null);
+
+      await service.updatePlanning(tenantId, "route-1", {} as any);
+
+      expect(prisma.route.update.mock.calls[0][0].data).not.toHaveProperty("plannedPolyline");
     });
   });
 });

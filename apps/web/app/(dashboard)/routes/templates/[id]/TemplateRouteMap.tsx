@@ -72,9 +72,14 @@ function DepotMarkerBubble() {
 function PolylineLayer({
   stops,
   depot,
+  precomputedPolyline,
 }: {
   stops: RouteTemplateStop[];
   depot?: { lat: number; lng: number } | null;
+  /** Route.plannedPolyline — when set, DrivingPathLayer decodes and renders it
+   *  directly instead of calling the Routes API, so a stored route never
+   *  re-bills Google per view. */
+  precomputedPolyline?: string | null;
 }) {
   const coords = React.useMemo(() => {
     const stopCoords = stops
@@ -92,7 +97,66 @@ function PolylineLayer({
 
   if (coords.length < 2) return null;
 
-  return <DrivingPathLayer waypoints={coords} strokeColor="#3b82f6" strokeOpacity={0.8} />;
+  return (
+    <DrivingPathLayer
+      waypoints={coords}
+      strokeColor="#3b82f6"
+      strokeOpacity={0.8}
+      precomputedPolyline={precomputedPolyline}
+    />
+  );
+}
+
+// ─── Route variant overlays (Fastest/Shortest/No-tolls comparison) ────────────
+
+export interface VariantOverlay {
+  encodedPolyline: string;
+  color: string;
+  selected: boolean;
+}
+
+/**
+ * Draws one polyline per route variant so the user can compare Fastest/
+ * Shortest/No-tolls on the map before picking one. Replaces the default
+ * `PolylineLayer` entirely when present — a route is either showing its one
+ * chosen/planned path or comparing candidates, never both. The selected
+ * variant gets the full brand treatment; the rest fade to grey so they read
+ * as "other options" rather than competing paths.
+ */
+export function EncodedPolylineLayer({ overlays }: { overlays: VariantOverlay[] }) {
+  const map = useMap();
+  const mapsLib = useMapsLibrary("maps");
+  const geometryLib = useMapsLibrary("geometry");
+
+  React.useEffect(() => {
+    if (!map || !mapsLib || !geometryLib) return;
+
+    const polylines = overlays
+      .map((overlay) => {
+        let path: google.maps.LatLng[];
+        try {
+          path = geometryLib.encoding.decodePath(overlay.encodedPolyline);
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn("Variant polyline decode failed, skipping overlay:", err);
+          return null;
+        }
+        if (path.length < 2) return null;
+        return new mapsLib.Polyline({
+          path,
+          geodesic: false,
+          strokeColor: overlay.selected ? overlay.color : "#9ca3af",
+          strokeOpacity: overlay.selected ? 0.9 : 0.35,
+          strokeWeight: overlay.selected ? 5 : 3,
+          map,
+        });
+      })
+      .filter((p): p is google.maps.Polyline => p !== null);
+
+    return () => polylines.forEach((p) => p.setMap(null));
+  }, [map, mapsLib, geometryLib, overlays]);
+
+  return null;
 }
 
 // ─── Auto-fit bounds ───────────────────────────────────────────────────────────
@@ -145,6 +209,12 @@ export interface TemplateRouteMapProps {
   depotLat?: number | null;
   depotLng?: number | null;
   depotAddress?: string | null;
+  /** Route.plannedPolyline — rendered by the default driving-path layer when
+   *  no variant comparison is active, so a stored route costs nothing to view. */
+  plannedPolyline?: string | null;
+  /** Route-variant comparison polylines (Fastest/Shortest/No-tolls). When
+   *  present (non-empty), these replace the default driving-path layer. */
+  variantOverlays?: VariantOverlay[];
 }
 
 function MapContent({
@@ -155,6 +225,8 @@ function MapContent({
   depotLat,
   depotLng,
   depotAddress,
+  plannedPolyline,
+  variantOverlays,
 }: TemplateRouteMapProps) {
   const [openInfoId, setOpenInfoId] = React.useState<string | null>(null);
   const [depotInfoOpen, setDepotInfoOpen] = React.useState(false);
@@ -168,7 +240,11 @@ function MapContent({
   return (
     <>
       <FitBoundsLayer stops={geoStops} depot={depot} />
-      <PolylineLayer stops={stops} depot={depot} />
+      {variantOverlays && variantOverlays.length > 0 ? (
+        <EncodedPolylineLayer overlays={variantOverlays} />
+      ) : (
+        <PolylineLayer stops={stops} depot={depot} precomputedPolyline={plannedPolyline} />
+      )}
 
       {/* Depot marker */}
       {depot && (
@@ -248,6 +324,8 @@ export function TemplateRouteMap({
   depotLat,
   depotLng,
   depotAddress,
+  plannedPolyline,
+  variantOverlays,
 }: TemplateRouteMapProps) {
   const { key: MAPS_KEY, loading: mapsKeyLoading } = useGoogleMapsKey();
   const geoStops = stops.filter((s) => s.customerAddress?.lat != null);
@@ -298,6 +376,8 @@ export function TemplateRouteMap({
               depotLat={depotLat}
               depotLng={depotLng}
               depotAddress={depotAddress}
+              plannedPolyline={plannedPolyline}
+              variantOverlays={variantOverlays}
             />
           </Map>
         </MapsApiGate>

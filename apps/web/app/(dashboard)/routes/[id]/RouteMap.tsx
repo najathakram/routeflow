@@ -14,6 +14,9 @@ import type { RouteRunStop } from "@/lib/api/routes";
 import { useGoogleMapsKey } from "@/hooks/useGoogleMapsKey";
 import { MapErrorBoundary, MapsApiGate } from "@/components/GoogleMapsGate";
 import { DrivingPathLayer } from "@/components/DrivingPathLayer";
+import { EncodedPolylineLayer, type VariantOverlay } from "../templates/[id]/TemplateRouteMap";
+
+export type { VariantOverlay };
 
 // ─── Marker colour by stop status ────────────────────────────────────────────
 
@@ -76,7 +79,16 @@ function MarkerBubble({ stop, selected }: { stop: RouteRunStop; selected: boolea
 
 // ─── Driving route connecting stops in order ─────────────────────────────────
 
-function PolylineLayer({ stops }: { stops: RouteRunStop[] }) {
+function PolylineLayer({
+  stops,
+  precomputedPolyline,
+}: {
+  stops: RouteRunStop[];
+  /** Route.plannedPolyline — when set, DrivingPathLayer decodes and renders it
+   *  directly instead of calling the Routes API, so a stored route never
+   *  re-bills Google per view. */
+  precomputedPolyline?: string | null;
+}) {
   const path = React.useMemo(
     () =>
       [...stops]
@@ -88,7 +100,14 @@ function PolylineLayer({ stops }: { stops: RouteRunStop[] }) {
 
   if (path.length < 2) return null;
 
-  return <DrivingPathLayer waypoints={path} strokeColor="#3b82f6" strokeOpacity={0.7} />;
+  return (
+    <DrivingPathLayer
+      waypoints={path}
+      strokeColor="#3b82f6"
+      strokeOpacity={0.7}
+      precomputedPolyline={precomputedPolyline}
+    />
+  );
 }
 
 // ─── Auto-fit bounds to all markers ──────────────────────────────────────────
@@ -219,7 +238,18 @@ function MapPlaceholder({
 
 // ─── Exported component ───────────────────────────────────────────────────────
 
-export function RouteMap({ stops }: { stops: RouteRunStop[] }) {
+export interface RouteMapProps {
+  stops: RouteRunStop[];
+  /** Route.plannedPolyline — rendered by the default driving-path layer when
+   *  no variant comparison is active (map views then never re-bill Google). */
+  plannedPolyline?: string | null;
+  /** Route-variant comparison polylines (Fastest/Shortest/No-tolls). When
+   *  present (non-empty), these replace the default driving-path layer —
+   *  same convention as TemplateRouteMap. */
+  variantOverlays?: VariantOverlay[];
+}
+
+export function RouteMap({ stops, plannedPolyline, variantOverlays }: RouteMapProps) {
   const { key: MAPS_KEY, loading: mapsKeyLoading } = useGoogleMapsKey();
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
 
@@ -259,7 +289,11 @@ export function RouteMap({ stops }: { stops: RouteRunStop[] }) {
               style={{ width: "100%", height: "100%" }}
               onClick={() => setSelectedId(null)}
             >
-              <PolylineLayer stops={stopsWithCoords} />
+              {variantOverlays && variantOverlays.length > 0 ? (
+                <EncodedPolylineLayer overlays={variantOverlays} />
+              ) : (
+                <PolylineLayer stops={stopsWithCoords} precomputedPolyline={plannedPolyline} />
+              )}
               <FitBoundsLayer stops={stopsWithCoords} />
 
               {stopsWithCoords.map((stop) => (

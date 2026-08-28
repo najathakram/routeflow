@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { createHash } from "crypto";
+import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
@@ -17,7 +18,13 @@ import {
   Prisma,
   RouteKind,
   FulfillPath,
+  RouteOriginKind,
+  RouteEndKind,
+  RouteOptimizeMetric,
 } from "@prisma/client";
+import { geocodeAddress } from "../common/geocode.util";
+import { TripOriginDto, TripOriginType } from "../trips/dto/create-trip.dto";
+import { TripEndDto, TripEndType } from "../trips/dto/route-planning.dto";
 import { ListRoutesDto } from "./dto/list-routes.dto";
 import { CreateRouteDto } from "./dto/create-route.dto";
 import { UpdateRouteDto } from "./dto/update-route.dto";
@@ -102,6 +109,7 @@ export class RoutesService {
     private readonly notifications: NotificationsService,
     private readonly messaging: MessagingService,
     private readonly invoicesService: InvoicesService,
+    private readonly configService: ConfigService,
   ) {}
 
   // ── Route Templates ────────────────────────────────────────────────────
@@ -183,21 +191,224 @@ export class RoutesService {
     return route;
   }
 
+  /**
+   * Route planning (start/end points, tolls, objective) for the scheduled-
+   * route builder (`routes/create`) — mirrors TripsService.createTrip's
+   * resolution (apps/api/src/trips/trips.service.ts, untouched by this
+   * module) so both builders validate the same way, but stays additive: when
+   * `dto.origin`/`dto.end` are omitted the created route is byte-identical to
+   * before this feature. TENANT origin is NOT re-resolved server-side — the
+   * web client already resolves it via GET /settings/route and sends
+   * depotLat/depotLng/depotAddress directly, exactly as this endpoint has
+   * always accepted them; only DRIVER/ADDRESS need a server round-trip.
+   */
   async createRoute(dto: CreateRouteDto) {
+    let depotLat = dto.depotLat;
+    let depotLng = dto.depotLng;
+    let depotAddress = dto.depotAddress;
+    let originKind: RouteOriginKind | undefined;
+
+    if (dto.origin) {
+      if (dto.origin.type === TripOriginType.TENANT) {
+        originKind = RouteOriginKind.TENANT;
+      } else {
+        const resolved = await this.resolveRouteOrigin(dto.origin);
+        depotLat = resolved.depotLat;
+        depotLng = resolved.depotLng;
+        depotAddress = resolved.depotAddress;
+        originKind =
+          dto.origin.type === TripOriginType.DRIVER
+            ? RouteOriginKind.DRIVER
+            : RouteOriginKind.ADDRESS;
+      }
+    }
+
+    // Geocode/driver-lookup HTTP calls (ADDRESS/DRIVER origin, DRIVER_HOME/
+    // ADDRESS end) happen strictly before the write, same rationale as
+    // TripsService.createTrip — external calls must never straddle a DB write.
+    const endResult = dto.end
+      ? await this.resolveRouteEnd(
+          dto.end,
+          {
+            depotLat: depotLat ?? null,
+            depotLng: depotLng ?? null,
+            depotAddress: depotAddress ?? null,
+          },
+          dto.driverId ?? null,
+        )
+      : null;
+
     return this.prisma.forTenant().route.create({
       data: {
         name: dto.name,
         driverId: dto.driverId || undefined,
-        depotLat: dto.depotLat,
-        depotLng: dto.depotLng,
-        depotAddress: dto.depotAddress,
+        depotLat,
+        depotLng,
+        depotAddress,
+        ...(originKind ? { originKind } : {}),
+        ...(endResult
+          ? {
+              endKind: endResult.endKind,
+              endLat: endResult.endLat,
+              endLng: endResult.endLng,
+              endAddress: endResult.endAddress,
+            }
+          : {}),
+        ...(dto.avoidTolls !== undefined ? { avoidTolls: dto.avoidTolls } : {}),
+        ...(dto.optimizeBy !== undefined
+          ? { optimizeBy: dto.optimizeBy as RouteOptimizeMetric }
+          : {}),
       },
     });
+  }
+
+  /** DRIVER/ADDRESS origin resolution for `createRoute` — see its docstring
+   *  for why TENANT never reaches here. Validation/messaging mirrors
+   *  TripsService.resolveOrigin's DRIVER/ADDRESS cases exactly. */
+  private async resolveRouteOrigin(
+    origin: TripOriginDto,
+  ): Promise<{ depotLat: number; depotLng: number; depotAddress: string }> {
+    switch (origin.type) {
+      case TripOriginType.DRIVER: {
+        const driver = await this.prisma.forTenant().driver.findFirst({
+          where: { id: origin.driverId },
+        });
+        if (!driver) throw new NotFoundException("Driver not found");
+        if (driver.homeLat == null || driver.homeLng == null) {
+          throw new BadRequestException(
+            `${driver.contactName ?? "This driver"} has no home base set. Add a home address on the driver profile first.`,
+          );
+        }
+        return {
+          depotLat: driver.homeLat,
+          depotLng: driver.homeLng,
+          depotAddress: driver.homeAddress ?? "Driver home base",
+        };
+      }
+      case TripOriginType.ADDRESS:
+      default: {
+        const addr = {
+          line1: origin.line1!,
+          city: origin.city ?? "",
+          state: origin.state ?? "",
+          zip: origin.zip ?? "",
+        };
+        const apiKey = this.configService.get<string>("googleMaps.apiKey");
+        const geo = await geocodeAddress(addr, apiKey, this.logger);
+        if (!geo) {
+          throw new BadRequestException(
+            "Could not locate the route start address. Check it and try again.",
+          );
+        }
+        return {
+          depotLat: geo.lat,
+          depotLng: geo.lng,
+          depotAddress: [origin.line1, origin.city, origin.state, origin.zip]
+            .filter(Boolean)
+            .join(", "),
+        };
+      }
+    }
+  }
+
+  /** End-point resolution for `createRoute` — mirrors TripsService.resolveEnd
+   *  exactly (NONE/RETURN_TO_START/DRIVER_HOME/ADDRESS), just re-hosted here
+   *  since this module never imports trips.service.ts. */
+  private async resolveRouteEnd(
+    end: TripEndDto | undefined,
+    origin: { depotLat: number | null; depotLng: number | null; depotAddress: string | null },
+    routeDriverId: string | null,
+  ): Promise<{
+    endKind: RouteEndKind;
+    endLat: number | null;
+    endLng: number | null;
+    endAddress: string | null;
+  }> {
+    if (!end || end.type === TripEndType.NONE) {
+      return { endKind: RouteEndKind.NONE, endLat: null, endLng: null, endAddress: null };
+    }
+
+    switch (end.type) {
+      case TripEndType.RETURN_TO_START: {
+        if (origin.depotLat == null || origin.depotLng == null) {
+          throw new BadRequestException(
+            "Set a route start point before choosing 'Return to start'.",
+          );
+        }
+        return {
+          endKind: RouteEndKind.RETURN_TO_START,
+          endLat: origin.depotLat,
+          endLng: origin.depotLng,
+          endAddress: origin.depotAddress,
+        };
+      }
+      case TripEndType.DRIVER_HOME: {
+        const driverId = end.driverId ?? routeDriverId;
+        if (!driverId) {
+          throw new BadRequestException(
+            "Choose a driver for the route end point, or assign a driver to the route first.",
+          );
+        }
+        const driver = await this.prisma.forTenant().driver.findFirst({ where: { id: driverId } });
+        if (!driver) throw new NotFoundException("Driver not found");
+        if (driver.homeLat == null || driver.homeLng == null) {
+          throw new BadRequestException(
+            `${driver.contactName ?? "This driver"} has no home base set. Add a home address on the driver profile first.`,
+          );
+        }
+        return {
+          endKind: RouteEndKind.DRIVER_HOME,
+          endLat: driver.homeLat,
+          endLng: driver.homeLng,
+          endAddress: driver.homeAddress ?? "Driver home base",
+        };
+      }
+      case TripEndType.ADDRESS: {
+        if (!end.line1) {
+          throw new BadRequestException("Enter an address for the route end point.");
+        }
+        const addr = {
+          line1: end.line1,
+          city: end.city ?? "",
+          state: end.state ?? "",
+          zip: end.zip ?? "",
+        };
+        const apiKey = this.configService.get<string>("googleMaps.apiKey");
+        const geo = await geocodeAddress(addr, apiKey, this.logger);
+        if (!geo) {
+          throw new BadRequestException(
+            "Could not locate the route end address. Check it and try again.",
+          );
+        }
+        return {
+          endKind: RouteEndKind.ADDRESS,
+          endLat: geo.lat,
+          endLng: geo.lng,
+          endAddress: [end.line1, end.city, end.state, end.zip].filter(Boolean).join(", "),
+        };
+      }
+      default:
+        return { endKind: RouteEndKind.NONE, endLat: null, endLng: null, endAddress: null };
+    }
   }
 
   async updateRoute(id: string, dto: UpdateRouteDto) {
     await this.findRouteOrThrow(id);
     return this.prisma.forTenant().route.update({ where: { id }, data: dto });
+  }
+
+  /**
+   * Drops a route's cached road polyline (`Route.plannedPolyline`).
+   *
+   * The map renders a stored polyline verbatim and deliberately skips its
+   * Routes API fetch while one is present, so any change to which stops are on
+   * the route — or what order they're in — must clear it or the map keeps
+   * drawing the old path forever. `applyRouteVariant` is the only writer.
+   */
+  private async clearPlannedPolyline(routeId: string) {
+    await this.prisma
+      .forTenant()
+      .route.update({ where: { id: routeId }, data: { plannedPolyline: null } });
   }
 
   async addStop(routeId: string, dto: AddStopDto) {
@@ -226,7 +437,7 @@ export class RoutesService {
       customerAddressId = defaultAddr?.id;
     }
 
-    return this.prisma.forTenant().routeStop.create({
+    const created = await this.prisma.forTenant().routeStop.create({
       data: {
         routeId,
         customerId: dto.customerId,
@@ -235,6 +446,8 @@ export class RoutesService {
         notes: dto.notes,
       },
     });
+    await this.clearPlannedPolyline(routeId);
+    return created;
   }
 
   async removeStop(routeId: string, stopId: string) {
@@ -264,6 +477,7 @@ export class RoutesService {
       }
       throw err;
     }
+    await this.clearPlannedPolyline(routeId);
     return { success: true };
   }
 
@@ -283,6 +497,10 @@ export class RoutesService {
       ...order.map(({ id, stopNumber }) =>
         this.prisma.forTenant().routeStop.update({ where: { id }, data: { stopNumber } }),
       ),
+      // See clearPlannedPolyline — a hand reorder invalidates the stored path.
+      this.prisma
+        .forTenant()
+        .route.update({ where: { id: routeId }, data: { plannedPolyline: null } }),
     ]);
     return { success: true };
   }
@@ -365,6 +583,12 @@ export class RoutesService {
       ...order.map(({ id, stopNumber }) =>
         this.prisma.forTenant().routeRunStop.update({ where: { id }, data: { stopNumber } }),
       ),
+      // The polyline lives on the parent route but is what this run's map
+      // draws — a hand reorder here makes it wrong too. See
+      // clearPlannedPolyline.
+      this.prisma
+        .forTenant()
+        .route.update({ where: { id: run.routeId }, data: { plannedPolyline: null } }),
     ]);
     return { success: true };
   }
@@ -822,7 +1046,19 @@ export class RoutesService {
       this.prisma.forTenant().routeRun.findMany({
         where,
         include: {
-          route: { select: { id: true, name: true, kind: true } },
+          route: {
+            select: {
+              id: true,
+              name: true,
+              kind: true,
+              depotLat: true,
+              depotLng: true,
+              depotAddress: true,
+              endKind: true,
+              endLat: true,
+              endLng: true,
+            },
+          },
           driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
           _count: { select: { stops: true } },
           stops: {
@@ -859,7 +1095,19 @@ export class RoutesService {
     const run = await this.prisma.forTenant().routeRun.findUnique({
       where: { id },
       include: {
-        route: { select: { id: true, name: true } },
+        route: {
+          select: {
+            id: true,
+            name: true,
+            kind: true,
+            depotLat: true,
+            depotLng: true,
+            depotAddress: true,
+            endKind: true,
+            endLat: true,
+            endLng: true,
+          },
+        },
         driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
         stops: {
           include: {
@@ -1734,7 +1982,19 @@ export class RoutesService {
         status: { in: [RouteRunStatus.SCHEDULED, RouteRunStatus.IN_PROGRESS] },
       },
       include: {
-        route: { select: { id: true, name: true } },
+        route: {
+          select: {
+            id: true,
+            name: true,
+            kind: true,
+            depotLat: true,
+            depotLng: true,
+            depotAddress: true,
+            endKind: true,
+            endLat: true,
+            endLng: true,
+          },
+        },
         driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
         _count: { select: { stops: true } },
         stops: {

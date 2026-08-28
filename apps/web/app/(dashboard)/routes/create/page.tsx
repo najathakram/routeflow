@@ -12,8 +12,25 @@ import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useCustomers } from "@/lib/api/customers";
 import { useDrivers } from "@/lib/api/drivers";
-import { useCreateRoute, useCustomerRouteAssignments, useRouteSettings } from "@/lib/api/routes";
+import {
+  useCreateRoute,
+  useCustomerRouteAssignments,
+  useRouteSettings,
+  type RouteOptimizeMetric,
+  type RoutePlanningEndDto,
+  type TripOrigin,
+} from "@/lib/api/routes";
 import { apiClient } from "@/lib/api-client";
+import {
+  EMPTY_PLANNING_ADDRESS,
+  EMPTY_END_DRAFT,
+  type RoutePlanningValue,
+  type RoutePlanningOriginKind,
+  type RoutePlanningAddress,
+  type RoutePlanningOriginSummary,
+  type TripEndDraft,
+  type RoutePlanningDriverOption,
+} from "@/components/RoutePlanningControls";
 import { CreateRouteLeftPanel } from "./CreateRouteLeftPanel";
 import { CreateRouteMap } from "./CreateRouteMap";
 
@@ -201,6 +218,23 @@ export default function CreateRoutePage() {
   // ── Stops state ──
   const [stops, setStops] = React.useState<StopEntry[]>([]);
 
+  // ── Route planning (start/end/tolls/objective) ──
+  const [originKind, setOriginKind] = React.useState<RoutePlanningOriginKind>("TENANT");
+  const [originAddress, setOriginAddress] =
+    React.useState<RoutePlanningAddress>(EMPTY_PLANNING_ADDRESS);
+  const [end, setEnd] = React.useState<TripEndDraft>(EMPTY_END_DRAFT);
+  const [avoidTolls, setAvoidTolls] = React.useState(false);
+  const [optimizeBy, setOptimizeBy] = React.useState<RouteOptimizeMetric>("TIME");
+  const [optionsOpen, setOptionsOpen] = React.useState(false);
+  // Snapshot taken whenever the client-side "Optimize Stop Order" button runs
+  // — if avoidTolls/optimizeBy change afterward, the stop order it produced
+  // may no longer match the user's intent (Design directive: surface a hint,
+  // don't silently go stale).
+  const [optimizedSettings, setOptimizedSettings] = React.useState<{
+    avoidTolls: boolean;
+    optimizeBy: RouteOptimizeMetric;
+  } | null>(null);
+
   const addStop = React.useCallback(
     (customer: CustomerForMap) => {
       if (stops.some((s) => s.customerId === customer.id)) return;
@@ -236,10 +270,114 @@ export default function CreateRoutePage() {
 
   const handleOptimize = React.useCallback(() => {
     setStops((prev) => nearestNeighborOrder(prev, depot));
-  }, [depot]);
+    setOptimizedSettings({ avoidTolls, optimizeBy });
+  }, [depot, avoidTolls, optimizeBy]);
+
+  // ── Route planning derived state ──
+  const drivers = driversData?.data ?? [];
+  const defaultDriverId = form.watch("defaultDriverId");
+  const selectedOriginDriver = drivers.find((d) => d.id === defaultDriverId);
+  // Mirrors deliveries/new's predicate (TripsService.resolveTenantDepot /
+  // resolveOrigin) so both builders agree on when a start point is usable.
+  const hasDepot =
+    (routeSettings?.depotLat != null && routeSettings?.depotLng != null) ||
+    !!routeSettings?.depotAddress;
+  const hasDriverHome =
+    selectedOriginDriver?.homeLat != null && selectedOriginDriver?.homeLng != null;
+
+  const originSummary: RoutePlanningOriginSummary = React.useMemo(
+    () => ({
+      depotAddress: routeSettings?.depotAddress,
+      hasDepot,
+      driverName: selectedOriginDriver?.contactName,
+      hasDriver: !!defaultDriverId,
+      hasDriverHome,
+      driverHref: defaultDriverId ? `/drivers/${defaultDriverId}` : null,
+    }),
+    [
+      routeSettings?.depotAddress,
+      hasDepot,
+      selectedOriginDriver?.contactName,
+      defaultDriverId,
+      hasDriverHome,
+    ],
+  );
+
+  const planningValue: RoutePlanningValue = {
+    originKind,
+    originAddress,
+    originSummary,
+    end,
+    avoidTolls,
+    optimizeBy,
+  };
+
+  function handlePlanningChange(next: RoutePlanningValue) {
+    setOriginKind(next.originKind);
+    setOriginAddress(next.originAddress);
+    setEnd(next.end);
+    setAvoidTolls(next.avoidTolls);
+    setOptimizeBy(next.optimizeBy);
+  }
+
+  const endDriverOptions: RoutePlanningDriverOption[] = React.useMemo(
+    () =>
+      drivers.map((d) => ({
+        id: d.id,
+        name: d.contactName,
+        hasHome: d.homeLat != null && d.homeLng != null,
+      })),
+    [drivers],
+  );
+
+  const originReady =
+    originKind === "TENANT"
+      ? hasDepot
+      : originKind === "DRIVER"
+        ? !!defaultDriverId && hasDriverHome
+        : originAddress.line1.trim().length > 0;
+
+  // Client-side "Optimize Stop Order" doesn't consume avoidTolls/optimizeBy
+  // (it's pure haversine distance) — this hint just tells the user their
+  // objective/tolls choice changed since the last time they asked for an
+  // order, so a re-optimize (client-side here, server-side once the route
+  // exists) is worth doing before saving.
+  const settingsChanged =
+    optimizedSettings != null &&
+    (optimizedSettings.avoidTolls !== avoidTolls || optimizedSettings.optimizeBy !== optimizeBy);
+
+  function buildOrigin(): TripOrigin {
+    if (originKind === "DRIVER") return { type: "DRIVER", driverId: defaultDriverId || "" };
+    if (originKind === "ADDRESS")
+      return {
+        type: "ADDRESS",
+        line1: originAddress.line1.trim(),
+        city: originAddress.city.trim() || undefined,
+        state: originAddress.state.trim() || undefined,
+        zip: originAddress.zip.trim() || undefined,
+      };
+    return { type: "TENANT" };
+  }
+
+  function buildEndDto(): RoutePlanningEndDto | undefined {
+    if (end.type === "NONE") return undefined;
+    if (end.type === "RETURN_TO_START") return { type: "RETURN_TO_START" };
+    if (end.type === "DRIVER_HOME") return { type: "DRIVER_HOME", driverId: end.driverId };
+    return {
+      type: "ADDRESS",
+      line1: end.address.line1.trim(),
+      city: end.address.city.trim() || undefined,
+      state: end.address.state.trim() || undefined,
+      zip: end.address.zip.trim() || undefined,
+    };
+  }
 
   // ── Submit ──
   const onSubmit = async (data: FormValues) => {
+    if (!originReady) {
+      toast({ title: "Choose a valid start point first", variant: "warning" });
+      return;
+    }
     setIsSubmitting(true);
     try {
       const route = await createRoute.mutateAsync({
@@ -248,6 +386,10 @@ export default function CreateRoutePage() {
         depotLat: routeSettings?.depotLat ?? undefined,
         depotLng: routeSettings?.depotLng ?? undefined,
         depotAddress: routeSettings?.depotAddress || undefined,
+        origin: buildOrigin(),
+        end: buildEndDto(),
+        avoidTolls,
+        optimizeBy,
       });
       // Add stops sequentially
       for (let i = 0; i < stops.length; i++) {
@@ -316,6 +458,13 @@ export default function CreateRoutePage() {
             onOptimize={handleOptimize}
             onSubmit={form.handleSubmit(onSubmit)}
             isSubmitting={isSubmitting}
+            planningValue={planningValue}
+            onPlanningChange={handlePlanningChange}
+            planningDrivers={endDriverOptions}
+            planningOpen={optionsOpen}
+            onTogglePlanning={() => setOptionsOpen((v) => !v)}
+            originReady={originReady}
+            settingsChanged={settingsChanged}
           />
         </div>
 

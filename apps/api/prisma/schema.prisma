@@ -165,6 +165,24 @@ enum RouteKind {
   ADHOC
 }
 
+enum RouteOriginKind {
+  TENANT
+  DRIVER
+  ADDRESS
+}
+
+enum RouteEndKind {
+  NONE
+  RETURN_TO_START
+  DRIVER_HOME
+  ADDRESS
+}
+
+enum RouteOptimizeMetric {
+  TIME
+  DISTANCE
+}
+
 enum OrderSource {
   APP
   PHONE
@@ -1095,17 +1113,26 @@ enum PromotionScope {
 }
 
 model Route {
-  id           String    @id @default(uuid())
-  name         String
-  driverId     String?
-  isActive     Boolean   @default(true)
-  depotLat     Float?
-  depotLng     Float?
-  depotAddress String?
-  kind         RouteKind @default(SCHEDULED)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  tenantId     String?
+  id              String              @id @default(uuid())
+  name            String
+  driverId        String?
+  isActive        Boolean             @default(true)
+  depotLat        Float?
+  depotLng        Float?
+  depotAddress    String?
+  originKind      RouteOriginKind? // how depot* was chosen; null = legacy rows
+  endKind         RouteEndKind        @default(NONE)
+  endLat          Float?
+  endLng          Float?
+  endAddress      String?
+  avoidTolls      Boolean             @default(false)
+  optimizeBy      RouteOptimizeMetric @default(TIME)
+  plannedPolyline String? // encoded road polyline of the chosen route (scale: map views
+  // render this instead of re-calling Google)
+  kind            RouteKind           @default(SCHEDULED)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  tenantId        String?
 
   driver    Driver?         @relation(fields: [driverId], references: [id])
   tenant    Tenant?         @relation(fields: [tenantId], references: [id])
