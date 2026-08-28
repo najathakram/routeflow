@@ -40,6 +40,16 @@ ENV EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=$EXPO_PUBLIC_GOOGLE_MAPS_API_KEY
 
 WORKDIR /app/apps/mobile
 
+# babel-preset-expo probes for optional integrations (expo-router, reanimated,
+# worklets) with require.resolve FROM ITS OWN LOCATION (node_modules/
+# babel-preset-expo). Since the #463 lockfile, npm-on-Linux nests expo-router
+# under apps/mobile/node_modules — off that walk-up path — so the preset
+# silently skipped its router plugin and the export died with
+# "Invalid call at line 2: process.env.EXPO_ROUTER_APP_ROOT".
+# NODE_PATH adds the workspace's own node_modules as a CJS resolution fallback,
+# fixing the whole class without fighting npm hoisting. Build-stage only.
+ENV NODE_PATH=/app/apps/mobile/node_modules
+
 # Export the app as a static web bundle (Expo Router web output → dist/)
 RUN npx expo export --platform web
 
