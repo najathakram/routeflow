@@ -1939,26 +1939,14 @@ function MyAccountTab() {
   const handleLinkGoogle = async () => {
     setIsLinking(true);
     try {
-      const apiUrl =
-        process.env.NEXT_PUBLIC_API_URL ?? "https://routeflowapi-production.up.railway.app/api/v1";
-      const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
-      const res = await fetch(`${apiUrl}/auth/google/link`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const { data } = await apiClient.get("/auth/google/link");
+      if (data?.url) window.location.href = data.url;
+    } catch (err: any) {
+      toast({
+        title: "Google link failed",
+        description: err?.response?.data?.message ?? "Please try again.",
+        variant: "error",
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        toast({
-          title: "Google link failed",
-          description: body.message ?? "Please try again.",
-          variant: "error",
-        });
-        setIsLinking(false);
-        return;
-      }
-      const { url } = await res.json();
-      if (url) window.location.href = url;
-    } catch {
-      toast({ title: "Google link failed", description: "Please try again.", variant: "error" });
       setIsLinking(false);
     }
   };
