@@ -7,5 +7,6 @@
     "mobile",
     "packages"
   ],
-  "fileCount": 899
+  "fileCount": 899,
+  "notes": "2026-08-28 (worktree charming-jennings) — B40 analytics date-range, remaining three cards: getDso(from?,to?) windows PAID invoices on issueDate via new private issueDateFilter (no bounds ⇒ no filter — mobile parameterless stays all-time); getDeadStock(daysInactive, from?, to?) — a picker range REPLACES the rolling window (no movement AND no invoiced sale inside [from,to]; stock stays current-state; display fields stay most-recent-ever); getMarginAlerts decided range-independent (current price vs current cost) — web card caption says so, web no longer sends/refetches from-to for it; dead-stock web row renders null daysInactive as em dash. Controller: dead-stock + dso gained @Query from/to. Complements PR #478 (route/driver half, awesome-bun session — lands first, this branch rebases). See CHANGELOG top bullet. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
