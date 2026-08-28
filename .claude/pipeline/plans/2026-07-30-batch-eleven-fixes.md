@@ -1,6 +1,6 @@
 # Plan: RouteFlow batch — 11 client-reported fixes & features
 
-> Authored by Fable 5 on 2026-07-30. Status: APPROVED
+> Authored by Fable 5 on 2026-07-30. Status: SHIPPED
 > This file is the ONLY context the implementation and review agents receive.
 > It must stand alone: no references to "the conversation", no "as discussed".
 

@@ -1,6 +1,6 @@
 # Plan: Split-payment deposits at order placement (PR-D) · in-builder order picker (PR-E)
 
-> Authored by Fable 5 on 2026-08-26. Status: APPROVED
+> Authored by Fable 5 on 2026-08-26. Status: SHIPPED
 > This file is the ONLY context the implementation and review agents receive. It must stand
 > alone: no references to "the conversation", no "as discussed".
 
