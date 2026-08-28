@@ -318,12 +318,7 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type ApiOrderStatus =
-  | "DRAFT"
-  | "PENDING"
-  | "CONFIRMED"
-  | "OUT_FOR_DELIVERY"
-  | "DELIVERED"
-  | "CANCELLED";
+  "DRAFT" | "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
 
 interface EditItemState {
   id: string; // real DB id for existing items; temp "new-{uuid}" for new items

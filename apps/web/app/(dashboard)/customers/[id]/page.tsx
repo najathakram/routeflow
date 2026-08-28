@@ -1992,8 +1992,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
   // request is PENDING_SELLER_APPROVAL, so the card can say WHO is asking. Read them
   // via a local, additive cast instead of widening the shared interface.
   const pendingRequester = portalStatus as
-    | (PortalStatus & { buyerName?: string | null; buyerEmail?: string | null })
-    | undefined;
+    (PortalStatus & { buyerName?: string | null; buyerEmail?: string | null }) | undefined;
   const sendInvite = useSendPortalInvite();
   const resendInvite = useResendPortalInvite();
   const disconnectPortal = useDisconnectPortal();

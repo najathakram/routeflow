@@ -6,14 +6,7 @@ import type { AnyPaymentMethod, SelectablePaymentMethod } from "../payment-metho
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type InvoiceStatus =
-  | "DRAFT"
-  | "SENT"
-  | "VIEWED"
-  | "PARTIAL"
-  | "PAID"
-  | "VOID"
-  | "OVERDUE"
-  | "WRITTEN_OFF";
+  "DRAFT" | "SENT" | "VIEWED" | "PARTIAL" | "PAID" | "VOID" | "OVERDUE" | "WRITTEN_OFF";
 
 export type PriceType = "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL" | "PROMO";
 

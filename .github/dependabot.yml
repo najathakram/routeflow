@@ -20,6 +20,34 @@ updates:
       # ecosystems) — surface them but never auto-PR a major bump.
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # Expo SDK 55 pins the native-module set (react-native 0.83.x, reanimated
+      # 4.2.x, worklets 0.7.x, screens 4.2x, ...). Their "minor" bumps are
+      # breaking (RN 0.x minors ARE majors) and broke typecheck on PR #463 —
+      # these move only with a deliberate Expo SDK upgrade. Patches stay open.
+      - dependency-name: "react-native"
+        update-types: ["version-update:semver-minor"]
+      - dependency-name: "react-native-reanimated"
+        update-types: ["version-update:semver-minor"]
+      - dependency-name: "react-native-worklets"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "react-native-gesture-handler"
+        update-types: ["version-update:semver-minor"]
+      - dependency-name: "react-native-screens"
+        update-types: ["version-update:semver-minor"]
+      - dependency-name: "react-native-safe-area-context"
+        update-types: ["version-update:semver-minor"]
+      - dependency-name: "react-native-maps"
+        update-types: ["version-update:semver-minor"]
+      - dependency-name: "react-native-svg"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+      # sanitize-html >= 2.17.6 swapped in an ESM-only htmlparser2 12 and
+      # requires Node >= 22.12 (Jest can't load it; prod containers run
+      # node:20). Pinned at 2.17.5 in apps/api — unpin both this ignore and
+      # the pin when the platform moves to Node 22. The 2.17.6/2.17.7 security
+      # fixes don't affect us (they need allowed svg/math/animation tags; we
+      # sanitize with allowedTags: [], allowedAttributes: {}).
+      - dependency-name: "sanitize-html"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
