@@ -91,8 +91,8 @@ interface DeadStock {
   id: string;
   name: string;
   currentStock: number;
-  lastMovement: string;
-  daysInactive: number;
+  lastMovement: string | null;
+  daysInactive: number | null;
 }
 
 interface MarginAlert {
@@ -596,14 +596,16 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
       .finally(() => setDeadStockLoading(false));
   }, [from, to]);
 
+  // Margin alerts are current-state (today's price vs today's cost) — the API
+  // takes no from/to, so don't send or refetch on range changes (B40).
   React.useEffect(() => {
     setMarginAlertsLoading(true);
     apiClient
-      .get("/analytics/inventory/margin-alerts", { params: { from, to } })
+      .get("/analytics/inventory/margin-alerts")
       .then((r) => setMarginAlerts(r.data))
       .catch(() => setMarginAlerts([]))
       .finally(() => setMarginAlertsLoading(false));
-  }, [from, to]);
+  }, []);
 
   const topProductColumns: Column<TopProduct>[] = [
     {
@@ -683,20 +685,23 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
     },
     {
       header: "Days Inactive",
-      accessor: (row) => (
-        <span
-          className={cn(
-            "font-medium",
-            row.daysInactive > 90
-              ? "text-danger"
-              : row.daysInactive > 30
-                ? "text-warning"
-                : "text-navy",
-          )}
-        >
-          {row.daysInactive}d
-        </span>
-      ),
+      accessor: (row) =>
+        row.daysInactive == null ? (
+          <span className="text-navy/70">—</span>
+        ) : (
+          <span
+            className={cn(
+              "font-medium",
+              row.daysInactive > 90
+                ? "text-danger"
+                : row.daysInactive > 30
+                  ? "text-warning"
+                  : "text-navy",
+            )}
+          >
+            {row.daysInactive}d
+          </span>
+        ),
       align: "right",
     },
   ];
@@ -774,6 +779,9 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
 
       {/* Dead Stock */}
       <Card title="Dead Stock">
+        <p className="mb-4 text-xs text-navy/60">
+          Products with stock on hand but no sales or stock movements in the selected date range.
+        </p>
         <AnalyticsTable
           columns={deadStockColumns}
           data={deadStock}
@@ -784,6 +792,9 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
 
       {/* Margin Alerts */}
       <Card title="Margin Alerts">
+        <p className="mb-4 text-xs text-navy/60">
+          Based on current prices and costs — not affected by the date range.
+        </p>
         <AnalyticsTable
           columns={marginAlertColumns}
           data={marginAlerts}
