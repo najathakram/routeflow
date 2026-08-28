@@ -1,37 +1,19 @@
-import { PanResponder, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
 import { useRef, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius } from "@routeflow/ui/tokens";
+import { strokesToSvgDataUrl, type SignatureStroke as Stroke } from "../lib/pod-artifacts";
 
 type Point = { x: number; y: number };
-type Stroke = Point[];
 
 interface Props {
   /**
-   * Called after each stroke completes or on clear.
-   * Receives a PNG data URL on web, a native sentinel string on native,
-   * or null when the pad is cleared.
+   * Called after each stroke completes or on clear. Receives an SVG data URL
+   * built from the stroke vectors (same on web and native — the server
+   * rasterizes it into a durable POD image at stop completion), or null when
+   * the pad is cleared / nothing drawable was signed.
    */
   onCapture: (uri: string | null) => void;
-}
-
-function renderStrokesToDataUrl(strokes: Stroke[], w: number, h: number): string {
-  const canvas = (document as any).createElement("canvas") as HTMLCanvasElement;
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d")!;
-  ctx.strokeStyle = "#1e293b";
-  ctx.lineWidth = 2.5;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  for (const stroke of strokes) {
-    if (stroke.length < 2) continue;
-    ctx.beginPath();
-    ctx.moveTo(stroke[0].x, stroke[0].y);
-    for (let i = 1; i < stroke.length; i++) ctx.lineTo(stroke[i].x, stroke[i].y);
-    ctx.stroke();
-  }
-  return canvas.toDataURL("image/png");
 }
 
 export function SignaturePad({ onCapture }: Props) {
@@ -59,17 +41,8 @@ export function SignaturePad({ onCapture }: Props) {
         if (stroke.length > 0) {
           setStrokes((prev) => {
             const next = [...prev, stroke];
-            if (Platform.OS === "web") {
-              try {
-                const { width, height } = padSize.current;
-                const dataUrl = renderStrokesToDataUrl(next, width, height);
-                onCapture(dataUrl);
-              } catch {
-                onCapture("native-captured");
-              }
-            } else {
-              onCapture("native-captured");
-            }
+            const { width, height } = padSize.current;
+            onCapture(strokesToSvgDataUrl(next, width, height));
             return next;
           });
         }
@@ -93,7 +66,9 @@ export function SignaturePad({ onCapture }: Props) {
     ...strokes,
     ...(currentStroke.current.length > 1 ? [currentStroke.current] : []),
   ];
-  const hasSignature = strokes.length > 0;
+  // A lone tap draws nothing and produces no capture — only count strokes
+  // that actually render (keeps the badge in sync with what Save gets).
+  const hasSignature = strokes.some((s) => s.length >= 2);
 
   return (
     <View style={styles.wrapper}>

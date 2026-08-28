@@ -305,6 +305,35 @@ export function useRouteRun(id: string) {
   });
 }
 
+/**
+ * Proof-of-delivery artifacts for one run stop. `photos`/`signatureUrl` are
+ * presigned (or directly renderable data) URLs; artifacts captured by older
+ * driver builds stored device-local strings and surface only as
+ * `legacyPhotoCount` / `signatureCaptured` so the UI stays honest about
+ * what it cannot display.
+ */
+export interface StopPod {
+  photos: { url: string }[];
+  legacyPhotoCount: number;
+  signatureUrl: string | null;
+  signatureCaptured: boolean;
+  driverNote: string | null;
+  completedAt: string | null;
+  ageCheckRequired: boolean;
+  ageVerified: boolean;
+  identityCheckRequired: boolean;
+  identityVerified: boolean;
+  identityType: string | null;
+}
+
+export function useStopPod(runId: string, stopId: string, enabled = true) {
+  return useQuery<StopPod>({
+    queryKey: ["route-runs", runId, "stops", stopId, "pod"],
+    queryFn: () => apiClient.get(`/route-runs/${runId}/stops/${stopId}/pod`).then((r) => r.data),
+    enabled: enabled && !!runId && !!stopId,
+  });
+}
+
 export function useCreateRouteRun() {
   const qc = useQueryClient();
   return useMutation<

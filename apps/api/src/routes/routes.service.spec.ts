@@ -13,10 +13,21 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { InvoicesService } from "../invoices/invoices.service";
+import { StorageService } from "../storage/storage.service";
 import { geocodeAddress } from "../common/geocode.util";
+import { compressImage } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 jest.mock("../common/geocode.util", () => ({ geocodeAddress: jest.fn() }));
+// Real sharp is exercised by compress.util.spec.ts (incl. the SVG-signature
+// case); here it's mocked so POD unit tests need no real image fixtures.
+jest.mock("../storage/compress.util", () => ({
+  compressImage: jest.fn().mockResolvedValue({
+    buffer: Buffer.from("compressed"),
+    mimeType: "image/jpeg",
+    ext: "jpg",
+  }),
+}));
 
 const MOCK_ROUTE = {
   id: "route-1",
@@ -73,6 +84,7 @@ describe("RoutesService", () => {
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
   let messaging: { notify: jest.Mock; notifyEvent: jest.Mock };
   let invoicesService: { recordDeliveryPaymentInTx: jest.Mock };
+  let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -99,6 +111,12 @@ describe("RoutesService", () => {
       notifyEvent: jest.fn().mockResolvedValue(undefined),
     };
 
+    storage = {
+      upload: jest.fn().mockImplementation((key: string) => Promise.resolve(key)),
+      presignedUrl: jest.fn().mockImplementation((key: string) => Promise.resolve(`signed:${key}`)),
+      delete: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         RoutesService,
@@ -108,6 +126,7 @@ describe("RoutesService", () => {
         { provide: MessagingService, useValue: messaging },
         { provide: InvoicesService, useValue: invoicesService },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue("test-key") } },
+        { provide: StorageService, useValue: storage },
       ],
     }).compile();
 
@@ -930,6 +949,208 @@ describe("RoutesService", () => {
           vars: expect.objectContaining({ orderNumber: "ORD-100", orderTotal: "$42.00" }),
         }),
       );
+    });
+
+    // Durable POD: a data-URL signature is ingested into storage and the stop
+    // persists the storage KEY; legacy strings (file:// URIs) pass through.
+    it("ingests a data-URL signature into storage and persists the key", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        orders: [],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn() },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        orderItem: { ...prisma.orderItem, findFirst: jest.fn().mockResolvedValue(null) },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+
+      await service.completeStop(
+        "run-1",
+        "stop-1",
+        {
+          signatureUrl: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+          podPhotoUrls: ["file:///legacy-device-path.jpg"],
+        },
+        operatorPayload,
+      );
+
+      const keyRe = /^tenants\/test-tenant\/pod\/stop-1\/signature-[a-f0-9-]+\.jpg$/;
+      expect(storage.upload).toHaveBeenCalledWith(
+        expect.stringMatching(keyRe),
+        expect.any(Buffer),
+        "image/jpeg",
+      );
+      expect(txMock.routeRunStop.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "stop-1" },
+          data: expect.objectContaining({
+            signatureUrl: expect.stringMatching(keyRe),
+            podPhotoUrls: ["file:///legacy-device-path.jpg"],
+          }),
+        }),
+      );
+    });
+  });
+
+  // ─── Durable POD artifacts ───────────────────────────────────────────────
+
+  describe("attachPodArtifact / getStopPod", () => {
+    const STOP = {
+      id: "stop-1",
+      routeRunId: "run-1",
+      status: "PENDING",
+      podPhotoUrls: [] as string[],
+      signatureUrl: null as string | null,
+      driverNote: null,
+      completedAt: null,
+      ageCheckRequired: false,
+      identityCheckRequired: false,
+      ageVerified: false,
+      identityVerified: false,
+      identityType: null,
+    };
+    const PHOTO_DATA_URL = "data:image/jpeg;base64,/9j/fake";
+
+    beforeEach(() => {
+      prisma.routeRun.findUnique.mockResolvedValue(MOCK_RUN);
+    });
+
+    it("appends a photo key to the stop and returns a presigned url", async () => {
+      prisma.routeRunStop.findFirst.mockResolvedValue({ ...STOP });
+
+      const result = await service.attachPodArtifact("run-1", "stop-1", {
+        kind: "photo",
+        dataUrl: PHOTO_DATA_URL,
+        artifactId: "abcd1234",
+      });
+
+      const key = "tenants/test-tenant/pod/stop-1/photo-abcd1234.jpg";
+      expect(storage.upload).toHaveBeenCalledWith(key, expect.any(Buffer), "image/jpeg");
+      expect(prisma.routeRunStop.update).toHaveBeenCalledWith({
+        where: { id: "stop-1" },
+        data: { podPhotoUrls: { push: key } },
+      });
+      expect(result).toEqual({ key, url: `signed:${key}` });
+    });
+
+    it("sets the signature key on a signature attach", async () => {
+      prisma.routeRunStop.findFirst.mockResolvedValue({ ...STOP });
+
+      await service.attachPodArtifact("run-1", "stop-1", {
+        kind: "signature",
+        dataUrl: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+        artifactId: "sig00001",
+      });
+
+      expect(prisma.routeRunStop.update).toHaveBeenCalledWith({
+        where: { id: "stop-1" },
+        data: { signatureUrl: "tenants/test-tenant/pod/stop-1/signature-sig00001.jpg" },
+      });
+    });
+
+    it("is idempotent per artifactId — a replay returns the existing key without re-uploading", async () => {
+      const existingKey = "tenants/test-tenant/pod/stop-1/photo-abcd1234.jpg";
+      prisma.routeRunStop.findFirst.mockResolvedValue({ ...STOP, podPhotoUrls: [existingKey] });
+
+      const result = await service.attachPodArtifact("run-1", "stop-1", {
+        kind: "photo",
+        dataUrl: PHOTO_DATA_URL,
+        artifactId: "abcd1234",
+      });
+
+      expect(storage.upload).not.toHaveBeenCalled();
+      expect(prisma.routeRunStop.update).not.toHaveBeenCalled();
+      expect(result).toEqual({ key: existingKey, url: `signed:${existingKey}` });
+    });
+
+    it("rejects a payload that is not an image data URL", async () => {
+      prisma.routeRunStop.findFirst.mockResolvedValue({ ...STOP });
+
+      await expect(
+        service.attachPodArtifact("run-1", "stop-1", {
+          kind: "photo",
+          dataUrl: "file:///device-local.jpg",
+        }),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        service.attachPodArtifact("run-1", "stop-1", {
+          kind: "photo",
+          dataUrl: "data:text/html,<script>alert(1)</script>",
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("404s when the stop does not belong to the run", async () => {
+      prisma.routeRunStop.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.attachPodArtifact("run-1", "stop-x", { kind: "photo", dataUrl: PHOTO_DATA_URL }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it("400s when the image bytes cannot be decoded (sharp rejects)", async () => {
+      prisma.routeRunStop.findFirst.mockResolvedValue({ ...STOP });
+      (compressImage as jest.Mock).mockRejectedValueOnce(new Error("unsupported image"));
+
+      await expect(
+        service.attachPodArtifact("run-1", "stop-1", { kind: "photo", dataUrl: PHOTO_DATA_URL }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.routeRunStop.update).not.toHaveBeenCalled();
+    });
+
+    it("getStopPod presigns stored keys, passes data URLs through, and counts legacy strings", async () => {
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        ...STOP,
+        podPhotoUrls: [
+          "tenants/test-tenant/pod/stop-1/photo-a.jpg",
+          "data:image/png;base64,AAAA",
+          "file:///dead-device-path.jpg",
+          // another tenant's key must never be presigned, even if a hostile
+          // completion payload smuggled it into the column
+          "tenants/other-tenant/pod/stop-1/photo-b.jpg",
+        ],
+        signatureUrl: "native-captured",
+      });
+
+      const pod = await service.getStopPod("run-1", "stop-1");
+
+      expect(pod.photos).toEqual([
+        { url: "signed:tenants/test-tenant/pod/stop-1/photo-a.jpg" },
+        { url: "data:image/png;base64,AAAA" },
+      ]);
+      expect(pod.legacyPhotoCount).toBe(2);
+      expect(pod.signatureUrl).toBeNull();
+      expect(pod.signatureCaptured).toBe(true);
+    });
+
+    it("getStopPod presigns a stored signature key", async () => {
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        ...STOP,
+        signatureUrl: "tenants/test-tenant/pod/stop-1/signature-x.png",
+      });
+
+      const pod = await service.getStopPod("run-1", "stop-1");
+
+      expect(pod.signatureUrl).toBe("signed:tenants/test-tenant/pod/stop-1/signature-x.png");
+      expect(pod.signatureCaptured).toBe(true);
+      expect(pod.photos).toEqual([]);
     });
   });
 

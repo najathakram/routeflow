@@ -16,10 +16,12 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBackButton, NavBar, SegmentedControl } from "@routeflow/ui/mobile/ios";
 import {
   useActiveRouteRun,
+  useAttachPodArtifact,
   useCompleteWithPayment,
   useRouteRun,
   type RouteRunOrder,
 } from "../../../../../lib/api/routes";
+import { podPhotoArtifactId } from "../../../../../lib/pod-artifacts";
 import { useOrder } from "../../../../../lib/api/orders";
 import { useDriverPayments } from "../../../../../lib/api/addons";
 import { useUploadPaymentImage } from "../../../../../lib/api/payments";
@@ -136,11 +138,16 @@ export default function PaymentScreen() {
   const change = Math.max(0, receivedNum - invoiceTotal);
 
   const completeWithPaymentMut = useCompleteWithPayment();
+  const attachPodMut = useAttachPodArtifact();
   const uploadImageMut = useUploadPaymentImage();
   const pod = usePodStore((s) => (stopId ? s.pods[stopId] : undefined));
   const clearPod = usePodStore((s) => s.clear);
 
-  const submitting = completeWithPaymentMut.isPending;
+  // `closing` spans the whole close sequence (POD attaches + completion), not
+  // just the completion mutation — without it a second tap during the attach
+  // uploads would run closeStop twice.
+  const [closing, setClosing] = useState(false);
+  const submitting = closing || completeWithPaymentMut.isPending;
 
   // Best-effort: the stop is already completed by the time this runs — a
   // failed photo attach must NEVER surface as a failed delivery/payment, so
@@ -158,7 +165,7 @@ export default function PaymentScreen() {
   };
 
   const closeStop = async () => {
-    if (!stopId || !runId || !stop) return;
+    if (!stopId || !runId || !stop || submitting) return;
 
     // RF-006: block submit when a money-collecting method has zero collected
     // amount. Every method except "Account" (on account) collects something at
@@ -238,6 +245,30 @@ export default function PaymentScreen() {
     }[method] ?? "OTHER") as CollectedMethod;
     const collected = !canCollect || method === "Account" ? 0 : Math.min(receivedNum, invoiceTotal);
 
+    setClosing(true);
+
+    // Durable POD: upload captured photos as individual JSON attaches BEFORE
+    // the completion. JSON rides the offline queue (FormData does not) and the
+    // queue replays FIFO, so offline attaches land before the queued
+    // completion. The server appends each photo's storage key to the stop —
+    // the completion payload no longer carries photo strings at all (sending
+    // them would overwrite keys attached by queued replays). Failures never
+    // block the driver: a lost photo is no worse than the pre-upload behavior.
+    const podPhotos = (pod?.photoUrls ?? []).filter((p) => p.startsWith("data:"));
+    for (const dataUrl of podPhotos) {
+      try {
+        await attachPodMut.mutateAsync({
+          runId,
+          stopId,
+          kind: "photo",
+          dataUrl,
+          artifactId: podPhotoArtifactId(dataUrl),
+        });
+      } catch {
+        // offline-queued or failed — the stop completion must proceed either way
+      }
+    }
+
     // BUG-DRV1-3: stable per-attempt idempotency-key. The header is captured
     // by the offline-queue persister so a retry after a network blip cannot
     // double-charge — the server (RF-019) returns the original response.
@@ -248,7 +279,9 @@ export default function PaymentScreen() {
         runId,
         stopId,
         deliveries,
-        podPhotoUrls: pod?.photoUrls,
+        // The signature stays inline (an SVG data URL is a few KB): the server
+        // ingests it into storage during completion, and the regulated
+        // signature gate needs it present on THIS request.
         signatureUrl: pod?.signatureUri,
         driverNote: pod?.note,
         ageVerified: pod?.ageVerified,
@@ -264,9 +297,11 @@ export default function PaymentScreen() {
       // untyped, same pattern as admin.ts's orderId/invoiceGroupId).
       paymentIds = (result as unknown as { paymentIds?: string[] }).paymentIds;
     } catch (e: any) {
+      setClosing(false);
       showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
       return;
     }
+    setClosing(false);
 
     clearPod(stopId);
     if (stopId) clearPlan(stopId);

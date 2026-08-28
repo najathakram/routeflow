@@ -21,6 +21,9 @@ import {
   Settings2,
   GitCompare,
   ExternalLink,
+  Camera,
+  PenLine,
+  ShieldCheck,
 } from "lucide-react";
 import {
   DndContext,
@@ -54,6 +57,7 @@ import {
   useUpdateRoutePlanning,
   useRouteVariants,
   useApplyRouteVariant,
+  useStopPod,
   type RouteRunStop,
   type Route,
   type RouteVariant,
@@ -190,7 +194,15 @@ function StopIcon({ status }: { status: StopStatus }) {
 
 // ─── Sortable stop item ────────────────────────────────────────────────────────
 
-function SortableStopItem({ stop, draggable }: { stop: RouteRunStop; draggable: boolean }) {
+function SortableStopItem({
+  stop,
+  runId,
+  draggable,
+}: {
+  stop: RouteRunStop;
+  runId: string;
+  draggable: boolean;
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: stop.id,
   });
@@ -205,9 +217,111 @@ function SortableStopItem({ stop, draggable }: { stop: RouteRunStop; draggable: 
     <li ref={setNodeRef} style={style}>
       <StopItem
         stop={stop}
+        runId={runId}
         dragHandleProps={draggable ? { ...attributes, ...listeners } : undefined}
       />
     </li>
+  );
+}
+
+// ─── Proof of delivery ────────────────────────────────────────────────────────
+
+/** Lazily fetched when a COMPLETED stop is expanded (presigned URLs expire,
+ *  so this is never bundled into the run payload). */
+function StopPodSection({ runId, stopId }: { runId: string; stopId: string }) {
+  const { data: pod, isLoading } = useStopPod(runId, stopId);
+
+  if (isLoading) {
+    return <p className="text-xs text-navy/50">Loading proof of delivery…</p>;
+  }
+  if (!pod) return null;
+
+  const hasAnything =
+    pod.photos.length > 0 ||
+    pod.legacyPhotoCount > 0 ||
+    pod.signatureCaptured ||
+    pod.ageCheckRequired ||
+    pod.identityCheckRequired;
+  if (!hasAnything) return null;
+
+  return (
+    <div>
+      <p className="mb-1 flex items-center gap-1 text-xs font-semibold text-navy/70">
+        <Camera className="h-3.5 w-3.5" /> Proof of delivery
+      </p>
+      {pod.photos.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-2">
+          {pod.photos.map((photo, i) => (
+            <a
+              key={i}
+              href={photo.url}
+              target="_blank"
+              rel="noreferrer"
+              title="Open full-size photo"
+              className="block h-20 w-20 overflow-hidden rounded-md border border-surface-border"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element -- presigned cross-origin URL, next/image gains nothing */}
+              <img
+                src={photo.url}
+                alt={`Delivery photo ${i + 1}`}
+                className="h-full w-full object-cover"
+              />
+            </a>
+          ))}
+        </div>
+      )}
+      {pod.legacyPhotoCount > 0 && (
+        <p className="mb-2 text-xs text-navy/50 italic">
+          {pod.legacyPhotoCount} photo{pod.legacyPhotoCount === 1 ? "" : "s"} captured by an older
+          app version can&apos;t be displayed.
+        </p>
+      )}
+      {pod.signatureUrl ? (
+        <div className="mb-2">
+          <p className="mb-1 flex items-center gap-1 text-xs font-medium text-navy/60">
+            <PenLine className="h-3.5 w-3.5" /> Customer signature
+          </p>
+          {/* eslint-disable-next-line @next/next/no-img-element -- presigned cross-origin URL, next/image gains nothing */}
+          <img
+            src={pod.signatureUrl}
+            alt="Customer signature"
+            className="h-16 rounded-md border border-surface-border bg-white object-contain"
+          />
+        </div>
+      ) : pod.signatureCaptured ? (
+        <p className="mb-2 text-xs text-navy/50 italic">
+          Signature captured, but recorded by an older app version and can&apos;t be displayed.
+        </p>
+      ) : null}
+      {(pod.ageCheckRequired || pod.identityCheckRequired) && (
+        <div className="flex flex-wrap gap-1.5">
+          {pod.ageCheckRequired && (
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold",
+                pod.ageVerified ? "bg-success/10 text-success" : "bg-danger/10 text-danger",
+              )}
+            >
+              <ShieldCheck className="h-3 w-3" />
+              {pod.ageVerified ? "Age verified" : "Age NOT verified"}
+            </span>
+          )}
+          {pod.identityCheckRequired && (
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold",
+                pod.identityVerified ? "bg-success/10 text-success" : "bg-danger/10 text-danger",
+              )}
+            >
+              <ShieldCheck className="h-3 w-3" />
+              {pod.identityVerified
+                ? `ID verified${pod.identityType ? ` · ${pod.identityType.replace(/_/g, " ")}` : ""}`
+                : "ID NOT verified"}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -215,10 +329,12 @@ function SortableStopItem({ stop, draggable }: { stop: RouteRunStop; draggable: 
 
 function StopItem({
   stop,
+  runId,
   dragHandleProps,
   onAtDoorActions,
 }: {
   stop: RouteRunStop;
+  runId: string;
   dragHandleProps?: React.HTMLAttributes<HTMLButtonElement>;
   onAtDoorActions?: (stop: RouteRunStop) => void;
 }) {
@@ -332,6 +448,7 @@ function StopItem({
               <p className="mt-0.5 text-xs text-navy/80">{stop.driverNote}</p>
             </div>
           )}
+          {stop.status === "COMPLETED" && <StopPodSection runId={runId} stopId={stop.id} />}
           {!stop.orders?.length && !stop.driverNote && (
             <p className="text-xs text-navy/70 italic">No orders or notes for this stop.</p>
           )}
@@ -951,7 +1068,12 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
               >
                 <ul className="flex-1 space-y-2 overflow-y-auto p-4">
                   {stops.map((stop) => (
-                    <SortableStopItem key={stop.id} stop={stop} draggable={true} />
+                    <SortableStopItem
+                      key={stop.id}
+                      stop={stop}
+                      runId={params.id}
+                      draggable={true}
+                    />
                   ))}
                 </ul>
               </SortableContext>
@@ -960,7 +1082,7 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
             <ul className="flex-1 space-y-2 overflow-y-auto p-4">
               {stops.map((stop) => (
                 <li key={stop.id}>
-                  <StopItem stop={stop} onAtDoorActions={setAtDoorStop} />
+                  <StopItem stop={stop} runId={params.id} onAtDoorActions={setAtDoorStop} />
                 </li>
               ))}
             </ul>

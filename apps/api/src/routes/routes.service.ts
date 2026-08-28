@@ -6,7 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
@@ -39,6 +39,16 @@ import { InvoicesService } from "../invoices/invoices.service";
 import { formatMoney } from "../messaging/messaging.helpers";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { CompleteWithPaymentDto } from "./dto/complete-with-payment.dto";
+import { AttachPodArtifactDto } from "./dto/attach-pod-artifact.dto";
+import { StorageService } from "../storage/storage.service";
+import { compressImage } from "../storage/compress.util";
+import {
+  isPodStorageKey,
+  isRenderableDataUrl,
+  parseImageDataUrl,
+  podArtifactKey,
+  type PodArtifactKind,
+} from "./pod-artifacts.util";
 import {
   assertRegulatedDeliverySatisfied,
   deriveStopRegulatedRequirements,
@@ -110,6 +120,7 @@ export class RoutesService {
     private readonly messaging: MessagingService,
     private readonly invoicesService: InvoicesService,
     private readonly configService: ConfigService,
+    private readonly storage: StorageService,
   ) {}
 
   // ── Route Templates ────────────────────────────────────────────────────
@@ -1462,6 +1473,166 @@ export class RoutesService {
     }
   }
 
+  // ── Durable proof-of-delivery artifacts ────────────────────────────────
+  // POD photos/signatures arrive as data URLs inside plain JSON (never
+  // multipart — FormData is excluded from the mobile offline queue) and are
+  // ingested into storage under tenants/<tenantId>/pod/<stopId>/; the
+  // existing RouteRunStop columns then hold storage keys. Legacy strings
+  // (file:// URIs, the old "native-captured" sentinel) pass through
+  // unchanged so not-yet-updated driver builds keep completing stops.
+
+  /** Tenant id for POD storage keys — every POD caller is a tenant-scoped request. */
+  private requireTenantId(): string {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new ForbiddenException("Tenant context required");
+    return tenantId;
+  }
+
+  /**
+   * Rasterize + store one data-URL artifact; returns the storage key, or null
+   * when the value isn't an ingestable image data URL OR the rasterize fails —
+   * on failure the caller keeps the original data URL, which is still durable
+   * and renderable by the web client (just larger than a stored file).
+   */
+  private async ingestPodDataUrl(
+    value: string,
+    stopId: string,
+    kind: PodArtifactKind,
+    artifactId?: string,
+  ): Promise<string | null> {
+    const parsed = parseImageDataUrl(value);
+    if (!parsed) return null;
+    try {
+      const compressed = await compressImage(
+        parsed.buffer,
+        parsed.mimeType,
+        kind === "signature" ? 1000 : 1600,
+      );
+      const key = podArtifactKey(
+        this.requireTenantId(),
+        stopId,
+        kind,
+        artifactId ?? randomUUID(),
+        compressed.ext,
+      );
+      await this.storage.upload(key, compressed.buffer, compressed.mimeType);
+      return key;
+    } catch (e) {
+      this.logger.warn(
+        `POD ${kind} ingest failed for stop ${stopId}: ${(e as Error)?.message ?? e}`,
+      );
+      return null;
+    }
+  }
+
+  /** Rewrite a completion payload's data-URL artifacts to storage keys in place. */
+  private async ingestPodCapture(
+    dto: { signatureUrl?: string; podPhotoUrls?: string[] },
+    stopId: string,
+  ): Promise<void> {
+    if (dto.signatureUrl) {
+      const key = await this.ingestPodDataUrl(dto.signatureUrl, stopId, "signature");
+      if (key) dto.signatureUrl = key;
+    }
+    if (dto.podPhotoUrls?.length) {
+      const rewritten: string[] = [];
+      for (const value of dto.podPhotoUrls) {
+        const key = await this.ingestPodDataUrl(value, stopId, "photo");
+        rewritten.push(key ?? value);
+      }
+      dto.podPhotoUrls = rewritten;
+    }
+  }
+
+  /**
+   * Attach one POD artifact to a run stop, before OR after completion (the
+   * driver app uploads photos right before firing the completion; an offline
+   * queue replays them in the same order). Idempotent per artifactId so a
+   * replay whose response was lost never duplicates a photo.
+   */
+  async attachPodArtifact(runId: string, stopId: string, dto: AttachPodArtifactDto) {
+    const run = await this.prisma.forTenant().routeRun.findUnique({ where: { id: runId } });
+    if (!run) throw new NotFoundException("Route run not found");
+    const stop = await this.prisma
+      .forTenant()
+      .routeRunStop.findFirst({ where: { id: stopId, routeRunId: runId } });
+    if (!stop) throw new NotFoundException("Stop not found");
+
+    if (!parseImageDataUrl(dto.dataUrl)) {
+      throw new BadRequestException("dataUrl must be a data:image/... URL");
+    }
+
+    const tenantId = this.requireTenantId();
+    const artifactId = dto.artifactId ?? randomUUID();
+    const marker = `/${dto.kind}-${artifactId}.`;
+    const existing =
+      dto.kind === "photo"
+        ? (stop.podPhotoUrls ?? []).find((k) => isPodStorageKey(k, tenantId) && k.includes(marker))
+        : stop.signatureUrl &&
+            isPodStorageKey(stop.signatureUrl, tenantId) &&
+            stop.signatureUrl.includes(marker)
+          ? stop.signatureUrl
+          : undefined;
+    if (existing) {
+      return { key: existing, url: await this.storage.presignedUrl(existing) };
+    }
+
+    const key = await this.ingestPodDataUrl(dto.dataUrl, stopId, dto.kind, artifactId);
+    if (!key) throw new BadRequestException("File is not a decodable image");
+
+    await this.prisma.forTenant().routeRunStop.update({
+      where: { id: stopId },
+      data: dto.kind === "photo" ? { podPhotoUrls: { push: key } } : { signatureUrl: key },
+    });
+    return { key, url: await this.storage.presignedUrl(key) };
+  }
+
+  /**
+   * Retrievable POD for one stop: presigned URLs for stored artifacts, data
+   * URLs passed through, legacy strings surfaced only as counts/flags so the
+   * web UI can say "captured by an older app version" instead of lying.
+   */
+  async getStopPod(runId: string, stopId: string) {
+    const stop = await this.prisma
+      .forTenant()
+      .routeRunStop.findFirst({ where: { id: stopId, routeRunId: runId } });
+    if (!stop) throw new NotFoundException("Stop not found");
+
+    const tenantId = this.requireTenantId();
+    const photos: { url: string }[] = [];
+    let legacyPhotoCount = 0;
+    for (const value of stop.podPhotoUrls ?? []) {
+      if (isPodStorageKey(value, tenantId)) {
+        photos.push({ url: await this.storage.presignedUrl(value) });
+      } else if (isRenderableDataUrl(value)) {
+        photos.push({ url: value });
+      } else {
+        legacyPhotoCount++;
+      }
+    }
+
+    const sig = (stop.signatureUrl ?? "").trim();
+    const signatureUrl = isPodStorageKey(sig, tenantId)
+      ? await this.storage.presignedUrl(sig)
+      : isRenderableDataUrl(sig)
+        ? sig
+        : null;
+
+    return {
+      photos,
+      legacyPhotoCount,
+      signatureUrl,
+      signatureCaptured: sig.length > 0,
+      driverNote: stop.driverNote ?? null,
+      completedAt: stop.completedAt ?? null,
+      ageCheckRequired: stop.ageCheckRequired,
+      ageVerified: stop.ageVerified,
+      identityCheckRequired: stop.identityCheckRequired,
+      identityVerified: stop.identityVerified,
+      identityType: stop.identityType ?? null,
+    };
+  }
+
   async completeStop(
     runId: string,
     stopId: string,
@@ -1496,6 +1667,10 @@ export class RoutesService {
       const cached = await this.checkIdempotencyKey(dto.idempotencyKey, scope);
       if (cached) return cached;
     }
+
+    // Durable POD: rewrite data-URL artifacts to storage keys before the tx
+    // (after the idempotency check so a cached replay never re-uploads).
+    await this.ingestPodCapture(dto, stopId);
 
     const driver =
       user.role === UserRole.DRIVER
@@ -1677,6 +1852,10 @@ export class RoutesService {
       const cached = await this.checkIdempotencyKey(dto.idempotencyKey, scope);
       if (cached) return cached;
     }
+
+    // Durable POD: rewrite data-URL artifacts to storage keys before the tx
+    // (after the idempotency check so a cached replay never re-uploads).
+    await this.ingestPodCapture(dto, stopId);
 
     const driver =
       user.role === UserRole.DRIVER

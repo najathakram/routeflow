@@ -27,6 +27,7 @@ import { UpdateRunStatusDto } from "./dto/update-run-status.dto";
 import { ListRunsDto } from "./dto/list-runs.dto";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { CompleteWithPaymentDto } from "./dto/complete-with-payment.dto";
+import { AttachPodArtifactDto } from "./dto/attach-pod-artifact.dto";
 import { DriverPaymentsGuard } from "./driver-payments.guard";
 
 @ApiTags("routes")
@@ -201,6 +202,27 @@ export class RouteRunsController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.routesService.completeWithPayment(runId, stopId, { ...body, idempotencyKey }, user);
+  }
+
+  // Durable POD: one artifact per JSON request (data URL, never multipart —
+  // FormData is excluded from the mobile offline queue), stored under
+  // tenants/<tenantId>/pod/<stopId>/ and appended to the stop.
+  @Post(":id/stops/:stopId/pod-artifact")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  attachPodArtifact(
+    @Param("id") runId: string,
+    @Param("stopId") stopId: string,
+    @Body() body: AttachPodArtifactDto,
+  ) {
+    return this.routesService.attachPodArtifact(runId, stopId, body);
+  }
+
+  @Get(":id/stops/:stopId/pod")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  getStopPod(@Param("id") runId: string, @Param("stopId") stopId: string) {
+    return this.routesService.getStopPod(runId, stopId);
   }
 
   @Patch(":id/stops/:stopId")

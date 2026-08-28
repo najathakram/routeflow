@@ -10,15 +10,28 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { colors, borderRadius } from "@routeflow/ui/tokens";
 
 interface Props {
-  photos: string[]; // array of local URIs
+  photos: string[]; // array of local URIs (or data URLs in "data-url" mode)
   onAdd: (uri: string) => void;
   onRemove: (uri: string) => void;
   maxPhotos?: number;
   label?: string;
+  /**
+   * "data-url" emits a resized/compressed JPEG data URL instead of the
+   * device-local picker URI. Used for POD photos, which upload as JSON data
+   * URLs (the offline queue can't replay FormData) — a device URI would be
+   * persisted verbatim server-side and never be retrievable.
+   */
+  output?: "uri" | "data-url";
 }
+
+// Keep POD attaches well under the API's 2MB JSON body limit while staying
+// legible for dispute review (boxes at a door, not product photography).
+const DATA_URL_MAX_WIDTH = 1280;
+const DATA_URL_JPEG_QUALITY = 0.6;
 
 export function PhotoCapture({
   photos,
@@ -26,8 +39,36 @@ export function PhotoCapture({
   onRemove,
   maxPhotos = 3,
   label = "Add Photo",
+  output = "uri",
 }: Props) {
   const canAdd = photos.length < maxPhotos;
+
+  const emit = async (asset: ImagePicker.ImagePickerAsset) => {
+    if (output !== "data-url") {
+      onAdd(asset.uri);
+      return;
+    }
+    try {
+      const resize =
+        asset.width && asset.width > DATA_URL_MAX_WIDTH
+          ? [{ resize: { width: DATA_URL_MAX_WIDTH } }]
+          : [];
+      const jpeg = await manipulateAsync(asset.uri, resize, {
+        compress: DATA_URL_JPEG_QUALITY,
+        format: SaveFormat.JPEG,
+        base64: true,
+      });
+      if (jpeg.base64) {
+        onAdd(`data:image/jpeg;base64,${jpeg.base64}`);
+        return;
+      }
+      onAdd(asset.uri);
+    } catch {
+      // Transcode failed (exotic format): fall back to the local URI so the
+      // driver still sees the photo — it just won't upload (pre-change behavior).
+      onAdd(asset.uri);
+    }
+  };
 
   const handleCapture = async () => {
     // On web, use image library; on native prefer camera
@@ -38,7 +79,7 @@ export function PhotoCapture({
         allowsEditing: false,
       });
       if (!result.canceled && result.assets[0]) {
-        onAdd(result.assets[0].uri);
+        await emit(result.assets[0]);
       }
       return;
     }
@@ -54,7 +95,7 @@ export function PhotoCapture({
       allowsEditing: false,
     });
     if (!result.canceled && result.assets[0]) {
-      onAdd(result.assets[0].uri);
+      await emit(result.assets[0]);
     }
   };
 
