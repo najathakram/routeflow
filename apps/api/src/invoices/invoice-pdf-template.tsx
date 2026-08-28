@@ -32,6 +32,16 @@ export interface InvoicePdfData {
   discount: DecimalLike;
   shippingFee: DecimalLike;
   total: DecimalLike;
+  /**
+   * Deposit schedule (Tier 1). Null = no deposit on this invoice — renders
+   * nothing (byte-identical PDF). When set, `depositAmount` is computed
+   * server-side (roundMoney(total*percent/100), same convention as
+   * invoices.service's computeDepositFields) — the template never derives it.
+   */
+  depositPercent?: DecimalLike | null;
+  /** Date the deposit portion is due; only meaningful when depositPercent is set. */
+  depositDueDate?: Date | string | null;
+  depositAmount?: number | null;
   notes?: string | null;
   terms?: string | null;
   shippingCarrier?: string | null;
@@ -366,6 +376,12 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
   const total = toNum(invoice.total);
   const totalPaid = invoice.payments.reduce((s, p) => s + toNum(p.amount), 0);
   const balance = total - totalPaid;
+  // Deposit schedule (Tier 1): depositAmount arrives pre-computed from the
+  // service (roundMoney(total*percent/100)); the remainder is simply what's
+  // left of the total after it — independent of payments actually recorded.
+  const hasDeposit = invoice.depositPercent != null && invoice.depositAmount != null;
+  const depositAmount = invoice.depositAmount ?? 0;
+  const remainderAmount = total - depositAmount;
   const addr =
     invoice.customer.addresses?.find((a) => a.isDefault) ?? invoice.customer.addresses?.[0];
 
@@ -566,6 +582,20 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                 <Text style={styles.totalBigLabel}>Total</Text>
                 <Text style={styles.totalBigValue}>{fmt(total)}</Text>
               </View>
+              {hasDeposit ? (
+                <View>
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>
+                      Deposit due {fmtDate(invoice.depositDueDate)}
+                    </Text>
+                    <Text style={styles.totalValue}>{fmt(depositAmount)}</Text>
+                  </View>
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>Remainder due {fmtDate(invoice.dueDate)}</Text>
+                    <Text style={styles.totalValue}>{fmt(remainderAmount)}</Text>
+                  </View>
+                </View>
+              ) : null}
               {totalPaid > 0 ? (
                 <View style={styles.totalRow}>
                   <Text style={[styles.totalLabel, { color: SUCCESS }]}>Amount Paid</Text>

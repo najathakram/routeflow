@@ -24,11 +24,26 @@
  */
 export interface PendingCache<T> {
   get(key: string, make: () => Promise<T>): Promise<T>;
+  /**
+   * The RESOLVED value for `key`, synchronously — undefined while the promise
+   * is still pending, rejected, evicted, or was never created. This is what
+   * lets a retap hand `navigator.share()` the downloaded File with ZERO
+   * intervening awaits: some browsers (and stricter activation models) treat
+   * even a microtask gap as leaving the user gesture, and `window.open`
+   * fallbacks on file-share-less browsers (e.g. Samsung Internet) are only
+   * reliably popup-blocker-safe when issued synchronously inside the tap.
+   */
+  peek(key: string): T | undefined;
   release(key: string): void;
 }
 
 export function createPendingCache<T>(max: number): PendingCache<T> {
   const entries = new Map<string, Promise<T>>();
+  const resolved = new Map<string, T>();
+  const drop = (key: string) => {
+    entries.delete(key);
+    resolved.delete(key);
+  };
   return {
     get(key, make) {
       const cached = entries.get(key);
@@ -39,18 +54,28 @@ export function createPendingCache<T>(max: number): PendingCache<T> {
       }
       const pending = make();
       entries.set(key, pending);
-      pending.catch(() => {
-        if (entries.get(key) === pending) entries.delete(key);
-      });
+      pending.then(
+        (value) => {
+          // Identity-checked, like the rejection evict below: a LATE resolve
+          // must not resurrect a value for an entry a retry has since replaced.
+          if (entries.get(key) === pending) resolved.set(key, value);
+        },
+        () => {
+          if (entries.get(key) === pending) drop(key);
+        },
+      );
       while (entries.size > max) {
         const oldest = entries.keys().next().value;
         if (oldest === undefined) break;
-        entries.delete(oldest);
+        drop(oldest);
       }
       return pending;
     },
+    peek(key) {
+      return resolved.get(key);
+    },
     release(key) {
-      entries.delete(key);
+      drop(key);
     },
   };
 }

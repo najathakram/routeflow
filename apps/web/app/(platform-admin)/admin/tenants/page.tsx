@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { superAdminClient } from "@/lib/admin-api";
+import { setImpersonation } from "@/lib/impersonation";
 import { AdminBadge, planLabel } from "../../_components/AdminBadge";
 import { AdminModal } from "../../_components/AdminModal";
 import { ChevronUp, ChevronDown, X } from "lucide-react";
@@ -192,8 +193,7 @@ export default function AdminTenantsPage() {
     setActionError(null);
     try {
       const res = await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/impersonate`);
-      localStorage.setItem("impersonationToken", res.data.accessToken);
-      localStorage.setItem("impersonationTenantSlug", tenant.slug);
+      setImpersonation(res.data.accessToken, tenant.slug);
       router.push("/dashboard");
     } catch (err: unknown) {
       setActionError(

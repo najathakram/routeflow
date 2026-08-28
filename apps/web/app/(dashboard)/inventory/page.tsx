@@ -27,6 +27,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { normalizeBoxesPieces, roundUnitCost } from "@/lib/pricing";
+import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
 import {
   useStockOverview,
@@ -795,7 +796,7 @@ function StockTable({
               </td>
               <td className="px-4 py-3 text-navy/70">
                 {item.averageCost != null ? (
-                  `$${Number(item.averageCost).toFixed(2)}`
+                  formatMoney(item.averageCost)
                 ) : (
                   <button
                     type="button"
@@ -808,7 +809,7 @@ function StockTable({
                 )}
               </td>
               <td className="px-4 py-3 text-navy/70">
-                {item.totalValue != null ? `$${Number(item.totalValue).toFixed(2)}` : "—"}
+                {item.totalValue != null ? formatMoney(item.totalValue) : "—"}
               </td>
               <td className="px-4 py-3">
                 <div className="flex items-center justify-end gap-3">
@@ -1441,7 +1442,7 @@ function CreatePOModal({
                           </p>
                         </td>
                         <td className="px-3 py-2 text-right text-navy/70">
-                          {subtotal > 0 ? `$${subtotal.toFixed(2)}` : "—"}
+                          {subtotal > 0 ? formatMoney(subtotal) : "—"}
                         </td>
                         <td className="px-2 py-2">
                           <button
@@ -1466,7 +1467,7 @@ function CreatePOModal({
                       Total
                     </td>
                     <td className="px-3 py-2 text-right text-sm font-semibold text-navy">
-                      ${total.toFixed(2)}
+                      {formatMoney(total)}
                     </td>
                     <td />
                   </tr>
@@ -1768,7 +1769,7 @@ function PODetailRow({
                         )}
                       </td>
                       <td className="px-3 py-2 text-right text-navy/70">
-                        ${(ordered * Number(item.unitCost ?? 0)).toFixed(2)}
+                        {formatMoney(ordered * Number(item.unitCost ?? 0))}
                       </td>
                     </tr>
                   );
@@ -2044,7 +2045,7 @@ function PurchaseOrdersTab({
                     <td className="px-4 py-3">{poStatusBadge(po.status)}</td>
                     <td className="px-4 py-3 text-navy/70">{po.items?.length ?? 0}</td>
                     <td className="px-4 py-3 font-medium text-navy">
-                      ${Number(po.total ?? 0).toFixed(2)}
+                      {formatMoney(po.total ?? 0)}
                     </td>
                     <td className="px-4 py-3 text-navy/70">
                       {po.expectedDate ? fmtCalendarDate(po.expectedDate) : "—"}
@@ -2757,7 +2758,7 @@ export default function InventoryPage() {
             )}
           </div>
           <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums tracking-[-0.01em] text-navy">
-            ${totalInventoryValue.toFixed(2)}
+            {formatMoney(totalInventoryValue)}
           </p>
           {missingCostCount > 0 ? (
             <button

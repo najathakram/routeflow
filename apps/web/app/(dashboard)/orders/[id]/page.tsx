@@ -58,6 +58,7 @@ import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON } from "@/lib/api/addons";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
+import { formatMoney, formatQty } from "@/lib/format";
 import {
   describeChangeRequest,
   describeResolution,
@@ -109,7 +110,7 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
   const [emailSent, setEmailSent] = React.useState(false);
 
   const phone = data.customerMobile || data.customerPhone;
-  const totalFmt = `$${Number(data.total).toFixed(2)}`;
+  const totalFmt = formatMoney(data.total);
   const invoiceMsg = encodeURIComponent(
     `Hi ${data.customerName}, your invoice ${data.invoiceNumber} for ${totalFmt} is ready. Please let us know if you have any questions.`,
   );
@@ -317,12 +318,7 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type ApiOrderStatus =
-  | "DRAFT"
-  | "PENDING"
-  | "CONFIRMED"
-  | "OUT_FOR_DELIVERY"
-  | "DELIVERED"
-  | "CANCELLED";
+  "DRAFT" | "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
 
 interface EditItemState {
   id: string; // real DB id for existing items; temp "new-{uuid}" for new items
@@ -713,7 +709,7 @@ function SubstitutePicker({
               <span className="font-medium text-navy">{p.name}</span>
               {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
             </div>
-            <span className="text-xs text-navy">${Number(p.pricePerUnit).toFixed(2)}</span>
+            <span className="text-xs text-navy">{formatMoney(p.pricePerUnit)}</span>
           </button>
         ))}
       </div>
@@ -1148,7 +1144,7 @@ function EditableLineItems({
             {/* Live line total */}
             {!item.cancelled && (
               <span className="money w-20 shrink-0 text-right text-sm font-semibold text-navy">
-                ${editLineSubtotal(item).toFixed(2)}
+                {formatMoney(editLineSubtotal(item))}
               </span>
             )}
 
@@ -2226,7 +2222,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
               title={order!
                 .revisions!.map(
                   (r) =>
-                    `v${r.revisionNumber} · ${r.editedByName ?? r.editedByRole ?? "system"} · ${new Date(r.createdAt).toLocaleString()} · $${r.snapshot.total.toFixed(2)}`,
+                    `v${r.revisionNumber} · ${r.editedByName ?? r.editedByRole ?? "system"} · ${new Date(r.createdAt).toLocaleString()} · ${formatMoney(r.snapshot.total)}`,
                 )
                 .join("\n")}
             >
@@ -2578,16 +2574,16 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 <div className="ml-auto w-full max-w-xs rounded-lg border border-surface-border bg-surface-raised px-4 py-3">
                   <div className="flex justify-between text-sm text-navy/70">
                     <span>Subtotal</span>
-                    <span className="money text-navy/70">${editSubtotal.toFixed(2)}</span>
+                    <span className="money text-navy/70">{formatMoney(editSubtotal)}</span>
                   </div>
                   <div className="flex justify-between text-sm text-navy/70 mt-1">
                     <span>Tax ({(taxRate * 100).toFixed(0)}%)</span>
-                    <span className="money text-navy/70">${editTax.toFixed(2)}</span>
+                    <span className="money text-navy/70">{formatMoney(editTax)}</span>
                   </div>
                   {orderCategoryTax > 0 && (
                     <div className="flex justify-between text-sm text-navy/70 mt-1">
                       <span>Regulated tax</span>
-                      <span className="money text-navy/70">${orderCategoryTax.toFixed(2)}</span>
+                      <span className="money text-navy/70">{formatMoney(orderCategoryTax)}</span>
                     </div>
                   )}
                   {/* Staff-editable shipping fee — never taxed, added after tax. */}
@@ -2605,7 +2601,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                   </div>
                   <div className="flex justify-between text-base font-semibold text-navy border-t border-surface-border mt-2 pt-2">
                     <span>New total</span>
-                    <span className="money text-[15px] text-navy">${editTotal.toFixed(2)}</span>
+                    <span className="money text-[15px] text-navy">{formatMoney(editTotal)}</span>
                   </div>
                 </div>
 
@@ -2795,10 +2791,10 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                             {li.priceType === "SPECIAL" ? (
                               <>
                                 <span className="strike text-xs">
-                                  ${Number(li.originalPrice).toFixed(2)}
+                                  {formatMoney(li.originalPrice)}
                                 </span>
                                 <span className="money text-emerald-600">
-                                  ${Number(li.unitPrice).toFixed(2)}
+                                  {formatMoney(li.unitPrice)}
                                 </span>
                                 <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
                                   Special
@@ -2812,7 +2808,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                                     no strikethrough — the base is redacted before the
                                     customer ever sees this line. */}
                                 <span className="money text-emerald-600">
-                                  ${Number(li.unitPrice).toFixed(2)}
+                                  {formatMoney(li.unitPrice)}
                                 </span>
                                 <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
                                   Upsell
@@ -2824,10 +2820,10 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                               li.originalPrice != null ? (
                               <>
                                 <span className="strike text-xs">
-                                  ${Number(li.originalPrice).toFixed(2)}
+                                  {formatMoney(li.originalPrice)}
                                 </span>
                                 <span className="money text-amber-600">
-                                  ${Number(li.unitPrice).toFixed(2)}
+                                  {formatMoney(li.unitPrice)}
                                 </span>
                                 <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
                                   {li.priceType === "MANUAL"
@@ -2839,7 +2835,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                               </>
                             ) : (
                               <span className="money text-navy/70">
-                                ${Number(li.unitPrice).toFixed(2)}
+                                {formatMoney(li.unitPrice)}
                               </span>
                             )}
                           </div>
@@ -2849,24 +2845,25 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                             <span className="text-navy/40">—</span>
                           ) : (
                             <span className="money text-navy">
-                              $
-                              {(li.subtotal != null
-                                ? Number(li.subtotal)
-                                : computeLineSubtotal({
-                                    unitPrice: Number(li.unitPrice),
-                                    qty: Number(li.qty),
-                                    boxes: li.boxes ?? null,
-                                    pieces: li.pieces ?? null,
-                                    // Snapshot upb, never the live product.
-                                    unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
-                                    // BUY_N_GET_M snapshot, or the fallback bills
-                                    // a free-units line at full price.
-                                    freeUnits: Math.max(
-                                      0,
-                                      Math.trunc(Number(li.promoFreeUnits ?? 0) || 0),
-                                    ),
-                                  })
-                              ).toFixed(2)}
+                              {formatMoney(
+                                li.subtotal != null
+                                  ? Number(li.subtotal)
+                                  : computeLineSubtotal({
+                                      unitPrice: Number(li.unitPrice),
+                                      qty: Number(li.qty),
+                                      boxes: li.boxes ?? null,
+                                      pieces: li.pieces ?? null,
+                                      // Snapshot upb, never the live product.
+                                      unitsPerBox:
+                                        li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
+                                      // BUY_N_GET_M snapshot, or the fallback bills
+                                      // a free-units line at full price.
+                                      freeUnits: Math.max(
+                                        0,
+                                        Math.trunc(Number(li.promoFreeUnits ?? 0) || 0),
+                                      ),
+                                    }),
+                              )}
                             </span>
                           )}
                         </td>
@@ -2886,7 +2883,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                       </td>
                       <td className="px-4 py-3 text-right">
                         <span className="money text-[15px] font-semibold text-navy">
-                          ${total.toFixed(2)}
+                          {formatMoney(total)}
                         </span>
                       </td>
                       <td />
@@ -3146,35 +3143,36 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Total quantity</dt>
                 <dd className="mono font-medium text-navy">
-                  {order.lineItems
-                    .filter((li) => li.status !== "CANCELLED")
-                    .reduce((s, li) => s + Number(li.qty), 0)
-                    .toFixed(1)}
+                  {formatQty(
+                    order.lineItems
+                      .filter((li) => li.status !== "CANCELLED")
+                      .reduce((s, li) => s + Number(li.qty), 0),
+                  )}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Subtotal</dt>
-                <dd className="money text-navy">${Number(order.subtotal).toFixed(2)}</dd>
+                <dd className="money text-navy">{formatMoney(order.subtotal)}</dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Tax</dt>
-                <dd className="money text-navy">${Number(order.tax).toFixed(2)}</dd>
+                <dd className="money text-navy">{formatMoney(order.tax)}</dd>
               </div>
               {orderCategoryTax > 0 && (
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-navy/70">Regulated tax</dt>
-                  <dd className="money text-navy">${orderCategoryTax.toFixed(2)}</dd>
+                  <dd className="money text-navy">{formatMoney(orderCategoryTax)}</dd>
                 </div>
               )}
               {shippingFee > 0 && (
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-navy/70">Shipping</dt>
-                  <dd className="money text-navy">${shippingFee.toFixed(2)}</dd>
+                  <dd className="money text-navy">{formatMoney(shippingFee)}</dd>
                 </div>
               )}
               <div className="flex items-center justify-between gap-3 border-t border-surface-border pt-2.5">
                 <dt className="font-semibold text-navy">Order total</dt>
-                <dd className="money text-[15px] font-semibold text-navy">${total.toFixed(2)}</dd>
+                <dd className="money text-[15px] font-semibold text-navy">{formatMoney(total)}</dd>
               </div>
             </dl>
 
@@ -3215,12 +3213,12 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                         )}
                         <div className="text-navy/50">
                           {oc.amount != null
-                            ? `Requested $${Number(oc.amount).toFixed(2)}`
+                            ? `Requested ${formatMoney(oc.amount)}`
                             : "Up to remaining"}
                         </div>
                       </div>
                       <span className="shrink-0 font-medium text-navy">
-                        ${appliedSoFar.toFixed(2)} applied
+                        {formatMoney(appliedSoFar)} applied
                       </span>
                     </div>
                   );

@@ -6,14 +6,7 @@ import type { AnyPaymentMethod, SelectablePaymentMethod } from "../payment-metho
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type InvoiceStatus =
-  | "DRAFT"
-  | "SENT"
-  | "VIEWED"
-  | "PARTIAL"
-  | "PAID"
-  | "VOID"
-  | "OVERDUE"
-  | "WRITTEN_OFF";
+  "DRAFT" | "SENT" | "VIEWED" | "PARTIAL" | "PAID" | "VOID" | "OVERDUE" | "WRITTEN_OFF";
 
 export type PriceType = "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL" | "PROMO";
 
@@ -187,6 +180,12 @@ export function useInvoices(
     limit?: number;
     /** When true, return ONLY invoices that have a tracking number (shipments list). */
     shipped?: boolean;
+    /**
+     * Derived-overdue filter: status in SENT/VIEWED/PARTIAL/OVERDUE AND dueDate
+     * in the past — broader than `status: "OVERDUE"` alone (mirrors the API's
+     * `ListInvoicesDto.isOverdue`).
+     */
+    isOverdue?: boolean;
   },
   options?: { refetchInterval?: number; enabled?: boolean },
 ) {
@@ -953,6 +952,13 @@ export interface PriceAdjustmentDto {
 export interface InvoiceSettings {
   defaultTerms: string;
   hideOriginalPrice?: boolean;
+  /** Tenant-wide deposit default (0–100). null/absent = no tenant deposit policy;
+   *  a customer's own `defaultDepositPercent` still wins when set. */
+  depositDefaultPercent?: number | null;
+  /** When true, an order's mirror invoice is ISSUED (SENT, no email) at
+   *  placement so the deposit can be paid immediately; the order stays
+   *  editable until delivery. */
+  depositCollectAtOrder?: boolean;
 }
 
 export function useInvoiceSettings() {

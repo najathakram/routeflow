@@ -1,7 +1,25 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { Prisma, RouteEndKind, RouteOptimizeMetric, RouteRunStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { ApplyRouteVariantDto } from "./dto/apply-route-variant.dto";
+import { buildCostMatrices, type LatLng } from "./cost-matrix";
+
+/**
+ * `computeRoutes` classifies as Routes **Pro** ($10/1000, 5K free) rather than
+ * Essentials ($5/1000, 10K free) once a request carries more than 10
+ * intermediate waypoints. Variants beyond this size skip the polyline call and
+ * fall back to the solver's own matrix totals with `encodedPolyline: null` —
+ * the client then draws its own path, exactly as it does on a Google failure.
+ */
+const MAX_POLYLINE_INTERMEDIATES = 10;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,7 +43,11 @@ export type FallbackReason =
   | "ORS_NOT_CONFIGURED"
   | "ORS_RATE_LIMITED"
   | "ORS_HTTP_ERROR"
-  | "ORS_NETWORK_ERROR";
+  | "ORS_NETWORK_ERROR"
+  // Google was the primary source (a key was configured) but computeRouteMatrix
+  // failed or returned a sparse/erroring response, so the haversine matrix was
+  // used instead. Distinct from ORS_* — the ORS pathway wasn't reached at all.
+  | "GOOGLE_MATRIX_FALLBACK";
 
 export interface OptimizeResult {
   stopOrder: Array<{ stopId: string; stopNumber: number }>;
@@ -34,12 +56,39 @@ export interface OptimizeResult {
   fallbackReason?: FallbackReason;
 }
 
+export interface RouteVariant {
+  key: "FASTEST" | "SHORTEST" | "NO_TOLLS";
+  stopIds: string[];
+  durationSec: number;
+  distanceMeters: number;
+  hasTolls: boolean;
+  encodedPolyline: string | null;
+}
+
+interface PlanningFields {
+  endKind: RouteEndKind;
+  endLat: number | null;
+  endLng: number | null;
+}
+
 function classifyOrsError(err: unknown): FallbackReason {
   const msg = err instanceof Error ? err.message : String(err);
   if (msg.includes("ORS_API_KEY not configured")) return "ORS_NOT_CONFIGURED";
   if (msg.includes("rate limit")) return "ORS_RATE_LIMITED";
   if (msg.startsWith("ORS error:")) return "ORS_HTTP_ERROR";
   return "ORS_NETWORK_ERROR";
+}
+
+/** True when `a` and `b` are within `pct` (fraction, e.g. 0.01 = 1%) of each other. */
+function withinPercent(a: number, b: number, pct: number): boolean {
+  if (a === 0 && b === 0) return true;
+  const base = Math.max(Math.abs(a), Math.abs(b), 1e-9);
+  return Math.abs(a - b) / base <= pct;
+}
+
+/** True when two stop-id arrays visit the same stops in the same order. */
+function sameStopOrder(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i]);
 }
 
 export interface StopETA {
@@ -187,7 +236,23 @@ export class RouteOptimizationService {
 
   // ─── Route optimization ─────────────────────────────────────────────────────
 
-  async optimizeTemplate(routeId: string): Promise<OptimizeResult> {
+  /**
+   * Load a template route's stops with resolved coordinates, geocoding any
+   * that are missing and throwing when some still can't be resolved. Shared
+   * by `optimizeTemplate` and `getRouteVariants` so both operate on the same
+   * validated stop set and the route's planning settings.
+   */
+  private async loadRouteStops(routeId: string): Promise<{
+    route: {
+      id: string;
+      avoidTolls: boolean;
+      optimizeBy: RouteOptimizeMetric;
+      endKind: RouteEndKind;
+      endLat: number | null;
+      endLng: number | null;
+    };
+    stops: StopWithCoords[];
+  }> {
     const route = await this.prisma.forTenant().route.findUnique({
       where: { id: routeId },
       include: {
@@ -209,9 +274,6 @@ export class RouteOptimizationService {
     });
 
     if (!route) throw new NotFoundException("Route not found");
-    if (route.stops.length === 0) {
-      return { stopOrder: [], reorderedCount: 0, usedFallback: false };
-    }
 
     // Fallback: for stops where customerAddressId FK is null, pull the customer's default address
     const stopsNeedingAddr = route.stops.filter((s) => !s.customerAddress && s.customerId);
@@ -264,6 +326,25 @@ export class RouteOptimizationService {
       deliveryWindowEnd: s.customer?.deliveryWindowEnd,
     }));
 
+    return {
+      route: {
+        id: route.id,
+        avoidTolls: route.avoidTolls,
+        optimizeBy: route.optimizeBy,
+        endKind: route.endKind,
+        endLat: route.endLat,
+        endLng: route.endLng,
+      },
+      stops,
+    };
+  }
+
+  async optimizeTemplate(routeId: string): Promise<OptimizeResult> {
+    const { route, stops } = await this.loadRouteStops(routeId);
+    if (stops.length === 0) {
+      return { stopOrder: [], reorderedCount: 0, usedFallback: false };
+    }
+
     // Resolve depot for route-aware optimization
     const depot = await this.resolveDepot(routeId);
 
@@ -271,16 +352,28 @@ export class RouteOptimizationService {
     let usedFallback = false;
     let fallbackReason: FallbackReason | undefined;
 
-    try {
-      optimizedIds = await this.callOrsOptimization(stops, depot);
-    } catch (err: unknown) {
-      fallbackReason = classifyOrsError(err);
-      this.logger.warn(
-        `ORS optimization failed (${fallbackReason}) — applying nearest-neighbor fallback`,
-        err instanceof Error ? err.message : String(err),
-      );
-      optimizedIds = this.nearestNeighborFallback(stops, depot);
-      usedFallback = true;
+    const apiKey = this.config.get<string>("googleMaps.apiKey") || undefined;
+    if (apiKey && depot) {
+      // Cost-matrix-based optimizer (Google Routes API, haversine fallback
+      // built into buildCostMatrices itself). Only reached when a Google key
+      // is configured and a fixed start point is known — otherwise the
+      // pre-existing ORS/nearest-neighbor pathway below runs unchanged.
+      const matrix = await this.solveWithCostMatrix(depot, stops, route, apiKey);
+      optimizedIds = matrix.stopIds;
+      usedFallback = matrix.usedHaversineFallback;
+      if (usedFallback) fallbackReason = "GOOGLE_MATRIX_FALLBACK";
+    } else {
+      try {
+        optimizedIds = await this.callOrsOptimization(stops, depot);
+      } catch (err: unknown) {
+        fallbackReason = classifyOrsError(err);
+        this.logger.warn(
+          `ORS optimization failed (${fallbackReason}) — applying nearest-neighbor fallback`,
+          err instanceof Error ? err.message : String(err),
+        );
+        optimizedIds = this.nearestNeighborFallback(stops, depot);
+        usedFallback = true;
+      }
     }
 
     const stopOrder = optimizedIds.map((stopId, idx) => ({
@@ -290,7 +383,9 @@ export class RouteOptimizationService {
 
     // Two-phase update to avoid @@unique([routeId, stopNumber]) violations:
     // Phase 1 shifts every stop to a temporary position (n + offset) so positions
-    // 1..n are free, then Phase 2 writes the real optimized order.
+    // 1..n are free, then Phase 2 writes the real optimized order. Also clears
+    // the route's stored plannedPolyline — any reorder outside `applyRouteVariant`
+    // invalidates it; a stale polyline is worse than none.
     const offset = stops.length + 1;
     await this.prisma.$transaction([
       ...stops.map((s) =>
@@ -305,6 +400,10 @@ export class RouteOptimizationService {
           data: { stopNumber },
         }),
       ),
+      this.prisma.forTenant().route.update({
+        where: { id: routeId },
+        data: { plannedPolyline: null },
+      }),
     ]);
 
     const originalOrder = new Map(stops.map((s) => [s.id, s.stopNumber]));
@@ -322,6 +421,7 @@ export class RouteOptimizationService {
     const run = await this.prisma.forTenant().routeRun.findUnique({
       where: { id: routeRunId },
       include: {
+        route: true,
         stops: {
           include: {
             customerAddress: true,
@@ -415,16 +515,28 @@ export class RouteOptimizationService {
     let usedFallback = false;
     let fallbackReason: FallbackReason | undefined;
 
-    try {
-      optimizedIds = await this.callOrsOptimization(stops, start);
-    } catch (err: unknown) {
-      fallbackReason = classifyOrsError(err);
-      this.logger.warn(
-        `ORS optimization failed (${fallbackReason}) — applying nearest-neighbor fallback`,
-        err instanceof Error ? err.message : String(err),
-      );
-      optimizedIds = this.nearestNeighborFallback(stops, start);
-      usedFallback = true;
+    const apiKey = this.config.get<string>("googleMaps.apiKey") || undefined;
+    if (apiKey && start) {
+      // Cost-matrix-based optimizer — see optimizeTemplate for rationale.
+      // Only reached when a Google key is configured and a fixed start point
+      // is known; otherwise the pre-existing ORS/nearest-neighbor pathway
+      // below runs unchanged.
+      const matrix = await this.solveWithCostMatrix(start, stops, run.route, apiKey);
+      optimizedIds = matrix.stopIds;
+      usedFallback = matrix.usedHaversineFallback;
+      if (usedFallback) fallbackReason = "GOOGLE_MATRIX_FALLBACK";
+    } else {
+      try {
+        optimizedIds = await this.callOrsOptimization(stops, start);
+      } catch (err: unknown) {
+        fallbackReason = classifyOrsError(err);
+        this.logger.warn(
+          `ORS optimization failed (${fallbackReason}) — applying nearest-neighbor fallback`,
+          err instanceof Error ? err.message : String(err),
+        );
+        optimizedIds = this.nearestNeighborFallback(stops, start);
+        usedFallback = true;
+      }
     }
 
     const stopOrder = optimizedIds.map((stopId, idx) => ({
@@ -433,6 +545,8 @@ export class RouteOptimizationService {
     }));
 
     // Two-phase update to avoid @@unique([routeRunId, stopNumber]) violations.
+    // Also clears the parent route's stored plannedPolyline — see the same
+    // note in optimizeTemplate.
     const offset = stops.length + 1;
     await this.prisma.$transaction([
       ...stops.map((s) =>
@@ -447,6 +561,10 @@ export class RouteOptimizationService {
           data: { stopNumber },
         }),
       ),
+      this.prisma.forTenant().route.update({
+        where: { id: run.routeId },
+        data: { plannedPolyline: null },
+      }),
     ]);
 
     await this.prisma.forTenant().routeRun.update({
@@ -460,6 +578,473 @@ export class RouteOptimizationService {
     ).length;
 
     return { stopOrder, reorderedCount, usedFallback, fallbackReason };
+  }
+
+  // ─── Cost-matrix-based solver (Google Routes API, primary) ────────────────
+
+  /**
+   * Order stops by cost matrix. Index 0 = fixed start. `endIndex` (optional) = fixed end that
+   * must be LAST (not reordered). Everything else is permutable. NN from the start + 2-opt.
+   * Returns the permutation of the permutable indices (matrix indices, order to visit).
+   */
+  private solveOrder(cost: number[][], permutable: number[], endIndex?: number): number[] {
+    if (permutable.length <= 1) return [...permutable];
+    const tail = endIndex === undefined ? [] : [endIndex];
+    // Nearest-neighbour seed from the fixed start (index 0)
+    const remaining = new Set(permutable);
+    const order: number[] = [];
+    let cur = 0;
+    while (remaining.size) {
+      let best = -1;
+      let bestC = Infinity;
+      for (const c of remaining)
+        if (cost[cur][c] < bestC) {
+          bestC = cost[cur][c];
+          best = c;
+        }
+      order.push(best);
+      remaining.delete(best);
+      cur = best;
+    }
+    // 2-opt over the open path 0 → order... → (endIndex?)
+    const tourCost = (o: number[]) => {
+      let t = cost[0][o[0]];
+      for (let i = 0; i < o.length - 1; i++) t += cost[o[i]][o[i + 1]];
+      if (tail.length) t += cost[o[o.length - 1]][tail[0]];
+      return t;
+    };
+    let improved = true;
+    while (improved) {
+      improved = false;
+      for (let i = 0; i < order.length - 1; i++) {
+        for (let j = i + 1; j < order.length; j++) {
+          const cand = [
+            ...order.slice(0, i),
+            ...order.slice(i, j + 1).reverse(),
+            ...order.slice(j + 1),
+          ];
+          if (tourCost(cand) + 1e-9 < tourCost(order)) {
+            order.splice(0, order.length, ...cand);
+            improved = true;
+          }
+        }
+      }
+    }
+    return order;
+  }
+
+  /**
+   * Build a cost matrix for [start, ...stops, end?] and solve it with `solveOrder`.
+   * Shared by `optimizeTemplate`, `optimizeRoute`, and `getRouteVariants` — the only
+   * thing that varies per caller is the start point and the {avoidTolls, optimizeBy}
+   * settings, which come from the route's planning fields (or a variant candidate).
+   */
+  private async solveWithCostMatrix(
+    start: LatLng,
+    stops: StopWithCoords[],
+    planning: PlanningFields & { avoidTolls: boolean; optimizeBy: RouteOptimizeMetric },
+    apiKey: string,
+  ): Promise<{
+    stopIds: string[];
+    durationSec: number;
+    distanceMeters: number;
+    usedHaversineFallback: boolean;
+  }> {
+    const points: LatLng[] = [start, ...stops.map((s) => ({ lat: s.lat, lng: s.lng }))];
+    const hasFixedEnd =
+      planning.endKind !== RouteEndKind.NONE && planning.endLat != null && planning.endLng != null;
+    if (hasFixedEnd) points.push({ lat: planning.endLat!, lng: planning.endLng! });
+
+    // With 0 or 1 permutable stops there is exactly one possible order, so a
+    // billable matrix call would buy nothing. Withhold the key: haversine
+    // still supplies the distance/duration totals the variants UI shows, and
+    // this is NOT reported as a Google fallback (nothing was attempted).
+    const trivialOrder = stops.length < 2;
+    const matrices = await buildCostMatrices(points, {
+      avoidTolls: planning.avoidTolls,
+      apiKey: trivialOrder ? undefined : apiKey,
+      logger: this.logger,
+      tenantId: this.prisma.getTenantId() ?? undefined,
+    });
+
+    const cost =
+      planning.optimizeBy === RouteOptimizeMetric.DISTANCE
+        ? matrices.distanceMeters
+        : matrices.durationSec;
+    const permutable = stops.map((_, i) => i + 1); // matrix indices 1..stops.length (0 = start)
+    const endIndex = hasFixedEnd ? points.length - 1 : undefined;
+    const order = this.solveOrder(cost, permutable, endIndex);
+
+    const pathIndices = [0, ...order, ...(hasFixedEnd ? [endIndex!] : [])];
+    let durationSec = 0;
+    let distanceMeters = 0;
+    for (let i = 0; i < pathIndices.length - 1; i++) {
+      durationSec += matrices.durationSec[pathIndices[i]][pathIndices[i + 1]];
+      distanceMeters += matrices.distanceMeters[pathIndices[i]][pathIndices[i + 1]];
+    }
+
+    return {
+      stopIds: order.map((idx) => stops[idx - 1].id),
+      durationSec,
+      distanceMeters,
+      usedHaversineFallback: !trivialOrder && matrices.source === "haversine",
+    };
+  }
+
+  // ─── Route variants (Fastest / Shortest / No-tolls) ────────────────────────
+
+  /**
+   * Solve the same stop set under {TIME}, {DISTANCE}, {TIME + avoidTolls} and, for
+   * each, make ONE `computeRoutes` call for real road totals + polyline + toll
+   * presence. Never throws / 500s on a Google failure — falls back to a single
+   * solver-only result with `encodedPolyline: null` so the client can still render
+   * something (and draw its own straight-line path).
+   */
+  async getRouteVariants(routeId: string): Promise<{ variants: RouteVariant[] }> {
+    const { route, stops } = await this.loadRouteStops(routeId);
+    if (stops.length === 0) return { variants: [] };
+
+    const depot = await this.resolveDepot(routeId);
+    if (!depot) return { variants: [] };
+
+    const apiKey = this.config.get<string>("googleMaps.apiKey") || undefined;
+    const endPoint =
+      route.endKind !== RouteEndKind.NONE && route.endLat != null && route.endLng != null
+        ? { lat: route.endLat, lng: route.endLng }
+        : null;
+
+    // When the route already avoids tolls, every candidate must too — a
+    // "NO_TOLLS" variant would just duplicate FASTEST in that case.
+    const forceAvoidTolls = route.avoidTolls === true;
+    const configs: Array<{
+      key: RouteVariant["key"];
+      optimizeBy: RouteOptimizeMetric;
+      avoidTolls: boolean;
+    }> = [
+      { key: "FASTEST", optimizeBy: RouteOptimizeMetric.TIME, avoidTolls: forceAvoidTolls },
+      { key: "SHORTEST", optimizeBy: RouteOptimizeMetric.DISTANCE, avoidTolls: forceAvoidTolls },
+    ];
+    if (!forceAvoidTolls) {
+      configs.push({ key: "NO_TOLLS", optimizeBy: RouteOptimizeMetric.TIME, avoidTolls: true });
+    }
+
+    try {
+      if (!apiKey) throw new Error("GOOGLE_MAPS_API_KEY not configured");
+
+      const results: RouteVariant[] = [];
+      for (const cfg of configs) {
+        const matrix = await this.solveWithCostMatrix(
+          depot,
+          stops,
+          { endKind: route.endKind, endLat: route.endLat, endLng: route.endLng, ...cfg },
+          apiKey,
+        );
+        const orderedStops = matrix.stopIds.map((id) => stops.find((s) => s.id === id)!);
+        // Cost guard: past 10 intermediates computeRoutes bills at the Pro
+        // tier, and this loop makes one call per variant. Above the threshold
+        // keep the solver's own totals and let the client draw the path.
+        const intermediateCount = endPoint
+          ? orderedStops.length
+          : Math.max(orderedStops.length - 1, 0);
+        const computed =
+          intermediateCount > MAX_POLYLINE_INTERMEDIATES
+            ? {
+                durationSec: matrix.durationSec,
+                distanceMeters: matrix.distanceMeters,
+                encodedPolyline: null,
+              }
+            : await this.computeRoutePolyline(
+                depot,
+                orderedStops,
+                endPoint,
+                cfg.avoidTolls,
+                apiKey,
+              );
+        results.push({
+          key: cfg.key,
+          stopIds: matrix.stopIds,
+          durationSec: computed.durationSec,
+          distanceMeters: computed.distanceMeters,
+          // Placeholder — computeRoutePolyline deliberately never requests toll
+          // info (billing risk). Derived by contrast below, once every variant
+          // in this batch has been computed.
+          hasTolls: false,
+          encodedPolyline: computed.encodedPolyline,
+        });
+      }
+      this.applyTollContrast(results);
+      return { variants: this.dedupeVariants(results) };
+    } catch (err) {
+      this.logger.warn(`Route variants via Google failed (${String(err)}) — solver-only fallback`);
+      const matrix = await this.solveWithCostMatrix(
+        depot,
+        stops,
+        {
+          endKind: route.endKind,
+          endLat: route.endLat,
+          endLng: route.endLng,
+          avoidTolls: route.avoidTolls,
+          optimizeBy: route.optimizeBy,
+        },
+        apiKey ?? "",
+      );
+      const fallbackKey: RouteVariant["key"] =
+        route.optimizeBy === RouteOptimizeMetric.DISTANCE
+          ? "SHORTEST"
+          : route.avoidTolls
+            ? "NO_TOLLS"
+            : "FASTEST";
+      return {
+        variants: [
+          {
+            key: fallbackKey,
+            stopIds: matrix.stopIds,
+            durationSec: matrix.durationSec,
+            distanceMeters: matrix.distanceMeters,
+            hasTolls: false,
+            encodedPolyline: null,
+          },
+        ],
+      };
+    }
+  }
+
+  /**
+   * Apply a previously-fetched variant: persist its stop order, optimizeBy/avoidTolls,
+   * and polyline. `stopIds` must be an exact permutation of the route's current stops.
+   *
+   * This is the ONLY writer of `plannedPolyline` — every other path that moves
+   * stops or start/end points nulls it instead, so a stored polyline always
+   * matches the order it was computed for.
+   *
+   * `dto.runId` closes the run-vs-template gap: variants are solved against the
+   * route TEMPLATE, but the operator is usually looking at a RUN's stop list.
+   * When a run is named, its RouteRunStops are re-numbered to the same order
+   * inside the SAME transaction — so the visible list and the stored polyline
+   * can never disagree, and no follow-up re-optimize (which would null the
+   * polyline we just wrote) is needed.
+   */
+  async applyRouteVariant(
+    routeId: string,
+    dto: ApplyRouteVariantDto,
+  ): Promise<{ applied: boolean }> {
+    const route = await this.prisma.forTenant().route.findUnique({
+      where: { id: routeId },
+      include: { stops: { select: { id: true } } },
+    });
+    if (!route) throw new NotFoundException("Route not found");
+
+    const currentIds = new Set(route.stops.map((s) => s.id));
+    const isPermutation =
+      dto.stopIds.length === route.stops.length &&
+      new Set(dto.stopIds).size === dto.stopIds.length &&
+      dto.stopIds.every((id) => currentIds.has(id));
+    if (!isPermutation) {
+      throw new BadRequestException("stopIds must be a permutation of the route's current stops");
+    }
+
+    // Run stops to re-number alongside the template, in the variant's order.
+    let runStopIdsInOrder: string[] | null = null;
+
+    if (dto.runId) {
+      const run = await this.prisma.forTenant().routeRun.findFirst({
+        where: { id: dto.runId, routeId },
+        include: { stops: { select: { id: true, routeStopId: true, stopNumber: true } } },
+      });
+      if (!run) throw new NotFoundException("Route run not found for this route");
+      if (run.status !== RouteRunStatus.SCHEDULED) {
+        throw new ConflictException(
+          "Only a scheduled run can be reordered — finish or cancel the active run first",
+        );
+      }
+      // Translate template stop ids → run stop ids. A run stop whose template
+      // stop isn't in the variant (or vice versa) keeps its relative position
+      // at the end, so the result is always a full permutation of the run's
+      // stops — required for the unique [routeRunId, stopNumber] rewrite.
+      const runStopByTemplateStop = new Map(run.stops.map((s) => [s.routeStopId, s.id]));
+      const mapped = dto.stopIds
+        .map((templateStopId) => runStopByTemplateStop.get(templateStopId))
+        .filter((id): id is string => id !== undefined);
+      const mappedSet = new Set(mapped);
+      const leftovers = [...run.stops]
+        .sort((a, b) => a.stopNumber - b.stopNumber)
+        .filter((s) => !mappedSet.has(s.id))
+        .map((s) => s.id);
+      runStopIdsInOrder = [...mapped, ...leftovers];
+    } else {
+      // No run named: mirror updatePlanning's guard so a template reorder can
+      // never land under a driver who is mid-delivery against the old order.
+      const activeRun = await this.prisma.forTenant().routeRun.findFirst({
+        where: { routeId, status: RouteRunStatus.IN_PROGRESS },
+        select: { id: true },
+      });
+      if (activeRun) {
+        throw new ConflictException(
+          "Finish or cancel the active run before changing route planning",
+        );
+      }
+    }
+
+    // Same two-phase offset trick as optimizeTemplate to avoid unique-constraint
+    // collisions on [routeId, stopNumber] while stop numbers are being rewritten.
+    const offset = dto.stopIds.length + 1;
+    const ops: Prisma.PrismaPromise<unknown>[] = [
+      ...dto.stopIds.map((stopId, idx) =>
+        this.prisma.forTenant().routeStop.update({
+          where: { id: stopId },
+          data: { stopNumber: idx + 1 + offset },
+        }),
+      ),
+      ...dto.stopIds.map((stopId, idx) =>
+        this.prisma.forTenant().routeStop.update({
+          where: { id: stopId },
+          data: { stopNumber: idx + 1 },
+        }),
+      ),
+      this.prisma.forTenant().route.update({
+        where: { id: routeId },
+        data: {
+          optimizeBy: dto.optimizeBy,
+          avoidTolls: dto.avoidTolls,
+          plannedPolyline: dto.encodedPolyline ?? null,
+        },
+      }),
+    ];
+
+    if (runStopIdsInOrder && runStopIdsInOrder.length > 0) {
+      const runOffset = runStopIdsInOrder.length + 1;
+      ops.push(
+        ...runStopIdsInOrder.map((stopId, idx) =>
+          this.prisma.forTenant().routeRunStop.update({
+            where: { id: stopId },
+            data: { stopNumber: idx + 1 + runOffset },
+          }),
+        ),
+        ...runStopIdsInOrder.map((stopId, idx) =>
+          this.prisma.forTenant().routeRunStop.update({
+            where: { id: stopId },
+            data: { stopNumber: idx + 1 },
+          }),
+        ),
+        // Same bookkeeping as optimizeRoute: this order came from the solver,
+        // not from a hand-drag.
+        this.prisma.forTenant().routeRun.update({
+          where: { id: dto.runId! },
+          data: { manuallyReordered: false },
+        }),
+      );
+    }
+
+    await this.prisma.$transaction(ops);
+
+    return { applied: true };
+  }
+
+  /**
+   * Toll presence is derived by contrast rather than requested from Google (toll
+   * computation on computeRoutes risks the Pro-tier double price). If a NO_TOLLS
+   * variant exists in this batch, any other variant whose duration differs from
+   * it by more than 2% OR whose stop order differs is presumed to route through
+   * tolls. When NO_TOLLS is absent (the route already avoids tolls) — or every
+   * comparison is within 2% with an identical stop order — hasTolls is false
+   * everywhere. Mutates `results` in place.
+   */
+  private applyTollContrast(results: RouteVariant[]): void {
+    const noTolls = results.find((r) => r.key === "NO_TOLLS");
+    if (!noTolls) {
+      for (const r of results) r.hasTolls = false;
+      return;
+    }
+    for (const r of results) {
+      const durationDiverges = !withinPercent(r.durationSec, noTolls.durationSec, 0.02);
+      const orderDiverges = !sameStopOrder(r.stopIds, noTolls.stopIds);
+      r.hasTolls = durationDiverges || orderDiverges;
+    }
+  }
+
+  /** Drop a variant whose stopIds equal an earlier one AND whose duration/distance
+   *  are both within 1% — same route under different settings can converge. */
+  private dedupeVariants(variants: RouteVariant[]): RouteVariant[] {
+    const kept: RouteVariant[] = [];
+    for (const v of variants) {
+      const dup = kept.find(
+        (k) =>
+          sameStopOrder(k.stopIds, v.stopIds) &&
+          withinPercent(k.durationSec, v.durationSec, 0.01) &&
+          withinPercent(k.distanceMeters, v.distanceMeters, 0.01),
+      );
+      if (!dup) kept.push(v);
+    }
+    return kept;
+  }
+
+  /**
+   * ONE `computeRoutes` call for a solved stop order: real road totals + encoded
+   * polyline. `intermediates` excludes the destination stop. Deliberately does NOT
+   * request toll info — `travelAdvisory.tollInfo`/`extraComputations` risk the
+   * Pro-tier double price on computeRoutes. Toll presence is derived by contrast
+   * against the NO_TOLLS variant instead (see `applyTollContrast`).
+   */
+  private async computeRoutePolyline(
+    start: LatLng,
+    orderedStops: StopWithCoords[],
+    endPoint: LatLng | null,
+    avoidTolls: boolean,
+    apiKey: string,
+  ): Promise<{
+    durationSec: number;
+    distanceMeters: number;
+    encodedPolyline: string | null;
+  }> {
+    const destination = endPoint ?? orderedStops[orderedStops.length - 1];
+    const intermediates = endPoint ? orderedStops : orderedStops.slice(0, -1);
+
+    const body = {
+      origin: { location: { latLng: { latitude: start.lat, longitude: start.lng } } },
+      destination: {
+        location: { latLng: { latitude: destination.lat, longitude: destination.lng } },
+      },
+      intermediates: intermediates.map((s) => ({
+        location: { latLng: { latitude: s.lat, longitude: s.lng } },
+      })),
+      travelMode: "DRIVE",
+      routingPreference: "TRAFFIC_UNAWARE",
+      ...(avoidTolls ? { routeModifiers: { avoidTolls: true } } : {}),
+    };
+
+    // Billing telemetry: this fetch is a real, billable computeRoutes call —
+    // log it before making it so per-tenant Google spend is observable in
+    // Railway logs before the invoice arrives.
+    this.logger.log(
+      `routes-billing computeRoutes calls=1 tenant=${this.prisma.getTenantId() ?? "unknown"}`,
+    );
+
+    const res = await fetch("https://routes.googleapis.com/directions/v2:computeRoutes", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": "routes.polyline.encodedPolyline,routes.distanceMeters,routes.duration",
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`computeRoutes ${res.status}`);
+
+    const data = (await res.json()) as {
+      routes?: Array<{
+        polyline?: { encodedPolyline?: string };
+        distanceMeters?: number;
+        duration?: string;
+      }>;
+    };
+    const r = data.routes?.[0];
+    if (!r) throw new Error("computeRoutes: no route returned");
+
+    return {
+      durationSec: parseFloat((r.duration ?? "0s").replace(/s$/, "")),
+      distanceMeters: r.distanceMeters ?? 0,
+      encodedPolyline: r.polyline?.encodedPolyline ?? null,
+    };
   }
 
   // ─── ORS Vroom API ────────────────────────────────────────────────────────

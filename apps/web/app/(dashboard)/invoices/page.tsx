@@ -106,7 +106,8 @@ function renderStatus(status: InvoiceStatus, dueDate?: string | null): React.Rea
       if (status === "PARTIAL") {
         return (
           <span className="text-xs font-semibold text-danger">
-            Partial · Overdue{overdueDays > 0 ? ` by ${overdueDays}d` : ""}
+            Partial · Overdue
+            {overdueDays > 0 ? ` by ${overdueDays} day${overdueDays !== 1 ? "s" : ""}` : ""}
           </span>
         );
       }
@@ -126,7 +127,9 @@ function renderStatus(status: InvoiceStatus, dueDate?: string | null): React.Rea
 
     if (status === "PARTIAL") {
       return (
-        <span className="text-xs font-semibold text-warning">Partial · Due in {diffDays}d</span>
+        <span className="text-xs font-semibold text-warning">
+          Partial · Due in {diffDays} day{diffDays !== 1 ? "s" : ""}
+        </span>
       );
     }
 
@@ -268,20 +271,20 @@ function PaymentSummaryBar({
         totalOutstanding += balance;
       }
 
-      if (
-        inv.status === "OVERDUE" ||
-        (due && due < today && inv.status !== "PAID" && inv.status !== "VOID")
-      ) {
-        overdue += balance;
-      } else if (due && due === today && inv.status !== "PAID") {
-        dueToday += balance;
-      } else if (
-        due &&
-        due <= in30 &&
-        due > today &&
+      // Draft pending-mirror invoices and written-off balances must not count as
+      // collectible — exclude them from overdue/due-today/due-in-30 alongside
+      // the existing PAID/VOID exclusions.
+      const openForCollection =
         inv.status !== "PAID" &&
-        inv.status !== "VOID"
-      ) {
+        inv.status !== "VOID" &&
+        inv.status !== "DRAFT" &&
+        inv.status !== "WRITTEN_OFF";
+
+      if (inv.status === "OVERDUE" || (due && due < today && openForCollection)) {
+        overdue += balance;
+      } else if (due && due === today && openForCollection) {
+        dueToday += balance;
+      } else if (due && due <= in30 && due > today && openForCollection) {
         dueIn30 += balance;
       }
 
@@ -889,7 +892,7 @@ export default function InvoicesPage() {
                           >
                             <Eye className="h-4 w-4" />
                           </button>
-                          {!isCustomer && (
+                          {!isCustomer && inv.status === "DRAFT" && (
                             <button
                               title="Delete invoice"
                               onClick={() => setConfirmDeleteId(inv.id)}

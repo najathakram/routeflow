@@ -11,6 +11,7 @@ import {
 } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { setTenantCookie } from "@/lib/tenant-cookie";
+import { setImpersonation } from "@/lib/impersonation";
 import { AdminTabs } from "../../../_components/AdminTabs";
 import { AdminBadge, planLabel } from "../../../_components/AdminBadge";
 import { AdminCard } from "../../../_components/AdminCard";
@@ -1490,10 +1491,12 @@ export default function AdminTenantDetailPage() {
         case "impersonate": {
           try {
             const res = await superAdminClient.post(`/platform-admin/tenants/${id}/impersonate`);
-            // Store impersonation token in BOTH keys so every auth path finds it
-            localStorage.setItem("impersonationToken", res.data.accessToken);
-            localStorage.setItem("accessToken", res.data.accessToken);
-            localStorage.setItem("impersonationTenantSlug", tenant.slug);
+            // Impersonation state lives ONLY in lib/impersonation.ts. The old
+            // legacy "accessToken" write here leaked the impersonation token to
+            // legacy-key readers (e.g. the settings Google-link fetch) — the exact
+            // contamination that hijacked fresh logins. Cost of removal: realtime
+            // sockets (which read OP_KEYS directly) stay silent during impersonation.
+            setImpersonation(res.data.accessToken, tenant.slug);
             setTenantCookie(tenant.slug);
             window.location.href = "/dashboard";
           } catch (impErr: unknown) {

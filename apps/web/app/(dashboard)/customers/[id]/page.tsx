@@ -1923,7 +1923,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
 
   const { data: customer, isLoading } = useCustomer(params.id);
   const { data: tierLabels } = useTierLabels();
-  const { data: ordersResult } = useCustomerOrders(params.id);
+  const { data: ordersResult, isError: ordersError } = useCustomerOrders(params.id);
   const { data: customerRoutes } = useCustomerRoutes(params.id);
   const { data: orderTemplates } = useOrderTemplates(params.id);
   const updateStatus = useUpdateCustomerStatus();
@@ -1992,8 +1992,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
   // request is PENDING_SELLER_APPROVAL, so the card can say WHO is asking. Read them
   // via a local, additive cast instead of widening the shared interface.
   const pendingRequester = portalStatus as
-    | (PortalStatus & { buyerName?: string | null; buyerEmail?: string | null })
-    | undefined;
+    (PortalStatus & { buyerName?: string | null; buyerEmail?: string | null }) | undefined;
   const sendInvite = useSendPortalInvite();
   const resendInvite = useResendPortalInvite();
   const disconnectPortal = useDisconnectPortal();
@@ -2373,7 +2372,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <StatCard
                 label="Orders"
-                value={allOrders.length}
+                value={ordersError ? "—" : allOrders.length}
                 icon={<FileText className="h-5 w-5" />}
               />
               <StatCard
@@ -3222,7 +3221,13 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
                 data={filteredOrders}
                 columns={orderColumns}
                 onRowClick={(row) => router.push(`/orders/${row.original.id}`)}
-                emptyState="No orders match the selected filter."
+                emptyState={
+                  ordersError
+                    ? "Couldn't load this customer's orders. Refresh to try again."
+                    : orderStatusFilter
+                      ? "No orders match the selected filter."
+                      : "No orders yet."
+                }
               />
             </div>
           </Card>

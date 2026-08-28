@@ -123,3 +123,88 @@ describe("SettingsController — GET/PATCH /settings/invoice hideOriginalPrice",
     expect(svc.set).not.toHaveBeenCalledWith("invoice.hideOriginalPrice", expect.anything());
   });
 });
+
+// WP-D1: tenant deposit policy — depositDefaultPercent (number, absent/0 = no tenant
+// default) and depositCollectAtOrder (boolean), both stored in SystemConfig like every
+// other invoice setting in this file.
+describe("SettingsController — GET/PATCH /settings/invoice deposit policy", () => {
+  let controller: SettingsController;
+  let svc: { get: jest.Mock; set: jest.Mock; getAll: jest.Mock };
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    svc = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+      getAll: jest.fn().mockResolvedValue({}),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [SettingsController],
+      providers: [
+        { provide: SystemConfigService, useValue: svc },
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: PrismaService, useValue: prisma },
+        { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+      ],
+    }).compile();
+
+    controller = module.get<SettingsController>(SettingsController);
+  });
+
+  it("GET returns depositDefaultPercent: null and depositCollectAtOrder: false when unset", async () => {
+    const result = await controller.getInvoiceSettings();
+    expect(result.depositDefaultPercent).toBeNull();
+    expect(result.depositCollectAtOrder).toBe(false);
+  });
+
+  it("GET returns the stored depositDefaultPercent as a number and depositCollectAtOrder true", async () => {
+    svc.get.mockImplementation((key: string) => {
+      if (key === "invoice.depositDefaultPercent") return Promise.resolve("30");
+      if (key === "invoice.depositCollectAtOrder") return Promise.resolve("true");
+      return Promise.resolve(null);
+    });
+    const result = await controller.getInvoiceSettings();
+    expect(result.depositDefaultPercent).toBe(30);
+    expect(result.depositCollectAtOrder).toBe(true);
+  });
+
+  it("GET distinguishes an explicit stored 0 from absent (never collapses 0 to null)", async () => {
+    svc.get.mockImplementation((key: string) =>
+      key === "invoice.depositDefaultPercent" ? Promise.resolve("0") : Promise.resolve(null),
+    );
+    const result = await controller.getInvoiceSettings();
+    expect(result.depositDefaultPercent).toBe(0);
+  });
+
+  it('PATCH {depositDefaultPercent:30} calls svc.set(invoice.depositDefaultPercent, "30")', async () => {
+    await controller.updateInvoiceSettings({ depositDefaultPercent: 30 });
+    expect(svc.set).toHaveBeenCalledWith("invoice.depositDefaultPercent", "30");
+  });
+
+  it('PATCH {depositDefaultPercent:null} stores the empty-string sentinel (not the string "null"), and GET then returns null', async () => {
+    await controller.updateInvoiceSettings({
+      depositDefaultPercent: null,
+    } as unknown as { depositDefaultPercent?: number });
+    expect(svc.set).toHaveBeenCalledWith("invoice.depositDefaultPercent", "");
+    expect(svc.set).not.toHaveBeenCalledWith("invoice.depositDefaultPercent", "null");
+
+    svc.get.mockImplementation((key: string) =>
+      key === "invoice.depositDefaultPercent" ? Promise.resolve("") : Promise.resolve(null),
+    );
+    const result = await controller.getInvoiceSettings();
+    expect(result.depositDefaultPercent).toBeNull();
+  });
+
+  it('PATCH {depositCollectAtOrder:true} calls svc.set(invoice.depositCollectAtOrder, "true")', async () => {
+    await controller.updateInvoiceSettings({ depositCollectAtOrder: true });
+    expect(svc.set).toHaveBeenCalledWith("invoice.depositCollectAtOrder", "true");
+  });
+
+  it("PATCH without either deposit key does not touch them", async () => {
+    await controller.updateInvoiceSettings({ defaultTerms: "Net 15" });
+    expect(svc.set).not.toHaveBeenCalledWith("invoice.depositDefaultPercent", expect.anything());
+    expect(svc.set).not.toHaveBeenCalledWith("invoice.depositCollectAtOrder", expect.anything());
+  });
+});

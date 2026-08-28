@@ -950,6 +950,233 @@ describe("InvoicesService", () => {
     });
   });
 
+  // WP-D1: a deposit-collect-at-order mirror is SENT (not DRAFT) at placement, so
+  // it has no open draft to find — reconcileOrderDraftInvoice widens to also catch
+  // it, ONLY when it's the order's sole non-void invoice, carries a deposit, and
+  // the order hasn't reached DELIVERED/CANCELLED.
+  describe("reconcileOrderDraftInvoice — WP-D1 deposit-mirror widening", () => {
+    const depositOrder = {
+      id: "o-dep",
+      customerId: "c1",
+      subtotal: 50,
+      tax: 5,
+      lineItems: [
+        {
+          id: "li1",
+          productId: "p1",
+          qty: 10,
+          deliveredQty: 10,
+          unitPrice: 5,
+          originalPrice: null,
+          priceType: "STANDARD",
+          product: { name: "P1" },
+          status: "PENDING",
+        },
+      ],
+    };
+
+    function armDepositReconcile(overrides: any = {}) {
+      prisma.invoice.findFirst.mockResolvedValue(null); // no open DRAFT pending mirror
+      prisma.order.findFirst.mockResolvedValue({ status: "PENDING" }); // order-editable gate
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "inv-dep",
+          status: InvoiceStatus.SENT,
+          deliveryBatchId: null,
+          discount: 0,
+          shippingFee: 0,
+          depositPercent: 50,
+          dueDate: new Date("2026-10-01"),
+          items: [],
+          payments: [{ amount: 20, status: "RECORDED" }],
+          ...overrides,
+        },
+      ]);
+      prisma.order.findUnique.mockResolvedValue(depositOrder);
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoiceItem.deleteMany.mockResolvedValue({});
+      prisma.invoice.update.mockImplementation((args: any) =>
+        Promise.resolve({ id: "inv-dep", ...args.data }),
+      );
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "li1" }]);
+      prisma.orderItem.update.mockResolvedValue({});
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { shippingFee: 0 } });
+    }
+
+    it("reconciles a SENT+deposit mirror: rebuilds totals, preserves payments/dueDate, recomputes status from paid vs new total", async () => {
+      armDepositReconcile();
+
+      const result = await service.reconcileOrderDraftInvoice("o-dep", { basis: "order" });
+
+      expect(result).toBeTruthy();
+      const data = prisma.invoice.update.mock.calls[0][0].data;
+      // subtotal 10*5=50, tax proportion 50/50=1 -> regularTax 5, total 55; paid 20 -> PARTIAL.
+      expect(data.subtotal).toBeCloseTo(50, 2);
+      expect(data.total).toBeCloseTo(55, 2);
+      expect(data.status).toBe(InvoiceStatus.PARTIAL);
+      // depositDueDate/dueDate anchor to placement/terms, not to edits — never
+      // part of this update at all (Prisma leaves untouched columns alone).
+      expect("dueDate" in data).toBe(false);
+      expect("depositDueDate" in data).toBe(false);
+      // Payments are read (for the status recompute) but never written here.
+      expect("payments" in data).toBe(false);
+    });
+
+    it("flips PAID (balance floors at 0) when the edited total drops to/below what's already paid", async () => {
+      armDepositReconcile({ payments: [{ amount: 60, status: "RECORDED" }] });
+
+      await service.reconcileOrderDraftInvoice("o-dep", { basis: "order" });
+
+      const data = prisma.invoice.update.mock.calls[0][0].data;
+      expect(data.status).toBe(InvoiceStatus.PAID);
+    });
+
+    it("excludes a VOID payment from the recomputed status, same as findAll/findOne", async () => {
+      armDepositReconcile({
+        payments: [
+          { amount: 60, status: "VOID" },
+          { amount: 10, status: "RECORDED" },
+        ],
+      });
+
+      await service.reconcileOrderDraftInvoice("o-dep", { basis: "order" });
+
+      const data = prisma.invoice.update.mock.calls[0][0].data;
+      expect(data.status).toBe(InvoiceStatus.PARTIAL); // 10 paid, not 70
+    });
+
+    // S2: the rebuilt mirror is an ISSUED invoice whose money just moved — commission
+    // must re-sync (what rebuildSiblingDrafts does on a preserveStatus rebuild) and
+    // the UI must hear about it.
+    it("re-syncs commission and emits invoice-updated for the issued mirror", async () => {
+      armDepositReconcile();
+      mockCommissionEngine.syncInvoiceCommissionSafe.mockClear();
+      mockGateway.emitInvoiceUpdated.mockClear();
+
+      await service.reconcileOrderDraftInvoice("o-dep", { basis: "order" });
+
+      expect(mockCommissionEngine.syncInvoiceCommissionSafe).toHaveBeenCalledWith(
+        "inv-dep",
+        expect.anything(),
+      );
+      expect(mockGateway.emitInvoiceUpdated).toHaveBeenCalledWith(
+        "test-tenant",
+        expect.objectContaining({
+          invoiceId: "inv-dep",
+          status: InvoiceStatus.PARTIAL,
+          total: 55,
+        }),
+      );
+    });
+
+    it("a plain DRAFT pending mirror syncs no commission and emits nothing (unchanged)", async () => {
+      prisma.invoice.findFirst.mockResolvedValue({ id: "d1", discount: 0, shippingFee: 0 });
+      prisma.order.findUnique.mockResolvedValue(depositOrder);
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.update.mockResolvedValue({ id: "d1", status: InvoiceStatus.DRAFT });
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "li1" }]);
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { shippingFee: 0 } });
+      mockCommissionEngine.syncInvoiceCommissionSafe.mockClear();
+      mockGateway.emitInvoiceUpdated.mockClear();
+
+      await service.reconcileOrderDraftInvoice("o-dep", { basis: "order" });
+
+      expect(mockCommissionEngine.syncInvoiceCommissionSafe).not.toHaveBeenCalled();
+      expect(mockGateway.emitInvoiceUpdated).not.toHaveBeenCalled();
+    });
+
+    it("never touches a plain SENT invoice with no deposit — the fence", async () => {
+      armDepositReconcile({ depositPercent: null });
+
+      const result = await service.reconcileOrderDraftInvoice("o-dep", { basis: "order" });
+
+      expect(result).toBeNull();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("never touches the mirror once the order is DELIVERED (post-delivery edits are resyncOrderInvoicesForEdit's job)", async () => {
+      prisma.invoice.findFirst.mockResolvedValue(null);
+      prisma.order.findFirst.mockResolvedValue({ status: "DELIVERED" });
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "inv-dep",
+          status: InvoiceStatus.SENT,
+          deliveryBatchId: null,
+          depositPercent: 50,
+          payments: [],
+        },
+      ]);
+
+      const result = await service.reconcileOrderDraftInvoice("o-dep", { basis: "order" });
+
+      expect(result).toBeNull();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("never touches the mirror once the order is CANCELLED", async () => {
+      prisma.invoice.findFirst.mockResolvedValue(null);
+      prisma.order.findFirst.mockResolvedValue({ status: "CANCELLED" });
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "inv-dep",
+          status: InvoiceStatus.SENT,
+          deliveryBatchId: null,
+          depositPercent: 50,
+          payments: [],
+        },
+      ]);
+
+      const result = await service.reconcileOrderDraftInvoice("o-dep", { basis: "order" });
+
+      expect(result).toBeNull();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("never touches when the order has more than one non-void invoice (split/partial territory, not this path)", async () => {
+      prisma.invoice.findFirst.mockResolvedValue(null);
+      prisma.order.findFirst.mockResolvedValue({ status: "PENDING" });
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "inv-dep",
+          status: InvoiceStatus.SENT,
+          deliveryBatchId: null,
+          depositPercent: 50,
+          payments: [],
+        },
+        {
+          id: "inv-other",
+          status: InvoiceStatus.SENT,
+          deliveryBatchId: null,
+          depositPercent: null,
+          payments: [],
+        },
+      ]);
+
+      const result = await service.reconcileOrderDraftInvoice("o-dep", { basis: "order" });
+
+      expect(result).toBeNull();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("a plain DRAFT pending mirror still forces DRAFT unconditionally — unwidened behavior is untouched", async () => {
+      // The open-draft branch short-circuits before the widened lookup even runs.
+      prisma.invoice.findFirst.mockResolvedValue({ id: "d1", discount: 0, shippingFee: 0 });
+      prisma.order.findUnique.mockResolvedValue(depositOrder);
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoiceItem.deleteMany.mockResolvedValue({});
+      prisma.invoice.update.mockResolvedValue({ id: "d1", status: InvoiceStatus.DRAFT });
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "li1" }]);
+      prisma.orderItem.update.mockResolvedValue({});
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { shippingFee: 0 } });
+
+      await service.reconcileOrderDraftInvoice("o-dep", { basis: "order" });
+
+      const data = prisma.invoice.update.mock.calls[0][0].data;
+      expect(data.status).toBe(InvoiceStatus.DRAFT);
+      expect(prisma.order.findFirst).not.toHaveBeenCalled();
+    });
+  });
+
   // ─── send(): invoice-after-delivery gating ─────────────────────────────────
 
   describe("send() — pending-mirror gating", () => {
@@ -963,6 +1190,28 @@ describe("InvoicesService", () => {
       prisma.order.findFirst.mockResolvedValue({ status: "PENDING", orderNumber: "O1" });
       await expect(service.send("i1")).rejects.toThrow(BadRequestException);
       expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    // WP-D1: the deposit-collect-at-order issuance path calls send() with this
+    // narrow escape hatch — never set by the public controller/reminder/van-sale
+    // callers — so a deposit mirror can be issued pre-delivery on purpose.
+    it("allowPreDelivery lets an order-linked DRAFT be sent before the order is delivered, without even checking the order", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "i1",
+        orderId: "o1",
+        status: InvoiceStatus.DRAFT,
+        deliveryBatchId: null,
+        depositPercent: 30,
+      });
+      prisma.invoice.update.mockResolvedValue({
+        id: "i1",
+        invoiceNumber: "INV-1",
+        customerId: "c1",
+        status: InvoiceStatus.SENT,
+        total: 10,
+      });
+      await expect(service.send("i1", { allowPreDelivery: true })).resolves.toBeDefined();
+      expect(prisma.order.findFirst).not.toHaveBeenCalled();
     });
 
     it("allows sending once the order is delivered", async () => {
@@ -2329,6 +2578,95 @@ describe("InvoicesService", () => {
       expect(reverted).toEqual([]);
       expect(prisma.invoice.update).not.toHaveBeenCalled();
     });
+
+    // B1 (WP-D1): a deposit mirror issued at ORDER PLACEMENT is SENT on purpose, and
+    // reverting it is IRREVERSIBLE (a pre-delivery order-linked DRAFT can never be
+    // re-sent). It is exempt — the widened reconcile keeps it in lockstep instead.
+    it("does NOT revert an unpaid issued deposit mirror — it stays SENT and the widened reconcile rebuilds its totals", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "inv-dep",
+          invoiceNumber: "INV-DEP",
+          internalNotes: null,
+          status: InvoiceStatus.SENT,
+          deliveryBatchId: null,
+          depositPercent: 30,
+          discount: 0,
+          shippingFee: 0,
+          dueDate: new Date("2099-10-01"),
+          items: [],
+          payments: [],
+        },
+      ]);
+      prisma.order.findFirst.mockResolvedValue({ status: "PENDING" });
+      prisma.invoice.count.mockResolvedValue(1); // the order's SOLE non-void invoice
+
+      const reverted = await service.revertLinkedInvoicesForOrderEdit("o-dep");
+
+      expect(reverted).toEqual([]);
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+      // Skipped outright — not even the payment probe (so a PAID deposit can't block
+      // the edit the way the legacy revert does).
+      expect(prisma.invoicePayment.count).not.toHaveBeenCalled();
+
+      // …and the post-edit reconcile rebuilds that same invoice in place, still issued.
+      prisma.invoice.findFirst.mockResolvedValue(null); // no open DRAFT to find
+      prisma.order.findUnique.mockResolvedValue({
+        id: "o-dep",
+        customerId: "c1",
+        subtotal: 50,
+        tax: 5,
+        lineItems: [
+          {
+            id: "li1",
+            productId: "p1",
+            qty: 10,
+            deliveredQty: 10,
+            unitPrice: 5,
+            originalPrice: null,
+            priceType: "STANDARD",
+            product: { name: "P1" },
+            status: "PENDING",
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { shippingFee: 0 } });
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "li1" }]);
+      prisma.invoice.update.mockImplementation((args: any) =>
+        Promise.resolve({ id: "inv-dep", ...args.data }),
+      );
+
+      await service.reconcileOrderDraftInvoice("o-dep", { basis: "order" });
+
+      const data = prisma.invoice.update.mock.calls[0][0].data;
+      expect(data.total).toBeCloseTo(55, 2); // 10 × $5 + $5 tax
+      expect(data.status).toBe(InvoiceStatus.SENT); // still issued; nothing paid yet
+    });
+
+    it("still reverts a deposit mirror once the order is DELIVERED (outside the reconcile fence)", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        { id: "inv-dep", invoiceNumber: "INV-DEP", internalNotes: null, depositPercent: 30 },
+      ]);
+      prisma.order.findFirst.mockResolvedValue({ status: "DELIVERED" });
+      prisma.invoice.count.mockResolvedValue(1);
+      prisma.invoicePayment.count.mockResolvedValue(0);
+      prisma.invoice.update.mockResolvedValue({ id: "inv-dep", status: "DRAFT" });
+
+      expect(await service.revertLinkedInvoicesForOrderEdit("o-dep")).toEqual(["inv-dep"]);
+    });
+
+    it("still reverts a deposit invoice when the order has OTHER non-void invoices (split/partial — the reconcile can't cover it)", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        { id: "inv-dep", invoiceNumber: "INV-DEP", internalNotes: null, depositPercent: 30 },
+      ]);
+      prisma.order.findFirst.mockResolvedValue({ status: "PENDING" });
+      prisma.invoice.count.mockResolvedValue(2); // not the sole invoice
+      prisma.invoicePayment.count.mockResolvedValue(0);
+      prisma.invoice.update.mockResolvedValue({ id: "inv-dep", status: "DRAFT" });
+
+      expect(await service.revertLinkedInvoicesForOrderEdit("o-dep")).toEqual(["inv-dep"]);
+    });
   });
 
   describe("unvoidInvoice restores invoicedQty", () => {
@@ -3038,6 +3376,78 @@ describe("InvoicesService", () => {
       // Both siblings still get paid — each billed once (no double).
       expect(res.applied).toBe(100);
       expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(2);
+    });
+
+    // B2 (WP-D1): a deposit mirror issued at placement is SENT — there is no open
+    // DRAFT to find, so the delivered-basis rebuild used to be skipped entirely and a
+    // short delivery collected against the FULL pre-delivery total.
+    it("rebuilds an ISSUED deposit mirror on the DELIVERED basis, preserving payments and recomputing status", async () => {
+      // 10 units @ $100 = $1,000, issued SENT at placement with a 30% deposit ($300,
+      // already paid). Only 6 are delivered → the bill must restate to $600.
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-dep" }); // a live invoice exists
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "inv-dep",
+          invoiceNumber: "INV-DEP",
+          customerId: "cust-1",
+          status: InvoiceStatus.SENT,
+          deliveryBatchId: null,
+          depositPercent: 30,
+          discount: 0,
+          shippingFee: 0,
+          dueDate: null,
+          total: 1000,
+          payments: [{ amount: 300, status: "RECORDED" }],
+        },
+      ]);
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-1",
+        customerId: "cust-1",
+        subtotal: 1000,
+        tax: 0,
+        shippingFee: 0,
+        lineItems: [
+          {
+            id: "li-1",
+            productId: "p1",
+            qty: 10,
+            deliveredQty: 6,
+            unitPrice: 100,
+            subtotal: 1000,
+            originalPrice: null,
+            priceType: "STANDARD",
+            product: { name: "Widget" },
+            status: "PENDING",
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.update.mockImplementation((args: any) =>
+        Promise.resolve({ id: "inv-dep", ...args.data, items: [] }),
+      );
+
+      await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 300, "CASH");
+
+      const rebuild = prisma.invoice.update.mock.calls[0][0];
+      expect(rebuild.where).toEqual({ id: "inv-dep" });
+      expect(rebuild.data.subtotal).toBeCloseTo(600, 2); // 6 of 10 × $100
+      expect(rebuild.data.total).toBeCloseTo(600, 2);
+      // Payment rows are never written by the rebuild; status recomputes from the
+      // $300 already paid against the NEW $600 total.
+      expect("payments" in rebuild.data).toBe(false);
+      expect(rebuild.data.status).toBe(InvoiceStatus.PARTIAL);
+      // The DRAFT-only delivered reconcile can't run here — there is no draft.
+      expect(service.reconcileOrderDeliveredInvoices).not.toHaveBeenCalled();
+    });
+
+    it("leaves a plain SENT invoice (no deposit) alone when there is no draft — the fence", async () => {
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" });
+      prisma.invoice.findMany.mockResolvedValue([inv({ deliveryBatchId: null })]);
+
+      await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
+
+      // Only the payment-status update ran — no rebuild of a non-deposit invoice.
+      expect(prisma.invoiceItem.deleteMany).not.toHaveBeenCalled();
     });
 
     it("does NOT reconcile an order absent from reconcileOrderIds (not delivered this completion)", async () => {
@@ -4725,15 +5135,25 @@ describe("InvoicesService", () => {
         mockSystemConfig.get.mockResolvedValue("Net 30"); // tenant default — must be beaten
         // mockSystemConfig is a shared jest.fn() across the whole spec file (never
         // reset between tests), so clear ITS call history right before the act —
-        // otherwise the "not called" assertion below inherits calls from unrelated
-        // earlier tests.
+        // otherwise the assertions below inherit calls from unrelated earlier tests.
         mockSystemConfig.get.mockClear();
 
         const result = await service.resolveDefaultTerms("cust-1");
 
-        expect(result).toEqual({ terms: "Net 60", dueDays: 60, customerDepositPercent: null });
-        // The customer override short-circuits before the tenant lookup is even needed.
-        expect(mockSystemConfig.get).not.toHaveBeenCalled();
+        expect(result).toEqual({
+          terms: "Net 60",
+          dueDays: 60,
+          customerDepositPercent: null,
+          effectiveDepositPercent: null,
+        });
+        // The customer's terms override short-circuits the TERMS tenant lookup — but
+        // WP-D1's deposit resolution always reads the tenant deposit default
+        // regardless (a customer with no deposit override still needs to know
+        // whether one applies), so exactly one call happens, and it's for the
+        // deposit key, never "invoice.defaultTerms". "Net 30" isn't numeric, so it
+        // resolves to no tenant deposit (effectiveDepositPercent stays null above).
+        expect(mockSystemConfig.get).toHaveBeenCalledTimes(1);
+        expect(mockSystemConfig.get).toHaveBeenCalledWith("invoice.depositDefaultPercent");
       });
 
       it("falls back to the tenant default when the customer has no override", async () => {
@@ -4742,7 +5162,12 @@ describe("InvoicesService", () => {
 
         const result = await service.resolveDefaultTerms("cust-1");
 
-        expect(result).toEqual({ terms: "Net 45", dueDays: 45, customerDepositPercent: null });
+        expect(result).toEqual({
+          terms: "Net 45",
+          dueDays: 45,
+          customerDepositPercent: null,
+          effectiveDepositPercent: null, // "Net 45" isn't numeric -> no tenant deposit
+        });
       });
 
       it("keeps the existing tenant-only behavior when called with no customerId", async () => {
@@ -4750,7 +5175,12 @@ describe("InvoicesService", () => {
 
         const result = await service.resolveDefaultTerms();
 
-        expect(result).toEqual({ terms: "Net 30", dueDays: 30, customerDepositPercent: null });
+        expect(result).toEqual({
+          terms: "Net 30",
+          dueDays: 30,
+          customerDepositPercent: null,
+          effectiveDepositPercent: null,
+        });
         expect(prisma.customer.findFirst).not.toHaveBeenCalled();
       });
 
@@ -4760,11 +5190,55 @@ describe("InvoicesService", () => {
           defaultDepositPercent: 50,
         });
         prisma.customer.findFirst.mockClear();
+        mockSystemConfig.get.mockResolvedValue(null); // no tenant default — customer's 50 wins anyway
 
         const result = await service.resolveDefaultTerms("cust-1");
 
-        expect(result).toEqual({ terms: "Net 60", dueDays: 60, customerDepositPercent: 50 });
+        expect(result).toEqual({
+          terms: "Net 60",
+          dueDays: 60,
+          customerDepositPercent: 50,
+          effectiveDepositPercent: 50,
+        });
         expect(prisma.customer.findFirst).toHaveBeenCalledTimes(1);
+      });
+
+      it("effective-deposit resolution matrix: customer 0 is an explicit opt-out even when the tenant default is set", async () => {
+        prisma.customer.findFirst.mockResolvedValue({
+          defaultPaymentTerms: null,
+          defaultDepositPercent: 0,
+        });
+        mockSystemConfig.get.mockResolvedValue("30");
+
+        const result = await service.resolveDefaultTerms("cust-1");
+
+        expect(result.customerDepositPercent).toBe(0);
+        expect(result.effectiveDepositPercent).toBeNull();
+      });
+
+      it("effective-deposit resolution matrix: customer null + tenant 30 -> 30 (inherits the tenant default)", async () => {
+        prisma.customer.findFirst.mockResolvedValue({
+          defaultPaymentTerms: null,
+          defaultDepositPercent: null,
+        });
+        mockSystemConfig.get.mockResolvedValue("30");
+
+        const result = await service.resolveDefaultTerms("cust-1");
+
+        expect(result.customerDepositPercent).toBeNull();
+        expect(result.effectiveDepositPercent).toBe(30);
+      });
+
+      it("effective-deposit resolution matrix: customer null + tenant unset -> none", async () => {
+        prisma.customer.findFirst.mockResolvedValue({
+          defaultPaymentTerms: null,
+          defaultDepositPercent: null,
+        });
+        mockSystemConfig.get.mockResolvedValue(null);
+
+        const result = await service.resolveDefaultTerms("cust-1");
+
+        expect(result.effectiveDepositPercent).toBeNull();
       });
     });
 
@@ -4893,6 +5367,12 @@ describe("InvoicesService", () => {
         prisma.invoice.create.mockImplementation((args: any) =>
           Promise.resolve({ ...args.data, items: [], payments: [], customer: {} }),
         );
+        // mockSystemConfig is a shared jest.fn() across the whole spec file (never
+        // reset between tests) — WP-D1's resolveDefaultTerms now ALWAYS reads
+        // "invoice.depositDefaultPercent" too, so pin it to "no tenant default" here.
+        // Each test below is about the CUSTOMER's own default; tests that also want a
+        // tenant default set it explicitly.
+        mockSystemConfig.get.mockResolvedValue(null);
       });
 
       it("(a) createInvoiceFromOrder: customer default 50 + Net 60 -> depositPercent 50, depositDueDate = issueDate, dueDate +60d", async () => {
@@ -5047,6 +5527,234 @@ describe("InvoicesService", () => {
 
         expect(invoice.depositPercent).toBe(10);
         expect(invoice.depositDueDate).toEqual(new Date("2026-09-05T00:00:00.000Z"));
+      });
+    });
+
+    // WP-D1: tenant deposit policy — effectiveDepositPercent (tenant default, since
+    // these customers carry no override of their own) drives createInvoiceFromOrder's
+    // deposit fields, and invoice.depositCollectAtOrder gates whether the mirror is
+    // issued (SENT, no email) right at creation.
+    describe("createInvoiceFromOrder — deposit-collect-at-order issuance", () => {
+      const orderWith = (over: any = {}) => ({
+        id: "ord-issue",
+        customerId: "cust-1",
+        orderNumber: "ORD-ISSUE",
+        subtotal: 100,
+        tax: 0,
+        status: "PENDING",
+        lineItems: [
+          {
+            id: "li-1",
+            productId: "p1",
+            name: null,
+            qty: 2,
+            invoicedQty: 0,
+            unitPrice: 50,
+            originalPrice: null,
+            priceType: "STANDARD",
+            product: { name: "Widget", unitsPerBox: 0 },
+          },
+        ],
+        ...over,
+      });
+
+      let row: any;
+
+      beforeEach(() => {
+        jest
+          .spyOn(service as any, "resolveTenantInvoiceDefaults")
+          .mockResolvedValue({ notes: null, terms: null, timezone: null });
+        jest.spyOn(service as any, "generateInvoiceNumber").mockResolvedValue("INV-ISSUE");
+        prisma.customer.findFirst.mockResolvedValue({
+          isTaxExempt: false,
+          defaultPaymentTerms: null,
+          defaultDepositPercent: null,
+        });
+        row = undefined;
+        prisma.invoice.create.mockImplementation((args: any) => {
+          row = { id: "inv-issue-1", ...args.data, items: [], payments: [], customer: {} };
+          return Promise.resolve(row);
+        });
+        // send()'s findOneOrThrow + its own mid-flight re-fetches all read through
+        // this same mutable `row` reference.
+        prisma.invoice.findUnique.mockImplementation(() => Promise.resolve(row));
+        prisma.invoice.update.mockImplementation((args: any) => {
+          row = { ...row, ...args.data };
+          return Promise.resolve(row);
+        });
+      });
+
+      it("effective tenant deposit + collectAtOrder=true + non-delivered order -> mirror issued SENT at create, no email", async () => {
+        mockSystemConfig.get.mockImplementation((key: string) => {
+          if (key === "invoice.depositDefaultPercent") return Promise.resolve("30");
+          if (key === "invoice.depositCollectAtOrder") return Promise.resolve("true");
+          return Promise.resolve(null);
+        });
+        prisma.order.findUnique.mockResolvedValue(orderWith());
+        // mockEmailService is a shared jest.fn() across the whole spec file (never
+        // reset between tests) — clear its call history right before the act so the
+        // "no email" assertion below isn't inherited from an unrelated earlier test.
+        mockEmailService.sendInvoice.mockClear();
+
+        const result = (await service.createInvoiceFromOrder("ord-issue")) as any[];
+
+        expect(result).toHaveLength(1);
+        expect(result[0].depositPercent).toBe(30);
+        expect(result[0].status).toBe(InvoiceStatus.SENT);
+        expect(mockEmailService.sendInvoice).not.toHaveBeenCalled();
+        // send() never checks the order-delivered gate for this call — the invoice
+        // update actually happened (proves send() ran, not just a passthrough).
+        expect(prisma.invoice.update).toHaveBeenCalled();
+      });
+
+      it("collectAtOrder unset (default) leaves the mirror DRAFT even with an effective deposit — byte-identical", async () => {
+        mockSystemConfig.get.mockImplementation((key: string) =>
+          key === "invoice.depositDefaultPercent" ? Promise.resolve("30") : Promise.resolve(null),
+        );
+        prisma.order.findUnique.mockResolvedValue(orderWith());
+
+        const result = (await service.createInvoiceFromOrder("ord-issue")) as any[];
+
+        expect(result[0].depositPercent).toBe(30);
+        expect(result[0].status).toBe(InvoiceStatus.DRAFT);
+        expect(prisma.invoice.update).not.toHaveBeenCalled();
+      });
+
+      it("does not issue when the order is already DELIVERED (the van-sale flow issues via its own explicit send())", async () => {
+        mockSystemConfig.get.mockImplementation((key: string) => {
+          if (key === "invoice.depositDefaultPercent") return Promise.resolve("30");
+          if (key === "invoice.depositCollectAtOrder") return Promise.resolve("true");
+          return Promise.resolve(null);
+        });
+        prisma.order.findUnique.mockResolvedValue(orderWith({ status: "DELIVERED" }));
+
+        const result = (await service.createInvoiceFromOrder("ord-issue")) as any[];
+
+        expect(result[0].status).toBe(InvoiceStatus.DRAFT);
+        expect(prisma.invoice.update).not.toHaveBeenCalled();
+      });
+
+      // S1: only open DRAFTs get sibling-aware rebuilds, so a regulated
+      // SEPARATE_INVOICE split (base + -R#) deliberately keeps DRAFT mirrors.
+      it("does NOT issue a split order's siblings — base + -R# stay DRAFT (deliberate limitation)", async () => {
+        mockSystemConfig.get.mockImplementation((key: string) => {
+          if (key === "invoice.depositDefaultPercent") return Promise.resolve("30");
+          if (key === "invoice.depositCollectAtOrder") return Promise.resolve("true");
+          return Promise.resolve(null);
+        });
+        prisma.order.findUnique.mockResolvedValue(orderWith());
+        jest.spyOn(service as any, "createSplitInvoices").mockResolvedValue([
+          { id: "inv-base", status: InvoiceStatus.DRAFT },
+          { id: "inv-r1", status: InvoiceStatus.DRAFT },
+        ]);
+
+        const result = (await service.createInvoiceFromOrder("ord-issue")) as any[];
+
+        expect(result.map((i) => i.status)).toEqual([InvoiceStatus.DRAFT, InvoiceStatus.DRAFT]);
+        expect(prisma.invoice.update).not.toHaveBeenCalled();
+      });
+
+      // S6: send() runs on its own connection/transaction, so it can't see rows a
+      // caller's still-open transaction just created.
+      it("does NOT issue when running inside a caller's transaction (cross-connection hazard)", async () => {
+        mockSystemConfig.get.mockImplementation((key: string) => {
+          if (key === "invoice.depositDefaultPercent") return Promise.resolve("30");
+          if (key === "invoice.depositCollectAtOrder") return Promise.resolve("true");
+          return Promise.resolve(null);
+        });
+        prisma.order.findUnique.mockResolvedValue(orderWith());
+
+        const result = (await service.createInvoiceFromOrder("ord-issue", prisma as any)) as any[];
+
+        expect(result[0].depositPercent).toBe(30); // the deposit still applies…
+        expect(result[0].status).toBe(InvoiceStatus.DRAFT); // …but it is not issued here
+        expect(prisma.invoice.update).not.toHaveBeenCalled();
+      });
+
+      it("no effective deposit at all -> never issues, regardless of the collectAtOrder flag", async () => {
+        mockSystemConfig.get.mockImplementation((key: string) =>
+          key === "invoice.depositCollectAtOrder" ? Promise.resolve("true") : Promise.resolve(null),
+        );
+        prisma.order.findUnique.mockResolvedValue(orderWith());
+
+        const result = (await service.createInvoiceFromOrder("ord-issue")) as any[];
+
+        expect("depositPercent" in result[0]).toBe(false);
+        expect(result[0].status).toBe(InvoiceStatus.DRAFT);
+        expect(prisma.invoice.update).not.toHaveBeenCalled();
+      });
+
+      // The fire-and-forget path is REGULAR order placement (buyer portal + operator
+      // create) — the mainline case. It has no request context, so it resolves the
+      // tenant policy off SystemConfig by tenantId and flips the mirror inline.
+      describe("createInvoiceFromOrderWithTenant (regular order placement)", () => {
+        const armTenantConfig = (values: Record<string, string>) => {
+          prisma.tenantConfig.findUnique.mockResolvedValue(null);
+          prisma.systemConfig.findFirst.mockImplementation((args: any) =>
+            Promise.resolve(
+              values[args?.where?.key] != null ? { value: values[args.where.key] } : null,
+            ),
+          );
+        };
+
+        it("inherits the tenant deposit percent (customer has none) and issues the mirror SENT + payable, no email", async () => {
+          prisma.order.findFirst.mockResolvedValue(orderWith());
+          armTenantConfig({
+            "invoice.depositDefaultPercent": "30",
+            "invoice.depositCollectAtOrder": "true",
+          });
+          mockEmailService.sendInvoice.mockClear();
+
+          const result = (await service.createInvoiceFromOrderWithTenant(
+            "ord-issue",
+            "test-tenant",
+          )) as any[];
+
+          const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+          expect(data.depositPercent).toBe(30);
+          expect(result).toHaveLength(1);
+          // SENT + sentAt is everything payability needs (canRecordPayment is
+          // status-driven), and nothing was emailed.
+          expect(result[0].status).toBe(InvoiceStatus.SENT);
+          expect(result[0].sentAt).toBeInstanceOf(Date);
+          expect(mockEmailService.sendInvoice).not.toHaveBeenCalled();
+        });
+
+        it("leaves the mirror DRAFT when collect-at-order is off (percent still applies)", async () => {
+          prisma.order.findFirst.mockResolvedValue(orderWith());
+          armTenantConfig({ "invoice.depositDefaultPercent": "30" });
+
+          const result = (await service.createInvoiceFromOrderWithTenant(
+            "ord-issue",
+            "test-tenant",
+          )) as any[];
+
+          expect((prisma.invoice.create.mock.calls[0][0] as any).data.depositPercent).toBe(30);
+          expect(result[0].status).toBe(InvoiceStatus.DRAFT);
+          expect(prisma.invoice.update).not.toHaveBeenCalled();
+        });
+
+        it("a customer deposit of 0 opts out even when the tenant default is set", async () => {
+          prisma.order.findFirst.mockResolvedValue(orderWith());
+          prisma.customer.findFirst.mockResolvedValue({
+            isTaxExempt: false,
+            defaultPaymentTerms: null,
+            defaultDepositPercent: 0,
+          });
+          armTenantConfig({
+            "invoice.depositDefaultPercent": "30",
+            "invoice.depositCollectAtOrder": "true",
+          });
+
+          const result = (await service.createInvoiceFromOrderWithTenant(
+            "ord-issue",
+            "test-tenant",
+          )) as any[];
+
+          const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+          expect("depositPercent" in data).toBe(false);
+          expect(result[0].status).toBe(InvoiceStatus.DRAFT);
+        });
       });
     });
 

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { UserRole } from "@prisma/client";
 import { TripsService } from "./trips.service";
@@ -9,6 +9,8 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { CreateTripDto } from "./dto/create-trip.dto";
 import { TripEligibilityQueryDto } from "./dto/trip-eligibility.dto";
+import { EligibleOrdersQueryDto } from "./dto/eligible-orders.dto";
+import { RoutePlanningDto } from "./dto/route-planning.dto";
 
 @ApiTags("trips")
 @ApiBearerAuth()
@@ -23,8 +25,22 @@ export class TripsController {
     return this.tripsService.getEligibility(user.tenantId!, query.orderIds);
   }
 
+  @Get("eligible-orders")
+  getEligibleOrders(@Query() query: EligibleOrdersQueryDto, @CurrentUser() user: JwtPayload) {
+    return this.tripsService.getEligibleOrders(user.tenantId!, query);
+  }
+
   @Post()
   createTrip(@Body() dto: CreateTripDto, @CurrentUser() user: JwtPayload) {
     return this.tripsService.createTrip(user.tenantId!, dto);
+  }
+
+  @Patch("routes/:routeId/planning")
+  updatePlanning(
+    @Param("routeId") routeId: string,
+    @Body() dto: RoutePlanningDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.tripsService.updatePlanning(user.tenantId!, routeId, dto);
   }
 }

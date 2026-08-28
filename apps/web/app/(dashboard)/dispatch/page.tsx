@@ -9,6 +9,11 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useRouteRuns, type RouteRun } from "@/lib/api/routes";
 import { useDrivers, type Driver } from "@/lib/api/drivers";
 import { useDeveloperMode, useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
+// `scheduledDate` is a CALENDAR date stored at UTC midnight, so it must be
+// rendered with fmtCalendarDate (timeZone: "UTC"). A local-time render shows
+// the PREVIOUS day for every negative-offset viewer — which would make this
+// card lie about exactly the thing it was added to disambiguate.
+import { fmtCalendarDate } from "@/lib/formatting";
 
 type RunStatus = "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "SCHEDULED";
 
@@ -67,7 +72,7 @@ function ActiveNowCard({ bothFeatures }: { bothFeatures: boolean }) {
   const runs = data?.data ?? [];
 
   return (
-    <CardShell title="Active Now">
+    <CardShell title="Active & Upcoming Runs">
       {isLoading ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {[1, 2, 3].map((i) => (
@@ -120,6 +125,7 @@ function ActiveNowCard({ bothFeatures }: { bothFeatures: boolean }) {
                     </span>
                   )}
                 </div>
+                <p className="text-xs text-navy/70">{fmtCalendarDate(run.scheduledDate)}</p>
                 <Link
                   href={`/routes/${run.id}/dispatch`}
                   className="inline-flex items-center justify-center gap-1 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-xs font-medium text-navy transition-colors hover:bg-surface-raised"

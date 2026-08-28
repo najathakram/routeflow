@@ -12,6 +12,7 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { RouteOptimizationService } from "./route-optimization.service";
 import { RouteAnalysisService } from "./route-analysis.service";
+import { ApplyRouteVariantDto } from "./dto/apply-route-variant.dto";
 
 @ApiTags("route-runs")
 @ApiBearerAuth()
@@ -63,5 +64,17 @@ export class RouteTemplateOptimizationController {
   @Throttle(OPTIMIZE_THROTTLE)
   analyze(@Param("id") id: string, @Body() body?: { startTime?: string }) {
     return this.analysisService.analyzeRoute(id, body?.startTime);
+  }
+
+  @Post(":id/variants")
+  @Throttle(OPTIMIZE_THROTTLE)
+  variants(@Param("id") id: string) {
+    return this.service.getRouteVariants(id);
+  }
+
+  @Post(":id/variants/apply")
+  @Throttle(OPTIMIZE_THROTTLE)
+  applyVariant(@Param("id") id: string, @Body() body: ApplyRouteVariantDto) {
+    return this.service.applyRouteVariant(id, body);
   }
 }

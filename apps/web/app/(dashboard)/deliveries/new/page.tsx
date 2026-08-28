@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Loader2,
@@ -23,19 +23,33 @@ import {
   useRouteSettings,
   useTripEligibility,
   useUpdateRoute,
+  useRouteVariants,
+  useApplyRouteVariant,
   type TripOrigin,
+  type RoutePlanningEndDto,
+  type RouteOptimizeMetric,
+  type RouteVariant,
 } from "@/lib/api/routes";
 import { useDrivers } from "@/lib/api/drivers";
-import { loadTripDraft, clearTripDraft } from "@/lib/trip-draft";
+import { loadTripDraft, saveTripDraft, clearTripDraft } from "@/lib/trip-draft";
 import { groupOrdersForTrip, type TripStopGroup } from "@routeflow/types";
 import { TemplateRouteMap } from "../../routes/templates/[id]/TemplateRouteMap";
+import type { VariantOverlay } from "../../routes/templates/[id]/TemplateRouteMap";
 import {
-  TripOriginPicker,
-  type TripOriginKind,
-  type TripOriginAddress,
-} from "../_components/TripOriginPicker";
+  RoutePlanningControls,
+  EMPTY_PLANNING_ADDRESS,
+  EMPTY_END_DRAFT,
+  type RoutePlanningValue,
+  type RoutePlanningOriginKind,
+  type RoutePlanningAddress,
+  type RoutePlanningOriginSummary,
+  type TripEndDraft,
+  type RoutePlanningDriverOption,
+} from "@/components/RoutePlanningControls";
+import { RouteVariantsPanel } from "@/components/RouteVariantsPanel";
 import { TripStopList } from "../_components/TripStopList";
 import { TripSkippedPanel, type TripSkippedRow } from "../_components/TripSkippedPanel";
+import { OrderPickerPanel } from "../_components/OrderPickerPanel";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -45,10 +59,22 @@ function summaryLabel(stopCount: number, orderCount: number): string {
   }`;
 }
 
-function originKindLabel(kind: TripOriginKind): string {
+function originKindLabel(kind: RoutePlanningOriginKind): string {
   if (kind === "TENANT") return "Tenant depot";
   if (kind === "DRIVER") return "Driver's home base";
   return "Custom address";
+}
+
+/** Fixed candidate configs the variants endpoint solves under (WP3) — the
+ *  `RouteVariant` response doesn't carry its own optimizeBy/avoidTolls, so
+ *  this mirrors the server's config list to build ApplyRouteVariantDto. */
+function variantConfigFor(
+  key: RouteVariant["key"],
+  currentAvoidTolls: boolean,
+): { optimizeBy: RouteOptimizeMetric; avoidTolls: boolean } {
+  if (key === "SHORTEST") return { optimizeBy: "DISTANCE", avoidTolls: currentAvoidTolls };
+  if (key === "NO_TOLLS") return { optimizeBy: "TIME", avoidTolls: true };
+  return { optimizeBy: "TIME", avoidTolls: currentAvoidTolls };
 }
 
 type Phase = "PICKING" | "BUILT";
@@ -57,7 +83,6 @@ type Phase = "PICKING" | "BUILT";
 
 export default function NewTripPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
@@ -65,28 +90,37 @@ export default function NewTripPage() {
     setTitle("Plan a delivery");
   }, [setTitle]);
 
-  // ── Draft (from the orders-list "Plan delivery trip" bulkbar action) ──
-  // Read client-side only — sessionStorage isn't available during the SSR
-  // pass, so undefined = "not checked yet" avoids flashing the empty state.
-  const [draft, setDraft] = React.useState<ReturnType<typeof loadTripDraft> | undefined>(undefined);
+  // ── Order selection (from the orders-list "Plan delivery trip" bulkbar
+  //    action, OR built up in-page via OrderPickerPanel) ──
+  // orderIds is the real source of truth — every add/remove persists via
+  // saveTripDraft so a refresh keeps the selection. Seeded ONCE from
+  // loadTripDraft() client-side only (sessionStorage isn't available during
+  // the SSR pass) — `hydrated` gates the initial render so we never flash an
+  // empty picker before a real draft has had a chance to load.
+  const [hydrated, setHydrated] = React.useState(false);
+  const [orderIds, setOrderIds] = React.useState<string[]>([]);
   React.useEffect(() => {
-    setDraft(loadTripDraft());
+    setOrderIds(loadTripDraft()?.orderIds ?? []);
+    setHydrated(true);
   }, []);
+
+  function persistOrderIds(next: string[]) {
+    setOrderIds(next);
+    saveTripDraft(next);
+  }
 
   // ── Phase / created-route state ──
   const [phase, setPhase] = React.useState<Phase>("PICKING");
   const [routeId, setRouteId] = React.useState<string | null>(null);
 
   // ── Form state (PICKING) ──
-  const [removedCustomerIds, setRemovedCustomerIds] = React.useState<Set<string>>(new Set());
   const [driverId, setDriverId] = React.useState("");
-  const [originKind, setOriginKind] = React.useState<TripOriginKind>("TENANT");
-  const [address, setAddress] = React.useState<TripOriginAddress>({
-    line1: "",
-    city: "",
-    state: "",
-    zip: "",
-  });
+  const [originKind, setOriginKind] = React.useState<RoutePlanningOriginKind>("TENANT");
+  const [originAddress, setOriginAddress] =
+    React.useState<RoutePlanningAddress>(EMPTY_PLANNING_ADDRESS);
+  const [end, setEnd] = React.useState<TripEndDraft>(EMPTY_END_DRAFT);
+  const [avoidTolls, setAvoidTolls] = React.useState(false);
+  const [optimizeBy, setOptimizeBy] = React.useState<RouteOptimizeMetric>("TIME");
   const today = new Date().toISOString().split("T")[0];
   const [date, setDate] = React.useState(today);
 
@@ -100,10 +134,15 @@ export default function NewTripPage() {
   const [frozenGroups, setFrozenGroups] = React.useState<TripStopGroup[]>([]);
   const [frozenOrderIds, setFrozenOrderIds] = React.useState<string[]>([]);
   const [frozenSkipped, setFrozenSkipped] = React.useState<TripSkippedRow[]>([]);
-  const [frozenOriginKind, setFrozenOriginKind] = React.useState<TripOriginKind>("TENANT");
+  const [frozenOriginKind, setFrozenOriginKind] = React.useState<RoutePlanningOriginKind>("TENANT");
+
+  // ── Route variants (Fastest/Shortest/No-tolls comparison, post-Build) ──
+  const [variants, setVariants] = React.useState<RouteVariant[]>([]);
+  const [selectedVariantKey, setSelectedVariantKey] = React.useState<RouteVariant["key"] | null>(
+    null,
+  );
 
   // ── Data ──
-  const orderIds = draft?.orderIds ?? [];
   const {
     data: eligibility,
     isLoading: eligLoading,
@@ -120,6 +159,8 @@ export default function NewTripPage() {
   const createRun = useCreateRouteRun();
   const deleteRoute = useDeleteRoute();
   const updateRoute = useUpdateRoute();
+  const routeVariants = useRouteVariants();
+  const applyVariant = useApplyRouteVariant();
 
   const drivers = driversData?.data ?? [];
   const selectedDriver = drivers.find((d) => d.id === driverId);
@@ -135,6 +176,67 @@ export default function NewTripPage() {
   // The DRIVER origin resolves from homeLat/homeLng only (TripsService.resolveOrigin),
   // which the driver profile's Home Base section writes on a successful geocode.
   const hasDriverHome = selectedDriver?.homeLat != null && selectedDriver?.homeLng != null;
+
+  // ── Route planning controls (start/end/tolls/objective) ──
+  // originSummary is display-only data RoutePlanningControls needs but can't
+  // derive itself (the driver picker sits above it on this page) — recomputed
+  // every render from routeSettings/selectedDriver, never stored in state.
+  const originSummary: RoutePlanningOriginSummary = React.useMemo(
+    () => ({
+      depotAddress: routeSettings?.depotAddress,
+      hasDepot,
+      driverName: selectedDriver?.contactName,
+      hasDriver: !!driverId,
+      hasDriverHome,
+      driverHref: driverId ? `/drivers/${driverId}` : null,
+    }),
+    [routeSettings?.depotAddress, hasDepot, selectedDriver?.contactName, driverId, hasDriverHome],
+  );
+
+  const planningValue: RoutePlanningValue = {
+    originKind,
+    originAddress,
+    originSummary,
+    end,
+    avoidTolls,
+    optimizeBy,
+  };
+
+  function handlePlanningChange(next: RoutePlanningValue) {
+    setOriginKind(next.originKind);
+    setOriginAddress(next.originAddress);
+    setEnd(next.end);
+    setAvoidTolls(next.avoidTolls);
+    setOptimizeBy(next.optimizeBy);
+  }
+
+  // Candidate drivers for the "End at driver's home" option — distinct from
+  // the origin's driver (chosen via the Driver select above).
+  const endDriverOptions: RoutePlanningDriverOption[] = React.useMemo(
+    () =>
+      drivers.map((d) => ({
+        id: d.id,
+        name: d.contactName,
+        hasHome: d.homeLat != null && d.homeLng != null,
+      })),
+    [drivers],
+  );
+
+  // ── Variant overlays for the map — only variants with a real polyline draw
+  //    (a solver-only fallback with encodedPolyline: null never gets an overlay,
+  //    which is exactly "keep today's single-route view" when Google fails). ──
+  const variantOverlays: VariantOverlay[] = React.useMemo(
+    () =>
+      variants
+        .filter((v): v is RouteVariant & { encodedPolyline: string } => !!v.encodedPolyline)
+        .map((v) => ({
+          encodedPolyline: v.encodedPolyline,
+          color: "#3b82f6",
+          selected: v.key === selectedVariantKey,
+        })),
+    [variants, selectedVariantKey],
+  );
+  const selectedVariant = variants.find((v) => v.key === selectedVariantKey) ?? null;
 
   // ── Eligibility → stop groups + skipped panel ──
   const eligibleRows = React.useMemo(
@@ -181,10 +283,11 @@ export default function NewTripPage() {
     return map;
   }, [eligibility]);
 
-  const pickingGroups = React.useMemo(
-    () => grouping.groups.filter((g) => !removedCustomerIds.has(g.customerId)),
-    [grouping.groups, removedCustomerIds],
-  );
+  // orderIds (the persisted draft) IS the picking selection now — grouping
+  // already reflects it end-to-end via the eligibility query, so there's no
+  // separate client-side exclusion set to intersect here (removal mutates
+  // orderIds directly; see handleRemoveCustomer/handleRemoveOrder below).
+  const pickingGroups = grouping.groups;
   const remainingIds = React.useMemo(
     () => pickingGroups.flatMap((g) => g.orderIds),
     [pickingGroups],
@@ -216,26 +319,73 @@ export default function NewTripPage() {
       ? hasDepot
       : originKind === "DRIVER"
         ? !!driverId && hasDriverHome
-        : address.line1.trim().length > 0;
+        : originAddress.line1.trim().length > 0;
+
+  // The end point is resolved server-side exactly like the origin (geocode /
+  // driver lookup, hard 400 on failure) — gate it client-side the same way
+  // rather than letting Build fail after the click.
+  const endReady =
+    end.type === "ADDRESS"
+      ? end.address.line1.trim().length > 0
+      : end.type === "DRIVER_HOME"
+        ? !!(end.driverId ?? driverId)
+        : true;
+
+  const endBlockedReason =
+    end.type === "ADDRESS" && !endReady
+      ? "Enter the custom end address in Route options"
+      : end.type === "DRIVER_HOME" && !endReady
+        ? "Choose a driver for the end point in Route options"
+        : null;
 
   const canBuild =
-    !createTrip.isPending && !eligLoading && !eligError && pickingGroups.length > 0 && originReady;
+    !createTrip.isPending &&
+    !eligLoading &&
+    !eligError &&
+    pickingGroups.length > 0 &&
+    originReady &&
+    endReady;
 
   function buildOrigin(): TripOrigin {
     if (originKind === "DRIVER") return { type: "DRIVER", driverId };
     if (originKind === "ADDRESS")
       return {
         type: "ADDRESS",
-        line1: address.line1.trim(),
-        city: address.city.trim() || undefined,
-        state: address.state.trim() || undefined,
-        zip: address.zip.trim() || undefined,
+        line1: originAddress.line1.trim(),
+        city: originAddress.city.trim() || undefined,
+        state: originAddress.state.trim() || undefined,
+        zip: originAddress.zip.trim() || undefined,
       };
     return { type: "TENANT" };
   }
 
+  function buildEndDto(): RoutePlanningEndDto | undefined {
+    if (end.type === "NONE") return undefined;
+    if (end.type === "RETURN_TO_START") return { type: "RETURN_TO_START" };
+    if (end.type === "DRIVER_HOME") return { type: "DRIVER_HOME", driverId: end.driverId };
+    return {
+      type: "ADDRESS",
+      line1: end.address.line1.trim(),
+      city: end.address.city.trim() || undefined,
+      state: end.address.state.trim() || undefined,
+      zip: end.address.zip.trim() || undefined,
+    };
+  }
+
   function handleRemoveCustomer(customerId: string) {
-    setRemovedCustomerIds((prev) => new Set(prev).add(customerId));
+    const group = pickingGroups.find((g) => g.customerId === customerId);
+    if (!group) return;
+    const toRemove = new Set(group.orderIds);
+    persistOrderIds(orderIds.filter((id) => !toRemove.has(id)));
+  }
+
+  function handleRemoveOrder(orderId: string) {
+    persistOrderIds(orderIds.filter((id) => id !== orderId));
+  }
+
+  function handleAddOrder(orderId: string) {
+    if (orderIds.includes(orderId)) return;
+    persistOrderIds([...orderIds, orderId]);
   }
 
   function handleBuild() {
@@ -243,8 +393,17 @@ export default function NewTripPage() {
     const groupsSnapshot = pickingGroups;
     const idsSnapshot = remainingIds;
     const skippedSnapshot = skippedRows;
+    setVariants([]);
+    setSelectedVariantKey(null);
     createTrip.mutate(
-      { orderIds: idsSnapshot, driverId: driverId || undefined, origin: buildOrigin() },
+      {
+        orderIds: idsSnapshot,
+        driverId: driverId || undefined,
+        origin: buildOrigin(),
+        end: buildEndDto(),
+        avoidTolls,
+        optimizeBy,
+      },
       {
         onSuccess: (route) => {
           setRouteId(route.id);
@@ -265,6 +424,21 @@ export default function NewTripPage() {
                 description: err.message,
                 variant: "warning",
               }),
+          });
+          // Never blocks/errors the BUILT view — a Google failure (or the
+          // mutation itself rejecting) just means no comparison cards, and
+          // the page falls back to today's single-route map unchanged.
+          routeVariants.mutate(route.id, {
+            onSuccess: (result) => {
+              setVariants(result.variants);
+              const preferred =
+                result.variants.find((v) => v.key === "FASTEST") ?? result.variants[0];
+              setSelectedVariantKey(preferred?.key ?? null);
+            },
+            onError: () => {
+              setVariants([]);
+              setSelectedVariantKey(null);
+            },
           });
         },
         onError: (err) => {
@@ -308,6 +482,37 @@ export default function NewTripPage() {
           variant: "warning",
         }),
     });
+  }
+
+  function handleUseVariant() {
+    if (!routeId || !selectedVariant || applyVariant.isPending) return;
+    const config = variantConfigFor(selectedVariant.key, avoidTolls);
+    applyVariant.mutate(
+      {
+        routeId,
+        key: selectedVariant.key,
+        stopIds: selectedVariant.stopIds,
+        optimizeBy: config.optimizeBy,
+        avoidTolls: config.avoidTolls,
+        encodedPolyline: selectedVariant.encodedPolyline,
+      },
+      {
+        onSuccess: () => {
+          // useApplyRouteVariant already invalidates ["routes", routeId], so
+          // useRoute(routeId) above refetches on its own — the stop list and
+          // map re-number from the fresh builtRoute.stops without extra code.
+          setOptimizeBy(config.optimizeBy);
+          setAvoidTolls(config.avoidTolls);
+          toast({
+            title: "Route updated",
+            description: "Using the selected route.",
+            variant: "success",
+          });
+        },
+        onError: (err) =>
+          toast({ title: "Failed to apply route", description: err.message, variant: "error" }),
+      },
+    );
   }
 
   function handleSend() {
@@ -383,30 +588,16 @@ export default function NewTripPage() {
     );
   }
 
-  // ── Empty / expired states (Design directive 4 — no dead ends) ──
+  // ── Loading (Design directive 4 — no dead ends): direct navigation with no
+  //    (or an expired) draft no longer dead-ends into a separate empty-state
+  //    screen — it falls straight into the same builder below with orderIds
+  //    starting empty, OrderPickerPanel expanded, and a hint pointing back to
+  //    the Orders list bulk action. ──
 
-  if (draft === undefined) {
+  if (!hydrated) {
     return (
       <div className="flex h-[calc(100vh-64px)] items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-      </div>
-    );
-  }
-
-  if (draft === null) {
-    const expired = Number(searchParams.get("n") ?? "0") > 0;
-    return (
-      <div className="flex h-[calc(100vh-64px)] flex-col items-center justify-center gap-4 p-8 text-center">
-        <MapPin className="h-10 w-10 text-navy/20" />
-        <p className="text-base font-medium text-navy">
-          {expired ? "Your delivery selection expired" : "Plan a delivery"}
-        </p>
-        <p className="max-w-sm text-sm text-navy/70">
-          {expired
-            ? "Selections expire after 30 minutes. Go back to Orders and select them again."
-            : 'Select orders from the Orders list, then choose "Plan delivery trip" to start building a delivery here.'}
-        </p>
-        <Button onClick={() => router.push("/orders")}>Go to Orders</Button>
       </div>
     );
   }
@@ -466,9 +657,8 @@ export default function NewTripPage() {
               title={
                 !originReady
                   ? "Choose a valid start point first"
-                  : pickingGroups.length === 0
-                    ? "No eligible stops selected"
-                    : undefined
+                  : (endBlockedReason ??
+                    (pickingGroups.length === 0 ? "No eligible stops selected" : undefined))
               }
             >
               {createTrip.isPending
@@ -572,17 +762,10 @@ export default function NewTripPage() {
                 </div>
               </div>
 
-              <TripOriginPicker
-                kind={originKind}
-                onKindChange={setOriginKind}
-                address={address}
-                onAddressChange={setAddress}
-                depotAddress={routeSettings?.depotAddress}
-                hasDepot={hasDepot}
-                driverName={selectedDriver?.contactName}
-                hasDriver={!!driverId}
-                hasDriverHome={hasDriverHome}
-                driverHref={driverId ? `/drivers/${driverId}` : null}
+              <RoutePlanningControls
+                value={planningValue}
+                onChange={handlePlanningChange}
+                drivers={endDriverOptions}
               />
             </>
           ) : (
@@ -599,6 +782,19 @@ export default function NewTripPage() {
                 <span className="font-medium">Date:</span> {new Date(date).toLocaleDateString()}
               </p>
             </div>
+          )}
+
+          {phase === "PICKING" && (
+            <OrderPickerPanel
+              excludeIds={orderIds}
+              onAdd={handleAddOrder}
+              defaultOpen={orderIds.length === 0}
+              hint={
+                orderIds.length === 0
+                  ? 'You can also select orders on the Orders list and choose "Plan delivery trip".'
+                  : undefined
+              }
+            />
           )}
 
           <div>
@@ -622,6 +818,7 @@ export default function NewTripPage() {
                 groups={displayGroups}
                 orderLookup={orderLookup}
                 onRemoveCustomer={phase === "PICKING" ? handleRemoveCustomer : undefined}
+                onRemoveOrder={phase === "PICKING" ? handleRemoveOrder : undefined}
                 emptyMessage="No eligible stops selected."
               />
             )}
@@ -630,15 +827,46 @@ export default function NewTripPage() {
           <TripSkippedPanel rows={displaySkipped} />
         </div>
 
-        {/* Right panel — map */}
-        <div className="flex-1 overflow-hidden">
+        {/* Right panel — variants + map */}
+        <div className="flex flex-1 flex-col overflow-hidden">
           {phase === "BUILT" ? (
-            <TemplateRouteMap
-              stops={builtRoute?.stops ?? []}
-              depotLat={builtRoute?.depotLat ?? undefined}
-              depotLng={builtRoute?.depotLng ?? undefined}
-              depotAddress={builtRoute?.depotAddress ?? undefined}
-            />
+            <>
+              {(routeVariants.isPending || variants.length > 0) && (
+                <div className="shrink-0 space-y-2 border-b border-surface-border bg-white p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-navy/70">
+                      Compare routes
+                    </h3>
+                    {variants.length > 0 && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={handleUseVariant}
+                        disabled={!selectedVariant || applyVariant.isPending}
+                      >
+                        {applyVariant.isPending ? "Applying…" : "Use this route"}
+                      </Button>
+                    )}
+                  </div>
+                  <RouteVariantsPanel
+                    variants={variants}
+                    selectedKey={selectedVariantKey}
+                    onSelect={(v) => setSelectedVariantKey(v.key)}
+                    loading={routeVariants.isPending}
+                  />
+                </div>
+              )}
+              <div className="flex-1 overflow-hidden">
+                <TemplateRouteMap
+                  stops={builtRoute?.stops ?? []}
+                  depotLat={builtRoute?.depotLat ?? undefined}
+                  depotLng={builtRoute?.depotLng ?? undefined}
+                  depotAddress={builtRoute?.depotAddress ?? undefined}
+                  plannedPolyline={builtRoute?.plannedPolyline}
+                  variantOverlays={variantOverlays.length > 0 ? variantOverlays : undefined}
+                />
+              </div>
+            </>
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-3 bg-surface-raised text-navy/70">
               <MapPin className="h-10 w-10" />

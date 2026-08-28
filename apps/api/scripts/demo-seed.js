@@ -88,8 +88,16 @@ const DEMO_NAME = "RouteFlow Demo Wholesale";
 const DEMO_PASSWORD = "routeflow_demo";
 const OPERATOR_USERNAME = "routeflow_demo";
 const DRIVER_USERNAME = "demo_driver";
-/** Reachable inbox so the buyer portal's email-match connect can be demoed live. */
-const OWNER_EMAIL = "najathakram1@gmail.com";
+/**
+ * Identifies the "Najath's Trading Co." demo customer (used to find that one
+ * customer record for the buyer-account link and regulated-licence steps
+ * below). Fictional *.example.com address — this used to be a real personal
+ * inbox so the buyer portal's email-match auto-connect could be demoed live;
+ * that leaked a real email into demo customer data (see CLAUDE.md "Test
+ * tenants & real-client data"), so linkOwnerBuyerAccount() now simply finds no
+ * matching BuyerAccount and no-ops, which is fine.
+ */
+const OWNER_EMAIL = "najath@najathstrading.example.com";
 const TAX_RATE = 0.0825;
 const PAYMENT_TERMS_DAYS = 15;
 const HISTORY_DAYS = 60;
@@ -218,9 +226,9 @@ const CUSTOMERS = [
     username: "najath_trading",
     businessName: "Najath's Trading Co.",
     contactName: "Najath Akram",
-    // A real inbox on purpose: signing into the buyer portal with this address
-    // auto-connects to this customer through the email-proof gate in
-    // buyer.service.ts requestSeller().
+    // Fictional demo address. This used to be a real inbox so signing into the
+    // buyer portal with it would auto-connect to this customer through the
+    // email-proof gate in buyer.service.ts requestSeller() — see OWNER_EMAIL.
     email: OWNER_EMAIL,
     phone: "(512) 555-0100",
     mobile: "(512) 555-0101",
@@ -231,6 +239,18 @@ const CUSTOMERS = [
     address: { line1: "2400 E Cesar Chavez St", city: "Austin", state: "TX", zip: "78702" },
   },
 ];
+
+// Fail fast at seed start: demo data must be fictional (CLAUDE.md "Test
+// tenants & real-client data") — a real inbox slipping into CUSTOMERS would
+// otherwise only surface once someone notices it live on prod.
+for (const c of CUSTOMERS) {
+  if (c.email && !c.email.endsWith("example.com")) {
+    throw new Error(
+      `demo-seed: customer "${c.businessName ?? c.key}" has a non-example.com email ` +
+        `(${c.email}) — demo data must be fictional`,
+    );
+  }
+}
 
 const SUPPLIERS = [
   {
@@ -624,8 +644,7 @@ async function ensureCustomers() {
       create: scoped({
         id: userId,
         // A customer's login email is a separate field from the customer record's
-        // contact email; both carry the real address for the owner's account so
-        // the buyer-portal email match succeeds.
+        // contact email; both are set from the same fictional c.email here.
         email: c.email,
         username: c.username,
         password: hash,

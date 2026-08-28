@@ -69,33 +69,6 @@ function currentRoleFromJwtRole(role: string): CurrentRole {
   return DRIVER_ROLE_SET.has(role) ? "driver" : "operator";
 }
 
-// ─── Legacy key migration (NEW-m2-1 / RF-077) ────────────────────────────────
-
-const LEGACY_ACCESS = "accessToken";
-const LEGACY_REFRESH = "refreshToken";
-
-/**
- * One-time migration: if the legacy `accessToken` key exists, move it to the
- * role-appropriate namespaced key then delete the legacy entry. Idempotent.
- */
-export async function migrateLegacyToken(): Promise<void> {
-  const legacy = await storage.get(LEGACY_ACCESS);
-  if (!legacy) return;
-
-  const payload = parseJwtPayload(legacy);
-  const role = (payload?.role as string) ?? "";
-  const keys = keysForRole(role);
-
-  const existing = await storage.get(keys.accessToken);
-  if (!existing) {
-    await storage.set(keys.accessToken, legacy);
-    const legacyRefresh = await storage.get(LEGACY_REFRESH);
-    if (legacyRefresh) await storage.set(keys.refreshToken, legacyRefresh);
-  }
-  await storage.del(LEGACY_ACCESS);
-  await storage.del(LEGACY_REFRESH);
-}
-
 function authUserFromToken(token: string): AuthUser | null {
   const payload = parseJwtPayload(token);
   if (!payload) return null;

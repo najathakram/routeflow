@@ -2,6 +2,7 @@ import { apiClient } from "./api-client";
 import { setTenantCookie, clearTenantCookie } from "./tenant-cookie";
 import { OP_KEYS } from "./auth-keys";
 import { setOpPresenceCookie, clearOpPresenceCookie } from "./presence-cookies";
+import { getImpersonation, clearImpersonation } from "./impersonation";
 
 export { OP_PRESENCE_COOKIE, clearOpPresenceCookie } from "./presence-cookies";
 
@@ -24,35 +25,6 @@ export interface AuthResponse {
   user: AuthUser;
 }
 
-// ─── Legacy key migration (NEW-m2-1 / RF-077) ────────────────────────────────
-
-const LEGACY_ACCESS = "accessToken";
-const LEGACY_REFRESH = "refreshToken";
-
-/**
- * One-time migration: if the legacy `accessToken` key exists and holds an
- * operator/customer/admin role token, copy it to the namespaced key then
- * delete the legacy entry. Idempotent — safe to call on every page load.
- */
-export function migrateLegacyOpToken(): void {
-  if (typeof window === "undefined") return;
-  const legacy = localStorage.getItem(LEGACY_ACCESS);
-  if (!legacy) return;
-  const payload = parseJwtPayload(legacy);
-  const role = payload?.role as string | undefined;
-  // Only migrate operator-flavoured tokens (driver tokens belong to rf:driver: slot)
-  if (role && ["OPERATOR", "TENANT_ADMIN", "CUSTOMER", "SUPER_ADMIN"].includes(role)) {
-    if (!localStorage.getItem(OP_KEYS.accessToken)) {
-      localStorage.setItem(OP_KEYS.accessToken, legacy);
-      const legacyRefresh = localStorage.getItem(LEGACY_REFRESH);
-      if (legacyRefresh) localStorage.setItem(OP_KEYS.refreshToken, legacyRefresh);
-    }
-  }
-  // Remove legacy keys regardless (avoids collisions going forward)
-  localStorage.removeItem(LEGACY_ACCESS);
-  localStorage.removeItem(LEGACY_REFRESH);
-}
-
 // ─── Token helpers ────────────────────────────────────────────────────────────
 
 function parseJwtPayload(token: string): Record<string, unknown> | null {
@@ -66,9 +38,10 @@ function parseJwtPayload(token: string): Record<string, unknown> | null {
 
 export function getStoredUser(): AuthUser | null {
   if (typeof window === "undefined") return null;
-  // Prefer impersonation token when active, fall back to namespaced operator token
-  const token =
-    localStorage.getItem("impersonationToken") ?? localStorage.getItem(OP_KEYS.accessToken);
+  // Prefer impersonation token when active and not expired, fall back to the
+  // namespaced operator token.
+  const imp = getImpersonation();
+  const token = imp && !imp.expired ? imp.token : localStorage.getItem(OP_KEYS.accessToken);
   if (!token) return null;
   const payload = parseJwtPayload(token);
   if (!payload) return null;
@@ -84,8 +57,7 @@ export function getStoredUser(): AuthUser | null {
     forcePasswordChange: payload.forcePasswordChange as boolean,
     isAdmin: (payload.isAdmin as boolean) ?? false,
     canActAsDriver: (payload.canActAsDriver as boolean) ?? false,
-    tenantSlug:
-      (payload.tenantSlug as string) ?? localStorage.getItem("impersonationTenantSlug") ?? null,
+    tenantSlug: (payload.tenantSlug as string) ?? (imp && !imp.expired ? imp.slug : null),
   };
 }
 
@@ -104,6 +76,10 @@ export async function login(username: string, password: string): Promise<AuthRes
   localStorage.setItem(OP_KEYS.accessToken, data.accessToken);
   localStorage.setItem(OP_KEYS.refreshToken, data.refreshToken);
   setOpPresenceCookie();
+  // A stale impersonation must never carry into a fresh login — both
+  // api-client.ts and getStoredUser() prefer it over the operator token,
+  // which would otherwise hijack this brand-new session.
+  clearImpersonation();
   // Correct the tenant cookie to match the authenticated user's actual tenant.
   // This ensures that even if the browser had a stale cookie from a previous
   // session or impersonation, all subsequent API calls use the correct tenant.
@@ -123,6 +99,7 @@ export async function logout(): Promise<void> {
   localStorage.removeItem(OP_KEYS.refreshToken);
   clearOpPresenceCookie();
   clearTenantCookie();
+  clearImpersonation();
   window.location.href = "/login";
 }
 
