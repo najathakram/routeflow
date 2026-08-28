@@ -19,11 +19,10 @@ COPY packages/ui/package.json               packages/ui/
 # Web workspace manifest
 COPY apps/web/package.json apps/web/
 
-# Install all workspace dependencies.
-# --force bypasses the EBADPLATFORM error for @next/swc-win32-x64-msvc which
-# ends up in the lockfile when generated on Windows. The Linux SWC binary is
-# installed automatically by Next.js; the Windows artifact is simply skipped.
-RUN npm install --force
+# Install exactly the committed lockfile — no registry re-resolution.
+# (win32-only optional deps like @next/swc-win32-* are skipped cleanly by
+# modern npm; the old --force recipe predates that.)
+RUN npm ci
 
 # Pin React 18 at the image root for this web-only build.
 # apps/mobile pins React 19 (RN 0.83), which npm hoists to /app/node_modules,
@@ -33,6 +32,9 @@ RUN npm install --force
 # Installing web's React 18 at the root (no --save: the shared lockfile/
 # manifests are untouched, and api/mobile builds are unaffected) makes
 # `next build` resolve a consistent React 18 runtime.
+# This is deliberately still `npm install` (npm ci cannot add packages):
+# the registry exposure is two exact-pinned, immutable versions, and --force
+# is required to override the React-19 peer ranges hoisted from the lock.
 RUN npm install --force --no-save react@18.3.1 react-dom@18.3.1
 
 # ── Copy full source ──
