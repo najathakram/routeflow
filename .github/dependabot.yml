@@ -20,6 +20,16 @@ updates:
       # ecosystems) — surface them but never auto-PR a major bump.
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # The jest toolchain is pinned as a set by root package.json `overrides`
+      # (30.2.0). Bumping only the workspace manifests (PR #479) mixes jest
+      # generations in one tree — jest-runtime 30.4+ calls jest-mock APIs the
+      # pinned 30.2.0 lacks (clearMocksOnScope TypeError, every suite dies).
+      # Jest moves ONLY via a deliberate whole-family bump of the overrides
+      # block (see the npm-ci-migration task).
+      - dependency-name: "jest"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "babel-jest"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
       # Expo SDK 55 pins the native-module set (react-native 0.83.x, reanimated
       # 4.2.x, worklets 0.7.x, screens 4.2x, ...). Their "minor" bumps are
       # breaking (RN 0.x minors ARE majors) and broke typecheck on PR #463 —
