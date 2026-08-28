@@ -1,9 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { setTenantCookie } from "@/lib/tenant-cookie";
+import { OP_KEYS } from "@/lib/auth-keys";
+import { setOpPresenceCookie } from "@/lib/presence-cookies";
 
 // ─── States ───────────────────────────────────────────────────────────────────
 
@@ -13,7 +15,6 @@ type VerifyState = "verifying" | "success" | "error";
 
 function VerifyEmailInner() {
   const params = useSearchParams();
-  const router = useRouter();
 
   const token = params.get("token");
 
@@ -54,9 +55,14 @@ function VerifyEmailInner() {
 
         const data = await res.json();
 
-        // Store tokens exactly like the normal login flow
-        localStorage.setItem("accessToken", data.accessToken);
-        localStorage.setItem("refreshToken", data.refreshToken);
+        // Store tokens exactly like the normal login flow (lib/auth.ts login):
+        // the namespaced operator keys — everything (api-client, getStoredUser)
+        // reads only these; the legacy "accessToken"/"refreshToken" keys are dead.
+        localStorage.setItem(OP_KEYS.accessToken, data.accessToken);
+        localStorage.setItem(OP_KEYS.refreshToken, data.refreshToken);
+        // Presence cookie for the middleware guards — without it a browser that
+        // also holds a buyer session gets bounced off /dashboard to /buyer/portal.
+        setOpPresenceCookie();
 
         // Set tenant cookie so the API interceptor sends the right tenant header
         if (data.user?.tenantSlug) {
@@ -65,9 +71,12 @@ function VerifyEmailInner() {
 
         setState("success");
 
-        // Brief pause to show success state, then navigate to dashboard
+        // Brief pause to show success state, then a FULL document navigation:
+        // the root AuthProvider only reads localStorage on mount, so a client-side
+        // router.push would leave it unauthenticated and the dashboard AuthGuard
+        // would bounce straight to /login (same constraint as (auth)/callback).
         setTimeout(() => {
-          if (!cancelled) router.push("/dashboard");
+          if (!cancelled) window.location.replace("/dashboard");
         }, 1500);
       } catch {
         if (!cancelled) {
@@ -80,7 +89,7 @@ function VerifyEmailInner() {
     return () => {
       cancelled = true;
     };
-  }, [token, apiUrl, router]);
+  }, [token, apiUrl]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-surface-raised p-4">
