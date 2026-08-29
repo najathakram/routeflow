@@ -57,6 +57,53 @@ env:
   NODE_VERSION: "20"
 
 jobs:
+  # ─── Lockfile integrity ────────────────────────────────────────────────────────
+  # npm's arborist ACCEPTS package-lock trees with unresolvable dependency edges:
+  # `npm ci` installs them without complaint and the breakage surfaces only when
+  # something lazily requires the absent module (found on #488 — @jest/reporters'
+  # istanbul deps and jest-changed-files' execa were missing from the tree; jest
+  # ran fine and `--coverage` crashed). Needs nothing but Node and the lockfile,
+  # so it runs BEFORE any install — there is no point installing a holed tree.
+  #
+  # This job MUST run the full gate, not just reachability, and that is why it
+  # installs semver first. An incoherent override makes `npm ci` itself fail —
+  # verified: mobile declaring jest ^30.3.0 against the 30.2.0 pin produces
+  # "Missing: jest@30.5.0 / @jest/core@30.5.0 / camelcase@6.3.0 …", the phantom
+  # subtree, naming everything except the cause. So every job that installs dies
+  # at install, and a post-install gate would never run on precisely the case it
+  # exists to explain. Pre-install is the only placement that survives it.
+  #
+  # semver is pinned to the version the repo's own tree hoists, so this job and
+  # `npm run verify` (which reads semver from node_modules) cannot reach
+  # different verdicts on the same lockfile. Bump the two together — the
+  # validator prints the version it used so a divergence is visible.
+  lock-integrity:
+    name: Lockfile integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # Into a SCRATCH dir, never the repo root: `npm install <pkg>` at a
+      # workspaces root re-resolves the whole workspace tree from the registry
+      # (measured: over 10 minutes without finishing) — the exact behaviour #488
+      # removed. An empty directory adds one package, and NODE_PATH makes it
+      # resolvable, the same mechanism apps/mobile/Dockerfile uses.
+      - name: Fetch semver (isolated — deliberately not a workspace install)
+        run: |
+          mkdir -p "$RUNNER_TEMP/lockdeps"
+          cd "$RUNNER_TEMP/lockdeps"
+          npm install --no-save --no-audit --no-fund --ignore-scripts semver@6.3.1
+
+      - name: Validate lockfile dependency edges
+        run: npm run validate-lock
+        env:
+          NODE_PATH: ${{ runner.temp }}/lockdeps/node_modules
+
   # ─── Lint ──────────────────────────────────────────────────────────────────────
   lint:
     name: Lint
@@ -84,6 +131,9 @@ jobs:
       - name: Install dependencies
         run: npm ci --engine-strict=false
 
+      # No lockfile check here: the lock-integrity job above already runs the
+      # full gate, and does it pre-install where it still runs even when an
+      # incoherent lock makes `npm ci` fail. One artifact, all gates.
       - run: npm run lint
 
   # ─── Type Check ────────────────────────────────────────────────────────────────
