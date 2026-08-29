@@ -158,15 +158,37 @@ if (!pkgs) {
 // that can go falsely green is worse than one that refuses to run.
 const require = createRequire(import.meta.url);
 let semver = null;
+let semverVersion = "n/a";
 if (!edgesOnly) {
   try {
     semver = require("semver");
+    semverVersion = require("semver/package.json").version;
   } catch {
     console.error(
       "✖ semver is not resolvable from the installed tree, so version-skew and\n" +
         "  override-break checking cannot run. Refusing to report a partial pass.\n\n" +
         "  Run this after `npm ci`, or pass --edges-only to check reachability\n" +
         "  alone (what the pre-install CI job does).",
+    );
+    process.exit(2);
+  }
+
+  // Pin the MAJOR, not just report it. Range-comparison semantics differ across
+  // semver majors (6 and 7 disagree on prerelease handling under
+  // includePrerelease, among others), so a dedupe or bump that swaps the copy
+  // this resolves would quietly change what every finding here means — the gate
+  // would still be green, and would no longer mean what it meant yesterday.
+  // That is the same silent-drift class the whole check exists to catch, so it
+  // fails loudly instead. To move: check the semantics diff, then update this
+  // constant and the pin in ci.yml's lock-integrity job TOGETHER.
+  const EXPECTED_SEMVER_MAJOR = 6;
+  const actualMajor = Number.parseInt(semverVersion, 10);
+  if (actualMajor !== EXPECTED_SEMVER_MAJOR) {
+    console.error(
+      `✖ expected semver ${EXPECTED_SEMVER_MAJOR}.x, got ${semverVersion}.\n\n` +
+        "  Range-comparison semantics differ between semver majors, so this gate's\n" +
+        "  verdicts would change meaning silently. Update EXPECTED_SEMVER_MAJOR in\n" +
+        "  this file and the semver pin in .github/workflows/ci.yml together.",
     );
     process.exit(2);
   }
@@ -262,9 +284,14 @@ for (const [loc, meta] of Object.entries(pkgs)) {
       // them is itself a finding (see the override checks below).
       let range = declared;
 
-      // A package listed in both dependencies and optionalDependencies is a
-      // plain dependency; the optional listing only marks install failure OK.
-      if (kind === "optionalDependencies" && (meta.dependencies ?? {})[name]) continue;
+      // A name in BOTH dependencies and optionalDependencies is OPTIONAL: npm
+      // documents that "entries in optionalDependencies will override entries
+      // of the same name in dependencies", and arborist loads prod then optional
+      // with the later edge replacing the earlier. So the absence of such a
+      // package is a valid tree — skip the hard `dependencies` occurrence and
+      // judge the optional one, or this reports a MISSING that is not real.
+      // (0 occurrences in today's lock; caught in review by hungry-colden.)
+      if (kind === "dependencies" && (meta.optionalDependencies ?? {})[name]) continue;
       if (kind === "peerDependencies" && peerMeta[name]?.optional) continue;
       if (bundlesAll || bundled?.has(name)) continue;
 
@@ -413,7 +440,11 @@ const counts = edgesOnly
     `skew ${newSkews.length} new / ${toleratedHits.length} tolerated · ` +
     `override-forced ${overrideForced.length} · peer ${peerSkews.length + peerMissing.length}` +
     (optMissing.length ? ` · optional ${optMissing.length}` : "") +
-    (exotic ? ` · ${exotic} non-versioned skipped` : "");
+    (exotic ? ` · ${exotic} non-versioned skipped` : "") +
+    // Printed so a divergence between the semver CI installs and the one the
+    // tree hoists is visible rather than silent — the two must agree or CI and
+    // the pre-push hook can reach different verdicts on the same lock.
+    ` · semver ${semverVersion}`;
 
 if (missing.length || newSkews.length || overrideBreaksWorkspace.length) {
   console.error(`\n${rel}: ${counts}\n`);

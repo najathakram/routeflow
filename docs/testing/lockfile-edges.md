@@ -31,27 +31,45 @@ npm run validate-lock
 Add `-- --verbose` to list the informational classes, or pass a path to check a different lockfile.
 It finishes in about a second.
 
-It runs in three places:
+It runs in two places, both the full gate:
 
-| Where                                                         | Mode           | Catches      |
-| ------------------------------------------------------------- | -------------- | ------------ |
-| CI **Lockfile integrity** job, before any install             | `--edges-only` | reachability |
-| CI **Lint** job, after `npm ci`                               | full           | everything   |
-| `npm run verify` step 1 (so the pre-push hook gates the lock) | full           | everything   |
+| Where                                                        | Catches    |
+| ------------------------------------------------------------ | ---------- |
+| CI **Lockfile integrity** job, before any install            | everything |
+| `npm run verify` step 1, so the pre-push hook gates the lock | everything |
 
-The pre-install job needs nothing but Node and the lockfile — there is no point installing a tree
-that already has holes in it. But the version-aware findings (skews, and the workspace override
-break) need `semver`, which only exists once `node_modules` does, so the Lint job re-runs the full
-gate on the installed tree.
+### Why the CI job runs pre-install
 
-`--edges-only` is an **explicit flag, never inferred from a missing `semver`.** Without it, an
-unresolvable `semver` is a hard error (exit 2) rather than a partial pass: most of the gate would
-otherwise be skipped while the run still reported green, and a gate that can go falsely green is
-worse than one that refuses to run.
+Because an incoherent override makes **`npm ci` itself fail**, so a post-install gate would never
+run on the case it exists to explain. Verified: with mobile declaring `jest ^30.3.0` against the
+30.2.0 pin, `npm ci` reports `Missing: jest@30.5.0 / @jest/core@30.5.0 / camelcase@6.3.0 …` — the
+phantom subtree, naming everything except the cause. Every job that installs dies at install.
+Pre-install is the only placement that survives it, and it also stops CI spending minutes
+installing a tree already known to be holed.
 
-Reading `semver` out of the installed tree is deliberate. arborist's own check is
+### Why it installs semver into a scratch directory
+
+The version-aware findings need `semver`, and pre-install there is no `node_modules` to supply it.
+The job fetches it — into an **empty scratch directory, never the repo root**. `npm install <pkg>`
+at a workspaces root re-resolves the entire workspace tree from the registry (measured at over ten
+minutes without finishing), which is both slow and precisely the registry-drift behaviour #488
+removed. An isolated directory adds exactly one package, and `NODE_PATH` makes it resolvable — the
+same mechanism `apps/mobile/Dockerfile` uses.
+
+The pinned version matches what the repo's own tree hoists, so CI and the pre-push hook cannot
+reach different verdicts on the same lockfile; **bump the two together.** The validator prints the
+semver version it used, so a divergence surfaces instead of passing silently.
+
+Reading `semver` rather than reimplementing it is deliberate: arborist's own check is
 `semver.satisfies(v, spec, true)`, so borrowing the same library keeps this honest to the tool it
-emulates rather than to a reimplementation of it.
+emulates.
+
+### `--edges-only`
+
+Reachability only, needing no `node_modules` at all. It is an **explicit flag, never inferred from
+a missing `semver`** — without it, an unresolvable `semver` is a hard error (exit 2) rather than a
+partial pass. Most of the gate would otherwise be skipped while the run still reported green, and a
+gate that can go falsely green is worse than one that refuses to run.
 
 ## What it reports
 
