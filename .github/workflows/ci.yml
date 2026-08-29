@@ -84,6 +84,19 @@ jobs:
       - name: Install dependencies
         run: npm ci --engine-strict=false
 
+      # Runs in ~1s on the tree npm ci just installed, and fails fast — before
+      # the slower jobs burn minutes on a tree with holes in it.
+      #
+      # `npm ci` only proves each lock entry's own tarball is present and
+      # integrity-matched; it never re-walks the tree to check that each entry's
+      # declared dependencies are actually reachable. #488 lost two CI rounds to
+      # that blind spot: six packages the jest coverage chain lazily requires
+      # were absent from the lock entirely, and `jest --coverage` crashed on a
+      # different one each round. This step enumerates all of them at once.
+      # See scripts/validate-lock-edges.mjs and docs/testing/lockfile-edges.md.
+      - name: Validate lockfile dependency edges
+        run: npm run validate-lock
+
       - run: npm run lint
 
   # ─── Type Check ────────────────────────────────────────────────────────────────

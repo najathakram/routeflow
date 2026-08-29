@@ -11,6 +11,7 @@
     "test:e2e": "turbo run test:e2e",
     "check-types": "turbo run check-types",
     "verify": "turbo run check-types lint test",
+    "validate-lock": "node scripts/validate-lock-edges.mjs",
     "smoke": "node scripts/smoke.mjs",
     "post-deploy-check": "node scripts/post-deploy-check.mjs",
     "feature-smoke": "node scripts/feature-smoke.mjs",
