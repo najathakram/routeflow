@@ -44,9 +44,17 @@
 // here, and unmet optionals are usually just foreign-platform binaries.
 //
 // USAGE
-//   npm run validate-lock                 # root package-lock.json
-//   npm run validate-lock -- --verbose    # also list the informational classes
+//   npm run validate-lock                    # root package-lock.json, full gate
+//   npm run validate-lock -- --verbose       # also list the informational classes
+//   node scripts/validate-lock-edges.mjs --edges-only   # reachability only, no
+//                                            # node_modules needed (pre-install CI)
 //   node scripts/validate-lock-edges.mjs <path-to-lock>
+//
+// It runs in two places on purpose: the "Lockfile integrity" job checks
+// reachability before any install (nothing to install if the lock is holed), and
+// the Lint job re-runs the FULL gate on the installed tree, where semver is
+// available for the version-aware findings. It is also step 1 of `npm run
+// verify`, so the pre-push hook gates the lock too.
 //
 // Triage of the current baseline: docs/testing/lockfile-edges.md
 //
@@ -113,6 +121,11 @@ const TOLERATED_SKEWS = [
 // ─── Lock loading ───────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
 const verbose = args.includes("--verbose");
+// Reachability only, no version comparison — the mode the pre-install CI job
+// runs in, where there is no node_modules to read semver from. It is an
+// explicit opt-in precisely so a missing semver can never quietly downgrade the
+// full gate to this one (see below).
+const edgesOnly = args.includes("--edges-only");
 const lockPath = resolve(args.find((a) => !a.startsWith("--")) ?? "package-lock.json");
 
 /** @type {{ packages?: Record<string, any>, lockfileVersion?: number }} */
@@ -133,19 +146,30 @@ if (!pkgs) {
   process.exit(1);
 }
 
-// semver is not declared anywhere — it is read out of the installed tree, which
-// npm ci has always populated by the time this runs. Without it the range
-// comparison is skipped; the hard-missing gate (pure name resolution) still runs,
-// and that is the part that actually blocks a broken tree.
+// semver is not declared anywhere — it is read out of the installed tree, and
+// arborist's own check is `semver.satisfies(v, spec, true)`, so borrowing the
+// same library keeps this honest to the tool being emulated rather than to a
+// reimplementation of it.
+//
+// Its absence is a HARD ERROR unless --edges-only was asked for. Every
+// version-aware finding — skews and the workspace-override-break gate that is
+// the whole reason this check exists — needs semver, so silently continuing
+// without it would turn the full gate green while skipping most of it. A gate
+// that can go falsely green is worse than one that refuses to run.
 const require = createRequire(import.meta.url);
 let semver = null;
-try {
-  semver = require("semver");
-} catch {
-  console.warn(
-    "⚠ semver is not resolvable from the installed tree — version-skew checking is skipped.\n" +
-      "  (Run this after `npm ci`. Unresolvable-edge checking is unaffected.)",
-  );
+if (!edgesOnly) {
+  try {
+    semver = require("semver");
+  } catch {
+    console.error(
+      "✖ semver is not resolvable from the installed tree, so version-skew and\n" +
+        "  override-break checking cannot run. Refusing to report a partial pass.\n\n" +
+        "  Run this after `npm ci`, or pass --edges-only to check reachability\n" +
+        "  alone (what the pre-install CI job does).",
+    );
+    process.exit(2);
+  }
 }
 
 // ─── Overrides ──────────────────────────────────────────────────────────────
@@ -383,18 +407,23 @@ if (verbose) {
   }
 }
 
-const counts =
-  `${Object.keys(pkgs).length} entries · missing ${missing.length} · ` +
-  `skew ${newSkews.length} new / ${toleratedHits.length} tolerated · ` +
-  `override-forced ${overrideForced.length} · peer ${peerSkews.length + peerMissing.length}` +
-  (optMissing.length ? ` · optional ${optMissing.length}` : "") +
-  (exotic ? ` · ${exotic} non-versioned skipped` : "") +
-  (semver ? "" : " · SKEW CHECK SKIPPED (no semver)");
+const counts = edgesOnly
+  ? `${Object.keys(pkgs).length} entries · missing ${missing.length} · reachability only`
+  : `${Object.keys(pkgs).length} entries · missing ${missing.length} · ` +
+    `skew ${newSkews.length} new / ${toleratedHits.length} tolerated · ` +
+    `override-forced ${overrideForced.length} · peer ${peerSkews.length + peerMissing.length}` +
+    (optMissing.length ? ` · optional ${optMissing.length}` : "") +
+    (exotic ? ` · ${exotic} non-versioned skipped` : "");
 
 if (missing.length || newSkews.length || overrideBreaksWorkspace.length) {
   console.error(`\n${rel}: ${counts}\n`);
   process.exit(1);
 }
 console.log(`✔ ${rel}: every dependency edge resolves. ${counts}`);
-if (!verbose && info.some(([, list]) => list.length))
+if (edgesOnly)
+  console.log(
+    "  Reachability only — version skews and override breaks are NOT checked here.\n" +
+      "  The Lint job re-runs the full gate on the installed tree.",
+  );
+else if (!verbose && info.some(([, list]) => list.length))
   console.log("  (--verbose lists the tolerated, override-forced and peer edges)");

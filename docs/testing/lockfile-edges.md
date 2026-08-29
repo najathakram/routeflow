@@ -28,9 +28,30 @@ arborist silently drop the **entire subtree** beneath it, and `npm ci` accepts t
 npm run validate-lock
 ```
 
-Add `-- --verbose` to list the informational classes, or pass a path to check a different
-lockfile. It reads the tree `npm ci` installed (for `semver` only) and finishes in about a
-second, which is why it sits in the Lint job right after install rather than in a job of its own.
+Add `-- --verbose` to list the informational classes, or pass a path to check a different lockfile.
+It finishes in about a second.
+
+It runs in three places:
+
+| Where                                                         | Mode           | Catches      |
+| ------------------------------------------------------------- | -------------- | ------------ |
+| CI **Lockfile integrity** job, before any install             | `--edges-only` | reachability |
+| CI **Lint** job, after `npm ci`                               | full           | everything   |
+| `npm run verify` step 1 (so the pre-push hook gates the lock) | full           | everything   |
+
+The pre-install job needs nothing but Node and the lockfile — there is no point installing a tree
+that already has holes in it. But the version-aware findings (skews, and the workspace override
+break) need `semver`, which only exists once `node_modules` does, so the Lint job re-runs the full
+gate on the installed tree.
+
+`--edges-only` is an **explicit flag, never inferred from a missing `semver`.** Without it, an
+unresolvable `semver` is a hard error (exit 2) rather than a partial pass: most of the gate would
+otherwise be skipped while the run still reported green, and a gate that can go falsely green is
+worse than one that refuses to run.
+
+Reading `semver` out of the installed tree is deliberate. arborist's own check is
+`semver.satisfies(v, spec, true)`, so borrowing the same library keeps this honest to the tool it
+emulates rather than to a reimplementation of it.
 
 ## What it reports
 
@@ -185,7 +206,7 @@ today. That move is an owner decision and must land as one change (CI, all three
 ## Related
 
 - [`scripts/validate-lock-edges.mjs`](../../scripts/validate-lock-edges.mjs) — the check itself.
-- [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) — Lint job, "Validate lockfile
-  dependency edges".
+- [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) — the "Lockfile integrity" job
+  (pre-install) and the Lint job's "Validate lockfile dependency edges (full)" step.
 - [`verification-matrix.md`](verification-matrix.md) — the four verification layers this sits
   alongside.

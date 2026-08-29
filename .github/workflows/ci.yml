@@ -57,6 +57,31 @@ env:
   NODE_VERSION: "20"
 
 jobs:
+  # ─── Lockfile integrity ────────────────────────────────────────────────────────
+  # npm's arborist ACCEPTS package-lock trees with unresolvable dependency edges:
+  # `npm ci` installs them without complaint and the breakage surfaces only when
+  # something lazily requires the absent module (found on #488 — @jest/reporters'
+  # istanbul deps and jest-changed-files' execa were missing from the tree; jest
+  # ran fine and `--coverage` crashed). Needs nothing but Node and the lockfile,
+  # so it runs BEFORE any install — there is no point installing a holed tree.
+  #
+  # --edges-only is reachability alone. The version-aware findings (skews, and
+  # the workspace-override-break gate) need semver from node_modules, so the Lint
+  # job re-runs the FULL gate after install. The flag is explicit rather than
+  # inferred so a missing semver can never silently downgrade that full run.
+  lock-integrity:
+    name: Lockfile integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - run: node scripts/validate-lock-edges.mjs --edges-only
+
   # ─── Lint ──────────────────────────────────────────────────────────────────────
   lint:
     name: Lint
@@ -84,17 +109,13 @@ jobs:
       - name: Install dependencies
         run: npm ci --engine-strict=false
 
-      # Runs in ~1s on the tree npm ci just installed, and fails fast — before
-      # the slower jobs burn minutes on a tree with holes in it.
-      #
-      # `npm ci` only proves each lock entry's own tarball is present and
-      # integrity-matched; it never re-walks the tree to check that each entry's
-      # declared dependencies are actually reachable. #488 lost two CI rounds to
-      # that blind spot: six packages the jest coverage chain lazily requires
-      # were absent from the lock entirely, and `jest --coverage` crashed on a
-      # different one each round. This step enumerates all of them at once.
+      # The FULL gate, on the tree npm ci just installed: reachability again plus
+      # the version-aware findings the pre-install lock-integrity job cannot make
+      # (skews outside the tolerated baseline, and a workspace range that a root
+      # override pin contradicts — #488's actual root cause). ~1s, and it runs
+      # before lint so a bad lock fails the job early.
       # See scripts/validate-lock-edges.mjs and docs/testing/lockfile-edges.md.
-      - name: Validate lockfile dependency edges
+      - name: Validate lockfile dependency edges (full)
         run: npm run validate-lock
 
       - run: npm run lint
