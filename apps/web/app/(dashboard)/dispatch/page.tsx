@@ -74,7 +74,7 @@ function ActiveNowCard({ bothFeatures }: { bothFeatures: boolean }) {
   return (
     <CardShell title="Active & Upcoming Runs">
       {isLoading ? (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
           {[1, 2, 3].map((i) => (
             <div
               key={i}
@@ -89,7 +89,7 @@ function ActiveNowCard({ bothFeatures }: { bothFeatures: boolean }) {
       ) : runs.length === 0 ? (
         <p className="text-sm text-navy/70">No active runs right now.</p>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
           {runs.map((run) => {
             const { done, total } = stopProgress(run);
             const driverName = run.driver?.contactName ?? "Unassigned";

@@ -9,10 +9,7 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  PieChart,
-  Pie,
   Cell,
-  Legend,
 } from "recharts";
 import {
   DollarSign,
@@ -29,6 +26,7 @@ import { PageHeader, StatCard, Card, Button, Select, cn } from "@routeflow/ui/we
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { apiClient } from "@/lib/api-client";
+import { formatMoney } from "@/lib/format";
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
@@ -121,16 +119,9 @@ interface DriverPerformance {
 
 // ─── Chart colours ────────────────────────────────────────────────────────────
 
-const PIE_COLORS = [
-  "#4F7FFA",
-  "#22C55E",
-  "#F59E0B",
-  "#EF4444",
-  "#8B5CF6",
-  "#06B6D4",
-  "#F97316",
-  "#EC4899",
-];
+/** Sales-by-category bars: one brand tone (tenant-aware) plus a muted grey for "Other". */
+const CATEGORY_BAR_COLOR = "var(--accent)";
+const CATEGORY_OTHER_COLOR = "#6B7280";
 
 // ─── Skeleton helpers ─────────────────────────────────────────────────────────
 
@@ -345,6 +336,26 @@ function RevenueTab({ from, to }: { from: string; to: string }) {
     [revenueTrend],
   );
 
+  // Top 8 categories by revenue + one "Other" bar aggregating the rest — the
+  // 20-slice pie this replaced was unreadable past a handful of categories.
+  const categoryBars = React.useMemo(() => {
+    const sorted = [...salesByCategory].sort((a, b) => b.revenue - a.revenue);
+    const categoryTotal = sorted.reduce((sum, c) => sum + c.revenue, 0);
+    const rows = sorted.slice(0, 8).map((c) => ({ ...c, isOther: false }));
+    const rest = sorted.slice(8);
+    if (rest.length > 0) {
+      rows.push({
+        category: `Other (${rest.length} categories)`,
+        revenue: rest.reduce((sum, c) => sum + c.revenue, 0),
+        isOther: true,
+      });
+    }
+    return rows.map((r) => {
+      const pctOfTotal = categoryTotal > 0 ? Math.round((r.revenue / categoryTotal) * 100) : 0;
+      return { ...r, label: `${r.category} — ${pctOfTotal}%` };
+    });
+  }, [salesByCategory]);
+
   return (
     <div className="space-y-6">
       {/* KPI cards */}
@@ -477,25 +488,41 @@ function RevenueTab({ from, to }: { from: string; to: string }) {
               No category data for this period
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height={260}>
-              <PieChart>
-                <Pie
-                  data={salesByCategory}
+            <ResponsiveContainer width="100%" height={Math.max(220, categoryBars.length * 34 + 20)}>
+              <BarChart
+                data={categoryBars}
+                layout="vertical"
+                margin={{ top: 4, right: 70, left: 8, bottom: 4 }}
+              >
+                <XAxis type="number" hide />
+                <YAxis
+                  type="category"
+                  dataKey="label"
+                  width={170}
+                  tick={{ fontSize: 12, fill: "#6B7280" }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <Tooltip formatter={(v) => formatMoney(Number(v))} />
+                <Bar
                   dataKey="revenue"
-                  nameKey="category"
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={90}
-                  label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
-                  labelLine={false}
+                  radius={[0, 4, 4, 0]}
+                  barSize={18}
+                  label={{
+                    position: "right",
+                    fontSize: 11,
+                    fill: "#33425B",
+                    formatter: (v: unknown) => formatMoney(Number(v)),
+                  }}
                 >
-                  {salesByCategory.map((_, index) => (
-                    <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                  {categoryBars.map((entry) => (
+                    <Cell
+                      key={entry.category}
+                      fill={entry.isOther ? CATEGORY_OTHER_COLOR : CATEGORY_BAR_COLOR}
+                    />
                   ))}
-                </Pie>
-                <Tooltip formatter={(v) => usd(Number(v))} />
-                <Legend />
-              </PieChart>
+                </Bar>
+              </BarChart>
             </ResponsiveContainer>
           )}
         </Card>

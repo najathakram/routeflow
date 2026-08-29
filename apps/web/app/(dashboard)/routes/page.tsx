@@ -412,7 +412,7 @@ export default function RoutesPage() {
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-navy">Active Runs</h2>
         {runsLoading ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
             {[1, 2, 3].map((i) => (
               <div
                 key={i}
@@ -429,7 +429,7 @@ export default function RoutesPage() {
             No active runs. Dispatch a template below to start one.
           </p>
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
             {activeRuns.map((run) => {
               const total = run._count?.stops ?? run.stops?.length ?? 0;
               const done =

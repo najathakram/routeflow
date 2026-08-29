@@ -896,7 +896,7 @@ export default function NewExpensePage() {
   const router = useRouter();
 
   const [activeTab, setActiveTab] = React.useState<TabKey>("single");
-  const handleSaved = () => router.push("/finance/expenses");
+  const handleSaved = () => router.push("/vendor-bills");
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">

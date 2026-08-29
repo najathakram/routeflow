@@ -552,6 +552,12 @@ export default function OrdersPage() {
           // gracefully rather than fabricating per-status tallies.
           const count =
             view.id === "all" ? meta?.total : view.id === "urgent" ? urgentCount : undefined;
+          // Urgent is a rare-but-important state — don't clutter the row with an
+          // empty pill when there's nothing urgent to see. Keep it while it's the
+          // ACTIVE view though: `urgentCount` counts the loaded page, so an urgent
+          // filter that returns nothing would otherwise hide the very chip that
+          // explains why the list is empty.
+          if (view.id === "urgent" && urgentCount === 0 && !isActive) return null;
           return (
             <button
               key={view.id}

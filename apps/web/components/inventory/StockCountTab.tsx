@@ -904,8 +904,8 @@ export function StockCountTab() {
           </div>
         ) : (
           <p className="text-[11px] text-navy/70">
-            Scanning starts a new count on the server — pause any time and resume it from another
-            device via the Continue-count strip above or Count history.
+            Scanning starts a new count. Pause any time — you can pick it up later from any device
+            via the strip above or Count history.
           </p>
         )}
       </Card>

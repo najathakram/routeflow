@@ -619,8 +619,8 @@ function CustomerRateCard({ agentId, isOperator }: { agentId: string; isOperator
     <Card title="Customer Rates">
       <div className="space-y-3">
         <p className="text-xs text-navy/70">
-          Per-customer overrides layer on top of the agent default. There is no list here — resolved
-          rates show per-accrual in the ledger&apos;s Rate column below.
+          Set a custom rate for specific customers — it overrides the agent&apos;s default rate.
+          Each commission row below shows the rate that was actually applied.
         </p>
         {isOperator && !showAdd && (
           <Button size="sm" variant="secondary" onClick={() => setShowAdd(true)}>

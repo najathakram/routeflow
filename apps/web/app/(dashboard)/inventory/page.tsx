@@ -330,8 +330,8 @@ function QuickRestockModal({
           <h2 className="text-base font-semibold text-navy">Quick Restock</h2>
           <p className="mt-0.5 text-xs text-navy/70">
             For supplier invoices, use{" "}
-            <a href="/purchases" className="text-brand-500 hover:underline">
-              Purchases &rarr; Vendor Bills
+            <a href="/vendor-bills" className="text-brand-500 hover:underline">
+              Bills &amp; Purchasing
             </a>
           </p>
         </div>
@@ -2803,7 +2803,7 @@ export default function InventoryPage() {
           {outOfStockCount > (stockItems as StockItem[]).length * 0.5 ? (
             <p className="text-xs text-navy/70">Stock may need updating after import</p>
           ) : (
-            <p className="text-xs text-navy/70">0 or fewer on hand</p>
+            <p className="text-xs text-navy/70">none on hand (or negative)</p>
           )}
         </div>
       </div>
