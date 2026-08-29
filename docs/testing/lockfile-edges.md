@@ -100,8 +100,13 @@ Keep every workspace's declared range compatible with the pin in root `overrides
 
 ## Current baseline
 
-As of this document: **0 missing, 0 workspace breaks, 8 tolerated skews, 23 override-forced and
-4 unsatisfied peer edges.**
+Measured on master `28cb0a25`, over a 2665-entry lock: **0 missing, 0 workspace breaks, 8 tolerated
+skews, 23 override-forced and 4 unsatisfied peer edges.**
+
+Those are a point-in-time snapshot, not a target. The entry count in particular moves whenever a
+dependency is added or dropped — a later reading is ordinary, not drift. The number that has to stay
+at zero is `missing`, and the gate enforces that on its own; nothing here needs updating to match a
+new count.
 
 Every tolerated skew lives in `TOLERATED_SKEWS` in the script with its reason. Matching is on the
 `(name, found, wanted)` triple and deliberately **not** on location, so a dedupe that moves a
