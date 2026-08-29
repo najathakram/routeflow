@@ -288,11 +288,12 @@ jobs:
 
   # ─── Playwright E2E ────────────────────────────────────────────────────────
   # Only runs on master push (where Railway deploys from) and manual dispatch.
-  # Waits for API health before running so the deploy has time to stabilise.
-  # ⚠️ KNOWN RACE: health answers 200 from the PREVIOUS deploy too, so a run
-  # triggered by the very push being deployed can test the old build and fail
-  # on specs that need the new one. The nightly (or a manual re-dispatch after
-  # the Railway deploy shows SUCCESS) is the authoritative signal.
+  # Blocks on a deploy-readiness gate that proves the DEPLOYED WEB build is the
+  # commit these specs were checked out at — see the step's own comment for what
+  # it does and does not prove. (Until 2026-08-29 the gate polled the API's
+  # /health and nothing else, which answers 200 from the previous deploy: it
+  # passed in one second on run 33263396288 and the suite then ran against a web
+  # build that did not match the checkout.)
   # Secrets needed: SMOKE_BASE_URL (API), PLAYWRIGHT_BASE_URL (web), PLAYWRIGHT_TENANT_SLUG
   # Optional: E2E_SEED_DATABASE_URL — Postgres URL for the target deployment's DB.
   #   When set, global.setup re-seeds the `e2e-routeflow` tenant every run (and a
@@ -302,13 +303,21 @@ jobs:
   e2e:
     name: E2E (Playwright)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 45, not 25: the readiness gate below now actually waits for the Railway web
+    # deploy (up to 15 min) instead of returning in a second, so the suite needs
+    # its own budget on top of that.
+    timeout-minutes: 45
     needs: [lint, type-check, test]
     if: >
       (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
       github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Full history: the readiness gate diffs the commit the deployed web
+          # app reports against this one, and that commit is an ancestor the
+          # default depth-1 clone does not contain.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v7
         with:
@@ -318,18 +327,174 @@ jobs:
       - name: Install dependencies
         run: npm ci --engine-strict=false
 
-      # Wait for Railway to finish deploying (~2-4 min) before hitting the live app.
-      - name: Wait for API health
+      # ─── Deploy-readiness gate ───────────────────────────────────────────────
+      # Every spec below runs against the DEPLOYED web app, so the gate has to
+      # prove the deployed WEB build is the code this checkout asserts on.
+      #
+      # WHAT THIS PROVES, using apps/web/app/api/health's `sha` (Railway injects
+      # RAILWAY_GIT_COMMIT_SHA into the running container):
+      #   1. the API answers 200, and
+      #   2. the web app answers 200, and
+      #   3. the deployed web build is code-identical to github.sha for web's
+      #      OWN build inputs.
+      #
+      # (3) is deliberately NOT `sha == github.sha`. Railway deploys per service
+      # via watchPatterns (web = apps/web/** + packages/**), so an api-only push
+      # legitimately leaves the web service on an older commit and never
+      # redeploys it — demanding an exact match would turn every api-only master
+      # push into a false red. An older web SHA therefore passes ONLY when
+      # nothing under apps/web/ or packages/ differs between it and github.sha.
+      # Anything else — stale web build, still-building deploy, failed deploy,
+      # or a web app AHEAD of the checkout (the run-33263396288 case) — keeps
+      # waiting and then FAILS the job. It never silently continues.
+      #
+      # KNOWN LIMITATION, stated rather than papered over: the API is probed for
+      # REACHABILITY ONLY. apps/api/src/app.service.ts returns {status,timestamp}
+      # and exposes no commit SHA, so an api-only deploy still in flight is NOT
+      # detected here and a spec depending on new API behaviour can still race.
+      # Closing that gap means adding the same field to the API health payload.
+      - name: Wait for the deployed app to match this commit
+        env:
+          API_BASE: ${{ secrets.SMOKE_BASE_URL || 'https://routeflowapi-production.up.railway.app' }}
+          WEB_BASE: ${{ secrets.PLAYWRIGHT_BASE_URL || 'https://routeflowweb-production.up.railway.app' }}
+          EXPECTED_SHA: ${{ github.sha }}
+          # The SHA match is only meaningful on master — see the guard below.
+          REQUIRE_SHA: ${{ github.ref == 'refs/heads/master' }}
+          # 15 min. A cold web image (npm ci + next build in Docker) runs ~5-9
+          # min, and on a packages/** push the web service queues behind the api.
+          WAIT_SECONDS: "900"
         run: |
-          API="${{ secrets.SMOKE_BASE_URL || 'https://routeflowapi-production.up.railway.app' }}"
-          echo "Waiting for $API/api/v1/health …"
-          for i in $(seq 1 30); do
-            STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "$API/api/v1/health" 2>/dev/null || echo "000")
-            [ "$STATUS" = "200" ] && echo "API healthy" && exit 0
-            echo "  attempt $i/30: status $STATUS"
+          set -uo pipefail
+
+          # workflow_dispatch is offered from ANY branch in the GitHub UI. Off
+          # master, github.sha is a commit Railway has never deployed and never
+          # will, so the SHA match below could never succeed: the gate would burn
+          # its whole 15-minute budget and then fail. That would turn this file's
+          # own documented recovery path ("re-dispatch after the Railway deploy
+          # shows SUCCESS") into a footgun for anyone who dispatches from the
+          # branch they were working on. So off master, fall back to the old
+          # reachability-only wait and say plainly that freshness is NOT proven.
+          # Probes the web ROOT here, not /api/health, so this path keeps working
+          # against a deployment predating that route.
+          if [ "$REQUIRE_SHA" != "true" ]; then
+            echo "::notice::Ref ${GITHUB_REF:-unknown} is not master — running the reachability-only wait. Deploy freshness is NOT proven: the deployed app is master, these specs are not."
+            for i in $(seq 1 30); do
+              # `-w` already prints 000 on failure; `|| echo 000` would double it.
+              a=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$API_BASE/api/v1/health") || true
+              w=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$WEB_BASE/") || true
+              a=${a:-000}
+              w=${w:-000}
+              if [ "$a" = "200" ] && [ "$w" = "200" ]; then
+                echo "api and web both reachable (freshness unchecked)."
+                exit 0
+              fi
+              echo "  attempt $i/30: api=$a web=$w"
+              sleep 10
+            done
+            echo "::error::api/web did not become reachable within 5 minutes."
+            exit 1
+          fi
+
+          echo "Expecting the deployed web app to be $EXPECTED_SHA"
+          # Outside the checkout on purpose - nothing this step writes should
+          # end up as an untracked file in the tree Playwright then runs from.
+          probe="${RUNNER_TEMP:-/tmp}/web-health.json"
+          deadline=$(( $(date +%s) + WAIT_SECONDS ))
+          attempt=0
+          api_ok=0
+          web_status="none"
+          web_sha=""
+          drift=""
+
+          while :; do
+            attempt=$(( attempt + 1 ))
+            # Reset per iteration: otherwise a later poll that sees web=404/000
+            # still prints the PREVIOUS iteration's file list in the timeout
+            # report, which reads as a contradiction next to "sha=none".
+            drift=""
+
+            if [ "$api_ok" -eq 0 ]; then
+              # `curl -w` already emits 000 on a connection failure, so a
+              # `|| echo 000` would APPEND a second one and log "000000".
+              api_status=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
+                "$API_BASE/api/v1/health") || true
+              api_status=${api_status:-000}
+              if [ "$api_status" = "200" ]; then
+                api_ok=1
+                echo "api : 200 (reachable; freshness NOT proven — see step comment)"
+              else
+                echo "api : $api_status"
+              fi
+            fi
+
+            web_status=$(curl -s -o "$probe" -w '%{http_code}' --max-time 15 \
+              -H 'cache-control: no-cache' "$WEB_BASE/api/health") || true
+            web_status=${web_status:-000}
+            web_sha=""
+            if [ "$web_status" = "200" ]; then
+              # node, not jq: setup-node already ran, so node is guaranteed here,
+              # whereas jq is only a convention of the runner image. A missing
+              # parser would read as "no sha" and time the gate out for the wrong
+              # reason. Prints nothing when sha is absent/null/not a string.
+              web_sha=$(node -e 'try{const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));if(typeof d.sha==="string")process.stdout.write(d.sha)}catch(e){}' "$probe" || true)
+            fi
+
+            if [ "$api_ok" -eq 1 ] && [ -n "$web_sha" ]; then
+              if [ "$web_sha" = "$EXPECTED_SHA" ]; then
+                echo "web : 200, serving $web_sha - exactly the commit under test."
+                echo "Deploy readiness CONFIRMED after $attempt attempt(s)."
+                exit 0
+              fi
+              if drift=$(git diff --name-only "$web_sha" "$EXPECTED_SHA" -- apps/web packages 2>/dev/null); then
+                if [ -z "$drift" ]; then
+                  echo "web : 200, serving $web_sha (not $EXPECTED_SHA), but nothing under"
+                  echo "      apps/web/ or packages/ differs between them - Railway correctly"
+                  echo "      SKIPPED the web service for this push."
+                  echo "Deploy readiness CONFIRMED after $attempt attempt(s)."
+                  exit 0
+                fi
+                echo "web : 200, serving $web_sha - does not match ($(printf '%s\n' "$drift" | wc -l) web file(s) differ)."
+              else
+                drift="__unresolved__"
+                echo "web : 200, serving $web_sha - that commit is not in this checkout."
+              fi
+            elif [ "$web_status" = "200" ] && [ -n "$web_sha" ]; then
+              echo "web : 200, serving $web_sha - holding for the API probe."
+            elif [ "$web_status" = "200" ]; then
+              echo "web : 200 but /api/health carried no \"sha\" - route missing from the"
+              echo "      deployed build, or RAILWAY_GIT_COMMIT_SHA unset in the container."
+            else
+              echo "web : $web_status"
+            fi
+
+            now=$(date +%s)
+            if [ "$now" -ge "$deadline" ]; then
+              break
+            fi
+            echo "  attempt $attempt - retrying in 10s ($(( deadline - now ))s of budget left)"
             sleep 10
           done
-          echo "API did not become healthy after 5 minutes" && exit 1
+
+          echo "::error::Deploy-readiness gate TIMED OUT after ${WAIT_SECONDS}s - refusing to run E2E against a deployment that is not this commit."
+          echo "  expected commit  : $EXPECTED_SHA"
+          if [ "$api_ok" -eq 1 ]; then
+            echo "  api /health      : 200"
+          else
+            echo "  api /health      : never returned 200"
+          fi
+          echo "  web /api/health  : status=$web_status sha=${web_sha:-none}"
+          if [ "$drift" = "__unresolved__" ]; then
+            echo "  The SHA the web app reports is not in this checkout - a 'railway up'"
+            echo "  force-deploy, or a rewritten history."
+          elif [ -n "$drift" ]; then
+            echo "  Web files differing between the deployed build and this commit:"
+            printf '%s\n' "$drift" | head -40 | sed 's/^/    /'
+          fi
+          echo "  Most likely the Railway web deploy failed or is still building. Fix or"
+          echo "  re-run the deploy, then re-dispatch this workflow."
+          echo "  (Only master reaches this branch — a dispatch from any other ref took"
+          echo "  the reachability-only path far above and never gets here.)"
+          exit 1
 
       - name: Install Playwright browsers
         working-directory: apps/web
