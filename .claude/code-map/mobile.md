@@ -182,6 +182,19 @@ nonce}` so a re-scan re-flashes),
   signature pre-check now calls `lib/pod-gating.ts` `regulatedPodGateError()` instead of an
   inline `if` ladder — P10-REG-B, behavior-preserving), `note.tsx`, `return/index.tsx`,
   `new-order.tsx`, `split-invoice.tsx` (partial delivery).
+- **Durable POD (2026-08-28):** `lib/pod-artifacts.ts` (pure, spec'd in
+  `__tests__/pod-artifacts.test.ts`) — `strokesToSvgDataUrl` (stroke vectors → SVG data URL,
+  white bg, null for tap-only; used by `components/SignaturePad.tsx` on BOTH platforms — the
+  canvas/`"native-captured"` sentinel paths are GONE, server rasterizes at ingest) +
+  `podPhotoArtifactId` (stable djb2 id for idempotent attach replays) + `asciiToBase64` (no
+  Buffer/btoa on RN). `components/PhotoCapture.tsx` gained `output="data-url"` (resize ≤1280px
+  - JPEG q0.6 base64 via expo-image-manipulator; payment-photo/product callers keep the default
+    `"uri"`); `photo.tsx` uses it. `payment.tsx` `closeStop()` uploads each data-URL photo via
+    `useAttachPodArtifact` (`lib/api/routes.ts` → `POST .../pod-artifact`, JSON so it offline-queues
+    FIFO ahead of the queued completion; failures swallowed — never blocks the driver), sends the
+    signature SVG inline in the completion (regulated gate needs it on THAT request), and NO LONGER
+    sends `podPhotoUrls` (would overwrite server-appended keys); `closing` state guards the whole
+    multi-request sequence against double-tap.
 - `map.tsx` (route map, live position, openInMaps), `orders.tsx`, `driver-profile.tsx`,
   `driver-menu.tsx`, `driver-messages.tsx`, `driver-change-password.tsx`, `driver-new-order.tsx`, `cash.tsx`.
 

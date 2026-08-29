@@ -310,6 +310,30 @@ export function useCompleteWithPayment() {
   });
 }
 
+/**
+ * Durable POD: attach one photo/signature to a run stop as a JSON data URL —
+ * deliberately NOT multipart, so an offline attempt is queued by the offline
+ * interceptor and replays (FIFO, before the queued completion). The server
+ * stores the image and appends its storage key to the stop; `artifactId`
+ * makes replays idempotent. 60s timeout mirrors the other image uploads.
+ */
+export interface AttachPodArtifactDto {
+  runId: string;
+  stopId: string;
+  kind: "photo" | "signature";
+  dataUrl: string;
+  artifactId?: string;
+}
+
+export function useAttachPodArtifact() {
+  return useMutation<{ key: string; url: string }, Error, AttachPodArtifactDto>({
+    mutationFn: ({ runId, stopId, ...body }) =>
+      apiClient
+        .post(`/route-runs/${runId}/stops/${stopId}/pod-artifact`, body, { timeout: 60_000 })
+        .then((r) => r.data),
+  });
+}
+
 export function useUpdateStopStatus() {
   const qc = useQueryClient();
   return useMutation<
