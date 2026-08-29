@@ -7,10 +7,10 @@ import {
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import { Prisma, MovementType, PaymentMethod } from "@prisma/client";
 import { costDecimal, nextAverageCost, reverseAverageCost } from "../inventory/costing";
 import { roundMoney } from "../common/pricing";
@@ -117,8 +117,8 @@ export class VendorBillsService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly configService: ConfigService,
     private readonly systemConfig: SystemConfigService,
+    private readonly platformConfig: PlatformConfigService,
     private readonly duplicateMatch: DuplicateMatchService,
     private readonly storage: StorageService,
     private readonly inventory: InventoryService,
@@ -1443,12 +1443,9 @@ export class VendorBillsService {
     const prior = await this.findScanByHash(fileHash);
     if (prior) return this.rematchPriorScan(prior);
 
-    // Look up API key: DB-stored key takes precedence over env var
-    const storedKey = await this.systemConfig.get("anthropic.apiKey");
-    const apiKey =
-      storedKey && storedKey.length > 0
-        ? storedKey
-        : this.configService.get<string>("ANTHROPIC_API_KEY");
+    // Key priority: tenant key (SystemConfig) → platform key → env var.
+    const tenantKey = await this.systemConfig.get("anthropic.apiKey");
+    const apiKey = await this.platformConfig.resolveAnthropicKey(tenantKey);
     if (!apiKey || apiKey.length === 0) {
       throw new BadRequestException(
         "AI invoice scanning is not available. Please contact your system administrator to configure the ANTHROPIC_API_KEY.",
@@ -1568,6 +1565,12 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     } catch (err) {
       const status = (err as { status?: number })?.status;
       this.logger.error(`scanInvoice: Anthropic call failed (status ${status}): ${String(err)}`);
+      await this.platformConfig.recordAiUsage({
+        tenantId: this.prisma.getTenantId(),
+        feature: "ocr.vendor_bill",
+        model: SCAN_MODEL,
+        success: false,
+      });
       if (status === 401 || status === 403) {
         throw new BadRequestException({
           message:
@@ -1591,6 +1594,16 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       });
     }
     const scanDurationMs = Date.now() - startedAt;
+
+    // The call succeeded, so the spend is real — record it even if parsing
+    // the response fails below.
+    await this.platformConfig.recordAiUsage({
+      tenantId: this.prisma.getTenantId(),
+      feature: "ocr.vendor_bill",
+      model: SCAN_MODEL,
+      inputTokens: message.usage?.input_tokens ?? 0,
+      outputTokens: message.usage?.output_tokens ?? 0,
+    });
 
     const content = message.content[0];
     if (content.type !== "text") {

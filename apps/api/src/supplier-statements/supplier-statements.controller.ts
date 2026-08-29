@@ -16,12 +16,16 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { AddonGuard } from "../billing/addon.guard";
+import { RequireAddon } from "../billing/require-addon.decorator";
 import { SupplierStatementsService } from "./supplier-statements.service";
 import { StatementApplyService } from "./statement-apply.service";
 import { ApplyStatementBodyDto } from "./dto/statement.dto";
 
+// AddonGuard passes handlers without @RequireAddon metadata — only the AI scan
+// endpoint is addon-gated; listing/reviewing/applying existing scans is not.
 @Controller("supplier-statements")
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, AddonGuard)
 @Roles(UserRole.OPERATOR)
 export class SupplierStatementsController {
   constructor(
@@ -41,7 +45,10 @@ export class SupplierStatementsController {
     return this.supplierStatementsService.getScan(id);
   }
 
+  // AI OCR is entitlement-gated (owner decision 2026-08-28) — OCR_ADDON in
+  // packages/types is the client-side mirror of this key.
   @Post("scan")
+  @RequireAddon("ocr")
   @UseInterceptors(
     // Up to 10 pages, 25MB per file, under the field name `files` (multer
     // matches the field name exactly — clients MUST use "files").

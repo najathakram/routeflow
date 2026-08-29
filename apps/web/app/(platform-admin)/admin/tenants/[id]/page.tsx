@@ -8,6 +8,7 @@ import {
   DRIVER_PAYMENTS_ADDON,
   RECURRING_ROUTES_ADDON,
   ORDER_DELIVERY_ADDON,
+  OCR_ADDON,
 } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { setTenantCookie } from "@/lib/tenant-cookie";
@@ -141,6 +142,16 @@ const AVAILABLE_ADDONS = [
       "Plan one-shot delivery trips from selected orders: optimize the stop order, dispatch " +
       "to a driver, and keep the full delivery history. Trips are never reused. Independent " +
       "of Recurring routes; enable either or both.",
+  },
+  {
+    key: OCR_ADDON,
+    name: "AI document scanning (OCR)",
+    description:
+      "AI reading of supplier documents — vendor-bill invoice scan, batch invoice scans, " +
+      "supplier-statement scan, and expense-receipt line extraction. Server-enforced: while " +
+      "OFF those four endpoints return 403 and documents are entered manually; everything " +
+      "else (review grids, applying past scans) keeps working. Per-tenant AI usage is " +
+      "metered either way. Turn ON for tenants who scan documents.",
   },
   {
     key: DEVELOPER_MODE_ADDON,

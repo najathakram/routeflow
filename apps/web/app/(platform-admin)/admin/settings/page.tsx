@@ -31,6 +31,7 @@ interface AiUsage {
   days: number;
   ocrScans: number;
   forecastRuns: number;
+  insightRuns: number;
   tokensIn: number;
   tokensOut: number;
   estSpendUsd: number;
@@ -417,6 +418,12 @@ export default function AdminSettingsPage() {
                       <dt className="text-slate-500">Forecast runs</dt>
                       <dd className="font-mono text-slate-200">
                         {usage.forecastRuns.toLocaleString()}
+                      </dd>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <dt className="text-slate-500">Route insights</dt>
+                      <dd className="font-mono text-slate-200">
+                        {(usage.insightRuns ?? 0).toLocaleString()}
                       </dd>
                     </div>
                     <div className="flex items-center justify-between">

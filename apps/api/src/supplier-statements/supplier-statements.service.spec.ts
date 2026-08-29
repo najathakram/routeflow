@@ -4,10 +4,10 @@ import {
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { SupplierStatementsService } from "./supplier-statements.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import { DuplicateMatchService } from "../import/duplicate-match.service";
 import { StorageService } from "../storage/storage.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -64,10 +64,12 @@ describe("SupplierStatementsService", () => {
   let service: SupplierStatementsService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let statementScan: ReturnType<typeof graftSupplierStatementScan>;
+  let recordAiUsage: jest.Mock;
 
   const jpegPage = { buffer: Buffer.from("img"), mimeType: "image/jpeg" };
 
   beforeEach(async () => {
+    recordAiUsage = jest.fn();
     prisma = createMockPrisma();
     statementScan = graftSupplierStatementScan(prisma);
     duplicateMatch.normalizeNumber.mockClear();
@@ -87,7 +89,10 @@ describe("SupplierStatementsService", () => {
       providers: [
         SupplierStatementsService,
         { provide: PrismaService, useValue: prisma },
-        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue("test-key") } },
+        {
+          provide: PlatformConfigService,
+          useValue: { resolveAnthropicKey: jest.fn().mockResolvedValue("test-key"), recordAiUsage },
+        },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: DuplicateMatchService, useValue: duplicateMatch },
         { provide: StorageService, useValue: storage },
@@ -103,7 +108,10 @@ describe("SupplierStatementsService", () => {
       providers: [
         SupplierStatementsService,
         { provide: PrismaService, useValue: prisma },
-        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(undefined) } },
+        {
+          provide: PlatformConfigService,
+          useValue: { resolveAnthropicKey: jest.fn().mockResolvedValue(null), recordAiUsage },
+        },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: DuplicateMatchService, useValue: duplicateMatch },
         { provide: StorageService, useValue: storage },
@@ -143,6 +151,8 @@ describe("SupplierStatementsService", () => {
 
     expect(mockAnthropicCreate).not.toHaveBeenCalled();
     expect(statementScan.create).not.toHaveBeenCalled();
+    // No model call → no usage row.
+    expect(recordAiUsage).not.toHaveBeenCalled();
     expect(result.scanId).toBe("scan-earlier");
     expect(result.supplier).toBe("Acme Foods");
     expect(result.matches).toEqual([]);
@@ -302,6 +312,34 @@ describe("SupplierStatementsService", () => {
       expect(data.openingBalance.toString()).toBe("0");
       expect(data.closingBalance.toString()).toBe("250");
       expect(result.scanId).toBe("scan-1");
+    });
+
+    it("records a tenant-tagged AiUsageEvent with the response's token counts", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [{ type: "text", text: JSON.stringify(fullStatement) }],
+        usage: { input_tokens: 3333, output_tokens: 444 },
+      });
+
+      await service.scanStatement([jpegPage]);
+
+      expect(recordAiUsage).toHaveBeenCalledWith({
+        tenantId: "test-tenant",
+        feature: "ocr.supplier_statement",
+        model: "claude-sonnet-5",
+        inputTokens: 3333,
+        outputTokens: 444,
+      });
+    });
+
+    it("records a failed AiUsageEvent when the Anthropic call itself errors", async () => {
+      mockAnthropicCreate.mockRejectedValue({ status: 529 });
+
+      await expect(service.scanStatement([jpegPage])).rejects.toBeInstanceOf(
+        ServiceUnavailableException,
+      );
+      expect(recordAiUsage).toHaveBeenCalledWith(
+        expect.objectContaining({ feature: "ocr.supplier_statement", success: false }),
+      );
     });
 
     it("resolves the supplier and pre-checks an exact-ref, amount-agreeing match", async () => {

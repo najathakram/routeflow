@@ -28,12 +28,20 @@ describe("PlatformConfigService — AI usage + test connection", () => {
     it("rolls up scans, tokens, est spend, and error rate by model + feature", async () => {
       prisma.$queryRaw.mockResolvedValue([
         {
-          model: "claude-sonnet-4-5",
-          feature: "ocr",
-          calls: 10,
-          inTok: 1_000_000,
-          outTok: 200_000,
+          model: "claude-haiku-4-5",
+          feature: "ocr.vendor_bill",
+          calls: 7,
+          inTok: 700_000,
+          outTok: 140_000,
           failures: 1,
+        },
+        {
+          model: "claude-sonnet-5",
+          feature: "ocr.supplier_statement",
+          calls: 3,
+          inTok: 300_000,
+          outTok: 60_000,
+          failures: 0,
         },
         {
           model: "claude-opus-4-5",
@@ -43,18 +51,29 @@ describe("PlatformConfigService — AI usage + test connection", () => {
           outTok: 100_000,
           failures: 0,
         },
+        {
+          model: "claude-sonnet-4-5",
+          feature: "insights.route",
+          calls: 4,
+          inTok: 40_000,
+          outTok: 8_000,
+          failures: 0,
+        },
       ]);
 
       const u = await service.getAiUsage(30);
 
+      // Both ocr.* features roll into ocrScans; insights.* into insightRuns.
       expect(u.ocrScans).toBe(10);
       expect(u.forecastRuns).toBe(5);
-      expect(u.tokensIn).toBe(1_500_000);
-      expect(u.tokensOut).toBe(300_000);
-      // sonnet: 1M×$3 + 0.2M×$15 = 6 ; opus: 0.5M×$15 + 0.1M×$75 = 15 → 21
-      expect(u.estSpendUsd).toBe(21);
-      // 1 failure / 15 calls = 6.7%
-      expect(u.errorRate).toBe(6.7);
+      expect(u.insightRuns).toBe(4);
+      expect(u.tokensIn).toBe(1_540_000);
+      expect(u.tokensOut).toBe(308_000);
+      // haiku: 0.7M×$1 + 0.14M×$5 = 1.40 ; sonnet: 0.3M×$2 + 0.06M×$10 = 1.20
+      // opus: 0.5M×$5 + 0.1M×$25 = 5.00 ; sonnet: 0.04M×$2 + 0.008M×$10 = 0.16 → 7.76
+      expect(u.estSpendUsd).toBe(7.76);
+      // 1 failure / 19 calls = 5.3%
+      expect(u.errorRate).toBe(5.3);
     });
 
     it("returns zeros when the table is empty / the query fails", async () => {
@@ -63,6 +82,7 @@ describe("PlatformConfigService — AI usage + test connection", () => {
       expect(u).toMatchObject({
         ocrScans: 0,
         forecastRuns: 0,
+        insightRuns: 0,
         tokensIn: 0,
         tokensOut: 0,
         estSpendUsd: 0,

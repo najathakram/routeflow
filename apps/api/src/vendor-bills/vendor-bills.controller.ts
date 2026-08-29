@@ -20,6 +20,8 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
+import { AddonGuard } from "../billing/addon.guard";
+import { RequireAddon } from "../billing/require-addon.decorator";
 import { VendorBillsService } from "./vendor-bills.service";
 import { CreateVendorBillDto } from "./dto/create-vendor-bill.dto";
 import { UpdateVendorBillDto } from "./dto/update-vendor-bill.dto";
@@ -29,9 +31,10 @@ import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
 import { SaveProductMappingDto } from "./dto/save-product-mapping.dto";
 import { RecordSupplierPaymentDto } from "./dto/supplier-payment.dto";
 
-// OPERATOR-only end to end.
+// OPERATOR-only end to end. AddonGuard passes handlers without @RequireAddon
+// metadata — only the AI scan endpoint below is addon-gated.
 @Controller("vendor-bills")
-@UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard, AddonGuard)
 @Roles(UserRole.OPERATOR)
 @RequirePlanFlag("flag.ap_bills")
 export class VendorBillsController {
@@ -63,7 +66,10 @@ export class VendorBillsController {
     );
   }
 
+  // AI OCR is entitlement-gated (owner decision 2026-08-28) — OCR_ADDON in
+  // packages/types is the client-side mirror of this key.
   @Post("scan-invoice")
+  @RequireAddon("ocr")
   @UseInterceptors(
     // Up to 10 pages, 25MB per file, under the field name `images` (multer
     // matches the field name exactly — clients MUST use "images").

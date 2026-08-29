@@ -1,5 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { ConfigService } from "@nestjs/config";
+import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import { VendorBillsService } from "./vendor-bills.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -27,7 +27,13 @@ describe("VendorBillsService.findOne — variant hint (PR-D WP2)", () => {
       providers: [
         VendorBillsService,
         { provide: PrismaService, useValue: prisma },
-        { provide: ConfigService, useValue: { get: jest.fn() } },
+        {
+          provide: PlatformConfigService,
+          useValue: {
+            resolveAnthropicKey: jest.fn().mockResolvedValue(null),
+            recordAiUsage: jest.fn(),
+          },
+        },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: DuplicateMatchService, useValue: { findVendorBillDuplicate: jest.fn() } },
         { provide: StorageService, useValue: { upload: jest.fn(), presignedUrl: jest.fn() } },

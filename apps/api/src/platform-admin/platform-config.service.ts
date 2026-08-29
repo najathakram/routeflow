@@ -12,11 +12,13 @@ const CLAUDE_MODELS = [
 ];
 
 // Rough per-1M-token USD pricing (input, output) for the display-only "Est.
-// spend" figure — not billing.
+// spend" figure — not billing. Refreshed 2026-08-29 to current Anthropic API
+// rates (Opus tier 5/25, Sonnet 5 2/10, Haiku 4.5 1/5) — the previous values
+// were one-to-three model generations stale and overstated Opus spend 3×.
 const AI_MODEL_PRICING: Record<string, { in: number; out: number }> = {
-  opus: { in: 15, out: 75 },
-  sonnet: { in: 3, out: 15 },
-  haiku: { in: 0.8, out: 4 },
+  opus: { in: 5, out: 25 },
+  sonnet: { in: 2, out: 10 },
+  haiku: { in: 1, out: 5 },
 };
 
 function modelPrice(model: string): { in: number; out: number } {
@@ -173,9 +175,10 @@ export class PlatformConfigService implements OnModuleInit {
   // ─── AI usage metering + connection test ────────────────────────────────────
 
   /**
-   * Append a usage row. Exposed for the AI call sites (OCR / forecasting) to
-   * record token usage — those modules are out of this session's scope, so this
-   * isn't wired yet; the usage panel reports whatever has been recorded.
+   * Append a usage row. Called by every Anthropic call site: vendor-bill scan
+   * (`ocr.vendor_bill`), supplier-statement scan (`ocr.supplier_statement`),
+   * expense-receipt extraction (`ocr.expense_receipt`), and route insights
+   * (`insights.route`). Never throws — metering must not fail the feature.
    */
   async recordAiUsage(evt: {
     tenantId?: string | null;
@@ -225,6 +228,7 @@ export class PlatformConfigService implements OnModuleInit {
 
     let ocrScans = 0;
     let forecastRuns = 0;
+    let insightRuns = 0;
     let tokensIn = 0;
     let tokensOut = 0;
     let totalCalls = 0;
@@ -238,8 +242,9 @@ export class PlatformConfigService implements OnModuleInit {
       failures += Number(r.failures);
       tokensIn += inTok;
       tokensOut += outTok;
-      if (r.feature === "ocr") ocrScans += calls;
-      if (r.feature === "forecast") forecastRuns += calls;
+      if (r.feature === "ocr" || r.feature.startsWith("ocr.")) ocrScans += calls;
+      if (r.feature === "forecast" || r.feature.startsWith("forecast.")) forecastRuns += calls;
+      if (r.feature.startsWith("insights.")) insightRuns += calls;
       const price = modelPrice(r.model);
       estSpendUsd += (inTok / 1e6) * price.in + (outTok / 1e6) * price.out;
     }
@@ -248,6 +253,7 @@ export class PlatformConfigService implements OnModuleInit {
       days,
       ocrScans,
       forecastRuns,
+      insightRuns,
       tokensIn,
       tokensOut,
       estSpendUsd: Math.round(estSpendUsd * 100) / 100,

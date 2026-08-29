@@ -13,6 +13,11 @@ import { CommissionsModule } from "../sales-agents/commissions.module";
 // EntitlementsModule depends only on the global PrismaService — it supplies
 // PlanFlagGuard for the reports/* handlers' @RequirePlanFlag("flag.reports") gate.
 import { EntitlementsModule } from "../billing/entitlements.module";
+// Supplies PlatformConfigService: unified Anthropic key resolution + AI usage metering.
+import { PlatformAdminModule } from "../platform-admin/platform-admin.module";
+// Supplies AddonGuard + AddonService for the extract-items @RequireAddon("ocr") gate
+// (EntitlementsModule does not export them).
+import { BillingModule } from "../billing/billing.module";
 
 @Module({
   imports: [
@@ -23,6 +28,8 @@ import { EntitlementsModule } from "../billing/entitlements.module";
     SystemConfigModule,
     CommissionsModule,
     EntitlementsModule,
+    PlatformAdminModule,
+    BillingModule,
     BullModule.registerQueue({ name: "invoices" }),
   ],
   controllers: [BookkeepingController],

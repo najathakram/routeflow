@@ -23,6 +23,9 @@ import { CustomersModule } from "../customers/customers.module";
 // EntitlementsModule depends only on the global PrismaService — it supplies
 // PlanFlagGuard for MigrationController's @RequirePlanFlag("flag.import_integrations") gate.
 import { EntitlementsModule } from "../billing/entitlements.module";
+// Supplies AddonGuard + AddonService for BatchController's @RequireAddon("ocr") scan gate
+// (EntitlementsModule does not export them).
+import { BillingModule } from "../billing/billing.module";
 
 @Module({
   imports: [
@@ -32,6 +35,7 @@ import { EntitlementsModule } from "../billing/entitlements.module";
     DuplicateMatchModule,
     CustomersModule,
     EntitlementsModule,
+    BillingModule,
   ],
   controllers: [
     ImportController,

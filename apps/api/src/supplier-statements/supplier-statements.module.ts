@@ -7,6 +7,10 @@ import { PrismaModule } from "../prisma/prisma.module";
 import { SystemConfigModule } from "../system-config/system-config.module";
 import { DuplicateMatchModule } from "../import/duplicate-match.module";
 import { StorageModule } from "../storage/storage.module";
+// Supplies PlatformConfigService: unified Anthropic key resolution + AI usage metering.
+import { PlatformAdminModule } from "../platform-admin/platform-admin.module";
+// Supplies AddonGuard + AddonService for the scan endpoint's @RequireAddon("ocr") gate.
+import { BillingModule } from "../billing/billing.module";
 
 /**
  * Imports `DuplicateMatchModule` directly rather than `ImportModule` (which
@@ -14,7 +18,15 @@ import { StorageModule } from "../storage/storage.module";
  * `VendorBillsModule` itself — see `duplicate-match.module.ts`.
  */
 @Module({
-  imports: [PrismaModule, ConfigModule, SystemConfigModule, DuplicateMatchModule, StorageModule],
+  imports: [
+    PrismaModule,
+    ConfigModule,
+    SystemConfigModule,
+    DuplicateMatchModule,
+    StorageModule,
+    PlatformAdminModule,
+    BillingModule,
+  ],
   controllers: [SupplierStatementsController],
   providers: [SupplierStatementsService, StatementApplyService],
   exports: [SupplierStatementsService, StatementApplyService],

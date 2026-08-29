@@ -106,6 +106,8 @@ export class RouteAnalysisService {
     }
 
     // Call Claude for analysis
+    let model: string | null = null;
+    let usageRecorded = false;
     try {
       const depotAddress = depot
         ? route.depotAddress || "configured depot"
@@ -118,7 +120,7 @@ export class RouteAnalysisService {
         )
         .join("\n");
 
-      const model = await this.platformConfig.resolveModel();
+      model = await this.platformConfig.resolveModel();
       const anthropic = new Anthropic({ apiKey });
 
       const response = await anthropic.messages.create({
@@ -151,6 +153,17 @@ Status guide:
         ],
       });
 
+      // The call succeeded, so the spend is real — record it even if parsing
+      // the response fails below.
+      usageRecorded = true;
+      await this.platformConfig.recordAiUsage({
+        tenantId: this.prisma.getTenantId(),
+        feature: "insights.route",
+        model,
+        inputTokens: response.usage?.input_tokens ?? 0,
+        outputTokens: response.usage?.output_tokens ?? 0,
+      });
+
       const textBlock = response.content.find((b) => b.type === "text");
       const rawText = textBlock?.type === "text" ? textBlock.text : "";
 
@@ -178,6 +191,14 @@ Status guide:
       };
     } catch (err) {
       this.logger.warn("AI route analysis failed", err instanceof Error ? err.message : err);
+      if (!usageRecorded) {
+        await this.platformConfig.recordAiUsage({
+          tenantId: this.prisma.getTenantId(),
+          feature: "insights.route",
+          model: model ?? "unknown",
+          success: false,
+        });
+      }
       return { configured: true, summary: "AI analysis unavailable — showing ETAs only.", etas };
     }
   }
@@ -262,6 +283,8 @@ Status guide:
       return { configured: false, etas };
     }
 
+    let model: string | null = null;
+    let usageRecorded = false;
     try {
       const depotAddress = depot
         ? run.depotAddress || run.route.depotAddress || "configured depot"
@@ -274,7 +297,7 @@ Status guide:
         )
         .join("\n");
 
-      const model = await this.platformConfig.resolveModel();
+      model = await this.platformConfig.resolveModel();
       const anthropic = new Anthropic({ apiKey });
 
       const response = await anthropic.messages.create({
@@ -307,6 +330,17 @@ Status guide:
         ],
       });
 
+      // The call succeeded, so the spend is real — record it even if parsing
+      // the response fails below.
+      usageRecorded = true;
+      await this.platformConfig.recordAiUsage({
+        tenantId: this.prisma.getTenantId(),
+        feature: "insights.route",
+        model,
+        inputTokens: response.usage?.input_tokens ?? 0,
+        outputTokens: response.usage?.output_tokens ?? 0,
+      });
+
       const textBlock = response.content.find((b) => b.type === "text");
       const rawText = textBlock?.type === "text" ? textBlock.text : "";
       const jsonStr = rawText
@@ -332,6 +366,14 @@ Status guide:
       };
     } catch (err) {
       this.logger.warn("AI route run analysis failed", err instanceof Error ? err.message : err);
+      if (!usageRecorded) {
+        await this.platformConfig.recordAiUsage({
+          tenantId: this.prisma.getTenantId(),
+          feature: "insights.route",
+          model: model ?? "unknown",
+          success: false,
+        });
+      }
       return { configured: true, summary: "AI analysis unavailable — showing ETAs only.", etas };
     }
   }
