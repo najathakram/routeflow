@@ -28,6 +28,7 @@
     "@commitlint/cli": "^19.6.0",
     "@commitlint/config-conventional": "^19.6.0",
     "husky": "^9.1.7",
+    "istanbul-lib-source-maps": "^5.0.0",
     "lint-staged": "^15.2.10",
     "prettier": "^3.9.6",
     "turbo": "^2.10.11",
