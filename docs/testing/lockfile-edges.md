@@ -191,8 +191,8 @@ Seven of the eight tolerated skews exist because a `--package-lock-only` regener
 pre-existing satisfying subtrees rather than re-resolving them, so islands that predate an override
 pin survive it. Clearing them needs a from-scratch resolution.
 
-**A from-scratch resolution currently does not complete.** Verified 2026-08-29 by resolving the
-manifests alone (no prior lock) with npm 10.8.2: it exits ERESOLVE.
+**A from-scratch resolution does not complete on this branch** (master `28cb0a25`). Verified
+2026-08-29 by resolving the manifests alone, no prior lock, with npm 10.8.2: it exits ERESOLVE.
 
 ```
 Could not resolve dependency:
@@ -202,17 +202,37 @@ peer react@"^19.2.8" from react-test-renderer@19.2.8
 Found: react@19.2.0 from @routeflow/mobile
 ```
 
-`react-test-renderer` is **declared nowhere and pinned nowhere** — it is a floating peer of
-`@testing-library/jest-native@5.4.3`, whose `>=16.0.0` range lets it drift to whatever the registry
-publishes. The committed lock holds it at 19.2.0, which agrees with mobile's exact `react@19.2.0`.
-The registry has since moved to 19.2.8, which demands `react@^19.2.8`.
+`react-test-renderer` is **declared nowhere and pinned nowhere** on this branch — it enters only as
+a floating peer, whose range lets it drift to whatever the registry publishes. The committed lock
+holds it at 19.2.0, which agrees with mobile's exact `react@19.2.0`. The registry has since moved to
+19.2.8, which demands `react@^19.2.8`.
 
 Nothing is broken today, and that is the point: the pinned lock is holding back a conflict that
 would already have broken the old `rm lockfile && npm install --force` recipe. It is exactly the
-registry-drift exposure #488 set out to close. But it means the next full regeneration must first
-either pin `react-test-renderer` to match the react pin (in `apps/mobile` devDependencies or root
-`overrides`, the way the other RN natives are pinned) or accept `--legacy-peer-deps`. Prefer the
-pin — `--legacy-peer-deps` disables peer checking across the whole tree.
+registry-drift exposure #488 set out to close. But the next full regeneration has to deal with it
+first. A pin is in flight as its own master-based PR; if it has landed by the time you read this,
+`react-test-renderer` will be an exact `apps/mobile` devDependency and a from-scratch resolution
+completes.
+
+Two things about that fix are worth knowing, because both are easy to get wrong later:
+
+- **Pin it as a workspace devDependency, not in root `overrides`** — the two are _not_
+  interchangeable here. This lock records no `overrides` field at all (the same fact that forces
+  this validator to read overrides from `package.json`), so an `overrides` pin leaves **zero trace
+  in the lock** and `npm ci`'s own validator can never check it. A workspace devDependency lands in
+  `packages["apps/mobile"].devDependencies` and is checked on every install. Resolved from scratch,
+  both produce byte-identical trees apart from that one manifest line — so the choice costs nothing
+  and one of them is verifiable.
+- **Retiring `@testing-library/jest-native` does not make the pin redundant.** It is tempting to
+  think so, since that package is deprecated in favour of `@testing-library/react-native`'s built-in
+  matchers. But `@testing-library/react-native@13.3.3` declares its own **non-optional**
+  `react-test-renderer: ">=18.2.0"` peer (its `peerDependenciesMeta` marks only `jest` optional), so
+  the float survives. Measured: with `jest-native` and the pin both removed, a from-scratch resolve
+  still fails on 19.2.8. Only removing _both_ testing-library packages would free it. Do not drop
+  the pin as dead weight.
+
+The alternative to pinning is `--legacy-peer-deps`, which is worse: it disables peer checking across
+the entire tree rather than fixing one edge.
 
 So: do the regeneration when something already forces one, and deal with the pin first. The
 **Node 20→22 move** is the obvious occasion — Prisma 7.10's dev-only `@prisma/streams-local`
