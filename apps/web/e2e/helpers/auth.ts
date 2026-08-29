@@ -35,9 +35,21 @@ export async function loginAsSuperAdmin(page: Page) {
  * without filling it, zod blocks the submit and login never navigates.
  */
 export async function fillWorkspaceIfShown(page: Page, slug: string = TENANT_SLUG) {
-  const workspace = page.getByLabel("Workspace");
-  if (await workspace.isVisible().catch(() => false)) {
-    await workspace.fill(slug);
+  // Single atomic attempt rather than isVisible()-then-fill: that pair races with
+  // hydration. The server-rendered form can show the field for a frame before the
+  // client derives the tenant from the hostname and drops it, so isVisible() returns
+  // true and the following fill() then burns the full 20s actionTimeout on a node
+  // that no longer exists — which is what turned the setup project red on Railway
+  // (operator failed outright, customer went flaky on the same code path).
+  //
+  // fill() auto-waits, so a field that appears mid-hydration is still handled; one
+  // that never appears costs only this short timeout. Swallowing the miss is safe and
+  // does NOT mask a real failure: if the workspace value were actually required, the
+  // waitForURL("**/dashboard") immediately after this call fails loudly instead.
+  try {
+    await page.getByLabel("Workspace").fill(slug, { timeout: 5_000 });
+  } catch {
+    // No Workspace field on this host — the tenant comes from the hostname/header.
   }
 }
 

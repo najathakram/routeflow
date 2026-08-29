@@ -1006,5 +1006,104 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       expect(where.driverId).toEqual({ not: null });
       expect(where.scheduledDate.gte).toEqual(new Date("2026-08-01"));
     });
+
+    it("windows route performance on scheduledDate when a range is sent", async () => {
+      await service.getRoutePerformance("2026-06-01", "2026-06-30");
+
+      const args = prisma.routeRun.findMany.mock.calls[0][0];
+      expect(args.where.scheduledDate.gte).toEqual(new Date("2026-06-01"));
+      expect(args.where.scheduledDate.lte.toISOString()).toBe("2026-06-30T23:59:59.999Z");
+    });
+
+    it("windows driver performance without dropping the driverId filter", async () => {
+      await service.getDriverPerformance("2026-06-01", "2026-06-30");
+
+      const args = prisma.routeRun.findMany.mock.calls[0][0];
+      expect(args.where.driverId).toEqual({ not: null });
+      expect(args.where.scheduledDate.gte).toEqual(new Date("2026-06-01"));
+      expect(args.where.scheduledDate.lte.toISOString()).toBe("2026-06-30T23:59:59.999Z");
+    });
+
+    it("stays all-time with no params — the mobile admin screen sends none", async () => {
+      await service.getRoutePerformance();
+      expect(prisma.routeRun.findMany.mock.calls[0][0].where).toEqual({});
+
+      await service.getDriverPerformance();
+      expect(prisma.routeRun.findMany.mock.calls[1][0].where).toEqual({ driverId: { not: null } });
+    });
+
+    it("accepts a one-sided window, filling the other side with the shared default", async () => {
+      // Either bound present ⇒ the window is real; dateRange supplies the missing
+      // side (from → Jan 1 of the current year, to → now), it is NOT left open.
+      await service.getRoutePerformance("2026-06-01");
+      const fromOnly = prisma.routeRun.findMany.mock.calls[0][0].where.scheduledDate;
+      expect(fromOnly.gte).toEqual(new Date("2026-06-01"));
+      expect(fromOnly.lte.getTime()).toBeLessThanOrEqual(Date.now());
+      expect(fromOnly.lte.getTime()).toBeGreaterThan(Date.now() - 60_000);
+
+      await service.getRoutePerformance(undefined, "2026-06-30");
+      const toOnly = prisma.routeRun.findMany.mock.calls[1][0].where.scheduledDate;
+      expect(toOnly.gte).toEqual(new Date(new Date().getFullYear(), 0, 1));
+      expect(toOnly.lte.toISOString()).toBe("2026-06-30T23:59:59.999Z");
+    });
+
+    it("aggregates per-route completion rates from the returned runs", async () => {
+      prisma.routeRun.findMany.mockResolvedValue([
+        run({ status: "COMPLETED", stops: [stopAt("2026-08-10T09:00:00.000Z")] }),
+        run({ status: "IN_PROGRESS", completedAt: null, stops: [] }),
+      ]);
+
+      const res = await service.getRoutePerformance("2026-06-01", "2026-06-30");
+
+      // Both runs fold into ONE row for the route; only the finished one may
+      // enter the duration math, but both count toward the completion rate.
+      expect(res).toEqual([
+        {
+          id: "r1",
+          name: "North Loop",
+          totalRuns: 2,
+          completedRuns: 1,
+          completionRate: 50,
+          onTimeRate: 100,
+          stopsPerHour: 0.5,
+          avgRunDurationMinutes: 120,
+        },
+      ]);
+    });
+
+    it("counts driver deliveries per order, skipping runs whose driver is gone", async () => {
+      const driver = { id: "d1", contactName: "Sam Field", user: { username: "sam" } };
+      prisma.routeRun.findMany.mockResolvedValue([
+        run({
+          driver,
+          orders: [{ id: "o1" }, { id: "o2" }],
+          stops: [stopAt("2026-08-10T09:00:00.000Z"), stopAt("2026-08-10T09:30:00.000Z")],
+        }),
+        run({
+          driver,
+          status: "IN_PROGRESS",
+          completedAt: null,
+          orders: [{ id: "o3" }],
+          stops: [stopAt("2026-08-10T10:00:00.000Z")],
+        }),
+        // Driver row deleted: the run contributes neither its order nor its stops.
+        run({ driver: null, orders: [{ id: "o4" }], stops: [stopAt("2026-08-10T11:00:00.000Z")] }),
+      ]);
+
+      const res = await service.getDriverPerformance();
+
+      expect(res).toEqual([
+        {
+          id: "d1",
+          name: "Sam Field",
+          totalDeliveries: 3,
+          completedDeliveries: 2,
+          completionRate: (2 / 3) * 100,
+          onTimeRate: 100,
+          stopsPerHour: 1,
+          avgRunDurationMinutes: 120,
+        },
+      ]);
+    });
   });
 });

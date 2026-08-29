@@ -6,7 +6,7 @@
  */
 
 import { test, expect } from "@playwright/test";
-import { setTenantCookie, loginAsOperator, logout } from "./helpers/auth";
+import { setTenantCookie, loginAsOperator, logout, fillWorkspaceIfShown } from "./helpers/auth";
 import { TENANT_SLUG } from "./helpers/constants";
 
 test.describe("Operator — Tenant Dashboard", () => {
@@ -956,6 +956,9 @@ test.describe("Operator — Tenant Dashboard", () => {
       .or(page.getByText(/continue with google/i))
       .first();
     if (await googleBtn.isVisible()) {
+      // Required since the login page stopped deriving a bogus workspace from the
+      // Railway hostname: startGoogleSignIn() refuses without a workspace value.
+      await fillWorkspaceIfShown(page);
       await googleBtn.click();
       // Should redirect to Google (or navigate to accounts.google.com)
       await page.waitForURL(/accounts\.google\.com|google\.com\/o\/oauth/, { timeout: 15_000 });
