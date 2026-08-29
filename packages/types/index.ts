@@ -167,3 +167,12 @@ export const DRIVER_PAYMENTS_ADDON = "driver_payments";
  */
 export const RECURRING_ROUTES_ADDON = "recurring_routes";
 export const ORDER_DELIVERY_ADDON = "order_delivery";
+
+/**
+ * TenantAddon.addonKey gating the AI document-reading features (owner decision
+ * 2026-08-28): vendor-bill scan, batch invoice scan, supplier-statement scan,
+ * and expense-receipt extraction. Server-enforced via @RequireAddon("ocr") on
+ * those endpoints (403 without it); web entry surfaces hide behind
+ * `useHasAddon(OCR_ADDON)`. Route insights are NOT covered by this key.
+ */
+export const OCR_ADDON = "ocr";

@@ -13,6 +13,8 @@ import { InventoryModule } from "../inventory/inventory.module";
 import { EntitlementsModule } from "../billing/entitlements.module";
 // Supplies PlatformConfigService: unified Anthropic key resolution + AI usage metering.
 import { PlatformAdminModule } from "../platform-admin/platform-admin.module";
+// Supplies AddonGuard + AddonService for the scan endpoint's @RequireAddon("ocr") gate.
+import { BillingModule } from "../billing/billing.module";
 
 @Module({
   imports: [
@@ -25,6 +27,7 @@ import { PlatformAdminModule } from "../platform-admin/platform-admin.module";
     InventoryModule,
     EntitlementsModule,
     PlatformAdminModule,
+    BillingModule,
   ],
   controllers: [VendorBillsController],
   providers: [VendorBillsService],
