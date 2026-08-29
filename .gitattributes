@@ -18,3 +18,8 @@
 *.zip binary
 *.tar binary
 *.gz binary
+
+# Session changelogs prepend at the same anchor; union-merge keeps both sides' bullets.
+# (_meta.json is deliberately NOT unioned — union on JSON breaks it. Rebase rule: take
+# master's _meta.json, then re-set only its "notes" field to your session's bullet.)
+.claude/code-map/CHANGELOG.md merge=union

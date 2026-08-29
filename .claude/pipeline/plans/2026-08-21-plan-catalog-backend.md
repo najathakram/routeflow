@@ -1,6 +1,6 @@
 # Plan: Publish catalog v8 — Starter/Growth/Scale/Enterprise at $99/$249/$499 + customer axis
 
-> Authored by Fable 5 on 2026-08-21. Status: APPROVED
+> Authored by Fable 5 on 2026-08-21. Status: SHIPPED
 > This file is the ONLY context the implementation and review agents receive.
 > It must stand alone: no references to "the conversation", no "as discussed".
 

@@ -62,8 +62,9 @@ red specs root-caused (4 REAL web bugs incl. a router.replace swallowing row cli
 2. **Enable `driver_payments` for affa** (Admin → Tenants → affa → Addons) — until flipped,
    affa drivers 403 on at-door collection ($0/on-account unaffected).
 3. After #443: assign `recurring_routes` / `order_delivery` per tenant as sold.
-4. Run the #445 F3 audit read-only:
-   `railway run --service postgres node apps/api/scripts/audit-buyer-verification-grandfather.mjs`.
+4. ✅ DONE 2026-08-26 via #450 (script connection fixed; first read-only run: 16 suspects,
+   12 e2e fixtures, 1 reported). ~~Run the #445 F3 audit read-only:
+   `railway run --service postgres node apps/api/scripts/audit-buyer-verification-grandfather.mjs`.~~
 5. Google-key hygiene: restrict the new key to Geocoding + Places; delete stray project
    routeflow-489906.
 6. E2E-on-master infra (task chip filed): the Playwright job's global-setup seed fails against
@@ -192,7 +193,8 @@ All merged, deployed, `post-deploy-check` green after every wave. Memory
   pass on money-critical diffs is a standing close-out step** — it caught #421's CRITICAL after
   3 Opus lenses + refuters passed clean.
 - **Migration slots used**: `0831` MSRP · `0901` agents · `0902` terms · `0903` geocode. Next free:
-  `20260904000000_*`. One migration-bearing PR in prod-apply flight at a time; apply BEFORE merge.
+  `20260908000000_*` (20260904/20260905/20260907 applied). One migration-bearing PR in
+  prod-apply flight at a time; apply BEFORE merge.
 - Worktrees/branches from the batch are pruned (or being pruned) — work in your OWN worktree off
   master, never `git add -A` in the shared checkout.
 

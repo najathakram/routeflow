@@ -81,6 +81,10 @@ backups/
 # ─── Security audit report (lists unfixed vulns; repo goes public for CI) ────
 SECURITY_AUDIT.md
 
+# ─── Stale QA dumps (603KB, ephemeral run output — never source) ─────────────
+QA_RESULTS.md
+docs/QA_RESULTS.md
+
 # ─── QA / audit manifests (ephemeral, contain production IDs) ───────────────
 apps/api/scripts/*-manifest-*.json
 

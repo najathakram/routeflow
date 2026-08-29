@@ -1,6 +1,6 @@
 # Plan: Sale integrity phase 2 — qty-zeroing fix, discount carry, reopen/demote/delete freedom, delivery-date picker
 
-> Authored by Fable 5 on 2026-08-25. Status: APPROVED (owner directed, screenshots + live repro)
+> Authored by Fable 5 on 2026-08-25. Status: SHIPPED (owner directed, screenshots + live repro)
 > Runs on branch feat/customer-feedback-batch AFTER the phase-1 pipeline (wf_933bbf1e) lands.
 > This file is the ONLY context implementers/reviewers receive. It stands alone.
 

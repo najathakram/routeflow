@@ -1,6 +1,6 @@
 # Plan: Platform billing — catalog-driven Stripe prices, custom tenant fees, annual prepay
 
-> Authored by Fable 5, 2026-08-21. Status: APPROVED. This file is the ONLY context the
+> Authored by Fable 5, 2026-08-21. Status: SHIPPED. This file is the ONLY context the
 > implementation and review agents receive. It must stand alone.
 
 ## ⚠️ WORKING TREE

@@ -1,6 +1,6 @@
 # Plan: Stripe Connect rework — close every confirmed review finding on PR #388
 
-> Authored by Fable 5 on 2026-08-21. Status: APPROVED
+> Authored by Fable 5 on 2026-08-21. Status: SHIPPED
 > This file is the ONLY context the implementation and review agents receive. It must stand alone.
 
 ## ⚠️ WORKING TREE — READ FIRST

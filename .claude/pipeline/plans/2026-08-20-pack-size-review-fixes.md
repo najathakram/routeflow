@@ -1,6 +1,6 @@
 # Plan: pack-size review fixes — 2 blockers, 6 majors, 3 minors
 
-> Authored by Fable 5 on 2026-08-20. Status: APPROVED
+> Authored by Fable 5 on 2026-08-20. Status: SHIPPED
 > This file is the ONLY context the implementation and review agents receive.
 > It must stand alone: no references to "the conversation", no "as discussed".
 

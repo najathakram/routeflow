@@ -1,6 +1,6 @@
 # Plan: Customer-feedback batch — addresses CRUD, agent quick-create, deposit terms, due-soon, dead reopen, shipment gating
 
-> Authored by Fable 5 on 2026-08-25. Status: APPROVED (owner directed 2026-08-25)
+> Authored by Fable 5 on 2026-08-25. Status: SHIPPED (owner directed 2026-08-25)
 > This file is the ONLY context the implementation and review agents receive. It stands alone.
 
 ## Objective
