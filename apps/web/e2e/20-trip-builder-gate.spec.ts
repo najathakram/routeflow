@@ -4,18 +4,16 @@
  * mode / a row checkbox only — Build, Create trip, and Send are never clicked.
  * Branches on the tenant's live addon state via GET /tenants/me/addons
  * (helpers/api.ts pattern, copied verbatim from 18-sales-agents-gate.spec.ts) so
- * it is green both before and after the developer_mode / order_delivery addons
- * are enabled on the e2e tenant. Order delivery and recurring routes are now
- * separate addons (owner split 2026-08-25); this spec follows the union flag
- * `developer_mode || order_delivery`, since `developer_mode` still unlocks
- * every in-development surface as the master switch.
+ * it is green both before and after the order_delivery addon is enabled on the
+ * e2e tenant. Order delivery and recurring routes are separate addons (owner
+ * split 2026-08-25); since 2026-08-28 `developer_mode` no longer unlocks the GA
+ * delivery features anywhere in client UI, so this spec follows the
+ * `order_delivery` flag alone.
  */
 import { test, expect } from "@playwright/test";
 import { apiBase, operatorAccessToken } from "./helpers/api";
 
-test("delivery-trip-builder surfaces follow the developer_mode/order_delivery addon flags", async ({
-  page,
-}) => {
+test("delivery-trip-builder surfaces follow the order_delivery addon flag", async ({ page }) => {
   await page.goto("/orders");
   const token = await operatorAccessToken(page);
   test.skip(!token, "no operator token — auth setup did not run");
@@ -23,7 +21,7 @@ test("delivery-trip-builder surfaces follow the developer_mode/order_delivery ad
     headers: { Authorization: `Bearer ${token}` },
   });
   const { addons = [] } = await res.json();
-  const enabled = addons.includes("developer_mode") || addons.includes("order_delivery");
+  const enabled = addons.includes("order_delivery");
 
   // Enter select mode and check the first order's row checkbox (if any orders
   // exist) to reveal the bulkbar. `table tbody tr` alone would also match the
@@ -42,9 +40,9 @@ test("delivery-trip-builder surfaces follow the developer_mode/order_delivery ad
   if (!enabled) {
     await expect(planTripAction).toHaveCount(0);
     // Deep-link bounces via the /deliveries GATED_PREFIXES entry in
-    // (dashboard)/layout.tsx's RouteGuard ("delivery" need — devMode ||
-    // deliveryAccess), same fail-closed-once-resolved mechanism the
-    // 02-operator OP-03b canary pins for /dispatch.
+    // (dashboard)/layout.tsx's RouteGuard ("delivery" need — deliveryAccess),
+    // same fail-closed-once-resolved mechanism the 02-operator OP-03b canary
+    // pins for /dispatch.
     await page.goto("/deliveries/new");
     await page.waitForURL(/\/dashboard/, { timeout: 15_000 });
   } else {

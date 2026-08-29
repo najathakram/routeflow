@@ -58,8 +58,9 @@ export default function OperatorHomeScreen() {
   // Owner split 2026-08-25: the dispatch-readiness hero and "Routes today" are
   // recurring-routes surfaces (useAdminRoutes keeps the SCHEDULED default), so
   // they follow the routes addon; drivers is shared by both features, matching
-  // (operator)/_layout.tsx's EITHER_SECTIONS. Each helper folds in
-  // developer_mode, so a dev tenant regresses zero.
+  // (operator)/_layout.tsx's EITHER_SECTIONS. Owner decision 2026-08-28: the
+  // helpers no longer fold in developer_mode — these operator dispatch
+  // surfaces follow the feature addons alone.
   const routesAccess = useRoutesAccess();
   const deliveryAccess = useDeliveryAccess();
   const driversAccess = routesAccess.enabled || deliveryAccess.enabled;
@@ -72,8 +73,15 @@ export default function OperatorHomeScreen() {
   // regardless of any stale local state, so DriverInlineView can never render.
   const effectiveViewMode = devMode ? viewMode : "operator";
   const { data: stats, isLoading: statsLoading } = useAdminDashboard();
-  const { data: routesData, isLoading: routesLoading } = useAdminRoutes({ limit: 10 });
-  const { data: driversData } = useAdminDrivers();
+  // `/routes`, `/drivers` and `/route-runs` are addon-gated server-side (403
+  // without a dispatch addon), so each query is disabled on the same gate that
+  // hides what it feeds — a tenant with neither addon polls nothing. Runs use
+  // the either-gate (an ad-hoc delivery materializes a route + run).
+  const { data: routesData, isLoading: routesLoading } = useAdminRoutes(
+    { limit: 10 },
+    { enabled: routesAccess.enabled },
+  );
+  const { data: driversData } = useAdminDrivers(undefined, { enabled: driversAccess });
   const routes = routesData?.data ?? [];
   const driversById = useMemo(() => {
     const map = new Map<string, AdminDriver>();
@@ -83,8 +91,14 @@ export default function OperatorHomeScreen() {
 
   // Active runs: today's scheduled runs PLUS any run still IN_PROGRESS from a prior day
   const today = new Date().toISOString().slice(0, 10);
-  const { data: runsData } = useOperatorRouteRuns({ date: today, limit: 50 });
-  const { data: inProgressData } = useOperatorRouteRuns({ status: "IN_PROGRESS", limit: 50 });
+  const { data: runsData } = useOperatorRouteRuns(
+    { date: today, limit: 50 },
+    { enabled: routesAccess.enabled || deliveryAccess.enabled },
+  );
+  const { data: inProgressData } = useOperatorRouteRuns(
+    { status: "IN_PROGRESS", limit: 50 },
+    { enabled: routesAccess.enabled || deliveryAccess.enabled },
+  );
   const todayRuns = useMemo(() => {
     const seen = new Set<string>();
     const merged: RouteRun[] = [];

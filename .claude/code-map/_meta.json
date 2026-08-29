@@ -1,12 +1,7 @@
 {
-  "mappedSha": "2d0270fd",
-  "generatedAt": "2026-08-28T16:05:00.000Z",
-  "areas": [
-    "api",
-    "web",
-    "mobile",
-    "packages"
-  ],
-  "fileCount": 899,
-  "notes": "2026-08-28 (worktree amazing-gagarin) — npm-ci migration, resolves F12-004: all 9 workflow install blocks + web/mobile Dockerfiles now `npm ci` (no registry re-resolution). Root cause of the old npm-ci failure: mobile jest ^30.3.0 vs override pin 30.2.0 — npm 10's ci validator is override-unaware (npm 11 tolerates it); range relaxed, lock regenerated with npm@10.8.2, zero floats. Worktree-drift landmines fixed (3): mobile tsconfig pins typeRoots (tsc walked ancestor node_modules/@types into the MAIN checkout); packages/ui's deprecated EMPTY @types/react-native stub removed; apps/mobile declares expo-modules-core 55.0.25 (exact, tracks expo's pin) so the lock hoists ONE root copy — root expo-* packages import it undeclared and the nested-under-expo position was unreachable (TS2339 .status via skipLibCheck-silenced import failure; same npm-nesting class as #482). Web's react@18.3.1 root-swap install stays (npm ci can't add packages). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "mappedSha": "28aa3212",
+  "generatedAt": "2026-08-29T02:29:53.893Z",
+  "areas": ["api", "web", "mobile", "packages"],
+  "fileCount": 900,
+  "notes": "2026-08-28 (branch feat/dispatch-addon-enforcement) — developer_mode NARROWED + dispatch API server-enforced. (1) developer_mode stops unlocking the two GA delivery features: web+mobile useRoutesAccess()/useDeliveryAccess() return the feature hook unchanged (same shape, no call site moved) and every `devMode ||` disjunct is gone from web layout/dashboard/dispatch/CommandPalette; useDeveloperMode now has ZERO callers in apps/web and on mobile gates only the in-development surfaces ((driver) app, role-picker driver option, (tenant) dispatch tab, operator drive-mode — all byte-identical). (2) @RequireAddon became variadic/any-of and AddonGuard resolves it with ONE getActiveAddons() call (legacy single-string metadata still accepted); class-level gates on Routes/RouteRuns/Drivers/RouteOptimization/RouteTemplateOptimization (either-gate) and Trips (order_delivery-only, with PATCH /trips/routes/:id/planning overriding to the either-gate); trips/drivers/route-optimization modules gained BillingModule. TRAPS: the 403 message is toasted verbatim, so INTERNAL_ADDON_KEYS={developer_mode} is honoured but never named; and newly-403ing endpoints mean every client query needs `enabled:` on the same gate that hides what it feeds (web useRoutes/useRouteRuns/useDrivers passthroughs, dashboard polls, mobile home.tsx, customers/[id] AssignRouteModal which is always MOUNTED). Seeds: demo-seed feature addons → `update: {}` (preserve admin toggle; developer_mode still forced), e2e-seed ensureDeveloperMode → ensureAddon(tenantId, key) granting all three on both paths. New spec routes/dispatch-addon-gate.spec.ts pins the gate. packages/types + admin AVAILABLE_ADDONS copy only — constant VALUES unchanged. See CHANGELOG top bullet. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

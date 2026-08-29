@@ -66,13 +66,8 @@ import { useExpiringAuthorizations, type ExpiringAuthorization } from "@/lib/api
 import { usePendingPortalApprovals } from "@/lib/api/portal-approvals";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { DraftDock } from "@/components/DraftDock";
-import { useHasAddon } from "@/lib/api/tobacco";
-import {
-  useDeveloperMode,
-  useRoutesAccess,
-  useDeliveryAccess,
-  SALES_AGENTS_ADDON,
-} from "@/lib/api/addons";
+import { useHasAddon, useTenantAddons } from "@/lib/api/tobacco";
+import { useRoutesAccess, useDeliveryAccess, SALES_AGENTS_ADDON } from "@/lib/api/addons";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
@@ -180,21 +175,21 @@ const DRIVER_NAV: NavEntry[] = [
 function getNavForRole(
   role: string | undefined,
   canActAsDriver: boolean | undefined,
-  access: { devMode: boolean; routesAccess: boolean; deliveryAccess: boolean },
+  access: { routesAccess: boolean; deliveryAccess: boolean },
 ): NavEntry[] {
-  const { devMode, routesAccess, deliveryAccess } = access;
+  const { routesAccess, deliveryAccess } = access;
   if (role === "CUSTOMER") return CUSTOMER_NAV;
   if (role === "DRIVER") {
     // Drivers run both recurring routes and ad-hoc delivery trips, so "My
     // Routes" needs either surface unlocked — not just recurring routes.
-    if (!(devMode || routesAccess || deliveryAccess))
+    if (!(routesAccess || deliveryAccess))
       return DRIVER_NAV.filter((e) => e.kind !== "leaf" || e.href !== "/routes");
     return DRIVER_NAV;
   }
 
-  // Tenants without either addon (and no devMode) never see the Dispatch
-  // group — it's gated on having at least one of the two features.
-  const showDispatchGroup = devMode || routesAccess || deliveryAccess;
+  // Tenants without either addon never see the Dispatch group — it's gated
+  // on having at least one of the two features.
+  const showDispatchGroup = routesAccess || deliveryAccess;
   let baseNav = OPERATOR_NAV.filter(
     (entry) => !(entry.kind === "group" && entry.label === "Dispatch" && !showDispatchGroup),
   ).map((entry): NavEntry => {
@@ -205,8 +200,8 @@ function getNavForRole(
     return {
       ...entry,
       children: entry.children.filter((c) => {
-        if (c.href === "/routes") return devMode || routesAccess;
-        if (c.href === "/deliveries") return devMode || deliveryAccess;
+        if (c.href === "/routes") return routesAccess;
+        if (c.href === "/deliveries") return deliveryAccess;
         return true;
       }),
     };
@@ -242,8 +237,9 @@ const CUSTOMER_ALLOWED: string[] = ["/dashboard", "/orders", "/returns", "/invoi
 const DRIVER_ALLOWED: string[] = ["/dashboard", "/routes", "/settings"];
 /**
  * In-development surfaces gated per-feature addon (owner decision 2026-08-25:
- * recurring routes and ad-hoc order delivery are separate addons; `devMode`
- * still unlocks both). `/drivers` is shared by both features ("either").
+ * recurring routes and ad-hoc order delivery are separate addons; owner
+ * decision 2026-08-28: `devMode` no longer unlocks either one client-side).
+ * `/drivers` is shared by both features ("either").
  */
 const GATED_PREFIXES: { prefix: string; need: "routes" | "delivery" | "either" }[] = [
   { prefix: "/dispatch", need: "either" },
@@ -299,7 +295,6 @@ function RouteGuard({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
-  const { enabled: devMode } = useDeveloperMode();
   const { enabled: routesAccess, resolved: routesResolved } = useRoutesAccess();
   const { enabled: deliveryAccess, resolved: deliveryResolved } = useDeliveryAccess();
 
@@ -313,7 +308,7 @@ function RouteGuard({ children }: { children: React.ReactNode }) {
       router.replace("/dashboard");
       return;
     }
-    // Tenants without the relevant addon (and no devMode) can't deep-link into
+    // Tenants without the relevant addon can't deep-link into
     // dispatch/routes/deliveries/drivers either — gated per-feature.
     const gate = matchGatedPrefix(pathname, role);
     if (!gate) return;
@@ -328,12 +323,11 @@ function RouteGuard({ children }: { children: React.ReactNode }) {
           : routesResolved || deliveryResolved;
     if (!resolved) return;
     const allowedByGate =
-      devMode ||
-      (gate.need === "routes"
+      gate.need === "routes"
         ? routesAccess
         : gate.need === "delivery"
           ? deliveryAccess
-          : routesAccess || deliveryAccess);
+          : routesAccess || deliveryAccess;
     if (!allowedByGate) {
       router.replace("/dashboard");
     }
@@ -341,7 +335,6 @@ function RouteGuard({ children }: { children: React.ReactNode }) {
     user?.role,
     pathname,
     router,
-    devMode,
     routesAccess,
     routesResolved,
     deliveryAccess,
@@ -664,9 +657,8 @@ function Header({
   const { data: pendingApprovals = [] } = usePendingPortalApprovals();
   const bellCount = unreadCount + expiring.length + pendingApprovals.length;
   const { driveMode, setDriveMode } = useDriveMode();
-  const { enabled: devMode } = useDeveloperMode();
   // Drive mode is a recurring-routes affordance ("My Routes"), so it's gated
-  // on routesAccess (not delivery access) alongside devMode.
+  // on routesAccess (not delivery access).
   const { enabled: routesAccess } = useRoutesAccess();
 
   // Show a back button only on sub-pages (e.g. /routes/123, /customers/456)
@@ -699,7 +691,7 @@ function Header({
         {title && <h1 className="text-base font-semibold text-navy truncate">{title}</h1>}
         {/* Drive-mode indicator + one-tap Exit (pos-cost-roles-spec §4) — lets the
             operator leave the field layout without hunting through the avatar menu. */}
-        {(devMode || routesAccess) && driveMode && (
+        {routesAccess && driveMode && (
           <button
             onClick={() => setDriveMode(false)}
             className="ml-2 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-brand-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-brand-600 transition-colors hover:bg-brand-100"
@@ -919,21 +911,20 @@ function Header({
                   change, or draft loss — and jumps to My Routes; turning it off (here or
                   via the topbar Exit affordance) just restores the normal layout in place.
                   pos-cost-roles-spec §4. */}
-              {(user as { canActAsDriver?: boolean })?.canActAsDriver &&
-                (devMode || routesAccess) && (
-                  <DropdownMenu.Item
-                    className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
-                    onSelect={() => {
-                      const next = !driveMode;
-                      setDriveMode(next);
-                      if (next) router.push("/routes/my-runs");
-                    }}
-                  >
-                    <Truck className="h-4 w-4 text-navy/70" />
-                    <span className="flex-1">Drive mode</span>
-                    {driveMode && <Check className="h-4 w-4 text-accent-deep" />}
-                  </DropdownMenu.Item>
-                )}
+              {(user as { canActAsDriver?: boolean })?.canActAsDriver && routesAccess && (
+                <DropdownMenu.Item
+                  className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
+                  onSelect={() => {
+                    const next = !driveMode;
+                    setDriveMode(next);
+                    if (next) router.push("/routes/my-runs");
+                  }}
+                >
+                  <Truck className="h-4 w-4 text-navy/70" />
+                  <span className="flex-1">Drive mode</span>
+                  {driveMode && <Check className="h-4 w-4 text-accent-deep" />}
+                </DropdownMenu.Item>
+              )}
 
               {/* Language / Idioma — per-user locale (unified/ux-standards.html) */}
               <DropdownMenu.Separator className="my-1 border-t border-surface-border" />
@@ -1021,16 +1012,16 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
-  // devMode/routesAccess/deliveryAccess/hasSalesAgents all read the same
-  // underlying tenant-addons query (react-query dedupes on queryKey), so this
-  // one `isLoading` is that single shared fetch's in-flight state — used below
+  // routesAccess/deliveryAccess/hasSalesAgents all read the same underlying
+  // tenant-addons query (react-query dedupes on queryKey), so this one
+  // `isLoading` is that single shared fetch's in-flight state — used below
   // to hold a skeleton for every addon-gated nav entry (Dispatch, Sales Agents)
   // until the real answer is in, instead of the group just popping into
   // existence. Deliberately NOT `!resolved` (= `!isSuccess`): useTenantAddons
   // is `retry: false`, so one 5xx would leave `resolved` false forever and
   // strand the placeholders as permanent shimmer. `isLoading` settles either
   // way, and a failed fetch degrades to the pre-existing "gate stays hidden".
-  const { enabled: devMode, isLoading: addonsLoading } = useDeveloperMode();
+  const { isLoading: addonsLoading } = useTenantAddons();
   const { enabled: routesAccess } = useRoutesAccess();
   const { enabled: deliveryAccess } = useDeliveryAccess();
   // Only OPERATOR/TENANT_ADMIN see regulated nav; skip the fetch for CUSTOMER/DRIVER.
@@ -1041,7 +1032,6 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   );
   const navStructure = React.useMemo(() => {
     const nav = getNavForRole(user?.role, (user as any)?.canActAsDriver, {
-      devMode,
       routesAccess,
       deliveryAccess,
     });
@@ -1135,7 +1125,6 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     hasSalesAgents,
     regulatedSections,
     regulatedLoading,
-    devMode,
     routesAccess,
     deliveryAccess,
     addonsLoading,
@@ -1218,10 +1207,10 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         shellRouter.push("/orders");
         sequence = "";
       } else if (sequence === "gr") {
-        if (devMode || routesAccess) shellRouter.push("/routes");
+        if (routesAccess) shellRouter.push("/routes");
         sequence = "";
       } else if (sequence === "gd") {
-        if (devMode || routesAccess) shellRouter.push("/drivers");
+        if (routesAccess) shellRouter.push("/drivers");
         sequence = "";
       } else if (sequence === "gc") {
         shellRouter.push("/customers");
@@ -1242,7 +1231,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [shellRouter, devMode, routesAccess]);
+  }, [shellRouter, routesAccess]);
 
   const SHORTCUTS = React.useMemo(
     () =>
@@ -1257,11 +1246,8 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         { keys: ["g", "s"], label: "Go to Settings" },
         { keys: ["⌘", "K"], label: "Open Command Palette" },
         { keys: ["?"], label: "Show Keyboard Shortcuts" },
-      ].filter(
-        (s) =>
-          devMode || routesAccess || (s.label !== "Go to Routes" && s.label !== "Go to Drivers"),
-      ),
-    [devMode, routesAccess],
+      ].filter((s) => routesAccess || (s.label !== "Go to Routes" && s.label !== "Go to Drivers")),
+    [routesAccess],
   );
 
   return (

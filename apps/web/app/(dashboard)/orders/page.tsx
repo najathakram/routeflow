@@ -147,7 +147,8 @@ export default function OrdersPage() {
   const { data: filterProduct } = useProduct(productIdFilter);
   // Hide-only gate for the ad-hoc delivery builder entry point — bulkbar action
   // stays hidden on `enabled` (never `resolved`; this is a nav affordance, not a
-  // data guard). devMode || order_delivery, via the shared composition helper.
+  // data guard). The `order_delivery` addon alone, via the shared composition
+  // helper (owner decision 2026-08-28: `devMode` no longer unlocks it).
   const { enabled: deliveryAccessEnabled } = useDeliveryAccess();
 
   // Customer search is URL-backed like the chips above, so drilling into an order

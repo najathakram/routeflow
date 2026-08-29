@@ -411,11 +411,13 @@ async function ensureTenant(existing) {
     update: { businessName: DEMO_NAME, taxRate: TAX_RATE },
   });
 
-  // Dispatch/driver/route UI is hidden for every tenant WITHOUT the
-  // developer_mode addon (#380). The demo's driver walkthrough depends on it,
-  // so a from-scratch reseed must re-create the row or the demo silently loses
-  // its driver screens. Row shape matches AddonService.hasAddon (see
-  // apps/api/scripts/e2e-seed.js ensureDeveloperMode).
+  // developer_mode unlocks the still-in-development mobile driver-app surfaces
+  // (owner decision 2026-08-28: it no longer unlocks the GA delivery features
+  // in client UI, and the dispatch API accepts it only as an any-of key for
+  // in-dev end-to-end testing). The demo's mobile driver walkthrough depends
+  // on it, so a from-scratch reseed must re-create the row AND force it back
+  // on every reseed. Row shape matches AddonService.hasAddon (see
+  // apps/api/scripts/e2e-seed.js ensureAddon).
   await prisma.tenantAddon.upsert({
     where: { tenantId_addonKey: { tenantId: DEMO_TENANT_ID, addonKey: "developer_mode" } },
     create: {
@@ -427,12 +429,13 @@ async function ensureTenant(existing) {
     },
     update: { active: true },
   });
-  console.log("   ✓ Developer mode addon active (driver/dispatch demo screens)");
+  console.log("   ✓ Developer mode addon active (mobile driver-app demo)");
 
   // At-door payment collection is per-tenant opt-in (driver_payments addon,
   // 2026-08-24). The demo walkthrough shows the driver collecting cash at the
   // door, so the demo tenant needs the addon or payment.tsx degrades to the
-  // on-account completion path.
+  // on-account completion path. `update: {}` so a reseed only creates the row
+  // when missing and preserves a platform-admin toggle when it exists.
   await prisma.tenantAddon.upsert({
     where: { tenantId_addonKey: { tenantId: DEMO_TENANT_ID, addonKey: "driver_payments" } },
     create: {
@@ -442,14 +445,17 @@ async function ensureTenant(existing) {
       stripeItemId: null,
       active: true,
     },
-    update: { active: true },
+    update: {},
   });
-  console.log("   ✓ Driver payments addon active (at-door collection demo)");
+  console.log(
+    "   ✓ Driver payments addon (created active on first seed; admin toggle preserved on reseed)",
+  );
 
   // Order-delivery split (2026-08-25): dispatch's ad-hoc trip builder and
-  // recurring route templates are now separate per-tenant addons, independent
-  // of each other and of developer_mode. Grant both so the demo's dispatch
-  // walkthrough shows every surface.
+  // recurring route templates are separate per-tenant addons, independent of
+  // each other and (as of 2026-08-28) of developer_mode. `update: {}` so a
+  // reseed only creates the row when missing and preserves a platform-admin
+  // toggle when it exists.
   await prisma.tenantAddon.upsert({
     where: { tenantId_addonKey: { tenantId: DEMO_TENANT_ID, addonKey: "recurring_routes" } },
     create: {
@@ -459,9 +465,11 @@ async function ensureTenant(existing) {
       stripeItemId: null,
       active: true,
     },
-    update: { active: true },
+    update: {},
   });
-  console.log("   ✓ Recurring routes addon active (route templates demo)");
+  console.log(
+    "   ✓ Recurring routes addon (created active on first seed; admin toggle preserved on reseed)",
+  );
 
   await prisma.tenantAddon.upsert({
     where: { tenantId_addonKey: { tenantId: DEMO_TENANT_ID, addonKey: "order_delivery" } },
@@ -472,9 +480,11 @@ async function ensureTenant(existing) {
       stripeItemId: null,
       active: true,
     },
-    update: { active: true },
+    update: {},
   });
-  console.log("   ✓ Order delivery addon active (ad-hoc trips demo)");
+  console.log(
+    "   ✓ Order delivery addon (created active on first seed; admin toggle preserved on reseed)",
+  );
 
   // Tenant-wide default depot. route-optimization's resolveDepot() reads these
   // SystemConfig keys as its tier-2 fallback, and the trip builder's "tenant

@@ -8,7 +8,7 @@ import { PageHeader, Badge, Button } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useRouteRuns, type RouteRun } from "@/lib/api/routes";
 import { useDrivers, type Driver } from "@/lib/api/drivers";
-import { useDeveloperMode, useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
+import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
 // `scheduledDate` is a CALENDAR date stored at UTC midnight, so it must be
 // rendered with fmtCalendarDate (timeZone: "UTC"). A local-time render shows
 // the PREVIOUS day for every negative-offset viewer — which would make this
@@ -291,11 +291,10 @@ export default function DispatchPage() {
   }, [setTitle]);
 
   const router = useRouter();
-  const { enabled: devMode } = useDeveloperMode();
   const { enabled: routesAccess } = useRoutesAccess();
   const { enabled: deliveryAccess } = useDeliveryAccess();
-  const showRoutes = devMode || routesAccess;
-  const showDelivery = devMode || deliveryAccess;
+  const showRoutes = routesAccess;
+  const showDelivery = deliveryAccess;
   const bothFeatures = showRoutes && showDelivery;
 
   const subtitle = bothFeatures

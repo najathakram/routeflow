@@ -281,7 +281,7 @@ export default defineConfig({
       },
     },
     // ── Ad-hoc trip builder entitlement gate (WP12, spec 20) ────────────────────────
-    // Reads the tenant's live developer_mode addon flag and asserts the orders
+    // Reads the tenant's live order_delivery addon flag and asserts the orders
     // bulkbar action / trip-builder deep-link match it. Read-only: GETs and
     // renders only — Build/Create trip/Send are never clicked.
     // Uses operator auth state; the spec reads its token out of that session.

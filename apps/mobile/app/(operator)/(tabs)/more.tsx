@@ -15,8 +15,8 @@ export default function OperatorMoreScreen() {
   // Owner split 2026-08-25: the MANAGE rows below mirror (operator)/_layout.tsx's
   // section sets, so a tenant that bought only one addon still reaches its own
   // surfaces — Routes/Fleet are recurring-routes screens, Drivers is shared by
-  // both features (EITHER_SECTIONS). Each helper folds in developer_mode, so a
-  // dev tenant regresses zero.
+  // both features (EITHER_SECTIONS). Owner decision 2026-08-28: the helpers no
+  // longer fold in developer_mode — these rows follow the feature addons alone.
   const routesAccess = useRoutesAccess();
   const deliveryAccess = useDeliveryAccess();
   const driversAccess = routesAccess.enabled || deliveryAccess.enabled;
