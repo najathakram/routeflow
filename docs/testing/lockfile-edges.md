@@ -2,7 +2,8 @@
 
 `npm ci` can install a broken tree, exit 0, and look healthy. This document explains the gap,
 the check that closes it ([`scripts/validate-lock-edges.mjs`](../../scripts/validate-lock-edges.mjs),
-wired into CI's Lint job), and the triage of every skew the check currently tolerates.
+run pre-install in CI and as step 1 of `npm run verify`), and the triage of every skew the check
+currently tolerates.
 
 ## The gap npm leaves
 
