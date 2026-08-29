@@ -349,6 +349,79 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       expect(res).toHaveLength(1);
       expect(res[0].daysInactive).toBe(40); // movement (40d) is newer than the sale (80d)
     });
+
+    it("keeps the parameterless rolling window open-ended (gte only)", async () => {
+      prisma.product.findMany.mockResolvedValue([{ id: "p1", name: "P1", currentStock: D(3) }]);
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.stockMovement.findMany.mockResolvedValue([]);
+
+      await service.getDeadStock(30);
+
+      const { createdAt } = prisma.stockMovement.findMany.mock.calls[0][0].where;
+      expect(createdAt.gte).toEqual(expect.any(Date));
+      expect(createdAt.lte).toBeUndefined();
+    });
+
+    it("a from/to range REPLACES the rolling window — activity outside it doesn't rescue", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        { id: "sold-in", name: "In-range", currentStock: D(5) },
+        { id: "sold-out", name: "Out-of-range", currentStock: D(9) },
+      ]);
+      prisma.invoice.findMany.mockResolvedValue([
+        { issueDate: new Date("2026-05-10"), items: [{ productId: "sold-in" }] },
+        // Sold AFTER the window closes — active today, but dead within May.
+        { issueDate: new Date("2026-06-20"), items: [{ productId: "sold-out" }] },
+      ]);
+      prisma.stockMovement.findMany.mockResolvedValue([]);
+
+      const res = await service.getDeadStock(30, "2026-05-01", "2026-05-31");
+
+      expect(res.map((r) => r.id)).toEqual(["sold-out"]);
+      // Display fields stay "most recent activity ever", not range-clipped.
+      expect(res[0].lastMovement).toEqual(new Date("2026-06-20"));
+      // The movement query is bounded to the same window.
+      const { createdAt } = prisma.stockMovement.findMany.mock.calls[0][0].where;
+      expect(createdAt.gte).toEqual(new Date("2026-05-01"));
+      expect(createdAt.lte.toISOString()).toContain("2026-05-31T23:59:59");
+    });
+  });
+
+  describe("getDso", () => {
+    it("averages days from issue to payment across PAID invoices, unwindowed by default", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        { issueDate: new Date("2026-06-01"), paidAt: new Date("2026-06-11") }, // 10d
+        { issueDate: new Date("2026-06-01"), paidAt: new Date("2026-06-21") }, // 20d
+      ]);
+
+      const res = await service.getDso();
+
+      expect(res).toEqual({ dso: 15, count: 2 });
+      // No bounds ⇒ no issueDate filter — mobile's parameterless call stays all-time.
+      expect(prisma.invoice.findMany.mock.calls[0][0].where).toEqual({
+        status: "PAID",
+        paidAt: { not: null },
+      });
+    });
+
+    it("windows on issueDate when from/to are given — payment may land after `to`", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        { issueDate: new Date("2026-06-15"), paidAt: new Date("2026-08-14") }, // 60d
+      ]);
+
+      const res = await service.getDso("2026-06-01", "2026-06-30");
+
+      expect(res).toEqual({ dso: 60, count: 1 });
+      const { where } = prisma.invoice.findMany.mock.calls[0][0];
+      expect(where.status).toBe("PAID");
+      expect(where.issueDate.gte).toEqual(new Date("2026-06-01"));
+      expect(where.issueDate.lte.toISOString()).toContain("2026-06-30T23:59:59");
+    });
+
+    it("returns zeros for an empty window", async () => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+
+      expect(await service.getDso("2026-01-01", "2026-01-31")).toEqual({ dso: 0, count: 0 });
+    });
   });
 
   describe("tobacco exclusion toggle", () => {

@@ -82,18 +82,23 @@ export class AnalyticsController {
   }
 
   @Get("inventory/dead-stock")
-  getDeadStock(@Query("daysInactive") days?: string) {
-    return this.analyticsService.getDeadStock(days ? parseInt(days) : 30);
+  getDeadStock(
+    @Query("daysInactive") days?: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+  ) {
+    return this.analyticsService.getDeadStock(days ? parseInt(days) : 30, from, to);
   }
 
+  // Deliberately no from/to: current prices vs current costs (see the service doc).
   @Get("inventory/margin-alerts")
   getMarginAlerts() {
     return this.analyticsService.getMarginAlerts();
   }
 
   @Get("dso")
-  getDso() {
-    return this.analyticsService.getDso();
+  getDso(@Query("from") from?: string, @Query("to") to?: string) {
+    return this.analyticsService.getDso(from, to);
   }
 
   @Get("sales-by-category")

@@ -181,6 +181,19 @@ export class AnalyticsService {
     return { fromDate, toDate };
   }
 
+  /**
+   * Prisma where-fragment windowing invoices on their business date
+   * (Invoice.issueDate). No bounds ⇒ no filter, preserving the endpoints'
+   * historical all-time behavior for parameterless callers (mobile). With
+   * either bound present the shared dateRange defaults fill the other side
+   * (from → Jan 1 of the current year, to → now; `to` is end-of-day inclusive).
+   */
+  private issueDateFilter(from?: string, to?: string) {
+    if (!from && !to) return {};
+    const { fromDate, toDate } = this.dateRange(from, to);
+    return { issueDate: { gte: fromDate, lte: toDate } };
+  }
+
   async getRevenueTrend(from?: string, to?: string, groupBy = "month") {
     const { fromDate, toDate } = this.dateRange(from, to);
     const excludeTobacco = await this.tobaccoExclusionActive();
@@ -478,11 +491,24 @@ export class AnalyticsService {
    * OR an invoiced sale — movement recency alone is wrong now that SALE
    * movements are dead (a daily-selling but rarely-restocked product would
    * read as dead stock; see common/invoiced-sales.ts). `lastMovement` /
-   * `daysInactive` report the most recent of the two signals.
+   * `daysInactive` report the most recent of the two signals (relative to
+   * now, whatever the window).
+   *
+   * Windowing: with from/to the analytics-page picker range REPLACES the
+   * rolling window — dead ⇔ no activity anywhere inside [from, to] — so
+   * "last 7 days" means exactly that, and daysInactive is ignored. Without
+   * bounds the historical rolling behavior stands: no activity in the
+   * daysInactive days up to now (mobile's parameterless call). Stock levels
+   * are always CURRENT state — a past-dated range asks "which of today's
+   * stocked products didn't move back then", not a point-in-time snapshot.
    */
-  async getDeadStock(daysInactive = 30) {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - daysInactive);
+  async getDeadStock(daysInactive = 30, from?: string, to?: string) {
+    const ranged = Boolean(from || to);
+    const rollingCutoff = new Date();
+    rollingCutoff.setDate(rollingCutoff.getDate() - daysInactive);
+    const { fromDate, toDate } = this.dateRange(from, to);
+    const windowStart = ranged ? fromDate : rollingCutoff;
+    const windowEnd = ranged ? toDate : null; // rolling mode stays open-ended
     const excludeTobacco = await this.tobaccoExclusionActive();
     const activeProducts = await this.prisma.forTenant().product.findMany({
       where: {
@@ -501,26 +527,31 @@ export class AnalyticsService {
       select: { issueDate: true, items: { select: { productId: true } } },
     });
     const lastSaleAt = new Map<string, Date>();
+    const soldInWindow = new Set<string>();
     for (const inv of invoices) {
+      const inWindow = inv.issueDate >= windowStart && (!windowEnd || inv.issueDate <= windowEnd);
       for (const item of inv.items ?? []) {
         if (!item.productId) continue;
+        if (inWindow) soldInWindow.add(item.productId);
         const prev = lastSaleAt.get(item.productId);
         if (!prev || inv.issueDate > prev) lastSaleAt.set(item.productId, inv.issueDate);
       }
     }
 
-    // Products with any stock movement since the cutoff are active.
+    // Products with any stock movement inside the window are active.
     const recentMovements = await this.prisma.forTenant().stockMovement.findMany({
-      where: { productId: { in: productIds }, createdAt: { gte: cutoff } },
+      where: {
+        productId: { in: productIds },
+        createdAt: windowEnd ? { gte: windowStart, lte: windowEnd } : { gte: windowStart },
+      },
       select: { productId: true },
       distinct: ["productId"],
     });
     const recentlyMoved = new Set(recentMovements.map((m: { productId: string }) => m.productId));
 
-    const deadCandidates = activeProducts.filter((p) => {
-      const sale = lastSaleAt.get(p.id);
-      return !recentlyMoved.has(p.id) && (!sale || sale < cutoff);
-    });
+    const deadCandidates = activeProducts.filter(
+      (p) => !recentlyMoved.has(p.id) && !soldInWindow.has(p.id),
+    );
     if (deadCandidates.length === 0) return [];
 
     // Last movement dates only for the dead candidates — a small set, which
@@ -549,6 +580,12 @@ export class AnalyticsService {
     });
   }
 
+  /**
+   * Products currently priced under a 20% margin. Deliberately takes NO
+   * from/to: it compares today's pricePerUnit to today's averageCost — pure
+   * current state with no history to window (B40 decision: the web card
+   * says so instead of pretending to filter).
+   */
   async getMarginAlerts() {
     const excludeTobacco = await this.tobaccoExclusionActive();
     const products = await this.prisma.forTenant().product.findMany({
@@ -573,9 +610,16 @@ export class AnalyticsService {
     return alerts;
   }
 
-  async getDso() {
+  /**
+   * Average days from issue to payment across PAID invoices. from/to window
+   * on Invoice.issueDate via issueDateFilter — the range selects WHICH
+   * invoices count (by when they were raised); the payment itself may land
+   * after `to` and still be measured. Omitted ⇒ all history (mobile's
+   * parameterless call).
+   */
+  async getDso(from?: string, to?: string) {
     const paidInvoices = await this.prisma.forTenant().invoice.findMany({
-      where: { status: "PAID", paidAt: { not: null } },
+      where: { status: "PAID", paidAt: { not: null }, ...this.issueDateFilter(from, to) },
       select: { issueDate: true, paidAt: true },
     });
     if (paidInvoices.length === 0) return { dso: 0, count: 0 };
