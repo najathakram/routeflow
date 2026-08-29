@@ -104,6 +104,25 @@ jobs:
         env:
           NODE_PATH: ${{ runner.temp }}/lockdeps/node_modules
 
+  # ─── Bug-signature scan ────────────────────────────────────────────────────────
+  # Greps for the code shapes that have historically BEEN bugs here (dead hooks,
+  # confirm-then-navigate, money re-derivation, swallowed writes…). The existing
+  # backlog is baselined in .claude/skills/bug-hunt/scan-ignore.json, so this only
+  # fails on NEWLY introduced instances. Zero deps, no install, ~2s.
+  # On failure: fix it, or add `// scan-ok: <id> — <reason>` above the line.
+  bug-scan:
+    name: Bug Signature Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - run: node .claude/skills/bug-hunt/scripts/scan-signatures.mjs
+
   # ─── Lint ──────────────────────────────────────────────────────────────────────
   lint:
     name: Lint
