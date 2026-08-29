@@ -1,0 +1,7 @@
+# Known-unresolvable dependency edges in package-lock.json, tolerated by
+# scripts/lock-validate.mjs (new hard-missing edges still fail). Currently EMPTY:
+# PR #488's lock regeneration closed the original 12 arborist-accepted holes
+# (@jest/reporters' istanbul deps + jest-changed-files' execa) that this file was
+# created to snapshot. Keep it empty — add lines only to consciously tolerate a
+# newly discovered hole while its lockfile fix is in flight.
+# Regenerate with: node scripts/lock-validate.mjs --write-baseline

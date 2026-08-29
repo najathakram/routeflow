@@ -57,6 +57,28 @@ env:
   NODE_VERSION: "20"
 
 jobs:
+  # ─── Lockfile integrity ────────────────────────────────────────────────────────
+  # npm's arborist ACCEPTS package-lock trees with unresolvable dependency edges:
+  # `npm ci` installs them without complaint and the breakage only surfaces at
+  # runtime (discovered on PR #488 — @jest/reporters' istanbul deps and
+  # jest-changed-files' execa were absent from the tree; jest ran, --coverage
+  # crashed). This step re-walks every edge in the committed lockfile and fails
+  # on any NEW hard-missing dependency (scripts/lock-validate.baseline.txt can
+  # tolerate a known hole while its lockfile fix is in flight — empty today).
+  # Needs only Node + the lockfile — deliberately no install step.
+  lock-validate:
+    name: Lockfile integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - run: node scripts/lock-validate.mjs
+
   # ─── Lint ──────────────────────────────────────────────────────────────────────
   lint:
     name: Lint
