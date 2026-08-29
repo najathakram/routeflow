@@ -93,19 +93,22 @@ test.describe("Auth & password flows", () => {
     // Client-side navigation (no full page load) → new page components mount
     // and fetch → 401 → refresh fails → sheet.
     //
-    // Unless the sheet is already up: a mounted component can fetch and 401 on its
-    // own before we get here, and then the modal overlay intercepts pointer events
-    // and this click retries until it times out (seen in CI: 37 retries over 20s
-    // against a link Playwright reported as visible, enabled and stable). The sheet
-    // being open IS this helper's objective, so there is nothing left to trigger.
-    if (
-      await page
-        .getByRole("dialog")
-        .isVisible()
-        .catch(() => false)
-    )
-      return;
-    await page.getByRole("link", { name: "Customers" }).first().click();
+    // ...unless the sheet beats us to it: a component already mounted can fetch and
+    // 401 on its own, and the modal overlay then intercepts pointer events, so this
+    // click retries until it times out (seen in CI: 37 retries over 20s against a
+    // link Playwright reported as visible, enabled and stable).
+    //
+    // Do NOT guard this with isVisible()-then-click — that is a check-then-act race
+    // and the sheet can open in between, which is exactly how this helper failed
+    // AP-05 on all three attempts. Instead let the click itself be tolerant: a
+    // blocked click means the sheet is already up, which IS this helper's objective.
+    // Not vacuous — every caller immediately asserts the dialog becomes visible, so
+    // if the sheet never opens the test still fails there.
+    await page
+      .getByRole("link", { name: "Customers" })
+      .first()
+      .click({ timeout: 8_000 })
+      .catch(() => {});
   }
 
   // ── Session expiry & settings password card ─────────────────────────────────
