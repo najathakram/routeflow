@@ -3,6 +3,7 @@
 import * as React from "react";
 import { getSessionTenantSlug } from "@/lib/auth";
 import { setTenantCookie } from "@/lib/tenant-cookie";
+import { subscribeImpersonation } from "@/lib/impersonation";
 
 export interface TenantBranding {
   slug: string;
@@ -153,17 +154,21 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
     void fetchBranding();
     // Re-check on tab focus / visibility so a multi-tab impersonation switch
     // (localStorage/cookie changed underneath a mounted app) picks up the new
-    // tenant's branding without requiring a hard reload. Only refetches when
-    // the resolved slug actually changed — never on every focus event.
+    // tenant's branding without requiring a hard reload. The impersonation
+    // subscription covers the same-tab case — set/clear during a soft nav,
+    // with no focus/visibility event to trigger a recheck. Only refetches
+    // when the resolved slug actually changed — never on every focus event.
     const recheck = () => {
       const next = resolveTenantSlug();
       if (next && next !== slugRef.current) void fetchBranding();
     };
     window.addEventListener("focus", recheck);
     document.addEventListener("visibilitychange", recheck);
+    const unsubImp = subscribeImpersonation(recheck);
     return () => {
       window.removeEventListener("focus", recheck);
       document.removeEventListener("visibilitychange", recheck);
+      unsubImp();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

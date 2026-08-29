@@ -158,16 +158,30 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   audit follow-up batch; until then prefer format.ts for new code EXCEPT calendar dates.
 - **`lib/impersonation.ts`** (new 2026-08-26, audit P0 batch — security-relevant) — **THE single
   reader/writer of the super-admin impersonation localStorage keys** (`getImpersonation()` —
-  parses JWT exp → `{token, slug, expired}`; `setImpersonation`/`clearImpersonation`;
-  `subscribeImpersonation` for the banner). Nothing else may touch those keys (grep-gated).
+  parses base64url JWT exp → `{token, slug, username, expired}`;
+  `setImpersonation(token, slug, username?)`/`clearImpersonation`; `subscribeImpersonation` —
+  same-tab CHANGE_EVENT + a **key-filtered** `storage` listener (token/slug/username, or
+  `key === null` for `clear()`); an unfiltered one fired on EVERY cross-tab localStorage write
+  and logged idle tabs out via AuthProvider's re-read). Nothing else may touch those keys
+  (grep-gated).
   Consumers: `lib/api-client.ts` (request interceptor prefers a NON-EXPIRED impersonation token,
   expired → clear + redirect `/admin/tenants?impersonation=expired`; a 401 while impersonating
   NEVER enters the operator refresh path — clear + redirect instead; the refresh catch also
   carries a concurrent-rotation race guard retrying with a raced fresh token before opening the
   ReAuth sheet), `lib/auth.ts` (`login()`/`logout()` clear impersonation; `getStoredUser` ignores
-  expired tokens), `(dashboard)/layout.tsx` `ImpersonationBanner` (live-subscribed + pathname
-  re-check, expired variant, always-available Exit), platform-admin tenants list + [id]
-  Impersonate actions (the [id] page's legacy bare `accessToken` write was REMOVED — it leaked the
+  expired tokens), `lib/auth-context.tsx` + `components/tenant-provider.tsx` (both re-read identity
+  on the subscription so a soft impersonation swap updates the chip/branding — each applies only a
+  NON-NULL read; a null read must never clear an established session), `(dashboard)/layout.tsx`
+  `ImpersonationBanner` (live-subscribed + pathname
+  re-check, expired variant, always-available Exit — Exit clears cookie + impersonation then
+  **hard-loads** `window.location.href = "/admin/tenants"` so every provider remounts on the
+  operator session [a `router.push` restored nothing]; the banner renders
+  `acting as {imp.username ?? "Tenant Admin"}`), platform-admin tenants list + [id]
+  Impersonate actions (**both** now do the same three things — `setImpersonation` with the
+  `res.data.impersonatedUser?.username` third arg, `setTenantCookie(slug)`, then a hard
+  `window.location.href = "/dashboard"`; the LIST page previously did neither the cookie write nor
+  a hard load [`router.push`], which is why impersonating from the list kept the PREVIOUS tenant's
+  logo/name/chip. The [id] page's legacy bare `accessToken` write was REMOVED — it leaked the
   impersonation token to legacy-key readers such as settings' Google-link fetch [NOT via
   `migrateLegacyOpToken`, which was never called and was deleted 2026-08-27]; cost: realtime
   sockets read OP_KEYS directly and stay silent during impersonation). Buyer impersonation flow is
@@ -783,8 +797,11 @@ total}`) — types live in `lib/api/vendor-bills.ts` as `PriorScanSummary`/`Scan
   JWT-first via `lib/auth.ts getSessionTenantSlug()` (module-level, NOT a hook: the provider
   mounts OUTSIDE the auth context), a disagreeing `tenant-slug` cookie is REWRITTEN (self-heal
   — it also feeds the X-Tenant-Slug header), and branding re-resolves+refetches on window
-  focus/visibilitychange when the resolved slug changed (multi-tab impersonation switches);
-  `refreshTokens()` in auth.ts also re-syncs the cookie. Root cause fixed: a stale cookie
+  focus/visibilitychange when the resolved slug changed (multi-tab impersonation switches)
+  **plus `subscribeImpersonation(recheck)` (2026-08-28)** for the same-tab case — an
+  impersonation set/clear during a soft nav fires no focus/visibility event, so the sidebar logo
+  and business name used to stay on the previous tenant; the slug-changed guard still means no
+  refetch on an unrelated event. `refreshTokens()` in auth.ts also re-syncs the cookie. Root cause fixed: a stale cookie
   could brand one tenant's invoice letterhead with another tenant's name), `CommandPalette.tsx` (Cmd+K nav/search),
   `BarcodeScannerButton.tsx`, `DocumentLetterhead.tsx` (PDF header), `ScanInvoiceModal.tsx` (OCR),
   `BatchItemReviewModal.tsx` (`settings/batch-import` — per-line product remap + supplier link;

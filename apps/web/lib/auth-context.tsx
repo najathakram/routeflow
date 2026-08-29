@@ -10,6 +10,7 @@ import {
   onCrossTabTokenChange,
   clearOpPresenceCookie,
 } from "./auth";
+import { subscribeImpersonation } from "./impersonation";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -47,6 +48,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         })
         .finally(() => setIsLoading(false));
     }
+  }, []);
+
+  // Impersonation set/clear swaps the active token without a route change —
+  // re-read the decoded identity so the header chip and role gates follow the
+  // acting session. Only a NON-NULL read is applied: a null read (the stored
+  // access token has simply aged out while the refresh token is still good)
+  // must never tear down an established session — that would bounce an idle
+  // tab to /login. Cross-tab sign-out is onCrossTabTokenChange's job below.
+  // Do NOT fall back to refreshTokens() here either — a null read during the
+  // transition must not re-pin the old session.
+  React.useEffect(() => {
+    return subscribeImpersonation(() => {
+      const next = getStoredUser();
+      if (next) setUser(next);
+    });
   }, []);
 
   React.useEffect(() => {

@@ -1,5 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { NotFoundException, ForbiddenException } from "@nestjs/common";
+import { NotFoundException, ForbiddenException, BadRequestException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { DriversService } from "./drivers.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -257,6 +257,50 @@ describe("DriversService", () => {
       expect(data).not.toHaveProperty("homeAddress");
       expect(data).not.toHaveProperty("homeLat");
       expect(data).not.toHaveProperty("homeLng");
+    });
+  });
+
+  // ─── remove ───────────────────────────────────────────────────────────────
+
+  describe("remove", () => {
+    it("deletes the driver and the linked user when the login is a pure DRIVER account", async () => {
+      prisma.driver.findUnique.mockResolvedValue(MOCK_DRIVER);
+      prisma.routeRun.count.mockResolvedValue(0);
+      prisma.user.findUnique.mockResolvedValue({ role: "DRIVER" } as any);
+
+      const result = await service.remove("drv-1");
+
+      expect(result).toEqual({ success: true });
+      expect(prisma.driver.delete).toHaveBeenCalledWith({ where: { id: "drv-1" } });
+      expect(prisma.user.delete).toHaveBeenCalledWith({ where: { id: "user-drv" } });
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it("keeps the login and clears canActAsDriver when the linked user is not a pure DRIVER account", async () => {
+      prisma.driver.findUnique.mockResolvedValue(MOCK_DRIVER);
+      prisma.routeRun.count.mockResolvedValue(0);
+      prisma.user.findUnique.mockResolvedValue({ role: "TENANT_ADMIN" } as any);
+
+      const result = await service.remove("drv-1");
+
+      expect(result).toEqual({ success: true });
+      expect(prisma.driver.delete).toHaveBeenCalledWith({ where: { id: "drv-1" } });
+      expect(prisma.user.delete).not.toHaveBeenCalled();
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: "user-drv" },
+        data: { canActAsDriver: false },
+      });
+    });
+
+    it("throws BadRequestException and deletes nothing when the driver has a scheduled or in-progress run", async () => {
+      prisma.driver.findUnique.mockResolvedValue(MOCK_DRIVER);
+      prisma.routeRun.count.mockResolvedValue(1);
+
+      await expect(service.remove("drv-1")).rejects.toThrow(BadRequestException);
+
+      expect(prisma.driver.delete).not.toHaveBeenCalled();
+      expect(prisma.user.delete).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled();
     });
   });
 });

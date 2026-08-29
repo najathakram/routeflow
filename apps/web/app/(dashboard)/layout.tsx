@@ -962,7 +962,6 @@ function Header({
 // ─── Impersonation banner ─────────────────────────────────────────────────────
 
 function ImpersonationBanner() {
-  const router = useRouter();
   const pathname = usePathname();
   const [imp, setImp] = React.useState<ImpersonationState | null>(null);
 
@@ -980,7 +979,13 @@ function ImpersonationBanner() {
   const exit = () => {
     clearTenantCookie();
     clearImpersonation();
-    router.push("/admin/tenants");
+    // No helper currently reads the super-admin's own (operator) token's
+    // tenantSlug independent of the impersonation token, so there is nothing
+    // to re-pin the cookie from here — the super-admin's own session carries
+    // no tenant. Hard-load (not router.push) so every provider — AuthProvider,
+    // TenantProvider, the nav — remounts cleanly on the operator session
+    // instead of carrying over impersonated state via a soft nav.
+    window.location.href = "/admin/tenants";
   };
 
   return (
@@ -992,7 +997,8 @@ function ImpersonationBanner() {
           </>
         ) : (
           <>
-            ⚠️ Impersonating <strong>{imp.slug}</strong> — acting as Tenant Admin
+            ⚠️ Impersonating <strong>{imp.slug}</strong> — acting as{" "}
+            {imp.username ?? "Tenant Admin"}
           </>
         )}
       </span>

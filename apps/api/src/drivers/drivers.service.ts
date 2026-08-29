@@ -272,9 +272,27 @@ export class DriversService {
       await tx.route.updateMany({ where: { driverId: id }, data: { driverId: null } });
       await tx.routeRun.updateMany({ where: { driverId: id }, data: { driverId: null } });
       await tx.deliveryMutation.updateMany({ where: { driverId: id }, data: { driverId: null } });
-      // Delete driver profile then the linked user account
+
+      const linkedUser = await tx.user.findUnique({
+        where: { id: driver.userId },
+        select: { role: true },
+      });
+
+      // Delete the driver profile, then decide what happens to the linked login
       await tx.driver.delete({ where: { id } });
-      await tx.user.delete({ where: { id: driver.userId } });
+
+      if (linkedUser?.role === UserRole.DRIVER) {
+        // Pure driver accounts exist only to drive — remove the login with the profile.
+        await tx.user.delete({ where: { id: driver.userId } });
+      } else {
+        // Dual-role staff (OPERATOR / TENANT_ADMIN acting as driver): NEVER delete the
+        // login (owner decision 2026-08-28 — deleting the admin's driver profile must not
+        // nuke the tenant's admin account, and restrict-FKs on User made the whole tx roll
+        // back silently, which is why deleted admin drivers "kept coming back"). Clear the
+        // capability flag so Settings/nav stop offering driver surfaces and
+        // toggleDriverPermit cannot silently resurrect the row.
+        await tx.user.update({ where: { id: driver.userId }, data: { canActAsDriver: false } });
+      }
     });
 
     return { success: true };

@@ -1496,7 +1496,11 @@ export default function AdminTenantDetailPage() {
             // legacy-key readers (e.g. the settings Google-link fetch) — the exact
             // contamination that hijacked fresh logins. Cost of removal: realtime
             // sockets (which read OP_KEYS directly) stay silent during impersonation.
-            setImpersonation(res.data.accessToken, tenant.slug);
+            setImpersonation(
+              res.data.accessToken,
+              tenant.slug,
+              res.data.impersonatedUser?.username,
+            );
             setTenantCookie(tenant.slug);
             window.location.href = "/dashboard";
           } catch (impErr: unknown) {
