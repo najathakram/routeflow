@@ -69,9 +69,9 @@ describe("PlatformConfigService — AI usage + test connection", () => {
       expect(u.insightRuns).toBe(4);
       expect(u.tokensIn).toBe(1_540_000);
       expect(u.tokensOut).toBe(308_000);
-      // haiku: 0.7M×$0.8 + 0.14M×$4 = 1.12 ; sonnet: 0.3M×$3 + 0.06M×$15 = 1.8
-      // opus: 0.5M×$15 + 0.1M×$75 = 15 ; sonnet: 0.04M×$3 + 0.008M×$15 = 0.24 → 18.16
-      expect(u.estSpendUsd).toBe(18.16);
+      // haiku: 0.7M×$1 + 0.14M×$5 = 1.40 ; sonnet: 0.3M×$2 + 0.06M×$10 = 1.20
+      // opus: 0.5M×$5 + 0.1M×$25 = 5.00 ; sonnet: 0.04M×$2 + 0.008M×$10 = 0.16 → 7.76
+      expect(u.estSpendUsd).toBe(7.76);
       // 1 failure / 19 calls = 5.3%
       expect(u.errorRate).toBe(5.3);
     });

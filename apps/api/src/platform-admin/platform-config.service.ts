@@ -12,11 +12,13 @@ const CLAUDE_MODELS = [
 ];
 
 // Rough per-1M-token USD pricing (input, output) for the display-only "Est.
-// spend" figure — not billing.
+// spend" figure — not billing. Refreshed 2026-08-29 to current Anthropic API
+// rates (Opus tier 5/25, Sonnet 5 2/10, Haiku 4.5 1/5) — the previous values
+// were one-to-three model generations stale and overstated Opus spend 3×.
 const AI_MODEL_PRICING: Record<string, { in: number; out: number }> = {
-  opus: { in: 15, out: 75 },
-  sonnet: { in: 3, out: 15 },
-  haiku: { in: 0.8, out: 4 },
+  opus: { in: 5, out: 25 },
+  sonnet: { in: 2, out: 10 },
+  haiku: { in: 1, out: 5 },
 };
 
 function modelPrice(model: string): { in: number; out: number } {

@@ -240,6 +240,10 @@ export const LEGACY_ADDON_KEY_TO_SKU: Record<string, AddonSkuCode> = {
   tobacco_dealer: "REGULATED_ITEMS",
   msrp: "MSRP",
   sales_agents: "SALES_AGENTS",
+  // Bridges the @RequireAddon("ocr") scan gate to the catalog's OCR pack SKU so
+  // enabling the addon bills the SKU (when Stripe is on) and SKU activation and
+  // the admin toggle converge on the same TenantAddon key.
+  ocr: "OCR_PACK_250",
 };
 
 /** Resolve an active TenantAddon row to its canonical SKU code (or null if unknown). */
