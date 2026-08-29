@@ -182,8 +182,15 @@ test.describe("Regulated compliance — report panel", () => {
     // Template select is registry-fed, with the category default pre-selected.
     // (The Template <label> is not htmlFor-associated, so the select has no
     // accessible name — assert on its selected option instead.)
+    //
+    // The copy is `{templateLabel(categoryDefaultTemplate)} default` — see
+    // components/RegulatedReportPanel.tsx. It was "Category default (TX_COMPTROLLER)"
+    // until #474 renamed the TX_COMPTROLLER template labels; this assertion was not
+    // updated with it and had been failing on every master E2E run since.
+    // Matched loosely so a further label tweak does not re-break it: what this test
+    // exists to pin is that the CATEGORY DEFAULT is the pre-selected option.
     await expect(page.locator("select").first().locator("option:checked")).toHaveText(
-      "Category default (TX_COMPTROLLER)",
+      /Texas Comptroller\s+default/i,
     );
 
     // Official TX default layout → 12 columns.

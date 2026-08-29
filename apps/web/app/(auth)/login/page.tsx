@@ -12,6 +12,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useTenant } from "@/components/tenant-provider";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { GoogleIcon, startGoogleSignIn } from "@/lib/google-oauth";
+import { tenantSlugFromHostname } from "@/lib/tenant-host";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -35,28 +36,16 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 // the workspace is implied by the URL — pre-fill and lock the field.
 // On platform hosts (www.routeflow.info, app.routeflow.info, hosting-provider
 // domains, localhost) the user must type which workspace they're signing into.
-const PLATFORM_SUBDOMAINS = new Set([
-  "www",
-  "app",
-  "api",
-  "admin",
-  "static",
-  "assets",
-  "mail",
-  "support",
-  "platform",
-  "billing",
-  "localhost",
-]);
-
+// Delegates to `@/lib/tenant-host`, which the middleware uses too. This function
+// used to carry its OWN copy of the host rules and that copy had drifted: it was
+// missing the hosting-provider guard, so on `*.up.railway.app` it returned the
+// SERVICE name ("routeflowweb-production") as a tenant slug. That hid the
+// Workspace field and made the submit handler below write a nonexistent slug into
+// the tenant-slug cookie — form login was impossible on the Railway fallback URL.
+// Keep both callers on the shared helper; never re-inline these rules.
 function getSubdomainWorkspace(): string | null {
   if (typeof window === "undefined") return null;
-  const host = window.location.hostname;
-  const parts = host.split(".");
-  if (parts.length < 3) return null; // bare domain or localhost
-  const sub = parts[0];
-  if (!sub || PLATFORM_SUBDOMAINS.has(sub)) return null;
-  return sub;
+  return tenantSlugFromHostname(window.location.hostname);
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────

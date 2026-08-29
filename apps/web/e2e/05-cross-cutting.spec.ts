@@ -13,6 +13,7 @@ import {
   loginAsOperator,
   loginAsBuyer,
   logout,
+  fillWorkspaceIfShown,
 } from "./helpers/auth";
 import { TENANT_SLUG, CREDENTIALS, HAS_SUPER_ADMIN_CREDS } from "./helpers/constants";
 
@@ -153,6 +154,13 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
       test.skip(true, "Google button not visible — GOOGLE_CLIENT_ID may not be configured");
       return;
     }
+    // startGoogleSignIn() refuses with "Please enter your workspace before signing
+    // in with Google" unless the workspace field has a value. This used to pass by
+    // accident: the login page derived a bogus workspace from the Railway hostname,
+    // so the field was pre-filled with a tenant that does not exist and this test
+    // asserted that OAuth start succeeds for a nonexistent tenant. Now that the host
+    // correctly implies no tenant, fill it explicitly and exercise the real path.
+    await fillWorkspaceIfShown(page);
     await googleBtn.click();
     await page.waitForURL(/accounts\.google\.com|google\.com\/o\/oauth/, { timeout: 15_000 });
     await expect(page).toHaveURL(/google\.com/);

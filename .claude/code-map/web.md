@@ -124,6 +124,18 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   flagged as a follow-up task), while settings' Google-link fetch reads only the legacy key —
   retire them together, never piecemeal.
 - **`lib/tenant-cookie.ts`** — shared cookie util (non-httpOnly — JS-readable required).
+- **`lib/tenant-host.ts`** (2026-08-29) — SINGLE SOURCE OF TRUTH for host→tenant derivation:
+  `PLATFORM_HOSTS`, `HOSTING_PROVIDER_DOMAINS`, `tenantSlugFromHostname(hostname): string | null`
+  (null for <3 labels, platform subdomains, and every hosting-provider domain; `"acme"` for
+  `acme.routeflow.info`). Imported by BOTH `middleware.ts` and the login page's
+  `getSubdomainWorkspace()`. ⚠️ **Never re-inline these rules.** They were duplicated and the copies
+  DRIFTED: the login page lacked the hosting-provider guard, so on `*.up.railway.app` it derived the
+  SERVICE name (`routeflowweb-production`) as a tenant slug — hiding the Workspace field and writing
+  that nonexistent slug into the tenant-slug cookie on submit, making form login impossible on the
+  Railway fallback host. That is why e2e AP-09 failed on every master run for weeks (it is the only
+  spec that logs in through the form without `setExtraHTTPHeaders` masking the clobbered cookie).
+  Knock-on by design: `useTenantBranding` is gated on the derived workspace, so tenant logo/name no
+  longer render on the Railway login page — correct, that host is not a tenant subdomain.
 - **`lib/socket.ts`** — Socket.io singleton, token auth, reconnect.
 - **`lib/auth-keys.ts`** — `OP_KEYS`/`BUYER_KEYS`/`DRIVER_KEYS` (prevent cross-context token bleed).
 - **`lib/page-title-context.tsx`** — `usePageTitle()`.

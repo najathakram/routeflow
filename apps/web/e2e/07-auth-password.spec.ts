@@ -92,6 +92,19 @@ test.describe("Auth & password flows", () => {
     });
     // Client-side navigation (no full page load) → new page components mount
     // and fetch → 401 → refresh fails → sheet.
+    //
+    // Unless the sheet is already up: a mounted component can fetch and 401 on its
+    // own before we get here, and then the modal overlay intercepts pointer events
+    // and this click retries until it times out (seen in CI: 37 retries over 20s
+    // against a link Playwright reported as visible, enabled and stable). The sheet
+    // being open IS this helper's objective, so there is nothing left to trigger.
+    if (
+      await page
+        .getByRole("dialog")
+        .isVisible()
+        .catch(() => false)
+    )
+      return;
     await page.getByRole("link", { name: "Customers" }).first().click();
   }
 

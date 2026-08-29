@@ -1,32 +1,11 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { tenantSlugFromHostname } from "@/lib/tenant-host";
 
-// Subdomains that are platform-level, never tenant slugs
-const PLATFORM_HOSTS = new Set([
-  "www",
-  "app",
-  "api",
-  "admin",
-  "static",
-  "assets",
-  "mail",
-  "support",
-  "platform",
-  "billing",
-  "localhost",
-]);
-
-// Hosting provider base domains — never extract tenant slug from these
-const HOSTING_PROVIDER_DOMAINS = new Set([
-  "railway.app",
-  "up.railway.app",
-  "vercel.app",
-  "netlify.app",
-  "render.com",
-  "fly.dev",
-  "onrender.com",
-  "herokuapp.com",
-]);
+// Platform-level subdomains and hosting-provider base domains live in
+// `@/lib/tenant-host` so the login page derives the workspace with exactly these
+// rules. They were duplicated here and there, and the copies drifted — see the
+// header of that module.
 
 // Mobile-web build served by the @routeflow/mobile Railway service. When phones
 // hit the Next.js web app we rewrite (proxy) the response from this URL so the
@@ -179,29 +158,14 @@ export function middleware(request: NextRequest) {
   const host = request.headers.get("host") ?? "";
   // host may be "acme.routeflow.io" or "acme.routeflow.io:443" — strip port
   const hostname = host.split(":")[0];
-  const parts = hostname.split(".");
 
   // Tenant resolution precedence:
   //   1. Real subdomain (e.g. acme.routeflow.info) → authoritative, overwrites cookie
   //   2. Existing cookie (user picked a workspace on the login form, or
   //      previous successful login anchored it to the user's actual tenant) → preserve
   //   3. Otherwise → no cookie set; the login page asks the user for a workspace.
-  let subdomainSlug: string | null = null;
-
-  if (parts.length >= 3) {
-    // Check against known hosting provider base domains (last 2 or 3 parts)
-    const twoPartBase = parts.slice(-2).join(".");
-    const threePartBase = parts.slice(-3).join(".");
-    const isHostingProvider =
-      HOSTING_PROVIDER_DOMAINS.has(twoPartBase) || HOSTING_PROVIDER_DOMAINS.has(threePartBase);
-
-    if (!isHostingProvider) {
-      const subdomain = parts[0];
-      if (subdomain && !PLATFORM_HOSTS.has(subdomain)) {
-        subdomainSlug = subdomain;
-      }
-    }
-  }
+  // Shared with the login page's getSubdomainWorkspace() — see `@/lib/tenant-host`.
+  const subdomainSlug: string | null = tenantSlugFromHostname(hostname);
 
   const existingCookieSlug = request.cookies.get("tenant-slug")?.value || null;
 
