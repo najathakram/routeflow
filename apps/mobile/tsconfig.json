@@ -1,6 +1,10 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "strict": true
+    "strict": true,
+    // Pin implicit @types discovery to THIS tree. Without it tsc walks every
+    // ancestor node_modules/@types — from a git worktree that reaches the main
+    // checkout's install and picks up (or trips over) whatever state it is in.
+    "typeRoots": ["./node_modules/@types", "../../node_modules/@types"]
   }
 }

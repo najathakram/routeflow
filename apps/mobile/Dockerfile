@@ -19,10 +19,10 @@ COPY packages/ui/package.json               packages/ui/
 # Mobile workspace manifest
 COPY apps/mobile/package.json apps/mobile/
 
-# Install all workspace dependencies.
-# --force bypasses the EBADPLATFORM error for @next/swc-win32-x64-msvc which
-# ends up in the lockfile when generated on Windows.
-RUN npm install --force
+# Install exactly the committed lockfile — no registry re-resolution.
+# (win32-only optional deps like @next/swc-win32-* are skipped cleanly by
+# modern npm; the old --force recipe predates that.)
+RUN npm ci
 
 # ── Copy full source ──
 COPY packages/ packages/

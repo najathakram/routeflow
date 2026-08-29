@@ -62,9 +62,7 @@ jobs:
           cache: npm
 
       - name: Install root deps
-        run: |
-          rm -f package-lock.json
-          npm install --force
+        run: npm ci --engine-strict=false
 
       - name: Run post-deploy check
         run: npm run post-deploy-check
@@ -93,9 +91,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: |
-          rm -f package-lock.json
-          npm install --force
+        run: npm ci --engine-strict=false
 
       - name: Install Playwright browsers
         working-directory: apps/web
