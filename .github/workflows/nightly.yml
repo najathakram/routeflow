@@ -97,6 +97,16 @@ jobs:
         working-directory: apps/web
         run: npx playwright install chromium --with-deps
 
+      # Deliberately NO deploy-readiness gate here, unlike ci.yml's e2e job.
+      # That gate exists because the master-push job races the Railway deploy it
+      # was triggered by. This one runs at 02:00 UTC on a schedule, hours after
+      # any deploy, so there is nothing to wait for — and gating on github.sha
+      # would be actively wrong: a scheduled run's sha is the branch tip, which
+      # says nothing about when the deployment happened.
+      # ⚠️ Separately: this workflow has not actually executed in weeks. While the
+      # repo is private, scheduled Actions are billed and every job fails to start
+      # ("recent account payments have failed…", started_at: null). Do not treat a
+      # nightly result — green or red — as a signal without checking it ran.
       - name: Run Playwright tests
         working-directory: apps/web
         run: npx playwright test

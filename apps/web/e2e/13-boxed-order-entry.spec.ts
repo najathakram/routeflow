@@ -109,6 +109,7 @@ test.describe("Operator — Boxed order entry (WP2-13)", () => {
    */
   async function findBoxedLine(page: Page): Promise<Locator | null> {
     const search = page.getByPlaceholder(PRODUCT_SEARCH_PLACEHOLDER);
+    const lines = page.locator("ul.divide-y > li");
     const dropdownButtons = page
       .locator(`input[placeholder="${PRODUCT_SEARCH_PLACEHOLDER}"] ~ ul > li > button`)
       .filter({ hasNotText: "Create new product" });
@@ -125,11 +126,24 @@ test.describe("Operator — Boxed order entry (WP2-13)", () => {
         if (/\bvariants?\b/i.test(label)) continue; // expands a parent, never adds a line
 
         await btn.click();
-        const row = page.locator("ul.divide-y > li").last();
+        // The line renders a tick after the click. `isVisible()` is a single
+        // non-retrying probe, so reading it straight off the click meant a slow
+        // render answered "not boxed" — and the boxed product was then REMOVED
+        // and skipped, leaving the spec to self-skip green on a tenant that does
+        // have one. Wait for the row to render before judging it.
+        //
+        // Waited on the ROW, deliberately not on `toHaveCount(1)` over the whole
+        // page: `ul.divide-y` is not unique to this modal (orders/[id] and
+        // CreditNotePicker render the same class combo), so a page-wide count
+        // assertion would be a latent false RED the day one of those is mounted
+        // behind the modal. Row-visibility fixes the same race without that coupling.
+        const row = lines.last();
+        await expect(row).toBeVisible({ timeout: 10_000 });
         const boxesInput = row.locator('input[title="Number of whole cases"]');
         if (await boxesInput.isVisible().catch(() => false)) return row;
 
         await row.getByTitle("Remove").click();
+        await expect(row).toBeHidden({ timeout: 10_000 });
         // Re-open the same result set for the next candidate index.
         requested = waitForProductSearch(page, term);
         await search.fill(term);
@@ -137,6 +151,49 @@ test.describe("Operator — Boxed order entry (WP2-13)", () => {
       }
     }
     return null;
+  }
+
+  /**
+   * Waits out the builder's post-add re-focus of the product search.
+   *
+   * `CreateOrderModal#addLineItem` clears the search and then re-focuses it on a
+   * `setTimeout(…, 50)` so a wedge scanner can fire the next code. Playwright's
+   * `fill()` on an `input[type=number]` is TWO round trips — first an in-page
+   * `select() + focus()`, then a separate CDP `Input.insertText` — and
+   * `insertText` goes to whatever is focused when it lands. When that 50 ms
+   * re-focus falls between the two, the keystroke is delivered to the SEARCH box
+   * (which then holds a stray "0") and the qty input keeps its old value, with
+   * no error: `fill()` never reads the value back. The line total then stays on
+   * the previous quantity forever and the money poll below burns its full
+   * timeout — the exact master-CI failure this guard removes (verified by
+   * replaying the steal: cases input stayed "1", search took the "0", total sat
+   * at 1 case + 2 pieces instead of 2 pieces).
+   *
+   * Waiting for the search to be empty AND focused proves that timer has already
+   * fired, so nothing is left pending to steal the keystrokes that follow.
+   */
+  async function waitForPostAddRefocus(page: Page) {
+    const search = page.getByPlaceholder(PRODUCT_SEARCH_PLACEHOLDER);
+    await expect(search).toHaveValue("", { timeout: 10_000 });
+    await expect(search).toBeFocused({ timeout: 10_000 });
+  }
+
+  /**
+   * Types a quantity into one of the row's boxed inputs and does not return
+   * until the input actually holds it. `fill()` alone is fire-and-forget (see
+   * `waitForPostAddRefocus`), so a swallowed keystroke is re-typed here rather
+   * than surfacing 10 s later as an unexplained money mismatch. This asserts
+   * only the INPUT, never the total — the proration assertion stays untouched.
+   */
+  async function setBoxedQty(page: Page, input: Locator, value: string) {
+    const search = page.getByPlaceholder(PRODUCT_SEARCH_PLACEHOLDER);
+    await expect(async () => {
+      // Never leave a stolen keystroke sitting in the search box: it re-opens the
+      // product dropdown, which would swallow this test's closing Escape.
+      if ((await search.inputValue()) !== "") await search.fill("");
+      await input.fill(value);
+      await expect(input).toHaveValue(value, { timeout: 2_000 });
+    }).toPass({ timeout: 15_000, intervals: [100, 250, 500, 1_000] });
   }
 
   /** Reads the case price and pack size straight off the line row's own text. */
@@ -172,6 +229,21 @@ test.describe("Operator — Boxed order entry (WP2-13)", () => {
     boxes: number,
     pieces: number,
   ) {
+    // Gate the money poll on the piece count the row renders from `li.qty` —
+    // the SAME state `computeLineSubtotal` prices, and a value that provably
+    // changes between the two cases below (2 pcs, then unitsPerBox + 2). Once it
+    // reads the new quantity, React has committed the typed input and the poll
+    // can no longer sample a pre-commit render of the old total. This asserts the
+    // QUANTITY only: wrong proration still fails the assertion that follows.
+    //
+    // Anchored with \b rather than a bare substring: "2 pcs total" is a substring
+    // of "12 pcs total", so on a tenant whose unitsPerBox ends in 0 the mixed case
+    // would satisfy the pieces-only gate and stop guarding the stolen-keystroke
+    // mode it exists for. \b cannot match between "1" and "2" (both word chars).
+    const totalPieces = boxes * unitsPerBox + pieces;
+    await expect(row).toContainText(new RegExp(String.raw`\b${totalPieces} pcs total`), {
+      timeout: 10_000,
+    });
     const expected = Math.round(boxPrice * (boxes + pieces / unitsPerBox) * 100) / 100;
     await expect
       .poll(async () => Math.abs((await readLineTotal(row)) - expected), { timeout: 10_000 })
@@ -189,17 +261,20 @@ test.describe("Operator — Boxed order entry (WP2-13)", () => {
       return;
     }
 
+    // Let the builder's post-add re-focus land before typing into the row.
+    await waitForPostAddRefocus(page);
+
     const { boxPrice, unitsPerBox } = await readBoxedFacts(row);
     const boxesInput = row.locator('input[title="Number of whole cases"]');
     const piecesInput = row.locator('input[title="Extra loose units (less than a full case)"]');
 
     // Pieces-only: 0 cases + 2 loose units.
-    await boxesInput.fill("0");
-    await piecesInput.fill("2");
+    await setBoxedQty(page, boxesInput, "0");
+    await setBoxedQty(page, piecesInput, "2");
     await assertLineTotal(row, boxPrice, unitsPerBox, 0, 2);
 
     // Mixed: 1 case + 2 loose units.
-    await boxesInput.fill("1");
+    await setBoxedQty(page, boxesInput, "1");
     await assertLineTotal(row, boxPrice, unitsPerBox, 1, 2);
 
     // Escape out — no add-item sub-flow is active (search cleared, no custom
