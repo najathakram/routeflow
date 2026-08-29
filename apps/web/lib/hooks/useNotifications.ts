@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { connectSocket } from "../socket";
 import { OP_KEYS } from "../auth-keys";
 import { pendingApprovalsKey } from "../api/portal-approvals";
+import { useTenant } from "@/components/tenant-provider";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -21,22 +22,30 @@ export interface AppNotification {
 
 // ─── LocalStorage persistence ─────────────────────────────────────────────────
 
-const STORAGE_KEY = "rf_notifications";
+// Pre-tenant-scoping key: its data can't be attributed to a tenant, so it is
+// deleted on load rather than migrated (migrating IS the cross-tenant leak).
+const LEGACY_STORAGE_KEY = "rf_notifications";
 const MAX_NOTIFICATIONS = 50;
 
-function loadFromStorage(): AppNotification[] {
-  if (typeof window === "undefined") return [];
+function storageKey(slug: string): string {
+  return `rf_notifications:${slug}`;
+}
+
+function loadFromStorage(slug: string | null): AppNotification[] {
+  if (typeof window === "undefined" || !slug) return [];
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey(slug));
     return raw ? (JSON.parse(raw) as AppNotification[]) : [];
   } catch {
     return [];
   }
 }
 
-function saveToStorage(notifications: AppNotification[]) {
+function saveToStorage(slug: string | null, notifications: AppNotification[]) {
+  if (!slug) return;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(notifications));
+    localStorage.setItem(storageKey(slug), JSON.stringify(notifications));
   } catch {
     // ignore quota / security errors
   }
@@ -47,11 +56,19 @@ function saveToStorage(notifications: AppNotification[]) {
 export function useNotifications() {
   const [notifications, setNotifications] = React.useState<AppNotification[]>([]);
   const queryClient = useQueryClient();
+  // TenantProvider owns slug resolution (JWT wins over cookie, self-heals, and
+  // re-resolves on tab focus after a multi-tab impersonation switch).
+  const { slug } = useTenant();
+  // Mirrors `slug` so push/markAllRead/clear keep stable identities (the socket
+  // effect depends on `push`) while still writing to the current tenant's key.
+  const slugRef = React.useRef<string | null>(null);
 
-  // Hydrate from localStorage on mount (client only)
+  // (Re)hydrate whenever the tenant resolves or switches — per-tenant keys mean
+  // a switch must drop the previous tenant's history, not carry it over.
   React.useEffect(() => {
-    setNotifications(loadFromStorage());
-  }, []);
+    slugRef.current = slug;
+    setNotifications(loadFromStorage(slug));
+  }, [slug]);
 
   const push = React.useCallback((n: Omit<AppNotification, "id" | "timestamp" | "read">) => {
     setNotifications((prev) => {
@@ -64,7 +81,7 @@ export function useNotifications() {
         },
         ...prev,
       ].slice(0, MAX_NOTIFICATIONS);
-      saveToStorage(next);
+      saveToStorage(slugRef.current, next);
       return next;
     });
   }, []);
@@ -161,14 +178,14 @@ export function useNotifications() {
   const markAllRead = React.useCallback(() => {
     setNotifications((prev) => {
       const next = prev.map((n) => ({ ...n, read: true }));
-      saveToStorage(next);
+      saveToStorage(slugRef.current, next);
       return next;
     });
   }, []);
 
   const clear = React.useCallback(() => {
     setNotifications([]);
-    saveToStorage([]);
+    saveToStorage(slugRef.current, []);
   }, []);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
