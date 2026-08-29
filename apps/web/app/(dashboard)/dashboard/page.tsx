@@ -32,7 +32,7 @@ import { useProducts } from "@/lib/api/products";
 import { unitsLabel } from "@/lib/stock-label";
 import { useFinanceDashboard } from "@/lib/api/finance";
 import { useInvoices, type Invoice } from "@/lib/api/invoices";
-import { useDeveloperMode, useRoutesAccess } from "@/lib/api/addons";
+import { useRoutesAccess } from "@/lib/api/addons";
 
 // ─── Column definitions (stable refs, defined outside component) ───────────────
 
@@ -503,11 +503,10 @@ export default function DashboardPage() {
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
-  const { enabled: devMode } = useDeveloperMode();
   // Routes/drivers are recurring-routes surfaces, so every gate below (the mode
-  // pill AND the route/driver cards it reveals) must use the same union as the
-  // shell's "Drive mode" menu item / exit chip in (dashboard)/layout.tsx —
-  // otherwise a recurring_routes-only tenant can enter drive mode but lands back
+  // pill AND the route/driver cards it reveals) must use the same condition as
+  // the shell's "Drive mode" menu item / exit chip in (dashboard)/layout.tsx —
+  // otherwise a recurring_routes tenant can enter drive mode but lands back
   // here with no mode pill and no driver content.
   const { enabled: routesAccess } = useRoutesAccess();
 
@@ -519,8 +518,7 @@ export default function DashboardPage() {
   const isCustomer = user?.role === "CUSTOMER";
   const baseIsDriver = user?.role === "DRIVER";
 
-  const canActAsDriver =
-    user?.canActAsDriver === true && baseIsOperator && (devMode || routesAccess);
+  const canActAsDriver = user?.canActAsDriver === true && baseIsOperator && routesAccess;
 
   // View mode for dual-role users — persisted across visits
   const [viewMode, setViewMode] = React.useState<ViewMode>("operator");
@@ -561,11 +559,17 @@ export default function DashboardPage() {
     isLoading: recentLoading,
     isError: recentError,
   } = useOrders({ page: 1, limit: 5 }, POLL);
+  // `/route-runs` and `/drivers` are addon-gated server-side (403 without a
+  // dispatch addon), so the 30s polls must be skipped for tenants that can't see
+  // the cards they feed — same condition as the render gates below.
   const { data: routeRunsData, isLoading: runsLoading } = useRouteRuns(
     { status: "SCHEDULED" },
-    POLL,
+    { ...POLL, enabled: routesAccess },
   );
-  const { data: driversData, isLoading: driversLoading } = useDrivers({ page: 1, limit: 20 }, POLL);
+  const { data: driversData, isLoading: driversLoading } = useDrivers(
+    { page: 1, limit: 20 },
+    { ...POLL, enabled: routesAccess },
+  );
   const { data: lowStockData, isLoading: lowStockLoading } = useProducts(
     { isActive: true, stockStatus: "LOW", limit: 5 },
     POLL,
@@ -655,7 +659,7 @@ export default function DashboardPage() {
               <FileMinus className="mr-1.5 h-3.5 w-3.5" />
               New Invoice
             </Button>
-            {(devMode || routesAccess) && (
+            {routesAccess && (
               <Button href="/routes/create" size="sm" variant="secondary">
                 <Truck className="mr-1.5 h-3.5 w-3.5" />
                 New Route
@@ -726,7 +730,7 @@ export default function DashboardPage() {
           </Link>
         )}
         {(isOperator || isDriver) &&
-          (devMode || routesAccess) &&
+          routesAccess &&
           (runsLoading ? (
             <StatSkeleton />
           ) : (
@@ -740,7 +744,7 @@ export default function DashboardPage() {
             </Link>
           ))}
         {isOperator &&
-          (devMode || routesAccess) &&
+          routesAccess &&
           (driversLoading ? (
             <StatSkeleton />
           ) : (
@@ -905,7 +909,7 @@ export default function DashboardPage() {
               ))}
 
             {/* Scheduled route runs */}
-            {(devMode || routesAccess) && (
+            {routesAccess && (
               <Card>
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-base font-semibold text-navy">Scheduled Route Runs</h3>
@@ -946,7 +950,7 @@ export default function DashboardPage() {
           {/* Right 1/3: Driver Status + Low Stock */}
           {isOperator && (
             <div className="flex flex-col gap-6">
-              {(devMode || routesAccess) && (
+              {routesAccess && (
                 <Card title="Driver Status">
                   {driversLoading ? (
                     <div className="animate-pulse space-y-4 py-2">

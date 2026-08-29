@@ -105,15 +105,19 @@ interface PaginatedResponse<T> {
 }
 
 // Routes
-export function useRoutes(params?: {
-  search?: string;
-  isActive?: boolean;
-  page?: number;
-  kind?: "SCHEDULED" | "ADHOC";
-}) {
+export function useRoutes(
+  params?: {
+    search?: string;
+    isActive?: boolean;
+    page?: number;
+    kind?: "SCHEDULED" | "ADHOC";
+  },
+  options?: { enabled?: boolean },
+) {
   return useQuery<PaginatedResponse<Route>>({
     queryKey: ["routes", params],
     queryFn: () => apiClient.get("/routes", { params }).then((r) => r.data),
+    ...options,
   });
 }
 
@@ -288,7 +292,7 @@ export function useRouteRuns(
     page?: number;
     limit?: number;
   },
-  options?: { refetchInterval?: number },
+  options?: { refetchInterval?: number; enabled?: boolean },
 ) {
   return useQuery<PaginatedResponse<RouteRun>>({
     queryKey: ["route-runs", params],

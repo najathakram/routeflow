@@ -122,7 +122,7 @@ import {
 import { useUndo } from "@/lib/undo";
 import { useProducts } from "@/lib/api/products";
 import { useHasAddon } from "@/lib/api/tobacco";
-import { MSRP_ADDON, SALES_AGENTS_ADDON } from "@/lib/api/addons";
+import { MSRP_ADDON, SALES_AGENTS_ADDON, useRoutesAccess } from "@/lib/api/addons";
 import {
   useCustomerCurrentAgent,
   useSalesAgents,
@@ -496,16 +496,22 @@ function AssignRouteModal({
   onClose,
   customerId,
   addresses,
+  routesAccess,
 }: {
   isOpen: boolean;
   onClose: () => void;
   customerId: string;
   addresses: { id: string; label: string; line1: string; city: string }[];
+  routesAccess: boolean;
 }) {
-  const { data: routesData, isLoading: routesLoading } = useRoutes({
-    isActive: true,
-    page: 1,
-  });
+  // This modal is always mounted (isOpen is a prop, not a mount condition), and
+  // /routes is addon-gated server-side (403 without a dispatch addon), so the
+  // query has to stay off until it is actually open on a routes tenant —
+  // same double-gate as AssignAgentModal above.
+  const { data: routesData, isLoading: routesLoading } = useRoutes(
+    { isActive: true, page: 1 },
+    { enabled: isOpen && routesAccess },
+  );
   const addStop = useAddStopToRoute();
   const [routeId, setRouteId] = React.useState("");
   const [addressId, setAddressId] = React.useState("");
@@ -1899,6 +1905,10 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
   const isOperator = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
   const { toast } = useToast();
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
+  // Assigning a customer to a standing route is a recurring-routes surface —
+  // /routes 403s without a dispatch addon, so hide the entry point and keep the
+  // modal's query off (this page is not behind the shell's RouteGuard).
+  const { enabled: routesAccess } = useRoutesAccess();
   const currentAgent = useCustomerCurrentAgent(params.id, { enabled: hasSalesAgents });
   const [agentModalOpen, setAgentModalOpen] = React.useState(false);
   const closeAssignment = useCloseAssignment();
@@ -2891,14 +2901,16 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
                         ))}
                       </ul>
                     )}
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      leftIcon={<Plus className="h-4 w-4" />}
-                      onClick={() => setIsAssignRouteOpen(true)}
-                    >
-                      Assign to Route
-                    </Button>
+                    {routesAccess && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        leftIcon={<Plus className="h-4 w-4" />}
+                        onClick={() => setIsAssignRouteOpen(true)}
+                      >
+                        Assign to Route
+                      </Button>
+                    )}
                   </div>
                 </Card>
               </div>
@@ -4133,6 +4145,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
           line1: a.line1,
           city: a.city,
         }))}
+        routesAccess={routesAccess}
       />
       <ContactPersonModal
         isOpen={isContactModalOpen}

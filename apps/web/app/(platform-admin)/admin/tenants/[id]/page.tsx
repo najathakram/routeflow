@@ -146,9 +146,9 @@ const AVAILABLE_ADDONS = [
     key: DEVELOPER_MODE_ADDON,
     name: "Developer Mode",
     description:
-      "Unlock in-development features (dispatch, routes, drivers, and the ad-hoc trip builder) " +
-      "for this tenant (master switch — unlocks every in-development surface, including both " +
-      "delivery features, for this tenant; UI-only)",
+      "Unlock in-development surfaces for this tenant — currently the mobile driver-app " +
+      "preview (and dispatch API access for end-to-end testing). No longer unlocks Recurring " +
+      "routes or Order delivery: enable those add-ons individually.",
   },
 ];
 
@@ -1496,7 +1496,11 @@ export default function AdminTenantDetailPage() {
             // legacy-key readers (e.g. the settings Google-link fetch) — the exact
             // contamination that hijacked fresh logins. Cost of removal: realtime
             // sockets (which read OP_KEYS directly) stay silent during impersonation.
-            setImpersonation(res.data.accessToken, tenant.slug);
+            setImpersonation(
+              res.data.accessToken,
+              tenant.slug,
+              res.data.impersonatedUser?.username,
+            );
             setTenantCookie(tenant.slug);
             window.location.href = "/dashboard";
           } catch (impErr: unknown) {

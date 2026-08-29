@@ -8,10 +8,10 @@ import { OperatorTabBar } from "../../components/OperatorTabBar";
 import { useDeliveryAccess, useRoutesAccess } from "../../lib/api/addons";
 
 // Owner split 2026-08-25: recurring routes and ad-hoc order delivery are two
-// independent per-tenant addons (developer_mode still unlocks both — folded
-// into useRoutesAccess/useDeliveryAccess so it's never missed). Sections
-// mirror lib/operator-tabs.ts SECTION_TO_TAB's "dispatch" entries, split by
-// which feature actually owns each screen.
+// independent per-tenant addons (owner decision 2026-08-28: developer_mode no
+// longer unlocks either — useRoutesAccess/useDeliveryAccess read the feature
+// addon alone). Sections mirror lib/operator-tabs.ts SECTION_TO_TAB's
+// "dispatch" entries, split by which feature actually owns each screen.
 //
 // "dispatch" itself is the shared hub ((tabs)/dispatch.tsx) that now surfaces
 // BOTH the recurring-routes rows and the Order-delivery entry point, so it

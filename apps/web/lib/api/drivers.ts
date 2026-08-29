@@ -36,7 +36,10 @@ interface PaginatedResponse<T> {
   meta: { total: number; page: number; limit: number; totalPages: number };
 }
 
-export function useDrivers(params?: ListParams, options?: { refetchInterval?: number }) {
+export function useDrivers(
+  params?: ListParams,
+  options?: { refetchInterval?: number; enabled?: boolean },
+) {
   return useQuery<PaginatedResponse<Driver>>({
     queryKey: ["drivers", params],
     queryFn: () => apiClient.get("/drivers", { params }).then((r) => r.data),

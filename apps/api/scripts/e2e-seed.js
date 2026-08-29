@@ -32,21 +32,27 @@ const OPERATOR_USERNAME = "admin";
 const OPERATOR_PASSWORD = "Admin@123";
 const CUSTOMER_USERNAME = "harbor_cafe";
 const CUSTOMER_PASSWORD = "Customer1!";
-// Hidden platform-admin addon that unlocks dispatch/routes/drivers UI — the
-// web e2e suite (OP-10 and friends) exercises /routes, so this tenant must
-// keep it active. See .claude/pipeline/plans/2026-08-20-developer-mode-hide-dispatch.md.
+// Feature addons the web e2e suite depends on. developer_mode no longer
+// unlocks the GA delivery features in client UI (owner decision 2026-08-28) —
+// the web e2e suite exercises /routes and /deliveries, which now need the
+// real feature addons (recurring_routes, order_delivery). developer_mode
+// itself stays active for the mobile driver-app surface, and the dispatch API
+// still accepts it as an any-of key.
 const DEVELOPER_MODE_ADDON = "developer_mode";
+const RECURRING_ROUTES_ADDON = "recurring_routes";
+const ORDER_DELIVERY_ADDON = "order_delivery";
 
-// Idempotent upsert of an ACTIVE TenantAddon row for developer_mode. Row shape
-// matches what AddonService.hasAddon/getActiveAddons match on (see
+// Idempotent upsert of an ACTIVE TenantAddon row for the given addon key. Row
+// shape matches what AddonService.hasAddon/getActiveAddons match on (see
 // apps/api/src/billing/addon.service.ts): stripePriceId/stripeItemId stay
-// null — this is a free, non-Stripe addon.
-async function ensureDeveloperMode(tenantId) {
+// null — these are free, non-Stripe addons. `update: { active: true }` (not
+// `{}`) because the e2e canary must be deterministic, unlike the demo tenant.
+async function ensureAddon(tenantId, addonKey) {
   await prisma.tenantAddon.upsert({
-    where: { tenantId_addonKey: { tenantId, addonKey: DEVELOPER_MODE_ADDON } },
+    where: { tenantId_addonKey: { tenantId, addonKey } },
     create: {
       tenantId,
-      addonKey: DEVELOPER_MODE_ADDON,
+      addonKey,
       stripePriceId: null,
       stripeItemId: null,
       active: true,
@@ -109,9 +115,11 @@ async function main() {
       console.log(`  ✓ Customer "${CUSTOMER_USERNAME}" exists`);
     }
 
-    // ── Developer mode addon (unlocks dispatch/routes/drivers UI) ───────────────
-    await ensureDeveloperMode(existing.id);
-    console.log(`  ✓ Developer mode addon active`);
+    // ── Feature addons (developer_mode + recurring_routes + order_delivery) ─────
+    await ensureAddon(existing.id, DEVELOPER_MODE_ADDON);
+    await ensureAddon(existing.id, RECURRING_ROUTES_ADDON);
+    await ensureAddon(existing.id, ORDER_DELIVERY_ADDON);
+    console.log(`  ✓ Developer mode, recurring routes, and order delivery addons active`);
 
     // ── Sweep stale parked drafts left by the web e2e suite ─────────────────────
     // 08-create-order-escape's ESC tests auto-park REAL drafts ("Order, <name>",
@@ -197,9 +205,11 @@ async function main() {
   });
   console.log(`  ✓ Customer created: ${CUSTOMER_USERNAME} / ${CUSTOMER_PASSWORD}`);
 
-  // ── Developer mode addon (unlocks dispatch/routes/drivers UI) ─────────────────
-  await ensureDeveloperMode(tenant.id);
-  console.log(`  ✓ Developer mode addon active`);
+  // ── Feature addons (developer_mode + recurring_routes + order_delivery) ───────
+  await ensureAddon(tenant.id, DEVELOPER_MODE_ADDON);
+  await ensureAddon(tenant.id, RECURRING_ROUTES_ADDON);
+  await ensureAddon(tenant.id, ORDER_DELIVERY_ADDON);
+  console.log(`  ✓ Developer mode, recurring routes, and order delivery addons active`);
 
   console.log("\n✅ E2E seed complete.\n");
 }

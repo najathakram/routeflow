@@ -25,10 +25,11 @@ export function useDeveloperMode(): { enabled: boolean; isLoading: boolean; reso
 // ─── Recurring routes (standing route templates + scheduled dispatch) ─────────
 //
 // Owner decision 2026-08-25: order delivery and recurring routes are separate
-// per-tenant addons; `useDeveloperMode` remains the master switch that unlocks
-// both (see useDeliveryAccess/useRoutesAccess below — every gate should read
-// through those, not this hook directly, so devMode is never missed). Same
-// addons fetch as useDeveloperMode — one call serves every flag.
+// per-tenant addons (see useDeliveryAccess/useRoutesAccess below — every gate
+// should read through those, not this hook directly). Owner decision
+// 2026-08-28: `developer_mode` no longer unlocks either GA delivery feature —
+// see the composition-helpers comment below. Same addons fetch as
+// useDeveloperMode — one call serves every flag.
 export function useRecurringRoutes(): { enabled: boolean; isLoading: boolean; resolved: boolean } {
   const { data, isLoading, isSuccess } = useTenantAddons();
   const enabled = data?.addons?.includes(RECURRING_ROUTES_ADDON) ?? false;
@@ -47,21 +48,19 @@ export function useOrderDelivery(): { enabled: boolean; isLoading: boolean; reso
 // ─── Composition helpers: effective surface visibility ────────────────────────
 //
 // Every routes/deliveries gate (nav, RouteGuard, command palette, orders
-// bulkbar) should read through these, never through the raw addon hooks —
-// `developer_mode` must keep unlocking both features with zero regressions.
+// bulkbar) should read through these, never through the raw addon hooks.
 
-/** Order-delivery surface visibility: the feature addon OR the dev master switch. */
+/** Order-delivery surface visibility — the feature addon alone (owner decision 2026-08-28:
+ *  developer_mode no longer unlocks GA delivery features; it remains only for genuinely
+ *  in-development surfaces, none of which exist on web today). */
 export function useDeliveryAccess(): { enabled: boolean; resolved: boolean } {
-  const dev = useDeveloperMode();
   const od = useOrderDelivery();
-  return { enabled: dev.enabled || od.enabled, resolved: dev.resolved || od.resolved };
+  return { enabled: od.enabled, resolved: od.resolved };
 }
 
-/** Recurring-routes surface visibility: the feature addon OR the dev master switch. */
 export function useRoutesAccess(): { enabled: boolean; resolved: boolean } {
-  const dev = useDeveloperMode();
   const rr = useRecurringRoutes();
-  return { enabled: dev.enabled || rr.enabled, resolved: dev.resolved || rr.resolved };
+  return { enabled: rr.enabled, resolved: rr.resolved };
 }
 
 // ─── MSRP on invoices (display-only suggested retail price) ───────────────────

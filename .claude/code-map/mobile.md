@@ -11,7 +11,7 @@ real-time sync; offline queue for driver route completions.
 | API base client, token handling | `lib/api-client.ts` — `apiClient` axios, `BASE_URL` via `EXPO_PUBLIC_API_URL`, role-namespaced tokens |
 | Auth login & token refresh | `lib/auth.ts` — `login()`, `loginWithGoogle()`, `getStoredUser()`, `refreshTokens()`, `changePassword()`/`setPassword()` (both store the server's rotated pair), SecureStore (web → localStorage); `lib/last-username.ts` prefills the login screen after expiry. **F12-005 OAuth session-fixation guard** `lib/oauth-state.ts` (pure: `generateOAuthState`/`isValidReturnedState`/`OAUTH_STATE_KEY`, test `__tests__/oauth-state.test.ts`): `loginWithGoogle`/`buyerLoginWithGoogle` generate a device nonce, store it (SecureStore), pass `device_state` to `GET /auth/google`; the API echoes it back as `&state=` in the `routeflow://` deep link and `app/(auth)/google-callback.tsx` (the unsolicited-deep-link surface) rejects any callback whose `state` doesn't match the stored nonce before persisting tokens |
 | Operator/driver auth store | `lib/auth-store.ts` — `useAuthStore` (Zustand), dual-role, activeRole override; `initialize()` registers `registerStaffSessionExpiredHandler` (api-client) so a failed 401-refresh clears the in-memory user → root layout redirects to login (staff mirror of the buyer session-expired handler); spec `__tests__/session-expired-wiring.test.ts` |
-| Developer mode (hidden dispatch/route/driver addon) | `lib/api/addons.ts` — `useDeveloperMode()` → `{enabled, isLoading, resolved}`; gate points: `app/_layout.tsx` (driver branch), `(operator)/(tabs)/{home,more}.tsx`, `(tenant)/_layout.tsx`, `(auth)/role-picker.tsx` — plus, THROUGH the composed `useRoutesAccess()`/`useDeliveryAccess()` (`devMode \|\| feature`), `app/(operator)/_layout.tsx` (deep-link chokepoint) and `components/OperatorTabBar.tsx` → `lib/operator-tabs.ts` `visibleOperatorTabs(dispatchAccess)`. See "Developer mode gate 2026-08-20" + the 2026-08-25 split |
+| Developer mode (in-development surfaces only, NARROWED 2026-08-28) | `lib/api/addons.ts` — `useDeveloperMode()` → `{enabled, isLoading, resolved}`; remaining gate points: `app/_layout.tsx` (driver branch), `(tenant)/_layout.tsx` (dispatch tab), `(auth)/role-picker.tsx` (driver option), and the RAW drive-mode reads in `(operator)/(tabs)/{home,more}.tsx`. It **no longer flows through** `useRoutesAccess()`/`useDeliveryAccess()` — those are the feature addon alone, so `app/(operator)/_layout.tsx` (deep-link chokepoint) and `components/OperatorTabBar.tsx` → `lib/operator-tabs.ts` `visibleOperatorTabs(dispatchAccess)` follow `recurring_routes`/`order_delivery` only. See "Developer mode gate 2026-08-20" + the 2026-08-25 split + the 2026-08-28 narrowing |
 | Password set/change (all roles) | `lib/password-form.ts` — `buildPasswordSchema("set"\|"change")` + `passwordEndpoint`/`forgotPasswordEndpoint`/`resetPasswordEndpoint`/`audienceFromParam` (staff vs buyer, spec `__tests__/password-form.test.ts`); operator/driver/customer change-password screens branch on fresh `hasPassword` (`GET /users/me` / `GET /buyer/auth/profile`) → set mode hides the current-password field; `(auth)/forgot-password` + `reset-password` take `?audience=buyer` (customer-login passes it); `force-change-password` gains a Sign out escape + set-mode branch |
 | Buyer auth & session | `lib/buyer-auth.ts` + `lib/buyer-session-store.ts` — login, activeSeller, cross-tab logout |
 | Socket.IO operator/driver | `hooks/useSocket.ts` — order/route/stop events → query invalidation, transports [polling, websocket] |
@@ -75,7 +75,7 @@ real-time sync; offline queue for driver route completions.
 ## App shell & lib
 
 - root `app/_layout.tsx` — Gesture + SafeArea + QueryClient + fonts + Notifications + auth/tenant/buyer init gates + ConfirmModal. Its role-routing effect also owns the **driver developer-mode gate** (see "Developer mode gate 2026-08-20" below). Module-top `initSentry()` (`lib/sentry.ts`, 2026-08-26): web-platform-only, inert unless `EXPO_PUBLIC_SENTRY_DSN` set, dynamic-imports `@sentry/react`, fire-and-forget.
-- **developer mode** `lib/api/addons.ts` — `useDeveloperMode()` → `{enabled, isLoading, resolved}`; the ONE gate for the hidden dispatch/driver/route surfaces (see "Developer mode gate 2026-08-20" below).
+- **developer mode** `lib/api/addons.ts` — `useDeveloperMode()` → `{enabled, isLoading, resolved}`; since 2026-08-28 the gate for the still-in-development surfaces ONLY — the `(driver)` app, the role-picker driver option, the `(tenant)` dispatch tab, and operator drive-mode. Dispatch/route surfaces follow `useRoutesAccess()`/`useDeliveryAccess()` instead (see "Developer mode gate 2026-08-20" + the 2026-08-28 narrowing below).
 - **calendar dates** `lib/format-date.ts` (NEW 2026-08-23) — `fmtCalendarDate(iso, style?)` formats UTC components (`timeZone:"UTC"`): invoice/bill/order calendar dates are stored at UTC midnight and local `toLocaleDateString` showed the previous day for US viewers. Routed through it: operator+customer invoice list/detail, recurring-invoices list/detail, vendor-bills scan, sale-flow new.tsx. Rule: calendar fields only — real timestamps (`paidAt`, `createdAt`, any `@default(now())`) keep local rendering. ~20 more calendar-date sites (vendor-bill [id]/index/finance, credit-notes, POs, estimates, requestedDeliveryDate) are known and queued for the follow-up sweep PR.
 - **API client** `lib/api-client.ts` — axios base, 15s timeout, `getActiveAccessToken()` respects role-namespaced keys (`rf:op:accessToken`, `rf:driver:accessToken`, ...).
 - **auth / secure storage** `lib/auth.ts` — SecureStore native / localStorage web, token refresh with 401-retry.
@@ -672,9 +672,10 @@ status:"ISSUED"})` never runs unscoped; filters via `isCreditOpenForApply`; full
 The dispatch/driver/route feature set isn't customer-ready, so it is hidden on every tenant
 EXCEPT ones carrying the hidden legacy `TenantAddon.addonKey` `developer_mode`
 (`DEVELOPER_MODE_ADDON` in `@routeflow/types`, toggled from the platform-admin tenant page).
-**Hiding is UI-only — no controller gained `@RequireAddon`**, deliberately: any leftover surface
-degrades to an empty state, never a 403 toast. `app/(driver)/**` has **zero diff**.
-**Launch reversal = grep `useDeveloperMode`** and delete the conditions.
+**Superseded 2026-08-28** — see "2026-08-28 — developer_mode narrowed + dispatch API enforced"
+below: the hiding is no longer UI-only (the dispatch API now 403s via `@RequireAddon`), and
+`developer_mode` no longer unlocks the two GA delivery features. `app/(driver)/**` has **zero
+diff**. **Launch reversal = grep `useDeveloperMode`** and delete the conditions.
 
 - **`lib/api/addons.ts` (new)** — `useDeveloperMode()` → `{enabled, isLoading, resolved}`. Mirrors
   `lib/api/tobacco.ts`'s `useTenantAddons` fetch (`GET /tenants/me/addons`, query key
@@ -771,15 +772,15 @@ draft.ts` mirrors web's `lib/trip-draft.ts` (local-only picked-orders draft, cle
 
 ### 2026-08-25 — recurring-routes / order-delivery addon split
 
-`developer_mode` is no longer the only gate for the dispatch/route/driver/trips surface — it now
-splits into two independent per-tenant addons that `developer_mode` still unlocks together.
+`developer_mode` is no longer the only gate for the dispatch/route/driver/trips surface — it
+splits into two independent per-tenant addons (which, as of 2026-08-28, it no longer unlocks).
 
 - **`lib/api/addons.ts`** gains `useRecurringRoutes()`/`useOrderDelivery()` (`RECURRING_ROUTES_ADDON`/
   `ORDER_DELIVERY_ADDON` from `@routeflow/types`, same `useQuery` shape/cache-key as
   `useDeveloperMode`/`useDriverPayments`) and the composition helpers
-  **`useRoutesAccess()`/`useDeliveryAccess()`** (`{enabled, resolved}`, each OR-ing `devMode` with
-  its feature flag). Every gate below reads the composed hook, never the raw addon hook or
-  `useDeveloperMode` alone — reading the raw hook silently drops the `developer_mode` unlock.
+  **`useRoutesAccess()`/`useDeliveryAccess()`** (`{enabled, resolved}`). Every gate below reads
+  the composed hook, never the raw addon hook. **2026-08-28:** each helper now returns its
+  feature hook UNCHANGED — the `devMode ||` disjunct is gone (return shape identical).
 - **`app/(operator)/_layout.tsx`** chokepoint: `DEV_MODE_SECTIONS` replaced by
   `sectionNeed(sec, screen) → "routes" | "delivery" | "either" | null` over three sets —
   `ROUTES_SECTIONS = {routes, fleet}`, `DELIVERY_SECTIONS = {trips}`,
@@ -826,6 +827,28 @@ splits into two independent per-tenant addons that `developer_mode` still unlock
   operator a button that bounces straight back. Both screens therefore hold `useDeveloperMode()`
   AND the two access helpers — one shared addons query, no extra fetch.
 - `app/(driver)/**` stays untouched (`git diff --stat` shows nothing there).
+
+### 2026-08-28 — `developer_mode` narrowed + dispatch API enforced
+
+Owner decision: `developer_mode` stops being a master switch over the two GA delivery features
+and keeps only the genuinely in-development surfaces. Mirrors web exactly (see [web](web.md)).
+
+- **`lib/api/addons.ts`** — `useDeliveryAccess()`/`useRoutesAccess()` drop the `useDeveloperMode()`
+  composition and return `{enabled, resolved}` off `useOrderDelivery()`/`useRecurringRoutes()`
+  alone. Return SHAPE is unchanged, so every call site is untouched. `useDeveloperMode` stays
+  exported — it still gates the in-dev surfaces below.
+- **Untouched by design** (these ARE the in-development surfaces `developer_mode` still unlocks):
+  `app/_layout.tsx` (driver-branch gate), `app/(auth)/role-picker.tsx` (driver option),
+  `app/(tenant)/_layout.tsx` (dispatch `Tabs.Screen` `href`), and the RAW `useDeveloperMode()`
+  drive-mode reads in `(tabs)/home.tsx` (`effectiveViewMode` + mode bar) and `(tabs)/more.tsx`
+  (Drive-mode row) — the `(driver)` app they lead into is still dev-gated.
+- **`(tabs)/home.tsx` query gating (the one behavior change beyond comments):** the dispatch API
+  now 403s without an addon, so `useAdminRoutes` takes `enabled: routesAccess.enabled`,
+  `useAdminDrivers` takes the EITHER gate, and both `useOperatorRouteRuns` calls take the EITHER
+  gate (an ad-hoc delivery materializes a route + run). A tenant with neither addon polls nothing.
+- Comment-only updates in `(tabs)/{home,more,dispatch}.tsx`, `(operator)/_layout.tsx`,
+  `components/OperatorTabBar.tsx`, `lib/operator-tabs.ts` — the stale "each helper folds in
+  developer_mode, so a dev tenant regresses zero" notes are now wrong and were rewritten.
 
 ### PR-D 2026-08-23 — sales-agent read parity (one row, read-only by design)
 

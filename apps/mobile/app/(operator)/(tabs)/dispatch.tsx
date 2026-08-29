@@ -28,9 +28,10 @@ export default function DispatchScreen() {
   const router = useRouter();
   const [tab, setTab] = useState("Routes");
   // Owner split 2026-08-25: recurring routes and order delivery are separate
-  // addons (developer_mode still unlocks both — folded into these composed
-  // hooks). A single-feature tenant reaches this hub via the EITHER-gated
-  // /dispatch section ((operator)/_layout.tsx) and sees only their rows.
+  // addons (owner decision 2026-08-28: these composed hooks read the feature
+  // addon alone — developer_mode no longer unlocks either). A single-feature
+  // tenant reaches this hub via the EITHER-gated /dispatch section
+  // ((operator)/_layout.tsx) and sees only their rows.
   const { enabled: routesEnabled } = useRoutesAccess();
   const { enabled: deliveryEnabled } = useDeliveryAccess();
   // Recurring-routes data only — a delivery-only tenant renders neither tab, so

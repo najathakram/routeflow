@@ -31,11 +31,11 @@ export function OperatorTabBar() {
   const routesAccess = useRoutesAccess();
   const deliveryAccess = useDeliveryAccess();
   // Owner split 2026-08-25: the Dispatch hub fronts BOTH recurring routes and
-  // ad-hoc order delivery, so EITHER addon earns the tab (each helper already
-  // folds in the developer_mode master switch — a dev tenant regresses zero).
-  // Gating on developer_mode alone would hide the tab from a tenant who bought
-  // only recurring_routes or only order_delivery, stranding them with no way
-  // into (operator)/_layout.tsx's now-widened sections.
+  // ad-hoc order delivery, so EITHER addon earns the tab (owner decision
+  // 2026-08-28: each helper reads its feature addon alone — developer_mode no
+  // longer folds in). Gating on developer_mode alone would hide the tab from a
+  // tenant who bought only recurring_routes or only order_delivery, stranding
+  // them with no way into (operator)/_layout.tsx's now-widened sections.
   //
   // Default-hidden while loading: both helpers report `enabled: false` until
   // the addons query resolves, so an entitled tenant must never see Dispatch

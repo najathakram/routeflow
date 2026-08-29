@@ -8,9 +8,11 @@ import { RouteAnalysisService } from "./route-analysis.service";
 import { AuthModule } from "../auth/auth.module";
 import { SystemConfigModule } from "../system-config/system-config.module";
 import { PlatformAdminModule } from "../platform-admin/platform-admin.module";
+import { BillingModule } from "../billing/billing.module";
 
 @Module({
-  imports: [AuthModule, SystemConfigModule, PlatformAdminModule],
+  // BillingModule: AddonGuard + AddonService for the either-feature addon gate
+  imports: [AuthModule, SystemConfigModule, PlatformAdminModule, BillingModule],
   controllers: [RouteOptimizationController, RouteTemplateOptimizationController],
   providers: [RouteOptimizationService, RouteAnalysisService],
   exports: [RouteOptimizationService, RouteAnalysisService],

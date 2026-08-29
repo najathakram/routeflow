@@ -33,7 +33,7 @@ import { cn } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { apiClient } from "@/lib/api-client";
 import { useI18n } from "@/lib/i18n";
-import { useDeveloperMode, useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
+import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
 
 /**
  * `?action=new` for a list route, preserving that list's own query state when
@@ -68,14 +68,13 @@ interface CommandItem {
 
 /**
  * Command ids gated per-feature addon (owner decision 2026-08-25: recurring
- * routes and ad-hoc order delivery are separate addons; devMode still unlocks
- * both).
+ * routes and ad-hoc order delivery are separate addons; owner decision
+ * 2026-08-28: `devMode` no longer unlocks either one client-side).
  */
 const ROUTES_COMMAND_IDS = ["nav-routes", "nav-drivers", "act-new-route"];
 const DELIVERY_COMMAND_IDS = ["act-plan-trip", "nav-deliveries"];
 
 function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] {
-  const { enabled: devMode } = useDeveloperMode();
   const { enabled: routesAccess } = useRoutesAccess();
   const { enabled: deliveryAccess } = useDeliveryAccess();
   return React.useMemo(
@@ -273,11 +272,11 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
           keywords: "create add product",
         },
       ].filter((c) => {
-        if (ROUTES_COMMAND_IDS.includes(c.id)) return devMode || routesAccess;
-        if (DELIVERY_COMMAND_IDS.includes(c.id)) return devMode || deliveryAccess;
+        if (ROUTES_COMMAND_IDS.includes(c.id)) return routesAccess;
+        if (DELIVERY_COMMAND_IDS.includes(c.id)) return deliveryAccess;
         return true;
       }),
-    [router, devMode, routesAccess, deliveryAccess],
+    [router, routesAccess, deliveryAccess],
   );
 }
 

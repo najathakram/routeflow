@@ -2,9 +2,9 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { superAdminClient } from "@/lib/admin-api";
 import { setImpersonation } from "@/lib/impersonation";
+import { setTenantCookie } from "@/lib/tenant-cookie";
 import { AdminBadge, planLabel } from "../../_components/AdminBadge";
 import { AdminModal } from "../../_components/AdminModal";
 import { ChevronUp, ChevronDown, X } from "lucide-react";
@@ -35,7 +35,6 @@ function trialDaysLeft(trialEndsAt: string): number {
 }
 
 export default function AdminTenantsPage() {
-  const router = useRouter();
   const [data, setData] = React.useState<TenantsResponse | null>(null);
   const [page, setPage] = React.useState(1);
   const [loading, setLoading] = React.useState(true);
@@ -193,8 +192,9 @@ export default function AdminTenantsPage() {
     setActionError(null);
     try {
       const res = await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/impersonate`);
-      setImpersonation(res.data.accessToken, tenant.slug);
-      router.push("/dashboard");
+      setImpersonation(res.data.accessToken, tenant.slug, res.data.impersonatedUser?.username);
+      setTenantCookie(tenant.slug);
+      window.location.href = "/dashboard";
     } catch (err: unknown) {
       setActionError(
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??

@@ -16,6 +16,8 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { AddonGuard } from "../billing/addon.guard";
+import { RequireAddon } from "../billing/require-addon.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole } from "@prisma/client";
 import { ListRoutesDto } from "./dto/list-routes.dto";
@@ -32,8 +34,17 @@ import { DriverPaymentsGuard } from "./driver-payments.guard";
 
 @ApiTags("routes")
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+// Owner decision 2026-08-28: /routes is SHARED between the two delivery features — an ad-hoc
+// trip materializes a route template + run, so template/detail/optimize flows must keep working
+// for a delivery-only tenant (mirrors RECURRING_ROUTES_PATHS in
+// apps/web/app/(dashboard)/layout.tsx, which downgrades everything under /routes except the
+// list/create pages to "either"). developer_mode stays accepted server-side ONLY so a dev tenant
+// can exercise the still-in-development mobile driver app end-to-end — it no longer unlocks this
+// UI anywhere in the web/mobile clients. Guard order matters: AddonGuard reads req.user (set by
+// JwtAuthGuard).
+@UseGuards(JwtAuthGuard, AddonGuard)
 @Controller("routes")
+@RequireAddon("recurring_routes", "order_delivery", "developer_mode")
 export class RoutesController {
   constructor(private readonly routesService: RoutesService) {}
 
@@ -120,8 +131,12 @@ export class RoutesController {
 
 @ApiTags("route-runs")
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+// Same either-gate as RoutesController above — a run is the shared execution object for both
+// recurring routes and ad-hoc trips, so runs/detail/complete flows must keep working for either
+// feature alone. See the rationale comment on RoutesController.
+@UseGuards(JwtAuthGuard, AddonGuard)
 @Controller("route-runs")
+@RequireAddon("recurring_routes", "order_delivery", "developer_mode")
 export class RouteRunsController {
   constructor(private readonly routesService: RoutesService) {}
 

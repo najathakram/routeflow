@@ -10,14 +10,22 @@ const OPTIMIZE_THROTTLE = { default: { ttl: 60_000, limit: 10 } } as const;
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { AddonGuard } from "../billing/addon.guard";
+import { RequireAddon } from "../billing/require-addon.decorator";
 import { RouteOptimizationService } from "./route-optimization.service";
 import { RouteAnalysisService } from "./route-analysis.service";
 import { ApplyRouteVariantDto } from "./dto/apply-route-variant.dto";
 
 @ApiTags("route-runs")
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+// Owner decision 2026-08-28: optimize/analyze are SHARED between the two delivery features — an
+// ad-hoc trip materializes a route run just like a recurring route, so these flows must keep
+// working for a delivery-only tenant. developer_mode stays accepted server-side ONLY so a dev
+// tenant can exercise the still-in-development mobile driver app end-to-end. Guard order
+// matters: AddonGuard reads req.user (set by JwtAuthGuard).
+@UseGuards(JwtAuthGuard, RolesGuard, AddonGuard)
 @Controller("route-runs")
+@RequireAddon("recurring_routes", "order_delivery", "developer_mode")
 export class RouteOptimizationController {
   constructor(
     private readonly service: RouteOptimizationService,
@@ -45,9 +53,11 @@ export class RouteOptimizationController {
 
 @ApiTags("routes")
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+// Same either-gate as RouteOptimizationController above — see the rationale comment there.
+@UseGuards(JwtAuthGuard, RolesGuard, AddonGuard)
 @Roles(UserRole.OPERATOR)
 @Controller("routes")
+@RequireAddon("recurring_routes", "order_delivery", "developer_mode")
 export class RouteTemplateOptimizationController {
   constructor(
     private readonly service: RouteOptimizationService,

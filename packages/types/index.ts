@@ -137,7 +137,13 @@ export * from "./trip-grouping";
 
 /**
  * Legacy TenantAddon.addonKey for the hidden platform-admin "developer mode" flag.
- * Unlocks in-development dispatch/driver/route surfaces on web + mobile.
+ * Owner decision 2026-08-28: `developer_mode` unlocks ONLY genuinely in-development
+ * surfaces — today that's the mobile `(driver)` app section, the mobile role-picker
+ * driver option, and the mobile `(tenant)` dispatch tab. It no longer unlocks the two
+ * GA delivery addons (`recurring_routes` / `order_delivery`) anywhere in client UI —
+ * client gates read the feature addon alone via `useRoutesAccess`/`useDeliveryAccess`.
+ * The dispatch API still accepts it as an any-of key on `@RequireAddon` purely so a
+ * dev tenant can exercise those in-dev surfaces end-to-end.
  * Bridge-to-catalog (later): LEGACY_ADDON_KEY_TO_SKU -> DEV_MODE sku granting flag.dispatch_live.
  */
 export const DEVELOPER_MODE_ADDON = "developer_mode";
@@ -154,8 +160,10 @@ export const DRIVER_PAYMENTS_ADDON = "driver_payments";
 /**
  * Per-tenant feature addons for the two delivery products (owner decision
  * 2026-08-25): tenants may run standing routes, ad-hoc order delivery, or both.
- * `developer_mode` remains the master dev switch that unlocks both — every
- * client gate must read `devMode || <feature>`.
+ * Owner decision 2026-08-28: `developer_mode` no longer unlocks either of these —
+ * client gates read the feature addon alone (`useRoutesAccess`/`useDeliveryAccess`).
+ * Server-side, the dispatch API accepts `developer_mode` as an any-of alongside
+ * these keys so dev tenants can still exercise in-dev surfaces end-to-end.
  */
 export const RECURRING_ROUTES_ADDON = "recurring_routes";
 export const ORDER_DELIVERY_ADDON = "order_delivery";
