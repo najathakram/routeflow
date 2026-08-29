@@ -223,6 +223,7 @@ nonce}` so a re-scan re-flashes),
 - `returns/` (**#225:** `index.tsx` rows tap through to `[id].tsx` new detail screen — status-gated action tiles over the full 8-status ladder; `new.tsx` new 3-step create-return: customer→DELIVERED order→per-line qty+restock), `routes/`, `purchase-orders/` (Stack layouts); `new-order.tsx`, `pick.tsx` (pick-list),
   `exceptions.tsx`, `analytics/index.tsx`, `movements.tsx`, `messages.tsx`, `fleet.tsx`, `driver.tsx`,
   `profile.tsx`, `change-password.tsx`, `expenses/{index,[id],new}.tsx`.
+- **Analytics perf hooks widened (2026-08-28, mirror of web):** `lib/api/admin.ts` `useAnalyticsRoutePerformance`/`useAnalyticsDriverPerformance` now accept `(from?, to?)` (params + queryKey) and both row types extend `RunOpsMetrics` (`onTimeRate`/`stopsPerHour`/`avgRunDurationMinutes`, nullable = no measurable data). No mobile screen renders these two hooks yet — `analytics/index.tsx` uses DSO/AOV/top-products/top-customers only.
 - `recurring-invoices/` → `index.tsx` (**#225:** "New" NavAction), `[id].tsx`, **#225 new:** `new.tsx` (customer→schedule[frequency chips + `recurringScheduleFields`]→item builder via `useCreateRecurringInvoice`).
 
 ### `(tenant)/` — tenant-admin dashboard

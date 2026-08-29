@@ -787,4 +787,151 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       expect(systemConfig.get).not.toHaveBeenCalled();
     });
   });
+
+  describe("route & driver performance", () => {
+    // On-time = stop completedAt on or before the END of the run's scheduledDate
+    // calendar day (UTC) — there is no ETA field on RouteRunStop to compare against.
+    const run = (over: Record<string, unknown> = {}) => ({
+      routeId: "r1",
+      status: "COMPLETED",
+      scheduledDate: new Date("2026-08-10T00:00:00.000Z"),
+      startedAt: new Date("2026-08-10T08:00:00.000Z"),
+      completedAt: new Date("2026-08-10T10:00:00.000Z"),
+      route: { id: "r1", name: "North Loop" },
+      orders: [],
+      stops: [],
+      ...over,
+    });
+    const stopAt = (iso: string | null) => ({ completedAt: iso ? new Date(iso) : null });
+
+    it("aggregates on-time %, stops/hour, and average duration across a route's runs", async () => {
+      prisma.routeRun.findMany.mockResolvedValue([
+        // 2h run: 3 stops on the scheduled day, 1 the day after (late), 1 never completed.
+        run({
+          stops: [
+            stopAt("2026-08-10T09:00:00.000Z"),
+            stopAt("2026-08-10T09:20:00.000Z"),
+            stopAt("2026-08-10T23:59:59.000Z"),
+            stopAt("2026-08-11T00:30:00.000Z"),
+            stopAt(null),
+          ],
+        }),
+        // 1h run two days later: 2 on-time stops.
+        run({
+          scheduledDate: new Date("2026-08-12T00:00:00.000Z"),
+          startedAt: new Date("2026-08-12T09:00:00.000Z"),
+          completedAt: new Date("2026-08-12T10:00:00.000Z"),
+          stops: [stopAt("2026-08-12T09:15:00.000Z"), stopAt("2026-08-12T09:45:00.000Z")],
+        }),
+      ]);
+
+      const [row] = await service.getRoutePerformance();
+
+      expect(row).toMatchObject({
+        id: "r1",
+        name: "North Loop",
+        totalRuns: 2,
+        completedRuns: 2,
+        completionRate: 100,
+      });
+      expect(row.onTimeRate).toBeCloseTo((5 / 6) * 100, 5); // 6 completed, 1 late
+      expect(row.stopsPerHour).toBe(2); // 6 completed stops over 3 valid hours
+      expect(row.avgRunDurationMinutes).toBe(90); // (120m + 60m) / 2
+    });
+
+    it("excludes runs missing start/finish stamps from duration math without losing their stops or completion counts", async () => {
+      prisma.routeRun.findMany.mockResolvedValue([
+        run({
+          stops: [
+            stopAt("2026-08-10T09:00:00.000Z"),
+            stopAt("2026-08-10T09:10:00.000Z"),
+            stopAt("2026-08-10T09:20:00.000Z"),
+            stopAt("2026-08-10T09:30:00.000Z"),
+          ],
+        }),
+        // In-progress run: startedAt only. Its 2 completed stops still count for
+        // on-time %, but must stay out of BOTH sides of stops/hour and duration.
+        run({
+          status: "IN_PROGRESS",
+          completedAt: null,
+          stops: [stopAt("2026-08-10T09:40:00.000Z"), stopAt("2026-08-10T09:50:00.000Z")],
+        }),
+      ]);
+
+      const [row] = await service.getRoutePerformance();
+
+      expect(row.totalRuns).toBe(2);
+      expect(row.completedRuns).toBe(1);
+      expect(row.completionRate).toBe(50);
+      expect(row.onTimeRate).toBe(100); // all 6 completed stops on-time
+      expect(row.stopsPerHour).toBe(2); // only the finished run: 4 stops / 2h
+      expect(row.avgRunDurationMinutes).toBe(120); // only the finished run
+    });
+
+    it("returns null metrics (never NaN/Infinity/0) when a route has no timing data", async () => {
+      prisma.routeRun.findMany.mockResolvedValue([
+        run({ status: "SCHEDULED", startedAt: null, completedAt: null, stops: [stopAt(null)] }),
+        // Zero-length span is junk data, not a 0-minute run — also excluded.
+        run({
+          status: "COMPLETED",
+          startedAt: new Date("2026-08-10T08:00:00.000Z"),
+          completedAt: new Date("2026-08-10T08:00:00.000Z"),
+          stops: [],
+        }),
+      ]);
+
+      const [row] = await service.getRoutePerformance();
+
+      expect(row.onTimeRate).toBeNull();
+      expect(row.stopsPerHour).toBeNull();
+      expect(row.avgRunDurationMinutes).toBeNull();
+      expect(row.completionRate).toBe(50);
+    });
+
+    it("windows runs on scheduledDate when from/to given, and applies no filter otherwise", async () => {
+      prisma.routeRun.findMany.mockResolvedValue([]);
+
+      await service.getRoutePerformance();
+      expect(prisma.routeRun.findMany.mock.calls[0][0].where).toEqual({});
+
+      await service.getRoutePerformance("2026-08-01", "2026-08-31");
+      const windowed = prisma.routeRun.findMany.mock.calls[1][0].where;
+      expect(windowed.scheduledDate.gte).toEqual(new Date("2026-08-01"));
+      expect(windowed.scheduledDate.lte).toEqual(new Date("2026-08-31T23:59:59.999Z"));
+    });
+
+    it("computes the same stop metrics per driver alongside order-based delivery counts", async () => {
+      const driver = { id: "d1", contactName: "Sam Field", user: { username: "sam" } };
+      prisma.routeRun.findMany.mockResolvedValue([
+        run({
+          driver,
+          orders: [{ id: "o1" }, { id: "o2" }],
+          stops: [stopAt("2026-08-10T09:00:00.000Z"), stopAt("2026-08-11T01:00:00.000Z")],
+        }),
+        run({
+          driver,
+          status: "IN_PROGRESS",
+          completedAt: null,
+          orders: [{ id: "o3" }],
+          stops: [stopAt("2026-08-10T09:30:00.000Z")],
+        }),
+      ]);
+
+      const [row] = await service.getDriverPerformance("2026-08-01", "2026-08-31");
+
+      expect(row).toMatchObject({
+        id: "d1",
+        name: "Sam Field",
+        totalDeliveries: 3,
+        completedDeliveries: 2,
+      });
+      expect(row.onTimeRate).toBeCloseTo((2 / 3) * 100, 5); // 3 completed stops, 1 late
+      expect(row.stopsPerHour).toBe(1); // valid run only: 2 stops / 2h
+      expect(row.avgRunDurationMinutes).toBe(120);
+      // Unassigned runs stay out, and the date window rides along with that filter.
+      const where = prisma.routeRun.findMany.mock.calls[0][0].where;
+      expect(where.driverId).toEqual({ not: null });
+      expect(where.scheduledDate.gte).toEqual(new Date("2026-08-01"));
+    });
+  });
 });

@@ -1,7 +1,11 @@
 {
   "mappedSha": "2d0270fd",
   "generatedAt": "2026-08-28T16:05:00.000Z",
-  "areas": ["api", "web", "mobile", "packages"],
-  "fileCount": 899,
-  "notes": "2026-08-28 (branch fix/audit-followup-batch) — AUDIT FOLLOW-UP BATCH: nav skeletons (isLoading gate, not isSuccess), Bills & Purchasing hub moved finance/expenses -> vendor-bills (terminal; loop averted — old chain was stub->purchases->expenses), analytics pie -> top-8 bars, overdue badge = meta.total, order Delete hidden when delivered/invoiced, Urgent pill hidden at 0 unless active, copy pass x7, run-card grids auto-fill. Full detail in CHANGELOG.md top bullet. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "areas": [
+    "api",
+    "web",
+    "mobile",
+    "packages"
+  ],
+  "fileCount": 899
 }

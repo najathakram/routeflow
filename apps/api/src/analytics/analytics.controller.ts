@@ -67,13 +67,13 @@ export class AnalyticsController {
   }
 
   @Get("routes/performance")
-  getRoutes() {
-    return this.analyticsService.getRoutePerformance();
+  getRoutes(@Query("from") from?: string, @Query("to") to?: string) {
+    return this.analyticsService.getRoutePerformance(from, to);
   }
 
   @Get("drivers/performance")
-  getDrivers() {
-    return this.analyticsService.getDriverPerformance();
+  getDrivers(@Query("from") from?: string, @Query("to") to?: string) {
+    return this.analyticsService.getDriverPerformance(from, to);
   }
 
   @Get("inventory/turnover")

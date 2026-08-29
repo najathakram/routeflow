@@ -35,6 +35,15 @@ const usd = (x: number) =>
 
 const pct = (x: number) => x.toFixed(1) + "%";
 
+/** "1h 23m" / "45m" from fractional minutes; "—" when no run had both stamps. */
+const fmtDuration = (mins: number | null) => {
+  if (mins == null) return "—";
+  const total = Math.round(mins);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+};
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface RevenuePeriod {
@@ -101,7 +110,16 @@ interface TopCustomer {
   orderCount: number;
 }
 
-interface RoutePerformance {
+/** Stop-level operational metrics shared by the routes and drivers tables.
+ *  Null = no measurable data in the window (no completed stops / no runs with
+ *  both start and finish stamps), rendered as "—" — distinct from a real 0. */
+interface RunOpsMetrics {
+  onTimeRate: number | null;
+  stopsPerHour: number | null;
+  avgRunDurationMinutes: number | null;
+}
+
+interface RoutePerformance extends RunOpsMetrics {
   id: string;
   name: string;
   totalRuns: number;
@@ -109,7 +127,7 @@ interface RoutePerformance {
   completionRate: number;
 }
 
-interface DriverPerformance {
+interface DriverPerformance extends RunOpsMetrics {
   id: string;
   name: string;
   totalDeliveries: number;
@@ -860,6 +878,49 @@ function CustomersTab({ from, to }: { from: string; to: string }) {
 
 // ─── Tab 4: Operations ─────────────────────────────────────────────────────────
 
+/** The three stop-level operational columns shared by the routes and drivers tables. */
+function opsMetricColumns<T extends RunOpsMetrics>(): Column<T>[] {
+  return [
+    {
+      header: "On-Time %",
+      accessor: (row) =>
+        row.onTimeRate == null ? (
+          <span className="text-sm text-navy/40">—</span>
+        ) : (
+          <span
+            className={cn(
+              "text-sm font-medium",
+              row.onTimeRate >= 90
+                ? "text-success"
+                : row.onTimeRate >= 70
+                  ? "text-warning"
+                  : "text-danger",
+            )}
+          >
+            {pct(row.onTimeRate)}
+          </span>
+        ),
+      align: "right",
+    },
+    {
+      header: "Stops/hr",
+      accessor: (row) => (
+        <span className="text-navy/80">
+          {row.stopsPerHour == null ? "—" : row.stopsPerHour.toFixed(1)}
+        </span>
+      ),
+      align: "right",
+    },
+    {
+      header: "Avg Duration",
+      accessor: (row) => (
+        <span className="text-navy/80">{fmtDuration(row.avgRunDurationMinutes)}</span>
+      ),
+      align: "right",
+    },
+  ];
+}
+
 function OperationsTab({ from, to }: { from: string; to: string }) {
   const { toast } = useToast();
 
@@ -937,6 +998,7 @@ function OperationsTab({ from, to }: { from: string; to: string }) {
       ),
       align: "right",
     },
+    ...opsMetricColumns<RoutePerformance>(),
   ];
 
   const driverColumns: Column<DriverPerformance>[] = [
@@ -991,6 +1053,7 @@ function OperationsTab({ from, to }: { from: string; to: string }) {
       ),
       align: "right",
     },
+    ...opsMetricColumns<DriverPerformance>(),
   ];
 
   return (

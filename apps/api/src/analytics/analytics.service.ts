@@ -99,6 +99,29 @@ export interface ProductDemandSeries {
   lastSaleAt: string | null;
 }
 
+/**
+ * Per-group (route or driver) accumulator for the stop-level operational
+ * metrics shared by getRoutePerformance / getDriverPerformance. "Valid" runs
+ * are those with a positive startedAt→completedAt span — the only ones that
+ * may enter the duration / stops-per-hour math.
+ */
+interface RunMetricAgg {
+  completedStops: number;
+  onTimeStops: number;
+  validRunCount: number;
+  validRunMs: number;
+  /** Completed stops belonging to valid-duration runs only. */
+  validRunStops: number;
+}
+
+/** The run slice the shared stop-metric accumulator needs. */
+interface RunMetricSource {
+  scheduledDate: Date;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  stops: { completedAt: Date | null }[];
+}
+
 /** Invoice line slice needed to subtract tobacco revenue from an invoice total. */
 const TOBACCO_LINE_SELECT = {
   items: {
@@ -263,19 +286,105 @@ export class AnalyticsService {
       .slice(0, limit);
   }
 
-  async getRoutePerformance() {
+  /**
+   * Prisma where-fragment windowing route runs on their business date
+   * (RouteRun.scheduledDate). No bounds ⇒ no filter, preserving the endpoints'
+   * historical all-time behavior for parameterless callers (mobile). With
+   * either bound present the shared dateRange defaults fill the other side
+   * (from → Jan 1 of the current year, to → now; `to` is end-of-day inclusive).
+   */
+  private runDateFilter(from?: string, to?: string) {
+    if (!from && !to) return {};
+    const { fromDate, toDate } = this.dateRange(from, to);
+    return { scheduledDate: { gte: fromDate, lte: toDate } };
+  }
+
+  private newRunMetricAgg(): RunMetricAgg {
+    return { completedStops: 0, onTimeStops: 0, validRunCount: 0, validRunMs: 0, validRunStops: 0 };
+  }
+
+  /**
+   * Folds one run's stop timings into the group accumulator.
+   *
+   * "On-time" definition: RouteRunStop carries no promised ETA (the schema has
+   * no eta / time-window field anywhere), so a completed stop counts as
+   * on-time when its completedAt falls on or before the END of its run's
+   * scheduledDate calendar day (UTC). Completing early is on-time; anything
+   * after the scheduled day is late. Stops never completed are not "late" —
+   * they're incomplete, which completionRate already captures — so they stay
+   * out of the on-time denominator entirely.
+   *
+   * Duration metrics admit only runs with a positive startedAt→completedAt
+   * span; runs missing either stamp (or with a non-positive span) are excluded
+   * from BOTH the stops-per-hour numerator and denominator so they can't
+   * poison the averages.
+   */
+  private accumulateRunMetrics(agg: RunMetricAgg, run: RunMetricSource) {
+    const dayEnd = new Date(run.scheduledDate);
+    dayEnd.setUTCHours(23, 59, 59, 999);
+    let runCompletedStops = 0;
+    for (const stop of run.stops) {
+      if (!stop.completedAt) continue;
+      runCompletedStops += 1;
+      if (stop.completedAt <= dayEnd) agg.onTimeStops += 1;
+    }
+    agg.completedStops += runCompletedStops;
+    if (run.startedAt && run.completedAt) {
+      const ms = run.completedAt.getTime() - run.startedAt.getTime();
+      if (ms > 0) {
+        agg.validRunCount += 1;
+        agg.validRunMs += ms;
+        agg.validRunStops += runCompletedStops;
+      }
+    }
+  }
+
+  /** Ratios from the accumulator — null (never 0 or NaN) when a window has no data. */
+  private finalizeRunMetrics(agg: RunMetricAgg): {
+    onTimeRate: number | null;
+    stopsPerHour: number | null;
+    avgRunDurationMinutes: number | null;
+  } {
+    const hours = agg.validRunMs / 3_600_000;
+    return {
+      onTimeRate: agg.completedStops > 0 ? (agg.onTimeStops / agg.completedStops) * 100 : null,
+      stopsPerHour: hours > 0 ? agg.validRunStops / hours : null,
+      avgRunDurationMinutes:
+        agg.validRunCount > 0 ? agg.validRunMs / agg.validRunCount / 60_000 : null,
+    };
+  }
+
+  /**
+   * Per-route run counts, completion rate, and the stop-level operational
+   * metrics (see accumulateRunMetrics for the on-time definition and the
+   * valid-duration rule). from/to window on RouteRun.scheduledDate via
+   * runDateFilter; omitted ⇒ all history.
+   */
+  async getRoutePerformance(from?: string, to?: string) {
     const runs = await this.prisma.forTenant().routeRun.findMany({
+      where: this.runDateFilter(from, to),
       include: {
         route: { select: { id: true, name: true } },
         orders: { select: { id: true } },
+        stops: { select: { completedAt: true } },
       },
     });
-    const map: Record<string, { name: string; totalRuns: number; completedRuns: number }> = {};
+    const map: Record<
+      string,
+      { name: string; totalRuns: number; completedRuns: number; metrics: RunMetricAgg }
+    > = {};
     for (const run of runs) {
       const id = run.routeId;
-      if (!map[id]) map[id] = { name: run.route.name, totalRuns: 0, completedRuns: 0 };
+      if (!map[id])
+        map[id] = {
+          name: run.route.name,
+          totalRuns: 0,
+          completedRuns: 0,
+          metrics: this.newRunMetricAgg(),
+        };
       map[id].totalRuns += 1;
       if (run.status === "COMPLETED") map[id].completedRuns += 1;
+      this.accumulateRunMetrics(map[id].metrics, run);
     }
     return Object.entries(map).map(([id, v]) => ({
       id,
@@ -283,20 +392,32 @@ export class AnalyticsService {
       totalRuns: v.totalRuns,
       completedRuns: v.completedRuns,
       completionRate: v.totalRuns > 0 ? (v.completedRuns / v.totalRuns) * 100 : 0,
+      ...this.finalizeRunMetrics(v.metrics),
     }));
   }
 
-  async getDriverPerformance() {
+  /**
+   * Per-driver delivery counts (orders on the run, as before) plus the same
+   * stop-level operational metrics as getRoutePerformance. from/to window on
+   * RouteRun.scheduledDate via runDateFilter; omitted ⇒ all history.
+   */
+  async getDriverPerformance(from?: string, to?: string) {
     const runs = await this.prisma.forTenant().routeRun.findMany({
-      where: { driverId: { not: null } },
+      where: { driverId: { not: null }, ...this.runDateFilter(from, to) },
       include: {
         driver: { include: { user: { select: { username: true } } } },
         orders: { select: { id: true } },
+        stops: { select: { completedAt: true } },
       },
     });
     const map: Record<
       string,
-      { name: string; totalDeliveries: number; completedDeliveries: number }
+      {
+        name: string;
+        totalDeliveries: number;
+        completedDeliveries: number;
+        metrics: RunMetricAgg;
+      }
     > = {};
     for (const run of runs) {
       if (!run.driver) continue;
@@ -306,9 +427,11 @@ export class AnalyticsService {
           name: run.driver.contactName ?? run.driver.user.username,
           totalDeliveries: 0,
           completedDeliveries: 0,
+          metrics: this.newRunMetricAgg(),
         };
       map[id].totalDeliveries += run.orders.length;
       if (run.status === "COMPLETED") map[id].completedDeliveries += run.orders.length;
+      this.accumulateRunMetrics(map[id].metrics, run);
     }
     return Object.entries(map).map(([id, v]) => ({
       id,
@@ -316,6 +439,7 @@ export class AnalyticsService {
       totalDeliveries: v.totalDeliveries,
       completedDeliveries: v.completedDeliveries,
       completionRate: v.totalDeliveries > 0 ? (v.completedDeliveries / v.totalDeliveries) * 100 : 0,
+      ...this.finalizeRunMetrics(v.metrics),
     }));
   }
 
