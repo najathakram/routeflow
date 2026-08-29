@@ -666,7 +666,15 @@ AgentFormModal` in a nested modal (`isAgentModalOpen` state); on create it selec
 ## E2E tests (`apps/web/e2e/`)
 
 Playwright against production (`routeflowweb-production.up.railway.app`). Auth via per-role
-storage-state JSON (created once by `setup/auth.setup.ts`). **No mutations — read-only so safe
+storage-state JSON (created once by `setup/auth.setup.ts`). ⚠️ **`helpers/auth.ts`
+`fillWorkspaceIfShown` must stay a SINGLE atomic `fill(slug,{timeout})` in a try/catch — never
+`isVisible()`-then-`fill()`.** That pair raced hydration (the server-rendered login form shows the
+Workspace field for a frame before the client derives the tenant from the hostname and drops it),
+so `isVisible()` returned true and the follow-up `fill()` burned the full 20s `actionTimeout` on a
+detached node. Because every role project `depends on` `setup`, that ONE failure turned the whole
+E2E job red on master for weeks — signature: operator FAILS, customer FLAKY on the identical path.
+Swallowing the miss is safe, not vacuous: if the value were required, the `waitForURL("**/dashboard")`
+right after fails loudly. **No mutations — read-only so safe
 against production data** — with deliberate exceptions: `08-create-order-escape.spec.ts`'s ESC
 tests park REAL drafts on the e2e tenant (the auto-park net is the behavior under test) and delete
 them in `afterEach` via `DELETE /drafts/:id` (ids captured from the builder's POST); and
