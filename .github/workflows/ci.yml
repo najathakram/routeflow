@@ -74,8 +74,15 @@ jobs:
       # re-resolution. (The old `rm lockfile + npm install --force` recipe made
       # every CI run re-resolve the world; standardwebhooks@1.1.0 shipping a
       # broken dist-less tarball broke CI within hours despite a pinned lock.)
+      #
+      # --engine-strict=false: the root .npmrc sets engine-strict=true, but that
+      # gate was dead everywhere before this migration (--force overrode it in
+      # CI; the Dockerfiles never COPY .npmrc) — and prisma 7.10's dev-only
+      # transitive @prisma/streams-local declares engines node>=22 while this
+      # runtime (and prod's node:20-alpine images) is Node 20. Keep the old
+      # warn-don't-block behavior; revisit when the prod images move to 22.
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --engine-strict=false
 
       - run: npm run lint
 
@@ -93,7 +100,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --engine-strict=false
 
       # Prisma client must be generated before tsc can resolve @prisma/client types
       - name: Generate Prisma client
@@ -149,7 +156,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --engine-strict=false
 
       # Replay the migration history against a FRESH Postgres before anything
       # else. `db push` below applies the schema directly and so has never
@@ -201,7 +208,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --engine-strict=false
 
       - name: Fail on critical production advisories
         run: npm audit --omit=dev --audit-level=critical
@@ -240,7 +247,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --engine-strict=false
 
       # Wait for Railway to finish deploying (~2-4 min) before hitting the live app.
       - name: Wait for API health
