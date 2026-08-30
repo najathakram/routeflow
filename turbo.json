@@ -1,6 +1,36 @@
 {
   "$schema": "https://turborepo.dev/schema.json",
   "ui": "tui",
+
+  // Files whose contents feed EVERY task's cache key.
+  //
+  // Turbo hashes the dependency GRAPH it resolves out of package-lock.json, not the
+  // lockfile itself. Measured on a545a10d: changing a transitive dep's `version` moves
+  // all 28 task hashes, but changing its `integrity` (so a DIFFERENT tarball installs),
+  // flipping `dev`/`devOptional` metadata (the drift a foreign npm regenerates), or
+  // reformatting the file moves NONE of them. So a dependency-shaped change could land,
+  // `npm ci` could install a different tree, and `npm run verify` would replay a cached
+  // pass without executing a single test — 18/18 CACHED, FULL TURBO, 4.6s (PR #495;
+  // independently reproduced on a second branch whose replayed log reported 3130 api
+  // tests "passing" that never ran).
+  //
+  // The root package.json was likewise absent from the global hash, so edits to the
+  // `verify` script itself invalidated nothing; a workspace manifest only ever
+  // invalidated its OWN package's tasks (3/28), never its dependents'.
+  //
+  // Trade-off, accepted deliberately: ANY dependency change now busts EVERY task's
+  // cache, so the first local run after a dep bump is cold by design. CI is unaffected
+  // — it has no turbo cache at all (no TURBO_TOKEN/TURBO_TEAM, no actions/cache of
+  // .turbo, fresh runners), so every CI run was already cold.
+  //
+  // Kept as an explicit list rather than a bare `**/package.json`: both resolve to the
+  // same 9 tracked manifests, but these globs cannot be misread as walking node_modules.
+  "globalDependencies": [
+    "package-lock.json",
+    "package.json",
+    "apps/*/package.json",
+    "packages/*/package.json"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
