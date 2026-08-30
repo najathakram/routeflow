@@ -1,0 +1,79 @@
+# ─── Migration replay ───────────────────────────────────────────────────────────
+# Replays the whole Prisma migration history against a FRESH Postgres.
+#
+# WHY THIS IS ITS OWN WORKFLOW (2026-08-30). This step used to live in ci.yml's
+# Test job, which is why that job carried `services: postgres + redis`. Nothing
+# else there needed them: all 181 api specs mock at the module boundary — not one
+# constructs a PrismaClient or reads DATABASE_URL — so the containers cost every
+# CI run a measured 23s of "Initialize containers" to serve a single 4-second
+# check. Splitting it out lets the consolidated `verify` job run with no services
+# at all, and lets this run only when it can actually find something: a `paths:`
+# filter is native to `on:`, so a workflow file is the cheapest way to express it.
+#
+# WHY IT EXISTS AT ALL. `prisma db push` applies the schema directly and so never
+# exercises the migration files. Production has no such shortcut — the only way
+# schema reaches it is `prisma migrate deploy` (CLAUDE.md: applied manually,
+# BEFORE the merge, never from the Docker CMD). A migration that cannot replay
+# from zero is therefore a production incident that CI can catch for ~3 minutes,
+# a handful of times a month. Do not fold it back into `verify`.
+#
+# The former `prisma db push` step is gone with it — it only ever set up a
+# database that no test read.
+# ────────────────────────────────────────────────────────────────────────────────
+
+name: Migration replay
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "apps/api/prisma/**"
+  workflow_dispatch:
+
+concurrency:
+  group: migrations-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  replay:
+    name: Replay migrations on a fresh database
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: routeflow_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d routeflow_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://test:test@localhost:5432/routeflow_test
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --engine-strict=false
+
+      - name: Verify migrations apply to a fresh database
+        working-directory: apps/api
+        run: npx prisma migrate deploy
