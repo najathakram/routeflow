@@ -127,8 +127,32 @@ apiClient.interceptors.response.use(
       (original?.method ?? "").toUpperCase(),
     );
     const isFormData = original?.data instanceof FormData;
+    // REG-B196 (T-B196a): a no-response error used to be classified as
+    // "offline" unconditionally. That is wrong for a TIMEOUT — the request
+    // reached the network and may well have committed server-side, so
+    // queueing it risks a duplicate write while the operator still has the
+    // full cart open. A timeout is therefore only treated as offline when the
+    // app affirmatively KNOWS it is offline.
+    //
+    // A hard transport failure (ERR_NETWORK / no code — DNS or route failure,
+    // raised immediately instead of after the 15s timeout) is the shape a
+    // genuinely offline device produces, and it never reached a server. Those
+    // stay queued unconditionally, because `isOnline` is a positive signal
+    // only useNetworkSync's NetInfo listener ever writes: it defaults to true,
+    // is deliberately not persisted, and nothing outside the (driver)/
+    // (operator) layouts mounts that listener. Gating the whole queue on it
+    // would silently drop offline mutations on every cold start and inside
+    // NetInfo's reachability-probe window (isInternetReachable === null).
+    const isTimeout = error.code === "ECONNABORTED" || error.code === "ETIMEDOUT";
+    const queueAsOffline = !isTimeout || useOfflineQueue.getState().isOnline === false;
 
-    if (isNetworkError && isMutation && !isFormData && !original?._offlineQueued) {
+    if (
+      isNetworkError &&
+      isMutation &&
+      !isFormData &&
+      !original?._offlineQueued &&
+      queueAsOffline
+    ) {
       if (original) original._offlineQueued = true;
       let body: unknown;
       try {

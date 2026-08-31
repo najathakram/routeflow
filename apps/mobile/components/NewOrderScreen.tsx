@@ -35,6 +35,7 @@ import { showToast } from "../lib/toast";
 import { resolveProductByCode } from "../lib/barcode-resolve";
 import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../lib/wedge-scan";
 import { makeScanHandler, runWedgeSubmit } from "../lib/scan-ladder";
+import { createScanAttempt, createWedgeSubmitHandler } from "../lib/wedge-submit";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
 import {
@@ -95,7 +96,8 @@ import {
 } from "../lib/pending-scroll";
 import { isCatalogHeader, visibleCatalogRows, type CatalogRow } from "../lib/visible-cart";
 import { unlistedAffordancePlacement } from "../lib/unlisted-affordance";
-import { orderSubmitGate } from "../lib/order-draft-logic";
+import { decideResumeLine, orderSubmitGate } from "../lib/order-draft-logic";
+import { getOrderSubmitKey, resetOrderSubmitKey } from "../lib/order-submit-key";
 import { fmtCalendarDate } from "../lib/format-date";
 // Parked drafts (PR-3): NewOrderScreen resolves ?resumeDraft= and hydrates
 // only the customer; ProductPickView (it owns all other parkable state) binds
@@ -173,9 +175,10 @@ type Product = {
   parentProductId?: string | null;
   parent?: { id: string; name: string } | null;
   /**
-   * `GET /products/:id` (used only by draft-resume hydration below) returns
-   * an archived product too, unlike the catalog list — checked explicitly so
-   * an archived line drops on resume instead of silently reappearing.
+   * `GET /products/:id` (draft-resume hydration) and the barcode ladder both
+   * return an archived product, unlike the catalog list. Such a line is KEPT
+   * on resume — it is still orderable server-side — and the cart row flags it
+   * as Archived rather than deleting the operator's scanned work (R5/B195).
    */
   isActive?: boolean | null;
 };
@@ -770,18 +773,16 @@ function ProductPickView({
         parkedLines.map(async (li) => {
           try {
             const { data } = await apiClient.get<Product>(`/products/${li.productId}`);
-            // findOne returns an archived product too (unlike the catalog
-            // list, which filters isActive:true) — treat it the same as gone.
-            if (data.isActive === false)
-              return { li, product: null as Product | null, failed: false };
-            return { li, product: data as Product | null, failed: false };
+            // findOne returns an archived product too (unlike the catalog list,
+            // which filters isActive:true) — and it is KEPT: the ladder resolves
+            // archived products, so dropping one here deleted a line the
+            // operator had just scanned in and parked (REG-B195). The row flags
+            // itself as archived instead. Only a 404 drops a line; a timeout or
+            // 5xx aborts the whole hydration rather than truncating the cart.
+            return { li, ...decideResumeLine<Product>({ ok: true, product: data }) };
           } catch (err) {
-            // ONLY a 404 means the product is genuinely gone. A timeout, a 5xx
-            // or an offline handset must never be read as "deleted": dropping
-            // the line there would both lie to the operator and let autosave
-            // PATCH the truncated cart back over the parked draft.
             const status = (err as { response?: { status?: number } })?.response?.status;
-            return { li, product: null as Product | null, failed: status !== 404 };
+            return { li, ...decideResumeLine<Product>({ ok: false, status }) };
           }
         }),
       );
@@ -1107,7 +1108,9 @@ function ProductPickView({
   const handleBarcodeScanned = makeScanHandler<Product>({
     products,
     accept: acceptScannedProduct,
-    resolve: (c) => resolveProductByCode<Product>(c),
+    // Forward the ladder's abort signal — without it a lookup that blows the
+    // scan deadline keeps running and still adds the line (F30 / R2).
+    resolve: (c, signal) => resolveProductByCode<Product>(c, signal),
     onAmbiguous: setPickCode,
     onCreate: canCreateProducts ? setCreateCode : undefined,
   });
@@ -1128,33 +1131,55 @@ function ProductPickView({
    * Both end in acceptScannedProduct, which clears the field and keeps the
    * list still — the next scan goes straight in, zero taps.
    */
-  const searchScanBusy = useRef(false);
-  const handleSearchSubmit = async () => {
-    if (searchScanBusy.current) return;
-    searchScanBusy.current = true;
-    try {
-      await runWedgeSubmit({
-        term: searchTerm,
+  // Wedge-submit: the search field is cleared SYNCHRONOUSLY on every SCAN
+  // submit — the web CreateOrderModal invariant (CreateOrderModal.tsx:310-316);
+  // submitting a typed NAME leaves it alone — and a burst arriving mid-resolve
+  // is buffered, never dropped, never concatenated
+  // (REG-B193). The handler's internal busy/queue state has to survive
+  // re-renders, so it is built ONCE via a ref; a small "latest deps" ref keeps
+  // it pointed at the current searchTerm/handleBarcodeScanned/showInline
+  // closures instead of the ones captured on the render that built it.
+  const wedgeDepsRef = useRef<{ scan: (code: string) => Promise<void>; clearSearch: () => void }>({
+    scan: async () => undefined,
+    clearSearch: () => undefined,
+  });
+  wedgeDepsRef.current = {
+    scan: (code) =>
+      runWedgeSubmit({
+        term: code,
         scan: handleBarcodeScanned,
         clearSearch: () => setSearch(""),
         showInline,
-      });
-    } finally {
-      searchScanBusy.current = false;
-    }
+      }),
+    clearSearch: () => setSearch(""),
   };
+  const wedgeSubmitRef = useRef(
+    createWedgeSubmitHandler({
+      scan: (code) => wedgeDepsRef.current.scan(code),
+      clearSearch: () => wedgeDepsRef.current.clearSearch(),
+    }),
+  );
+  const handleSearchSubmit = () => wedgeSubmitRef.current(searchTerm);
 
-  const lastAutoAdd = useRef<{ code: string; at: number }>({ code: "", at: 0 });
+  // Settled exact-match auto-add (no-terminator scanners): whether a settle
+  // may add is decided by a per-scan ATTEMPT, not a time window (REG-B201) — a
+  // window can't tell "this scan already added" from "a background refetch
+  // re-settled the same code"; an attempt nonce can, no matter how late the
+  // stale settle lands. The attempt ENDS the moment the field goes empty (what
+  // acceptScannedProduct does), so re-scanning the SAME item for a second unit
+  // starts a fresh attempt and adds again — the old 800ms window allowed that
+  // and a per-code nonce would have killed it forever.
+  const autoAddAttemptRef = useRef(createScanAttempt());
   useEffect(() => {
     const code = searchTerm.trim();
-    if (!looksLikeScanCode(code) || isSearching) return;
+    if (!looksLikeScanCode(code)) {
+      autoAddAttemptRef.current.end();
+      return;
+    }
+    if (isSearching) return;
     const { match } = findExactScanMatch(code, products);
     if (!match) return;
-    const now = Date.now();
-    // Re-fire guard: the rows can re-settle for the same term (refetch); an
-    // INTENTIONAL re-scan of the same code (~1s+ of aim-and-trigger) passes.
-    if (lastAutoAdd.current.code === code && now - lastAutoAdd.current.at < 800) return;
-    lastAutoAdd.current = { code, at: now };
+    if (!autoAddAttemptRef.current.shouldAutoAdd(code)) return;
     const outcome = acceptScannedProduct(match, scanUnitKind(code, match));
     if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1674,12 +1699,27 @@ function ProductPickView({
   // Pre-check the customer's open draft/pending order so we can ask before submitting.
   const { data: activeOrder } = useActiveOrderForCustomer(customerId);
 
+  // A screen instance IS a cart session: mint a fresh Idempotency-Key for it
+  // (F30/R8). The key then survives every FAILED attempt on this cart — a
+  // timeout, an offline queue replay — so the server collapses the retry onto
+  // the original order instead of creating a sibling; it is only reset once a
+  // submit actually succeeds (below), because the next submit is deliberately
+  // a new order.
+  useEffect(() => {
+    // R5 (close-out): a parked-draft RESUME re-mounts this screen for the SAME
+    // cart — rotating the key there re-opens the duplicate window for a
+    // timed-out-but-committed submit made before the park. Rotate only for a
+    // genuinely new cart session.
+    if (!initialDraft) resetOrderSubmitKey();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot mount decision on the resume seed
+  }, []);
+
   // Re-entrancy latch. `createOrder.isPending` alone leaves two windows open
   // where the button still reads "Confirm": the pre-submit draft flush (a
   // whole POST/PATCH round trip before `mutate` is even called) and the
   // post-success `finalizeBoundDraft` (react-query clears isPending before
   // running this call's onSuccess). A second tap in either window would create
-  // a SECOND order — there is deliberately no idempotency key on POST /orders.
+  // a SECOND order client-side, ahead of the server's idempotency replay.
   // The ref is what actually gates (set synchronously in the tap handler); the
   // state exists only to re-render the disabled button.
   const submittingRef = useRef(false);
@@ -1772,9 +1812,15 @@ function ProductPickView({
         ...(selectedCreditIds.length
           ? { appliedCreditNotes: selectedCreditIds.map((id) => ({ creditNoteId: id })) }
           : {}),
+        // Sent as the Idempotency-Key header (see useCreateOrderAsDriver). The
+        // SAME value on every retry/replay of this cart is the point.
+        idempotencyKey: getOrderSubmitKey(),
       },
       {
         onSuccess: async (order) => {
+          // This cart is now a real order; anything submitted next is a NEW
+          // order and must carry its own key.
+          resetOrderSubmitKey();
           if (mergeChoice === "merge") {
             showToast(`Merged into order ${order.orderNumber}`);
           } else if (asDraft) {
@@ -2939,6 +2985,13 @@ function CartRow({
             {isBoxed ? `case of ${upb}` : product.unit ? `per ${product.unit}` : ""}
             {product.sku ? `${isBoxed || product.unit ? " · " : ""}${product.sku}` : ""}
           </Text>
+          {/* R5/B195: an archived product is kept on the order (it is still
+              orderable) — flagged, never silently deleted on draft-resume. */}
+          {product.isActive === false ? (
+            <Text style={styles.cartRowArchived} numberOfLines={1}>
+              Archived — no longer in the catalog
+            </Text>
+          ) : null}
         </View>
         <Pressable onPress={onRemove} hitSlop={8} style={styles.cartRowRemove}>
           <Ionicons name="trash-outline" size={18} color={ios.system.redInk} />
@@ -3827,6 +3880,12 @@ const styles = StyleSheet.create({
     color: ios.label2,
     marginTop: 2,
     fontVariant: ["tabular-nums"],
+  },
+  cartRowArchived: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.system.orangeInk,
+    marginTop: 2,
   },
   cartRowRemove: {
     width: 32,

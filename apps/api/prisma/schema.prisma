@@ -1332,6 +1332,13 @@ model Order {
   // value meaning "exempt"; `null` means no override (fall through to rate resolution).
   commissionRatePct      Decimal?    @db.Decimal(5, 2)
   fulfillPath            FulfillPath @default(ROUTE)
+  // F30/R8: client-generated key (uuid per cart session) for POST /orders replay
+  // semantics. A duplicate submit under the same (tenantId, idempotencyKey) —
+  // queue self-duplication, a timed-out-but-completed request retried — returns
+  // the ORIGINAL order instead of creating a second one. NULL is untouched by
+  // the unique constraint (Postgres treats NULLs as distinct, mirroring the
+  // orderNumber unique below), so old clients that never send a key are unaffected.
+  idempotencyKey         String?
   createdAt              DateTime    @default(now())
   updatedAt              DateTime    @updatedAt
   tenantId               String?
@@ -1354,6 +1361,8 @@ model Order {
   // NULL values are treated as distinct by PostgreSQL, so rows with
   // orderNumber=null remain unrestricted (legacy/draft orders).
   @@unique([tenantId, orderNumber])
+  // F30/R8: per-tenant idempotency store — see column comment above.
+  @@unique([tenantId, idempotencyKey])
   @@index([customerId])
   @@index([routeRunId])
   @@index([routeRunStopId])

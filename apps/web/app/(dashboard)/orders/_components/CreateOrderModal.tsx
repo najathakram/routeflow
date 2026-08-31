@@ -283,6 +283,16 @@ export function CreateOrderModal({
   barcodeScanHandlerRef.current = async (code: string) => {
     try {
       const result = await resolveProductByCode(code);
+      if (result.archived) {
+        // F30 / R5: the product exists but is retired — never put it on an
+        // order silently, and never fall through to "create a new product"
+        // for something the catalog already has.
+        toast({
+          variant: "error",
+          title: `${result.product?.name || "Item"} is archived — reactivate to sell`,
+        });
+        return;
+      }
       if (!result.notFound && result.product) {
         addLineItem(result.product); // addLineItem clears search + refocuses
         return;

@@ -275,6 +275,41 @@ export function useBuyerProductsInfinite(params?: {
   });
 }
 
+/**
+ * F30 / R12 (B200): resolve a scanned code against THIS buyer's catalog.
+ *
+ * The operator ladder in `lib/barcode-resolve.ts` is unusable from the buyer
+ * realm — both its rungs (`/products/barcode/:code` and `/products?scanCode=`)
+ * are `@Roles(OPERATOR, DRIVER)`, so a customer 403s on both. This is the
+ * buyer realm's own rung (`BuyerController.scanProduct`), which runs the same
+ * `normalizeScanCode` candidate match the operator rung does — so an iOS
+ * 13-digit decode of a 12-digit label still resolves — behind the isActive +
+ * regulated-visibility gate every other buyer-catalog surface uses.
+ *
+ * A 404 is the MISS outcome, not a failure: it covers both "no candidate
+ * matched" and "matched a product this buyer may not see", and the two must
+ * be indistinguishable to the buyer. Anything else (network / 5xx) propagates
+ * so the caller can say "try again" instead of lying with "not found"
+ * (`resolveProductByCode`'s convention).
+ */
+export async function resolveBuyerProductByCode(
+  code: string,
+  signal?: AbortSignal,
+): Promise<{ product: BuyerProduct; notFound?: false } | { notFound: true; product?: undefined }> {
+  const trimmed = code.trim();
+  if (!trimmed) return { notFound: true };
+  try {
+    const res = await buyerApiClient.get<BuyerProduct>(
+      `/buyer/products/scan/${encodeURIComponent(trimmed)}`,
+      { signal },
+    );
+    if (res.data?.id) return { product: res.data };
+  } catch (err: any) {
+    if (err?.response?.status !== 404) throw err;
+  }
+  return { notFound: true };
+}
+
 // ─── Promotions (P5-04, buyer cart) ────────────────────────────────────────────
 
 /** An active, in-window promotion (GET /buyer/promotions). Mirrors web's shape. */

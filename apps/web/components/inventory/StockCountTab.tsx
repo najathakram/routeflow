@@ -8,7 +8,7 @@ import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
-import { resolveProductByCode } from "@/lib/barcode-resolve";
+import { archivedMessage, resolveProductByCode } from "@/lib/barcode-resolve";
 import { useAuth } from "@/lib/auth-context";
 import { fmtDate } from "@/lib/formatting";
 import { unitsLabel } from "@/lib/stock-label";
@@ -503,6 +503,17 @@ export function StockCountTab() {
       const sid = await ensureSession();
       if (!sid) return;
       const result = await resolveProductByCode(code);
+      if (result.archived) {
+        // F30 / R5: counting a retired product would post variance movements
+        // against something the tenant has taken out of service — say what it
+        // actually is instead of counting it or claiming it doesn't exist.
+        toast({
+          title: archivedMessage(result.product),
+          description: "Reactivate it on the Products page to count it.",
+          variant: "error",
+        });
+        return;
+      }
       if (result.notFound) {
         setUnknownCode(code);
         return;

@@ -9,7 +9,7 @@ import { BarcodeScanner } from "../../../components/BarcodeScanner";
 import { useCreateVendorBill } from "../../../lib/api/vendor-bills";
 import { useSuppliers } from "../../../lib/api/purchase-orders";
 import { useProducts } from "../../../lib/api/products";
-import { resolveProductByCode } from "../../../lib/barcode-resolve";
+import { archivedMessage, resolveProductByCode } from "../../../lib/barcode-resolve";
 import { showToast } from "../../../lib/toast";
 
 interface LineItem {
@@ -265,6 +265,12 @@ function LineItemRow({
     if (!trimmed) return;
     try {
       const result = await resolveProductByCode<PickableProduct>(trimmed);
+      if (result.archived) {
+        // F30 / R5: linking a retired product to a bill line would move its
+        // stock and cost again — reactivate it first, deliberately.
+        showToast(archivedMessage(result.product));
+        return;
+      }
       if (!result.notFound && result.product) {
         setSearch(result.product.name);
         onUpdate(index, linePrefillFor(result.product));

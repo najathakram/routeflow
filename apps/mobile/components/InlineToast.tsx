@@ -1,5 +1,6 @@
 import * as React from "react";
 import { AccessibilityInfo, Animated, Easing, StyleSheet, Text } from "react-native";
+import { registerToastHost, releaseToastHost } from "../lib/toast-host";
 
 const VISIBLE_MS = 2400;
 const FADE_MS = 180;
@@ -11,8 +12,16 @@ export interface InlineToastState {
 }
 
 /**
- * `lib/toast.ts` is a NO-OP on iOS, so draft-saved / credit-created /
- * line-removed events land silently there. This is the in-screen replacement.
+ * `lib/toast.ts` has no in-screen surface of its own on iOS, so draft-saved /
+ * credit-created / line-removed events would land silently there. This is the
+ * in-screen replacement.
+ *
+ * The hook also registers itself with `lib/toast-host.ts` for as long as it is
+ * mounted (REG-B151): that registry is how `showToast`'s iOS branch reaches a
+ * screen's `<InlineToast>` instead of firing a blocking `Alert` mid-scan-burst.
+ * Registering HERE rather than in each screen is deliberate — every owner of an
+ * `<InlineToast>` comes through this hook, so a new screen cannot forget the
+ * wiring. `toast-ios.test.ts` asserts these two calls stay put.
  */
 export function useInlineToast(): {
   toast: InlineToastState | null;
@@ -26,6 +35,10 @@ export function useInlineToast(): {
     setToast({ id: seq.current, message });
   }, []);
   const dismiss = React.useCallback(() => setToast(null), []);
+  React.useEffect(() => {
+    registerToastHost(show);
+    return () => releaseToastHost(show);
+  }, [show]);
   return { toast, show, dismiss };
 }
 

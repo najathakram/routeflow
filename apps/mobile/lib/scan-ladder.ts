@@ -24,8 +24,14 @@ export interface ScanLadderDeps<T extends ScanMatchable> {
   products: readonly T[] | (() => readonly T[]);
   /** Put the product in the cart and describe what happened. Screen-owned. */
   accept: (product: T, unitKind: "case" | "piece") => ScanOutcome;
-  /** Server fallback (`resolveProductByCode`), injected to keep this testable. */
-  resolve: (code: string) => Promise<BarcodeResolveResult<T>>;
+  /**
+   * Server fallback (`resolveProductByCode`), injected to keep this testable.
+   * MUST forward `signal` to the underlying request: the ladder's deadline
+   * works by ABORTING the lookup (see {@link SCAN_RESOLVE_TIMEOUT_MS}), and a
+   * resolve that ignores the signal can still settle — and still `accept` —
+   * long after the operator was told the scan failed.
+   */
+  resolve: (code: string, signal?: AbortSignal) => Promise<BarcodeResolveResult<T>>;
   /** Several substring hits — open a picker seeded with the code. */
   onAmbiguous: (code: string) => void;
   /**
@@ -39,6 +45,20 @@ export interface ScanLadderDeps<T extends ScanMatchable> {
 function resolveProducts<T extends ScanMatchable>(p: ScanLadderDeps<T>["products"]): readonly T[] {
   return typeof p === "function" ? p() : p;
 }
+
+/**
+ * Caps ONE scan lookup so a slow resolve can't hold the camera's pending
+ * buffer (and its `isResolving` indicator) open for api-client's full request
+ * timeout — F30 / R2's shortened "looking up…" window.
+ *
+ * The deadline lives HERE, around the awaited request, and it ABORTS rather
+ * than races. A `Promise.race` in the camera would only discard the VALUE: the
+ * ladder below would keep running and its `deps.accept` — a real cart write —
+ * would land seconds after the operator was told "try again" and re-presented
+ * the item, giving qty 2 for one physical scan. Scoped to this call: the
+ * signal cancels only the lookup, never api-client's own axios timeout.
+ */
+export const SCAN_RESOLVE_TIMEOUT_MS = 5000;
 
 /**
  * Build the continuous-scan handler: local rows → server resolve → ambiguous →
@@ -68,8 +88,12 @@ export function makeScanHandler<T extends ScanMatchable>(
     if (local) return deps.accept(local, scanUnitKind(trimmed, local));
 
     // 2) Server fallback: barcode → exact SKU → name/SKU substring → notFound.
+    //    Bounded by SCAN_RESOLVE_TIMEOUT_MS — an abort, so a lookup that blows
+    //    the deadline is cancelled and can never reach `deps.accept`.
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), SCAN_RESOLVE_TIMEOUT_MS);
     try {
-      const result = await deps.resolve(trimmed);
+      const result = await deps.resolve(trimmed, controller.signal);
       if (result.ambiguous) {
         // Deliberately NOT matches[0]: with numeric product names a 12-digit
         // scan substring-matches broadly, so a guess puts the wrong item on the
@@ -83,16 +107,35 @@ export function makeScanHandler<T extends ScanMatchable>(
           },
         };
       }
+      if (result.archived && result.product) {
+        // F30 / R5: a resolved-but-inactive product is a distinct outcome —
+        // never silently added, and never reported as if it doesn't exist.
+        const archivedProduct = result.product as { name?: string };
+        return {
+          feedback: {
+            kind: "error",
+            text: `${archivedProduct?.name ?? "Item"} is archived — reactivate to sell`,
+          },
+        };
+      }
       if (!result.notFound && result.product?.id) {
         // Classify against the RESOLVED product's own codes — the endpoint
         // resolves either code but doesn't say which one matched.
         return deps.accept(result.product, scanUnitKind(trimmed, result.product));
       }
     } catch (err: any) {
+      if (controller.signal.aborted) {
+        // Deadline hit: the request was CANCELLED, so nothing was added and
+        // re-presenting the item is safe — which is the whole point of
+        // aborting instead of abandoning a still-live lookup.
+        return { feedback: { kind: "error", text: "Still looking that up — try again." } };
+      }
       // Network / 5xx — surface it, so a lookup failure never reads as "this
       // product doesn't exist".
       const msg = err?.response?.data?.message ?? err?.message ?? "Couldn't look up barcode.";
       return { feedback: { kind: "error", text: msg } };
+    } finally {
+      clearTimeout(deadline);
     }
 
     // 3) Nothing matched. Stay in scan mode; the pill carries the hand-off.
