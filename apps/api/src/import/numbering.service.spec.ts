@@ -74,7 +74,9 @@ describe("NumberingService", () => {
       const row = await service.updateSettings("INVOICE", { nextNumber: 9000 });
       expect(prisma.numberingSequence.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { tenantId_docType: { tenantId: "test-tenant", docType: "INVOICE" } },
+          where: {
+            tenantId_docType_year: { tenantId: "test-tenant", docType: "INVOICE", year: 0 },
+          },
           update: { nextNumber: 9000 },
         }),
       );
