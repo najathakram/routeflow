@@ -406,38 +406,30 @@ homeAddress` (the driver-home origin), and orders inherit `fulfillPath` from the
   - **Universal one-step demotion + reopen DELIVERED + delete-any (2026-08-25, sale-integrity phase 2 WP3):** `changeStatus`'s `allowed` map gained `PENDING → DRAFT` and `DELIVERED → [CONFIRMED, PARTIALLY_DELIVERED]` (owner reversed BUG-ORD-01: reopening a delivered order is legal again) — every state may now step back one stage. The new transitions join the requires-reason demotion set and are staff-only for free: the role gates that run BEFORE the map already limit CUSTOMER to cancelling its own PENDING/DRAFT order and DRIVER to `PENDING → CONFIRMED`. A DELIVERED demotion additionally (a) 409s (`ConflictException`) when `order.routeRunStopId` points at a `RouteRunStop` whose `status === "COMPLETED"` — one extra lookup, only on this transition, message sends staff to reopen the run stop instead (that path reverses stock and payments correctly) — and (b) writes `deliveredAt: null` so a reopened order leaves delivered-on-date reports. The DELIVERED branch's side effects (draft reconcile / auto-invoice / credit settle) are keyed on `dto.status === DELIVERED` and so fire on NEITHER demotion. Mirrored byte-for-byte by `apps/mobile/lib/order-status-flow.ts`'s `ORDER_STATUS_TRANSITIONS`/`demotionRequiresReason`. — **Delete-any:** `deleteOrder(id, user?)` / `bulkDeleteOrders(ids, user?)` (`user` optional so change-requests' abandoned-draft cleanup keeps its single-arg call). Money, not status, is the gate now: staff (OPERATOR/TENANT_ADMIN, and any internal caller passing no user) may delete an order in ANY status; a non-staff caller keeps the old `Only DRAFT, PENDING, or CANCELLED` allowlist verbatim. Two 409s precede the delete — `Return` rows against the order (the one restrict-linked child; every other one cascades or is deleted in the transaction, so a delivered-and-partly-returned order would otherwise blow up with a raw FK error) and blocking payments off `cancelImpact` (external cash only; #341's wallet behaviour is preserved — credit-note/advance money is still handed back and the delete proceeds). The old `assertCancellableOrThrow` 400 became that ConflictException so the client shows "void the invoice first". Controller routes `changeStatus`/`bulkDelete`/`remove` are widened to TENANT_ADMIN. Specs: `orders.service.spec` "changeStatus — one-step-back demotions" + "deleteOrder — delete-any".
   - **Delivery-date picker (2026-08-25, sale-integrity phase 2 WP4):** `CreateSaleDto.deliveredOn?: string` (`@IsDateString`) REPLACES `deliveredNow`'s binary in `createSale` when present (`deliveredNow` still honoured alone for older/mobile clients; when both are sent `deliveredOn` wins). A date > end-of-today UTC ⇒ deliver-later: the order stays PENDING with its DRAFT mirror invoice and `requestedDeliveryDate = deliveredOn`. A past/today date ⇒ delivered: it runs through `parseOrderDate` (so backdating keeps its staff-only gate and 2-year floor) and becomes the order's `deliveredAt` — overriding `orderDate`'s fallback — then the invoice is generated and issued as usual. Specs: `orders.service.spec` `createSale` WP4 block (past/future/today, non-staff backdate 403, deliveredOn-absent path unchanged).
 
-  - ⏳ **F03 IN FLIGHT ON THIS BRANCH — UNVERIFIED, DO NOT TRUST AS MAPPED BEHAVIOUR.** Five code files
-    exist here that are NOT on master and have NOT passed a red gate, review lens or mutation probe
-    (six counting the mobile mirror below):
-    `invoices/payment-predicates.ts` (NEW — `CONFIRMED_PAYMENT` = `{status:"PAID"}` + `sumConfirmed()`;
-    ⚠️ narrows SUMS only — listing reads keep `not: VOID` so DRAFT rows stay visible for R2's badge),
-    `invoices/invoices.service.ts` (routed through that predicate + the F04 oracle cap —
-    `Math.min(billedThrough(...), basisQty)` on BOTH telescope points), `invoices/invoice-pdf-item.ts`,
-    the web invoice-detail draft badge + its mobile mirror
-    (`apps/mobile/app/(operator)/(tabs)/invoices/[id].tsx` — a `Draft — unconfirmed` `Pill` plus a
-    "Not counted toward the balance due" meta line on the payment row. Mobile is the primary operator
-    surface and its header reads `balanceDue`/`paidAmount` straight from the server, so without the badge
-    the screen listed `+$200.00` beside an unmoved balance and explained nothing; web puts that
-    explanation in a `title` tooltip, which a phone has no hover for), and `scripts/repair-f03.mjs` (R10's repair lane, now IMPLEMENTED
-    against `apps/api/src/scripts/repair-f03.spec.ts`: `parseFlags`/`assertRepairTarget`/`identifyRepairs`/
-    `applyRepairs` over an injected store + a lazy `pg` binding and CLI. Dry-run default, `--execute` +
-    `--i-have-a-fresh-backup`, per-row compare-and-set that SKIPS drifted rows, JSONL log under
-    `local-assets/`, `--force-nonprod` entry guard. ⚠️ It DETECTS all four damage classes but only
-    AUTO-WRITES `status-drift` and `qty-conservation-drift`; `stale-category-tax` (B57) and
-    `stranded-credit` (B85) are report-only — their repair cascades into invoice totals / the credit
-    wallet / commissions, which live in the services. B81 is reported unrepairable, never modified.
-    ⚠️ Both auto-write sweeps are scoped to the DAMAGE SIGNATURE, never the whole table:
-    `status-drift` only considers invoices that carry a DRAFT `InvoicePayment` (unscoped it demotes
-    import-settled PAID invoices — `import/import.service.ts`'s `existing` branch writes
-    status/dueDate/paidAt with NO payment row, honoured by `isSettled` — and mass-rewrites
-    VIEWED/SENT/OVERDUE rows B74 never touched); `qty-conservation-drift` bails on any order holding a
-    provenance-less invoice line, because `adjustInvoicedQtyForInvoice`'s byProduct fallback bumps
-    `invoicedQty` through lines the `orderItemId` join cannot see, and clamps the written value to
-    `oi.qty` (schema.prisma "Capped at qty")).
-    ⚠️ **The oracle cap has NO
-    regression behind it yet** — `T-B50s` was added to the test plan on resume precisely because the fix
-    shipped without one. Full entries land at F03's close-out, once the behaviour is proven; mapping them
-    now would make this file assert unproven money math.
+  - **F03 payment-status truth (2026-08-31, batch F03 — no migration):** `invoices/payment-predicates.ts`
+    (NEW) is the single source of truth — `CONFIRMED_PAYMENT` = `{status:"PAID"}` and
+    `sumConfirmed(rows)`. ⚠️ **Every payment SUM narrows to PAID; every payment LISTING keeps all rows
+    and carries `status` through to the renderer** — narrowing a listing hides the DRAFT row the badge
+    exists to show, which is the opposite of R2. Routed: `invoices.service` (findAll `balanceDue`,
+    `recomputeStatus` feeders, the PDF query), `bookkeeping.service` (three dashboards PLUS `getSummary`,
+    `getArAgingInvoices`, `recordPayment` and the balance reports), `customers.service`,
+    `buyer/statement.service`, `payment-requests.service`. ⚠️ `getCashFlow` and
+    `getPaymentsReceivedReport` are **byte-untouched on purpose** — they were already PAID-only and are
+    the reference reads the rest were aligned to. The original three-function fence WAS the defect: it
+    left the same tenant reading $200 outstanding on `/bookkeeping/summary` and $500 on
+    `/bookkeeping/dashboard`. ⚠️ Fixtures asserting `status: "RECORDED"` were corrected to `"PAID"` —
+    `PaymentStatus` is exactly `DRAFT|PAID|VOID`, so RECORDED was a fiction no writer can produce and it
+    was masking three unrouted sites. Documents: `invoice-pdf.service`/`invoice-pdf-template` and
+    `email.service` sum confirmed rows only, list DRAFT rows under a "Pending confirmation" label, and a
+    reminder now demands the BALANCE not the total; the shared item type is `invoices/invoice-pdf-item.ts`
+    (`originalPrice`/`priceType`/`promoFreeUnits` for the strikethrough + N-free disclosure).
+    ⚠️ **`T-B50s`, never a bare `REG-B50` token** — `REG-B50` also selects F04's shipped
+    `pricing-parity.spec.ts` tests, which makes a red gate structurally incapable of reporting 0 passed.
+    It pins the F04 oracle cap on the SERVER telescope (`Math.min(billedThrough(x), basisQty)` on BOTH
+    points); mutation-verified by hand — removing the cap from ONE point goes red. `scripts/repair-f03.mjs`
+    is the D4 repair tool (dry-run default, `--execute` + `--i-have-a-fresh-backup`, per-row
+    compare-and-set that SKIPS drifted rows, JSONL log under `local-assets/`); **it has never been run
+    against production.**
   - **F30 server half (2026-08-31, batch F30 — migration `20260910000000_order_idempotency`, additive):**
     - **`Order.idempotencyKey String?` + `@@unique([tenantId, idempotencyKey])` (R8, REG-B196).** `POST /orders`
       reads an `Idempotency-Key` **header** (`@Headers`, `@ApiHeader(required:false)`) — never a DECLARED
@@ -479,8 +471,20 @@ homeAddress` (the driver-home origin), and orders inherit `fulfillPath` from the
       by the time a queued turn runs — `fn` re-reads `findActiveOrder` inside the lock and writes to / returns
       THAT order. ⚠️ **SCOPE: the Map is per controller INSTANCE, so this serializes one API process only.**
       Two Railway replicas merging the same order still race their reads: the row lock inside
-      `updateOrderItems` serializes the WRITE, not the read the absolute totals were computed from. Closing
-      that means folding inside `updateOrderItems`' own transaction — tracked, deliberately not done here.
+      `updateOrderItems` serializes the WRITE, not the read the absolute totals were computed from.
+      **DEFERRED ON EVIDENCE (2026-08-31), not merely pending:** `@routeflow/api` runs exactly ONE instance —
+      no `numReplicas` in `apps/api/railway.toml`, `numReplicas = null` for every service in Railway's API
+      (so no dashboard override either), and the live deployment reports 1 running instance — so the
+      cross-replica race is UNREACHABLE and restructuring a money-critical write path to close it would be
+      the bigger risk. ⚠️ **The trigger is scaling, and it is silent** (wrong money, no error/log/test), and
+      the process cannot self-detect it because Railway injects no replica-count variable — so the guard is a
+      comment in `apps/api/railway.toml`'s `[deploy]` block, where the scaling decision is actually made;
+      do not remove it. When picked up, three designs are spelled out in `withOrderMergeLock`'s doc comment,
+      cheapest first: (1) **Redis lock** (SET NX PX + token-checked release; Redis is already a dependency via
+      the Socket.io adapter, diff stays inside the method, and the T-B199 spec's one-instance framing survives),
+      (2) optimistic CAS on version/updatedAt inside `updateOrderItems`' transaction with a 409 + client retry,
+      (3) the "full" fix — fold inside that transaction, which REQUIRES moving (never deleting)
+      `orders.scan-hardening.spec.ts`'s "two concurrent merges on ONE INSTANCE serialize" block.
     - **`UpdateOrderItemsDto.replaceAll` is EXPLICIT-ONLY (R10, REG-B198).** The legacy heuristic
       (`replaceAll = dto.replaceAll ?? allNewItems`, "every item lacks an id ⇒ replace") is GONE — that is exactly the
       shape of a mobile per-scan "just add these" PATCH, which wiped the order. Omitted or `false` ⇒ incremental merge.

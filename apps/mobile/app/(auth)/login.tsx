@@ -12,6 +12,7 @@ import { BrandGlyph, GoogleButton } from "@routeflow/ui/mobile/ios";
 import { useAuthStore } from "../../lib/auth-store";
 import { useTenantStore } from "../../lib/tenant-store";
 import { getLastUsername } from "../../lib/last-username";
+import { buildLabel } from "../../lib/build-info";
 
 const schema = z.object({
   username: z.string().min(1, "Username is required"),
@@ -237,6 +238,10 @@ export default function LoginScreen() {
             New driver? <Text style={styles.footerLink}>Get setup code</Text>
           </Text>
         </TouchableOpacity>
+
+        {/* B202: diagnostic build stamp — lets us and the client tell which
+            deploy a browser/phone is actually on (see lib/build-info.ts). */}
+        <Text style={styles.buildStamp}>{buildLabel()}</Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -410,5 +415,15 @@ const styles = StyleSheet.create({
   footerLink: {
     color: ios.brand,
     fontFamily: "Inter_500Medium",
+  },
+  buildStamp: {
+    textAlign: "center",
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    // label2, not the fainter label3: this stamp exists to be READ ALOUD by a
+    // client confirming which deploy they're on, so it has to clear a contrast
+    // floor. label3 (30% opacity) sits near 2:1 on this background.
+    color: ios.label2,
+    marginTop: 8,
   },
 });
