@@ -260,6 +260,16 @@ CRITICAL — ship the hotfix batch immediately. This is active production pain f
   scan pipeline). Severity minor: van-sale is a deliberate button press; the offline queue's
   replay marker (R2) already stops queue self-duplication. Candidate for a future hunt round to
   mint as its own register entry.
+- **withOrderMergeLock is per-process (R11/B199 lost-update half) — DEFERRED ON EVIDENCE 2026-08-31.**
+  The controller-instance Map serializes merges within ONE API process; two replicas would still race
+  their reads. Checked before acting: `@routeflow/api` runs exactly 1 instance (no `numReplicas` in
+  railway.toml, `numReplicas = null` in Railway's API, live deployment reports 1 running instance), so
+  the race is unreachable and restructuring the money path to close it is the larger risk. ⚠️ Scaling is
+  the trigger and it fails SILENTLY (wrong money, no error/log/test); Railway injects no replica-count
+  variable, so the guard is a comment in `apps/api/railway.toml`'s `[deploy]` block. Three designs in
+  `withOrderMergeLock`'s doc comment — Redis lock (cheapest, Redis already a dependency), optimistic CAS
+  + 409 retry, or the full fold-inside-the-transaction (which must MOVE, not delete, the T-B199
+  "ONE INSTANCE" spec block).
 - **recordIdempotencyKey single-slot carry (R6).** When an auto-merge sweep folds several keyed
   losers into one winner, only the eldest loser's key can occupy the winner's slot; later losers'
   keys are dropped (their clients' replays fall back to content comparison against the merged
