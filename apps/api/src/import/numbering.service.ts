@@ -17,6 +17,11 @@ const DEFAULTS: Record<DocumentNumberType, { prefix: string; padding: number }> 
   ESTIMATE: { prefix: "EST-", padding: 4 },
   CREDIT_NOTE: { prefix: "CN-", padding: 4 },
   PAYMENT: { prefix: "PAY-", padding: 4 },
+  // F01/G6: match the series the ad-hoc minters emit today (returns.service.ts
+  // `RET-<year>-…` pad-4, orders.service.ts `ORD-…` pad-5) so F16 can route
+  // them through reserveNext without renumbering anything.
+  RETURN: { prefix: "RET-", padding: 4 },
+  ORDER: { prefix: "ORD-", padding: 5 },
 };
 
 export interface NumberingSettingRow {
@@ -97,7 +102,7 @@ export class NumberingService {
     const tenantId = this.requireTenant();
     const d = DEFAULTS[docType];
     const row = await this.prisma.forTenant().numberingSequence.upsert({
-      where: { tenantId_docType: { tenantId, docType } },
+      where: { tenantId_docType_year: { tenantId, docType, year: 0 } },
       create: {
         tenantId,
         docType,
@@ -173,7 +178,7 @@ export class NumberingService {
 
     // Ensure a row exists so the atomic increment / tx update has a target.
     const seq = await this.prisma.forTenant().numberingSequence.upsert({
-      where: { tenantId_docType: { tenantId, docType } },
+      where: { tenantId_docType_year: { tenantId, docType, year: 0 } },
       create: { tenantId, docType, prefix: d.prefix, padding: d.padding, nextNumber: 1 },
       update: {},
     });
@@ -181,7 +186,7 @@ export class NumberingService {
     if (!exists) {
       // Fast path: atomic single-statement increment — safe under concurrency.
       const updated = await this.prisma.forTenant().numberingSequence.update({
-        where: { tenantId_docType: { tenantId, docType } },
+        where: { tenantId_docType_year: { tenantId, docType, year: 0 } },
         data: { nextNumber: { increment: 1 } },
       });
       const reserved = updated.nextNumber - 1;
@@ -192,7 +197,7 @@ export class NumberingService {
     // skipping forward past numbers that already exist.
     return this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
       const current = await tx.numberingSequence.findUnique({
-        where: { tenantId_docType: { tenantId, docType } },
+        where: { tenantId_docType_year: { tenantId, docType, year: 0 } },
       });
       const prefix = current?.prefix ?? seq.prefix;
       const padding = current?.padding ?? seq.padding;
@@ -222,7 +227,7 @@ export class NumberingService {
       }
 
       await tx.numberingSequence.update({
-        where: { tenantId_docType: { tenantId, docType } },
+        where: { tenantId_docType_year: { tenantId, docType, year: 0 } },
         data: { nextNumber: n + 1 },
       });
       return { number: candidate, advanced };

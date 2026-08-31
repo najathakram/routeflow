@@ -1,8 +1,17 @@
 # HANDOFF — current state & what to pick up next
 
 **Written:** 2026-08-30 · **Visibility:** private (verified by read-back) · **Campaign:** the
-bug-register burn-down is EXECUTING — `W1 in flight (F00 PR open) · 2/180 closed · next: merge
-F00, then F01`.
+bug-register burn-down is EXECUTING — `W2 in flight (F01 PR open, prod migration owner-gated on
+#514) · 2/180 closed · next: owner reviews migration.sql → backup → prod-migrate → merge F01 →
+W3 (F02b · F03 · F04 · F17)`.
+
+> **W1 ✅ SHIPPED 2026-08-30:** F00 = PR #545 → master `7e5c2d98`; deploy-signal E2E **proven
+> live** (run started 21s after deploy SUCCESS; echo event self-skipped without cancelling);
+> post-deploy 9/9 + feature-smoke green; measured Verify = 5m11s/run. ⚠️ **Actions billing still
+> refuses private minutes account-wide** (0-step failures) — every CI green still needs a public
+> window until the owner fixes Settings → Billing. F01 adds migration slot
+> `20260908000000_campaign_schema_foundation` (additive only, 12 columns + 2 enum values across
+> 8 models — see `.claude/pipeline/2026-08-30-campaign-schema-foundation/`).
 
 ## 🟡 ACTIVE — bug-register burn-down campaign (W1: F00)
 
