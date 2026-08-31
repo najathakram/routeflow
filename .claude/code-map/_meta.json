@@ -1,6 +1,6 @@
 {
-  "mappedSha": "88fd3a3f",
-  "generatedAt": "2026-08-31T14:05:00.000Z",
+  "mappedSha": "92cced83",
+  "generatedAt": "2026-08-31T14:20:00.000Z",
   "areas": [
     "api",
     "web",
@@ -8,5 +8,5 @@
     "packages"
   ],
   "fileCount": 918,
-  "notes": "**2026-08-31** — (master `88fd3a3f`; CAMPAIGN PAUSED by the owner) — map pass for the E2E heal #556 only: `web.md` 02-operator entry records why OP-09c/OP-11b must never target \"the first row\" (spec 21 guard fixtures the guard itself refuses to delete sort into row 1; OP-09c wrote 9.75 onto a $1.00-list leftover, the tier-monotonicity glyph joined the label text node and killed the exact-match locator — the chronic deploy-signal red). Both now resolve a stable seeded product by API and match /^Tier 2/. ⚠️ DELIBERATELY UNMAPPED: the 24 files the Stop gate flags under `fix/F03-payment-truth` are UNMERGED WIP (commit d1269474) plus an isolated, droppable repo-wide prettier pass (80b75ff9) — the map tracks master, and F03 gets its entries when it merges, not before. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "**2026-08-31** — (master `92cced83`; CAMPAIGN PAUSED by the owner) — map pass for the E2E heal #556 only (docs-only commits #557–#559 follow it): `web.md` 02-operator entry records why OP-09c/OP-11b must never target \"the first row\" (spec 21 guard fixtures the guard itself refuses to delete sort into row 1; OP-09c wrote 9.75 onto a $1.00-list leftover, the tier-monotonicity glyph joined the label text node and killed the exact-match locator — the chronic deploy-signal red). Both now resolve a stable seeded product by API and match /^Tier 2/. ⚠️ DELIBERATELY UNMAPPED: the 24 files the Stop gate flags under `fix/F03-payment-truth` are UNMERGED WIP (commit d1269474) plus an isolated, droppable repo-wide prettier pass (80b75ff9) — the map tracks master, and F03 gets its entries when it merges, not before. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
