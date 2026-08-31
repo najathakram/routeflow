@@ -885,6 +885,7 @@ function EditableLineItems({
    *  contracted price a stale remembered price must never outrank. */
   isSpecialTierFor: (product: SubstituteOption) => boolean;
 }) {
+  const { toast } = useToast();
   // Scroll the just-scanned/added row into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLDivElement>>(new Map());
   const [scrollToId, setScrollToId] = React.useState<string | null>(null);
@@ -996,6 +997,17 @@ function EditableLineItems({
       // Replaces the inline copy that swallowed 5xx/network as "not found" and
       // skipped unitSku on the exact-match check.
       const result = await resolveProductByCode(code);
+      if (result.archived) {
+        // F30 / R5: resolved, but retired. Don't add it, and don't offer
+        // "create product" for something the catalog already has — say what it
+        // is and keep the code selected for the next scan.
+        toast({
+          variant: "error",
+          title: `${result.product?.name || "Item"} is archived — reactivate to sell`,
+        });
+        setTimeout(() => addInputRef.current?.select(), 50);
+        return;
+      }
       if (!result.notFound && result.product) {
         if (result.ambiguous) {
           // Several substring hits — this surface has always offered the
@@ -1942,8 +1954,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     }
 
     // replaceAll:false — this screen sends an incremental diff (new items have no
-    // id). Without it the API's legacy heuristic would treat an add-only payload
-    // as a full replace and delete the untouched lines.
+    // id). F30/R10 (B198) made the flag explicit-only, so omitting it would merge
+    // too; sending false states the intent at the call site rather than relying on
+    // the server default.
     updateItems.mutate(
       {
         id: order!.id,

@@ -31,7 +31,7 @@ import { computeLineSubtotal, normalizeBoxesPieces } from "../../../../../lib/pr
 import { editedLineFreeUnits } from "../../../../../lib/invoice-totals";
 import { freeUnitsLabel } from "../../../../../lib/buyer-cart-logic";
 import { sanitizeIntInput, parseIntQty } from "../../../../../lib/qty";
-import { resolveProductByCode } from "../../../../../lib/barcode-resolve";
+import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
 import { BarcodeFab } from "../../../../../components/BarcodeFab";
 import { LicenseGuardModal } from "../../../../../components/LicenseGuardModal";
 import { CreditLimitGuardModal } from "../../../../../components/CreditLimitGuardModal";
@@ -194,6 +194,12 @@ export default function AdjustOrderScreen() {
     if (!trimmed) return;
     try {
       const result = await resolveProductByCode<ScannedProduct>(trimmed);
+      if (result.archived) {
+        // F30 / R5: the product exists but the tenant retired it — a sellable
+        // at-door line is exactly what it must NOT silently become.
+        showToast(archivedMessage(result.product));
+        return;
+      }
       if (result.notFound || !result.product?.id) {
         showToast(`No product for "${trimmed}"`);
         return;
@@ -348,13 +354,11 @@ export default function AdjustOrderScreen() {
         deliveredQty: li.deliveredQty,
       })),
       edited: Object.entries(qtyById).map(([lineId, qty]): AtDoorEditedLine => ({ lineId, qty })),
-      added: added.map(
-        (a): AtDoorAddedLine => ({
-          productId: a.productId,
-          qty: a.qty,
-          ...(a.unitsPerBox && a.unitsPerBox > 1 ? { boxes: a.boxes, pieces: a.pieces } : {}),
-        }),
-      ),
+      added: added.map((a): AtDoorAddedLine => ({
+        productId: a.productId,
+        qty: a.qty,
+        ...(a.unitsPerBox && a.unitsPerBox > 1 ? { boxes: a.boxes, pieces: a.pieces } : {}),
+      })),
     });
 
     if (diff.length === 0) {

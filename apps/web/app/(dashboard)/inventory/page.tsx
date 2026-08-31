@@ -22,7 +22,7 @@ import {
 import { Badge, Button, Modal, PageHeader, cn, useToast } from "@routeflow/ui/web";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
-import { resolveProductByCode } from "@/lib/barcode-resolve";
+import { archivedMessage, resolveProductByCode } from "@/lib/barcode-resolve";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
@@ -229,7 +229,16 @@ function QuickRestockModal({
     setScanLoading(true);
     try {
       const result = await resolveProductByCode(code);
-      if (!result.notFound) {
+      if (result.archived) {
+        // F30 / R5: restocking a retired product would post stock movements
+        // against something the tenant has taken out of service. Name it
+        // instead of selecting it — and never call it "not found".
+        scanToast({
+          title: archivedMessage(result.product),
+          description: "Reactivate it on the Products page, then restock it.",
+          variant: "error",
+        });
+      } else if (!result.notFound) {
         setForm((f) => ({ ...f, productId: result.product.id }));
         qtyInputRef.current?.focus();
       } else {

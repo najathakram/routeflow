@@ -13,7 +13,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminProducts, type AdminProduct } from "../lib/api/admin";
 import { BarcodeScanner } from "./BarcodeScanner";
-import { resolveProductByCode } from "../lib/barcode-resolve";
+import { archivedMessage, resolveProductByCode } from "../lib/barcode-resolve";
 import { showToast } from "../lib/toast";
 
 /**
@@ -70,6 +70,13 @@ export function ProductPickerSheet({
     if (!trimmed) return;
     try {
       const result = await resolveProductByCode(trimmed);
+      if (result.archived) {
+        // F30 / R5: this sheet feeds sale, purchase and count lines — handing
+        // an archived product to `onSelect` commits it. Name it instead; the
+        // "No product" toast below would be a lie.
+        showToast(archivedMessage(result.product));
+        return;
+      }
       if (!result.notFound) {
         const hit = result.product as AdminProduct & { parentProductId?: string | null };
         if (standaloneOnly && hit.parentProductId) {
@@ -136,6 +143,11 @@ export function ProductPickerSheet({
                       <Text style={styles.meta} numberOfLines={1}>
                         {p.sku ? `SKU ${p.sku}` : "No SKU"}
                         {p.unit ? ` · ${p.unit}` : ""}
+                        {/* This list is unfiltered by `isActive`, and a scan that
+                            resolved ambiguously seeds it — so an archived row can
+                            sit next to sellable ones. Say which it is (F30 / R5)
+                            rather than letting it be picked as an ordinary line. */}
+                        {p.isActive === false ? " · Archived" : ""}
                       </Text>
                     </View>
                     <View style={styles.stockPill}>

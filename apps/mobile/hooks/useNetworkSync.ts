@@ -1,31 +1,45 @@
 import { useEffect, useRef } from "react";
 import NetInfo from "@react-native-community/netinfo";
-import { useOfflineQueue } from "../store/offlineQueue";
+import { useOfflineQueue, selectFailedActionCount, type QueuedAction } from "../store/offlineQueue";
 import { apiClient } from "../lib/api-client";
 import { showToast } from "../lib/toast";
-
-const MAX_RETRIES = 3;
+import { alertInfo } from "../lib/confirm";
+import { drainQueue, buildReplayRequestConfig, describeFailedDrain } from "../lib/queue-drain";
 
 // RF-170: matches /route-runs/{runId}/stops/{stopId}/complete
 const STOP_COMPLETE_RE = /\/route-runs\/([^/]+)\/stops\/[^/]+\/complete/;
 
 export function useNetworkSync() {
-  const { queue, isOnline, setOnline, setSyncing, dequeue, incrementRetry } = useOfflineQueue();
+  const {
+    queue,
+    isOnline,
+    setOnline,
+    setSyncing,
+    dequeue,
+    incrementRetry,
+    addFailedAction,
+    failedActions,
+    clearFailedAction,
+    clearFailedActions,
+  } = useOfflineQueue();
+  // R6's badge leg: the drain-time alert is one-shot (dismissable, and it can
+  // fire while the app is backgrounded), so the count has to stand on its own
+  // until the operator acknowledges it — see components/OfflineBanner.tsx.
+  const failedCount = useOfflineQueue(selectFailedActionCount);
   const syncing = useRef(false);
 
-  const drainQueue = async (currentQueue: typeof queue) => {
+  const runDrain = async (currentQueue: QueuedAction[]) => {
     if (syncing.current || currentQueue.length === 0) return;
     syncing.current = true;
     setSyncing(true);
 
+    // RF-170: before submitting a stop-completion, verify the run is still
+    // active. If it was cancelled while the driver was offline, the action
+    // is intentionally discarded — the run itself no longer exists, so this
+    // is a deliberate short-circuit, not the silent-loss path REG-B143/B111
+    // fixed below, and it never reaches the shared classification.
+    const remaining: QueuedAction[] = [];
     for (const action of currentQueue) {
-      if (action.retries >= MAX_RETRIES) {
-        dequeue(action.id);
-        continue;
-      }
-
-      // RF-170: before submitting a stop-completion, verify the run is still active.
-      // If it was cancelled while the driver was offline, silently drop the action.
       const stopMatch = STOP_COMPLETE_RE.exec(action.endpoint);
       if (stopMatch) {
         const runId = stopMatch[1];
@@ -40,24 +54,30 @@ export function useNetworkSync() {
           // Can't verify — attempt submission anyway; server will reject if needed.
         }
       }
+      remaining.push(action);
+    }
 
-      try {
-        await apiClient.request({
-          method: action.method,
-          url: action.endpoint,
-          data: action.body,
-          ...(action.headers ? { headers: action.headers } : {}),
-        });
-        dequeue(action.id);
-      } catch (err: unknown) {
-        const status = (err as { response?: { status?: number } })?.response?.status;
-        // CRIT-05: Discard non-retriable client errors immediately; only retry server errors
-        if (status !== undefined && status >= 400 && status < 500) {
-          dequeue(action.id);
-        } else {
-          incrementRetry(action.id);
-        }
-      }
+    // Shared, pure classification (lib/queue-drain.ts) — the ONLY place that
+    // decides delivered vs retry vs never-silent-failure, so this hook and
+    // its jest specs can never drift out of sync.
+    const result = await drainQueue(remaining, {
+      request: (action) => apiClient.request(buildReplayRequestConfig(action)),
+      // REG-B143 / REG-B111: a 4xx or a retry-exhausted entry must never just
+      // vanish — persist it (badge count) as it is classified, instead of a
+      // bare dequeue.
+      notifyFailed: addFailedAction,
+    });
+
+    for (const id of result.delivered) dequeue(id);
+    for (const id of result.retriedIds) incrementRetry(id);
+    for (const record of result.failedActions) dequeue(record.action.id);
+
+    // ONE alert for the whole drain, naming the work that was lost. Alerting
+    // per record stacked a modal per stale entry on reconnect, each captioned
+    // with a bare method + URL — see describeFailedDrain.
+    if (result.failedActions.length > 0) {
+      const { title, message } = describeFailedDrain(result.failedActions);
+      alertInfo(title, message);
     }
 
     syncing.current = false;
@@ -69,11 +89,18 @@ export function useNetworkSync() {
       const online = !!(state.isConnected && state.isInternetReachable !== false);
       setOnline(online);
       if (online && queue.length > 0) {
-        drainQueue(queue);
+        runDrain(queue);
       }
     });
     return () => unsubscribe();
   }, [queue]);
 
-  return { isOnline, queueLength: queue.length };
+  return {
+    isOnline,
+    queueLength: queue.length,
+    failedCount,
+    failedActions,
+    clearFailedAction,
+    clearFailedActions,
+  };
 }
