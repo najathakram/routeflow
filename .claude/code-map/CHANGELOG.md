@@ -16,7 +16,7 @@ never accumulate history in `"notes"`.
   change) — #504: replaced the single baseline entry that silently suppressed BOTH
   `orders.service.ts` money-rederive hits (~L1002, ~L1270, custom `unlistedNewItems` appends with
   `productId: null`) with inline `// scan-ok: money-rederive — ...` comments carrying the actual
-  reasoning (never boxed, so no `unitsPerBox` proration to lose; per-piece price x integer qty;
+  reasoning (never boxed, so no `unitsPerBox` proration to lose; per-piece price x qty — Decimal(10,3), the order-edit path allows fractional;
   write already `roundMoney`'d). Removed that one entry from `scan-ignore.json`'s `money-rederive`
   list — a NEW naked `qty * unitPrice` anywhere else in that file now fails the scan (verified: a
   throwaway line at the top of `OrdersService` flipped the scan to `EXIT 1`, reverted before

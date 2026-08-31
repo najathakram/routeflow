@@ -1,6 +1,6 @@
 {
   "mappedSha": "7e5c2d98",
-  "generatedAt": "2026-08-31T01:50:00.000Z",
+  "generatedAt": "2026-08-31T01:55:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 900,
   "notes": "2026-08-31 - (branch `chore/money-rederive-annotations`, rebased onto master `7e5c2d98` post-F00, no schema change) - #504: replaced the single scan-ignore.json baseline entry that silently suppressed BOTH orders.service.ts money-rederive hits (~L1002/~L1270, custom `unlistedNewItems` appends with `productId: null`) with inline `// scan-ok: money-rederive - ...` comments stating the actual reasoning (never boxed, no unitsPerBox proration to lose; qty is Decimal(10,3) - the order-edit path allows fractional; rounded write). Removed that entry from the baseline list so a new naked `qty * unitPrice` elsewhere in that file now fails the scan (verified with a throwaway line, reverted before commit). No functional change; the other two money-rederive baseline entries are untouched. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it - never accumulate history here."
