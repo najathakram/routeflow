@@ -1,5 +1,62 @@
 # HANDOFF — current state & what to pick up next
 
+> # ⏸️ CAMPAIGN PAUSED BY THE OWNER — 2026-08-31
+>
+> **Do not resume any batch until the owner says so.** Nothing is mid-flight: the F03 pipeline
+> (run `wf_7bd33cd7-ac3`) was stopped deliberately, every worktree is committed and clean, and
+> master is green at `d616a47d` with all three Railway services deployed and the post-deploy
+> E2E passing (run 33395261653).
+>
+> **State at pause — 24 of 193 bugs terminal (12.4% by count, 17.9% severity-weighted).**
+> Complete: F00+F01 enablement, F02 (9), F04 (3), F30 (12). In progress: F03 (0 of 9 proven).
+> Remaining: 169 bugs across 26 batches, 19 of them Critical.
+>
+> ## To resume, in this order
+>
+> 1. `git fetch origin master` — confirm master is still `d616a47d` and no one else moved it.
+> 2. **F03 first** (worktree `.claude/worktrees/rf-F03`, branch `fix/F03-payment-truth`,
+>    2 commits ahead of master). Its pipeline stopped at the implement/review boundary with
+>    REAL but WHOLLY UNVERIFIED output — no red gate, no jest run, no review lenses, no mutation
+>    probe. Before anything else:
+>    - **Drop `80b75ff9`** (`chore(format)`) — it is the pipeline's repo-wide prettier pass over
+>      47 files F03 never touched, isolated on purpose so it can be reverted in one move.
+>    - Resume the engine: `Workflow({scriptPath: "C:/Users/nakram/.claude/skills/dev-pipeline/pipeline.js", resumeFromRunId: "wf_7bd33cd7-ac3"})`.
+>      Completed agents replay from cache; read `journal.jsonl` in the run's transcript dir first
+>      rather than assuming what landed.
+>    - Finish the two known loose ends: `scan-known-bugs.json` still needs the whole
+>      `draft-payment-not-void` block deleted (only one site was pruned), and F03 owes a prod
+>      **repair flight** (backup → `repair-f03.mjs` dry-run → apply → integrity re-check, board #516).
+>    - ⚠️ Notable finding already banked in `d1269474`: the **F04 oracle-cap check confirmed the
+>      server shared the mirrors' over-billing hole**; `buildInvoiceItemData` now caps
+>      `billedThrough` at `basisQty`. That needs a REG-B50-tokened proof before it can be claimed.
+> 3. Then the audited schedule: F06 → F07 → F11 → F22+F24 → F16 on track A; F05, F10, F09, F15,
+>    F13, F14, F12, F17 (staged, artifacts committed), F19 → F20, F21 after F16, F25 → F26, F08,
+>    Wave C, then F31.
+>
+> ## Owner-blocked (nothing I can do)
+>
+> - **Expo build** — F30's mobile scan fixes are merged but only reach devices via a build; the
+>   server half is live and stricter, so old clients are safe meanwhile. Client retest after.
+> - **GitHub Actions billing** for private minutes — until fixed, every CI green needs the public
+>   window and the repo stays PUBLIC per the standing directive.
+> - **Final flip to private** when the campaign closes.
+> - **RLS arming** (D3) stays parked at `prisma/deferred-rls/`; 15 tables still hold NULL-tenant rows.
+> - **Policy-layer proposal** (artifact `b3592216…`) — four asks still open.
+>
+> ## Verified-clean inventory at pause
+>
+> | Worktree | Branch | State |
+> |---|---|---|
+> | main | `master` @ `d616a47d` | clean, green, deployed |
+> | rf-F03 | `fix/F03-payment-truth` | clean; 2 commits (1 WIP + 1 droppable format) |
+> | rf-F30 | `fix/F30-scan-loss` | clean, MERGED (#555) — prunable |
+> | rf-F04 | `fix/F04-pricing-mirrors` | clean, MERGED (#554) — prunable |
+> | rf-F17 | `fix/F17-import-robustness` | clean; build-plan staged, batch unstarted |
+> | rf-F02b, campaign-kickoff | merged branches | prunable |
+>
+> Register artifact `310ae33a…` is CURRENT (198 findings, every shipped fix chipped). The
+> user-guide artifact `cae40575…` is shared-not-owned — guide changes must be flagged to the owner.
+
 **Written:** 2026-08-31 · **Visibility:** ⚠️ **PUBLIC by owner directive until the campaign completes** (do NOT flip private mid-campaign; the final flip is the owner's if the session dies) · **Campaign:** `F00+F01+F02(9)+F04(3) SHIPPED LIVE · F30 closing out (12 more: B190–B201 — scan-loss cluster, mobile+api one PR, migration 20260910 order_idempotency prod-applies BEFORE its merge) · 24/193 at F30's merge · F03/F17 staged next (F03 owes the oracle-cap check + deletes its scan-known-bugs block), then the audited two-track schedule (board artifact 9e97d8f6…)`. Owner delegations ACTIVE (.claude/campaign/DECISIONS.md D1–D6 + memory): Fable review replaces owner approval except system-harm/client-data risk; merge-as-ready any hour; repair-as-we-go per batch; repo stays public. ⚠️ Register debt SETTLED at F30 close-out (chips for F02/F04, new articles B189–B201, artifact republished) — keep it settled: every later batch updates the register in its own close-out.
 
 > **W1 ✅ SHIPPED 2026-08-30:** F00 = PR #545 → master `7e5c2d98`; deploy-signal E2E **proven
