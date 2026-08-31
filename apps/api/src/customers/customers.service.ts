@@ -36,6 +36,9 @@ import { GRACE_DAYS } from "../billing/plan-catalog.constants";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+// Cap on how many blocking customers deleteAllCustomers() names in its 409 message.
+const MAX_LISTED_BLOCKERS = 10;
+
 @Injectable()
 export class CustomersService {
   private readonly logger = new Logger(CustomersService.name);
@@ -1957,6 +1960,19 @@ export class CustomersService {
   }
 
   async deleteAllCustomers(): Promise<{ deleted: number }> {
+    // R2 — refuse a null tenant. forTenant() returns the UNSCOPED client and
+    // tenantTransaction hands back the raw tx when there is no tenant context
+    // (prisma.service.ts `if (!tenantId) return this` / `return fn(rawTx)`), so on a
+    // SUPER_ADMIN token every query below — the listing, the pre-flight groupBy and
+    // the wipe itself — would span EVERY tenant. A destructive bulk delete has no
+    // legitimate all-tenant mode; refuse, exactly as the financial-data wipe does.
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) {
+      throw new ForbiddenException(
+        "Deleting all customers requires a tenant context; it cannot be run across tenants.",
+      );
+    }
+
     const customers = await this.prisma
       .forTenant()
       .customer.findMany({ select: { id: true, userId: true } });
@@ -1964,6 +1980,33 @@ export class CustomersService {
 
     const customerIds = customers.map((c) => c.id);
     const userIds = customers.map((c) => c.userId);
+
+    // Pre-flight: collect per-customer PAID/SENT invoice counts. Mirrors
+    // batchDelete()'s pre-flight above — financial records from PAID or SENT
+    // invoices must never be silently destroyed, including by a full wipe.
+    const blockers = await this.prisma.forTenant().invoice.groupBy({
+      by: ["customerId"],
+      where: {
+        customerId: { in: customerIds },
+        status: { in: ["PAID", "SENT"] },
+      },
+      _count: { _all: true },
+    });
+
+    if (blockers.length > 0) {
+      // batchDelete() enumerates every blocker because its `ids` are a bounded UI
+      // selection; here they are every customer in the tenant, so cap the list —
+      // a 409 body listing thousands of opaque uuids is unreadable, not actionable.
+      const breakdown = blockers
+        .slice(0, MAX_LISTED_BLOCKERS)
+        .map((b) => `${b.customerId}: ${b._count._all} invoice(s)`);
+      if (blockers.length > MAX_LISTED_BLOCKERS) {
+        breakdown.push(`and ${blockers.length - MAX_LISTED_BLOCKERS} more`);
+      }
+      throw new ConflictException(
+        `Bulk delete blocked — the following customers have PAID or SENT invoices that cannot be destroyed: ${breakdown.join("; ")}.`,
+      );
+    }
 
     await this.prisma.tenantTransaction(
       async (tx) => {
