@@ -72,6 +72,10 @@ export function ScanOrderSheet({
   const trayRef = React.useRef<ScanTrayHandle>(null);
   const [error, setError] = React.useState<ScanFeedback | null>(null);
   const errorTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  // F30 / R2, REG-B192: ScanCamera now buffers instead of silently dropping a
+  // scan that arrives while a lookup is in flight — this surfaces that state
+  // so the operator sees "looking up…" instead of dead frames.
+  const [isResolving, setIsResolving] = React.useState(false);
 
   React.useEffect(
     () => () => {
@@ -79,6 +83,12 @@ export function ScanOrderSheet({
     },
     [],
   );
+
+  // The camera unmounts when the sheet closes (below) without necessarily
+  // reaching its own resolve-complete callback — don't strand the indicator on.
+  React.useEffect(() => {
+    if (!visible) setIsResolving(false);
+  }, [visible]);
 
   const dismissError = () => {
     if (errorTimer.current) clearTimeout(errorTimer.current);
@@ -123,6 +133,7 @@ export function ScanOrderSheet({
               style={StyleSheet.absoluteFill}
               onScanned={onScanned}
               onOutcome={handleOutcome}
+              onResolvingChange={setIsResolving}
               active={!paused}
               continuous
               hint={false}
@@ -177,9 +188,16 @@ export function ScanOrderSheet({
 
         <View style={styles.tray}>
           <View style={styles.trayHeader}>
-            <Text style={styles.traySummary}>
-              {itemsLabel} · ${total.toFixed(2)}
-            </Text>
+            <View style={styles.trayHeaderLeft}>
+              <Text style={styles.traySummary}>
+                {itemsLabel} · ${total.toFixed(2)}
+              </Text>
+              {isResolving ? (
+                <Text style={styles.resolvingText} accessibilityLiveRegion="polite">
+                  Looking up…
+                </Text>
+              ) : null}
+            </View>
             <Pressable
               onPress={onReview}
               hitSlop={10}
@@ -290,11 +308,17 @@ const styles = StyleSheet.create({
     borderBottomColor: ios.separator,
     backgroundColor: ios.bg,
   },
+  trayHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1 },
   traySummary: {
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
     color: ios.label,
     fontVariant: ["tabular-nums"],
+  },
+  resolvingText: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
   },
   reviewBtn: { flexDirection: "row", alignItems: "center", gap: 2, minHeight: 44 },
   reviewText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.brand },

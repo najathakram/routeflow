@@ -384,6 +384,43 @@ describe("RoutesService", () => {
     });
   });
 
+  // ─── deleteRoute — REG-B96 (destructive-write guard) ─────────────────────
+  //
+  // R3: refuse hard delete when ANY run is IN_PROGRESS/COMPLETED, regardless
+  // of route.kind — not just ADHOC (drop the ADHOC gate, keep the existing
+  // message). Today's guard only fires for `route.kind === RouteKind.ADHOC`,
+  // so a SCHEDULED route with a delivered, POD-bearing run sails straight
+  // through it and is destroyed. createMockPrisma()'s model mocks are plain
+  // jest.fn()s here (no stateful fake store needed) — the oracle is which
+  // methods get called, not persisted row state, exactly like the existing
+  // "plannedPolyline invalidation" tests in this file.
+
+  describe("deleteRoute", () => {
+    it("REG-B96 / T-B96: refuses a SCHEDULED route with a COMPLETED run and deletes nothing", async () => {
+      prisma.route.findUnique.mockResolvedValue({ ...MOCK_ROUTE, kind: RouteKind.SCHEDULED });
+      prisma.routeRun.findMany.mockResolvedValue([
+        {
+          id: "run-1",
+          status: "COMPLETED",
+          // A POD-bearing stop — exactly the row R3 says must never be
+          // deletable through this path.
+          stops: [{ id: "rrs-1", signatureUrl: "tenants/test-tenant/pod/rrs-1/signature-x.png" }],
+        },
+      ]);
+
+      // RED TODAY: the guard is gated on `route.kind === RouteKind.ADHOC`, so
+      // a SCHEDULED route sails straight through it and nothing is rejected.
+      await expect(service.deleteRoute("route-1")).rejects.toThrow(BadRequestException);
+
+      // Call-shape, not return value: a guard that throws AFTER already
+      // deleting would still pass a return-value-only check.
+      expect(prisma.routeRunStop.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.routeRun.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.route.delete).not.toHaveBeenCalled();
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    });
+  });
+
   // ─── plannedPolyline invalidation ─────────────────────────────────────────
   //
   // The map renders Route.plannedPolyline verbatim and deliberately SKIPS its

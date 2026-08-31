@@ -3,7 +3,7 @@
     "name": "RouteFlow",
     "slug": "routeflow-mobile",
     "scheme": "routeflow",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -28,7 +28,8 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "versionCode": 4
+      "versionCode": 5,
+      "blockedPermissions": ["android.permission.RECORD_AUDIO"]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -43,6 +44,29 @@
           "image": "./assets/splash-icon.png",
           "imageWidth": 200
         }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "RouteFlow uses the camera to scan product barcodes and capture invoices.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "RouteFlow shares your location with dispatch while you run a delivery route.",
+          "locationAlwaysAndWhenInUsePermission": "RouteFlow shares your location with dispatch while you deliver, including when the app is in the background.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "RouteFlow accesses your photos so you can attach receipts, bills, and product images.",
+          "cameraPermission": "RouteFlow uses the camera to photograph receipts, bills, and product images."
+        }
       ]
     ],
     "extra": {
@@ -51,6 +75,12 @@
         "projectId": "5f27e8dc-332e-4491-8d28-360dab02acba"
       }
     },
-    "owner": "najathakram1"
+    "owner": "najathakram1",
+    "updates": {
+      "url": "https://u.expo.dev/5f27e8dc-332e-4491-8d28-360dab02acba"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    }
   }
 }

@@ -379,10 +379,21 @@ export function useDeleteCustomerPrice() {
   });
 }
 
+/**
+ * Delete a customer. Accepts either a bare id (hard-delete attempt — 409s if the
+ * customer has financial records) or `{ id, force }` to take the soft-delete
+ * branch server-side (mirrors {@link useSoftDeleteCustomer}, which always forces).
+ */
 export function useDeleteCustomer() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => apiClient.delete(`/customers/${id}`).then((r) => r.data),
+    mutationFn: (args: string | { id: string; force?: boolean }) => {
+      const id = typeof args === "string" ? args : args.id;
+      const force = typeof args === "string" ? undefined : args.force;
+      return apiClient
+        .delete(`/customers/${id}`, force ? { params: { force: "true" } } : undefined)
+        .then((r) => r.data);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["customers"] });
     },

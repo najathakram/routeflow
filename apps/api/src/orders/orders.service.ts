@@ -123,6 +123,20 @@ export class OrdersService implements OnApplicationBootstrap {
     qtyPieces: number,
     qtyUnits: number,
     rememberedPrice?: number | null,
+    /**
+     * REG-B109: the line's box/piece denomination — the SAME values the caller
+     * then feeds `computeLineSubtotal` — so promo SELECTION compares candidates
+     * by the money this line will actually be billed, loose pieces included.
+     * Without it, a mixed line (whole boxes + loose pieces) is compared on whole
+     * boxes only and a BUY_N_GET_M can beat a deeper price promo that in fact
+     * bills less. Optional and defaulted: omitting it keeps the whole-selling-unit
+     * approximation, which is already exact for any line with no loose pieces.
+     */
+    denomination?: {
+      boxes: number | null;
+      pieces: number | null;
+      unitsPerBox: number | null;
+    },
   ): {
     unitPrice: number;
     originalPrice: number | null;
@@ -153,6 +167,9 @@ export class OrdersService implements OnApplicationBootstrap {
       category: product.category,
       qtyPieces,
       qtyUnits,
+      boxes: denomination?.boxes ?? null,
+      pieces: denomination?.pieces ?? null,
+      unitsPerBox: denomination?.unitsPerBox ?? null,
     });
     if (promo.appliedPromoId) {
       return {
@@ -376,6 +393,12 @@ export class OrdersService implements OnApplicationBootstrap {
             total: true,
             // Applied credit-note payments, so clients can show per-credit dollars
             // actually applied without a second roundtrip.
+            // Classification pending: whether this credit-note-application read
+            // should count DRAFT rows is decided by campaign batch F03's
+            // confirmed-payment sweep (sums go PAID-only, listings keep not-VOID
+            // with visible status). F03 converts this site or writes the reasoned
+            // exemption here.
+            // scan-ok: draft-payment-not-void — pending F03 classification, see above.
             payments: {
               where: { method: "CREDIT_NOTE", status: { not: "VOID" } },
               select: { id: true, amount: true, creditNoteId: true },
@@ -1010,7 +1033,28 @@ export class OrdersService implements OnApplicationBootstrap {
         });
       }
 
-      // 3. Drop loser orders and their items.
+      // 3. Drop loser orders and their items — carrying a loser's Idempotency-
+      //    Key onto the winner FIRST when the winner's slot is free (R6): the
+      //    loser's cart just landed in the winner, so a still-queued retry of
+      //    that request must replay onto the winner, not re-create a deleted
+      //    order. Single-column storage means only one carried key can survive
+      //    a multi-loser sweep — the ELDEST loser's (they merge updatedAt DESC,
+      //    so iterate from the tail); the residual (two keyed losers, one slot)
+      //    is a recorded Low limitation, bounded further by R4's content check.
+      const winnerRow = await tx.order.findUnique({
+        where: { id: winner.id },
+        select: { idempotencyKey: true },
+      });
+      let slotFree = winnerRow?.idempotencyKey == null;
+      for (const loser of [...losers].reverse()) {
+        const loserKey = (loser as { idempotencyKey?: string | null }).idempotencyKey;
+        if (slotFree && loserKey) {
+          // Free the unique before re-pointing it at the winner.
+          await tx.order.update({ where: { id: loser.id }, data: { idempotencyKey: null } });
+          await tx.order.update({ where: { id: winner.id }, data: { idempotencyKey: loserKey } });
+          slotFree = false;
+        }
+      }
       for (const loser of losers) {
         await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
         await tx.order.delete({ where: { id: loser.id } });
@@ -1443,7 +1487,75 @@ export class OrdersService implements OnApplicationBootstrap {
     return raw;
   }
 
+  /**
+   * F30/R8 (B196): the order that already applied this Idempotency-Key for
+   * THIS customer, if any.
+   *
+   * `create()` does its own inline lookup (it needs the full order to return);
+   * this is the lookup for the staff create-MERGE branch, which never reaches
+   * `create()` and only needs to know whether the key was already applied.
+   * Tenant-scoped through `forTenant()`, matching the `@@unique([tenantId,
+   * idempotencyKey])` the column is stored under — and scoped to `customerId`
+   * on top of that, because the key is client-chosen: a bare key match would
+   * let one client's string replay onto a DIFFERENT customer's order.
+   */
+  async findOrderIdByIdempotencyKey(
+    idempotencyKey: string,
+    customerId: string,
+  ): Promise<string | null> {
+    const existing = await this.prisma.forTenant().order.findFirst({
+      where: { idempotencyKey, customerId },
+      select: { id: true },
+    });
+    return existing?.id ?? null;
+  }
+
+  /**
+   * F30/R8 (B196): stamp the replay key onto the order a staff merge landed on,
+   * so a re-delivery of that same request replays instead of folding the same
+   * items in again.
+   *
+   * An order holds at most one key, so a merge overwrites whatever key created
+   * the order. That is deliberate: replays arrive within seconds/minutes of the
+   * request they duplicate, so the MOST RECENT operation on the order is the one
+   * whose replay window is still open. A concurrent claim from another API
+   * replica loses the unique-constraint race (P2002) — the merge it raced has
+   * already been written, so swallow it rather than fail a completed write.
+   */
+  async recordIdempotencyKey(orderId: string, idempotencyKey: string): Promise<void> {
+    try {
+      // First key wins (R1): an order can absorb several queued requests (auto-
+      // merge waves); the EARLIEST key is the one a stuck client will retry
+      // with, so never let a later wave clobber it — the later request's own
+      // replay is answered by content comparison against the same order anyway.
+      await this.prisma.forTenant().order.updateMany({
+        where: { id: orderId, idempotencyKey: null },
+        data: { idempotencyKey },
+      });
+    } catch (e: any) {
+      if (e?.code !== "P2002") throw e;
+    }
+  }
+
   async create(dto: CreateOrderDto, user: JwtPayload, options: { skipAutoMerge?: boolean } = {}) {
+    // F30/R8: Idempotency-Key replay. `idempotencyKey` isn't on CreateOrderDto
+    // (the controller threads it in from the `Idempotency-Key` header, never
+    // client body input) — a client-generated uuid per cart session so a
+    // duplicate POST /orders (queue self-duplication, a timed-out request that
+    // actually completed server-side) returns the ORIGINAL order instead of
+    // creating a second one. The pre-check runs below, once the caller's own
+    // customer is known; the P2002 branch further down catches the narrow
+    // concurrent-race window that pre-check can't.
+    const idempotencyKey = (dto as any).idempotencyKey as string | undefined;
+    // The key is stored under @@unique([tenantId, idempotencyKey]) and every
+    // lookup rides forTenant(), which hands back the UNSCOPED client when the
+    // caller carries no tenant (SUPER_ADMIN — admitted here by RolesGuard's
+    // role hierarchy). Refuse the key path outright for such a caller rather
+    // than let a replay lookup match another tenant's order.
+    if (idempotencyKey && !this.prisma.getTenantId()) {
+      throw new ForbiddenException("Idempotency-Key requires a tenant-scoped session");
+    }
+
     // Resolve which customer this order is for
     let customerId: string;
 
@@ -1478,6 +1590,56 @@ export class OrdersService implements OnApplicationBootstrap {
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer) throw new ForbiddenException("Customer record not found");
       customerId = customer.id;
+    }
+
+    // F30/R8: the replay lookup runs HERE — after the caller's own customer is
+    // resolved — never on the bare key. The key is entirely client-chosen, so
+    // matching on it alone would hand buyer B the order buyer A created with
+    // the same string (business name, every line, every unit price) while B's
+    // own order is silently never written. A key already held by someone else
+    // is a client-side collision, not a replay: refuse it, rather than replay
+    // another caller's order or fall through to a write that would P2002 on
+    // the same constraint anyway.
+    if (idempotencyKey) {
+      const existing = await this.prisma.forTenant().order.findFirst({
+        where: { idempotencyKey },
+        include: {
+          customer: { select: { id: true, businessName: true } },
+          lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
+        },
+      });
+      if (existing) {
+        if (existing.customerId !== customerId) {
+          throw new ConflictException("Idempotency-Key already used for a different order");
+        }
+        // R4 (close-out): a replay must be a replay OF THE SAME CART. A client
+        // that edited its cart after a timed-out-but-committed submit and
+        // reused the key would otherwise get the STALE order back as if the
+        // edit had been saved. Compare the incoming line multiset against the
+        // stored order; a mismatch is a client bug surfaced loudly, never a
+        // silent wrong-cart acknowledgment.
+        {
+          const norm = (
+            rows: Array<{ productId?: string | null; name?: string | null; qty: unknown }>,
+          ) =>
+            rows
+              .map((r) => (r.productId ?? `unlisted:${r.name ?? ""}`) + "×" + Number(r.qty))
+              .sort()
+              .join("|");
+          const incomingNorm = norm((dto.items ?? []) as never[]);
+          const storedNorm = norm(
+            (existing.lineItems ?? []).filter(
+              (li: { status?: string }) => li.status !== "CANCELLED",
+            ) as never[],
+          );
+          if (incomingNorm !== storedNorm) {
+            throw new ConflictException(
+              "Idempotency-Key reused with a different cart — submit the edited cart as a new order (new key), or retry the original unchanged",
+            );
+          }
+        }
+        return existing;
+      }
     }
 
     // An auto-merge folds these items into an EXISTING order whose own business
@@ -1748,6 +1910,8 @@ export class OrdersService implements OnApplicationBootstrap {
           qtyPieces,
           qtyUnits,
           rememberedForLine,
+          // REG-B109: the exact denomination this line bills with below.
+          { boxes, pieces, unitsPerBox: upb },
         );
         unitPrice = resolved.unitPrice;
         priceType = resolved.priceType;
@@ -1921,6 +2085,10 @@ export class OrdersService implements OnApplicationBootstrap {
             data: {
               customerId,
               orderNumber,
+              // F30/R8: persist the replay key (null for every caller that
+              // doesn't send one — untouched by the compound unique below,
+              // since Postgres treats NULLs as distinct).
+              idempotencyKey: idempotencyKey ?? null,
               status: isDraft ? OrderStatus.DRAFT : OrderStatus.PENDING,
               subtotal,
               tax,
@@ -1957,10 +2125,42 @@ export class OrdersService implements OnApplicationBootstrap {
         });
         break; // transaction succeeded
       } catch (e: any) {
-        // Retry only on orderNumber unique-constraint violations (RF-014);
-        // propagate all other errors immediately (including ConflictException
-        // for OOS items from RF-017).
-        if (e?.code === "P2002" && attempt < MAX_RETRIES - 1) continue;
+        if (e?.code === "P2002") {
+          // F30/R8: a concurrent request carrying the SAME idempotency key won
+          // the race between our pre-check above and this write — fetch and
+          // return the order IT just created instead of retrying (retrying
+          // would mint a fresh order number and create a genuine duplicate,
+          // exactly what the key exists to prevent).
+          const target = e?.meta?.target;
+          const hitIdempotencyConstraint =
+            idempotencyKey != null &&
+            (Array.isArray(target)
+              ? target.some((t: unknown) => String(t).toLowerCase().includes("idempotencykey"))
+              : String(target ?? "")
+                  .toLowerCase()
+                  .includes("idempotencykey"));
+          if (hitIdempotencyConstraint) {
+            const existing = await this.prisma.forTenant().order.findFirst({
+              where: { idempotencyKey },
+              include: {
+                customer: { select: { id: true, businessName: true } },
+                lineItems: {
+                  include: { product: { select: { id: true, name: true, unit: true } } },
+                },
+              },
+            });
+            // Same ownership gate as the pre-check above: the row that won the
+            // race is only OUR replay if it belongs to this caller.
+            if (existing && existing.customerId !== customerId) {
+              throw new ConflictException("Idempotency-Key already used for a different order");
+            }
+            if (existing) return existing;
+          }
+          // Retry only on orderNumber unique-constraint violations (RF-014);
+          // propagate all other errors immediately (including ConflictException
+          // for OOS items from RF-017).
+          if (attempt < MAX_RETRIES - 1) continue;
+        }
         throw e;
       }
     }
@@ -2813,6 +3013,8 @@ export class OrdersService implements OnApplicationBootstrap {
                   qtyPieces,
                   qtyUnits,
                   buyerPriceHistory[item.productId]?.lastPrice ?? null,
+                  // REG-B109: the exact denomination this line bills with below.
+                  { boxes, pieces, unitsPerBox: upb },
                 )
               : {
                   unitPrice: Number(product.pricePerUnit),
@@ -2857,15 +3059,17 @@ export class OrdersService implements OnApplicationBootstrap {
         } else {
           // Operator/admin path.
           // Whether to wipe + recreate (mobile "replace-all") vs. merge incrementally.
-          // Explicit `replaceAll` wins; otherwise fall back to the legacy heuristic so
-          // existing mobile clients (which omit the flag and send a full id-less list)
-          // keep working. The web edit UI sends `replaceAll: false`, so adding a new
-          // item there merges/appends instead of deleting the untouched lines.
-          const allNewItems = dto.items.every((i) => !i.id);
+          // R10/B198: explicit `replaceAll: true` ONLY — the old shape-inference
+          // heuristic ("every item lacks an id" ⇒ replace) is gone. That
+          // heuristic wiped an order on any id-less "just add these" PATCH that
+          // omitted the flag (the real mobile per-scan/edit shape), 200-ing a
+          // catastrophic silent line loss keyed on an incidental payload
+          // property. Every other caller (web, mobile, queued replays) now
+          // defaults to the SAFE branch — an incremental add — unless it says
+          // replaceAll:true out loud.
           // A4: a driver only ever reaches this branch with a diff payload —
           // never let one replace-all (that path deletes lines wholesale).
-          const replaceAll =
-            user?.role === UserRole.DRIVER ? false : (dto.replaceAll ?? allNewItems);
+          const replaceAll = user?.role === UserRole.DRIVER ? false : dto.replaceAll === true;
 
           // WP1: tier pricing context for this operator/admin edit — loaded ONCE for
           // the whole call (not per sub-branch, not per item) so both the replace-all
@@ -2985,6 +3189,8 @@ export class OrdersService implements OnApplicationBootstrap {
                         qtyPieces,
                         qtyUnits,
                         null,
+                        // REG-B109: the exact denomination this line bills with below.
+                        { boxes, pieces, unitsPerBox: upb },
                       )
                     : {
                         // Non-staff caller: legacy list pricing, no tier resolution.
@@ -3036,6 +3242,43 @@ export class OrdersService implements OnApplicationBootstrap {
             // Legacy lines with null position count as -1 → new lines start at 0.
             let nextPos =
               Math.max(-1, ...(order.lineItems ?? []).map((li) => li.position ?? -1)) + 1;
+
+            // R9/B197: resolve every NEW catalog-linked add BEFORE writing
+            // anything in this loop. The old `if (!product) continue` let an
+            // unresolvable id (stale cache, cross-tenant id post-filtered to
+            // null) silently skip while its siblings landed — HTTP 200 with a
+            // dropped line, invisible anywhere. Failing loudly here, before any
+            // orderItem.create() below, means a bad id aborts the WHOLE add —
+            // no partial write of the good lines alongside the missing one.
+            // One batched read (the same shape the replace-all branch above
+            // uses), not a findUnique per line: this runs inside the
+            // transaction already holding SELECT … FOR UPDATE on the order, so
+            // a 30-line scan batch must not spend 30 sequential round-trips
+            // widening that window — and the Map it builds serves the add loop
+            // below too, which used to re-read every one of these rows again.
+            const addProductIds = [
+              ...new Set(
+                dto.items
+                  .filter((item) => {
+                    const hasBoxSplitCheck = (item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0;
+                    const newQtyHintCheck = hasBoxSplitCheck ? 1 : (item.qty ?? 0);
+                    return !item.id && item.productId && newQtyHintCheck > 0;
+                  })
+                  .map((item) => item.productId as string),
+              ),
+            ];
+            const addProducts =
+              addProductIds.length > 0
+                ? await tx.product.findMany({ where: { id: { in: addProductIds } } })
+                : [];
+            const addProductMap = new Map<string, any>(addProducts.map((p: any) => [p.id, p]));
+            const unresolvedAddIds = addProductIds.filter((id) => !addProductMap.has(id));
+            if (unresolvedAddIds.length > 0) {
+              throw new BadRequestException(
+                `Product${unresolvedAddIds.length > 1 ? "s" : ""} not found: ${unresolvedAddIds.join(", ")}`,
+              );
+            }
+
             for (const item of dto.items) {
               // New unlisted item (no id, no productId, has name + unitPrice).
               if (!item.id && !item.productId && (item.name ?? "").trim() && (item.qty ?? 0) > 0) {
@@ -3067,8 +3310,12 @@ export class OrdersService implements OnApplicationBootstrap {
               const hasBoxSplit = (item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0;
               const newQtyHint = hasBoxSplit ? 1 : (item.qty ?? 0);
               if (!item.id && item.productId && newQtyHint > 0) {
-                const product = await tx.product.findUnique({ where: { id: item.productId } });
-                if (!product) continue;
+                // R9/B197: served from the pre-scan's batched read above, which
+                // covers exactly this set of ids and already aborted the whole
+                // request if any of them failed to resolve. The guard stays as
+                // a belt-and-braces invariant — never silently drop a line.
+                const product = addProductMap.get(item.productId);
+                if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
                 // Recompute qty from boxes/pieces when present.
                 let qty = item.qty ?? 0;
                 if (hasBoxSplit) {
@@ -3106,6 +3353,12 @@ export class OrdersService implements OnApplicationBootstrap {
                           qtyPieces,
                           qtyUnits,
                           null,
+                          // REG-B109: the exact denomination this line bills with below.
+                          {
+                            boxes: boxesForLine,
+                            pieces: piecesForLine,
+                            unitsPerBox: unitsPerBoxNum,
+                          },
                         )
                       : {
                           // Non-staff caller (driver diff add): legacy list pricing.
@@ -4403,6 +4656,8 @@ export class OrdersService implements OnApplicationBootstrap {
               qtyPieces,
               qtyUnits,
               priceHistory[product.id]?.lastPrice ?? null,
+              // REG-B109: the exact denomination this line bills with below.
+              { boxes: split.boxes, pieces: split.pieces, unitsPerBox: upb },
             );
             const created = await tx.orderItem.create({
               data: {

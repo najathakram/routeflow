@@ -35,6 +35,14 @@ export interface OrderItem {
   boxes?: number | null;
   pieces?: number | null;
   /**
+   * SALE-TIME box size for a box-split line (null on selling-unit lines). The
+   * server already sends it (mirrors `apps/web/lib/api/orders.ts#OrderItem`);
+   * declaring it is what lets `short-pick.ts#freeUnitSizeFor` prefer this
+   * snapshot over the LIVE `product.unitsPerBox`, so a repacked product never
+   * re-prorates an old line's free boxes at the new box size.
+   */
+  unitsPerBox?: number | null;
+  /**
    * BUY_N_GET_M snapshot: whole free SELLING units on this line (BOXES for a
    * boxed line). The stored `subtotal` already nets them off — any local
    * recompute MUST pass them to `computeLineSubtotal` or it over-charges.
@@ -194,6 +202,14 @@ export interface CreateOrderAsDriverDto {
    * [] = remove all; otherwise the FULL desired set (server diffs).
    */
   appliedCreditNotes?: AppliedCreditNoteInput[];
+  /**
+   * F30/R8: one uuid per CART SESSION, sent as the `Idempotency-Key` HEADER
+   * (never in the body — the server reads it off the header only). A duplicate
+   * POST under the same key — a timed-out request the operator retries, an
+   * offline-queue replay — returns the ORIGINAL order instead of creating a
+   * second one. Mint/reset it with `lib/order-submit-key`.
+   */
+  idempotencyKey?: string;
 }
 
 export interface ActiveOrderSummary {
@@ -358,7 +374,18 @@ export function useCreateSale() {
 export function useCreateOrderAsDriver() {
   const qc = useQueryClient();
   return useMutation<Order, Error, CreateOrderAsDriverDto>({
-    mutationFn: (dto) => apiClient.post("/orders", dto).then((r) => r.data),
+    // `idempotencyKey` travels as a HEADER, never in the body (the same idiom
+    // as `useCompleteWithPayment` in lib/api/routes.ts) — api-client also
+    // preserves that header across an offline-queue replay, so a replayed cart
+    // collapses onto the original order rather than duplicating it.
+    mutationFn: ({ idempotencyKey, ...body }) =>
+      apiClient
+        .post(
+          "/orders",
+          body,
+          idempotencyKey ? { headers: { "idempotency-key": idempotencyKey } } : {},
+        )
+        .then((r) => r.data),
     onSuccess: (_, vars) => {
       if (vars.routeRunId) qc.invalidateQueries({ queryKey: ["route-runs", vars.routeRunId] });
       invalidateOrderCaches(qc);
@@ -425,10 +452,14 @@ export function useUpdateOrderItems() {
       orderId: string;
       items: UpdateOrderItemInput[];
       /**
-       * `false` = incremental merge: untouched lines (absent from `items`) are
-       * left as-is, protecting invoiced qty + override history. Always pass
-       * `false` from the edit UI — omitting it lets the server's legacy heuristic
-       * flip to full-replace when every entry is id-less (e.g. only new adds).
+       * `false` (or omitted) = incremental merge: untouched lines (absent from
+       * `items`) are left as-is, protecting invoiced qty + override history.
+       * Only `true` replaces the whole line set.
+       *
+       * F30/R10 (B198): the server's old shape-inference heuristic — flip to
+       * full-replace when every entry is id-less — is GONE, so omitting the flag
+       * is now safe. Still pass `false` explicitly from the edit UI: it states
+       * the intent at the call site rather than relying on the default.
        */
       replaceAll?: boolean;
       /**

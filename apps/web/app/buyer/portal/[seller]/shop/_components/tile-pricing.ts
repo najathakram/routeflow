@@ -20,7 +20,12 @@ import type { CartItem } from "@/lib/buyer-cart";
  *               cart yet (the would-be-added quantity), the cart item's
  *               units when present. Sourced the same way as qtyPieces above,
  *               and required by the BUY_N_GET_M gate in applyBestPromotion.
- *   result    = applyBestPromotion(base, rules, { productId, category, qtyPieces, qtyUnits })
+ *   split     = the cart line's own boxes/pieces/unitsPerBox (null when the
+ *               product isn't in the cart yet) — REG-B109: promo selection
+ *               compares candidates by the money the CART bills, so a mixed
+ *               box+piece line's loose pieces are not dropped from the compare.
+ *   result    = applyBestPromotion(base, rules, { productId, category, qtyPieces,
+ *               qtyUnits, ...split })
  * `rules` must come from `toPromotionRules(useBuyerPromotions().data)`.
  * result.unitPrice = net selling-unit price; result.originalPrice = struck
  * pre-promo price (null => no strikethrough, always null for BUY_N_GET_M —
@@ -46,6 +51,12 @@ export function deriveTilePrice(
     category: product.category ?? null,
     qtyPieces,
     qtyUnits,
+    // REG-B109: the cart line's own denomination, so selection compares by the
+    // money the CART bills (loose pieces included) and the tile keeps matching
+    // it to the cent. No cart line yet => null, i.e. the 1-unit add above.
+    boxes: cartItem?.boxes ?? null,
+    pieces: cartItem?.pieces ?? null,
+    unitsPerBox,
   });
 }
 

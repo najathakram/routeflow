@@ -46,6 +46,7 @@ import {
 } from "../../../../lib/sale-line";
 import { resolveProductByCode } from "../../../../lib/barcode-resolve";
 import { makeScanHandler, runWedgeSubmit } from "../../../../lib/scan-ladder";
+import { createScanAttempt, createWedgeSubmitHandler } from "../../../../lib/wedge-submit";
 import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../../lib/wedge-scan";
 import { useAuthStore } from "../../../../lib/auth-store";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
@@ -627,7 +628,9 @@ function InvoiceComposer({
   const handleBarcodeScanned = makeScanHandler<Product>({
     products,
     accept: acceptScannedProduct,
-    resolve: (c) => resolveProductByCode<Product>(c),
+    // Forward the ladder's abort signal — without it a lookup that blows the
+    // scan deadline keeps running and still adds the line (F30 / R2).
+    resolve: (c, signal) => resolveProductByCode<Product>(c, signal),
     onAmbiguous: setPickCode,
     onCreate: canCreateProducts ? setCreateCode : undefined,
   });
@@ -636,31 +639,52 @@ function InvoiceComposer({
   // the full reasoning): Enter-as-scan for terminator scanners, settled
   // exact-match auto-add for the rest. Both gated on looksLikeScanCode so a
   // typed NAME search never auto-adds.
-  const searchScanBusy = useRef(false);
-  const handleSearchSubmit = async () => {
-    if (searchScanBusy.current) return;
-    searchScanBusy.current = true;
-    try {
-      await runWedgeSubmit({
-        term: searchTerm,
+  // Wedge-submit: the search field is cleared SYNCHRONOUSLY on every SCAN
+  // submit (never on a typed name) — mirrors NewOrderScreen exactly (see its
+  // comment) — and a burst arriving
+  // mid-resolve is buffered, never dropped, never concatenated (REG-B193). The
+  // handler's busy/queue state has to survive re-renders, so it's built ONCE
+  // via a ref; a "latest deps" ref keeps it pointed at the current
+  // searchTerm/handleBarcodeScanned/showInline closures instead of the ones
+  // captured on the render that built it.
+  const wedgeDepsRef = useRef<{ scan: (code: string) => Promise<void>; clearSearch: () => void }>({
+    scan: async () => undefined,
+    clearSearch: () => undefined,
+  });
+  wedgeDepsRef.current = {
+    scan: (code) =>
+      runWedgeSubmit({
+        term: code,
         scan: handleBarcodeScanned,
         clearSearch: () => setSearch(""),
         showInline,
-      });
-    } finally {
-      searchScanBusy.current = false;
-    }
+      }),
+    clearSearch: () => setSearch(""),
   };
+  const wedgeSubmitRef = useRef(
+    createWedgeSubmitHandler({
+      scan: (code) => wedgeDepsRef.current.scan(code),
+      clearSearch: () => wedgeDepsRef.current.clearSearch(),
+    }),
+  );
+  const handleSearchSubmit = () => wedgeSubmitRef.current(searchTerm);
 
-  const lastAutoAdd = useRef<{ code: string; at: number }>({ code: "", at: 0 });
+  // Settled exact-match auto-add (no-terminator scanners): a per-scan ATTEMPT
+  // — not a time window — decides whether a settle may fire (REG-B201); see
+  // NewOrderScreen's comment for why a window can't tell "already added" from
+  // "a background refetch re-settled", and why the attempt has to END when the
+  // field clears (otherwise a deliberate re-scan of the same item is eaten).
+  const autoAddAttemptRef = useRef(createScanAttempt());
   useEffect(() => {
     const code = searchTerm.trim();
-    if (!looksLikeScanCode(code) || isSearching) return;
+    if (!looksLikeScanCode(code)) {
+      autoAddAttemptRef.current.end();
+      return;
+    }
+    if (isSearching) return;
     const { match } = findExactScanMatch(code, products);
     if (!match) return;
-    const now = Date.now();
-    if (lastAutoAdd.current.code === code && now - lastAutoAdd.current.at < 800) return;
-    lastAutoAdd.current = { code, at: now };
+    if (!autoAddAttemptRef.current.shouldAutoAdd(code)) return;
     const outcome = acceptScannedProduct(match, scanUnitKind(code, match));
     if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps

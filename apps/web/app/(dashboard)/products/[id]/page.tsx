@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Package,
@@ -54,6 +55,7 @@ import { tierLabel } from "@/lib/tier-label";
 import { unitsLabel } from "@/lib/stock-label";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DecimalInput } from "@/components/MoneyInput";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
 import { SubcategoryCombobox } from "@/components/SubcategoryCombobox";
@@ -306,6 +308,7 @@ function CostHistoryCard({ productId }: { productId: string }) {
 }
 
 export default function ProductDetailPage({ params }: { params: { id: string } }) {
+  const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
   const { data: product, isLoading } = useProduct(params.id);
@@ -404,6 +407,9 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
 
   // ── Variant-split modal state (PR-D) ──────────────────────────────────────
   const [showVariantSplit, setShowVariantSplit] = React.useState(false);
+
+  // ── Delete confirmation (R2 — was declared, never wired) ──────────────────
+  const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
 
   // ── Crop-existing state ───────────────────────────────────────────────────
   // When set, the next crop completion replaces this key instead of adding a new image
@@ -579,6 +585,23 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const cancelEdit = () => {
     setEditDraft({});
     setIsEditing(false);
+  };
+
+  // ── Delete (mirrors the mobile app's confirm → toast → navigate-back flow) ─
+  const handleDeleteProduct = async () => {
+    try {
+      await deleteProduct.mutateAsync(params.id);
+      toast({ title: "Product deleted", variant: "success" });
+      router.push("/products");
+    } catch (err: any) {
+      toast({
+        title: "Failed to delete product",
+        description: err?.response?.data?.message,
+        variant: "error",
+      });
+    } finally {
+      setShowDeleteConfirm(false);
+    }
   };
 
   // ── Crop helpers ──────────────────────────────────────────────────────────
@@ -1019,6 +1042,16 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
           onSuccess={() => setShowVariantSplit(false)}
         />
       )}
+      <ConfirmDialog
+        open={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={handleDeleteProduct}
+        title="Delete product?"
+        description={`${product.name} will be deactivated and hidden from the catalog. Existing order and invoice history is preserved. Products with an in-flight (undelivered) order cannot be deleted.`}
+        confirmLabel="Yes, delete"
+        variant="danger"
+        loading={deleteProduct.isPending}
+      />
       <div className="space-y-5 p-6">
         {/* Back */}
         <Link
@@ -1523,6 +1556,16 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                           title="Tobacco products are tracked separately for monthly tax reports"
                         >
                           {(product as any).isTobacco ? "Unmark tobacco" : "Mark as tobacco"}
+                        </Button>
+                      )}
+                      {isOperator && (
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          leftIcon={<Trash2 className="h-4 w-4" />}
+                          onClick={() => setShowDeleteConfirm(true)}
+                        >
+                          Delete
                         </Button>
                       )}
                     </>

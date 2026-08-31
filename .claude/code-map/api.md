@@ -95,6 +95,22 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
     **`freeUnits`** subtracts whole SELLING units before pricing — default 0, so every pre-existing
     call site is byte-for-byte unaffected), `normalizeBoxesPieces` (integer boxes/pieces + rollover),
     `roundMoney` (cents),
+    **`prorateLineSubtotal(storedSubtotal, deliveredQty, orderQty, freeUnits = 0, freeUnitSize = 1)`**
+    (F04/REG-B50, 2026-08-31) — "what does `deliveredQty` of `orderQty` cost" asked OUTSIDE the invoice.
+    This api copy is the **reference implementation** (no server caller — the only production caller today
+    is mobile's driver at-door short-pick, through the mobile mirror). Money comes from the **STORED**
+    subtotal, never a live re-price. Reference oracle = **`invoices.service.ts#buildInvoiceItemData`**
+    (READ-ONLY from here), specialised to a single bill from scratch (`priorBilledQty` always 0): the
+    **paid-basis floored cumulative telescope** — prorate over `orderQty − freeUnits × freeUnitSize` and
+    floor the free units consumed by the delivered prefix — **NOT** the plain linear
+    `stored × delivered / order`, which is exactly REG-B50's bug on a line that HAD free units. A full
+    delivery copies the stored subtotal back verbatim. `freeUnits` is the line's BUY_N_GET_M snapshot in
+    whole SELLING units (BOXES on a box-split line) while the qty args stay on the line's own axis
+    (PIECES); `freeUnitSize` bridges them (`unitsPerBox` when the line was stored WITH a split, else 1) —
+    a box-split caller that leaves it at the default under-bills a partial by up to one box. At
+    `freeUnits = 0` it reduces to the linear formula, so 3-arg callers are byte-for-byte unaffected.
+    Mirrored in web/mobile `lib/pricing.ts`; cross-mirror parity locked by `common/pricing-parity.spec.ts`
+    (+ `pricing-parity.fixtures.ts`, which imports the web and mobile copies by relative path).
     **`applyBestPromotion`/`promotionMatchesProduct`** (P5-04 — best applicable promo → net selling-unit
     price + originalPrice; PERCENT/QTY_BREAK % off, FIXED $/selling-unit, QTY_BREAK gated on pieces).
     **Zero-price guard (2026-08-21):** `ruleCanZeroPrice`/`promotionZeroesProduct`/`scanPromotionZeroPrice`/
@@ -110,8 +126,15 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
     non-integer or `< 1` N/M means the rule is IGNORED, never a crash. A BOGO win keeps `unitPrice = base` and
     `originalPrice = null` — the saving (`freeUnits × base`) is realised ONLY by feeding `freeUnits` into
     `computeLineSubtotal`, **never** a rounded net unit price (12 @ $35 with 2 free = exactly $350.00, not
-    10 × $29.17). `applyBestPromotion` still picks one non-stacking winner by largest dollar saving, now comparing
-    across mechanics (price promos `(base − net) × qtyUnits` vs BOGO `freeUnits × base`), id tie-break as before.
+    10 × $29.17). `applyBestPromotion` still picks one non-stacking winner, but **REG-B109 (F04, 2026-08-31)
+    moved the comparison onto the BILL basis**: every candidate is priced through the SAME
+    `computeLineSubtotal` on the FULL entered quantity and the one billing the LEAST wins — the old basis
+    (price promos `(base − net) × qtyUnits` vs BOGO `freeUnits × base`) counted whole selling units only and
+    silently dropped a mixed line's loose pieces. Ties fall back to the lowest net unit price, then promo id.
+    `PromoContext` gained optional **`boxes`/`pieces`/`unitsPerBox`** (R7 signature compatibility) — they are
+    **opt-in (`hasFullQty = boxes != null || pieces != null`); without them the comparison degrades to the old
+    `qtyUnits` basis**, which is exact only on a line with no loose pieces, so every line-pricing call site
+    must pass the same split it then bills with.
     **Every money write rounds; boxed lines never use `qty*unitPrice` (over-charges by unitsPerBox); a promo adjusts the
     selling-unit price then feeds computeLineSubtotal (never per-piece).** Mirrored in
     web/mobile `lib/pricing.ts`. `utils/pricing.ts` = `getTierPrice`. **`computeCategoryTax`** (Phase-4 W3) — regulated per-category levy: per-unit types (EXCISE/PER_VOLUME/DEPOSIT) = `rate × unitBasisQty` (**caller converts to basis**: pieces for excise/deposit, true volume for PER_VOLUME — a 16oz bottle taxed per-oz needs 16×pieces; orthogonal to box-proration, never the boxed subtotal); PERCENT_OF_SALE = `rate × subtotal` (embedded when priceIncludesTax = `subtotal×rate/(1+rate)`). Sign-preserving (reversals). Pure fn. **RF-4 (WIRED): folded into totals** — `orders.service` computes it per line at create/edit/merge (`unitBasisQty` = piece count) into `OrderItem.categoryTaxAmount` + the order total (`total = subtotal + regularTax + categoryTax − discount`; the `tax` column stays regular-only, category tax = Σ line snapshots); `invoices.service` copies/prorates it onto `InvoiceItem.categoryTaxAmount` (telescoping, like subtotal) and folds it into every invoice `taxAmount` via `foldCategoryTax` — **exemption covers everything\*\* (an `isTaxExempt` customer owes $0 of BOTH regular AND category tax; snapshots zeroed too so the ledger records $0). PER_VOLUME volume-per-piece source still deferred (uses pieces, approximate). Specs: `common/pricing.spec.ts`, `orders.service.spec` (RF-4 per-category regulated tax), `invoices.service.spec` (RF-4 split invariant + exemption + manual).
@@ -263,9 +286,16 @@ homeAddress` (the driver-home origin), and orders inherit `fulfillPath` from the
   `prisma migrate resolve --applied 0_init` ONCE before any further `migrate deploy`, or
   deploys block with P3009. `AiUsageEvent` + `IdempotencyKey` are modelled in schema.prisma
   purely so Prisma stops treating the app's runtime-created tables as drift and DROPping them.
-- **`prisma/rls.sql`** — Postgres row-level-security policies (defense-in-depth under the
-  `forTenant` client-side scoping); 2026-08-15 repaired dollar-quoting + the verification
-  query at the end.
+- **`prisma/migrations/20260909000000_rls/migration.sql`** — Postgres row-level-security
+  policies (defense-in-depth under the `forTenant` client-side scoping), applied by
+  `migrate deploy`, never by hand: per-table `ENABLE`/`FORCE ROW LEVEL SECURITY` +
+  `tenant_isolation` policy, then a post-apply `DO` block that RAISES on any listed table
+  missing enable/force/policy (the policy loop swallows its own errors, so a 0 exit proves
+  nothing). **Sole copy of the policied-table list** — `scripts/rls-preflight.mjs` parses
+  `tables := ARRAY[...]` out of this file to count NULL-`tenantId` rows before arming.
+- **`prisma/rls.sql`** — superseded pointer stub (comments only). The policy DDL lived here
+  until it moved into the migration above; a second copy of the table list is how a table
+  gets armed without the pre-flight ever checking it. Do not re-add DDL here.
 
 ## Feature modules (`src/<module>/`)
 
@@ -325,6 +355,7 @@ homeAddress` (the driver-home origin), and orders inherit `fulfillPath` from the
   `batchDelete` — bounded by the caller's id list — the blocker breakdown is capped at
   `MAX_LISTED_BLOCKERS` (10) + "and N more"; under the cap the two messages stay byte-identical.
   Spec `customers.service.delete-all.spec.ts`.
+- **Credit-note delete FK fix (2026-08-30)** — `deleteCustomer` (hard path), `deleteAllCustomers`, and `deleteImportedCustomers` all ran `creditNote.deleteMany` while `OrderCreditNote` rows could still reference the notes: `OrderCreditNote.creditNoteId` has NO `onDelete` (Prisma default Restrict; only its `orderId` side cascades), so any tenant with order↔credit-note links threw an FK violation that aborted the whole `tenantTransaction` — bulk delete-all 500'd. All three sites now fetch the doomed notes' ids and `orderCreditNote.deleteMany({ creditNoteId: { in } })` BEFORE `creditNote.deleteMany`, mirroring the returns-before-orders pattern. Only Restrict child of `CreditNote` (its `invoicePayments` FK is optional→SetNull, `items` cascade, `Return.creditNoteId`/regulated-ledger `creditNoteId` are plain columns with no FK). Specs: `customers.service.spec.ts` `order↔credit-note links` blocks (invocationCallOrder ordering asserts). The `settings.controller clearFinancialData` twin (B126) is fixed in the destructive-guards plan, not here.
 - **buyer-request approvals (2026-08-20, no migration)** — `POST /customers/:id/portal-approve` → `approveBuyerRequest` (409 unless `PENDING_SELLER_APPROVAL`, then ACTIVE + `linkedAt`); NEW `POST /customers/:id/portal-decline` → `declineBuyerRequest` — same guards, 404/409 gates, then **DELETES** the row so the `@unique customerId` slot is freed for a future invite (DISCONNECTED stays reserved for severing an ACTIVE link) **EXCEPT** when the row still carries a LIVE `inviteToken` (a request made against an outstanding invite preserves it): those revert to `INVITED` + `buyerAccountId: null` so the seller's emailed invite survives the decline; an EXPIRED token falls through to the delete. `listPendingPortalApprovals` + `getPortalStatus` additively carry `buyerName`/`buyerEmail` (who is asking) — the web bell's pinned "Action needed" rows. Spec `customers/portal-approvals.spec.ts`.
 - **(2026-07-30, WP15) "Sells regulated items" filter** — `ListCustomersDto.regulated?: string`; `findAll` applies `where.authorizations = { some: { trackedCategory: { requiresLicense: true } } }` when `"1"` (mirrors the `tag` relation filter) and the `findMany` include gains a filtered `_count: { select: { authorizations: { where: { trackedCategory: { requiresLicense: true } } } } }` surfaced per-row as `regulatedCount`. Consumed by web customers list chip (WP14) + mobile `customers/index.tsx` `FilterChipRow` (regulated param passed through `useAdminCustomers` via an inline cast since `lib/api/admin.ts` params type is untouched). Spec: `customers.service.spec.ts` `findAll` block.
 - **Wallet double-count fix (P5-13, money-critical)** — `getMyStatement` (buyer, self) + `getStatementForOperator` (operator + `buyer.controller` `GET /buyer/statement`) both now select `amountUsed`+`expiresAt` and compute `availableCredit = Σ roundMoney(amount − amountUsed)` over the canonical open predicate (`credit-notes/` entry) instead of the old `Σ amount over status===ISSUED`, which double-counted a partially-applied credit (its full face amount PLUS the same dollars already sitting on an invoice as a `CREDIT_NOTE` payment). Each `CREDIT_NOTE` transaction row now reports remaining (not face) via `runningBalance` and exposes `expiresAt` (consumed by the buyer wallet tile). `advanceBalance`/`pendingOrdersAmount` (separate `AdvancePayment` concept) are untouched — never netted into `availableCredit`. **`email` is OPTIONAL** (DTO `@IsOptional`): `create` mints a unique `no-email+<uuid>@placeholder.local` for the required `User.email` and leaves `Customer.email` null; `sendPortalInvite` ignores `@placeholder.local` fallbacks. **`mergeCustomers` (T1-16#7 fix)** re-points the secondary's `CustomerAuthorization`+`AuthorizationOverride` to the primary before deleting it — both FK-cascade on customer delete, so without this a merge silently DESTROYED the secondary's regulated licenses. `CustomerAuthorization` is unique per `(customerId,trackedCategoryId)`, so per-category collisions keep the stronger auth via `authRank`/`authSecondaryWins` (live VERIFIED > pending > lapsed/expired > rejected > none; later expiry breaks ties; else primary kept), deleting the loser so the re-point never trips the constraint. Spec: `customers.service.spec.ts` (`mergeCustomers (regulated authorizations)` block; prisma-mock gained `estimate`/`estimateItem`/`customerTagAssignment`).
@@ -374,6 +405,105 @@ homeAddress` (the driver-home origin), and orders inherit `fulfillPath` from the
   - **Qty-zeroing money-bug fix + line invariant (2026-08-25, sale-integrity phase 2 WP1):** `create()`'s item loop switched from a non-null `boxes`/`pieces` check to a POSITIVE check — `if ((item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0)` — before calling `normalizeBoxesPieces`; the web New-sale screen sends `boxes: 0, pieces: 0` on plain-qty lines, and the old non-null check let that overwrite a real `qty` with 0 (live bug: line stored `qty 0.000` at full `unitPrice`, order total $0, invoice ungeneratable). `boxes`/`pieces` are now always initialized `null` and only set from the split when the positive check passes (never stored as `0`). Immediately after qty/boxes/pieces are finalized, a hard invariant throws `BadRequestException` when `!(Number(qty) > 0)` — no order line can persist qty ≤ 0. The same non-null trap and fix are applied surgically inside `updateOrderItems`' add/replace/merge branches (new-item creation, individual-edit `editHasSplit` detection) via the same `(item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0` predicate. **Every one of those `normalizeBoxesPieces` calls also threads the caller's `qty` through** (`create`, `updateOrderItems`' new-item + `editHasSplit` branches, and the change-request `ADD_ITEM` add) — `normalizeBoxesPieces` only honours a `boxes`/`pieces` split when `unitsPerBox > 1`, so a product with `unitsPerBox: 1` (the web sends `boxes: 1` for ANY truthy `unitsPerBox`) fell into the non-boxed branch with no `qty` at all and derived 0: pre-invariant that persisted the live `qty 0.000` line, post-invariant it hard-400s a legitimate sale. With `qty` supplied the non-boxed branch keeps the operator's quantity and stores `boxes`/`pieces` null; boxed products are unaffected (the split still wins). Specs: `orders.service.spec` boxed/non-boxed zero-payload cases + regression pin for real box entry (byte-equal) + the all-zero-never-throws case + `createSale` with `boxes:0,pieces:0` lines generates a non-empty invoice.
   - **Universal one-step demotion + reopen DELIVERED + delete-any (2026-08-25, sale-integrity phase 2 WP3):** `changeStatus`'s `allowed` map gained `PENDING → DRAFT` and `DELIVERED → [CONFIRMED, PARTIALLY_DELIVERED]` (owner reversed BUG-ORD-01: reopening a delivered order is legal again) — every state may now step back one stage. The new transitions join the requires-reason demotion set and are staff-only for free: the role gates that run BEFORE the map already limit CUSTOMER to cancelling its own PENDING/DRAFT order and DRIVER to `PENDING → CONFIRMED`. A DELIVERED demotion additionally (a) 409s (`ConflictException`) when `order.routeRunStopId` points at a `RouteRunStop` whose `status === "COMPLETED"` — one extra lookup, only on this transition, message sends staff to reopen the run stop instead (that path reverses stock and payments correctly) — and (b) writes `deliveredAt: null` so a reopened order leaves delivered-on-date reports. The DELIVERED branch's side effects (draft reconcile / auto-invoice / credit settle) are keyed on `dto.status === DELIVERED` and so fire on NEITHER demotion. Mirrored byte-for-byte by `apps/mobile/lib/order-status-flow.ts`'s `ORDER_STATUS_TRANSITIONS`/`demotionRequiresReason`. — **Delete-any:** `deleteOrder(id, user?)` / `bulkDeleteOrders(ids, user?)` (`user` optional so change-requests' abandoned-draft cleanup keeps its single-arg call). Money, not status, is the gate now: staff (OPERATOR/TENANT_ADMIN, and any internal caller passing no user) may delete an order in ANY status; a non-staff caller keeps the old `Only DRAFT, PENDING, or CANCELLED` allowlist verbatim. Two 409s precede the delete — `Return` rows against the order (the one restrict-linked child; every other one cascades or is deleted in the transaction, so a delivered-and-partly-returned order would otherwise blow up with a raw FK error) and blocking payments off `cancelImpact` (external cash only; #341's wallet behaviour is preserved — credit-note/advance money is still handed back and the delete proceeds). The old `assertCancellableOrThrow` 400 became that ConflictException so the client shows "void the invoice first". Controller routes `changeStatus`/`bulkDelete`/`remove` are widened to TENANT_ADMIN. Specs: `orders.service.spec` "changeStatus — one-step-back demotions" + "deleteOrder — delete-any".
   - **Delivery-date picker (2026-08-25, sale-integrity phase 2 WP4):** `CreateSaleDto.deliveredOn?: string` (`@IsDateString`) REPLACES `deliveredNow`'s binary in `createSale` when present (`deliveredNow` still honoured alone for older/mobile clients; when both are sent `deliveredOn` wins). A date > end-of-today UTC ⇒ deliver-later: the order stays PENDING with its DRAFT mirror invoice and `requestedDeliveryDate = deliveredOn`. A past/today date ⇒ delivered: it runs through `parseOrderDate` (so backdating keeps its staff-only gate and 2-year floor) and becomes the order's `deliveredAt` — overriding `orderDate`'s fallback — then the invoice is generated and issued as usual. Specs: `orders.service.spec` `createSale` WP4 block (past/future/today, non-staff backdate 403, deliveredOn-absent path unchanged).
+
+  - **F03 payment-status truth (2026-08-31, batch F03 — no migration):** `invoices/payment-predicates.ts`
+    (NEW) is the single source of truth — `CONFIRMED_PAYMENT` = `{status:"PAID"}` and
+    `sumConfirmed(rows)`. ⚠️ **Every payment SUM narrows to PAID; every payment LISTING keeps all rows
+    and carries `status` through to the renderer** — narrowing a listing hides the DRAFT row the badge
+    exists to show, which is the opposite of R2. Routed: `invoices.service` (findAll `balanceDue`,
+    `recomputeStatus` feeders, the PDF query), `bookkeeping.service` (three dashboards PLUS `getSummary`,
+    `getArAgingInvoices`, `recordPayment` and the balance reports), `customers.service`,
+    `buyer/statement.service`, `payment-requests.service`. ⚠️ `getCashFlow` and
+    `getPaymentsReceivedReport` are **byte-untouched on purpose** — they were already PAID-only and are
+    the reference reads the rest were aligned to. The original three-function fence WAS the defect: it
+    left the same tenant reading $200 outstanding on `/bookkeeping/summary` and $500 on
+    `/bookkeeping/dashboard`. ⚠️ Fixtures asserting `status: "RECORDED"` were corrected to `"PAID"` —
+    `PaymentStatus` is exactly `DRAFT|PAID|VOID`, so RECORDED was a fiction no writer can produce and it
+    was masking three unrouted sites. Documents: `invoice-pdf.service`/`invoice-pdf-template` and
+    `email.service` sum confirmed rows only, list DRAFT rows under a "Pending confirmation" label, and a
+    reminder now demands the BALANCE not the total; the shared item type is `invoices/invoice-pdf-item.ts`
+    (`originalPrice`/`priceType`/`promoFreeUnits` for the strikethrough + N-free disclosure).
+    ⚠️ **`T-B50s`, never a bare `REG-B50` token** — `REG-B50` also selects F04's shipped
+    `pricing-parity.spec.ts` tests, which makes a red gate structurally incapable of reporting 0 passed.
+    It pins the F04 oracle cap on the SERVER telescope (`Math.min(billedThrough(x), basisQty)` on BOTH
+    points); mutation-verified by hand — removing the cap from ONE point goes red. `scripts/repair-f03.mjs`
+    is the D4 repair tool (dry-run default, `--execute` + `--i-have-a-fresh-backup`, per-row
+    compare-and-set that SKIPS drifted rows, JSONL log under `local-assets/`); **it has never been run
+    against production.**
+  - **F30 server half (2026-08-31, batch F30 — migration `20260910000000_order_idempotency`, additive):**
+    - **`Order.idempotencyKey String?` + `@@unique([tenantId, idempotencyKey])` (R8, REG-B196).** `POST /orders`
+      reads an `Idempotency-Key` **header** (`@Headers`, `@ApiHeader(required:false)`) — never a DECLARED
+      body field, so a client can't set it as body input; the controller threads it onto the dto object and
+      `create()` reads it back as `(dto as any).idempotencyKey`. ⚠️ That cast is the contract, not an
+      oversight — declaring it on `CreateOrderDto` would re-open the body as a second source. ⚠️ The header is raw,
+      entirely client-chosen input: the controller's private **`normalizeIdempotencyKey(raw)`** bounds it at the edge
+      (trim; blank ⇒ absent; else a single printable-ASCII token ≤ 128 chars or 400) — unbounded it lands in a btree
+      unique index and an oversized one 500s with a raw index-row-size error. ⚠️ And a key match is NEVER a replay on
+      its own: `create()` resolves the caller's own `customerId` FIRST, then looks the key up, and a hit belonging to a
+      DIFFERENT customer is a client-side collision ⇒ `ConflictException`, not a replay (the bare lookup handed buyer B
+      buyer A's order — business name, every line, every unit price — while B's own order was never written). The P2002
+      branch applies the same ownership gate. A caller with NO tenant (SUPER_ADMIN, admitted by RolesGuard's hierarchy,
+      for whom `forTenant()` returns the UNSCOPED client) is refused the key path outright. Service helpers
+      `findOrderIdByIdempotencyKey(key, customerId)` / `recordIdempotencyKey(orderId, key)` (both `forTenant()`-scoped to
+      match the compound unique; `recordIdempotencyKey` SWALLOWS P2002 — the merge it raced is already
+      written, so a lost claim must not fail a completed write, and an order holds at most one key, the most
+      recent operation's); `create()` persists the key and treats the P2002 on that unique as a REPLAY
+      (fetch + return the existing order, not a second one). ⚠️ Postgres treats NULLs as distinct (mirrors the `orderNumber` unique), so every
+      pre-existing row and every client that sends no key is untouched — no backfill, no writer before this deploy.
+      ⚠️ **The staff auto-merge branch in the CONTROLLER returns without ever reaching `create()`**, so it checks
+      and stamps the key itself, and stamps it only AFTER the fold landed (a merge that threw must re-run, not replay).
+    - **`foldMergeItems(existingLines, incoming)` + `deriveUnitsPerBox(row)` (R11, REG-B199, money-critical),**
+      module-private in `orders.controller.ts`. A box-split line stores qty in PIECES (`boxes×upb + pieces`);
+      summing that flat against a plain qty fed the wrong number into box-price proration (a 2-box + 5-piece line
+      became 7 BOXES, repriced ×`unitsPerBox`). Boxes fold with boxes, pieces with pieces, an incoming item with no
+      box data is loose pieces, `normalizeBoxesPieces` re-derives the split; `unitPrice`/`notes` are preserved from
+      the EXISTING line; unlisted (`productId: null`) lines pass through as their own items. ⚠️ `OrderItem.unitsPerBox`
+      is null on pre-snapshot rows — `deriveUnitsPerBox` falls back to the row's own `(qty − pieces) / boxes` rather
+      than reading null as 0 (which collapsed a boxed line to its loose pieces). The result is the order's COMPLETE
+      new line set, so the caller passes `replaceAll: true` explicitly.
+    - **`withOrderMergeLock(orderId, fn)` + `mergeLocksByOrder` (R11, REG-B199),** module-private state on
+      `OrdersController`. The fold reads the order, computes ABSOLUTE totals, then writes them, so two merges
+      racing the same active order (two scanners hitting Confirm milliseconds apart, a queue replay racing a
+      live request) could both read the same pre-write snapshot and clobber each other's delta — the
+      lost-update half of B199. `fn` is chained onto the prior turn's SETTLED promise (`prior.then(fn, fn)`),
+      so the second caller can't start until the first's write completed; the map entry is deleted once its
+      turn settles, so it never grows unbounded. ⚠️ The `activeOrder` snapshot taken BEFORE the lock is stale
+      by the time a queued turn runs — `fn` re-reads `findActiveOrder` inside the lock and writes to / returns
+      THAT order. ⚠️ **SCOPE: the Map is per controller INSTANCE, so this serializes one API process only.**
+      Two Railway replicas merging the same order still race their reads: the row lock inside
+      `updateOrderItems` serializes the WRITE, not the read the absolute totals were computed from.
+      **DEFERRED ON EVIDENCE (2026-08-31), not merely pending:** `@routeflow/api` runs exactly ONE instance —
+      no `numReplicas` in `apps/api/railway.toml`, `numReplicas = null` for every service in Railway's API
+      (so no dashboard override either), and the live deployment reports 1 running instance — so the
+      cross-replica race is UNREACHABLE and restructuring a money-critical write path to close it would be
+      the bigger risk. ⚠️ **The trigger is scaling, and it is silent** (wrong money, no error/log/test), and
+      the process cannot self-detect it because Railway injects no replica-count variable — so the guard is a
+      comment in `apps/api/railway.toml`'s `[deploy]` block, where the scaling decision is actually made;
+      do not remove it. When picked up, three designs are spelled out in `withOrderMergeLock`'s doc comment,
+      cheapest first: (1) **Redis lock** (SET NX PX + token-checked release; Redis is already a dependency via
+      the Socket.io adapter, diff stays inside the method, and the T-B199 spec's one-instance framing survives),
+      (2) optimistic CAS on version/updatedAt inside `updateOrderItems`' transaction with a 409 + client retry,
+      (3) the "full" fix — fold inside that transaction, which REQUIRES moving (never deleting)
+      `orders.scan-hardening.spec.ts`'s "two concurrent merges on ONE INSTANCE serialize" block.
+    - **`UpdateOrderItemsDto.replaceAll` is EXPLICIT-ONLY (R10, REG-B198).** The legacy heuristic
+      (`replaceAll = dto.replaceAll ?? allNewItems`, "every item lacks an id ⇒ replace") is GONE — that is exactly the
+      shape of a mobile per-scan "just add these" PATCH, which wiped the order. Omitted or `false` ⇒ incremental merge.
+      ⚠️ This supersedes the "replace vs merge (gotcha)" bullet above for the operator path.
+    - **No silent line drops in `updateOrderItems` (R9, REG-B197).** A pre-scan inside the transaction resolves every
+      NEW catalog-linked add before anything is written; unresolvable ids (stale cache, cross-tenant id filtered to null)
+      abort the WHOLE request with a `BadRequestException` instead of the old `if (!product) continue`, which returned
+      HTTP 200 with a dropped line. The in-loop `!product` case now throws too (belt-and-braces — never a silent drop).
+      ⚠️ ONE batched `tx.product.findMany({ id: { in: distinct ids } })` + a Map serves BOTH the pre-scan and the add
+      loop below it (the same shape the replace-all branch above uses) — a `findUnique` per line in each ran the same
+      read twice, 60 sequential round-trips for a 30-line scan batch, all inside the transaction already holding
+      `SELECT … FOR UPDATE` on the order.
+    - Specs: `orders/orders.scan-hardening.spec.ts` (NEW — idempotent create/replay, the merge fold's denominations,
+      `replaceAll` explicit-only, the unresolvable-add abort) + extensions in `orders/orders.service.spec.ts`.
+      ⚠️ Its last block (T-B200/R12) tests **`BuyerController.scanProduct`**, not this module — R12 shipped as the
+      buyer-catalog rung, so the block moved there rather than pinning `ProductsController` (whose staff-only
+      `@Roles(OPERATOR, DRIVER)` it now asserts stays closed). Its idempotency-scoping case binds the fake's tenant
+      partition to `forTenant()` and leaves the ROOT prisma client unscoped, so a lookup that skips `forTenant()`
+      reads across tenants in the test exactly as it would in production.
 
 ### `routes/` & `route-optimization/`
 
@@ -578,7 +708,7 @@ Decimal?` is the **snapshot taken at line creation**, resolved server-side by
 - **`scripts/repair-costing.mjs`** — READ-ONLY prod costing diagnostic (deliberately NO `--execute`): §1 duplicate RECEIVED bills grouped by normalized supplier invoice number (KEEP first / EXTRA rest + per-product phantom stock/value), §2 case-cost suspect lines (`packSize>1` recorded, or boxed product with line cost ≥ per-piece sell), §3 sequenced repair proposal (void extras → fix movement denominations → recompute). Env: `REPORT_TENANT_SLUG`, `REPORT_RECEIVED_BEFORE` (bound §2 to pre-fix receives). Same `railway run --service postgres` URL-from-parts pattern as the other prod scripts; degrades when `packSize` column absent.
 
 - **`scripts/data-integrity-report.mjs`** (2026-08-28/29) — READ-ONLY forensic integrity report: 25 SELECT/aggregate checks (24 named + one dynamic per-child-model `tenant-drift-<model>` generator) detecting the DB footprints of confirmed bugs (invoice-overpaid, invoice-paid-with-balance, invoice-unpaid-with-payments, payment-stuck-draft, payment-on-dead-invoice, invoice-header-math, invoice-lines-vs-subtotal, invoice-number-dup-null-tenant, orderitem-overbilled/-invoicedqty-underrun/-negative-counters, cancelled-order-delivered-goods, return-exceeds-delivered/-exceeds-ordered/-dangling-creditnote, creditnote-overdrawn/-used-drift, advance-balance-drift, product-negative-stock, stock-vs-last-movement [flagged unreliable — see below], recurring-duplicate-fire, recurring-stalled, stop-completed-no-timestamp, delivered-order-skipped-stop) plus general corruption (tenant-scope drift, arithmetic drift, orphans, duplicates). Session forces `default_transaction_read_only = on` before any check, every query is SELECT-only with a `statement_timeout`, never prints customer/product names — safe to run against production. `railway run --service postgres node scripts/data-integrity-report.mjs [--tenant <slug>] [--verbose]`; connection resolves like `prod-readonly-audit.mjs` (URL from `POSTGRES_*`/`RAILWAY_TCP_PROXY_*` parts when `DATABASE_URL` is the internal-only one). **Fable adversarial review (2026-08-29, VALIDATION STATUS header in the file):** recurring-duplicate-fire correctly detects B46's midnight re-fire pairs; payments-vs-status checks mirror `recomputeStatus` exactly; credit-note/advance drift sound but the dangling-pointer mechanism runs backwards; billing-counter checks are valid but B84's double-void leaves no negative scar to catch; returns-exceeding-delivered confirmed against the ordered-basis validator; tenant-scope drift confirmed (nullable tenantId class has fired before per the backfill scripts above); **`stock-vs-last-movement` REFUTED as a footprint** — `currentStock` is not reconstructible from movements by design, so the check would flood false positives (B55/B64 are still real, just not detectable this way).
-- **`scripts/repair-integrity.mjs`** — SURGICAL repair companion, scoped to the SPECIFIC rows `data-integrity-report.mjs` found on 2026-08-28/29 only (`overpaid-1a8fbb3d`, `paidbal-882e3615`, `deadpay-cf082424`, `overbill-6edd8f20`, `unpaidpay-{638eb534,bc48a97b}`, `hdrmath-1a62c9d9`, `linesum-ea63fb65`, `retdel-{36c21079,aa79cb93,2ef317f6}`, `tenantdrift-23fae434`, `orphantpl-15e9d9f1`, `stalledtpl-61bc82ba` — 23 rowIds total, hardcoded `ROWS` array); it never scans for new damage. Dry-run by default (same forced-read-only session); writing requires ALL of `--execute` + `--i-have-a-fresh-backup` (attestation) + `--confirm <rowId>` (repeatable, opt in per row) — rows flagged "needs a human decision" also need `--resolution <rowId>=<option>` (see `--list`), and the overpaid row's void-duplicate-payment path additionally needs `--payment <InvoicePayment id>`. One transaction per row: locks the row (`FOR UPDATE`), re-reads and byte-compares the before-state against the dry-run snapshot (drift aborts that row), re-runs the matching forensic check post-commit to confirm clean, and appends every executed repair to `local-assets/repair-log-<timestamp>.jsonl`. Refuses to run unless `current_database()` looks like production (`PROD_DB_NAMES = {"railway","routeflow"}`, excluding names matching `test|local|dev|qa|e2e`) — `--force-nonprod` overrides, loud and deliberate. Per the client-data-protection policy: these are LIVE CLIENT rows, run only at owner's explicit request, after a fresh verified backup (house method: `railway ssh` in-container `pg_dump`), dry-run first, one row at a time — full procedure in `scripts/REPAIR-RUNBOOK.md`.
+- **`scripts/repair-integrity.mjs`** — SURGICAL repair companion, scoped to the SPECIFIC rows `data-integrity-report.mjs` found on 2026-08-28/29 only (`overpaid-1a8fbb3d`, `paidbal-882e3615`, `deadpay-cf082424`, `overbill-6edd8f20`, `unpaidpay-{638eb534,bc48a97b}`, `hdrmath-1a62c9d9`, `linesum-ea63fb65`, `retdel-{36c21079,aa79cb93,2ef317f6}`, `tenantdrift-23fae434`, `orphantpl-15e9d9f1`, `stalledtpl-61bc82ba` — 23 rowIds total, hardcoded `ROWS` array); it never scans for new damage. Dry-run by default (same forced-read-only session); writing requires ALL of `--execute` + `--i-have-a-fresh-backup` (attestation) + `--confirm <rowId>` (repeatable, opt in per row) — rows flagged "needs a human decision" also need `--resolution <rowId>=<option>` (see `--list`), and the overpaid row's void-duplicate-payment path additionally needs `--payment <InvoicePayment id>`. One transaction per row: locks the row (`FOR UPDATE`), re-reads and byte-compares the before-state against the dry-run snapshot (drift aborts that row), re-runs the matching forensic check post-commit to confirm clean, and appends every executed repair to `local-assets/repair-log-<timestamp>.jsonl`. Refuses to run unless `current_database()` looks like production (`PROD_DB_NAMES = {"railway","routeflow"}`, excluding names matching `test|local|dev|qa|e2e`) — `--force-nonprod` overrides, loud and deliberate. Per the client-data-protection policy: these are LIVE CLIENT rows, run only at owner's explicit request, after a fresh verified backup (house method: `railway ssh` in-container `pg_dump`), dry-run first, one row at a time — full procedure in `scripts/REPAIR-RUNBOOK.md`. **Its local `roundMoney` (and `feature-smoke.mjs`'s) mirrors `apps/api/src/common/pricing.ts#roundMoney`** — half-away-from-zero via the `toFixed(4)` re-render, NOT a `+ Number.EPSILON` nudge (F04/REG-B122). This script WRITES the values it rounds (`newPaid`, `newAmount`, `lineSum`, `newTotal`), so an EPSILON copy would round every exact half-cent DOWN and re-introduce the one-cent divergence it exists to repair — never let the two drift.
 - **`scripts/prod-readonly-audit.mjs`** (2026-08-15) — READ-ONLY production audit (no write
   path at all); run via `railway run --service postgres node apps/api/scripts/prod-readonly-audit.mjs`.
 
@@ -878,6 +1008,22 @@ buyerPaymentRequestId }` so the PI resolves the request); `checkout.session.comp
 - **buyer-admin controller** `platform-admin/buyer-accounts` + `customer-links` — manage buyer accounts, approve links. **F2 fix (2026-08-22):** `BuyerAdminService.updateBuyer` on an email CHANGE now runs in a `$transaction` that also `deleteMany`s the account's `BuyerEmailVerificationToken` rows AND its `BuyerRefreshToken` rows (a token mailed to the OLD address binds only buyerAccountId, so it could otherwise verify the NEW address; sessions die because the identity anchor changed). Name/phone-only updates touch neither, and the `email`/`emailVerified:false` write is keyed off the same `emailChanging` predicate — the admin UI echoes the current email back on every save, so keying it off `dto.email !== undefined` would de-verify the buyer on a phone-only edit. Spec `buyer/buyer-admin.service.spec.ts`.
 - **buyer-merge controller** `buyer/auth` — account merge via token.
 - **order tracking (P10-BUY-8, no migration)** — `buyer.controller` `GET /buyer/orders/:id/tracking` (new; `BuyerSellerContextGuard` + `BuyerTenantInterceptor` + `X-Tenant-Slug`) is a thin wrapper that returns `OrdersService.getOrderTracking(id, makePseudoUser(ctx))` **verbatim** — same `@CurrentBuyerCustomer` pseudo-user (role CUSTOMER) + userId-based ownership gate `findOne`/`getOrder` already rely on, so a buyer only sees their own order's route/stop/ETA (403 otherwise). No new model, no new business logic, no money fields. (Mobile `orders/[id].tsx` tracking card + Reorder consume it; see mobile.md.)
+- **buyer catalog scan (F30/R12, REG-B200, 2026-08-31, no migration)** — `GET /buyer/products/scan/:code`
+  (`buyer.controller.scanProduct`, `BuyerSellerContextGuard` + `BuyerTenantInterceptor` + `X-Tenant-Slug`).
+  Customer-role scanning previously had NO reachable rung at all: `GET /products` and `GET /products/barcode`
+  are `@Roles(OPERATOR, DRIVER)`, so every buyer-side scan 403'd on both. Reuses the SAME primitives
+  `ProductsService.findByBarcode` is built on — `normalizeScanCode` candidate-set match across
+  `barcode`/`sku`/`unitSku` then `pickBestScanMatch`'s deterministic tie-break (`common/barcode-normalize`) —
+  called directly against the already-injected `this.prisma.forTenant()` so the controller gains no new
+  constructor dep — **`forTenant()`, never the raw client**: the lookup spans `barcode`/`sku`/`unitSku` with no
+  explicit tenant filter of its own, so the scoped client is the ONLY thing keeping a buyer's scan inside the
+  seller tenant (`orders.scan-hardening.spec.ts` T-B200 pins this with a deliberately-unscoped root client).
+  Two tiers: exact `in`, then case-insensitive MISS-ONLY (`take: 25`) for typed/lowercased alpha SKUs; 404 otherwise.
+  ⚠️ The hit is routed through `catalogService.getProductDetail` — the SAME `isActive` + regulated-category
+  visibility gate every other buyer-catalog surface uses — so a scan can never surface a product this buyer
+  may not see. Returns the detail payload + `alertSubscribed`. Client leg: mobile
+  `lib/api/buyer.ts#resolveBuyerProductByCode` → the `<BarcodeFab continuous>` on
+  `(customer)/(tabs)/catalog.tsx` (see mobile.md) — this route's only caller.
 - side effects: BuyerAccount/BuyerRefreshToken/CustomerLink/BuyerMergeRequest writes; invite email; presigned links.
 
 ### `email/`

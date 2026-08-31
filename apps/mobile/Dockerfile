@@ -38,6 +38,25 @@ ENV EXPO_PUBLIC_API_URL=$EXPO_PUBLIC_API_URL
 ARG EXPO_PUBLIC_GOOGLE_MAPS_API_KEY
 ENV EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=$EXPO_PUBLIC_GOOGLE_MAPS_API_KEY
 
+# Build stamp (B202) — baked into the web export so the login screen can show
+# "build <sha>", the fastest way to prove a phone/browser is actually on the
+# new deploy (see lib/build-info.ts). Two ARGs on purpose:
+# EXPO_PUBLIC_BUILD_SHA is the explicit knob and always wins;
+# RAILWAY_GIT_COMMIT_SHA is a best-effort fallback to the deploying commit.
+# `${VAR:-default}` is standard Dockerfile environment-replacement syntax, so
+# the fallback costs nothing when the explicit arg is set.
+# VERIFIED 2026-08-31 on the #562 deploy: Railway DOES forward
+# RAILWAY_GIT_COMMIT_SHA into the build, so the fallback alone is enough and no
+# service variable is needed — the shipped bundle carried the full merge sha and
+# the login screen read "build e2bc8b3". Should that ever stop being true, the
+# symptom is a deploy rendering "build dev", and the fix is a service variable
+# EXPO_PUBLIC_BUILD_SHA=${{RAILWAY_GIT_COMMIT_SHA}} on the routeflowmobile
+# service. It degrades to "dev" rather than breaking the build either way —
+# which is exactly why `shortBuildSha` is total.
+ARG EXPO_PUBLIC_BUILD_SHA
+ARG RAILWAY_GIT_COMMIT_SHA
+ENV EXPO_PUBLIC_BUILD_SHA=${EXPO_PUBLIC_BUILD_SHA:-$RAILWAY_GIT_COMMIT_SHA}
+
 WORKDIR /app/apps/mobile
 
 # babel-preset-expo probes for optional integrations (expo-router, reanimated,

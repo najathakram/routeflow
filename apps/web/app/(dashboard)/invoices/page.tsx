@@ -252,6 +252,11 @@ function PaymentSummaryBar({
     let overdue = 0;
     let paidInvoiceCount = 0;
     let totalDaysToPay = 0;
+    // F03/R2 (REG-B11) — payments recorded with status "DRAFT" are unconfirmed
+    // money the server excludes from every CONFIRMED_PAYMENT sum (balanceDue,
+    // the bookkeeping dashboards, PDF, email). Surface that queue here so a
+    // draft payment isn't invisible outside the invoice detail's own badge.
+    let awaitingConfirmationCount = 0;
 
     for (const inv of all) {
       const total = Number(inv.total);
@@ -261,6 +266,10 @@ function PaymentSummaryBar({
       const balance =
         inv.balanceDue !== undefined ? Number(inv.balanceDue) : Math.max(0, total - paid);
       const due = inv.dueDate ? inv.dueDate.slice(0, 10) : null;
+
+      for (const p of inv.payments ?? []) {
+        if (p.status === "DRAFT") awaitingConfirmationCount++;
+      }
 
       if (
         inv.status !== "PAID" &&
@@ -301,13 +310,14 @@ function PaymentSummaryBar({
 
     const avgDays = paidInvoiceCount > 0 ? Math.round(totalDaysToPay / paidInvoiceCount) : 0;
 
-    return { totalOutstanding, dueToday, dueIn30, overdue, avgDays };
+    return { totalOutstanding, dueToday, dueIn30, overdue, avgDays, awaitingConfirmationCount };
   }, [all]);
 
   const items = [
     {
       label: "Total Outstanding",
       value: fmt(kpis.totalOutstanding),
+      hint: undefined as string | undefined,
       money: true,
       valueClass: undefined as string | undefined,
       active: activeFilter === "SENT",
@@ -317,6 +327,7 @@ function PaymentSummaryBar({
     {
       label: "Due Today",
       value: fmt(kpis.dueToday),
+      hint: undefined as string | undefined,
       money: true,
       valueClass: kpis.dueToday > 0 ? "text-orange-500" : undefined,
       active: dueTodayActive,
@@ -326,6 +337,7 @@ function PaymentSummaryBar({
     {
       label: "Due Within 30 Days",
       value: fmt(kpis.dueIn30),
+      hint: undefined as string | undefined,
       money: true,
       valueClass: undefined as string | undefined,
       active: false,
@@ -335,6 +347,7 @@ function PaymentSummaryBar({
     {
       label: "Overdue",
       value: fmt(kpis.overdue),
+      hint: undefined as string | undefined,
       money: true,
       valueClass: kpis.overdue > 0 ? "text-red-600" : undefined,
       active: activeFilter === "OVERDUE",
@@ -344,21 +357,36 @@ function PaymentSummaryBar({
     {
       label: "Avg. Days to Get Paid",
       value: kpis.avgDays > 0 ? `${kpis.avgDays} Days` : "N/A",
+      hint: undefined as string | undefined,
       money: false,
       valueClass: undefined as string | undefined,
       active: activeFilter === "PAID",
       onClick: () => onFilter(activeFilter === "PAID" ? "" : "PAID"),
       ariaLabel: undefined as string | undefined,
     },
+    {
+      // F03/R2 (REG-B11) — count of DRAFT (unconfirmed) payments across all
+      // invoices; not an invoice-status filter (DRAFT is a payment-level
+      // status here), so this tile is a read-only counter, not a toggle.
+      label: "Awaiting Confirmation",
+      value: String(kpis.awaitingConfirmationCount),
+      hint: "Draft payments not yet counted as paid",
+      money: false,
+      valueClass: kpis.awaitingConfirmationCount > 0 ? "text-warning" : undefined,
+      active: false,
+      onClick: undefined as (() => void) | undefined,
+      ariaLabel: undefined as string | undefined,
+    },
   ];
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
       {items.map((item) => (
         <StatTile
           key={item.label}
           label={item.label}
           value={item.value}
+          hint={item.hint}
           money={item.money}
           valueClass={item.valueClass}
           active={item.active}

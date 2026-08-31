@@ -1,0 +1,24 @@
+{
+  "draft-payment-not-void": {
+    "fixedBy": "F09 (credit-notes wallet integrity — F03's B11 confirmed-payment sweep fenced credit-notes.service.ts off as F09's lane and left ONLY these sites; delete this block with F09's pass)",
+    "sites": [
+      "apps/api/src/credit-notes/credit-notes.service.ts::const pays = await tx.invoicePayment.findMany({",
+      "apps/api/src/credit-notes/credit-notes.service.ts::const payments = await tx.invoicePayment.findMany({",
+      "apps/api/src/credit-notes/credit-notes.service.ts::const payments = await db.invoicePayment.findMany({"
+    ]
+  },
+  "import-parsefloat-money": {
+    "fixedBy": "F17 (B98 parseImportMoney — delete this block with that fix)",
+    "sites": [
+      "apps/api/src/import/import.service.ts::const amount = parseFloat(row[\"Amount Applied to Invoice\"] || row[\"Amount\"] || \"0\");",
+      "apps/api/src/import/import.service.ts::const amount = parseFloat(row[\"Total\"] || row[\"Expense Amount\"] || \"0\");",
+      "apps/api/src/import/import.service.ts::const balanceDue = parseFloat(",
+      "apps/api/src/import/import.service.ts::const itemDiscount = parseFloat(row[\"Discount Amount\"] || \"0\") || 0;",
+      "apps/api/src/import/import.service.ts::const pricePerUnit = parseFloat(row[\"Rate\"] || row[\"Sales Rate\"] || row[\"Price\"] || \"0\") || 0;",
+      "apps/api/src/import/import.service.ts::const shippingFee = parseFloat(first[\"Shipping Charge\"] || \"0\") || 0;",
+      "apps/api/src/import/import.service.ts::const subtotal = parseFloat(first[\"SubTotal\"] || first[\"Sub Total\"] || \"0\") || total;",
+      "apps/api/src/import/import.service.ts::const total = parseFloat(first[\"Total\"] || \"0\") || 0;",
+      "apps/api/src/import/import.service.ts::const unitPrice = parseFloat(row[\"Item Price\"] || \"0\") || 0;"
+    ]
+  }
+}

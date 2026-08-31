@@ -47,6 +47,7 @@ export function AssignToSectionModal({ isOpen, onClose, products, onSuccess }: P
 
   const handleApply = async () => {
     if (!target) return;
+    const totalSelected = products.length;
     try {
       if (target === NONE_VALUE) {
         const groups = new Map<string, string[]>();
@@ -61,20 +62,49 @@ export function AssignToSectionModal({ isOpen, onClose, products, onSuccess }: P
           const res = await unassign.mutateAsync({ id: sectionId, productIds });
           unassignedCount += res.unassigned;
         }
+        // Processed-vs-skipped (vendor-bills' shape). `unassigned` counts
+        // MOVERS only — products that already carried no regulated type were
+        // grouped out above and never sent, but they are a successful no-op,
+        // not a skip. Count both populations as processed so a selection of
+        // untyped products reads as success instead of "0 unassigned, N
+        // skipped"; the remaining gap is the server not confirming a mover.
+        const alreadyUnassigned = products.filter((p) => !p.trackedCategoryId).length;
+        const processed = unassignedCount + alreadyUnassigned;
+        const skipped = totalSelected - processed;
         toast({
-          title: "Products unassigned",
-          description: `${unassignedCount} product${unassignedCount !== 1 ? "s" : ""} removed from their regulated type`,
-          variant: "success",
+          title: `${processed} product${processed !== 1 ? "s" : ""} unassigned${skipped > 0 ? `, ${skipped} skipped` : ""}`,
+          description:
+            skipped > 0
+              ? "The server did not confirm every product in the selection."
+              : alreadyUnassigned > 0
+                ? `${alreadyUnassigned} already had no regulated type.`
+                : "Removed from their regulated type",
+          variant: processed > 0 ? "success" : "error",
         });
       } else {
         const res = await assign.mutateAsync({
           id: target,
           productIds: products.map((p) => p.id),
         });
+        // `assigned` counts MOVERS only — rows already in the target type are
+        // excluded from it although the server did process them. Reporting the
+        // gap against it turns a fully successful re-assign into "0 assigned,
+        // N skipped", so read the server's `processed` instead; the local
+        // already-in-target tally is only the fallback for an older API (and
+        // undercounts ids selected on a page this view never loaded).
+        const alreadyInTarget = products.filter((p) => p.trackedCategoryId === target).length;
+        const processed = res.processed ?? res.assigned + alreadyInTarget;
+        const skipped = totalSelected - processed;
+        const unchanged = processed - res.assigned;
         toast({
-          title: "Products assigned",
-          description: `${res.assigned} product${res.assigned !== 1 ? "s" : ""} moved`,
-          variant: "success",
+          title: `${processed} product${processed !== 1 ? "s" : ""} assigned${skipped > 0 ? `, ${skipped} skipped` : ""}`,
+          description:
+            skipped > 0
+              ? "The server did not confirm every product in the selection."
+              : unchanged > 0
+                ? `${unchanged} already had this regulated type.`
+                : undefined,
+          variant: processed > 0 ? "success" : "error",
         });
       }
       onSuccess?.();

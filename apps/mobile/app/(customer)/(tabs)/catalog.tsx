@@ -123,6 +123,20 @@ export default function CustomerCatalogScreen() {
         inlineTitle="Catalog"
         trailing={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
+            {/* F30 / R12 (B200): the first customer-side scan affordance. Until
+                the buyer realm got its own resolve rung there was nothing to
+                open — the operator ladder's two rungs are
+                @Roles(OPERATOR, DRIVER), so every customer-token lookup 403'd.
+                A pushed screen, not an in-tab overlay: the camera has to cover
+                the tab bar. */}
+            <Pressable
+              onPress={() => router.push("/(customer)/scan")}
+              hitSlop={8}
+              style={styles.bellBtn}
+              accessibilityLabel="Scan barcode"
+            >
+              <Ionicons name="barcode-outline" size={22} color={ios.label} />
+            </Pressable>
             <Pressable
               onPress={() => router.push("/(customer)/favorites")}
               hitSlop={8}

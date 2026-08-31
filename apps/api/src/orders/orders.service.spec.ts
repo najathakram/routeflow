@@ -3136,11 +3136,9 @@ describe("OrdersService", () => {
 
     it("replaceAll:false — adding an id-less item appends without deleting existing lines", async () => {
       prisma.order.findUnique.mockResolvedValue(orderWithItems);
-      prisma.product.findUnique.mockResolvedValue({
-        id: "prod-B",
-        pricePerUnit: 7,
-        unitsPerBox: null,
-      });
+      const prodB = { id: "prod-B", pricePerUnit: 7, unitsPerBox: null };
+      prisma.product.findUnique.mockResolvedValue(prodB);
+      prisma.product.findMany.mockResolvedValue([prodB]);
       prisma.orderItem.findMany.mockResolvedValue([
         { subtotal: 10, status: "PENDING" },
         { subtotal: 7, status: "PENDING" },
@@ -3163,13 +3161,15 @@ describe("OrdersService", () => {
 
     it("edit that adds a regulated line snapshots its category + flips hasRegulated", async () => {
       prisma.order.findUnique.mockResolvedValue(orderWithItems);
-      prisma.product.findUnique.mockResolvedValue({
+      const prodTob = {
         id: "prod-tob",
         pricePerUnit: 7,
         unitsPerBox: null,
         trackedCategoryId: "cat-tob",
         trackedSubcategoryId: "sub-cig", // RF-3: reporting breakdown snapshot
-      });
+      };
+      prisma.product.findUnique.mockResolvedValue(prodTob);
+      prisma.product.findMany.mockResolvedValue([prodTob]);
       // Post-edit active items include the newly-added regulated line.
       prisma.orderItem.findMany.mockResolvedValue([
         { subtotal: 10, status: "PENDING", trackedCategoryId: null },
@@ -3524,12 +3524,21 @@ describe("OrdersService", () => {
       expect(prisma.orderItem.update).not.toHaveBeenCalled();
     });
 
-    it("legacy heuristic — an all-id-less payload with no flag still replaces all (mobile)", async () => {
+    // F30/R10 (B198): the legacy shape-inference heuristic ("every item lacks an
+    // id" ⇒ replace all) is GONE — it wiped an order on any id-less "just add
+    // these" PATCH that omitted the flag, which is the real mobile per-scan
+    // shape. An omitted flag now means the SAFE branch. (The dedicated
+    // regression lives in orders.scan-hardening.spec.ts as T-B198; this keeps
+    // the contract pinned in the suite that owns replace-vs-incremental.)
+    it("replaceAll OMITTED — an all-id-less payload appends, it does not replace all", async () => {
       prisma.order.findUnique.mockResolvedValue(orderWithItems);
-      prisma.product.findMany.mockResolvedValue([
-        { id: "prod-B", pricePerUnit: 7, unitsPerBox: null },
+      const prodB = { id: "prod-B", pricePerUnit: 7, unitsPerBox: null };
+      prisma.product.findUnique.mockResolvedValue(prodB);
+      prisma.product.findMany.mockResolvedValue([prodB]);
+      prisma.orderItem.findMany.mockResolvedValue([
+        { subtotal: 10, status: "PENDING" },
+        { subtotal: 7, status: "PENDING" },
       ]);
-      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 7, status: "PENDING" }]);
 
       await service.updateOrderItems(
         "ord-1",
@@ -3537,7 +3546,12 @@ describe("OrdersService", () => {
         operatorPayload,
       );
 
-      expect(prisma.orderItem.deleteMany).toHaveBeenCalledWith({ where: { orderId: "ord-1" } });
+      expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ productId: "prod-B", unitPrice: 7 }),
+        }),
+      );
     });
 
     it("appends a new unlisted line (no productId) as a MANUAL item, without deleting", async () => {
@@ -3635,6 +3649,7 @@ describe("OrdersService", () => {
       prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 }); // operatorTierCtx read
       prisma.customerPrice.findMany.mockResolvedValue([]);
       prisma.product.findUnique.mockResolvedValue(TIERED_PRODUCT);
+      prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
 
       await service.updateOrderItems(
@@ -3665,6 +3680,7 @@ describe("OrdersService", () => {
       prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
       prisma.customerPrice.findMany.mockResolvedValue([]);
       prisma.product.findUnique.mockResolvedValue(TIERED_PRODUCT);
+      prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 12, status: "PENDING" }]);
 
       await service.updateOrderItems(
@@ -3705,6 +3721,7 @@ describe("OrdersService", () => {
         { productId: "prod-1", pricingTier: null, msrp: 5 },
       ]);
       prisma.product.findUnique.mockResolvedValue(TIERED_PRODUCT);
+      prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
 
       await service.updateOrderItems(
@@ -3772,6 +3789,7 @@ describe("OrdersService", () => {
       prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
       prisma.customerPrice.findMany.mockResolvedValue([]);
       prisma.product.findUnique.mockResolvedValue(TIERED_PRODUCT);
+      prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 20, status: "PENDING" }]);
 
       await service.updateOrderItems(
@@ -3838,6 +3856,7 @@ describe("OrdersService", () => {
       prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1 });
       prisma.customerPrice.findMany.mockResolvedValue([]);
       prisma.product.findUnique.mockResolvedValue(MOCK_PRODUCT);
+      prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 9.98, status: "PENDING" }]);
 
       await service.updateOrderItems(
@@ -3995,11 +4014,9 @@ describe("OrdersService", () => {
 
     it("a driver diff fresh add prices from the catalog, ignoring the client price", async () => {
       prisma.order.findUnique.mockResolvedValue(twoLineOrder);
-      prisma.product.findUnique.mockResolvedValue({
-        id: "prod-C",
-        pricePerUnit: 9,
-        unitsPerBox: null,
-      });
+      const prodC = { id: "prod-C", pricePerUnit: 9, unitsPerBox: null };
+      prisma.product.findUnique.mockResolvedValue(prodC);
+      prisma.product.findMany.mockResolvedValue([prodC]);
       prisma.orderItem.findMany.mockResolvedValue([
         { subtotal: 10, status: "PENDING" },
         { subtotal: 7, status: "PENDING" },
@@ -4033,12 +4050,9 @@ describe("OrdersService", () => {
       prisma.customerPrice.findMany.mockResolvedValue([
         { productId: "prod-C", pricingTier: 3, msrp: null },
       ]);
-      prisma.product.findUnique.mockResolvedValue({
-        id: "prod-C",
-        pricePerUnit: 9,
-        priceTier3: 6,
-        unitsPerBox: null,
-      });
+      const prodCTiered = { id: "prod-C", pricePerUnit: 9, priceTier3: 6, unitsPerBox: null };
+      prisma.product.findUnique.mockResolvedValue(prodCTiered);
+      prisma.product.findMany.mockResolvedValue([prodCTiered]);
       prisma.orderItem.findMany.mockResolvedValue([
         { subtotal: 10, status: "PENDING" },
         { subtotal: 7, status: "PENDING" },
@@ -6314,7 +6328,10 @@ describe("OrdersController — merge choice vs orderDate", () => {
     status: "PENDING",
     total: 10,
     createdAt: new Date(),
-    lineItems: [{ productId: "prod-1", qty: 2, unitPrice: 5, name: null }],
+    // priceType MANUAL: only an operator override survives the fold (F30/R11 refined
+    // contract) — derived prices are omitted so updateOrderItems re-derives at the
+    // merged qty; orders.scan-hardening.spec.ts pins that branch.
+    lineItems: [{ productId: "prod-1", qty: 2, unitPrice: 5, priceType: "MANUAL", name: null }],
   };
 
   beforeEach(async () => {
@@ -6365,9 +6382,11 @@ describe("OrdersController — merge choice vs orderDate", () => {
       operatorPayload,
     );
 
+    // F30/R11 (B199): the fold carries the EXISTING line's unitPrice through —
+    // a merge is never where an operator's price override quietly disappears.
     expect(ordersService.updateOrderItems).toHaveBeenCalledWith(
       "ord-open",
-      expect.objectContaining({ items: [{ productId: "prod-1", qty: 3 }] }),
+      expect.objectContaining({ items: [{ productId: "prod-1", qty: 3, unitPrice: 5 }] }),
       operatorPayload,
     );
   });

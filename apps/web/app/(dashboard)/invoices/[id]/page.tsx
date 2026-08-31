@@ -29,6 +29,7 @@ import {
   Eye,
   Upload,
   X,
+  Clock,
 } from "lucide-react";
 import { Badge, Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -150,6 +151,25 @@ function CheckStatusBadge({ status }: { status: CheckStatus }) {
       {status === "BOUNCED" && <XCircle className="h-3 w-3" />}
       {status === "CLEARED" && <CheckCircle2 className="h-3 w-3" />}
       {meta.label}
+    </span>
+  );
+}
+
+/**
+ * F03/R2 (REG-B11) — a payment recorded with `status: "DRAFT"` has NOT been
+ * confirmed and is excluded from every CONFIRMED_PAYMENT sum on the server
+ * (balanceDue, dashboards, PDF, email — invoices.service.ts's payment
+ * predicate). Money still owed can otherwise look paid here, so the row must
+ * say so instead of rendering identically to a confirmed payment.
+ */
+function DraftPaymentBadge() {
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700"
+      title="Not yet confirmed — this amount is not counted toward the balance due"
+    >
+      <Clock className="h-3 w-3" />
+      Draft — unconfirmed
     </span>
   );
 }
@@ -1515,11 +1535,19 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
 
   const total = Number(invoice.total);
   const payments: InvoicePayment[] = invoice.payments ?? [];
-  // P5-12: VOID payments (manually voided OR bounced checks) don't count
-  // toward the paid amount — a bounce must re-open the displayed balance.
-  const amountPaid = payments
-    .filter((p) => p.status !== "VOID")
-    .reduce((s, p) => s + Number(p.amount), 0);
+  // F03/R1: only CONFIRMED payments count toward the paid amount. VOID rows
+  // (manually voided OR bounced checks — P5-12) don't, and neither do DRAFT
+  // (unconfirmed) ones: the balance a bounce re-opens is the same balance an
+  // unconfirmed row must never close. Prefer the server's own paidAmount /
+  // balanceDue (invoices.service findOne, CONFIRMED_PAYMENT basis) so this page
+  // agrees to the cent with the invoices list, the PDF and the emails; the
+  // local sum is only a fallback for a payload that carries neither. The
+  // `payments` array itself stays unfiltered — Payment History must keep
+  // showing DRAFT rows so DraftPaymentBadge can mark them.
+  const amountPaid =
+    invoice.paidAmount != null
+      ? Number(invoice.paidAmount)
+      : payments.filter((p) => p.status === "PAID").reduce((s, p) => s + Number(p.amount), 0);
   const status = invoice.status;
 
   // Draft/Final invoice-PDF stage. Default: DRAFT while it's still the
@@ -1529,7 +1557,11 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const defaultPdfVariant: InvoicePdfVariant = deriveInvoiceVariant(invoice);
   const pdfVariant: InvoicePdfVariant = pdfVariantOverride ?? defaultPdfVariant;
   const balanceDue =
-    status === "VOID" || status === "WRITTEN_OFF" ? 0 : Math.max(0, total - amountPaid);
+    invoice.balanceDue != null
+      ? Number(invoice.balanceDue)
+      : status === "VOID" || status === "WRITTEN_OFF"
+        ? 0
+        : Math.max(0, total - amountPaid);
   const discount = Number(invoice.discount ?? 0);
   const shippingFee = Number(invoice.shippingFee ?? 0);
 
@@ -2003,11 +2035,14 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     );
   };
 
-  // For edit payment: max amount = total - (all other non-VOID payments)
+  // For edit payment: max amount = total - (all other CONFIRMED payments).
+  // F03/R1: mirrors the server guard, whose `othersTotal` is sumConfirmed over the
+  // sibling rows (invoices.service updatePayment) — a DRAFT sibling counts for
+  // neither side, so the modal no longer refuses an amount the API would accept.
   const editPaymentMax = editingPayment
     ? total -
       payments
-        .filter((p) => p.id !== editingPayment.id && p.status !== "VOID")
+        .filter((p) => p.id !== editingPayment.id && p.status === "PAID")
         .reduce((s, p) => s + Number(p.amount), 0)
     : 0;
 
@@ -2132,9 +2167,12 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             PDF
           </Button>
 
-          {/* Revert to Draft — SENT/VIEWED/OVERDUE with no payments */}
+          {/* Revert to Draft — SENT/VIEWED/OVERDUE with no payment ROWS at all:
+              revertInvoiceToDraft refuses on `invoicePayment.count > 0`, which
+              counts DRAFT and VOID rows too. Gating on amountPaid (a CONFIRMED
+              sum) would offer a button the server always rejects. */}
           {(status === "SENT" || status === "VIEWED" || status === "OVERDUE") &&
-            amountPaid === 0 && (
+            payments.length === 0 && (
               <Button
                 size="sm"
                 variant="secondary"
@@ -2704,6 +2742,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                           >
                             {methodLabel(pmt.method)}
                           </span>
+                          {pmt.status === "DRAFT" && <DraftPaymentBadge />}
                           {checkStatusForRow && <CheckStatusBadge status={checkStatusForRow} />}
                           {pmt.reference && (
                             <span className="text-xs text-navy/70">· {pmt.reference}</span>

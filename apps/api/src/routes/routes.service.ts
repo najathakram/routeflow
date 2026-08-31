@@ -517,7 +517,7 @@ export class RoutesService {
   }
 
   async deleteRoute(id: string) {
-    const route = await this.findRouteOrThrow(id);
+    await this.findRouteOrThrow(id);
 
     // Collect all run IDs and run-stop IDs for this route before deleting
     const runs = await this.prisma.forTenant().routeRun.findMany({
@@ -527,16 +527,12 @@ export class RoutesService {
     const runIds = runs.map((r) => r.id);
     const runStopIds = runs.flatMap((r) => r.stops.map((s) => s.id));
 
-    // An ad-hoc trip IS the only delivery record its orders have — there is no
-    // recurring route to rebuild it from. Deleting one whose run has started or
-    // finished would destroy the run stops carrying POD photos, signatures and
-    // arrival/completion timestamps, so refuse. Drafts (and scheduled/cancelled
-    // runs, which recorded nothing) stay deletable. SCHEDULED routes are
-    // untouched by this guard.
-    if (
-      route.kind === RouteKind.ADHOC &&
-      runs.some((r) => r.status === "IN_PROGRESS" || r.status === "COMPLETED")
-    ) {
+    // R3: any route — ADHOC or SCHEDULED — whose run has started or finished
+    // carries run stops with POD photos, signatures and arrival/completion
+    // timestamps. Deleting it would destroy that history with no way to
+    // rebuild it, so refuse regardless of route.kind. Drafts (and
+    // scheduled/cancelled runs, which recorded nothing) stay deletable.
+    if (runs.some((r) => r.status === "IN_PROGRESS" || r.status === "COMPLETED")) {
       throw new BadRequestException(
         "This trip has already been delivered on and cannot be deleted — its proof of delivery would be lost.",
       );

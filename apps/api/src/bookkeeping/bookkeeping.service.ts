@@ -28,6 +28,7 @@ import { PlatformConfigService } from "../platform-admin/platform-config.service
 import Anthropic from "@anthropic-ai/sdk";
 import { compressDocument } from "../storage/compress.util";
 import { IRS_SYSTEM_CATEGORIES } from "./irs-categories.constant";
+import { CONFIRMED_PAYMENT, sumConfirmed } from "../invoices/payment-predicates";
 
 /**
  * Receipt-extraction model. Receipts are small documents where a misread line
@@ -107,10 +108,10 @@ export class BookkeepingService implements OnModuleInit {
     ]);
 
     const data = invoices.map((inv) => {
-      // Exclude VOID (bounced) payments from the paid total (P5-12).
-      const paid = inv.payments
-        .filter((p) => p.status !== "VOID")
-        .reduce((s, p) => s + Number(p.amount), 0);
+      // F03/R1: the ledger's paid total counts CONFIRMED (PAID) money only — a
+      // DRAFT payment isn't collected, nor is a VOID (bounced) one (P5-12). The
+      // rows themselves are still returned unfiltered so the UI can badge them.
+      const paid = sumConfirmed(inv.payments);
       let ledgerStatus: TxnStatus;
       if (inv.status === InvoiceStatus.PAID) ledgerStatus = TxnStatus.PAID;
       else if (inv.status === InvoiceStatus.PARTIAL) ledgerStatus = TxnStatus.PARTIAL;
@@ -141,10 +142,10 @@ export class BookkeepingService implements OnModuleInit {
       },
     });
     if (!inv) throw new NotFoundException("Transaction not found");
-    // Exclude VOID (bounced) payments from the paid total (P5-12).
-    const paid = inv.payments
-      .filter((p) => p.status !== "VOID")
-      .reduce((s, p) => s + Number(p.amount), 0);
+    // F03/R1: the ledger's paid total counts CONFIRMED (PAID) money only — a
+    // DRAFT payment isn't collected, nor is a VOID (bounced) one (P5-12). The
+    // rows themselves are still returned unfiltered so the UI can badge them.
+    const paid = sumConfirmed(inv.payments);
     let ledgerStatus: TxnStatus;
     if (inv.status === InvoiceStatus.PAID) ledgerStatus = TxnStatus.PAID;
     else if (inv.status === InvoiceStatus.PARTIAL) ledgerStatus = TxnStatus.PARTIAL;
@@ -167,9 +168,11 @@ export class BookkeepingService implements OnModuleInit {
     return this.prisma.tenantTransaction(async (tx) => {
       const inv = await tx.invoice.findUnique({
         where: { id },
-        // Exclude VOID (bounced) payments — a bounced check must not count as
-        // paid, or a legitimate re-payment gets wrongly rejected (P5-12).
-        include: { payments: { where: { status: { not: "VOID" } } } },
+        // F03/R1: this sum ADVANCES invoice state (the status write below is
+        // derived from it), so it counts CONFIRMED (PAID) money only — a DRAFT
+        // payment would mark the invoice PAID off money nobody has, and a VOID
+        // (bounced) one would wrongly reject a legitimate re-payment (P5-12).
+        include: { payments: { where: CONFIRMED_PAYMENT } },
       });
       if (!inv) throw new NotFoundException("Transaction not found");
 
@@ -228,9 +231,8 @@ export class BookkeepingService implements OnModuleInit {
       else if (updated.status === InvoiceStatus.PARTIAL) ledgerStatus = TxnStatus.PARTIAL;
       else ledgerStatus = TxnStatus.UNPAID;
 
-      const paid2 = updated.payments
-        .filter((p) => p.status !== "VOID")
-        .reduce((s, p) => s + Number(p.amount), 0);
+      // F03/R1: same CONFIRMED basis as findAll/findOne above.
+      const paid2 = sumConfirmed(updated.payments);
       return {
         id: updated.id,
         status: ledgerStatus,
@@ -1067,11 +1069,17 @@ export class BookkeepingService implements OnModuleInit {
           },
           select: {
             total: true,
-            payments: { where: { status: { not: "VOID" } }, select: { amount: true } },
+            // F03/R1: only a CONFIRMED payment reduces what's outstanding. This
+            // must agree with getMobileDashboard/getFinanceDashboard — the same
+            // tenant reads /bookkeeping/summary and /bookkeeping/dashboard side
+            // by side and they must not disagree.
+            payments: { where: CONFIRMED_PAYMENT, select: { amount: true } },
           },
         }),
+        // F03/R1/T-B11s: weekly receipts are CONFIRMED (PAID) money only —
+        // getCashFlow's basis, not the historical "everything but VOID" one.
         this.prisma.forTenant().invoicePayment.aggregate({
-          where: { status: { not: "VOID" }, createdAt: { gte: sevenDaysAgo } },
+          where: { ...CONFIRMED_PAYMENT, createdAt: { gte: sevenDaysAgo } },
           _sum: { amount: true },
         }),
         this.prisma.forTenant().invoice.count({
@@ -1120,9 +1128,11 @@ export class BookkeepingService implements OnModuleInit {
         },
         _sum: { total: true },
       }),
-      // Total collected (YTD invoice payments) — exclude VOID (bounced) (P5-12)
+      // Total collected (YTD invoice payments) — CONFIRMED (PAID) only (F03/R1/
+      // T-B11s): an unconfirmed DRAFT payment is not money in hand any more than
+      // a VOID (bounced, P5-12) one is; this must match getCashFlow's basis.
       this.prisma.forTenant().invoicePayment.aggregate({
-        where: { status: { not: "VOID" }, createdAt: { gte: startOfYear } },
+        where: { ...CONFIRMED_PAYMENT, createdAt: { gte: startOfYear } },
         _sum: { amount: true },
       }),
       // Total expenses (YTD)
@@ -1144,7 +1154,9 @@ export class BookkeepingService implements OnModuleInit {
         },
         select: {
           total: true,
-          payments: { where: { status: { not: "VOID" } }, select: { amount: true } },
+          // F03/R1: only a CONFIRMED payment actually reduces what's outstanding —
+          // a DRAFT one hasn't been collected yet, so the balance still stands.
+          payments: { where: CONFIRMED_PAYMENT, select: { amount: true } },
         },
       }),
     ]);
@@ -1188,8 +1200,10 @@ export class BookkeepingService implements OnModuleInit {
           ],
         },
       },
-      // Exclude VOID (bounced) payments from AR-aging balances (P5-12).
-      include: { payments: { where: { status: { not: "VOID" } } } },
+      // F03/R1: AR-aging balances net out only CONFIRMED (PAID) payments — a
+      // DRAFT one (unconfirmed) hasn't reduced what's owed, same as excluding
+      // VOID (bounced) ones (P5-12).
+      include: { payments: { where: CONFIRMED_PAYMENT } },
     });
 
     let arCurrent = 0,
@@ -1228,8 +1242,10 @@ export class BookkeepingService implements OnModuleInit {
           },
           _sum: { total: true },
         }),
+        // F03/R1/T-B11s: receipts are CONFIRMED (PAID) money only — matches
+        // getCashFlow's basis, not the historical "everything but VOID" one.
         this.prisma.forTenant().invoicePayment.aggregate({
-          where: { status: { not: "VOID" }, createdAt: { gte: mStart, lte: mEnd } },
+          where: { ...CONFIRMED_PAYMENT, createdAt: { gte: mStart, lte: mEnd } },
           _sum: { amount: true },
         }),
         this.prisma.forTenant().expense.aggregate({
@@ -1273,8 +1289,9 @@ export class BookkeepingService implements OnModuleInit {
           },
           _sum: { total: true },
         }),
+        // F03/R1/T-B11s: same CONFIRMED (PAID) basis as monthlySales.totalReceipts.
         this.prisma.forTenant().invoicePayment.aggregate({
-          where: { status: { not: "VOID" }, createdAt: { gte: from } },
+          where: { ...CONFIRMED_PAYMENT, createdAt: { gte: from } },
           _sum: { amount: true },
         }),
       ]);
@@ -1290,8 +1307,9 @@ export class BookkeepingService implements OnModuleInit {
           },
           issueDate: { gte: from },
         },
-        // Exclude VOID (bounced) payments from the due balance (P5-12).
-        include: { payments: { where: { status: { not: "VOID" } } } },
+        // F03/R1: a DRAFT payment hasn't reduced the due balance yet, same as
+        // excluding VOID (bounced) ones (P5-12).
+        include: { payments: { where: CONFIRMED_PAYMENT } },
       });
       const due = dueInvoices.reduce((sum, inv) => {
         const b = Number(inv.total) - inv.payments.reduce((s, p) => s + Number(p.amount), 0);
@@ -1338,8 +1356,10 @@ export class BookkeepingService implements OnModuleInit {
       },
       include: {
         customer: { select: { id: true, businessName: true } },
-        // Exclude VOID (bounced) payments from AR-aging balances (P5-12).
-        payments: { where: { status: { not: "VOID" } } },
+        // F03/R1: AR-aging balances net out CONFIRMED (PAID) payments only — a
+        // DRAFT one hasn't reduced what's owed, same as a VOID (bounced) one
+        // (P5-12). Keeps this report agreeing with getFinanceDashboard's AR bucket.
+        payments: { where: CONFIRMED_PAYMENT },
       },
     });
 
@@ -1475,8 +1495,9 @@ export class BookkeepingService implements OnModuleInit {
       },
       include: {
         customer: { select: { id: true, businessName: true, contactName: true, phone: true } },
-        // Exclude VOID (bounced) payments from received/balance/overdue (P5-12).
-        payments: { where: { status: { not: "VOID" } } },
+        // F03/R1: received/balance/overdue count CONFIRMED (PAID) payments only —
+        // a DRAFT one isn't money received, same as a VOID (bounced) one (P5-12).
+        payments: { where: CONFIRMED_PAYMENT },
       },
     });
 
@@ -1560,8 +1581,9 @@ export class BookkeepingService implements OnModuleInit {
       where,
       include: {
         customer: { select: { id: true, businessName: true } },
-        // Exclude VOID (bounced) payments from paid/balance (P5-12).
-        payments: { where: { status: { not: "VOID" } } },
+        // F03/R1: paid/balance count CONFIRMED (PAID) payments only — a DRAFT one
+        // hasn't been collected, same as a VOID (bounced) one (P5-12).
+        payments: { where: CONFIRMED_PAYMENT },
       },
       orderBy: { issueDate: "desc" },
     });
@@ -1589,8 +1611,9 @@ export class BookkeepingService implements OnModuleInit {
       where: { status: InvoiceStatus.WRITTEN_OFF },
       include: {
         customer: { select: { id: true, businessName: true } },
-        // Exclude VOID (bounced) payments from bad-debt paid/balance totals (P5-12).
-        payments: { where: { status: { not: "VOID" } } },
+        // F03/R1: bad-debt paid/balance totals count CONFIRMED (PAID) payments
+        // only — a DRAFT one isn't recovered money, nor is a VOID one (P5-12).
+        payments: { where: CONFIRMED_PAYMENT },
       },
       orderBy: { writtenOffAt: "desc" },
     });
@@ -1912,8 +1935,9 @@ export class BookkeepingService implements OnModuleInit {
       where,
       include: {
         customer: { select: { id: true, businessName: true } },
-        // Exclude VOID (bounced) payments from AR-aging balances (P5-12).
-        payments: { where: { status: { not: "VOID" } } },
+        // F03/R1: AR-aging balances net out CONFIRMED (PAID) payments only — a
+        // DRAFT one hasn't reduced what's owed, same as a VOID one (P5-12).
+        payments: { where: CONFIRMED_PAYMENT },
       },
       orderBy: { issueDate: "desc" },
     });
@@ -2070,8 +2094,11 @@ export class BookkeepingService implements OnModuleInit {
         },
         include: {
           customer: { select: { id: true, businessName: true } },
-          // Exclude VOID (bounced) payments from invoice balances (P5-12).
-          payments: { where: { status: { not: "VOID" } } },
+          // F03/R1: invoice balances net out CONFIRMED (PAID) payments only — a
+          // DRAFT one hasn't been collected, same as a VOID one (P5-12). The
+          // separate payment LISTING below deliberately keeps every row and
+          // carries `status` through to the renderer.
+          payments: { where: CONFIRMED_PAYMENT },
         },
       }),
       this.prisma.forTenant().creditNote.findMany({

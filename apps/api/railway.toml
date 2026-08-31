@@ -6,6 +6,27 @@ dockerfilePath = "apps/api/Dockerfile"
 watchPatterns = ["apps/api/**", "packages/**"]
 
 [deploy]
+# ⚠️ MONEY-CORRECTNESS GATE — DO NOT SCALE THIS SERVICE PAST ONE REPLICA
+# without first closing B199's cross-replica merge race.
+#
+# The staff auto-merge branch of OrdersController.create() does a
+# read-fold-write on an order's line items and serializes it with an
+# IN-MEMORY, per-process lock (withOrderMergeLock). On a second replica that
+# lock does not exist: both processes fold onto the same pre-write snapshot
+# and the second write silently clobbers the first's added lines. The row
+# lock inside updateOrderItems serializes the WRITE, not the READ the
+# absolute totals were computed from, so nothing downstream catches it.
+#
+# It fails SILENTLY — wrong quantities and wrong money on real customer
+# orders, with no error, no log and no failing test. Railway injects no
+# replica-count variable, so the process cannot detect the situation itself;
+# this comment is the guard. Setting numReplicas here, or raising replicas in
+# the Railway dashboard, arms the bug on the next deploy.
+#
+# Before scaling: implement one of the three designs in withOrderMergeLock's
+# doc comment (orders.controller.ts) — the Redis lock is the cheapest, and
+# Redis is already a dependency. Verified 2026-08-31: this service runs
+# exactly 1 instance, so the race is currently unreachable.
 healthcheckPath = "/api/v1/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"

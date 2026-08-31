@@ -349,11 +349,32 @@ let e2eIndex = null;
 if (t2NeedsPostDeploy) {
   const web = getWebE2eJson();
   if (web === null) {
-    fail(
-      `at least one T2 row claims "done" (post-deploy), but ${webE2eJsonPath} ` +
-        `does not exist — run the workflow_dispatch e2e pass against the ` +
-        `deployed build and export its JSON reporter output there`,
+    // No playwright artifact on this machine. A CI verify runner NEVER has one
+    // (playwright runs post-deploy, not in the verify job), so a T2 "done" row
+    // may instead carry `dischargeEvidence` — written at discharge time, naming
+    // the run against the deployed build. Accepted LOUDLY per row below (the
+    // per-row loop checks it); rows without it still fail here.
+    const missing = rows.filter(
+      (r) =>
+        r.tier === "T2" &&
+        r.state === "done" &&
+        !(r.dischargeEvidence && String(r.dischargeEvidence).trim()),
     );
+    if (missing.length) {
+      fail(
+        `T2 "done" without a playwright artifact AND without dischargeEvidence: ` +
+          missing.map((r) => r.id).join(", ") +
+          ` — either run the e2e pass against the deployed build (JSON to ${webE2eJsonPath}) ` +
+          `or record the discharge run in the row's dischargeEvidence field`,
+      );
+    } else {
+      for (const r of rows.filter((r) => r.tier === "T2" && r.state === "done")) {
+        console.log(
+          `T2 discharge acknowledgment: ${r.id} accepted on recorded evidence (no local ` +
+            `playwright artifact) — ${String(r.dischargeEvidence).slice(0, 120)}`,
+        );
+      }
+    }
   } else if (web === "PARSE_ERROR") {
     fail(`${webE2eJsonPath} exists but failed to parse — re-run the e2e pass`);
   } else {

@@ -1111,7 +1111,11 @@ export class ProductsService {
     return this.prisma.forTenant().product.update({ where: { id }, data: { isActive: false } });
   }
 
-  async clearAll(): Promise<{ deleted: number }> {
+  async clearAll(): Promise<{
+    deleted: number;
+    softDeleted: number;
+    skipped: Array<{ id: string; reason: string }>;
+  }> {
     // Tenant-scoped by construction.
     //
     // This previously ran `TRUNCATE TABLE "Product" CASCADE`. TRUNCATE takes no
@@ -1125,34 +1129,159 @@ export class ProductsService {
     // ever touch the caller's own rows, and it clears the five RESTRICT dependents
     // (OrderTemplateItem, PurchaseOrderItem, ReturnItem, StockLot, StockMovement)
     // before the products themselves. The remaining FKs are CASCADE or SET NULL.
+    //
+    // R1's per-id classification applies here too, so "clear all" is not a wipe:
+    // a product with order/invoice/stock history is deactivated rather than
+    // destroyed, and one with active order items is skipped. The full
+    // {deleted, softDeleted, skipped} breakdown is passed through unchanged —
+    // reporting only `deleted` would read as 0 on a catalog that was in fact
+    // fully cleared by deactivation.
     const ids = (await this.prisma.forTenant().product.findMany({ select: { id: true } })).map(
       (p) => p.id,
     );
     return this.bulkDelete(ids);
   }
 
-  async bulkDelete(ids: string[]): Promise<{ deleted: number }> {
-    if (ids.length === 0) return { deleted: 0 };
-    // Delete all dependent records first, then the products themselves
-    await this.prisma.$transaction([
-      this.prisma.forTenant().customerPrice.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma
+  async bulkDelete(ids: string[]): Promise<{
+    deleted: number;
+    softDeleted: number;
+    skipped: Array<{ id: string; reason: string }>;
+  }> {
+    if (ids.length === 0) return { deleted: 0, softDeleted: 0, skipped: [] };
+
+    // R1: per-id classification before any delete — this used to hard-delete
+    // every id unconditionally, which meant a product with real order/invoice
+    // history (or, worse, an in-flight order) lost that history the instant
+    // it was swept up in a bulk selection. Three outcomes, same as remove():
+    //   1. active order items (not DELIVERED/CANCELLED) -> skip, reported by name
+    //   2. any other reference in the dependent tables  -> soft-delete
+    //      (isActive:false, exactly what remove() does), touching NO rows
+    //   3. reference-free                                -> hard delete
+    const products = await this.prisma
+      .forTenant()
+      .product.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } });
+    const nameById = new Map(products.map((p) => [p.id, p.name]));
+
+    // ONE grouped query for the whole batch, never one count per id: the DTO
+    // allows 500 ids and clearAll() passes the entire catalog, so a per-id
+    // `count` would be hundreds of sequential round-trips in a single request.
+    const activeGroups = await this.prisma.forTenant().orderItem.groupBy({
+      by: ["productId"],
+      where: { productId: { in: ids }, status: { notIn: ["DELIVERED", "CANCELLED"] } },
+    });
+    const activeIds = new Set(
+      activeGroups.map((g) => g.productId).filter((id): id is string => !!id),
+    );
+
+    const skipped: Array<{ id: string; reason: string }> = [];
+    const remaining: string[] = [];
+    for (const id of ids) {
+      if (activeIds.has(id)) {
+        skipped.push({
+          id,
+          reason: `${nameById.get(id) ?? id} has active order items and cannot be deleted`,
+        });
+        continue;
+      }
+      remaining.push(id);
+    }
+
+    if (remaining.length === 0) {
+      return { deleted: 0, softDeleted: 0, skipped };
+    }
+
+    // One GROUPED query per dependent table (not per id, and never a row
+    // fetch): `groupBy` collapses to at most one row per referenced product,
+    // so probing a 500-id batch costs eleven bounded queries however much
+    // order/invoice/stock history those products carry — a plain `findMany`
+    // would drag every referencing row into API memory just to build this set.
+    // Each delegate's `groupBy` has an incompatible generic signature from the
+    // next, so the array is typed loosely here — only `productId` is ever read
+    // off the result.
+    const referencedIds = new Set<string>();
+    const dependentModels: Array<{
+      groupBy: (args: unknown) => Promise<Array<{ productId: string | null }>>;
+    }> = [
+      this.prisma.forTenant().orderItem,
+      this.prisma.forTenant().invoiceItem,
+      this.prisma.forTenant().stockMovement,
+      this.prisma.forTenant().vendorBillItem,
+      this.prisma.forTenant().purchaseOrderItem,
+      this.prisma.forTenant().estimateItem,
+      this.prisma.forTenant().returnItem,
+      this.prisma.forTenant().recurringInvoiceItem,
+      this.prisma.forTenant().orderTemplateItem,
+      this.prisma.forTenant().deliveryMutation,
+      this.prisma.forTenant().stockLot,
+    ];
+    for (const model of dependentModels) {
+      const groups = await model.groupBy({
+        by: ["productId"],
+        where: { productId: { in: remaining } },
+      });
+      for (const group of groups) if (group.productId) referencedIds.add(group.productId);
+      // Every remaining id is already known to be referenced — the outcome
+      // cannot change, so skip the rest of the tables.
+      if (referencedIds.size === remaining.length) break;
+    }
+
+    const softDeleteIds = remaining.filter((id) => referencedIds.has(id));
+    const hardDeleteIds = remaining.filter((id) => !referencedIds.has(id));
+
+    if (softDeleteIds.length > 0) {
+      await this.prisma
         .forTenant()
-        .recurringInvoiceItem.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.forTenant().productMapping.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.forTenant().vendorBillItem.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.forTenant().estimateItem.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.forTenant().returnItem.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.forTenant().purchaseOrderItem.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.forTenant().invoiceItem.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.forTenant().orderTemplateItem.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.forTenant().deliveryMutation.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.forTenant().orderItem.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.forTenant().stockLot.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.forTenant().stockMovement.deleteMany({ where: { productId: { in: ids } } }),
-      this.prisma.forTenant().product.deleteMany({ where: { id: { in: ids } } }),
-    ]);
-    return { deleted: ids.length };
+        .product.updateMany({ where: { id: { in: softDeleteIds } }, data: { isActive: false } });
+    }
+
+    if (hardDeleteIds.length > 0) {
+      // Delete all dependent records first, then the products themselves —
+      // scoped to only the reference-free ids.
+      await this.prisma.$transaction([
+        this.prisma
+          .forTenant()
+          .customerPrice.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+        this.prisma
+          .forTenant()
+          .recurringInvoiceItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+        this.prisma
+          .forTenant()
+          .productMapping.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+        this.prisma
+          .forTenant()
+          .vendorBillItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+        this.prisma
+          .forTenant()
+          .estimateItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+        this.prisma
+          .forTenant()
+          .returnItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+        this.prisma
+          .forTenant()
+          .purchaseOrderItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+        this.prisma
+          .forTenant()
+          .invoiceItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+        this.prisma
+          .forTenant()
+          .orderTemplateItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+        this.prisma
+          .forTenant()
+          .deliveryMutation.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+        this.prisma
+          .forTenant()
+          .orderItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+        this.prisma
+          .forTenant()
+          .stockLot.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+        this.prisma
+          .forTenant()
+          .stockMovement.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+        this.prisma.forTenant().product.deleteMany({ where: { id: { in: hardDeleteIds } } }),
+      ]);
+    }
+
+    return { deleted: hardDeleteIds.length, softDeleted: softDeleteIds.length, skipped };
   }
 
   async importFromZoho(dto: ImportProductsDto): Promise<{

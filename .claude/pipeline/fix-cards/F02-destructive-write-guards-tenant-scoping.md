@@ -18,16 +18,16 @@
 
 ## Proof-tier assignment (frozen at seed — see plan's Phase 2 and `.claude/campaign/status/F02.jsonl`)
 
-| ID   | Tier | Hunt-round SHA | Citation status                                                | Ledger state                                          |
-| ---- | ---- | -------------- | -------------------------------------------------------------- | ----------------------------------------------------- |
-| B24  | T2   | 2d0270fd       | NO_TOKEN_UNVERIFIED                                            | queued                                                |
-| B96  | T1   | 0cd59277       | NO_TOKEN_UNVERIFIED                                            | queued                                                |
-| B101 | T1   | 0cd59277       | OUT_OF_BOUNDS                                                  | queued                                                |
-| B126 | T1   | 0b2c3a0a       | MOVED (corrected)                                              | **already-fixed — PR #506, deployed + verified**      |
-| B127 | T1   | 0b2c3a0a       | NO_TOKEN_UNVERIFIED                                            | **already-fixed — PR #506, deployed + verified**      |
-| B130 | T2   | 0b2c3a0a       | NO_TOKEN_UNVERIFIED                                            | queued                                                |
-| B154 | T2   | 0b2c3a0a       | AMBIGUOUS_FILE                                                 | queued                                                |
-| B188 | T1   | 77b88623       | FRESH — verified on current master 2026-08-31, citations exact | queued _(added post-kickoff)_                         |
+| ID   | Tier | Hunt-round SHA | Citation status                                                | Ledger state                                     |
+| ---- | ---- | -------------- | -------------------------------------------------------------- | ------------------------------------------------ |
+| B24  | T2   | 2d0270fd       | NO_TOKEN_UNVERIFIED                                            | queued                                           |
+| B96  | T1   | 0cd59277       | NO_TOKEN_UNVERIFIED                                            | queued                                           |
+| B101 | T1   | 0cd59277       | OUT_OF_BOUNDS                                                  | queued                                           |
+| B126 | T1   | 0b2c3a0a       | MOVED (corrected)                                              | **already-fixed — PR #506, deployed + verified** |
+| B127 | T1   | 0b2c3a0a       | NO_TOKEN_UNVERIFIED                                            | **already-fixed — PR #506, deployed + verified** |
+| B130 | T2   | 0b2c3a0a       | NO_TOKEN_UNVERIFIED                                            | queued                                           |
+| B154 | T2   | 0b2c3a0a       | AMBIGUOUS_FILE                                                 | queued                                           |
+| B188 | T1   | 77b88623       | FRESH — verified on current master 2026-08-31, citations exact | queued _(added post-kickoff)_                    |
 
 > T1 = jest spec (api or mobile pure-logic) · T2 = Playwright e2e, web-visible (proven-pending-deploy through the PR, per the plan) · T3 = recorded manual check (forbidden for Critical/High — none here are). See `.claude/campaign/citation-reanchor-log.md` for any bug ID flagged above whose citation needs a discovery-time check before trusting it verbatim.
 

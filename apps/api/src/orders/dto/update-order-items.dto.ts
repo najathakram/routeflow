@@ -97,11 +97,13 @@ export class UpdateOrderItemsDto {
   /**
    * When true, the operator path treats `items` as the FULL line set: it deletes
    * existing items and recreates from the payload (the mobile "replace-all"
-   * pattern). When false, items are merged incrementally — id-less entries are
-   * appended, existing items not present are left untouched. When omitted, the
-   * server falls back to the legacy heuristic ("every item lacks an id" ⇒ replace)
-   * so older mobile clients keep working. The web edit UI sends `false` so adding
-   * a new item never wipes the untouched lines.
+   * pattern). Otherwise — false OR omitted — items are merged incrementally:
+   * id-less entries are appended, existing items not present are left untouched.
+   *
+   * F30/R10 (B198): explicit-only. The old fallback heuristic ("every item lacks
+   * an id" ⇒ replace) is gone — it wiped an order on any id-less "just add these"
+   * PATCH that omitted the flag, which is exactly the mobile per-scan shape. A
+   * caller that wants a wholesale replace must now say `replaceAll: true` out loud.
    */
   @IsOptional()
   @IsBoolean()

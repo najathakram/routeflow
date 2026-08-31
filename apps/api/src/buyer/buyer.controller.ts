@@ -48,6 +48,7 @@ import { ListOrdersDto } from "../orders/dto/list-orders.dto";
 import { ListInvoicesDto } from "../invoices/dto/list-invoices.dto";
 import { UpdateOrderItemsDto } from "../orders/dto/update-order-items.dto";
 import { SubmitAuthorizationDto } from "../authorizations/dto/submit-authorization.dto";
+import { normalizeScanCode, pickBestScanMatch } from "../common/barcode-normalize";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 
 /** Upper bound on `GET /buyer/products?ids=` — a cart is far smaller than this. */
@@ -401,6 +402,60 @@ export class BuyerController {
   async getProduct(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
     const detail = await this.catalogService.getProductDetail(id, ctx.customerId);
     const alertSubscribed = await this.stockAlertService.isSubscribed(ctx.customerId, id);
+    return { ...detail, alertSubscribed };
+  }
+
+  // F30/R12 (B200): customer-role scanning had NO reachable rung at all —
+  // GET /products and GET /products/barcode are @Roles(OPERATOR, DRIVER), so
+  // every buyer-side scan attempt 403'd on both. This reuses the SAME
+  // normalize/match functions ProductsService.findByBarcode is built on
+  // (normalizeScanCode's candidate-set match across barcode/sku/unitSku, so a
+  // scan resolves regardless of which symbology the decoder picked, then
+  // pickBestScanMatch's deterministic tie-break) — called here directly
+  // against this.prisma (already injected) rather than via ProductsService,
+  // so this endpoint adds no new constructor dependency. The result is routed
+  // through getProductDetail — the SAME isActive + regulated-category
+  // visibility gate every other buyer-catalog surface on this controller
+  // already enforces — so a scan can never surface a product this buyer isn't
+  // allowed to see.
+  @Get("products/scan/:code")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Resolve a scanned barcode/sku/unitSku against the buyer's catalog" })
+  async scanProduct(@Param("code") code: string, @CurrentBuyerCustomer() ctx: any) {
+    const candidates = normalizeScanCode(code);
+    if (candidates.length === 0) throw new NotFoundException("Product not found");
+
+    const db = this.prisma.forTenant();
+    // Tier 1 — exact (mirrors ProductsService.findByBarcode).
+    let matches = await db.product.findMany({
+      where: {
+        OR: [
+          { barcode: { in: candidates } },
+          { sku: { in: candidates } },
+          { unitSku: { in: candidates } },
+        ],
+      },
+    });
+    // Tier 2 — case-insensitive, MISS ONLY (typed/lowercased alpha SKUs).
+    if (matches.length === 0) {
+      matches = await db.product.findMany({
+        where: {
+          OR: candidates.flatMap((c) => [
+            { barcode: { equals: c, mode: "insensitive" as const } },
+            { sku: { equals: c, mode: "insensitive" as const } },
+            { unitSku: { equals: c, mode: "insensitive" as const } },
+          ]),
+        },
+        take: 25,
+      });
+    }
+    if (matches.length === 0) throw new NotFoundException("Product not found");
+    const match = pickBestScanMatch(matches, candidates);
+
+    const detail = await this.catalogService.getProductDetail(match.id, ctx.customerId);
+    const alertSubscribed = await this.stockAlertService.isSubscribed(ctx.customerId, match.id);
     return { ...detail, alertSubscribed };
   }
 

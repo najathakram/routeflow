@@ -1,0 +1,132 @@
+# F03 — test plan
+
+Tiering per frozen ledger: B11 = T2 (web badge; `proven-pending-deploy` through the PR — its
+SERVER half is additionally T1-proven pre-merge); all others T1 (`apps/api` jest). Oracles are
+hand-worked money values or the already-correct sibling (`getCashFlow`'s PAID-only basis).
+
+| T#      | Lvl    | Given / When / Then                                                                                                                                                                                                                                    | Oracle                                                                                                                                                                                                                                                                                                                       | Not vacuous / mutation                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T-B11s  | unit   | invoice $500 with payments PAID $200 + DRAFT $300 / findAll balanceDue + the three bookkeeping dashboards; PLUS the three formerly-uncovered sums (deposit-mirror reconcile, `recordDeliveryPaymentInTx` prior-payments, `setCheckStatus` post-bounce) | balanceDue $300; dashboards count $200 collected — the numbers getCashFlow would give; deposit mirror PARTIAL not PAID; the driver's $50 recorded not swallowed; post-bounce PARTIAL not PAID                                                                                                                                | Today: balanceDue $0, dashboards $500 — red now. Mutation: revert any one site to `not: VOID` ⇒ its assert red (RUN — see "Mutation probes actually run")                                                                                                                                                                                                                                                                                                       |
+| T-B57   | unit   | PERCENT_OF_SALE line, rate 7%, subtotal $100→$50 via applyPriceAdjustment                                                                                                                                                                              | categoryTaxAmount $3.50 after; invoice.taxAmount resummed                                                                                                                                                                                                                                                                    | Today keeps $7.00 — red now. Mutation: drop the recompute ⇒ red                                                                                                                                                                                                                                                                                                                                                                                                 |
+| T-B74   | unit   | TWO cases over the same $150→$80 adjustment: (a) PARTIAL, $80 PAID; (b) SENT, $60 PAID + $50 DRAFT                                                                                                                                                     | (a) status flips to PAID ($80 ≥ $80); (b) status lands PARTIAL — $60 confirmed of $80, the DRAFT $50 buys nothing                                                                                                                                                                                                            | Today neither writes a status at all — both red now. One case could not discriminate the basis, so (b) is the mutation kill: a non-VOID sum sees $110 ≥ $80 and marks the invoice PAID off an unconfirmed payment ⇒ red. See "Coverage boundaries" below                                                                                                                                                                                                        |
+| T-B81   | unit   | stored payment method CREDIT_NOTE / PATCH method: "CASH"                                                                                                                                                                                               | 409 Conflict; row unchanged; wallet untouched (spy)                                                                                                                                                                                                                                                                          | Today silently overwrites — red now. Mutation: check dto.method instead of stored ⇒ red                                                                                                                                                                                                                                                                                                                                                                         |
+| T-B84   | unit   | two concurrent voidInvoice calls on one SENT invoice (fake store serializes the claim)                                                                                                                                                                 | exactly one succeeds; invoicedQty decremented once; second gets the abort                                                                                                                                                                                                                                                    | Today both pass, double-decrement — red now. Mutation: revert updateMany→update ⇒ red                                                                                                                                                                                                                                                                                                                                                                           |
+| T-B85   | unit   | order with an explicit-amount OrderCreditNote selection / createPartialFromOrder                                                                                                                                                                       | settleOrderCreditsInTx called inside the same tx (spy + tx identity assert)                                                                                                                                                                                                                                                  | Today never called — red now. Mutation: move the call outside the tx ⇒ tx-identity assert red                                                                                                                                                                                                                                                                                                                                                                   |
+| T-B97   | unit   | invoice $500, payments PAID $300 + DRAFT $200 / invoice-pdf.service builds the template payload                                                                                                                                                        | the paid figure the template will show is $300, so customer-facing Balance Due is $200 — the PDF-query leg of R1                                                                                                                                                                                                             | Today `not: VOID` ⇒ $500 paid / $0 due — red now. The mock reproduces the DB by honouring the `include.payments.where` the service passes, so the assert pins the NUMBER, not a query shape                                                                                                                                                                                                                                                                     |
+| T-B102  | unit   | invoice $500, PAID $300 + DRAFT $100 / caller: sendEmail + sendReminder payload; renderer: email.service tfoot                                                                                                                                         | params carry totalPaid 300 / balanceDue 200; rendered tfoot shows both; reminder demands $200                                                                                                                                                                                                                                | Today total-only, $500 demanded — red now. Mutation: pass total as balance ⇒ red. Two legs: the RENDERER leg (email.service.spec) is handed the numbers, so the CALLER leg (invoices.service.spec, REG-B102) pins that invoices.service computes them on the CONFIRMED basis — the DRAFT $100 is what kills a non-VOID caller sum ($400/$100)                                                                                                                   |
+| T-B103  | unit   | BOGO line qty 6 (1 free, originalPrice set) / email itemRows + the PDF line-display helpers                                                                                                                                                            | email markup shows strikethrough + "1 free" and the $50 (not $60) subtotal; `promoNote`/`showOriginalPrice` return the web renderer's decisions; the PDF service plumbs the tenant hide-original setting                                                                                                                     | Email markup asserts are behavioural. PDF leg: `invoice-pdf-template` is replaced wholesale by apps/api/package.json's moduleNameMapper, so NO in-template assert is reachable — the decisions live in `invoice-pdf-item.ts` and are asserted directly (mutation: drop the free-unit note or the hide-setting branch ⇒ red). The template payload itself is a `{...inv}` spread, so asserting fixture fields back would be vacuous and is deliberately NOT done |
+| T-R10   | unit   | seeded fake store: one status-drift invoice, one stale-tax line, one stranded credit, one conserved-qty drift, one clean control / repair-f03 dry-run then execute                                                                                     | dry-run lists exactly 4 proposals with before→after (control absent); execute refuses without both flags AND refuses a non-prod DATABASE_URL without `--force-nonprod`; with flags, applies, re-reads before each write and returns the `local-assets/` JSONL log path; B81 class appears under "unrepairable, not modified" | `scripts/repair-f03.mjs` exists only as a SIGNATURE STUB (exports, no behaviour) so the child-process driver links instead of dying on ERR_MODULE_NOT_FOUND — every one of the 5 cases fails on its own assertion, none on an import error. Mutation: make dry-run write ⇒ the read-only assert (store write-spy) red                                                                                                                                           |
+| T-B50s  | unit   | boxed BOGO line, freeUnitSize 8 with 2 free boxes (orderQty 47, basisQty 36) / buildInvoiceItemData bills a PARTIAL delivery short of orderQty                                                                                                         | the partial's billed amount NEVER exceeds the stored line subtotal, and a FULL bill still reproduces storedSubtotal exactly (billedThrough(orderQty) === basisQty)                                                                                                                                                           | Without the `Math.min(billedThrough(...), basisQty)` cap on BOTH telescope points, the floored free-unit allocation makes billedThrough 41 > basisQty 36 and the partial over-bills — red before the cap. Mutation: drop the cap from EITHER point ⇒ red (capping one side alone breaks the telescoping difference)                                                                                                                                             |
+| REG-B11 | T2 e2e | invoice with a DRAFT payment (e2e-routeflow tenant) / open invoice detail                                                                                                                                                                              | "Draft — unconfirmed" badge on the row; dashboard awaiting-confirmation count ≥ 1                                                                                                                                                                                                                                            | proven-pending-deploy; post-merge red ⇒ follow-on batch, never revert (server truth is T1-proven)                                                                                                                                                                                                                                                                                                                                                               |
+
+Red gate: `-t "REG-B(11|57|74|81|84|85|102|103)|REG-B50s"` in apps/api — every new test fails on
+an assertion pre-impl. Every new case must carry one of those tokens in its describe/it or the
+gate never selects it: T-R10's four cases carry `REG-B74 REG-B57 REG-B85 REG-B84` (the IDs whose
+repair half they discharge — the execute-guard case included), and T-B97 carries `REG-B11` (it is
+the PDF leg of the same DRAFT-payment predicate bug; `REG-B97` alone would not match).
+
+**Regex corrected 2026-08-31 (was `REG-B(11|50|57|74|81|84|85|102|103)`).** The bare `REG-B50`
+alternative also matched three PRE-EXISTING, already-shipped F04 tests in
+`apps/api/src/common/pricing-parity.spec.ts`, whose names carry `REG-B50` — so the gate could
+never report `0 passed` no matter what this batch did. `REG-B50s` (the F03 server-oracle-cap
+token) does not match those names. Verified in this worktree:
+
+| regex                                 | suites | tests selected | pricing-parity.spec.ts selected? |
+| ------------------------------------- | ------ | -------------- | -------------------------------- |
+| old `REG-B(11\|50\|…\|103)`           | 8      | 48             | YES — 3 shipped F04 tests        |
+| new `REG-B(11\|57\|…\|103)\|REG-B50s` | 7      | 45             | no                               |
+
+**RED-GATE PROOF: NOT CAPTURED — the recorded string was false and has been deleted.** The
+previous line here claimed "24 selected, 24 failed, 0 passed; full `npx jest` = 24 failed / 3263
+passed / 3287 total". No such run happened. The implementation landed in the SAME commit as the
+tests (`d1269474`), so by the time any gate ran, `invoices.service.ts`, `payment-predicates.ts`
+and the web badge were already present and the invoices lane was green. Do not carry a red-gate
+proof string into the build report for this batch.
+
+Post-implementation measurement (the honest number, `--verbose`, never `--silent` — `--silent`
+prints only failing suites, which is how a fully PASSING new suite went unreported): **45
+selected, 0 failed, 45 passed across 7 suites**; full `npx jest` = **0 failed / 3307 passed /
+3307 total across 193 suites**. Run artifact: `.campaign/runs/api.json`.
+
+To capture the missing red proof, the implementation must be split back out of the test commit:
+restore `apps/api/src/invoices/invoices.service.ts`, `apps/api/src/bookkeeping/bookkeeping.service.ts`,
+`apps/api/src/invoices/invoice-pdf{.service.ts,-template.tsx}`, `apps/api/src/email/email.service.ts`
+and `apps/web/app/(dashboard)/invoices/[id]/page.tsx` from master, keep the two deliberate contract
+stubs (`invoice-pdf-item.ts`, `scripts/repair-f03.mjs`), re-run the gate, and read the literal
+counts off the `Tests:` line PLUS a per-suite check that no `PASS` row belongs to a batch file.
+
+Per-test non-vacuity evidence stands in its place, measured by mutation rather than by a
+pre-implementation run — see "Mutation probes actually run" below.
+
+Vacuity note: tenantTransaction pass-through mock cannot prove R7's tx wrapping — T-B85 uses the
+fake-store-driven real `tenantTransaction` (the #506 spec shape) and asserts the settle call sees
+the SAME tx object as the create.
+
+## Coverage boundaries (audited — read before assuming a requirement is proven)
+
+- **T-B74 is two cases, not one.** A single fixture cannot separate the CONFIRMED basis from the
+  buggy non-VOID one (both clear a lowered total). (a) PARTIAL + `$80 PAID` ⇒ status PAID proves
+  the recompute happens at all; (b) SENT + `$60 PAID` + `$50 DRAFT` ⇒ status PARTIAL is the case a
+  `not: VOID` sum ($110 ≥ $80 ⇒ PAID) fails. Every payment read in both cases (invoice `include`,
+  `invoicePayment.findMany`, `invoicePayment.aggregate`) is simulated to honour the `where.status`
+  the service actually passes, so the assertion pins the number rather than a query shape.
+- **R9's PDF renderer is proven through a helper, not the template.**
+  `apps/api/package.json`'s `jest.moduleNameMapper` swaps `./invoice-pdf-template` for a stub, so
+  the `.tsx` never executes under Jest and no markup assertion exists for it. The two display
+  decisions (the `"N free"` note, the struck original price incl. the tenant hide setting and the
+  MANUAL-upsell exception) are extracted to `apps/api/src/invoices/invoice-pdf-item.ts` and
+  asserted directly. The PDF item PAYLOAD is deliberately not asserted: the service spreads
+  `{...inv, items}` into the template, so those fields are Prisma scalars the fixture supplies —
+  asserting them back can never fail.
+- **R2 (P1, the web badge + awaiting-confirmation count) has no test in this red gate — by
+  design, not by omission.** `apps/web/e2e/22-payment-truth.spec.ts` is authored in build-plan P4
+  alongside the UI it drives (the pipeline args already say "e2e spec authored in P4, not
+  red-gated") and is a T2 `proven-pending-deploy` surface: Playwright here runs against the
+  DEPLOYED site, so it cannot be red pre-implementation the way a unit test can. R2 is therefore
+  UNPROVEN until that spec lands and the post-deploy run is green — do not read the green api gate
+  as covering it.
+- **T-R10 residuals.** The store is injected, so the assertions cover the proposals, the read-only
+  dry run, the two-flag refusal, the drift skip, the non-prod entry guard and the JSONL log path —
+  but NOT the real Prisma binding or the per-row transaction, which have no database here. Those
+  two are verified by hand on the post-deploy repair flight (dry run → apply →
+  `data-integrity-report` re-check, build-plan close-out step 5), not by this suite.
+- **T-B50s is ONE gated case, not two (changed 2026-08-31).** The full-bill round trip
+  (`billedThrough(48) === basisQty` ⇒ subtotal $360) used to sit in its own untokened
+  `describe(… documentation, not gate-selected)` block. At the full bill `Math.min(billedThrough,
+  basisQty)` is the identity, so on its own that assertion holds byte-identically with and without
+  the cap: an always-green case with no requirement ID that the gate could not even see. It is now
+  folded into the gated "bills nothing further once the cap already captured the full subtotal"
+  case, where the $0 finisher supplies the discrimination and the round trip pins that the cap
+  clamps AT basisQty and never below it.
+- **R1's three former blind spots are now covered (closed 2026-08-31).** R1 says _every_
+  payment-SUMMING read is CONFIRMED, but three sums in `invoices.service.ts` had no test behind
+  them. Each now has a `REG-B11`-tokened case in `invoices.service.spec.ts` that pins a NUMBER
+  (the fixtures reproduce the database by honouring whatever `where.status` the service passes, so
+  a `not: VOID` sum cannot reach the expected value):
+  - `reconcileOrderDraftInvoice`'s deposit-mirror status recompute — $55 rebuilt total, $30 PAID +
+    $40 DRAFT ⇒ PARTIAL, not the $70-funded PAID.
+  - `recordDeliveryPaymentInTx`'s prior-payments sum — $130 invoice, $80 PAID + $50 DRAFT, driver
+    collects $50 ⇒ the $50 is recorded and the invoice lands PAID. This is the one site that
+    CANNOT lean on `sumConfirmed`: the query selects `{ amount: true }` only, so the row's status
+    never reaches the reducer and the WHERE clause is load-bearing. Under `not: VOID` the service
+    computes $0 remaining and skips the invoice — the driver's cash is never recorded at all.
+  - `setCheckStatus`'s post-BOUNCE recompute — $130 invoice, bounced $100 plus $80 PAID + $50
+    DRAFT survivors ⇒ PARTIAL, not the $130-funded PAID.
+
+## Mutation probes actually run (2026-08-31)
+
+Standing in for the red-gate run that was never captured. Each probe reverts ONE site in
+`apps/api/src/invoices/invoices.service.ts` to the pre-F03 `not: VOID` shape, runs
+`npx jest src/invoices/invoices.service.spec.ts -t "REG-B11" --verbose`, and restores the file
+(md5 checked back to `1412d56c715ea91af563633efebaff29`).
+
+| mutation                                                               | result                   |
+| ---------------------------------------------------------------------- | ------------------------ |
+| deposit mirror: `sumConfirmed(draft.payments)` → non-VOID reduce       | REG-B11 deposit case RED |
+| `recordDeliveryPaymentInTx`: `...CONFIRMED_PAYMENT` → `not: VOID`      | REG-B11 driver case RED  |
+| `setCheckStatus`: CONFIRMED include + `sumConfirmed` → non-VOID reduce | REG-B11 bounce case RED  |
+| all three at once                                                      | 3 failed / 3 passed of 6 |
+
+The three pre-existing REG-B11 cases (findAll balanceDue, the two `updatePayment` cases) stayed
+GREEN under all three mutations, which is what proves the probes were targeted rather than a
+blanket break.

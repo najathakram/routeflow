@@ -19,7 +19,7 @@ import { NavAction, NavBackButton, NavBar, Pill, type PillVariant } from "@route
 import { BarcodeFab } from "../../../../components/BarcodeFab";
 import { ProductPickerSheet } from "../../../../components/ProductPickerSheet";
 import { InlineCreateProductSheet } from "../../../../components/InlineCreateProductSheet";
-import { resolveProductByCode } from "../../../../lib/barcode-resolve";
+import { archivedMessage, resolveProductByCode } from "../../../../lib/barcode-resolve";
 import { sanitizeIntInput } from "../../../../lib/qty";
 import { showToast } from "../../../../lib/toast";
 import { confirm, chooseAction } from "../../../../lib/confirm";
@@ -262,6 +262,12 @@ export default function StockCountSessionScreen() {
 
   const handleScanned = async (code: string): Promise<ScanOutcome> => {
     const res = await resolveProductByCode(code);
+    if (res.archived) {
+      // F30 / R5: counting a retired product would post variance movements
+      // against something the tenant has taken out of service — say what it
+      // actually is instead of counting it or claiming it doesn't exist.
+      return { feedback: { kind: "error", text: archivedMessage(res.product) } };
+    }
     if (res.notFound || !res.product) {
       const trimmed = code.trim();
       return {
