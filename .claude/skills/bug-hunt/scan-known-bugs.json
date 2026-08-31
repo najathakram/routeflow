@@ -10,8 +10,7 @@
       "apps/api/src/credit-notes/credit-notes.service.ts::const payments = await db.invoicePayment.findMany({",
       "apps/api/src/credit-notes/credit-notes.service.ts::const payments = await tx.invoicePayment.findMany({",
       "apps/api/src/credit-notes/credit-notes.service.ts::const pays = await tx.invoicePayment.findMany({",
-      "apps/api/src/customers/customers.service.ts::const payments = await this.prisma.forTenant().invoicePayment.findMany({",
-      "apps/api/src/invoices/invoices.service.ts::const advancePays = await tx.invoicePayment.findMany({"
+      "apps/api/src/customers/customers.service.ts::const payments = await this.prisma.forTenant().invoicePayment.findMany({"
     ]
   },
   "import-parsefloat-money": {

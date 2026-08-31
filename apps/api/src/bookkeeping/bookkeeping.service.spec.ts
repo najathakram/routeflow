@@ -519,6 +519,80 @@ describe("BookkeepingService", () => {
     });
   });
 
+  // ─── REG-B11 / T-B11s: dashboard "collected" figures must use the CONFIRMED ──
+  // (PAID-only) basis, matching getCashFlow — never `status: { not: "VOID" }`,
+  // which silently folds unconfirmed DRAFT payments into money already "in".
+  //
+  // Fixture: one invoice's payments are PAID $200 (confirmed/cleared) + DRAFT
+  // $300 (recorded but not yet confirmed — e.g. a check that hasn't cleared).
+  // getCashFlow already sums PAID-only and would report $200 here; these
+  // dashboards must report the SAME $200, not $500 (PAID + DRAFT).
+  //
+  // NOTE: `getDashboard` (bookkeeping.controller.ts `GET /bookkeeping/dashboard`)
+  // is a route alias with no logic of its own — it calls `getMobileDashboard()`
+  // directly — so it is exercised transitively by the getMobileDashboard cases
+  // below; there is no separate service-level `getDashboard` to test here.
+  describe('REG-B11 — dashboard money reads use the CONFIRMED (PAID) basis, not "not: VOID"', () => {
+    const NOW = new Date();
+    // Simulated DB rows for the one invoice's payments.
+    const FAKE_PAYMENTS = [
+      { amount: 200, status: "PAID", createdAt: NOW },
+      { amount: 300, status: "DRAFT", createdAt: NOW }, // must NOT count as collected
+    ];
+
+    const matchesStatus = (value: string, cond: any): boolean => {
+      if (cond === undefined) return true;
+      if (typeof cond === "string") return value === cond;
+      if (cond.equals !== undefined) return value === cond.equals;
+      if (cond.not !== undefined) return value !== cond.not;
+      if (cond.in !== undefined) return (cond.in as string[]).includes(value);
+      return true;
+    };
+    const matchesCreatedAt = (value: Date, cond: any): boolean => {
+      if (cond === undefined) return true;
+      if (cond.gte !== undefined && value < cond.gte) return false;
+      if (cond.lte !== undefined && value > cond.lte) return false;
+      return true;
+    };
+    // Simulates the real DB: sums FAKE_PAYMENTS honoring whatever `where` the
+    // service actually passes, so the assertion pins the resulting NUMBER —
+    // not the shape of the query — the same way the cash-basis block above
+    // simulates `findMany` filtering for getCashFlow.
+    const simulateAggregate = (args: any) => {
+      const where = args?.where ?? {};
+      const sum = FAKE_PAYMENTS.filter(
+        (p) =>
+          matchesStatus(p.status, where.status) && matchesCreatedAt(p.createdAt, where.createdAt),
+      ).reduce((s, p) => s + p.amount, 0);
+      return { _sum: { amount: sum } };
+    };
+
+    beforeEach(() => {
+      prisma.invoicePayment.aggregate.mockImplementation(async (args: any) =>
+        simulateAggregate(args),
+      );
+    });
+
+    it("T-B11s: getMobileDashboard reports totalCollected/revenue of $200, not $500 (PAID + DRAFT)", async () => {
+      const result = await service.getMobileDashboard();
+
+      expect(result.totalCollected).toBe(200);
+      expect(result.revenue).toBe(200);
+    });
+
+    it("T-B11s: getFinanceDashboard's monthly receipts total $200, not $500 (PAID + DRAFT)", async () => {
+      const result = await service.getFinanceDashboard();
+
+      expect(result.monthlySales.totalReceipts).toBe(200);
+    });
+
+    it("T-B11s: getFinanceDashboard's summary-table 'today' receipts total $200, not $500 (PAID + DRAFT)", async () => {
+      const result = await service.getFinanceDashboard();
+
+      expect(result.summaryTable.today.receipts).toBe(200);
+    });
+  });
+
   // ─── getProfitAndLoss ───────────────────────────────────────────────────────
 
   describe("getProfitAndLoss", () => {

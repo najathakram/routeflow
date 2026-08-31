@@ -164,6 +164,10 @@
 
 ---
 
+## Lane addendum from F04 (2026-08-31)
+
+F04's Fable final pass found the mirrors' ported telescope could bill a PARTIAL delivery above the agreed line subtotal in the freeUnitSize>1 region (fixed in the mirrors with a basisQty cap). The REFERENCE ORACLE — buildInvoiceItemData, invoices.service.ts:827-897, THIS lane — may share the hole if it has (or gains) a free-unit-size axis. F03 discovery MUST check billedThrough-vs-basis capping there; if the server can over-bill mixed BOGO partials, fix it in this batch with a REG-tokened spec (the mirrors now cap, so an uncapped server would over-invoice what the driver correctly under-collects).
+
 ## Discovery instructions (per the campaign plan)
 
 Discovery's job is to confirm these lines still say what the register says they say on

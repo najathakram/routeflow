@@ -382,3 +382,132 @@ describe("EmailService — sending-domain management (Phase 2)", () => {
     await expect(svc.setSendingFromAddress("invoices@mail.acme.com")).rejects.toThrow(/verify/i);
   });
 });
+
+/**
+ * T-B102 / R8 / REG-B102 — send/reminder emails must carry the CONFIRMED-basis
+ * `totalPaid`/`balanceDue` (not just the never-changes `total`) and render them in
+ * the tfoot the same way the PDF's totals box shows Amount Paid / Balance Due. A
+ * reminder must demand the outstanding BALANCE, never the stale total — dunning a
+ * customer for the full $500 after they've already paid $300 is exactly the
+ * "payment status lies" bug this campaign exists to kill.
+ *
+ * `sendInvoice`'s params type doesn't declare `totalPaid`/`balanceDue` yet, so the
+ * calls below are cast `as any` — the assertions on the RENDERED html (not a TS
+ * compile error) are what must go red.
+ */
+describe("EmailService.sendInvoice — payment truth (T-B102, R8, REG-B102)", () => {
+  const baseParams = {
+    to: "buyer@example.com",
+    customerName: "Acme Buyer",
+    invoiceNumber: "INV-2001",
+    invoiceId: "inv-2001",
+    issueDate: "Jan 1, 2026",
+    dueDate: "Jan 31, 2026",
+    total: 500,
+    totalPaid: 300,
+    balanceDue: 200,
+    items: [{ description: "Widget", qty: 10, unitPrice: 50, subtotal: 500 }],
+  };
+
+  function tfootOf(html: string): string {
+    return (html.match(/<tfoot>[\s\S]*?<\/tfoot>/) ?? [""])[0];
+  }
+
+  it("REG-B102: a non-reminder send's tfoot shows Amount Paid $300.00 AND Balance Due $200.00 on a $500 invoice with $300 confirmed", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({ ...baseParams, isReminder: false } as any);
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    const html = sendSpy.mock.calls[0][0].html;
+    const tfoot = tfootOf(html);
+    expect(tfoot).toContain("Amount Paid");
+    expect(tfoot).toContain("$300.00");
+    expect(tfoot).toContain("Balance Due");
+    expect(tfoot).toContain("$200.00");
+  });
+
+  it("REG-B102: sendReminder (isReminder:true) demands the $200 balance in its tfoot, never the stale $500 total (mutation: total-as-balance)", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({ ...baseParams, isReminder: true } as any);
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    const html = sendSpy.mock.calls[0][0].html;
+    const tfoot = tfootOf(html);
+    expect(tfoot).toContain("$200.00");
+    expect(tfoot).not.toContain("$500.00");
+  });
+});
+
+/**
+ * T-B103 / R9 / REG-B103 — PDF + email item payloads gain `originalPrice`,
+ * `priceType`, `promoFreeUnits`; the email item row must show the struck-through
+ * original price and an "N free" note on a BOGO line, mirroring the web invoice
+ * detail renderer (apps/web/app/(dashboard)/invoices/[id]/page.tsx's
+ * `{Number(item.promoFreeUnits)} free` text + `.strike` original-price markup —
+ * email HTML has no external stylesheet, so the strike must be an inline
+ * `text-decoration:line-through` or a semantic `<s>`/`<del>` tag instead of a CSS
+ * class).
+ *
+ * Fixture: qty 6, 1 free unit, $10/unit, $12 original (pre-promo) — qty×unit−free
+ * reconciles to the $50 stored subtotal: 10*(6-1) = 50, never the naive 10*6 = 60
+ * a re-derive-from-qty bug would show.
+ */
+describe("EmailService.sendInvoice — BOGO/promo item display (T-B103, R9, REG-B103)", () => {
+  const bogoItem = {
+    description: "Widget (BOGO)",
+    qty: 6,
+    unitPrice: 10,
+    subtotal: 50,
+    originalPrice: 12,
+    priceType: "PROMO",
+    promoFreeUnits: 1,
+  };
+
+  function itemRowsOf(html: string): string {
+    return (html.match(/<tbody>([\s\S]*?)<\/tbody>/) ?? ["", ""])[1];
+  }
+
+  it("REG-B103: the item row notes the free unit, strikes the original price, and keeps the $50 (not $60) subtotal", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({
+      to: "buyer@example.com",
+      customerName: "Acme Buyer",
+      invoiceNumber: "INV-2002",
+      invoiceId: "inv-2002",
+      issueDate: "Jan 1, 2026",
+      dueDate: "Jan 31, 2026",
+      total: 50,
+      totalPaid: 0,
+      balanceDue: 50,
+      items: [bogoItem],
+    } as any);
+
+    const html = sendSpy.mock.calls[0][0].html;
+    const row = itemRowsOf(html);
+
+    // BUY_N_GET_M note — same wording as the web reference ("1 free").
+    expect(row).toContain("1 free");
+    // Struck-through original per-unit price ($12), via either a semantic <s>
+    // tag or an inline text-decoration:line-through — checked as two independent
+    // acceptable shapes rather than one brittle combined regex.
+    const hasSTag = /<s[^>]*>[^<]*\$12\.00/i.test(row);
+    const hasInlineStrike = /text-decoration:\s*line-through/i.test(row) && row.includes("$12.00");
+    expect(hasSTag || hasInlineStrike).toBe(true);
+    // Reconciliation: qty×unit − free = 10*(6-1) = $50, the stored subtotal —
+    // never the naive qty×unit = $60 a re-derive-from-qty bug would show.
+    expect(row).toContain("$50.00");
+    expect(row).not.toContain("$60.00");
+  });
+});

@@ -70,6 +70,10 @@ describe("InvoicesService", () => {
   const mockCreditNotes = {
     autoApplyOldestCreditsInTx: jest.fn().mockResolvedValue({ applied: 0, invoiceStatus: null }),
     settleOrderCreditsInTx: jest.fn().mockResolvedValue({ applied: 0, unapplied: 0 }),
+    // F03/T-B84: voidInvoice's releaseWalletPaymentsInTx calls this unconditionally —
+    // without a stub here, voidInvoice tests crash on "not a function" instead of
+    // failing on their actual assertion.
+    releaseInvoiceCreditsInTx: jest.fn().mockResolvedValue([]),
   };
 
   const mockStorage = {
@@ -105,6 +109,8 @@ describe("InvoicesService", () => {
     });
     mockCreditNotes.settleOrderCreditsInTx.mockClear();
     mockCreditNotes.settleOrderCreditsInTx.mockResolvedValue({ applied: 0, unapplied: 0 });
+    mockCreditNotes.releaseInvoiceCreditsInTx.mockClear();
+    mockCreditNotes.releaseInvoiceCreditsInTx.mockResolvedValue([]);
     mockStorage.upload.mockClear();
     mockStorage.upload.mockResolvedValue("stored");
     mockStorage.presignedUrl.mockClear();
@@ -2693,6 +2699,66 @@ describe("InvoicesService", () => {
     });
   });
 
+  // F03 (T-B84 / R6 / REG-B84): voidInvoiceInTx has no atomic claim — a double-click
+  // or a retried request lets two concurrent voids both "succeed" and both release
+  // invoicedQty. R6's fix is `updateMany({ where: { id, status: { not: VOID } } })`,
+  // abort on count===0 — the same claim shape returns.service.ts's void path uses.
+  // See .claude/pipeline/2026-08-31-f03-payment-truth/{spec,test-plan}.md R6/T-B84.
+  describe("voidInvoiceInTx — atomic claim under concurrent void (T-B84 / R6 / REG-B84)", () => {
+    it("two concurrent voidInvoice calls on one SENT invoice: exactly one succeeds, invoicedQty releases exactly once", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-race",
+        status: InvoiceStatus.SENT,
+        orderId: "ord-race",
+        payments: [],
+      });
+
+      // Fake-store claim, modeling Postgres's real conditional-update semantics:
+      // `updateMany` only "claims" the row (and flips it to VOID) while it is
+      // NOT already VOID, exactly like a real `WHERE id = ? AND status <> 'VOID'`
+      // would. A plain `.update()` mock (today's actual code path) has no way to
+      // express "count===0 because a concurrent caller already claimed it" —
+      // that's precisely the race this fake exists to make observable.
+      let liveStatus: string = InvoiceStatus.SENT;
+      prisma.invoice.updateMany.mockImplementation(async (args: any) => {
+        const where = args?.where ?? {};
+        if (where.id !== "inv-race") return { count: 0 };
+        const excludesVoid = where.status && (where.status as any).not === InvoiceStatus.VOID;
+        if (excludesVoid && liveStatus === InvoiceStatus.VOID) return { count: 0 };
+        liveStatus = (args?.data?.status as string) ?? liveStatus;
+        return { count: 1 };
+      });
+
+      // Fake orderItem row, live-mutated by whichever call actually wins the
+      // claim — the same reasoning as above: a static/stale mock can't
+      // distinguish "released once" from "released twice".
+      const orderItemRow = { id: "oi-race", productId: "p-race", qty: 10, invoicedQty: 10 };
+      prisma.invoiceItem.findMany.mockResolvedValue([
+        { productId: "p-race", qty: 3, orderItemId: "oi-race" },
+      ]);
+      prisma.orderItem.findMany.mockImplementation(async () => [{ ...orderItemRow }]);
+      prisma.orderItem.update.mockImplementation(async (args: any) => {
+        if (args?.where?.id === "oi-race") orderItemRow.invoicedQty = args.data.invoicedQty;
+        return { ...orderItemRow };
+      });
+
+      const results = await Promise.allSettled([
+        service.voidInvoice("inv-race"),
+        service.voidInvoice("inv-race"),
+      ]);
+
+      const fulfilled = results.filter((r) => r.status === "fulfilled");
+      const rejected = results.filter((r) => r.status === "rejected");
+      // Today: voidInvoiceInTx does a plain `tx.invoice.update(...)` with no
+      // status filter at all, so BOTH calls succeed — red now (fulfilled has 2).
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      // Exactly one release of this invoice line's 3 units (10 -> 7). Today's
+      // unconditional double-void releases it twice (10 -> 4).
+      expect(orderItemRow.invoicedQty).toBe(7);
+    });
+  });
+
   // ─── P5-12: check lifecycle (Recorded→Deposited→Cleared→Bounced) ───────────
 
   describe("P5-12 — setCheckStatus", () => {
@@ -2957,6 +3023,42 @@ describe("InvoicesService", () => {
       expect(prisma.invoicePayment.create).toHaveBeenCalledWith({
         data: expect.objectContaining({ checkStatus: null }),
       });
+    });
+  });
+
+  // F03 (T-B11s / R1 / REG-B11): findAll's balanceDue must be computed from
+  // CONFIRMED (PAID) payments only — an unconfirmed DRAFT payment (e.g. a bulk
+  // bank-reconciliation entry an operator hasn't confirmed yet) must not be
+  // silently folded into the invoice list's own balance-due number. See
+  // .claude/pipeline/2026-08-31-f03-payment-truth/{spec,test-plan}.md R1/T-B11s.
+  // This is the findAll leg only — the three bookkeeping dashboards (same bug,
+  // same predicate) are proven in bookkeeping.service.spec.ts, a separate package.
+  describe("findAll — balanceDue counts only CONFIRMED (PAID) payments (T-B11s / R1 / REG-B11)", () => {
+    it("a $500 invoice with $200 PAID + $300 DRAFT reports balanceDue $300, not $0", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "inv-b11",
+          status: InvoiceStatus.PARTIAL,
+          total: 500,
+          dueDate: null,
+          depositPercent: null,
+          depositDueDate: null,
+          payments: [
+            { id: "pay-confirmed", amount: 200, status: "PAID" },
+            { id: "pay-draft", amount: 300, status: "DRAFT" },
+          ],
+        },
+      ]);
+      prisma.invoice.count.mockResolvedValue(1);
+
+      const result = await service.findAll({} as any);
+
+      // Today: `p.status !== "VOID"` counts the DRAFT $300 as paid too, so
+      // paidAmount is $500 and balanceDue floors at $0 — red now. The DRAFT
+      // payment must stay invisible to this total until an operator confirms
+      // it (recordPayment/recordStandalonePayment only advance invoice.status
+      // on PAID, so a lying balanceDue disagrees with status on top of it).
+      expect(result.data[0]).toMatchObject({ paidAmount: 200, balanceDue: 300 });
     });
   });
 
@@ -4336,6 +4438,84 @@ describe("InvoicesService", () => {
     });
   });
 
+  // F03 (T-B85 / R7 / REG-B85): createPartialFromOrder never settles order-level
+  // credit-note selections, and doesn't run inside a transaction at all — a
+  // leftover explicit-amount OrderCreditNote selection is neither auto-applied
+  // (send()'s explicitIds exclusion assumes settle already ran) nor settled by
+  // this path, and is stranded. R7 wraps the create + orderItem.update loop in a
+  // tenantTransaction (mirroring createSplitInvoices's runCreation(tx) shape) and
+  // calls settleOrderCreditsInTx(tx, order.id, tenantId) inside it.
+  // See .claude/pipeline/2026-08-31-f03-payment-truth/{spec,test-plan}.md R7/T-B85.
+  describe("createPartialFromOrder — credit-note settle hook (T-B85 / R7 / REG-B85)", () => {
+    it("wraps creation in a tenantTransaction and calls settleOrderCreditsInTx with THAT SAME tx object", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-b85",
+        customerId: "cust-b85",
+        orderNumber: "ORD-B85",
+        subtotal: 50,
+        tax: 0,
+        shippingFee: 0,
+        lineItems: [
+          {
+            id: "oi-b85",
+            productId: "p-1",
+            qty: 10,
+            invoicedQty: 0,
+            boxes: null,
+            pieces: null,
+            unitsPerBox: null,
+            unitPrice: 5,
+            subtotal: 50,
+            product: { name: "Widget", unitsPerBox: null },
+          },
+        ],
+      } as any);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false } as any);
+
+      // Fake-store-driven tenantTransaction (the #506 spec shape): ONE stable,
+      // identity-distinct tx object, NOT createMockPrisma()'s default (a fresh
+      // `{...models}` spread manufactured PER CALL) and NOT a bare pass-through
+      // to `this.prisma`/`forTenant()`. Either of those would make the identity
+      // assertion below pass vacuously — a pass-through mock proves nothing,
+      // because settle receiving `this.prisma.forTenant()` instead of the real
+      // tx would look identical to it receiving the tx. Only a genuinely
+      // separate, call-stable object can distinguish "tx threaded through" from
+      // "settle ran on the wrong client".
+      const txClient = {
+        invoice: {
+          create: jest.fn(async (args: any) => ({
+            ...args.data,
+            id: "inv-b85",
+            items: [],
+            payments: [],
+            customer: {},
+          })),
+          findFirst: jest.fn().mockResolvedValue(null),
+        },
+        orderItem: { update: jest.fn().mockResolvedValue({}) },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+        $queryRaw: jest.fn().mockResolvedValue([]),
+      };
+      prisma.tenantTransaction.mockImplementation((fn: any) => fn(txClient));
+
+      await service.createPartialFromOrder("ord-b85", {
+        items: [{ orderItemId: "oi-b85", qty: 10 }],
+      } as any);
+
+      // R7: settle must run INSIDE the same transaction that creates the
+      // invoice — never on a separately-scoped client. Today createPartialFromOrder
+      // has no settle call at all and isn't a transaction, so this is red on an
+      // empty mock-calls list (mutation: moving the call outside the tx — e.g.
+      // calling it with `this.prisma.forTenant()` after the tx resolves — fails
+      // this same identity assertion).
+      expect(mockCreditNotes.settleOrderCreditsInTx).toHaveBeenCalledWith(
+        txClient,
+        "ord-b85",
+        "test-tenant",
+      );
+    });
+  });
+
   // ─── Payment image attachment (clone of the expense-receipt pattern) ──────
   // uploadPaymentImage/getPaymentImageUrl/deletePaymentImage + recordPayment's
   // createdPaymentId + deletePayment's best-effort storage cleanup.
@@ -4866,6 +5046,48 @@ describe("InvoicesService", () => {
 
         expect(updateData()).not.toHaveProperty("settledAt");
       });
+
+      // F03: deletePayment (:4653) and voidPayment (:4941) both guard on the
+      // STORED payment.method before letting a CREDIT_NOTE/ADVANCE payment be
+      // undone any way but its dedicated reversal path. updatePayment is the
+      // one sibling with no such guard — it checks only the INCOMING dto.method
+      // (rejecting a PATCH that sets method TO CREDIT_NOTE/ADVANCE) and never
+      // reads the row's stored method, so a PATCH with method "CASH" on a
+      // payment stored as CREDIT_NOTE silently rewrites it with no balance
+      // compensation, permanently orphaning the credit note's amountUsed. See
+      // .claude/pipeline/2026-08-31-f03-payment-truth/{spec,test-plan}.md R5/T-B81.
+      describe("stored-method guard (T-B81 / R5 / REG-B81)", () => {
+        it("rejects (409) a PATCH that changes method away from a STORED CREDIT_NOTE payment, and touches nothing", async () => {
+          prisma.invoice.findUnique.mockResolvedValue({
+            id: "inv-b81",
+            status: InvoiceStatus.PARTIAL,
+            total: 500,
+            dueDate: null,
+            payments: [
+              {
+                id: "pay-b81",
+                status: "PAID",
+                amount: 200,
+                method: "CREDIT_NOTE",
+                creditNoteId: "cn-b81",
+              },
+            ],
+          });
+
+          // Today: the upfront guard only checks dto.method ("CASH" isn't
+          // CREDIT_NOTE/ADVANCE, so it passes) and the stored method is never
+          // read — this resolves successfully and silently overwrites the row.
+          // Red now.
+          await expect(
+            service.updatePayment("inv-b81", "pay-b81", { amount: 200, method: "CASH" } as any),
+          ).rejects.toThrow(ConflictException);
+
+          expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
+          // Wallet untouched: the guard must abort BEFORE any balance compensation,
+          // the same way its two siblings do.
+          expect(prisma.creditNote.update).not.toHaveBeenCalled();
+        });
+      });
     });
 
     it("recordStandalonePayment stamps the bank date on every row of the group", async () => {
@@ -5080,6 +5302,298 @@ describe("InvoicesService", () => {
             taxAmount: 17,
             total: 137,
           }),
+        }),
+      );
+    });
+  });
+
+  // F03 (T-B57 / R3 / REG-B57): applyPriceAdjustment's item loop writes only
+  // unitPrice/subtotal — categoryTaxAmount is never recomputed, so a PERCENT_OF_SALE
+  // line keeps its pre-adjustment excise amount even though the taxable subtotal
+  // changed, mirroring recomputeLineCategoryTaxes (orders.service.ts :212-256) is
+  // the fix. See .claude/pipeline/2026-08-31-f03-payment-truth/{spec,test-plan}.md
+  // R3/T-B57.
+  describe("applyPriceAdjustment — recomputes PERCENT_OF_SALE categoryTax (T-B57 / R3 / REG-B57)", () => {
+    it("re-derives categoryTaxAmount from the NEW subtotal (7% of $50 = $3.50) and resums invoice.taxAmount", async () => {
+      const invoiceItem = {
+        id: "li-b57",
+        invoiceId: "inv-b57",
+        productId: "prod-reg",
+        trackedCategoryId: "cat-1",
+        unitPrice: 10,
+        discount: 0,
+        subtotal: 100,
+        qty: 10,
+        taxRate: 0,
+        // Stale: 7% of the OLD $100 subtotal.
+        categoryTaxAmount: 7,
+      };
+      const invoice = {
+        id: "inv-b57",
+        customerId: "cust-1",
+        orderId: null,
+        status: InvoiceStatus.SENT,
+        discount: 0,
+        shippingFee: 0,
+        internalNotes: null,
+        items: [invoiceItem],
+      };
+
+      prisma.invoice.findUnique.mockResolvedValue(invoice);
+      // Whichever query shape the fix uses to look up the category's tax config.
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        { id: "cat-1", taxType: "PERCENT_OF_SALE", rate: 0.07, priceIncludesTax: false },
+      ]);
+      prisma.trackedCategory.findUnique.mockResolvedValue({
+        id: "cat-1",
+        taxType: "PERCENT_OF_SALE",
+        rate: 0.07,
+        priceIncludesTax: false,
+      });
+
+      // A tiny live "store" for categoryTaxAmount: the post-update totals read
+      // (invoiceItem.findMany) must reflect whatever the item-update loop
+      // actually PERSISTED, not a value this test hands it for free — otherwise
+      // the test would pass regardless of what the service computes.
+      let persistedCategoryTax = invoiceItem.categoryTaxAmount;
+      prisma.invoiceItem.update.mockImplementation(async (args: any) => {
+        if (args?.data && "categoryTaxAmount" in args.data) {
+          persistedCategoryTax = args.data.categoryTaxAmount;
+        }
+        return {};
+      });
+      prisma.invoiceItem.findMany.mockImplementation(async () => [
+        { ...invoiceItem, unitPrice: 5, subtotal: 50, categoryTaxAmount: persistedCategoryTax },
+      ]);
+      prisma.invoice.update.mockResolvedValue({});
+
+      await service.applyPriceAdjustment("inv-b57", {
+        items: [{ itemId: "li-b57", newUnitPrice: 5 }],
+        scope: "SINGLE",
+      });
+
+      // Today: applyToInvoice never touches categoryTaxAmount, so
+      // persistedCategoryTax stays at the stale $7 and taxAmount keeps $7 (not
+      // resummed to $3.50) — red now.
+      expect(prisma.invoiceItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-b57" },
+          data: expect.objectContaining({ categoryTaxAmount: 3.5 }),
+        }),
+      );
+      // What the item loop actually PERSISTED, read back off the little live store
+      // above rather than off a mock's call list — this is the value the post-update
+      // invoiceItem.findMany hands back, so it is also what makes the taxAmount
+      // assertion below load-bearing instead of a constant this test supplied.
+      expect(persistedCategoryTax).toBe(3.5);
+      expect(prisma.invoice.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "inv-b57" },
+          data: expect.objectContaining({ subtotal: 50, taxAmount: 3.5, total: 53.5 }),
+        }),
+      );
+    });
+  });
+
+  // ─── F03: CONFIRMED-basis payment fixtures ───────────────────────────────────
+  // Several F03 cases turn on WHICH payment rows a read returns. Handing the service
+  // a pre-filtered list would pass no matter which predicate it used, so these helpers
+  // reproduce the database instead: they honour whatever `where.status` the service
+  // actually passes — in the invoice `include`, in invoicePayment.findMany, or in an
+  // aggregate — and the assertions then pin the resulting NUMBER. A `status: { not:
+  // "VOID" }` predicate cannot reach those numbers; only PAID-only can.
+  type FakePaymentRow = { id: string; amount: number; status: string };
+
+  const matchesPaymentStatus = (value: string, cond: any): boolean => {
+    if (cond === undefined) return true;
+    if (typeof cond === "string") return value === cond;
+    if (cond.equals !== undefined) return value === cond.equals;
+    if (cond.not !== undefined) return value !== cond.not;
+    if (cond.in !== undefined) return (cond.in as string[]).includes(value);
+    return true;
+  };
+
+  const filterPayments = (rows: FakePaymentRow[], where: any): FakePaymentRow[] =>
+    rows.filter((p) => matchesPaymentStatus(p.status, where?.status));
+
+  /** Point invoicePayment.findMany/aggregate at the same simulated rows. */
+  const stubPaymentReads = (rows: FakePaymentRow[]) => {
+    prisma.invoicePayment.findMany.mockImplementation(async (args: any) =>
+      filterPayments(rows, args?.where),
+    );
+    prisma.invoicePayment.aggregate.mockImplementation(async (args: any) => ({
+      _sum: { amount: filterPayments(rows, args?.where).reduce((s, p) => s + p.amount, 0) },
+    }));
+  };
+
+  // F03 (T-B74 / R4 / REG-B74): applyPriceAdjustment blocks PAID/WRITTEN_OFF/VOID
+  // up front and rewrites subtotal/taxAmount/total, but never calls recomputeStatus
+  // — the helper ~15 other totals-changing sites in this file call afterward. A
+  // PARTIAL invoice whose lowered total falls at/below what's already paid keeps
+  // its stale status instead of flipping to PAID, mis-gating write-off/reminder
+  // eligibility (both branch on status). See
+  // .claude/pipeline/2026-08-31-f03-payment-truth/{spec,test-plan}.md R4/T-B74.
+  //
+  // Two cases over the SAME $150 -> $80 adjustment, because one alone cannot tell the
+  // CONFIRMED basis apart from the buggy non-VOID one: case (a) fixes that the status
+  // is recomputed at all, case (b) fixes that it is recomputed from CONFIRMED payments
+  // only — the DRAFT row there is what a `not: VOID` sum would wrongly cash in.
+  describe("applyPriceAdjustment — recomputes invoice status on CONFIRMED payments (T-B74 / R4 / REG-B74)", () => {
+    const runAdjustment = async (status: InvoiceStatus, payments: FakePaymentRow[]) => {
+      const invoiceItem = {
+        id: "li-b74",
+        invoiceId: "inv-b74",
+        productId: "prod-1",
+        unitPrice: 15,
+        discount: 0,
+        subtotal: 150,
+        qty: 10,
+        taxRate: 0,
+        categoryTaxAmount: 0,
+      };
+      const invoice = {
+        id: "inv-b74",
+        customerId: "cust-1",
+        orderId: null,
+        status,
+        discount: 0,
+        shippingFee: 0,
+        internalNotes: null,
+        dueDate: null,
+        items: [invoiceItem],
+      };
+
+      stubPaymentReads(payments);
+      prisma.invoice.findUnique.mockImplementation(async (args: any) => ({
+        ...invoice,
+        payments: filterPayments(payments, args?.include?.payments?.where),
+      }));
+      prisma.invoiceItem.update.mockResolvedValue({});
+      prisma.invoiceItem.findMany.mockResolvedValue([
+        { ...invoiceItem, unitPrice: 8, subtotal: 80 },
+      ]);
+      prisma.invoice.update.mockResolvedValue({});
+
+      await service.applyPriceAdjustment("inv-b74", {
+        items: [{ itemId: "li-b74", newUnitPrice: 8 }],
+        scope: "SINGLE",
+      });
+    };
+
+    it("(a) flips PARTIAL -> PAID once the lowered total ($150 -> $80) is met by CONFIRMED payments ($80 PAID)", async () => {
+      await runAdjustment(InvoiceStatus.PARTIAL, [{ id: "pay-paid", amount: 80, status: "PAID" }]);
+
+      // Today: applyPriceAdjustment never calls recomputeStatus at all, so the
+      // invoice.update call carries no `status` key whatsoever and the invoice
+      // stays PARTIAL — red now.
+      expect(prisma.invoice.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "inv-b74" },
+          data: expect.objectContaining({ status: InvoiceStatus.PAID }),
+        }),
+      );
+    });
+
+    it("(b) lands PARTIAL, not PAID, when only an unconfirmed DRAFT payment would clear the lowered total ($60 PAID + $50 DRAFT)", async () => {
+      await runAdjustment(InvoiceStatus.SENT, [
+        { id: "pay-paid", amount: 60, status: "PAID" },
+        { id: "pay-draft", amount: 50, status: "DRAFT" },
+      ]);
+
+      // CONFIRMED basis: $60 of an $80 total -> PARTIAL (a real change from SENT, so
+      // it is written whether the fix persists the status unconditionally or only on
+      // change). Red today for the same reason as (a) — no status key at all.
+      //
+      // This is the case the mutation dies on: summing non-VOID payments gives
+      // $110 >= $80 and marks the invoice PAID off a payment nobody has confirmed,
+      // closing it to reminders and write-off while $20 is genuinely outstanding.
+      expect(prisma.invoice.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "inv-b74" },
+          data: expect.objectContaining({ status: InvoiceStatus.PARTIAL }),
+        }),
+      );
+    });
+  });
+
+  // F03 (T-B102 / R8 / REG-B102) — the CALLER half of the email fix. The rendering
+  // half lives in email.service.spec.ts; it is handed totalPaid/balanceDue directly,
+  // so a build that renders the tfoot perfectly while feeding it DRAFT-inflated
+  // numbers would still pass there. These two cases pin what invoices.service
+  // actually computes and passes at :3501 (send) and :3666 (reminder).
+  describe("sendEmail / sendReminder pass CONFIRMED totalPaid + balanceDue (T-B102 / R8 / REG-B102)", () => {
+    // $500 invoice, $300 CONFIRMED + $100 DRAFT. The DRAFT row is the discriminator:
+    // a non-VOID sum reports $400 paid / $100 due and would dun the customer for the
+    // wrong number; the truth is $300 paid / $200 due.
+    const PAYMENTS: FakePaymentRow[] = [
+      { id: "pay-confirmed", amount: 300, status: "PAID" },
+      { id: "pay-draft", amount: 100, status: "DRAFT" },
+    ];
+
+    const invoiceFixture = (status: InvoiceStatus) => ({
+      id: "inv-b102",
+      orderId: null, // standalone → assertOrderInvoiceUnlocked skips the order check
+      invoiceNumber: "INV-2001",
+      status,
+      deliveryBatchId: null,
+      total: 500,
+      subtotal: 500,
+      taxAmount: 0,
+      discount: 0,
+      shippingFee: 0,
+      depositPercent: null,
+      depositDueDate: null,
+      paymentTermsLabel: null,
+      issueDate: new Date("2026-01-01"),
+      dueDate: new Date("2026-01-31"),
+      customer: { id: "c-b102", businessName: "Acme Buyer", email: "buyer@example.com" },
+      items: [{ description: "Widget", qty: 10, unitPrice: 50, subtotal: 500, msrp: null }],
+    });
+
+    beforeEach(() => {
+      stubPaymentReads(PAYMENTS);
+      prisma.invoice.findUnique.mockImplementation(async (args: any) => ({
+        ...invoiceFixture(InvoiceStatus.PARTIAL),
+        payments: filterPayments(PAYMENTS, args?.include?.payments?.where),
+      }));
+      prisma.invoice.update.mockResolvedValue({
+        id: "inv-b102",
+        invoiceNumber: "INV-2001",
+        customerId: "c-b102",
+        orderId: null,
+        status: InvoiceStatus.PARTIAL,
+        total: 500,
+        dueDate: null,
+      });
+      mockEmailService.sendInvoice.mockClear();
+      mockEmailService.isEmailConfigured.mockResolvedValue(true);
+      mockEmailService.sendInvoice.mockResolvedValue({ delivered: true, transport: "resend" });
+    });
+
+    it("REG-B102: sendEmail passes totalPaid 300 / balanceDue 200 on a $500 invoice with a $100 DRAFT payment", async () => {
+      await service.sendEmail("inv-b102");
+
+      // Today: the payload carries `total` only — no totalPaid, no balanceDue — so
+      // the email can only show "Amount Due $500.00". Red now.
+      expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          total: 500,
+          totalPaid: 300,
+          balanceDue: 200,
+          isReminder: false,
+        }),
+      );
+    });
+
+    it("REG-B102: sendReminder demands the CONFIRMED balance ($200), not the total and not the DRAFT-inflated $100", async () => {
+      await service.sendReminder("inv-b102");
+
+      expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          total: 500,
+          totalPaid: 300,
+          balanceDue: 200,
+          isReminder: true,
         }),
       );
     });

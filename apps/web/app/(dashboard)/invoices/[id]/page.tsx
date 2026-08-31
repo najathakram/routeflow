@@ -29,6 +29,7 @@ import {
   Eye,
   Upload,
   X,
+  Clock,
 } from "lucide-react";
 import { Badge, Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -150,6 +151,25 @@ function CheckStatusBadge({ status }: { status: CheckStatus }) {
       {status === "BOUNCED" && <XCircle className="h-3 w-3" />}
       {status === "CLEARED" && <CheckCircle2 className="h-3 w-3" />}
       {meta.label}
+    </span>
+  );
+}
+
+/**
+ * F03/R2 (REG-B11) — a payment recorded with `status: "DRAFT"` has NOT been
+ * confirmed and is excluded from every CONFIRMED_PAYMENT sum on the server
+ * (balanceDue, dashboards, PDF, email — invoices.service.ts's payment
+ * predicate). Money still owed can otherwise look paid here, so the row must
+ * say so instead of rendering identically to a confirmed payment.
+ */
+function DraftPaymentBadge() {
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700"
+      title="Not yet confirmed — this amount is not counted toward the balance due"
+    >
+      <Clock className="h-3 w-3" />
+      Draft — unconfirmed
     </span>
   );
 }
@@ -2704,6 +2724,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                           >
                             {methodLabel(pmt.method)}
                           </span>
+                          {pmt.status === "DRAFT" && <DraftPaymentBadge />}
                           {checkStatusForRow && <CheckStatusBadge status={checkStatusForRow} />}
                           {pmt.reference && (
                             <span className="text-xs text-navy/70">· {pmt.reference}</span>
