@@ -17,7 +17,8 @@
       "env": {
         "EXPO_PUBLIC_API_URL": "http://192.168.4.25:3000",
         "HUSKY": "0",
-        "npm_config_engine_strict": "false"
+        "npm_config_engine_strict": "false",
+        "NODE_PATH": "/home/expo/workingdir/build/apps/mobile/node_modules"
       },
       "node": "20.19.4"
     },
@@ -29,7 +30,8 @@
       "env": {
         "EXPO_PUBLIC_API_URL": "http://192.168.4.25:3000",
         "HUSKY": "0",
-        "npm_config_engine_strict": "false"
+        "npm_config_engine_strict": "false",
+        "NODE_PATH": "/home/expo/workingdir/build/apps/mobile/node_modules"
       },
       "node": "20.19.4"
     },
@@ -41,7 +43,8 @@
       "env": {
         "EXPO_PUBLIC_API_URL": "https://routeflowapi-production.up.railway.app",
         "HUSKY": "0",
-        "npm_config_engine_strict": "false"
+        "npm_config_engine_strict": "false",
+        "NODE_PATH": "/home/expo/workingdir/build/apps/mobile/node_modules"
       },
       "node": "20.19.4",
       "channel": "staging"
@@ -51,7 +54,8 @@
       "env": {
         "EXPO_PUBLIC_API_URL": "https://routeflowapi-production.up.railway.app",
         "HUSKY": "0",
-        "npm_config_engine_strict": "false"
+        "npm_config_engine_strict": "false",
+        "NODE_PATH": "/home/expo/workingdir/build/apps/mobile/node_modules"
       },
       "node": "20.19.4",
       "channel": "production"
