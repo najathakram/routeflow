@@ -4,7 +4,7 @@
 
 **Root cause:** Destructive paths that skipped the guard their own siblings carry, on a Prisma client with no tenant injection and no RLS behind it. B126 is ten unscoped deleteMany({}) calls that empty every tenant's finances from any operator token.
 
-**Ships as:** TWO PRs under one card. F02a — RESUME the run that already exists: `.claude/pipeline/2026-08-30-destructive-endpoint-guards/` is Status: APPROVED, scale MAJOR, base master 6c8f1401, worktree `.claude/worktrees/destructive-guards` on branch `fix/destructive-endpoint-guards` already provisioned, covering B126 and B127 ONLY. Do not re-plan it; resume it (its build plan has no `## Pipeline args` block — assemble the Workflow args from its packages P1/P2/P3, TP1/TP2 by hand). F02b — the rest of the family: B24, B96, B101, B130, B154, B188.
+**Ships as:** TWO PRs under one card. F02a — ✅ **SHIPPED pre-campaign as PR #506** (master `cc8c7d46`, deployed, post-deploy-check 9/9): B126 and B127 are `already-fixed` in the ledger; the run's pipeline artifacts are tracked at `.claude/pipeline/2026-08-30-destructive-endpoint-guards/` (PR #509). **F02b is the only remaining work:** B24, B96, B101, B130, B154, B188. Its discovery must read #506's diff first — the guards it added (typed confirmation DTO, PAID/SENT pre-flight, null-tenant ForbiddenException) are the sibling patterns F02b's fixes should reuse.
 
 **Files:** system-config/settings.controller.ts · customers.service.ts (deleteAll, batchDelete, merge) · products.service.ts (bulkDelete) · routes.service.ts (deleteRoute) · web products and customers list pages · prisma/prisma.service.ts · prisma/rls.sql · bookkeeping/invoice.service.ts + invoice.processor.ts (B188)
 
@@ -12,7 +12,7 @@
 
 **Guardrails / shared infra:** Also delivers G1 (extend the signature scanner) and G8 (tenant-isolation backstops / RLS under migration control — see the plan's G8 section for the critical caveat that RLS does NOT close B126 by itself; B126's real fix is routing settings.controller.ts's raw $transaction through tenantTransaction).
 
-**Dependencies / lane notes:** Must land before F15, F16 (positional — same customers.service.ts delete paths). No semantic predecessor.
+**Dependencies / lane notes:** Must land before F15, F16 (positional — same customers.service.ts delete paths). No semantic predecessor. ⚠️ An unmerged sibling hotfix exists on branch `claude/relaxed-hodgkin-e12254` (worktree `hungry-colden-9a670b`, commit `27795982`): "delete order-credit-note links before credit notes in customer purges" — a follow-up to #506's deleteAll touching `customers.service.ts` (+35) with specs (+88). F02b's Phase-0 must check whether it has merged: if yes, rebase over it and reuse its pattern; if still unmerged, coordinate with its session (or absorb the commit) rather than re-deriving the same fix and colliding in the lane.
 
 ---
 
@@ -23,8 +23,8 @@
 | B24  | T2   | 2d0270fd       | NO_TOKEN_UNVERIFIED                                            | queued                                                |
 | B96  | T1   | 0cd59277       | NO_TOKEN_UNVERIFIED                                            | queued                                                |
 | B101 | T1   | 0cd59277       | OUT_OF_BOUNDS                                                  | queued                                                |
-| B126 | T1   | 0b2c3a0a       | MOVED (corrected)                                              | **in-flight — F02a, sibling session, not yet merged** |
-| B127 | T1   | 0b2c3a0a       | NO_TOKEN_UNVERIFIED                                            | **in-flight — F02a, sibling session, not yet merged** |
+| B126 | T1   | 0b2c3a0a       | MOVED (corrected)                                              | **already-fixed — PR #506, deployed + verified**      |
+| B127 | T1   | 0b2c3a0a       | NO_TOKEN_UNVERIFIED                                            | **already-fixed — PR #506, deployed + verified**      |
 | B130 | T2   | 0b2c3a0a       | NO_TOKEN_UNVERIFIED                                            | queued                                                |
 | B154 | T2   | 0b2c3a0a       | AMBIGUOUS_FILE                                                 | queued                                                |
 | B188 | T1   | 77b88623       | FRESH — verified on current master 2026-08-31, citations exact | queued _(added post-kickoff)_                         |
