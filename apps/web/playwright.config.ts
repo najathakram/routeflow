@@ -38,7 +38,14 @@ export default defineConfig({
   timeout: 60_000, // 60 s per test (Railway cold-start latency)
   expect: { timeout: 15_000 }, // 15 s per assertion
 
-  reporter: [["list"], ["html", { outputFolder: "playwright-report", open: "never" }]],
+  reporter: [
+    ["list"],
+    ["html", { outputFolder: "playwright-report", open: "never" }],
+    // Machine-readable results for scripts/campaign-check.mjs (the bug-register
+    // campaign's gate reads passed/skipped per REG-B### title). Path is relative
+    // to this config file; .campaign/runs/ at the repo root is gitignored.
+    ["json", { outputFile: "../../.campaign/runs/web-e2e.json" }],
+  ],
 
   use: {
     baseURL: BASE_URL,

@@ -1,11 +1,61 @@
 # HANDOFF — current state & what to pick up next
 
-**Written:** 2026-08-26 (early AM — the 2026-08-25 queue SHIPPED in one window) · **Visibility:**
-private (verified by read-back) · **CI:** GitHub Actions billing is STILL broken account-wide;
-today's window used the free-public-minutes flow (flip public → rerun/trigger → merge → private).
-Master's final run: Test/TypeCheck/Lint/Security ALL GREEN — the E2E (Playwright) job fails in
-global-setup seed and has NEVER been green recently (nightlies red since ≥2026-08-22, pre-existing
-infra — task chip filed). The pre-push hook's full `npm run verify` remains the authoritative gate.
+**Written:** 2026-08-30 · **Visibility:** private (verified by read-back) · **Campaign:** the
+bug-register burn-down is EXECUTING — `W1 in flight (F00 PR open) · 2/180 closed · next: merge
+F00, then F01`.
+
+## 🟡 ACTIVE — bug-register burn-down campaign (W1: F00)
+
+Full plan: `C:\Users\nakram\.claude\plans\read-the-bug-registry-scalable-gosling.md` (28 fix
+batches F02–F29 + two enablement batches F00/F01, ~30 PRs across 8 merge windows W1–W8; all
+Criticals close by end of W6). Register: `local-assets/docs/routeflow-bug-register.html`
+(**188 entries, 180 open** — B188 added 2026-08-31, see below; artifact
+`310ae33a-f47a-4d67-876d-4f3c880200a5` — the old `da34f8d6…` URL is DEAD, never publish to it);
+user guide artifact `cae40575-f391-4db3-b0c4-d3da779fcfba` (shared-not-owned — sessions cannot
+republish it; flag guide changes to the owner).
+
+**State of the machinery (all of it ships in the F00 PR, branch `fix/F00-ci-campaign`):**
+
+- **Ledger seeded and tracked** — `.claude/campaign/status/F##.jsonl`, one shard per batch
+  F00–F29, 180 rows (id / batch / frozen tier / state / pr / proof / evidence / roundSha).
+  **B126/B127 are `already-fixed`**: shipped pre-campaign via PR #506 (master `cc8c7d46`),
+  deployed, post-deploy-check 9/9 — evidence names the two #506 specs. That is F02a done;
+  F02b (B24, B96, B101, B130, B154, B188) is not started.
+- **`scripts/campaign-check.mjs`** — the unfakeable gate; now **wired into `npm run verify`**
+  (step 3, before turbo), so every PR and the pre-push hook reconcile ledger claims against
+  jest/Playwright JSON run artifacts. Proven to fail on synthetic bad claims and to pass the
+  real ledger. Run artifacts go to `.campaign/runs/` (gitignored).
+- **Citations re-anchored** — audit + per-batch attention list in
+  `.claude/campaign/citation-reanchor-log.md` (1,176 checked against `6c8f1401`, 13 corrected
+  in the register, 47 multi-candidate flags for per-batch discovery). Read it before any
+  batch's discovery phase.
+- **28 F-cards** at `.claude/pipeline/fix-cards/F##-<slug>.md` — each dev-pipeline run's brief;
+  never re-read the register in a batch.
+- **Decisions of record** in `.claude/campaign/DECISIONS.md` — D1: no web unit runner, web-side
+  logic stays tier T2 (proven post-deploy via the e2e run); D2: B126/B127 stay `already-fixed`.
+- **Board driver is on master** — PR #507 landed `scripts/team/team.mjs`, the `team` skill and
+  the three agent roles, so fresh worktrees off master have the board. Campaign epics/batch
+  issues: seed via `team.mjs epic/task` if not yet present.
+- **B188 (added 2026-08-31, capability-model follow-up):** `generateInvoicePdf`
+  (`apps/api/src/bookkeeping/invoice.service.ts:37-91`) reads AND writes `transaction` on a bare
+  unscoped Prisma client — the missed sibling of the F1-002 fix. Dormant (the "invoices" Bull
+  queue has no producer); routed to F02b, tier T1, cited fresh on `77b88623`. Plan prose says
+  "179" — the ledger, not the prose, is `campaign-check`'s source of truth.
+
+**⚠️ F00's merge is also the LIVE TEST of the `deployment_status` E2E trigger** (`2073d6be` —
+untestable on a branch: GitHub only runs the default branch's copy for that event). After F00's
+first master deploy, an "E2E (Playwright)" run must appear within ~20 min, or apply the
+two-line revert spelled out in ci.yml's `on:` block. Also record F00's measured billed minutes —
+it is the CI diet's proof.
+
+**Then:** F01 (consolidated additive migration, slot `20260908000000_*` — backup first,
+`prod-migrate.mjs` BEFORE the merge, per CLAUDE_SESSION_PREAMBLE.md), then Wave A batch loop:
+worktree off master → dev-pipeline from the F-card → `REG-B###` proofs → ledger flip in the PR
+→ `npm run verify` → merge train → register/guide update in the main checkout → republish.
+
+---
+
+## Pre-campaign history below (2026-08-24 through 2026-08-26)
 
 ## ✅ SHIPPED + LIVE 2026-08-26 window — NINE PRs merged, migration 20260905 applied, all deploys SUCCESS
 
