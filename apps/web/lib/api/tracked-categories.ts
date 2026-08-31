@@ -4,11 +4,7 @@ import { apiClient } from "../api-client";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type TrackedCategoryTaxType =
-  | "EXCISE_PER_UNIT"
-  | "PERCENT_OF_SALE"
-  | "PER_VOLUME"
-  | "DEPOSIT_PER_CONTAINER"
-  | "NONE";
+  "EXCISE_PER_UNIT" | "PERCENT_OF_SALE" | "PER_VOLUME" | "DEPOSIT_PER_CONTAINER" | "NONE";
 export type InvoiceTreatment = "SEPARATE_INVOICE" | "SEPARATE_SECTION" | "LINE_TAX";
 export type ReportCadence = "MONTHLY" | "QUARTERLY" | "ANNUAL";
 
@@ -121,9 +117,19 @@ export function useToggleTrackedCategory() {
   });
 }
 
+/**
+ * `assigned` counts MOVERS only — rows already in the target type are excluded
+ * from it although they were processed. `processed` is every requested row the
+ * tenant can see; use it (not `assigned`) to decide what was skipped. Optional
+ * because a browser tab open across a deploy can still hit the older API.
+ */
 export function useAssignProductsToCategory() {
   const qc = useQueryClient();
-  return useMutation<{ assigned: number }, Error, { id: string; productIds: string[] }>({
+  return useMutation<
+    { assigned: number; processed?: number },
+    Error,
+    { id: string; productIds: string[] }
+  >({
     mutationFn: ({ id, productIds }) =>
       apiClient
         .post(`/tracked-categories/${id}/products/assign`, { productIds })

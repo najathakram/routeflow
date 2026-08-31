@@ -2,6 +2,11 @@
 module.exports = {
   preset: "ts-jest",
   testEnvironment: "node",
+  // Campaign gate artifact — see scripts/jest-campaign-reporter.cjs.
+  reporters: [
+    "default",
+    ["<rootDir>/../../scripts/jest-campaign-reporter.cjs", { artifact: "mobile" }],
+  ],
   // Only run the pure-logic unit tests — not the Expo/RN component files
   testMatch: ["**/__tests__/**/*.test.ts"],
   // ts-jest config (new flat style, also supported via globals for compat)

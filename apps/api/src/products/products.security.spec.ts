@@ -139,14 +139,26 @@ describe("ProductsService.clearAll — cross-tenant wipe regression", () => {
   it("reports only the caller's own product count", async () => {
     prisma.forTenant().product.findMany.mockResolvedValue([{ id: "p1" }, { id: "p2" }]);
 
-    await expect(service.clearAll()).resolves.toEqual({ deleted: 2 });
+    // clearAll() passes bulkDelete's breakdown through verbatim (R1): these two
+    // products carry no references, so both are hard-deleted and nothing is
+    // soft-deleted or skipped. The count is still the caller's own — that is
+    // what this regression pins.
+    await expect(service.clearAll()).resolves.toEqual({
+      deleted: 2,
+      softDeleted: 0,
+      skipped: [],
+    });
     expect(prisma.$transaction).toHaveBeenCalled();
   });
 
   it("is a no-op when the tenant has no products", async () => {
     prisma.forTenant().product.findMany.mockResolvedValue([]);
 
-    await expect(service.clearAll()).resolves.toEqual({ deleted: 0 });
+    await expect(service.clearAll()).resolves.toEqual({
+      deleted: 0,
+      softDeleted: 0,
+      skipped: [],
+    });
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });

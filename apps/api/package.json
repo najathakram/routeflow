@@ -118,6 +118,15 @@
     "typescript-eslint": "^8.68.0"
   },
   "jest": {
+    "reporters": [
+      "default",
+      [
+        "<rootDir>/../../../scripts/jest-campaign-reporter.cjs",
+        {
+          "artifact": "api"
+        }
+      ]
+    ],
     "moduleFileExtensions": [
       "js",
       "json",

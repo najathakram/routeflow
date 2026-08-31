@@ -215,7 +215,7 @@ describe("TrackedCategoriesService", () => {
         where: { id: { in: ["p1", "p2"] }, NOT: { trackedCategoryId: "c1" } },
         data: { trackedCategoryId: "c1", trackedSubcategoryId: null },
       });
-      expect(res).toEqual({ assigned: 2 });
+      expect(res).toEqual({ assigned: 2, processed: 2 });
     });
 
     it("excludes rows already in this section from the count (movers-only semantics)", async () => {
@@ -227,7 +227,11 @@ describe("TrackedCategoriesService", () => {
       });
       // Of the 3 requested ids, only the movers matched the NOT-in-section where
       // clause and got updated — the row already in "c1" is excluded by Prisma.
-      prisma.product.updateMany.mockResolvedValue({ count: 1 });
+      // The isTobacco sync that follows spans the full id set, so its count is
+      // every row the tenant can see: 1 mover + 2 already in "c1".
+      prisma.product.updateMany
+        .mockResolvedValueOnce({ count: 1 }) // movers
+        .mockResolvedValueOnce({ count: 3 }); // isTobacco mirror, full id set
 
       const res = await service.assignProducts("c1", ["p1", "p2", "p3"]);
 
@@ -235,7 +239,9 @@ describe("TrackedCategoriesService", () => {
         where: { id: { in: ["p1", "p2", "p3"] }, NOT: { trackedCategoryId: "c1" } },
         data: { trackedCategoryId: "c1", trackedSubcategoryId: null },
       });
-      expect(res).toEqual({ assigned: 1 });
+      // `processed` must NOT drop the two rows already in the section — the
+      // caller reports them as done, not skipped.
+      expect(res).toEqual({ assigned: 1, processed: 3 });
     });
 
     it("only unassigns products currently in the category and clears trackedSubcategoryId", async () => {

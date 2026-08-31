@@ -24,11 +24,11 @@ axis, and [`references/verification.md`](references/verification.md) for the evi
 ## Ground rules (non-negotiable)
 
 1. **Evidence or drop it.** Every claim cites repo-relative `path:line` the agent actually opened,
-   caller *and* callee. Line numbers drift — name the symbol too.
+   caller _and_ callee. Line numbers drift — name the symbol too.
 2. **Refute first.** The default stance on every candidate is that it's wrong. A finding survives
-   only after a *separate* agent tries to kill it and fails. In round 2, verification changed the
+   only after a _separate_ agent tries to kill it and fails. In round 2, verification changed the
    substance of 6 of 53 findings and reversed 2 — skipping it ships fiction.
-3. **Never re-report.** Read the register first; it also carries an *Investigated & Cleared*
+3. **Never re-report.** Read the register first; it also carries an _Investigated & Cleared_
    section of invariants proven sound. Re-chasing cleared ground is the most common waste.
 4. **Check both apps.** "No UI calls this" is false if mobile calls it. This exact error produced
    two wrong claims before it was caught. Grep `apps/web` **and** `apps/mobile`.
@@ -49,12 +49,16 @@ Run them in order; each is useful alone.
 node .claude/skills/bug-hunt/scripts/scan-signatures.mjs
 ```
 
-Greps for the twenty code shapes that have historically *been* bugs here (dead hooks,
+Greps for the twenty-six code shapes that have historically _been_ bugs here (dead hooks,
 confirm-then-navigate, impossible enum branches, money re-derivation, swallowed writes…). Exit 1
 on a high-signal hit, so it can gate CI or a pre-PR check. Hits are leads, not findings — each
 still needs Layer 3 before it enters the register.
 
-### Layer 2 — Hunt (fan out by bug *class*, never by file)
+Adding a signature? It must ship with an `offender`/`clean` fixture pair —
+`scan-signatures.mjs --self-test` (a step of `npm run verify`) fails on any signature that has
+none, and on any whose fixtures don't prove it in both directions.
+
+### Layer 2 — Hunt (fan out by bug _class_, never by file)
 
 Fan out one agent per class from `references/hunt-classes.md`. **Class, not area** — this is the
 single most important structural choice. Area-based splitting ("audit invoices") re-finds the same
@@ -63,14 +67,14 @@ conservation invariant that doesn't balance") finds what reading a screen never 
 
 **Model tiering (empirical, not decorative):**
 
-| Work | Model | Why |
-| --- | --- | --- |
-| Conservation invariants, state-machine reachability, shared-mirror math, schema/migrations, test-gap inference, forensics | **Fable** | Needs constructing adversarial sequences and counter-examples. Produced 5 of round 2's 14 criticals from 6 agents. |
-| Concurrency/races, security composition, freshly-merged code, triage/dedup judging | **Opus** | Threat-modelling and cross-PR reasoning. |
-| Mechanical per-class sweeps (dead UI, dropped DTO fields, cache invalidation, date formatting) | **Sonnet** | High volume, low ambiguity — but only behind a strong verifier. |
-| **Verification of any critical claim** | **Fable or Opus** | Never weaker than the finder. This is where being wrong is most expensive. |
+| Work                                                                                                                      | Model             | Why                                                                                                                |
+| ------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Conservation invariants, state-machine reachability, shared-mirror math, schema/migrations, test-gap inference, forensics | **Fable**         | Needs constructing adversarial sequences and counter-examples. Produced 5 of round 2's 14 criticals from 6 agents. |
+| Concurrency/races, security composition, freshly-merged code, triage/dedup judging                                        | **Opus**          | Threat-modelling and cross-PR reasoning.                                                                           |
+| Mechanical per-class sweeps (dead UI, dropped DTO fields, cache invalidation, date formatting)                            | **Sonnet**        | High volume, low ambiguity — but only behind a strong verifier.                                                    |
+| **Verification of any critical claim**                                                                                    | **Fable or Opus** | Never weaker than the finder. This is where being wrong is most expensive.                                         |
 
-(Mythos is not selectable in the agent picker; Fable is the same underlying model, so Fable *is*
+(Mythos is not selectable in the agent picker; Fable is the same underlying model, so Fable _is_
 the top tier here.)
 
 Give every finder: the register (to dedup), the money-discipline context, the evidence contract,
@@ -104,7 +108,7 @@ A silent wrong number outranks a loud crash: users route around crashes and trus
 The register and the user guide are companions in `local-assets/docs/` and move together.
 
 1. New findings take the next free **B-number** — never reused, never renumbered.
-2. A finding that *deepens* an existing entry enriches it in place; it does not become a duplicate.
+2. A finding that _deepens_ an existing entry enriches it in place; it does not become a duplicate.
 3. Refuted claims go to **Investigated & Cleared** with why — never deleted.
 4. When a fix ships: flip the chip to `Fixed · #PR`, update the matching guide entry if
    user-visible behaviour changed, and republish **both** artifacts to their existing URLs.
@@ -113,13 +117,13 @@ Full protocol and both artifact URLs: memory `project_bug_register_2026-08-28`.
 
 ## Scoping a run
 
-| Ask | Shape |
-| --- | --- |
-| "quick check before shipping" | Layer 1 + 2–3 classes touching the change |
-| "find bugs in X" | Layer 1 + every class that touches X, verified |
-| "are there more bugs" | Full Layer 2 fan-out on classes not yet run — check the register's coverage first |
-| "why does this feel clunky" | `references/ux-audit.md` lenses; correctness classes only where friction hints at a real defect |
-| "is it production ready" | All three layers + the forensic data-integrity script |
+| Ask                           | Shape                                                                                           |
+| ----------------------------- | ----------------------------------------------------------------------------------------------- |
+| "quick check before shipping" | Layer 1 + 2–3 classes touching the change                                                       |
+| "find bugs in X"              | Layer 1 + every class that touches X, verified                                                  |
+| "are there more bugs"         | Full Layer 2 fan-out on classes not yet run — check the register's coverage first               |
+| "why does this feel clunky"   | `references/ux-audit.md` lenses; correctness classes only where friction hints at a real defect |
+| "is it production ready"      | All three layers + the forensic data-integrity script                                           |
 
 ## Hard-won cautions
 

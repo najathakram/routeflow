@@ -298,5 +298,20 @@ export default defineConfig({
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
+
+    // ── Destructive-write guards (F02b, spec 21) ───────────────────────────────
+    // REG-B24 / REG-B130 / REG-B154: products + customers bulk-delete confirm
+    // dialogs, the guarded-product skip report, the customer soft-delete branch,
+    // and the products selection reset. Mutating but self-contained: it creates
+    // its own `E2E B2x …` throwaway product/customer fixtures on the approved
+    // seed tenant and never destroys a discovered record — the guarded product
+    // it selects is the one bulkDelete must SKIP.
+    // Uses operator auth state; the spec reads its token out of that session.
+    {
+      name: "destructive-guards",
+      testMatch: /21-destructive-guards\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
   ],
 });
