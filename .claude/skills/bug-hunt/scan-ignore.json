@@ -78,7 +78,6 @@
   ],
   "money-rederive": [
     "apps/api/src/import/import.service.ts::parseFloat(row[\"Item Total\"] || \"0\") || qty * unitPrice - itemDiscount,",
-    "apps/api/src/orders/orders.service.ts::subtotal: roundMoney(data.qty * data.unitPrice),",
     "apps/mobile/app/(driver)/route/index.tsx::return t + (o.lineItems ?? []).reduce((s, li) => s + li.qty * li.unitPrice, 0);"
   ],
   "calendar-date": [

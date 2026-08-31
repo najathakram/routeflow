@@ -1,12 +1,7 @@
 {
-  "mappedSha": "7213ac29",
-  "generatedAt": "2026-08-30T20:30:00.000Z",
-  "areas": [
-    "api",
-    "web",
-    "mobile",
-    "packages"
-  ],
+  "mappedSha": "7e5c2d98",
+  "generatedAt": "2026-08-31T01:55:00.000Z",
+  "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 900,
-  "notes": "**2026-08-30** — (branch fix/F00-ci-campaign = ci/minutes-diet + campaign scaffolding, merged onto master 7213ac29; no schema change) — F00: the bug-register campaign machinery ships with the CI diet. New tracked surfaces: .claude/campaign/status/F00-F29.jsonl (180-row proof ledger, one shard per batch), scripts/campaign-check.mjs (the gate — now step 3 of npm run verify, so every PR and the pre-push hook enforce the ledger), .claude/pipeline/fix-cards/ (28 per-batch briefs), .claude/campaign/DECISIONS.md (D1 no web unit runner — web logic is T2; D2 B126/B127 stay already-fixed on #506 evidence), citation-reanchor-log.md (1,176 citations audited, 13 corrected). turbo.json test.inputs -> [$TURBO_DEFAULT$] (old list had no mobile code dirs — cached-pass false greens); apps/web/playwright.config.ts gains a json reporter -> .campaign/runs/web-e2e.json (gitignored). ⚠️ Merging F00 is ALSO the live test of the deployment_status E2E trigger — an E2E (Playwright) run must appear within ~20 min of the first master deploy, else apply ci.yml on-block two-line revert. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "2026-08-31 - (branch `chore/money-rederive-annotations`, rebased onto master `7e5c2d98` post-F00, no schema change) - #504: replaced the single scan-ignore.json baseline entry that silently suppressed BOTH orders.service.ts money-rederive hits (~L1002/~L1270, custom `unlistedNewItems` appends with `productId: null`) with inline `// scan-ok: money-rederive - ...` comments stating the actual reasoning (never boxed, no unitsPerBox proration to lose; qty is Decimal(10,3) - the order-edit path allows fractional; rounded write). Removed that entry from the baseline list so a new naked `qty * unitPrice` elsewhere in that file now fails the scan (verified with a throwaway line, reverted before commit). No functional change; the other two money-rederive baseline entries are untouched. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it - never accumulate history here."
 }
