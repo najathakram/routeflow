@@ -1074,9 +1074,9 @@ lastAt}` state).
   by literal text replacement, so a computed lookup would silently read `undefined` in the shipped
   bundle. The Dockerfile adds `ARG EXPO_PUBLIC_BUILD_SHA` + `ARG RAILWAY_GIT_COMMIT_SHA` with
   `ENV EXPO_PUBLIC_BUILD_SHA=${EXPO_PUBLIC_BUILD_SHA:-$RAILWAY_GIT_COMMIT_SHA}` before the export.
-  ⚠️ Whether Railway forwards `RAILWAY_GIT_COMMIT_SHA` into the build as an ARG is UNVERIFIED; if a
-  deploy renders "build dev", add a service variable `EXPO_PUBLIC_BUILD_SHA=${{RAILWAY_GIT_COMMIT_SHA}}`
-  on routeflowmobile. Rendered on the login screen in `ios.label2` (NOT the fainter `label3` — the
+  VERIFIED 2026-08-31 (#562 deploy): Railway DOES forward `RAILWAY_GIT_COMMIT_SHA` into the build,
+  so no service variable is needed — the deployed bundle carried the full merge sha. If a deploy ever
+  renders "build dev", add `EXPO_PUBLIC_BUILD_SHA=${{RAILWAY_GIT_COMMIT_SHA}}` on routeflowmobile. Rendered on the login screen in `ios.label2` (NOT the fainter `label3` — the
   stamp exists to be read aloud by a client confirming their deploy, so it must clear a contrast
   floor). Inlining verified end-to-end against a real `expo export --platform web`.
 - ⚠️ **Local `expo export --platform web` needs `NODE_PATH=$(pwd)/node_modules`** or it dies with
