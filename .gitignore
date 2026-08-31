@@ -103,3 +103,7 @@ docs/qa/workers/w6-fuzz-pack/f20-huge.pdf
 # they live in local-assets/ on the dev machine. The repo goes public briefly
 # for CI, and clones should stay lean.
 local-assets/
+
+# ─── Bug-register campaign run artifacts (jest/Playwright JSON read by ────────
+#     scripts/campaign-check.mjs; regenerated per run, never committed) ───────
+.campaign/

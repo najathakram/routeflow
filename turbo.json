@@ -47,7 +47,11 @@
     },
     "test": {
       "dependsOn": ["^build"],
-      "inputs": ["src/**", "test/**", "**/*.spec.ts", "**/*.test.ts"],
+      // $TURBO_DEFAULT$, not a hand-picked list: apps/mobile has no src/ (its code
+      // lives in app/, lib/, store/, hooks/, utils/), so a narrow inputs list let
+      // edits to e.g. mobile lib/pricing.ts bust NO hashed input — turbo replayed a
+      // cached pass and printed a green jest summary for code it never ran.
+      "inputs": ["$TURBO_DEFAULT$"],
       "outputs": ["coverage/**"]
     },
     "test:e2e": {

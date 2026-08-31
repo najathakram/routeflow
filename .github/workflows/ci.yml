@@ -1,93 +1,195 @@
 # ─── Continuous Integration ─────────────────────────────────────────────────────
-# Runs lint, type-check, and tests on every push and pull request to main.
+# Lint, type-check, tests, lockfile integrity, bug-signature scan and the audit —
+# ONE job, one install — plus a post-deploy Playwright job on master.
 #
-# $0 Actions budget: Actions minutes are unlimited on PUBLIC repos; a private repo
-# draws on the account's monthly free-minute allowance and then bills.
+# ═══ THE MINUTES BUDGET — read this before adding a job or a step ═══════════════
+# Actions minutes are UNLIMITED and free on PUBLIC repos, and metered on PRIVATE
+# ones (GitHub Free: 2,000 min/mo; Pro: 3,000). This repo is private commercial
+# source, and until 2026-08-30 it was flipped PUBLIC for a few minutes around every
+# merge for no reason other than to make CI free — a ritual with real exposure and
+# real failure modes (five consecutive `repository not found` deploys came out of
+# racing that flip against Railway's snapshot).
 #
-# NOTE (2026-07-30): the repo NO LONGER needs a public/private flip to DEPLOY —
-# Railway's GitHub App has private-repo access and redeploys master while private
-# (verified on PR #313). The flip only ever bought free CI minutes, so with the
-# repo private this workflow runs only if the account's Actions billing is healthy.
-# When it is blocked, every job fails in ~10s with 0 steps and the annotation
-# "The job was not started because recent account payments have failed…" — that is
-# a billing state, NOT a code failure. THE LOCAL GATE IS AUTHORITATIVE in that case.
+# Measured over 2026-07-31..2026-08-30 (417 runs, per-job wall clock from the
+# Actions API, each job billed rounded UP to the whole minute — this reconciles to
+# within 2.3% of the billing API's 6,256 min for August):
 #
-# Triggers are deliberately narrow to conserve minutes: trunk pushes + PRs into
-# master only. (Until 2026-07-30 this ran on `push: ["**"]` — every branch push —
-# while `pull_request` pointed at the non-existent `main`, so PR checks never ran.)
+#     Test              1,603 min   (306 real runs, median 275s)
+#     E2E (Playwright)    736 min   ( 82 real runs, median 489s)
+#     Type Check        1,172 min   (304 real runs, median 190s)
+#     Lint              1,152 min   (304 real runs, median 188s)
+#     Security Audit      949 min   (307 real runs, median 150s)
+#     ───────────────────────────────────────────────────────────
+#     TOTAL             5,612 min/month  =  2.8x the Free allowance
 #
-# Local gates (no Actions minutes spent):
-#   • pre-push hook    → `npm run verify` + trunk-push block (.husky/pre-push)
-#   • `npm run verify` → check-types + lint + test (turbo-cached, so repeat runs are fast)
-#   • `npm run smoke`  → liveness probe vs a running API (SMOKE_BASE_URL=… post-deploy)
-# The Test job below already runs the api + mobile Jest suites (incl. the
-# money-math / qty / backsync regression specs) via `turbo run test`.
+# The single largest line item was not any check — it was `npm ci`, at a measured
+# 75s inside EACH of five separate jobs, five times per run, plus five job setups
+# each rounding up to a full billed minute. Hence: one job, one install.
+#
+# RULES that follow from the budget, and that a future edit must not quietly break:
+#   1. ubuntu-latest ONLY. Windows bills 2x and macOS 10x.
+#   2. Do not add a job that installs dependencies. Add a STEP to `verify`.
+#   3. Correctness runs on the PR, ONCE. It does not re-run on the master push —
+#      see the `verify` job's `if:` for why that is sound here.
+#   4. A runner that is sleeping still bills. Before adding a wait/poll loop, ask
+#      whether the thing being waited for can signal instead. APPLIED 2026-08-30:
+#      E2E no longer starts on the master push and then polls for ~320s while
+#      Railway builds — it starts when Railway SAYS the deploy succeeded. The poll
+#      loop is still there, because it is the correctness gate; it just exits on
+#      its first attempt now instead of being paid to sleep through the build.
+#
+# ═══ LOCAL GATE IS AUTHORITATIVE ════════════════════════════════════════════════
+# `.husky/pre-push` runs `npm run verify` — the SAME command this workflow runs —
+# on every push, and blocks direct trunk pushes. CI is the Linux confirmation of a
+# result the developer already has: it catches what a Windows dev box cannot
+# (case-sensitive paths, separators, platform-gated deps, a clean-install tree),
+# and nothing else. If CI is failing on something the local gate should have
+# caught, fix the local gate.
+#
+# Triggers stay narrow: PRs into master (minus paths-ignore) drive correctness, and
+# a SUCCESSFUL Railway deploy — not the master push — drives E2E.
+#
+# ⚠️ THERE IS NO `push:` TRIGGER, AND ITS ABSENCE IS DELIBERATE (2026-08-30).
+# `verify` already skipped the master push, and `e2e` now starts from the deploy
+# instead. Re-adding `push:` does not "make CI safer" — it re-adds a second, full
+# -price E2E run per merge that duplicates the deploy-triggered one. If the
+# deployment_status path ever has to be abandoned, restore it as:
+#     push:
+#       branches: [master]
+#       paths-ignore: [ …the same list as pull_request below… ]
+# and add `(github.event_name == 'push' && github.ref == 'refs/heads/master')`
+# back to the e2e job's `if:` — those two edits are the whole revert.
 # ────────────────────────────────────────────────────────────────────────────────
 
 name: CI
 
-# NOTE: the lists below are duplicated on purpose — the GitHub Actions workflow
-# parser does not support YAML anchors/aliases, so `&x` / `*x` would not work here.
 on:
-  push:
-    branches: [master]
-    paths-ignore:
-      - "**.md"
-      - ".claude/**"
-      - "docs/**"
-      - ".vscode/**"
-      - "LICENSE"
   pull_request:
     branches: [master]
+    # Explicit, because the default set omits ready_for_review and `verify`
+    # skips drafts — without this a draft marked ready would produce NO run at
+    # all, and with no branch protection on a Free private repo the PR could
+    # merge with zero CI.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore:
       - "**.md"
       - ".claude/**"
       - "docs/**"
       - ".vscode/**"
+      - "local-assets/**"
       - "LICENSE"
-  # Manual trigger — lets you confirm CI is healthy (e.g. after an Actions billing
-  # block clears) without having to push a dummy commit.
+
+  # ── The E2E trigger ────────────────────────────────────────────────────────
+  # Railway's GitHub App already tells GitHub when a deploy finishes: it creates
+  # a GitHub Deployment per master commit (creator `railway-app[bot]`, environment
+  # "routeflow / production", `sha` = the deployed commit) and posts `in_progress`
+  # → `success` statuses onto it. GitHub turns each of those into a
+  # `deployment_status` event for free.
+  #
+  # That makes this the ONE option in the E2E cost list that needs no secret, no
+  # PAT, no Railway dashboard change and no bridge service: GitHub's dispatches
+  # API requires an `Authorization` header, and a plain Railway webhook cannot set
+  # one, so `repository_dispatch` would have needed a proxy. This does not.
+  #
+  # No state filter is possible in `on:` — see the e2e job's `if:`, which takes
+  # only `success`, and its freshness guard, which is NOT optional (Railway
+  # re-posts `success` onto the PREVIOUS deployment when a new one goes live).
+  deployment_status:
+
+  # The Railway-webhook path, kept declared but unwired. It costs nothing to
+  # accept and is the fallback if the GitHub App ever stops posting deployments.
+  # Owner setup, if it is ever needed, is in the e2e job header. This event used
+  # to be handled by post-deploy.yml; that trigger was removed when this one was
+  # added, so exactly one workflow consumes `railway-deploy`.
+  repository_dispatch:
+    types: [railway-deploy]
+
+  # Manual trigger — runs BOTH jobs. This is the documented recovery path after a
+  # Railway deploy is re-run (see the e2e job's readiness gate).
   workflow_dispatch:
 
+# PR runs group per-ref (a new push cancels the stale run). Deploy-driven runs
+# group per DEPLOYED SHA with cancellation OFF — `github.ref` is empty/constant
+# on deployment_status, and Railway posts a second event 2–4s after every real
+# success (a stale `success` on the PREVIOUS deployment and/or `inactive` on the
+# same one). Under a constant group with cancel-in-progress:true that echo
+# CANCELS the real run at the WORKFLOW level — job-level concurrency cannot
+# protect a run whose workflow group already cancelled it — and the echo's own
+# run then skips itself in the freshness guard: zero E2E, reported green, on
+# essentially every deploy. With cancellation limited to pull_request, an echo
+# run merely queues and bails out in its freshness guard's first minute.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event.deployment.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   NODE_VERSION: "20"
 
 jobs:
-  # ─── Lockfile integrity ────────────────────────────────────────────────────────
-  # npm's arborist ACCEPTS package-lock trees with unresolvable dependency edges:
-  # `npm ci` installs them without complaint and the breakage surfaces only when
-  # something lazily requires the absent module (found on #488 — @jest/reporters'
-  # istanbul deps and jest-changed-files' execa were missing from the tree; jest
-  # ran fine and `--coverage` crashed). Needs nothing but Node and the lockfile,
-  # so it runs BEFORE any install — there is no point installing a holed tree.
+  # ─── Verify (everything except E2E, in one runner) ─────────────────────────────
+  # Replaces the former lock-integrity + bug-scan + lint + type-check + test +
+  # security-audit jobs. Those were six checkouts, six `setup-node`s and five
+  # `npm ci`s to run about 210 seconds of actual checking.
   #
-  # This job MUST run the full gate, not just reachability, and that is why it
-  # installs semver first. An incoherent override makes `npm ci` itself fail —
-  # verified: mobile declaring jest ^30.3.0 against the 30.2.0 pin produces
-  # "Missing: jest@30.5.0 / @jest/core@30.5.0 / camelcase@6.3.0 …", the phantom
-  # subtree, naming everything except the cause. So every job that installs dies
-  # at install, and a post-install gate would never run on precisely the case it
-  # exists to explain. Pre-install is the only placement that survives it.
-  #
-  # semver is pinned to the version the repo's own tree hoists, so this job and
-  # `npm run verify` (which reads semver from node_modules) cannot reach
-  # different verdicts on the same lockfile. Bump the two together — the
-  # validator prints the version it used so a divergence is visible.
-  lock-integrity:
-    name: Lockfile integrity
+  # WHY THIS DOES NOT RUN ON THE MASTER PUSH.
+  # Every master commit arrives as a squash-merge of a PR that this job already
+  # verified, and the house merge routine rebases each branch onto master
+  # immediately before merging — so the merged tree is the tree that was tested.
+  # Re-running it on the push is a second full-price copy of a result already in
+  # hand. Two independent backstops cover the residual case where the merged tree
+  # somehow differs:
+  #   • Railway's Docker builds compile both apps for real — apps/api/Dockerfile
+  #     runs `nest build` (tsc) and apps/web/Dockerfile runs `next build`. A type
+  #     error does not reach production; it fails the deploy.
+  #   • The e2e job below then exercises that deployment end to end.
+  # If a bare master push ever needs the full gate, use "Run workflow" — dispatch
+  # reaches this job.
+  verify:
+    name: Verify
+    # PRs and manual dispatch ONLY. Draft PRs are skipped: the pre-push hook
+    # already gated them locally, and a draft is by definition not asking for a
+    # merge decision yet. Marking a PR ready-for-review triggers a run.
+    #
+    # Stated as an allow-list, not as `!= 'push'`. The old exclusion form was a
+    # trap the moment this workflow gained a third trigger: `deployment_status`
+    # is not `push`, so the negative form would have run the entire correctness
+    # suite on every production deploy — the exact opposite of this file's point.
+    # Add an event here deliberately or it does not reach this job.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.draft != true)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
 
+      # ── PRE-INSTALL lockfile gate ────────────────────────────────────────────
+      # This runs before `npm ci` and that placement is load-bearing, not tidiness.
+      #
+      # npm's arborist ACCEPTS package-lock trees with unresolvable dependency
+      # edges: `npm ci` installs them without complaint and the breakage surfaces
+      # only when something lazily requires the absent module (#488 — @jest/
+      # reporters' istanbul deps and jest-changed-files' execa were missing from
+      # the tree; jest ran fine and `--coverage` crashed).
+      #
+      # And an INCOHERENT override makes `npm ci` itself fail — verified: mobile
+      # declaring jest ^30.3.0 against the 30.2.0 pin produces "Missing:
+      # jest@30.5.0 / @jest/core@30.5.0 / camelcase@6.3.0 …", the phantom subtree,
+      # naming everything except the cause. A post-install gate would never run on
+      # precisely the case it exists to explain. `npm run verify` below re-runs
+      # this validator against the installed tree, which is cheap (~3s) and keeps
+      # CI running the literal same command the local hook runs; this early copy
+      # is the one that survives an install failure.
+      #
+      # semver is pinned to the version the repo's own tree hoists, so this step
+      # and `npm run verify` cannot reach different verdicts on the same lockfile.
+      # Bump the two together — the validator prints the version it used.
+      #
       # Into a SCRATCH dir, never the repo root: `npm install <pkg>` at a
       # workspaces root re-resolves the whole workspace tree from the registry
       # (measured: over 10 minutes without finishing) — the exact behaviour #488
@@ -99,42 +201,10 @@ jobs:
           cd "$RUNNER_TEMP/lockdeps"
           npm install --no-save --no-audit --no-fund --ignore-scripts semver@6.3.1
 
-      - name: Validate lockfile dependency edges
-        run: npm run validate-lock
+      - name: Validate lockfile dependency edges (pre-install)
+        run: node scripts/validate-lock-edges.mjs
         env:
           NODE_PATH: ${{ runner.temp }}/lockdeps/node_modules
-
-  # ─── Bug-signature scan ────────────────────────────────────────────────────────
-  # Greps for the code shapes that have historically BEEN bugs here (dead hooks,
-  # confirm-then-navigate, money re-derivation, swallowed writes…). The existing
-  # backlog is baselined in .claude/skills/bug-hunt/scan-ignore.json, so this only
-  # fails on NEWLY introduced instances. Zero deps, no install, ~2s.
-  # On failure: fix it, or add `// scan-ok: <id> — <reason>` above the line.
-  bug-scan:
-    name: Bug Signature Scan
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - run: node .claude/skills/bug-hunt/scripts/scan-signatures.mjs
-
-  # ─── Lint ──────────────────────────────────────────────────────────────────────
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
 
       # `npm ci` installs exactly the committed lockfile — no registry
       # re-resolution. (The old `rm lockfile + npm install --force` recipe made
@@ -142,143 +212,47 @@ jobs:
       # broken dist-less tarball broke CI within hours despite a pinned lock.)
       #
       # --engine-strict=false: the root .npmrc sets engine-strict=true, but that
-      # gate was dead everywhere before this migration (--force overrode it in
-      # CI; the Dockerfiles never COPY .npmrc) — and prisma 7.10's dev-only
+      # gate was dead everywhere before the npm-ci migration (--force overrode it
+      # in CI; the Dockerfiles never COPY .npmrc) — and prisma 7.10's dev-only
       # transitive @prisma/streams-local declares engines node>=22 while this
       # runtime (and prod's node:20-alpine images) is Node 20. Keep the old
       # warn-don't-block behavior; revisit when the prod images move to 22.
       - name: Install dependencies
         run: npm ci --engine-strict=false
 
-      # No lockfile check here: the lock-integrity job above already runs the
-      # full gate, and does it pre-install where it still runs even when an
-      # incoherent lock makes `npm ci` fail. One artifact, all gates.
-      - run: npm run lint
-
-  # ─── Type Check ────────────────────────────────────────────────────────────────
-  type-check:
-    name: Type Check
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci --engine-strict=false
-
-      # Prisma client must be generated before tsc can resolve @prisma/client types
+      # apps/api's `postinstall` already runs this, so it is normally a ~5s no-op.
+      # Kept explicit so the job still type-checks if an install ever gains
+      # --ignore-scripts: tsc cannot resolve @prisma/client without it.
       - name: Generate Prisma client
         working-directory: apps/api
         run: npx prisma generate
 
-      - run: npm run check-types
+      # THE gate: byte-for-byte the command `.husky/pre-push` runs.
+      #   node scripts/validate-lock-edges.mjs
+      #   && node .claude/skills/bug-hunt/scripts/scan-signatures.mjs
+      #   && turbo run check-types lint test
+      #
+      # No turbo cache here, deliberately — no TURBO_TOKEN/TURBO_TEAM and no
+      # actions/cache of .turbo, so every task genuinely executes on a fresh
+      # runner. That is the point of this job. Three separate false GREENS have
+      # come out of cached turbo replays in this repo (#495: 18/18 CACHED in 4.6s
+      # on a lockfile-only change; a replayed log reporting 3,130 api tests
+      # "passing" that never ran). CI is the run that is always cold. Do not add
+      # a turbo cache here to save minutes — cut work or runs instead.
+      #
+      # `--coverage` was dropped on 2026-08-30: no coverageThreshold is configured
+      # in any workspace, so it gated nothing, and the coverage artifact it fed
+      # was never consumed by anything downstream.
+      - name: Verify (lockfile, bug-signature scan, types, lint, tests)
+        run: npm run verify
 
-  # ─── Test ──────────────────────────────────────────────────────────────────────
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
-          POSTGRES_DB: routeflow_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U test -d routeflow_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    env:
-      DATABASE_URL: postgresql://test:test@localhost:5432/routeflow_test
-      REDIS_URL: redis://localhost:6379
-      JWT_SECRET: ci-test-secret-not-for-production
-      JWT_REFRESH_SECRET: ci-test-refresh-secret-not-for-production
-      NODE_ENV: test
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci --engine-strict=false
-
-      # Replay the migration history against a FRESH Postgres before anything
-      # else. `db push` below applies the schema directly and so has never
-      # exercised the migration files at all — which is exactly how a broken
-      # migration reaches production, where the only way to apply schema is
-      # `prisma migrate deploy`. This step fails the PR instead.
-      - name: Verify migrations apply to a fresh database
-        working-directory: apps/api
-        run: npx prisma migrate deploy
-
-      # Generate Prisma client and push schema to the test database
-      - name: Setup database
-        working-directory: apps/api
-        run: |
-          npx prisma generate
-          npx prisma db push
-
-      - name: Run tests
-        run: npm run test -- -- --coverage
-
-      - name: Upload coverage reports
-        if: always()
-        # Artifact-storage quota exhaustion must never fail the Test job — every
-        # test already passed by this step. Quota recalculates every 6-12h.
-        continue-on-error: true
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-reports
-          path: |
-            apps/api/coverage/
-            apps/web/coverage/
-          retention-days: 14
-
-  # ─── Security Audit ────────────────────────────────────────────────────────
-  # F12-001: fail CI on any CRITICAL production advisory, and surface (without
-  # blocking on) highs. Kept non-blocking at the high level for now so every PR
-  # isn't wedged on the two known SemVer-MAJOR fixes (next 14→16, nodemailer 9);
-  # tighten to `--audit-level=high` once those majors are migrated.
-  security-audit:
-    name: Security Audit
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci --engine-strict=false
-
+      # Registry state, not tree state — so this belongs in CI and not in the
+      # local pre-push gate, where it would add network latency to every push.
+      #
+      # F12-001: fail on any CRITICAL production advisory, and surface (without
+      # blocking on) highs. Kept non-blocking at the high level for now so every
+      # PR isn't wedged on the two known SemVer-MAJOR fixes (next 14→16,
+      # nodemailer 9); tighten to `--audit-level=high` once those are migrated.
       - name: Fail on critical production advisories
         run: npm audit --omit=dev --audit-level=critical
 
@@ -287,13 +261,62 @@ jobs:
         run: npm audit --omit=dev --audit-level=high || true
 
   # ─── Playwright E2E ────────────────────────────────────────────────────────
-  # Only runs on master push (where Railway deploys from) and manual dispatch.
-  # Blocks on a deploy-readiness gate that proves the DEPLOYED WEB build is the
-  # commit these specs were checked out at — see the step's own comment for what
-  # it does and does not prove. (Until 2026-08-29 the gate polled the API's
-  # /health and nothing else, which answers 200 from the previous deploy: it
-  # passed in one second on run 33263396288 and the suite then ran against a web
-  # build that did not match the checkout.)
+  # Runs when RAILWAY REPORTS A SUCCESSFUL DEPLOY — plus repository_dispatch and
+  # manual dispatch. NOT on the master push; see the `on:` block for the revert.
+  #
+  # This job is POST-deploy verification, not a merge gate: production is already
+  # serving the commit by the time the suite starts.
+  #
+  # ═══ WHY THE TRIGGER MOVED (option 1 of the cost list, taken 2026-08-30) ═════
+  # It was the most expensive thing in this file and it got MORE expensive when
+  # the correctness jobs stopped gating it — measured 9 billed min/run while
+  # `needs: [lint, type-check, test]` held it back ~5 min (by which time Railway
+  # had finished building), and PROJECTED ~13 once it started immediately and
+  # waited out the deploy on its own runner. Roughly 320s of every run was a
+  # billed runner asleep in a curl loop.
+  #
+  # The four options that were priced against that:
+  #   1. TAKEN — start from the deploy signal instead of the push. Gives up
+  #      nothing: the same suite, the same gate, the same commit. ~8 billed min.
+  #   2. Raise playwright.config.ts's `workers: process.env.CI ? 1 : 2`. Big win,
+  #      real risk: the suite shares one e2e-routeflow tenant. NOT taken.
+  #   3. Run only when apps/web or packages changed (~56% of merges). Gives up
+  #      detection of API regressions that surface through the UI. NOT taken.
+  #   4. Drop `synchronize` from the PR trigger — a PR's final state may then
+  #      never see CI. NOT taken.
+  #
+  # The design assumed option 1 meant wiring a Railway webhook to GitHub's
+  # `repository_dispatch` API. It does not have to: GitHub's dispatches endpoint
+  # authenticates by header and a plain Railway webhook cannot send one, so that
+  # route needs a PAT and a proxy. Railway's GitHub App is ALREADY posting
+  # deployment statuses to this repo — verified on every master commit back
+  # through 2026-08-28 — so `deployment_status` gets the same signal with no
+  # secret, no proxy and no dashboard change. `repository_dispatch` stays declared
+  # as the fallback.
+  #
+  # OWNER RUNBOOK — only if the GitHub App path ever dies (E2E silently stops
+  # appearing on master commits). One-time Railway setup:
+  #   1. Create a fine-grained PAT scoped to najathakram/routeflow with the
+  #      Contents:read + Metadata:read + "Repository dispatch"(write) permissions.
+  #   2. Railway → project → Settings → Webhooks cannot set an Authorization
+  #      header, so the PAT cannot be used directly. Point the webhook at any
+  #      relay you control that re-POSTs to
+  #      https://api.github.com/repos/najathakram/routeflow/dispatches
+  #      with `Authorization: Bearer <PAT>`, `Accept: application/vnd.github+json`
+  #      and body {"event_type":"railway-deploy"}.
+  #   3. Nothing in this repo changes — the trigger is already declared above.
+  # DO NOT store that PAT in the repo or in Actions secrets; this workflow never
+  # reads one. The relay is the only thing that needs it.
+  #
+  # Measured step medians the ~8 min is built from: install 76s, browsers 24s,
+  # playwright 325s. The readiness gate stays, but the deploy it waits for has
+  # already reported success, so it exits on its first attempt instead of ~32.
+  #
+  # It no longer `needs:` the correctness jobs, because they no longer run on the
+  # master push at all (see the verify job). Nothing is lost: `needs` only ever
+  # deferred this job, and the deploy-readiness gate below already refuses to run
+  # against a deployment that is not this commit.
+  #
   # Secrets needed: SMOKE_BASE_URL (API), PLAYWRIGHT_BASE_URL (web), PLAYWRIGHT_TENANT_SLUG
   # Optional: E2E_SEED_DATABASE_URL — Postgres URL for the target deployment's DB.
   #   When set, global.setup re-seeds the `e2e-routeflow` tenant every run (and a
@@ -303,29 +326,118 @@ jobs:
   e2e:
     name: E2E (Playwright)
     runs-on: ubuntu-latest
-    # 45, not 25: the readiness gate below now actually waits for the Railway web
-    # deploy (up to 15 min) instead of returning in a second, so the suite needs
-    # its own budget on top of that.
+    # 45, not 25: the readiness gate below still owns a 15-minute budget for the
+    # case where Railway reports success before the web service is actually
+    # serving, so the suite needs its own budget on top of that.
     timeout-minutes: 45
-    needs: [lint, type-check, test]
     if: >
-      (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+      (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success') ||
+      github.event_name == 'repository_dispatch' ||
       github.event_name == 'workflow_dispatch'
+    # Keyed on the COMMIT, deliberately not on a constant.
+    #
+    # A constant group with cancel-in-progress looks right ("a newer deploy
+    # supersedes an in-flight check" — post-deploy.yml says exactly that) and is
+    # wrong here, because of the Railway behaviour documented on the freshness
+    # guard below: when deployment N succeeds, Railway ALSO re-posts `success`
+    # onto deployment N-1, about 4 seconds later (measured: 19:49:41 then
+    # 19:49:45). Under a constant group that STALE event would cancel the run for
+    # the commit that actually shipped, and then skip itself — E2E would silently
+    # never run. Per-SHA grouping lets the stale run start and bail out on its own.
+    concurrency:
+      group: ci-e2e-${{ github.event.deployment.sha || github.sha }}
+      cancel-in-progress: true
     steps:
+      # ─── Freshness guard ─────────────────────────────────────────────────────
+      # Railway posts more `success` statuses than there are deploys. Measured
+      # over the 12 most recent deployments (2026-08-28..29): 18 `success` events
+      # for 12 deploys, because a new deployment going live re-marks the previous
+      # one — and sometimes the one before that — as succeeded. Those extra events
+      # carry the OLD commit as `deployment.sha`.
+      #
+      # Acting on one would check out a superseded commit, find production
+      # correctly serving a NEWER one, and — since the newer commit's web files
+      # legitimately differ — sit in the readiness gate for its full 15 minutes
+      # and then fail. That is a false red AND ~17 billed minutes, per deploy.
+      #
+      # So: bail out before the checkout. `gh` and GITHUB_TOKEN are already on the
+      # runner, this costs ~2s of a 1-minute minimum billing increment, and it
+      # cannot be expressed in the `if:` above — nothing in the event payload says
+      # whether the deployment is still current.
+      #
+      # It never fails the job. A skipped stale run reporting green is correct:
+      # the commit it describes has already been replaced in production.
+      - name: Skip superseded deployments
+        id: freshness
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          DEPLOY_SHA: ${{ github.event.deployment.sha }}
+        run: |
+          set -uo pipefail
+
+          if [ "$EVENT_NAME" != "deployment_status" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "$EVENT_NAME run — the freshness guard only applies to deployment_status."
+            exit 0
+          fi
+
+          # Compare against the newest DEPLOYMENT, deliberately not the branch
+          # tip: commits outside Railway's watchPatterns (docs/, root files)
+          # produce NO deployment at all, so tip-comparison would make the real
+          # deploy's success look stale whenever such a commit lands inside the
+          # deploy window — and E2E would silently never run for either commit.
+          # "Is this deployment still the newest one" is the question; the
+          # deployments API answers exactly that.
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/deployments?per_page=1" --jq '.[0].sha' 2>/dev/null || true)
+          if [ -z "$latest" ]; then
+            echo "::warning::Could not read the newest deployment — proceeding rather than skipping, so a GitHub API blip cannot silently cancel E2E coverage."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$DEPLOY_SHA" = "$latest" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Deployment $DEPLOY_SHA is still the newest deployment — running the suite."
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping — this success is for $DEPLOY_SHA but the newest deployment is $latest. Railway re-posts success on the previous deployment when a new one goes live; the newer deployment has its own run."
+          fi
+
       - uses: actions/checkout@v7
+        if: steps.freshness.outputs.run == 'true'
         with:
+          # The DEPLOYED commit, which is what every spec below asserts against.
+          # On deployment_status that is the deployment's sha; the fallback covers
+          # repository_dispatch and workflow_dispatch, where github.sha is the ref
+          # that was dispatched.
+          ref: ${{ github.event.deployment.sha || github.sha }}
           # Full history: the readiness gate diffs the commit the deployed web
           # app reports against this one, and that commit is an ancestor the
           # default depth-1 clone does not contain.
           fetch-depth: 0
 
       - uses: actions/setup-node@v7
+        if: steps.freshness.outputs.run == 'true'
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
       - name: Install dependencies
+        if: steps.freshness.outputs.run == 'true'
         run: npm ci --engine-strict=false
+
+      # Deliberately BEFORE the readiness gate. Both this and the install above
+      # are work that has to happen regardless, and doing them first means their
+      # ~100s runs down the same clock the gate would otherwise spend asleep
+      # waiting for Railway. A billed runner should poll only once it has nothing
+      # useful left to do. Still true now that the gate normally exits on its
+      # first attempt: it is exactly the ordering that keeps the residual wait at
+      # zero rather than merely small.
+      - name: Install Playwright browsers
+        if: steps.freshness.outputs.run == 'true'
+        working-directory: apps/web
+        run: npx playwright install chromium --with-deps
 
       # ─── Deploy-readiness gate ───────────────────────────────────────────────
       # Every spec below runs against the DEPLOYED web app, so the gate has to
@@ -354,14 +466,27 @@ jobs:
       # detected here and a spec depending on new API behaviour can still race.
       # Closing that gap means adding the same field to the API health payload.
       - name: Wait for the deployed app to match this commit
+        if: steps.freshness.outputs.run == 'true'
         env:
           API_BASE: ${{ secrets.SMOKE_BASE_URL || 'https://routeflowapi-production.up.railway.app' }}
           WEB_BASE: ${{ secrets.PLAYWRIGHT_BASE_URL || 'https://routeflowweb-production.up.railway.app' }}
-          EXPECTED_SHA: ${{ github.sha }}
-          # The SHA match is only meaningful on master — see the guard below.
-          REQUIRE_SHA: ${{ github.ref == 'refs/heads/master' }}
-          # 15 min. A cold web image (npm ci + next build in Docker) runs ~5-9
-          # min, and on a packages/** push the web service queues behind the api.
+          # Same expression as the checkout `ref:` above — the gate must assert on
+          # the commit that was actually checked out, or the `git diff` below
+          # compares the wrong trees.
+          EXPECTED_SHA: ${{ github.event.deployment.sha || github.sha }}
+          # Stated as an allow-list of the events whose SHA is genuinely a commit
+          # Railway deploys, rather than as `github.ref == 'refs/heads/master'`:
+          # on deployment_status `github.ref` is empty or a bare SHA, so the old
+          # form would have silently downgraded EVERY deploy-triggered run to the
+          # reachability-only path — losing the whole point of the gate while
+          # still reporting green. Only a workflow_dispatch off master is exempt.
+          REQUIRE_SHA: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/master' }}
+          # 15 min. Railway's `success` is a project-level signal and has been
+          # observed ~106s after the deploy starts, which is faster than a cold web
+          # image (npm ci + next build in Docker, ~5-9 min) can possibly be — so
+          # "Railway says success" does not prove the WEB service is serving yet.
+          # Normally this gate now exits on attempt 1; this budget is what covers
+          # the case where it does not.
           WAIT_SECONDS: "900"
         run: |
           set -uo pipefail
@@ -496,11 +621,8 @@ jobs:
           echo "  the reachability-only path far above and never gets here.)"
           exit 1
 
-      - name: Install Playwright browsers
-        working-directory: apps/web
-        run: npx playwright install chromium --with-deps
-
       - name: Run Playwright tests
+        if: steps.freshness.outputs.run == 'true'
         working-directory: apps/web
         run: npx playwright test
         env:
@@ -514,7 +636,9 @@ jobs:
           CI: "true"
 
       - name: Upload Playwright report
-        if: failure()
+        # `failure()` alone would be true for a stale-deployment run too, and
+        # there is no report to upload there.
+        if: failure() && steps.freshness.outputs.run == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report-ci-${{ github.run_number }}

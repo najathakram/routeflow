@@ -1,13 +1,41 @@
 # Last local gate before push.
 #
-# GitHub Actions does not run on this repo while it is private and the account's
-# Actions billing is blocked (jobs fail in ~10s with 0 steps). So this hook — not
-# CI — is the authoritative gate, and it runs the FULL verify suite rather than
-# types alone. Turbo caches every task, so a re-push with no source changes
-# finishes in seconds; only genuinely changed workspaces are re-checked.
+# WHY THIS IS THE EXPENSIVE GATE AND CI IS THE CHEAP ONE (2026-08-30):
+# Actions minutes are unlimited on PUBLIC repos and metered on PRIVATE ones
+# (2,000/mo on Free, 3,000 on Pro). This repo used to flip public for a few
+# minutes per merge purely to make CI free. Retiring that flip means every CI
+# minute is now billed, so ci.yml was cut to a SINGLE consolidated job that runs
+# this exact same `npm run verify` — CI confirms on Linux what this hook already
+# proved locally, and nothing more. Every check that fails here is a check that
+# never has to burn a paid runner.
+#
+# That inverts the old note in this file ("GitHub Actions does not run on this
+# repo"): CI does run now, and it is deliberately thin. This hook is where the
+# work happens.
+#
+# COST DISCIPLINE — a gate that takes minutes gets bypassed, and a bypassed gate
+# enforces nothing. MEASURED warm on this box, 3 interleaved rounds on an idle
+# machine: 39.4s median before, 30.0s median now. `npm run verify` invokes
+# node/turbo DIRECTLY instead of nesting `npm run` calls, because each `npm run`
+# costs ~7-9s of pure npm startup here (`npm run` with no args, which only lists
+# scripts, takes 7-9s; `node -e ""` takes 0.7s) and the old chain paid it three
+# times over.
+#
+# That gap widens exactly when it hurts. Under host saturation the same npm
+# startup measured ~27s and the old chain took 94.5s — so the shape that is
+# merely tidier on an idle box is what keeps the gate usable on a busy one.
+# If this hook ever creeps past ~2 minutes, fix the gate; do not loosen it.
+#
+# COLD runs are a different animal: turbo's globalDependencies (correctly)
+# include package-lock.json and every manifest, so ANY dependency change busts
+# all 28 task caches and the next verify is a full cold build — measured 15m14s
+# here, 12m15s by the session that landed globalDependencies. That is by design:
+# a dep bump is exactly when you want everything re-checked. Do not "fix" a slow
+# post-dep-bump run by narrowing globalDependencies; that is the false-green
+# mechanism #495 shipped and 6c8f1401 closed.
 #
 # Emergency escape hatch:  SKIP_VERIFY=1 git push ...
-# (Nothing downstream will catch what you skip — CI is not a safety net here.)
+# It is loud, and it deliberately does NOT record a verification marker.
 
 # Cheapest check first: refuse a trunk push before spending any time verifying.
 branch="$(git rev-parse --abbrev-ref HEAD)"
@@ -17,7 +45,37 @@ if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
 fi
 
 if [ "$SKIP_VERIFY" = "1" ]; then
-  echo "⚠ SKIP_VERIFY=1 — skipping 'npm run verify'. CI will NOT catch this."
-else
-  npm run verify
+  echo "⚠ SKIP_VERIFY=1 — skipping 'npm run verify'."
+  echo "⚠ CI runs ONE consolidated job on the PR; it will re-check this on Linux,"
+  echo "⚠ and every failure there costs paid Actions minutes. Push knowingly."
+  exit 0
+fi
+
+# ── Verified-tree fast path ───────────────────────────────────────────────────
+# Re-pushing a tree that already passed (amend of a message, a rebase that
+# changed no content, a force-push after a no-op) should not re-run the gate.
+# The marker keys on the COMMIT TREE hash, not the commit sha, so it survives
+# rebases and reword-only amends — the content is what verify actually checked.
+#
+# It is recorded ONLY when the working tree is clean. `npm run verify` inspects
+# files on disk, so with uncommitted edits present a pass describes the working
+# tree, not the commit being pushed — that is not something to cache.
+#
+# .git/ is deliberate: this is a local, per-clone fact. It is NOT pushed and CI
+# does NOT trust it. A tree that passes on Windows is not proof it passes on
+# ubuntu-latest (case-sensitive paths, separators, platform-gated deps), which
+# is precisely the residual risk CI's single Linux job exists to cover.
+marker="$(git rev-parse --git-dir)/rf-verified"
+tree="$(git rev-parse HEAD^{tree} 2>/dev/null || echo none)"
+dirty="$(git status --porcelain 2>/dev/null | head -1)"
+
+if [ -z "$dirty" ] && [ -f "$marker" ] && [ "$(cat "$marker" 2>/dev/null)" = "$tree" ]; then
+  echo "✓ tree $tree already passed 'npm run verify' locally — skipping (clean tree, unchanged content)."
+  exit 0
+fi
+
+npm run verify || exit 1
+
+if [ -z "$dirty" ] && [ "$tree" != "none" ]; then
+  printf '%s' "$tree" > "$marker"
 fi

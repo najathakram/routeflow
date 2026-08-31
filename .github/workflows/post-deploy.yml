@@ -1,35 +1,34 @@
 # ─── Post-Deploy Verification ────────────────────────────────────────────────
-# Triggered by a Railway deploy webhook after a successful production deploy.
-# Also triggerable manually for ad-hoc verification.
+# MANUAL / AD-HOC ONLY. This is the "go and check production right now" button:
+# an authenticated API smoke followed by the full Playwright suite, against any
+# API/web URL pair you give it.
 #
-# Railway deploy hook setup (one-time, in Railway dashboard):
-#   1. Generate a GitHub Personal Access Token (classic) with `repo` scope.
-#   2. Add it as a Railway env var: GITHUB_DISPATCH_TOKEN
-#   3. In Railway → Service → Settings → Deploy Hooks, add a hook:
-#      Name: "Run post-deploy tests"
-#      URL:  https://api.github.com/repos/YOUR_ORG/routeflow/dispatches
-#      Method: POST
-#      Headers:
-#        Authorization: Bearer ${{ GITHUB_DISPATCH_TOKEN }}
-#        Accept: application/vnd.github+json
-#        X-GitHub-Api-Version: 2022-11-28
-#      Body: {"event_type":"railway-deploy","client_payload":{"api_url":"${{RAILWAY_PUBLIC_DOMAIN}}"}}
+# ⚠️ IT IS NOT THE AUTOMATIC POST-DEPLOY CHECK ANY MORE (2026-08-30).
+# It used to carry `repository_dispatch: [railway-deploy]`, which never fired in
+# 30 days. ci.yml's `e2e` job now runs on Railway's `deployment_status` and owns
+# `railway-deploy` as its declared fallback. That trigger was REMOVED here rather
+# than left in place, because two workflows accepting the same event would have
+# meant two Playwright suites — ~11 billed minutes of duplicate — the first time
+# anyone actually wired the webhook. Do not add it back without removing it from
+# ci.yml first.
 #
-# Alternatively, trigger manually from the Actions tab → "Post-Deploy Verification"
-# → "Run workflow" with optional URL overrides.
+# ⚠️ MINUTES. This workflow is TWO jobs with TWO `npm ci`s (~11 billed min a run)
+# against a 2,000 min/mo private allowance. That is fine for something a human
+# triggers on purpose; it is why it is not on a schedule or a webhook. Read the
+# budget block at the top of ci.yml before giving it an automatic trigger.
 #
-# Self-hosted runner (recommended for private repos with $0 budget):
-#   Deploy a GitHub Actions runner on Railway as a separate service:
-#     image: myoung34/github-runner:latest
-#     env: RUNNER_SCOPE=repo, REPO_URL=..., ACCESS_TOKEN=..., RUNNER_NAME=railway-runner
-#   Then change `runs-on: ubuntu-latest` to `runs-on: self-hosted` below.
+# Run it from the Actions tab → "Post-Deploy Verification" → "Run workflow", with
+# optional URL overrides (defaults come from the same secrets ci.yml uses).
+#
+# Self-hosted runners have been considered and REJECTED for this repo — see the
+# note in the CI-minutes analysis: a self-hosted runner on a box holding Railway
+# credentials and live sessions is not a safe trade for minutes, and it would not
+# help here anyway.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Post-Deploy Verification
 
 on:
-  repository_dispatch:
-    types: [railway-deploy]
   workflow_dispatch:
     inputs:
       api_url:
@@ -47,22 +46,23 @@ on:
 
 concurrency:
   group: post-deploy
-  cancel-in-progress: true # a newer deploy supersedes an in-flight check
+  cancel-in-progress: true # a newer manual run supersedes an in-flight check
 
 env:
   NODE_VERSION: "20"
-  # Prefer manual dispatch inputs, then repository_dispatch payload, then secrets, then defaults
+  # Dispatch inputs, then the secrets ci.yml uses, then the public defaults. The
+  # `github.event.client_payload.*` fallbacks that used to sit in the middle were
+  # dropped with the repository_dispatch trigger — nothing can populate them now,
+  # and leaving them in reads as if a webhook still feeds this workflow.
   API_URL: >-
     ${{
       inputs.api_url ||
-      github.event.client_payload.api_url ||
       secrets.SMOKE_BASE_URL ||
       'https://routeflowapi-production.up.railway.app'
     }}
   WEB_URL: >-
     ${{
       inputs.web_url ||
-      github.event.client_payload.web_url ||
       secrets.PLAYWRIGHT_BASE_URL ||
       'https://routeflowweb-production.up.railway.app'
     }}

@@ -13,22 +13,35 @@
 #   PLAYWRIGHT_BASE_URL   — Web URL  (e.g. https://routeflowweb-production.up.railway.app)
 #   PLAYWRIGHT_TENANT_SLUG — tenant slug for test logins (e.g. e2e-routeflow)
 #
-# $0 Actions budget note: scheduled workflows only run on PUBLIC repos on the
-# free plan. Toggle the repo public, run, then make it private again — or add
-# a self-hosted runner (see the post-deploy.yml comment for the Railway runner
-# setup instructions).
+# ⚠️ THE SCHEDULE IS DISABLED — ON PURPOSE (2026-08-30). Dispatch only.
 #
-# NOTE: this workflow is dormant while the repo is private (the schedule never
-# fires). The recurring gates in practice are the post-deploy webhook and
-# `npm run regression` (verify + post-deploy-check + feature-smoke) run locally
-# before every push — see docs/testing/verification-matrix.md.
+# This workflow has not actually executed since 2026-08-20: while Actions billing
+# was blocked, every job failed to start in ~2s with 0 steps ("recent account
+# payments have failed…"). That produced a nightly RED every night that meant
+# nothing, and it is why a nightly conclusion must never be read without first
+# confirming `steps > 0`.
+#
+# The reason the cron is now commented out rather than left to recover on its own
+# is a budget one. A private repo draws on a metered allowance (GitHub Free:
+# 2,000 min/mo), and this workflow costs roughly 11 billed minutes a night —
+# api-smoke ~2 plus a full Playwright suite ~9 — so the moment billing is healthy
+# it would quietly resume and take ~330 min/month, a sixth of the entire Free
+# allowance, for a run nobody is currently reading. Turning it back on is a
+# deliberate decision with a price tag, not a default.
+#
+# What actually covers this ground today: ci.yml's e2e job runs the same
+# Playwright suite against the deployment after every master push, and
+# `npm run regression` (verify + post-deploy-check + feature-smoke) runs locally.
+# See docs/testing/verification-matrix.md.
+#
+# To re-enable: uncomment the `schedule:` block below and budget the ~330 min/mo.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Nightly Regression
 
 on:
-  schedule:
-    - cron: "0 2 * * *" # 02:00 UTC every day
+  # schedule:
+  #   - cron: "0 2 * * *" # 02:00 UTC every day — disabled, see the header note
   workflow_dispatch:
     inputs:
       api_url:
