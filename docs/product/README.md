@@ -17,7 +17,7 @@ it, billing it, collecting it, filing it — and answer four questions in the sa
 4. How would we know each of those actually works?
 
 Across the fifteen domains the model currently names **697 capabilities** (207 P0, 305 P1,
-185 P2) and **230 gaps**.
+185 P2) and **242 gaps**.
 
 **Status labels are a code-grounded audit at a point in time.** Every SHIPPED, PARTIAL, BROKEN
 or MISSING verdict in these files was taken by reading the repository at commit **`f932289a`**
@@ -163,12 +163,21 @@ by `scripts/lib/test-tenants.cjs` — it simply is not applied to HTTP routes.
 
 ### 4. Audit trail and attribution
 
-Six domains assume an audit trail and rate it anywhere from SHIPPED to MISSING. One fact settles
-all six: `AuditLog` and `AuditInterceptor` exist, and the interceptor is wired only into
-`apps/api/src/platform-admin/`. Tenant staff actions are entirely unattributed. Configuration is
-worse than records: `SystemConfig` carries `updatedAt`, no actor and no history, so "who changed
-the tax rate, when, and what was it before" is unanswerable — and that question arrives after a
-customer disputes an invoice.
+Six domains assume an audit trail and rate it anywhere from SHIPPED to MISSING. `AuditInterceptor`
+is registered globally (`@Global()` `AuditModule`, wired as an `APP_INTERCEPTOR` in `app.module.ts`)
+and fires on every mutation (POST/PUT/PATCH/DELETE) app-wide, so tenant staff actions are
+attributed too — every write logs `tenantId`, `userId`, `action`, `entityType`, `entityId` and
+`ip` to `AuditLog`. `apps/api/src/platform-admin/` is not the interceptor's only consumer; it
+layers a second, purpose-built row (`recordAdminAction`) on top, keyed to the *target* tenant with
+a real action code — needed because a super-admin's JWT carries no `tenantId`, so the generic
+interceptor row alone would log `tenantId=null` and never surface in a per-tenant view. The real
+gaps are elsewhere: `apps/api/src/audit/` has no controller at all, so nothing — not even a
+tenant admin — can read its own captured rows back except through platform-admin's own
+`SUPER_ADMIN`-only `audit-logs` route; and `AuditLog` has no before/after columns, only a
+free-form `meta: Json?`, so no old/new value diff exists anywhere. Configuration is worse than
+records: `SystemConfig` carries `updatedAt`, no actor and no history, so "who changed the tax
+rate, when, and what was it before" is unanswerable — and that question arrives after a customer
+disputes an invoice.
 
 - [ ] The audited action set is defined once (money writes, deletions, price and tier changes,
       entitlement and role changes, licence overrides, impersonation start/stop) and every
@@ -493,7 +502,7 @@ user guide. What follows is what they found the model does not cover.
 | **Notifications, Messaging & Realtime**                                     | Four API modules, eight Prisma models and three user-visible surfaces implement "tell someone something happened", scattered as one-liners across five domains. Nobody owns the delivery guarantee, consent, the send log, or the fact that the transport is a stub. Consent and quiet hours are legal obligations. | `apps/api/src/{messaging,messages,notifications}/`, `gateways/routeflow.gateway.ts`; models Message, MessageThread, MessageTemplate, NotificationRule, MessageOptOut, MessagingSettings, InboundTriage, DeviceToken.                                                                                    |
 | **Delivery Transparency & Outbound Customer Communications**                | The rules engine, templates, consent flags and quiet hours are built and the message goes nowhere; meanwhile the buyer who wants to know when the van arrives has no link they can open without logging in. The most demo-able delivery feature in the category, currently domain-less.                             | `messaging/providers/stub.provider.ts` is the only `MessageProvider`; no public or tokenized tracking route exists.                                                                                                                                                                                     |
 | **The Daily Operating Picture (dashboard home / today view)**               | The first screen every operator opens belongs to no domain, and composition surfaces have their own failure modes: a KPI that disagrees with the list it links to, a card empty because an addon is off rather than because there is no work.                                                                       | `apps/web/app/(dashboard)/dashboard/page.tsx` and `apps/mobile/app/(operator)/(tabs)/home.tsx` (~30 KB of composed KPI and queue logic). Guide Chapter 02.                                                                                                                                              |
-| **Platform Administration & Vendor Back-Office**                            | One line in the billing domain covers a whole application with its own auth, audit log, buyer identity arbitration and vendor invoice ledger. Impersonation and cross-tenant buyer merges are the highest-blast-radius operations in the product with no tiering, criteria or owner.                                | `apps/web/app/(platform-admin)/admin/*`; `apps/api/src/platform-admin/` is the only consumer of `AuditInterceptor`; models AuditLog, PlatformConfig, BuyerMergeRequest, RfInvoice.                                                                                                                      |
+| **Platform Administration & Vendor Back-Office**                            | One line in the billing domain covers a whole application with its own auth, audit log, buyer identity arbitration and vendor invoice ledger. Impersonation and cross-tenant buyer merges are the highest-blast-radius operations in the product with no tiering, criteria or owner.                                | `apps/web/app/(platform-admin)/admin/*`; `apps/api/src/platform-admin/` layers a purpose-built `recordAdminAction` row atop the globally-registered `AuditInterceptor`; models AuditLog, PlatformConfig, BuyerMergeRequest, RfInvoice.                                                                                                                      |
 | **Tenant Health & Vendor Support Operations**                               | Nothing answers which tenant is stuck right now, what gate blocked whom, which import half-landed, or what support changed on their behalf. For a vendor selling fifteen domains to non-technical distributors, support load is the real cost of goods and it is invisible.                                         | `AuditLog` exists with no health/gate-denial/support surface built on it; `PlanFlagGuard` throws a structured `PLAN_GATE` 403 that nothing records.                                                                                                                                                     |
 | **Fleet, Vehicles & Cost-to-Serve**                                         | RouteFlow plans stops with no concept of the thing that carries them: will it fit the small van, what did the run cost, which vehicle is off the road, is the driver's licence valid. Cost-to-serve is also the argument for raising a customer's minimum order.                                                    | No Vehicle/Asset/Maintenance/Odometer model; Product has no weight/volume/dimensions. Vehicle-shaped capabilities are scattered as orphan bullets across Routes and Drivers.                                                                                                                            |
 | **Integration Platform (public API, webhooks, accounting connectors, EDI)** | Integration appears only as the tail of onboarding, framed as one-way migration. It is a permanent bidirectional obligation — the bookkeeper's package every month, a chain customer's EDI every week, the tenant's own scripts.                                                                                    | No ApiKey/Webhook/WebhookDelivery/OAuthConnection model; only `ImportExternalRef` plus loose Zoho `SystemConfig` keys; `flag.api_sso` is declared and documented as RESERVED.                                                                                                                           |
@@ -548,7 +557,7 @@ fifteen files.
 | Compliance       | Manufacturer-format (MSA-style) reporting alongside the state templates                    | MUST | The template registry covers state jurisdictions only, so for the sharpest segment the story stops one filing short.                               |
 | Compliance       | Purchase-side excise capture                                                               | MUST | The levy is computed at sale time only, so the two sides of the regulated ledger can never be tied out.                                            |
 | Tenancy          | Contain the blast radius of `DELETE /api/v1/settings/financial-data`                       | MUST | Ten unscoped `deleteMany({})` calls behind a plain operator role, registered at two paths, reaching every tenant's finances.                       |
-| Tenancy          | A tenant-side audit trail                                                                  | MUST | `AuditInterceptor` is wired only into platform-admin; nothing a tenant's own staff does is recorded anywhere.                                      |
+| Tenancy          | A tenant-side audit trail                                                                  | MUST | `AuditLog` rows are captured for every tenant mutation, but `apps/api/src/audit/` has no controller — only platform-admin's `SUPER_ADMIN`-only route can read them back, and rows carry no before/after values. |
 | Tenancy          | Two-factor authentication for admin and finance accounts                                   | MUST | No TOTP implementation exists; one compromised operator password reaches every money mutation that role allows.                                    |
 | Tenancy          | Delegable financial permissions inside the operator role                                   | MUST | Five fixed roles cannot express "warehouse clerk who cannot see margin" — the most common real-world variation request.                            |
 | Tenancy          | Guided first-week setup that knows what is still unconfigured                              | NICE | A trial tenant lands on an empty product with fifteen domains; nothing names the six things that must be true before the first invoice is correct. |
