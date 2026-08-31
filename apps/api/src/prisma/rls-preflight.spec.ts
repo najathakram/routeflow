@@ -115,7 +115,7 @@ describe("REG-G8c RLS arming pre-flight (R10 / T-G8c)", () => {
         "apps",
         "api",
         "prisma",
-        "migrations",
+        "deferred-rls",
         "20260909000000_rls",
         "migration.sql",
       ),
