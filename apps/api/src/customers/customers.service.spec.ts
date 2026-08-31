@@ -1237,7 +1237,7 @@ describe("CustomersService", () => {
   // OrderCreditNote.creditNoteId has no onDelete (Restrict), so deleting a
   // credit note that is still linked to an order aborts the whole transaction.
 
-  describe("deleteAllCustomers — order↔credit-note links", () => {
+  describe("REG-B189 deleteAllCustomers — order↔credit-note links", () => {
     it("deletes orderCreditNote rows for the customers' credit notes before the notes", async () => {
       prisma.customer.findMany.mockResolvedValue([
         { id: "cust-1", userId: "user-1" },
@@ -1276,7 +1276,7 @@ describe("CustomersService", () => {
     });
   });
 
-  describe("deleteCustomer (hard delete) — order↔credit-note links", () => {
+  describe("REG-B189 deleteCustomer (hard delete) — order↔credit-note links", () => {
     it("deletes orderCreditNote rows for the customer's credit notes before the notes", async () => {
       prisma.customer.findUnique.mockResolvedValue({
         ...MOCK_CUSTOMER,
@@ -1297,7 +1297,7 @@ describe("CustomersService", () => {
     });
   });
 
-  describe("deleteImportedCustomers — order↔credit-note links", () => {
+  describe("REG-B189 deleteImportedCustomers — order↔credit-note links", () => {
     it("deletes orderCreditNote rows for the imported customers' credit notes before the notes", async () => {
       prisma.customer.findMany.mockResolvedValue([
         { id: "cust-1", userId: "user-1", customerLink: null },
