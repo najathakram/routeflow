@@ -10,7 +10,7 @@
     "test": "turbo run test",
     "test:e2e": "turbo run test:e2e",
     "check-types": "turbo run check-types",
-    "verify": "node scripts/validate-lock-edges.mjs && node .claude/skills/bug-hunt/scripts/scan-signatures.mjs && node scripts/campaign-check.mjs && turbo run check-types lint test",
+    "verify": "node scripts/validate-lock-edges.mjs && node .claude/skills/bug-hunt/scripts/scan-signatures.mjs && node scripts/campaign-check.mjs && turbo run check-types lint test --concurrency=2",
     "validate-lock": "node scripts/validate-lock-edges.mjs",
     "smoke": "node scripts/smoke.mjs",
     "post-deploy-check": "node scripts/post-deploy-check.mjs",
