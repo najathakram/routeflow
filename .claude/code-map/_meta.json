@@ -1,7 +1,7 @@
 {
-  "mappedSha": "7e5c2d98",
-  "generatedAt": "2026-08-31T01:55:00.000Z",
+  "mappedSha": "91094f01",
+  "generatedAt": "2026-08-31T02:05:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 900,
-  "notes": "2026-08-31 - (branch `chore/money-rederive-annotations`, rebased onto master `7e5c2d98` post-F00, no schema change) - #504: replaced the single scan-ignore.json baseline entry that silently suppressed BOTH orders.service.ts money-rederive hits (~L1002/~L1270, custom `unlistedNewItems` appends with `productId: null`) with inline `// scan-ok: money-rederive - ...` comments stating the actual reasoning (never boxed, no unitsPerBox proration to lose; qty is Decimal(10,3) - the order-edit path allows fractional; rounded write). Removed that entry from the baseline list so a new naked `qty * unitPrice` elsewhere in that file now fails the scan (verified with a throwaway line, reverted before commit). No functional change; the other two money-rederive baseline entries are untouched. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it - never accumulate history here."
+  "notes": "2026-08-30 - (branch `chore/b126-eslint-selectors`, off master 7213ac29; no schema change) - Landed the two B126 `no-restricted-syntax` ESLint selectors held back from #506 (#503, part of #502): zero-arg `deleteMany()`/`updateMany()` and empty-object `deleteMany({})`/`updateMany({})` are now lint ERRORS in `apps/api/eslint.config.mjs`. The rejected third selector (`where` missing `tenantId`) and the money-math AST selector stay out per #502's design record. `npm run lint` on the real tree is clean, zero new eslint-disable lines - confirms #506 (cc8c7d46) already cleared the ten real hits in `system-config/settings.controller.ts`. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it - never accumulate history here."
 }

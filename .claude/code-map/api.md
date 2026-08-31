@@ -36,6 +36,13 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 
 ## Bootstrap & cross-cutting
 
+- **`eslint.config.mjs` (B126 selectors, 2026-08-30, #503)** — two `no-restricted-syntax`
+  entries ban unscoped bulk writes: `deleteMany()`/`updateMany()` called with zero arguments, and
+  either called with an empty-object argument (`deleteMany({})`) — both messages point at
+  `{ where: { tenantId } }`. Landed as a standalone PR after #506 (`cc8c7d46`) fixed the ten
+  real hits this would have tripped in `system-config/settings.controller.ts`, so it lands with
+  zero eslint-disable lines. A third selector (bare `where` missing `tenantId`) and a money-math
+  AST selector were evaluated and deliberately rejected as noisy — see #502.
 - **`src/main.ts`** — ⚠️ NEVER `app.use(json())` here: it consumes the body before Nest captures `rawBody` and silently breaks EVERY Stripe webhook signature (#400 — the 2mb body limit goes through Nest's parser options). **Sentry (2026-08-26, DSN-optional):** `import "./instrument"` is the FIRST import (`src/instrument.ts` — `Sentry.init` with `enabled: !!process.env.SENTRY_DSN`, inert otherwise); global filters registered as `useGlobalFilters(new SentryExceptionFilter(httpAdapter), new ThrottlerExceptionFilter())` — Nest reverses the array so the specific throttler filter still wins for ThrottlerException; `src/common/sentry-exception.filter.ts` captures ONLY ≥500s with `tenant`/user/path tags then defers to `super.catch`. startup: `assertSecrets()` (JWT required in all envs; **`STORAGE_URL_SIGNING_SECRET` now FATAL in production too — F5-001 fail-closed**; `ENCRYPTION_KEY` still warn-only), `runStartupMigration()`
   (idempotent TenantConfig columns), helmet, trust proxy 2 (Railway CDN), CORS wildcard
   patterns, global `ValidationPipe` (whitelist/forbidNonWhitelisted/transform),
