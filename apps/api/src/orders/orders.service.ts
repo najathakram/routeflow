@@ -998,7 +998,7 @@ export class OrdersService implements OnApplicationBootstrap {
             name: data.name,
             qty: data.qty,
             unitPrice: data.unitPrice,
-            // scan-ok: money-rederive — custom line (productId: null), never boxed, so there's no unitsPerBox proration to lose; per-piece price x integer qty, rounded on write.
+            // scan-ok: money-rederive — custom line (productId: null), never boxed, so there's no unitsPerBox proration to lose; per-piece price x qty (Decimal(10,3) — the order-edit path allows fractional qty), rounded on write.
             subtotal: roundMoney(data.qty * data.unitPrice),
             status: ItemStatus.PENDING,
             priceType: data.priceType,
@@ -1266,7 +1266,7 @@ export class OrdersService implements OnApplicationBootstrap {
             name: data.name,
             qty: data.qty,
             unitPrice: data.unitPrice,
-            // scan-ok: money-rederive — custom line (productId: null), never boxed, so there's no unitsPerBox proration to lose; per-piece price x integer qty, rounded on write.
+            // scan-ok: money-rederive — custom line (productId: null), never boxed, so there's no unitsPerBox proration to lose; per-piece price x qty (Decimal(10,3) — the order-edit path allows fractional qty), rounded on write.
             subtotal: roundMoney(data.qty * data.unitPrice),
             status: ItemStatus.PENDING,
             priceType: data.priceType,
