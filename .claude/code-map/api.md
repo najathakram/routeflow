@@ -407,13 +407,34 @@ homeAddress` (the driver-home origin), and orders inherit `fulfillPath` from the
   - **Delivery-date picker (2026-08-25, sale-integrity phase 2 WP4):** `CreateSaleDto.deliveredOn?: string` (`@IsDateString`) REPLACES `deliveredNow`'s binary in `createSale` when present (`deliveredNow` still honoured alone for older/mobile clients; when both are sent `deliveredOn` wins). A date > end-of-today UTC ⇒ deliver-later: the order stays PENDING with its DRAFT mirror invoice and `requestedDeliveryDate = deliveredOn`. A past/today date ⇒ delivered: it runs through `parseOrderDate` (so backdating keeps its staff-only gate and 2-year floor) and becomes the order's `deliveredAt` — overriding `orderDate`'s fallback — then the invoice is generated and issued as usual. Specs: `orders.service.spec` `createSale` WP4 block (past/future/today, non-staff backdate 403, deliveredOn-absent path unchanged).
 
   - ⏳ **F03 IN FLIGHT ON THIS BRANCH — UNVERIFIED, DO NOT TRUST AS MAPPED BEHAVIOUR.** Five code files
-    exist here that are NOT on master and have NOT passed a red gate, review lens or mutation probe:
+    exist here that are NOT on master and have NOT passed a red gate, review lens or mutation probe
+    (six counting the mobile mirror below):
     `invoices/payment-predicates.ts` (NEW — `CONFIRMED_PAYMENT` = `{status:"PAID"}` + `sumConfirmed()`;
     ⚠️ narrows SUMS only — listing reads keep `not: VOID` so DRAFT rows stay visible for R2's badge),
     `invoices/invoices.service.ts` (routed through that predicate + the F04 oracle cap —
     `Math.min(billedThrough(...), basisQty)` on BOTH telescope points), `invoices/invoice-pdf-item.ts`,
-    the web invoice-detail draft badge, and `scripts/repair-f03.mjs` (a SIGNATURE STUB only — the red
-    gate needs it to link; it has no behaviour and must never be run). ⚠️ **The oracle cap has NO
+    the web invoice-detail draft badge + its mobile mirror
+    (`apps/mobile/app/(operator)/(tabs)/invoices/[id].tsx` — a `Draft — unconfirmed` `Pill` plus a
+    "Not counted toward the balance due" meta line on the payment row. Mobile is the primary operator
+    surface and its header reads `balanceDue`/`paidAmount` straight from the server, so without the badge
+    the screen listed `+$200.00` beside an unmoved balance and explained nothing; web puts that
+    explanation in a `title` tooltip, which a phone has no hover for), and `scripts/repair-f03.mjs` (R10's repair lane, now IMPLEMENTED
+    against `apps/api/src/scripts/repair-f03.spec.ts`: `parseFlags`/`assertRepairTarget`/`identifyRepairs`/
+    `applyRepairs` over an injected store + a lazy `pg` binding and CLI. Dry-run default, `--execute` +
+    `--i-have-a-fresh-backup`, per-row compare-and-set that SKIPS drifted rows, JSONL log under
+    `local-assets/`, `--force-nonprod` entry guard. ⚠️ It DETECTS all four damage classes but only
+    AUTO-WRITES `status-drift` and `qty-conservation-drift`; `stale-category-tax` (B57) and
+    `stranded-credit` (B85) are report-only — their repair cascades into invoice totals / the credit
+    wallet / commissions, which live in the services. B81 is reported unrepairable, never modified.
+    ⚠️ Both auto-write sweeps are scoped to the DAMAGE SIGNATURE, never the whole table:
+    `status-drift` only considers invoices that carry a DRAFT `InvoicePayment` (unscoped it demotes
+    import-settled PAID invoices — `import/import.service.ts`'s `existing` branch writes
+    status/dueDate/paidAt with NO payment row, honoured by `isSettled` — and mass-rewrites
+    VIEWED/SENT/OVERDUE rows B74 never touched); `qty-conservation-drift` bails on any order holding a
+    provenance-less invoice line, because `adjustInvoicedQtyForInvoice`'s byProduct fallback bumps
+    `invoicedQty` through lines the `orderItemId` join cannot see, and clamps the written value to
+    `oi.qty` (schema.prisma "Capped at qty")).
+    ⚠️ **The oracle cap has NO
     regression behind it yet** — `T-B50s` was added to the test plan on resume precisely because the fix
     shipped without one. Full entries land at F03's close-out, once the behaviour is proven; mapping them
     now would make this file assert unproven money math.

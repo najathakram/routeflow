@@ -277,10 +277,48 @@ describe("scripts/repair-f03.mjs — F03 repair lane (T-R10 / R10)", () => {
       // mutation this test exists to catch (repair-integrity.mjs's default-read-only stance).
       expect(writes).toEqual([]);
     });
+
+    // Two live-data shapes the sweep must NOT damage. The production SQL scopes both out (see
+    // DETECTION SCOPE in scripts/repair-f03.mjs), but that query is out of this file's reach —
+    // what IS in reach, and what these assertions pin, is the store-agnostic half of each guard,
+    // which is the layer any future store binding also has to pass through.
+    it("never demotes a PAID invoice with no payment rows, and clamps a conserved qty to the order line's qty", () => {
+      const result = runRepairDriver(`
+        const store = freshStore();
+
+        // A CSV-imported invoice: import.service.ts's "existing" branch writes {status, dueDate,
+        // paidAt} and creates NO InvoicePayment at all; findAll/findOne honour that status via
+        // isSettled. A blanket recompute sees 0 confirmed, proposes PAID -> SENT, and re-opens a
+        // settled receivable (also nulling paidAt, which the revenue windows read).
+        store.invoices.push({
+          id: "inv-imported-paid",
+          status: "PAID",
+          total: 100,
+          dueDate: null,
+          payments: [],
+        });
+
+        // An order line re-invoiced and then reduced: the live invoice lines conserve MORE than
+        // the line now carries. invoicedQty is documented "Capped at qty" (schema.prisma) and
+        // adjustInvoicedQtyForInvoice's adjust() clamps to it, so the proposal must be the cap
+        // (10) and never the raw sum (25) — an over-cap write turns every remaining-qty reader's
+        // qty - invoicedQty negative.
+        store.orderItems[0].conservedQty = 25;
+
+        const dry = await identifyRepairs(store);
+        console.log("__RESULT__" + JSON.stringify({ dry, writes: store.writes }));
+      `);
+
+      const byId = Object.fromEntries(result.dry.proposals.map((p: any) => [p.id, p]));
+      expect(byId["inv-imported-paid"]).toBeUndefined();
+      expect(byId["oi-qty-drift"].before).toEqual({ invoicedQty: 20 });
+      expect(byId["oi-qty-drift"].after).toEqual({ invoicedQty: 10 });
+      expect(result.writes).toEqual([]);
+    });
   });
 
   // The REG tokens belong on this describe too: the red gate selects by
-  // `-t "REG-B(11|57|74|81|84|85|102|103)"`, so a guard case without them is invisible to
+  // `-t "REG-B(11|57|74|81|84|85|102|103)|REG-B50s"`, so a guard case without them is invisible to
   // the gate — R10's safety half would sit outside the very filter that proves it red.
   describe("execute guard — REG-B74 REG-B57 REG-B85 REG-B84", () => {
     it("refuses to write without BOTH --execute and --i-have-a-fresh-backup", () => {

@@ -2,6 +2,7 @@ import { BadRequestException, Inject, Injectable, Logger, NotFoundException } fr
 import { BuyerPaymentRequestStatus, InvoiceStatus, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { InvoicesService } from "../invoices/invoices.service";
+import { CONFIRMED_PAYMENT, sumConfirmed } from "../invoices/payment-predicates";
 import { StripeConnectService } from "../stripe-connect/stripe-connect.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -96,12 +97,17 @@ export class PaymentRequestsService {
   private async openInvoices(customerId: string): Promise<AllocationPreviewLine[]> {
     const rows = await this.prisma.forTenant().invoice.findMany({
       where: { customerId, status: { in: OPEN_STATUSES } },
-      include: { payments: { where: { status: { not: "VOID" as any } } } },
+      // F03/R1: CONFIRMED (PAID) rows only. These balances drive the oldest-first
+      // allocation, so an unconfirmed DRAFT payment counted here would zero out an
+      // invoice's balanceDue, drop it from the allocation, and misroute the buyer's
+      // real payment into on-account credit — while every other read (findAll/
+      // findOne/PDF/email) correctly still shows the money owed.
+      include: { payments: { where: CONFIRMED_PAYMENT } },
       orderBy: [{ issueDate: "asc" }, { invoiceNumber: "asc" }],
     });
     return rows
       .map((inv) => {
-        const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+        const paid = sumConfirmed(inv.payments);
         const balanceDue = roundMoney(Number(inv.total) - paid);
         return {
           invoiceId: inv.id,

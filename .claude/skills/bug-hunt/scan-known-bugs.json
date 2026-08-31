@@ -1,16 +1,10 @@
 {
   "draft-payment-not-void": {
-    "fixedBy": "F03 (B11/B97 confirmed-payment sweep — delete this block with that fix)",
+    "fixedBy": "F09 (credit-notes wallet integrity — F03's B11 confirmed-payment sweep fenced credit-notes.service.ts off as F09's lane and left ONLY these sites; delete this block with F09's pass)",
     "sites": [
-      "apps/api/src/bookkeeping/bookkeeping.service.ts::include: { payments: { where: { status: { not: \"VOID\" } } } },",
-      "apps/api/src/bookkeeping/bookkeeping.service.ts::payments: { where: { status: { not: \"VOID\" } } },",
-      "apps/api/src/bookkeeping/bookkeeping.service.ts::payments: { where: { status: { not: \"VOID\" } }, select: { amount: true } },",
-      "apps/api/src/bookkeeping/bookkeeping.service.ts::this.prisma.forTenant().invoicePayment.aggregate({",
-      "apps/api/src/buyer/statement.service.ts::db.invoicePayment.findMany({",
-      "apps/api/src/credit-notes/credit-notes.service.ts::const payments = await db.invoicePayment.findMany({",
-      "apps/api/src/credit-notes/credit-notes.service.ts::const payments = await tx.invoicePayment.findMany({",
       "apps/api/src/credit-notes/credit-notes.service.ts::const pays = await tx.invoicePayment.findMany({",
-      "apps/api/src/customers/customers.service.ts::const payments = await this.prisma.forTenant().invoicePayment.findMany({"
+      "apps/api/src/credit-notes/credit-notes.service.ts::const payments = await tx.invoicePayment.findMany({",
+      "apps/api/src/credit-notes/credit-notes.service.ts::const payments = await db.invoicePayment.findMany({"
     ]
   },
   "import-parsefloat-money": {

@@ -994,7 +994,7 @@ describe("InvoicesService", () => {
           depositPercent: 50,
           dueDate: new Date("2026-10-01"),
           items: [],
-          payments: [{ amount: 20, status: "RECORDED" }],
+          payments: [{ amount: 20, status: "PAID" }],
           ...overrides,
         },
       ]);
@@ -1029,7 +1029,7 @@ describe("InvoicesService", () => {
     });
 
     it("flips PAID (balance floors at 0) when the edited total drops to/below what's already paid", async () => {
-      armDepositReconcile({ payments: [{ amount: 60, status: "RECORDED" }] });
+      armDepositReconcile({ payments: [{ amount: 60, status: "PAID" }] });
 
       await service.reconcileOrderDraftInvoice("o-dep", { basis: "order" });
 
@@ -1041,7 +1041,7 @@ describe("InvoicesService", () => {
       armDepositReconcile({
         payments: [
           { amount: 60, status: "VOID" },
-          { amount: 10, status: "RECORDED" },
+          { amount: 10, status: "PAID" },
         ],
       });
 
@@ -1049,6 +1049,27 @@ describe("InvoicesService", () => {
 
       const data = prisma.invoice.update.mock.calls[0][0].data;
       expect(data.status).toBe(InvoiceStatus.PARTIAL); // 10 paid, not 70
+    });
+
+    // F03 (T-B11s / R1 / REG-B11) — the deposit-mirror status recompute is one of the
+    // payment SUMS R1 covers, and `not: VOID` is not enough here: an UNCONFIRMED
+    // DRAFT row is neither VOID nor collected money. Rebuilt total is $55; $30 is
+    // confirmed and $40 is a DRAFT bank-reconciliation row nobody has confirmed.
+    // CONFIRMED basis ⇒ $30 of $55 ⇒ PARTIAL. A `not: VOID` sum sees $70 ≥ $55 and
+    // marks an ISSUED deposit mirror PAID off money the tenant has not been paid —
+    // closing it to reminders and write-off while $25 is genuinely outstanding.
+    it("REG-B11: an unconfirmed DRAFT payment never funds the deposit mirror's recomputed status", async () => {
+      armDepositReconcile({
+        payments: [
+          { amount: 30, status: "PAID" },
+          { amount: 40, status: "DRAFT" },
+        ],
+      });
+
+      await service.reconcileOrderDraftInvoice("o-dep", { basis: "order" });
+
+      const data = prisma.invoice.update.mock.calls[0][0].data;
+      expect(data.status).toBe(InvoiceStatus.PARTIAL); // 30 confirmed of 55, not 70
     });
 
     // S2: the rebuilt mirror is an ISSUED invoice whose money just moved — commission
@@ -2546,6 +2567,73 @@ describe("InvoicesService", () => {
     });
   });
 
+  // ── F03 (T-B50s / REG-B50s): buildInvoiceItemData's telescoping proration must
+  // cap billedThrough(cumQty) at basisQty on BOTH telescope points. With
+  // freeUnitSize > 1 the floored free-unit allocation (freeUnitsThrough) lands
+  // only near 100% delivered, so an UNCAPPED billedThrough can exceed basisQty
+  // for a cumQty still short of orderQty — a boxed BOGO line of 48 pieces
+  // (unitsPerBox 6, 2 free boxes ⇒ basisQty 36 paid pieces): billing 47 of 48
+  // (one piece short of orderQty), freeUnitsThrough(47) floors to 1 (the second
+  // free box isn't "earned" until the very last piece), so billedThrough(47) =
+  // 47 − 1×6 = 41 — 5 MORE than the line's whole paid basis (36). Uncapped, that
+  // partial would bill 41/36 of the $360 agreed subtotal ($410) — more than the
+  // customer ever owed for the entire line.
+  //
+  // Token note: the describe carries `REG-B50s` (NOT `REG-B50`) on purpose. The bare
+  // `REG-B50` token is already owned by apps/api/src/common/pricing-parity.spec.ts's
+  // three SHIPPED F04 parity tests, and a gate regex containing `REG-B50` selects
+  // those too — which would make F03's gate incapable of ever reporting "0 passed".
+  // The gate regex was corrected to match: `-t "REG-B(11|57|74|81|84|85|102|103)|REG-B50s"`
+  // (measured: 7 suites / 45 tests, vs 8 / 48 under the old one that pulled in
+  // pricing-parity.spec.ts).
+  const B50S_LINE = {
+    id: "oi-50",
+    productId: "p-50",
+    qty: 48,
+    boxes: 8,
+    pieces: 0,
+    unitsPerBox: 6,
+    unitPrice: 60,
+    subtotal: 360,
+    promoFreeUnits: 2,
+    product: { name: "BOGO Boxed Cap", unitsPerBox: 6 },
+  };
+
+  describe("buildInvoiceItemData — caps billedThrough at basisQty on a boxed BOGO partial (T-B50s / REG-B50s)", () => {
+    const build = (li: any, billQty: number, opts?: { priorBilledQty?: number }) =>
+      (service as any).buildInvoiceItemData(li, billQty, "test-tenant", opts);
+
+    // 8 boxes of 6 = 48 pieces @ $60/box, 2 free boxes ⇒ paid basis = 6 boxes =
+    // 36 pieces ⇒ $360 stored subtotal (6 paid boxes × $60).
+    const li = B50S_LINE;
+
+    it("never bills above the stored line subtotal on a partial one piece short of orderQty", () => {
+      // cumQty 47 of 48: uncapped billedThrough would be 41 > basisQty 36, i.e.
+      // a $410 bill against a $360 agreed line. Capped, it must land at exactly
+      // $360 — the whole paid basis is already delivered by piece 47.
+      const partial = build(li, 47, { priorBilledQty: 0 });
+      expect(partial.subtotal).toBe(360);
+    });
+
+    it("bills nothing further once the cap already captured the full subtotal (kills a one-sided cap)", () => {
+      // Finishing the delivery (piece 48, prior 47) must bill $0 more: the cap
+      // already collected the whole $360 at piece 47. Capping only the
+      // (prior+billQty) telescope point but leaving the `prior` point uncapped
+      // would compute round(360×36/36) − round(360×41/36) = 360 − 410 = −$50 —
+      // a negative bill — so this proves the cap must apply to BOTH points.
+      const finisher = build(li, 1, { priorBilledQty: 47 });
+      expect(finisher.subtotal).toBe(0);
+
+      // …and the round-trip the cap must not break: a FULL bill still reproduces
+      // the stored subtotal exactly (billedThrough(48) = 48 − 2×6 = 36 = basisQty,
+      // so the cap is the identity here). Folded into this case on purpose — on its
+      // own it discriminates nothing about the cap and would be an always-green,
+      // requirement-ID-less test; paired with the $0 finisher above it pins that the
+      // cap clamps AT basisQty and never BELOW it.
+      expect(build(li, 48, { priorBilledQty: 0 }).subtotal).toBe(360);
+    });
+  });
+
   // ── Auto-revert a SENT pending-mirror invoice when its order is edited ──────────
   describe("revertLinkedInvoicesForOrderEdit", () => {
     it("reverts an unpaid SENT pending-mirror invoice to DRAFT (auto-revert on edit)", async () => {
@@ -2891,7 +2979,7 @@ describe("InvoicesService", () => {
         subtotal: 140,
         total: 140,
         dueDate: null,
-        payments: [{ id: "pay-2", amount: 40 }],
+        payments: [{ id: "pay-2", amount: 40, status: "PAID" }],
       });
 
       const result = await service.setCheckStatus("inv-1", "pay-1", {
@@ -2907,6 +2995,46 @@ describe("InvoicesService", () => {
         },
       });
       expect(result).toEqual({ success: true, checkStatus: "BOUNCED" });
+    });
+
+    // F03 (T-B11s / R1 / REG-B11) — the BOUNCED branch re-reads the invoice's
+    // surviving payments to recompute status, and that read is a payment SUM, so it
+    // is on the CONFIRMED basis. The fixture reproduces the database rather than
+    // handing over a pre-filtered list: findUnique honours whatever
+    // `include.payments.where` the service passes, so a `not: VOID` query really does
+    // get the DRAFT row back and the assertion pins the resulting NUMBER, not a query
+    // shape. $130 invoice, the bounced $100 plus $80 confirmed and $50 unconfirmed:
+    // survivors on the CONFIRMED basis are $80 of $130 ⇒ PARTIAL. A non-VOID sum sees
+    // $130 ⇒ PAID, so a returned check would leave the invoice reading fully paid.
+    it("REG-B11: an unconfirmed DRAFT survivor never funds the post-bounce status recompute", async () => {
+      const rows = [
+        { id: "pay-1", amount: 100, status: "VOID" }, // the check just bounced
+        { id: "pay-2", amount: 80, status: "PAID" },
+        { id: "pay-3", amount: 50, status: "DRAFT" },
+      ];
+      prisma.invoicePayment.findFirst.mockResolvedValue({
+        ...basePayment,
+        checkStatus: CheckStatus.DEPOSITED,
+      });
+      prisma.invoicePayment.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoice.findUnique.mockImplementation(async (args: any) => ({
+        id: "inv-1",
+        invoiceNumber: "INV-0001",
+        customerId: "cust-1",
+        status: InvoiceStatus.PAID,
+        subtotal: 130,
+        total: 130,
+        dueDate: null,
+        paidAt: new Date("2026-01-05"),
+        payments: filterPayments(rows as any, args?.include?.payments?.where),
+      }));
+
+      await service.setCheckStatus("inv-1", "pay-1", { status: CheckStatus.BOUNCED });
+
+      expect(prisma.invoice.update).toHaveBeenCalledWith({
+        where: { id: "inv-1" },
+        data: { status: InvoiceStatus.PARTIAL, paidAt: null },
+      });
     });
 
     it("aborts a concurrent double-bounce without re-billing the NSF fee (CAS matches 0 rows)", async () => {
@@ -3423,6 +3551,43 @@ describe("InvoicesService", () => {
       expect(service.createInvoiceFromOrder).not.toHaveBeenCalled();
     });
 
+    // F03 (T-B11s / R1 / REG-B11) — the prior-payments read that decides how much of
+    // the driver's cash each invoice can absorb is a payment SUM, so it is on the
+    // CONFIRMED basis. This one CANNOT lean on `sumConfirmed`: the query selects
+    // `{ amount: true }` only, so the row's status never reaches the reducer and the
+    // WHERE clause is load-bearing. findMany therefore honours whatever `where.status`
+    // the service passes, and the assertion pins the NUMBER.
+    //
+    // $130 invoice already carrying $80 confirmed + $50 unconfirmed DRAFT; the driver
+    // collects the remaining $50 at the door. CONFIRMED basis ⇒ alreadyPaid $80,
+    // remaining $50 ⇒ the $50 is recorded and the invoice lands PAID. A `not: VOID`
+    // sum reads $130 already paid, computes $0 remaining, `continue`s — and the cash
+    // the driver physically took is never recorded against anything.
+    it("REG-B11: an unconfirmed DRAFT payment never eats the driver's collected cash", async () => {
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" });
+      prisma.invoice.findMany.mockResolvedValue([inv({ total: 130 })]);
+      stubPaymentReads([
+        { id: "pay-confirmed", amount: 80, status: "PAID" },
+        { id: "pay-draft", amount: 50, status: "DRAFT" },
+      ]);
+
+      const res = await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 50, "CASH");
+
+      expect(res.applied).toBe(50);
+      expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ invoiceId: "inv-1", amount: 50, status: "PAID" }),
+        }),
+      );
+      // $80 confirmed + the $50 just taken = the whole $130.
+      expect(prisma.invoice.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "inv-1" },
+          data: expect.objectContaining({ status: InvoiceStatus.PAID }),
+        }),
+      );
+    });
+
     it("finalizes a DRAFT pending-mirror (→SENT baseline) so a partial payment lands PARTIAL, not stuck DRAFT", async () => {
       prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" });
       prisma.invoice.findMany.mockResolvedValue([inv({ status: InvoiceStatus.DRAFT })]);
@@ -3499,7 +3664,7 @@ describe("InvoicesService", () => {
           shippingFee: 0,
           dueDate: null,
           total: 1000,
-          payments: [{ amount: 300, status: "RECORDED" }],
+          payments: [{ amount: 300, status: "PAID" }],
         },
       ]);
       prisma.order.findUnique.mockResolvedValue({
@@ -3598,7 +3763,7 @@ describe("InvoicesService", () => {
       );
     });
 
-    it("row-locks the invoice and reads prior paid with VOID excluded", async () => {
+    it("row-locks the invoice and reads prior paid CONFIRMED-only (F03/R1)", async () => {
       prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" });
       prisma.invoice.findMany.mockResolvedValue([inv()]);
       prisma.invoicePayment.findMany.mockResolvedValue([]);
@@ -3608,9 +3773,9 @@ describe("InvoicesService", () => {
       expect(res.applied).toBe(100);
       // FOR UPDATE lock taken (serializes a concurrent back-office payment).
       expect(prisma.$executeRaw).toHaveBeenCalled();
-      // prior-paid read excludes bounced (VOID) payments.
+      // prior-paid read is CONFIRMED (PAID) only — excludes both VOID and DRAFT.
       expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expect.objectContaining({ status: { not: "VOID" } }) }),
+        expect.objectContaining({ where: expect.objectContaining({ status: "PAID" }) }),
       );
     });
 
@@ -4032,7 +4197,7 @@ describe("InvoicesService", () => {
 
     it("rebuilds a SENT invoice at the edited order qty, keeps the payment, recomputes to PARTIAL", async () => {
       prisma.invoice.findMany.mockResolvedValue([
-        inv({ payments: [{ amount: 30, status: "COMPLETED" }] }),
+        inv({ payments: [{ amount: 30, status: "PAID" }] }),
       ] as any);
       prisma.order.findUnique.mockResolvedValue(mockOrder([line()]) as any);
 
@@ -4046,7 +4211,7 @@ describe("InvoicesService", () => {
 
     it("a PAID invoice edited to a lower total stays PAID (over-paid / credit balance)", async () => {
       prisma.invoice.findMany.mockResolvedValue([
-        inv({ status: InvoiceStatus.PAID, payments: [{ amount: 50, status: "COMPLETED" }] }),
+        inv({ status: InvoiceStatus.PAID, payments: [{ amount: 50, status: "PAID" }] }),
       ] as any);
       // Edited down: qty 6 @ 5 = 30.
       prisma.order.findUnique.mockResolvedValue(
@@ -5088,6 +5253,63 @@ describe("InvoicesService", () => {
           expect(prisma.creditNote.update).not.toHaveBeenCalled();
         });
       });
+
+      // F03 (R1 / REG-B11): updatePayment narrowed the OTHER payments to
+      // sumConfirmed but folded the row under edit in at full value for anything
+      // but VOID. So un-confirming a payment (PAID -> DRAFT), or merely correcting
+      // a reference on an already-DRAFT one, recomputed the invoice to PAID and
+      // stamped paidAt off money nobody confirmed — while sumConfirmed still
+      // reported the full balance in findAll/findOne and on the PDF. VOID and DRAFT
+      // must both contribute $0, exactly as recordPayment already does.
+      describe("un-confirmed rows never fund the recomputed status (R1 / REG-B11)", () => {
+        const seedSinglePayment = (storedStatus: string) => {
+          prisma.invoice.findUnique.mockResolvedValue({
+            id: "inv-b11u",
+            status: InvoiceStatus.SENT,
+            total: 500,
+            dueDate: null,
+            payments: [{ id: "pay-b11u", status: storedStatus, amount: 500, method: "ACH" }],
+          });
+          prisma.invoicePayment.update.mockResolvedValue({});
+          prisma.invoice.update.mockResolvedValue({
+            id: "inv-b11u",
+            invoiceNumber: "INV-0009",
+            customerId: "cust-1",
+            total: 500,
+            payments: [],
+          });
+        };
+
+        const invoiceData = () => (prisma.invoice.update.mock.calls[0][0] as any).data;
+
+        it("REG-B11: PATCHing the only payment to DRAFT takes the invoice off PAID and clears paidAt", async () => {
+          seedSinglePayment("PAID");
+
+          await service.updatePayment("inv-b11u", "pay-b11u", {
+            amount: 500,
+            method: "ACH",
+            status: "DRAFT",
+          } as any);
+
+          expect(invoiceData().status).toBe(InvoiceStatus.SENT);
+          expect(invoiceData().paidAt).toBeNull();
+        });
+
+        it("REG-B11: editing an already-DRAFT payment leaves the invoice unpaid", async () => {
+          seedSinglePayment("DRAFT");
+
+          // No status key in the dto, so newPaymentStatus falls back to the STORED
+          // "DRAFT" — a not-VOID effectiveAmount would cash the full $500 here.
+          await service.updatePayment("inv-b11u", "pay-b11u", {
+            amount: 500,
+            method: "ACH",
+            reference: "corrected-ref",
+          } as any);
+
+          expect(invoiceData().status).toBe(InvoiceStatus.SENT);
+          expect(invoiceData().paidAt).toBeNull();
+        });
+      });
     });
 
     it("recordStandalonePayment stamps the bank date on every row of the group", async () => {
@@ -5393,6 +5615,83 @@ describe("InvoicesService", () => {
         }),
       );
     });
+
+    // The recompute must mirror orders.service.recomputeLineCategoryTaxes on BOTH of
+    // its non-obvious inputs, or it corrupts the very numbers it exists to keep
+    // fresh: the per-unit piece basis (a boxed line ordered in SELLING UNITS stores
+    // unitsPerBox NULL, so the levy collapses by unitsPerBox without the product
+    // fallback) and the customer's tax exemption (foldCategoryTax zeroes every line
+    // at creation; re-deriving here bills excise an exempt customer does not owe).
+    const seedExciseLine = (opts: { isTaxExempt?: boolean } = {}) => {
+      const invoiceItem = {
+        id: "li-b57e",
+        invoiceId: "inv-b57e",
+        productId: "prod-reg",
+        trackedCategoryId: "cat-2",
+        unitPrice: 10,
+        discount: 0,
+        subtotal: 100,
+        qty: 10,
+        // Boxed product ordered as SELLING UNITS: create snapshots unitsPerBox only
+        // on box-split lines, so both are null here — the hole the fallback fills.
+        boxes: null,
+        unitsPerBox: null,
+        taxRate: 0,
+        // 0.50 x (10 x 20 pieces) — what creation billed off the PRODUCT's box size.
+        categoryTaxAmount: 100,
+      };
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-b57e",
+        customerId: "cust-2",
+        orderId: null,
+        status: InvoiceStatus.SENT,
+        discount: 0,
+        shippingFee: 0,
+        internalNotes: null,
+        dueDate: null,
+        items: [invoiceItem],
+        payments: [],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: !!opts.isTaxExempt });
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        { id: "cat-2", taxType: "EXCISE_PER_UNIT", rate: 0.5, priceIncludesTax: false },
+      ]);
+      prisma.product.findMany.mockResolvedValue([{ id: "prod-reg", unitsPerBox: 20 }]);
+      prisma.invoiceItem.update.mockResolvedValue({});
+      prisma.invoiceItem.findMany.mockResolvedValue([
+        { ...invoiceItem, unitPrice: 5, subtotal: 50, categoryTaxAmount: 0 },
+      ]);
+      prisma.invoice.update.mockResolvedValue({});
+    };
+
+    const itemUpdateData = () => (prisma.invoiceItem.update.mock.calls[0][0] as any).data;
+
+    it("REG-B57: an EXCISE_PER_UNIT line with no unitsPerBox snapshot keeps its per-PIECE basis (product fallback)", async () => {
+      seedExciseLine();
+
+      await service.applyPriceAdjustment("inv-b57e", {
+        items: [{ itemId: "li-b57e", newUnitPrice: 5 }],
+        scope: "SINGLE",
+      });
+
+      // 0.50 x 200 pieces. Without the product fallback the basis collapses to the
+      // 10 selling units and the levy drops to $5 — $95 of excise silently lost, and
+      // pushed to the linked order by recomputeOrderFromInvoices.
+      expect(itemUpdateData().categoryTaxAmount).toBe(100);
+    });
+
+    it("REG-B57: a TAX-EXEMPT customer's line stays at $0 category tax after a re-price", async () => {
+      seedExciseLine({ isTaxExempt: true });
+
+      await service.applyPriceAdjustment("inv-b57e", {
+        items: [{ itemId: "li-b57e", newUnitPrice: 5 }],
+        scope: "SINGLE",
+      });
+
+      // foldCategoryTax zeroed this line at creation; the recompute must preserve
+      // that, not re-derive $100 of excise onto an exempt customer's invoice.
+      expect(itemUpdateData().categoryTaxAmount).toBe(0);
+    });
   });
 
   // ─── F03: CONFIRMED-basis payment fixtures ───────────────────────────────────
@@ -5492,6 +5791,16 @@ describe("InvoicesService", () => {
           data: expect.objectContaining({ status: InvoiceStatus.PAID }),
         }),
       );
+    });
+
+    it("(c) stamps paidAt alongside that PAID flip, so the invoice still lands in the revenue window", async () => {
+      await runAdjustment(InvoiceStatus.PARTIAL, [{ id: "pay-paid", amount: 80, status: "PAID" }]);
+
+      // Every sibling status writer pairs status with paidAt. A PAID row with a NULL
+      // paidAt is invisible to bookkeeping's getSummary totalRevenue, the P&L window
+      // and getTimeToGetPaid — all of which filter on status PAID *and* paidAt.
+      const data = (prisma.invoice.update.mock.calls[0][0] as any).data;
+      expect(data.paidAt).toBeInstanceOf(Date);
     });
 
     it("(b) lands PARTIAL, not PAID, when only an unconfirmed DRAFT payment would clear the lowered total ($60 PAID + $50 DRAFT)", async () => {
@@ -5595,6 +5904,128 @@ describe("InvoicesService", () => {
           balanceDue: 200,
           isReminder: true,
         }),
+      );
+    });
+  });
+
+  // F03 (T-B103 / R9 / REG-B103) — the CALLER half of the promo/BOGO email display.
+  // email.service.spec.ts hands `sendInvoice` the promo scalars directly, so a build
+  // whose renderer is perfect but whose caller drops them still passes there while the
+  // customer sees neither the "1 free" note nor the struck original price. These two
+  // cases pin what invoices.service actually puts on the wire out of `inv.items`.
+  describe("sendEmail / sendReminder pass the promo item scalars (T-B103 / R9 / REG-B103)", () => {
+    // Mirrors email.service.spec.ts's BOGO fixture: qty 6 with 1 free at $10/unit
+    // against a $12 pre-promo price — 10*(6-1) reconciles to the $50 stored subtotal.
+    const BOGO_ITEM = {
+      description: "Widget (BOGO)",
+      qty: 6,
+      unitPrice: 10,
+      subtotal: 50,
+      msrp: null,
+      originalPrice: 12,
+      priceType: "PROMO",
+      promoFreeUnits: 1,
+    };
+
+    const expectedItem = () =>
+      expect.objectContaining({
+        description: "Widget (BOGO)",
+        qty: 6,
+        unitPrice: 10,
+        subtotal: 50,
+        originalPrice: 12,
+        priceType: "PROMO",
+        promoFreeUnits: 1,
+      });
+
+    beforeEach(() => {
+      stubPaymentReads([]);
+      prisma.invoice.findUnique.mockImplementation(async (args: any) => ({
+        id: "inv-b103",
+        orderId: null, // standalone → assertOrderInvoiceUnlocked skips the order check
+        invoiceNumber: "INV-2002",
+        status: InvoiceStatus.SENT,
+        deliveryBatchId: null,
+        total: 50,
+        subtotal: 50,
+        taxAmount: 0,
+        discount: 0,
+        shippingFee: 0,
+        depositPercent: null,
+        depositDueDate: null,
+        paymentTermsLabel: null,
+        issueDate: new Date("2026-01-01"),
+        dueDate: new Date("2026-01-31"),
+        customer: { id: "c-b103", businessName: "Acme Buyer", email: "buyer@example.com" },
+        items: [BOGO_ITEM],
+        payments: filterPayments([], args?.include?.payments?.where),
+      }));
+      prisma.invoice.update.mockResolvedValue({
+        id: "inv-b103",
+        invoiceNumber: "INV-2002",
+        customerId: "c-b103",
+        orderId: null,
+        status: InvoiceStatus.SENT,
+        total: 50,
+        dueDate: null,
+      });
+      mockEmailService.sendInvoice.mockClear();
+      mockEmailService.isEmailConfigured.mockResolvedValue(true);
+      mockEmailService.sendInvoice.mockResolvedValue({ delivered: true, transport: "resend" });
+      // mockSystemConfig is a shared jest.fn() across the whole spec file (never
+      // re-created) — pin the tenant answer explicitly so these cases don't inherit
+      // another describe's `invoice.hideOriginalPrice` value.
+      mockSystemConfig.get.mockResolvedValue(null);
+    });
+
+    it("REG-B103: sendEmail forwards originalPrice / priceType / promoFreeUnits on the item row", async () => {
+      await service.sendEmail("inv-b103");
+
+      expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({ items: [expectedItem()], isReminder: false }),
+      );
+    });
+
+    it("REG-B103: sendReminder forwards them too — the reminder shows the same line", async () => {
+      await service.sendReminder("inv-b103");
+
+      expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({ items: [expectedItem()], isReminder: true }),
+      );
+    });
+
+    // Forwarding originalPrice is only safe while the tenant's hide-original-price
+    // setting rides along: the PDF attached to this very send and the web detail page
+    // both honour it, so an ungated email body would be the ONE surface leaking the
+    // struck pre-promo price a tenant configured away.
+    it("REG-B103: sendEmail carries the tenant's hideOriginalPrice through to the email", async () => {
+      mockSystemConfig.get.mockImplementation(async (key: string) =>
+        key === "invoice.hideOriginalPrice" ? "true" : null,
+      );
+
+      await service.sendEmail("inv-b103");
+
+      expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({ hideOriginalPrice: true, isReminder: false }),
+      );
+    });
+
+    it("REG-B103: sendReminder carries it too, and both default to false when unset", async () => {
+      mockSystemConfig.get.mockImplementation(async (key: string) =>
+        key === "invoice.hideOriginalPrice" ? "true" : null,
+      );
+      await service.sendReminder("inv-b103");
+      expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({ hideOriginalPrice: true, isReminder: true }),
+      );
+
+      // Unset (the default tenant) still shows the strike — the gate must not
+      // silently suppress promo transparency for everyone.
+      mockSystemConfig.get.mockResolvedValue(null);
+      mockEmailService.sendInvoice.mockClear();
+      await service.sendReminder("inv-b103");
+      expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({ hideOriginalPrice: false }),
       );
     });
   });

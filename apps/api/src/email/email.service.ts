@@ -4,6 +4,11 @@ import { Resend } from "resend";
 import * as nodemailer from "nodemailer";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
+// F03/R9: ONE original-price display decision shared with the PDF, so the two
+// customer-facing documents of the same send can never disagree (a pure helper —
+// no Nest/module coupling, and unlike ./invoice-pdf-template it is not mocked
+// away under Jest).
+import { showOriginalPrice } from "../invoices/invoice-pdf-item";
 
 // F6-001: SSRF guard — block private/loopback/metadata IPs as SMTP hosts.
 // Tenants control smtpHost; without this guard they could point it at
@@ -672,6 +677,20 @@ export class EmailService {
      */
     paymentTermsLabel?: string | null;
     total: number;
+    /**
+     * CONFIRMED (PAID)-basis amount already collected (F03/R8) — mirrors the
+     * PDF's Amount Paid. Undefined on a caller that hasn't been updated yet;
+     * the tfoot then falls back to a single "Amount Due" = `total` row (the
+     * pre-F03 rendering) instead of a misleading $0-paid line.
+     */
+    totalPaid?: number;
+    /**
+     * CONFIRMED-basis outstanding balance (F03/R8) — what a reminder must
+     * demand. NEVER pass `total` here: dunning a customer for the full amount
+     * after they've already paid part of it is exactly the bug this exists to
+     * kill (B102).
+     */
+    balanceDue?: number;
     items: {
       description: string;
       qty: number;
@@ -679,9 +698,27 @@ export class EmailService {
       subtotal: number;
       /** Suggested retail price snapshot, per PIECE — display-only, null renders nothing. */
       msrp?: number | null;
+      /**
+       * Pre-promo/pre-adjustment per-unit price, for the strikethrough (F03/R9)
+       * — null/undefined renders no strike. Mirrors the web invoice detail
+       * renderer and the PDF's `showOriginalPrice` (a MANUAL upsell — unitPrice
+       * ABOVE originalPrice — never shows it).
+       */
+      originalPrice?: number | null;
+      priceType?: string | null;
+      /** BUY_N_GET_M free units on this line — null/0 renders no note. */
+      promoFreeUnits?: number | null;
     }[];
     pdfUrl?: string;
     isReminder?: boolean;
+    /**
+     * The tenant's `invoice.hideOriginalPrice` setting (F03/R9), passed in by the
+     * caller exactly as the PDF payload carries it. True suppresses EVERY
+     * strikethrough: the attached PDF and the web detail page already honour it,
+     * so without it this body would be the one place a tenant's hidden pre-promo
+     * price leaks to the buyer.
+     */
+    hideOriginalPrice?: boolean;
     /** Deposit schedule (display-only, derived server-side) — null/absent renders nothing. */
     depositAmount?: number | null;
     depositDueDate?: string | null;
@@ -847,6 +884,10 @@ export class EmailService {
       dueDate: string;
       paymentTermsLabel?: string | null;
       total: number;
+      /** CONFIRMED-basis amount already collected (F03/R8) — see sendInvoice's doc. */
+      totalPaid?: number;
+      /** CONFIRMED-basis outstanding balance (F03/R8) — see sendInvoice's doc. */
+      balanceDue?: number;
       items: {
         description: string;
         qty: number;
@@ -854,9 +895,16 @@ export class EmailService {
         subtotal: number;
         /** Suggested retail price snapshot, per PIECE — display-only, null renders nothing. */
         msrp?: number | null;
+        /** Pre-promo/pre-adjustment per-unit price, for the strikethrough (F03/R9). */
+        originalPrice?: number | null;
+        priceType?: string | null;
+        /** BUY_N_GET_M free units on this line — null/0 renders no note. */
+        promoFreeUnits?: number | null;
       }[];
       pdfUrl?: string;
       isReminder?: boolean;
+      /** Tenant's `invoice.hideOriginalPrice` — see sendInvoice's doc. */
+      hideOriginalPrice?: boolean;
       /** Deposit schedule (display-only, derived server-side) — null/absent renders nothing. */
       depositAmount?: number | null;
       depositDueDate?: string | null;
@@ -867,19 +915,36 @@ export class EmailService {
       new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 
     const itemRows = params.items
-      .map(
-        (it) => `
+      .map((it) => {
+        // F03/R9 — mirrors the web invoice detail renderer and the PDF: name the
+        // free units (a BOGO line's reduced subtotal otherwise reads as a pricing
+        // error), and delegate the strikethrough decision to the SAME
+        // `showOriginalPrice` helper the PDF uses, so the tenant's
+        // hide-original-price setting and the MANUAL-upsell exception cannot drift
+        // between the body and the PDF attached to the very same message.
+        const freeUnits = it.promoFreeUnits != null ? Number(it.promoFreeUnits) : 0;
+        const original = it.originalPrice != null ? Number(it.originalPrice) : null;
+        const showOriginal = showOriginalPrice(it, !!params.hideOriginalPrice);
+        return `
         <tr>
           <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;">${it.description}</td>
-          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;text-align:center;">${it.qty}</td>
-          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;text-align:right;">${fmt(it.unitPrice)}${
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;text-align:center;">${it.qty}${
+            freeUnits > 0
+              ? `<div style="font-size:11px;color:#b45309;font-weight:600;margin-top:2px;">${freeUnits} free</div>`
+              : ""
+          }</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;text-align:right;">${
+            showOriginal
+              ? `<s style="color:#9ca3af;font-weight:400;text-decoration:line-through;">${fmt(original as number)}</s><br/>`
+              : ""
+          }${fmt(it.unitPrice)}${
             it.msrp != null
               ? `<div style="font-size:11px;color:#9ca3af;font-weight:400;margin-top:2px;">MSRP ${fmt(it.msrp)}/pc</div>`
               : ""
           }</td>
           <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1a2033;text-align:right;font-weight:600;">${fmt(it.subtotal)}</td>
-        </tr>`,
-      )
+        </tr>`;
+      })
       .join("");
 
     const reminderBanner = params.isReminder
@@ -904,6 +969,32 @@ export class EmailService {
     const pdfButton = params.pdfUrl
       ? `<a href="${params.pdfUrl}" style="display:inline-block;margin-top:8px;background:#f3f4f6;color:#374151;padding:8px 20px;border-radius:6px;font-size:13px;text-decoration:none;font-weight:500;">Download PDF</a>`
       : "";
+
+    // F03/R1/R8/B102 — Amount Paid + Balance Due on the CONFIRMED (PAID) basis,
+    // mirroring the PDF's totals box. A reminder must demand the true
+    // outstanding balance, never the stale `total`: when the caller has
+    // supplied `balanceDue`, that (not `total`) is what appears here — for a
+    // reminder that is the whole point of the fix (B102). Callers that haven't
+    // been updated yet (balanceDue undefined) keep the pre-F03 single
+    // "Amount Due" = total row.
+    const amountPaidRow =
+      params.totalPaid != null && params.totalPaid > 0
+        ? `<tr>
+                <td colspan="3" style="padding:8px 12px;font-size:13px;font-weight:600;color:#16a34a;text-align:right;">Amount Paid</td>
+                <td style="padding:8px 12px;font-size:14px;font-weight:600;color:#16a34a;text-align:right;">${fmt(params.totalPaid)}</td>
+              </tr>`
+        : "";
+    const totalsFooter =
+      params.balanceDue != null
+        ? `${amountPaidRow}
+              <tr style="background:#f9fafb;">
+                <td colspan="3" style="padding:12px;font-size:14px;font-weight:700;color:#1a2033;text-align:right;">Balance Due</td>
+                <td style="padding:12px;font-size:16px;font-weight:700;color:${params.balanceDue > 0 ? "#dc2626" : "#16a34a"};text-align:right;">${fmt(params.balanceDue)}</td>
+              </tr>`
+        : `<tr style="background:#f9fafb;">
+                <td colspan="3" style="padding:12px;font-size:14px;font-weight:700;color:#1a2033;text-align:right;">Amount Due</td>
+                <td style="padding:12px;font-size:16px;font-weight:700;color:#1a2033;text-align:right;">${fmt(params.total)}</td>
+              </tr>`;
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -964,10 +1055,7 @@ export class EmailService {
             </thead>
             <tbody>${itemRows}</tbody>
             <tfoot>
-              <tr style="background:#f9fafb;">
-                <td colspan="3" style="padding:12px;font-size:14px;font-weight:700;color:#1a2033;text-align:right;">Amount Due</td>
-                <td style="padding:12px;font-size:16px;font-weight:700;color:#1a2033;text-align:right;">${fmt(params.total)}</td>
-              </tr>
+              ${totalsFooter}
             </tfoot>
           </table>
 

@@ -155,7 +155,7 @@ describe("StatementService (P5-15 — monthly statement reconciliation)", () => 
       );
     });
 
-    it("queries invoices excluding DRAFT/VOID and payments excluding VOID", async () => {
+    it("queries invoices excluding DRAFT/VOID and payments narrowed to CONFIRMED (REG-B11)", async () => {
       await service.buildMonthlyStatement("cust-1", "2026-06");
 
       expect(prisma.invoice.findMany).toHaveBeenCalledWith(
@@ -169,9 +169,39 @@ describe("StatementService (P5-15 — monthly statement reconciliation)", () => 
       expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            status: { not: "VOID" },
+            status: "PAID",
           }),
         }),
+      );
+    });
+
+    it("REG-B11: a DRAFT payment never reduces the receivable the customer is shown", async () => {
+      // The customer-facing statement must agree with the invoice PDF and the
+      // reminder email, which now report on the CONFIRMED basis: an unconfirmed
+      // $120 DRAFT row is not collected money, so closing stays 370, not 250.
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          ...INV_100,
+          payments: [
+            ...INV_100.payments,
+            {
+              amount: 120,
+              paidAt: new Date("2026-06-08T00:00:00.000Z"),
+              status: "DRAFT",
+              method: "BANK_TRANSFER",
+            },
+          ],
+        },
+        INV_101,
+      ]);
+
+      const stmt = await service.buildMonthlyStatement("cust-1", "2026-06");
+
+      expect(stmt.closing).toBe(370);
+      expect(stmt.closing).not.toBe(250);
+      expect(stmt.opening).toBe(300);
+      expect(stmt.opening + stmt.charges - stmt.payments - stmt.credits + stmt.adjustments).toBe(
+        stmt.closing,
       );
     });
 

@@ -272,6 +272,36 @@ describe("PaymentRequestsService", () => {
       expect(result.allocations).toEqual([{ invoiceId: "inv-open", amount: 40 }]);
       expect(result.excess).toBe(0);
     });
+
+    // F03 (T-B11s / R1 / REG-B11): the balances this allocation spreads money
+    // across must come from CONFIRMED (PAID) payments only. Under the old
+    // `not: VOID` basis an unconfirmed DRAFT payment zeroed the invoice's
+    // balanceDue, dropped it from the allocation, and pushed the buyer's real
+    // card payment into on-account credit instead of onto the invoice — while
+    // every other read still (correctly) showed the money owed.
+    it("ignores DRAFT (unconfirmed) payments when computing the balances it allocates against (REG-B11)", async () => {
+      const drafted = {
+        id: "inv-draft",
+        invoiceNumber: "INV-0001",
+        issueDate: new Date("2026-01-01"),
+        total: 500,
+        payments: [{ amount: 500, status: "DRAFT" }],
+      };
+      prisma.invoice.findMany.mockResolvedValue([drafted]);
+
+      const result = await service.buildOldestFirstAllocation("cust-1", 500);
+
+      expect(prisma.invoice.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: { payments: { where: { status: "PAID" } } },
+        }),
+      );
+      expect(result.lines).toEqual([
+        expect.objectContaining({ invoiceId: "inv-draft", balanceDue: 500, applied: 500 }),
+      ]);
+      expect(result.allocations).toEqual([{ invoiceId: "inv-draft", amount: 500 }]);
+      expect(result.excess).toBe(0);
+    });
   });
 
   // ─── paymentContext (invariant 13) ──────────────────────────────────────────

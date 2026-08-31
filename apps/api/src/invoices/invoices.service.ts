@@ -1418,21 +1418,10 @@ export class InvoicesService {
     // 0 — the overpayment itself is surfaced by the existing credit-note workflow,
     // not by this reconcile. depositDueDate/dueDate are never part of this update —
     // they anchor to placement/terms, not to edits, so they're preserved verbatim.
-    // F03/R1 NOTE (deviation, see build report): LEFT on the historical not-VOID
-    // sum. Every pre-existing (non-F03) test in this describe block ("WP-D1
-    // deposit-mirror widening") represents a confirmed payment with
-    // `status: "RECORDED"` (not "PAID") — a `sumConfirmed`/CONFIRMED_PAYMENT
-    // filter zeroes those rows out and flips 3 tests' expected PARTIAL/PAID to
-    // SENT. Not in this package's file-scope to correct the fixtures. Not
-    // covered by any F03 red-gate test — flagged for a follow-up once those
-    // fixtures are updated to the real PAID/DRAFT/VOID enum.
+    // F03/R1: CONFIRMED (PAID) payments only.
     const nextStatus = isDepositMirror
       ? this.recomputeStatus(
-          roundMoney(
-            ((draft as any).payments ?? [])
-              .filter((p: any) => p.status !== "VOID")
-              .reduce((s: number, p: any) => s + Number(p.amount), 0),
-          ),
+          roundMoney(sumConfirmed((draft as any).payments)),
           total,
           (draft as any).dueDate ?? null,
           draft.status,
@@ -3536,6 +3525,13 @@ export class InvoicesService {
     const totalPaid = sumConfirmed(inv.payments);
     const balanceDue = roundMoney(Math.max(0, Number(inv.total) - totalPaid));
 
+    // F03/R9: the SAME tenant setting findOneOrThrow and the PDF read. The email
+    // body renders the same item table as the PDF attached to this very message,
+    // so it has to honour the hide-original-price preference too — otherwise
+    // forwarding the promo scalars below would newly leak the struck pre-promo
+    // price a tenant deliberately configured away.
+    const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
+
     // Built as a variable (not an inline literal) so the extra totalPaid/
     // balanceDue fields don't trip TS's excess-property check ahead of the F03
     // batch's matching email.service.ts `sendInvoice` param-type update (a
@@ -3559,9 +3555,17 @@ export class InvoicesService {
         unitPrice: Number(it.unitPrice),
         subtotal: Number(it.subtotal),
         msrp: it.msrp != null ? Number(it.msrp) : null,
+        // F03/R9: the strikethrough + "N free" note buildInvoiceEmail renders are
+        // dead without these three scalars — the renderer can only show what this
+        // caller passes, and a BOGO line's reduced subtotal reads as a pricing
+        // error otherwise. Mirrors the PDF item payload and the web detail renderer.
+        originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
+        priceType: it.priceType ?? null,
+        promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
       })),
       pdfUrl,
       isReminder: false,
+      hideOriginalPrice,
       // Deposit schedule (display-only): derive with the same read-time math the
       // detail endpoint uses; null when the invoice carries no deposit.
       depositAmount: this.computeDepositFields(inv as any, 0).depositAmount,
@@ -3715,6 +3719,10 @@ export class InvoicesService {
     const totalPaid = sumConfirmed(inv.payments);
     const balanceDue = roundMoney(Math.max(0, Number(inv.total) - totalPaid));
 
+    // F03/R9: see sendEmail's matching comment — the reminder renders the same item
+    // table, so it honours the same hide-original-price setting.
+    const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
+
     // See sendEmail's matching comment: a variable, not an inline literal, so the
     // extra fields don't trip TS's excess-property check ahead of email.service.ts's
     // param-type update landing in this same campaign batch.
@@ -3735,9 +3743,15 @@ export class InvoicesService {
         unitPrice: Number(it.unitPrice),
         subtotal: Number(it.subtotal),
         msrp: it.msrp != null ? Number(it.msrp) : null,
+        // F03/R9: see sendEmail's matching comment — a reminder renders the same
+        // item table, so it needs the same promo scalars.
+        originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
+        priceType: it.priceType ?? null,
+        promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
       })),
       pdfUrl,
       isReminder: true,
+      hideOriginalPrice,
     };
     const sendResult = await this.emailService.sendInvoice(reminderPayload);
 
@@ -4570,16 +4584,9 @@ export class InvoicesService {
       // Row-lock (like recordPayment) then read paid FRESH, so a concurrent
       // back-office payment on the same invoice can't also read 0 and over-collect.
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${inv.id} FOR UPDATE`;
-      // F03/R1 NOTE (deviation, see build report): this site is LEFT on the
-      // historical not-VOID sum. Two pre-existing (non-F03) tests pin
-      // incompatible halves of the CONFIRMED-only fix — one asserts this exact
-      // `where: { status: { not: "VOID" } }` shape, the other's fixture rows carry
-      // no `status` field at all and would zero out under a `sumConfirmed` filter.
-      // Neither spec test is in this package's file-scope to correct. Not covered
-      // by any F03 red-gate test (T-B11s/T-B57/T-B74/T-B81/T-B84/T-B85/T-B97/T-B102/
-      // T-B103) — flagged for a follow-up once the spec fixtures are updated.
+      // F03/R1: CONFIRMED (PAID) payments only.
       const priorPayments = await tx.invoicePayment.findMany({
-        where: { invoiceId: inv.id, status: { not: "VOID" as any } },
+        where: { invoiceId: inv.id, ...CONFIRMED_PAYMENT },
         select: { amount: true },
       });
       const total = Number(inv.total);
@@ -4686,8 +4693,15 @@ export class InvoicesService {
 
       const newPaymentStatus = dto.status ?? payment.status ?? "PAID";
 
-      // When voiding: treat the payment as $0 for balance checks
-      const effectiveAmount = newPaymentStatus === "VOID" ? 0 : dto.amount;
+      // F03/R1: only a CONFIRMED (PAID) row funds the recomputed status — VOID and
+      // DRAFT both contribute $0, mirroring recordPayment (:4415). Counting a DRAFT
+      // here let an operator flip an invoice to PAID (and stamp paidAt) off money
+      // nobody confirmed — either by editing an unconfirmed payment or by
+      // un-confirming a real one — while sumConfirmed still reported the full
+      // balance due: exactly the B11 damage class CONFIRMED_PAYMENT removes. The
+      // remaining-balance guard below deliberately stays on the raw dto.amount so a
+      // DRAFT still cannot be parked above the invoice total.
+      const effectiveAmount = newPaymentStatus === "PAID" ? dto.amount : 0;
 
       // F03/R1: sum all other CONFIRMED (PAID) payments plus the effective new
       // amount — an unconfirmed DRAFT "other" payment must not inflate the
@@ -5191,16 +5205,10 @@ export class InvoicesService {
         throw new BadRequestException("Payment is voided — its check status can no longer change");
       }
 
-      // F03/R1 NOTE (deviation, see build report): this site is LEFT on the
-      // historical not-VOID sum. A pre-existing (non-F03) test's fixture row
-      // carries no `status` field at all (`payments: [{ id: "pay-2", amount: 40 }]`)
-      // and would zero out under a `sumConfirmed` filter, flipping that test's
-      // expected PARTIAL to SENT. Not in this package's file-scope to correct the
-      // fixture. Not covered by any F03 red-gate test — flagged for a follow-up
-      // once that fixture carries a real PAID/DRAFT/VOID status.
+      // F03/R1: CONFIRMED (PAID) payments only.
       const invoice = await tx.invoice.findUnique({
         where: { id: invoiceId },
-        include: { payments: { where: { status: { not: "VOID" as any } } } },
+        include: { payments: { where: CONFIRMED_PAYMENT } },
       });
       if (!invoice) throw new NotFoundException("Invoice not found");
 
@@ -5228,9 +5236,7 @@ export class InvoicesService {
         newTotal = roundMoney(newTotal + fee);
       }
 
-      const totalPaid = invoice.payments
-        .filter((p) => p.id !== paymentId)
-        .reduce((s, p) => s + Number(p.amount), 0);
+      const totalPaid = sumConfirmed(invoice.payments.filter((p) => p.id !== paymentId));
       const newStatus = this.recomputeStatus(totalPaid, newTotal, invoice.dueDate, invoice.status);
       await tx.invoice.update({
         where: { id: invoiceId },
@@ -5377,6 +5383,16 @@ export class InvoicesService {
       );
     }
 
+    // F03/R3: category (excise) tax follows the customer's exemption exactly like
+    // the regular sales tax — foldCategoryTax zeroes every line's snapshot at creation
+    // for an exempt customer, so the per-line recompute below must PRESERVE that zero
+    // rather than re-derive a levy the customer does not owe. ALL_CUSTOMER_SINCE only
+    // ever targets this same customer's invoices, so one read covers every target.
+    const adjustmentCustomer = await this.prisma
+      .forTenant()
+      .customer.findFirst({ where: { id: invoice.customerId }, select: { isTaxExempt: true } });
+    const isTaxExempt = !!(adjustmentCustomer as any)?.isTaxExempt;
+
     // Build a map of itemId → newUnitPrice for quick lookup
     const priceMap = new Map(dto.items.map((i) => [i.itemId, i.newUnitPrice]));
 
@@ -5394,12 +5410,11 @@ export class InvoicesService {
       // (:233-275). Before this, the item loop wrote only unitPrice/subtotal, so a
       // regulated line kept its PRE-adjustment excise amount even though the
       // taxable subtotal changed.
+      const regulatedItems = inv.items.filter(
+        (item: any) => localPriceMap.get(item.id) != null && item.trackedCategoryId,
+      );
       const regulatedCatIds = [
-        ...new Set(
-          inv.items
-            .filter((item: any) => localPriceMap.get(item.id) != null && item.trackedCategoryId)
-            .map((item: any) => item.trackedCategoryId as string),
-        ),
+        ...new Set(regulatedItems.map((item: any) => item.trackedCategoryId as string)),
       ];
       const categoriesById = new Map<string, any>(
         regulatedCatIds.length
@@ -5410,14 +5425,36 @@ export class InvoicesService {
             ).map((c: any) => [c.id, c])
           : [],
       );
-      // Mirrors orders.service's linePieceQty: a box-split line stores qty already
-      // in pieces; a boxed selling-unit line expands by its snapshotted
-      // unitsPerBox. Unused by PERCENT_OF_SALE (unitBasisQty is ignored there) but
-      // correct for an EXCISE_PER_UNIT / PER_VOLUME / DEPOSIT_PER_CONTAINER line.
+      // Each re-priced regulated line's PRODUCT unitsPerBox, so linePieceQty can
+      // expand a boxed line ordered in SELLING UNITS: create only snapshots
+      // unitsPerBox on box-split lines while it computed the ORIGINAL levy from the
+      // product's box size, so without this fallback a per-unit levy collapses by a
+      // factor of unitsPerBox on the first re-price. The same fetch
+      // orders.service.recomputeLineCategoryTaxes carries, for the same reason.
+      const regulatedProductIds = [
+        ...new Set(regulatedItems.map((item: any) => item.productId).filter(Boolean)),
+      ] as string[];
+      const unitsPerBoxByProduct = new Map<string, number>(
+        regulatedProductIds.length
+          ? (
+              await this.prisma.forTenant().product.findMany({
+                where: { id: { in: regulatedProductIds } },
+                select: { id: true, unitsPerBox: true },
+              })
+            ).map((pr: any) => [pr.id, Number(pr.unitsPerBox ?? 0)])
+          : [],
+      );
+      // Mirrors orders.service's linePieceQty: a box-split line stores qty already in
+      // pieces; a boxed selling-unit line expands by its snapshotted unitsPerBox,
+      // falling back to the product's. Unused by PERCENT_OF_SALE (unitBasisQty is
+      // ignored there) but correct for an EXCISE_PER_UNIT / PER_VOLUME /
+      // DEPOSIT_PER_CONTAINER line.
       const linePieceQty = (li: any): number => {
         const qty = Number(li.qty) || 0;
         if (li.boxes != null) return qty;
-        const upb = Number(li.unitsPerBox ?? 0);
+        const upb = Number(
+          li.unitsPerBox ?? (li.productId ? unitsPerBoxByProduct.get(li.productId) : null) ?? 0,
+        );
         return upb > 1 ? qty * upb : qty;
       };
 
@@ -5440,13 +5477,18 @@ export class InvoicesService {
           ? categoriesById.get((item as any).trackedCategoryId)
           : null;
         if (category) {
-          itemData.categoryTaxAmount = computeCategoryTax({
-            taxType: category.taxType as CategoryTaxType,
-            rate: Number(category.rate),
-            unitBasisQty: linePieceQty(item),
-            lineSubtotal: newSubtotal,
-            priceIncludesTax: category.priceIncludesTax,
-          });
+          // An exempt customer owes $0 of category tax just as they owe $0 of the
+          // regular tax (foldCategoryTax's contract) — re-deriving it here would bill
+          // excise that the creation path correctly zeroed.
+          itemData.categoryTaxAmount = isTaxExempt
+            ? 0
+            : computeCategoryTax({
+                taxType: category.taxType as CategoryTaxType,
+                rate: Number(category.rate),
+                unitBasisQty: linePieceQty(item),
+                lineSubtotal: newSubtotal,
+                priceIncludesTax: category.priceIncludesTax,
+              });
         }
         await this.prisma.forTenant().invoiceItem.update({
           where: { id: item.id },
@@ -5465,9 +5507,9 @@ export class InvoicesService {
       // Category (regulated/excise) tax is persisted per line and is NOT part of
       // taxRate. Every other recompute in this file folds it in; omitting it here
       // silently under-bills excise and propagates the shortfall to the linked
-      // order via recomputeOrderFromInvoices below. No exemption re-derivation is
-      // needed: categoryTaxAmount is already zeroed at creation for exempt
-      // customers, and a price adjustment never changes exemption.
+      // order via recomputeOrderFromInvoices below. Exemption is honoured in the
+      // per-line write above (an exempt customer's lines are re-written as 0), so this
+      // Σ is exemption-correct by construction.
       const categoryTaxTotal = roundMoney(
         updatedItems.reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0),
       );
@@ -5498,6 +5540,12 @@ export class InvoicesService {
           taxAmount,
           total,
           status: newStatus,
+          // Every sibling status writer in this file (recordPayment, updatePayment,
+          // deletePayment, voidPayment, setCheckStatus) pairs the status with paidAt.
+          // Without it an invoice this settles to PAID keeps paidAt NULL and vanishes
+          // from every "status: PAID + paidAt" revenue window — bookkeeping's
+          // getSummary totalRevenue, the P&L window and getTimeToGetPaid.
+          paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null,
           internalNotes: existingInternal ? `${existingInternal}\n${auditLine}` : auditLine,
         },
       });

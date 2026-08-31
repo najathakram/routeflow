@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { PrismaService } from "../prisma/prisma.service";
 import { monthRange, periodBucketOf } from "../regulated/period";
 import { roundMoney } from "../common/pricing";
+import { CONFIRMED_PAYMENT, sumConfirmed } from "../invoices/payment-predicates";
 
 /** Strict "YYYY-MM" — anything else is a 400 before any query runs. */
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -9,7 +10,7 @@ const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 /**
  * Payment methods that are credit APPLICATIONS (P5-13), not cash-like tender.
  * A credit-note or advance application is itself an InvoicePayment row, so the
- * month's non-VOID payment rows ALREADY contain them — the statement splits
+ * month's CONFIRMED payment rows ALREADY contain them — the statement splits
  * them into the `credits` bucket so nothing is ever double-counted.
  */
 const CREDIT_METHODS = ["CREDIT_NOTE", "ADVANCE"] as const;
@@ -74,10 +75,16 @@ export class StatementService {
           payments: { select: { amount: true, paidAt: true, status: true, method: true } },
         },
       }),
+      // F03/R1: the statement's payment + credit activity is a SUMMING read —
+      // every row here lands in the `payments`/`credits` totals AND as a signed
+      // line item, and StatementLineItem has no status to render a "pending"
+      // label with. So it narrows to CONFIRMED (PAID) rows, exactly like the
+      // invoice PDF's totalPaid and the reminder email: a DRAFT (unconfirmed)
+      // payment must not tell a customer their balance dropped.
       db.invoicePayment.findMany({
         where: {
           invoice: { customerId },
-          status: { not: "VOID" },
+          ...CONFIRMED_PAYMENT,
           paidAt: { gte: from, lt: to },
         },
         orderBy: { paidAt: "asc" },
@@ -98,16 +105,14 @@ export class StatementService {
     if (!customer) throw new NotFoundException("Customer not found");
 
     // Net receivable at a boundary — getStatementForOperator.outstandingAmount
-    // semantics (customers.service.ts:642-644) with the VOID payment filter
-    // added and time bounds applied.
+    // semantics (customers.service.ts:642-644) with the CONFIRMED payment basis
+    // (F03/R1 — DRAFT and VOID rows both excluded) and time bounds applied.
     const receivableAt = (boundary: Date): number =>
       roundMoney(
         invoices
           .filter((inv) => inv.status !== "WRITTEN_OFF" && inv.issueDate < boundary)
           .reduce((sum, inv) => {
-            const paid = inv.payments
-              .filter((p) => p.status !== "VOID" && p.paidAt < boundary)
-              .reduce((s, p) => s + Number(p.amount), 0);
+            const paid = sumConfirmed(inv.payments.filter((p) => p.paidAt < boundary));
             return sum + roundMoney(Number(inv.total) - paid);
           }, 0),
       );

@@ -21,7 +21,8 @@ it must NOT touch orders.service.ts (F06/F07) or credit-notes.service.ts (F09).*
   (`Math.min(billedThrough(delivered), basisQty)`). The REFERENCE ORACLE, `buildInvoiceItemData`
   (invoices.service.ts:827-897, THIS lane), may share the hole. Check billedThrough-vs-basis
   capping there; if the server can over-bill mixed BOGO partials, fix it HERE with a
-  REG-B50-tokened spec case (the mirrors now cap, so an uncapped server over-invoices what the
+  REG-B50s-tokened spec case (`REG-B50s`, not the bare `REG-B50` — that token belongs to F04's
+  shipped pricing-parity tests; the mirrors now cap, so an uncapped server over-invoices what the
   driver correctly under-collects). If it already caps, add the pinning assert anyway and note it. **The proving test is T-B50s** — added to the test plan 2026-08-31 on resume, after review found the cap had been IMPLEMENTED with no regression behind it (a planning gap: the check was briefed into P1 without a matching T# for the author phase to work from).
 - **Scanner block deletion (with the fix, same package):** delete the `draft-payment-not-void`
   block from `.claude/skills/bug-hunt/scan-known-bugs.json` — its 10 acknowledged sites are
@@ -34,6 +35,19 @@ it must NOT touch orders.service.ts (F06/F07) or credit-notes.service.ts (F09).*
 - **Files (owns exclusively):** `apps/api/src/bookkeeping/bookkeeping.service.ts` (+ its spec)
 - getMobileDashboard / getFinanceDashboard / getDashboard only. getCashFlow /
   getPaymentsReceivedReport byte-untouched (assert via git diff in review).
+- **Boundary WIDENED at review (2026-08-31).** The three-function fence left `getSummary`
+  (GET /bookkeeping/summary), `getArAgingInvoices` and the sibling balance reports
+  (`getCustomerBalanceSummary`, `getInvoiceDetailsReport`, `getBadDebtsReport`,
+  `getArAgingDetails`, `getReceivableSummary`) plus `recordPayment`'s state-advancing sum and
+  the `findAll`/`findOne`/`recordPayment` ledger `totalPaid` on `not: VOID` — so the SAME tenant
+  read $200 outstanding on /bookkeeping/summary and $500 on /bookkeeping/dashboard. The fence was
+  the defect, not the design: the reports lane's own reference reads (`getCashFlow`,
+  `getPaymentsReceivedReport`) already filter `status: PAID`. Resolution per R1 ("every
+  payment-SUMMING read uses it"): **every payment SUM in bookkeeping.service.ts is CONFIRMED;
+  every payment LISTING keeps all rows and carries `status` through to the renderer** (the
+  `getReceivableSummary` payment-row query is such a listing and stays unfiltered). The two
+  reference functions remain byte-untouched. Covered by the added T-B11s cases for getSummary /
+  getArAgingInvoices / recordPayment in `bookkeeping.service.spec.ts`.
 
 ## P3 — documents: PDF + email
 
@@ -69,8 +83,10 @@ it must NOT touch orders.service.ts (F06/F07) or credit-notes.service.ts (F09).*
 
 scale major · workdir rf-F03 · TPs mirror the test-plan rows (TP1 invoices, TP2 bookkeeping,
 TP3 documents, TP4 repair script; e2e spec authored in P4 not red-gated) · redGate
-`-t "REG-B(11|50|57|74|81|84|85|102|103)"` apps/api, expect fail (50 = T-B50s, the server
-oracle cap) · verify perRound api tsc; final:
+`-t "REG-B(11|57|74|81|84|85|102|103)|REG-B50s"` apps/api, expect fail (`REG-B50s` = T-B50s, the
+server oracle cap — the bare `REG-B50` alternative is NOT usable: it also selects three shipped
+F04 tests in `apps/api/src/common/pricing-parity.spec.ts`, which made the gate structurally
+incapable of reporting 0 passed; see test-plan.md) · verify perRound api tsc; final:
 api jest JSON artifact, web tsc, scanner, campaign-check --batch F03 --pipeline-dir <this>.
 Mutation targets: the predicate (revert one site to not-VOID), B84's claim (updateMany→update),
 B81's guard (stored→dto), repair dry-run (make it write). No uiVerify (badge is T2-post-deploy).

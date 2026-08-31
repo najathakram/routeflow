@@ -286,10 +286,17 @@ describe("BookkeepingService", () => {
     // service actually excluding VOID — a regressed (unfiltered) query would see
     // the full `_allPayments` set (including the bounced payment) and fail.
     const applyScopedPayments = (row: any, args: any) => {
-      const not =
-        args?.include?.payments?.where?.status?.not ?? args?.select?.payments?.where?.status?.not;
+      const cond = args?.include?.payments?.where?.status ?? args?.select?.payments?.where?.status;
       const all: any[] = row._allPayments ?? [];
-      const payments = not ? all.filter((p) => p.status !== not) : all;
+      const payments = all.filter((p) => {
+        if (cond === undefined) return true;
+        // F03 narrowed these reads from `{ not: "VOID" }` to the CONFIRMED
+        // predicate (`"PAID"`); simulate both shapes so the assertions below
+        // still pin NUMBERS rather than a query shape.
+        if (typeof cond === "string") return p.status === cond;
+        if (cond.not !== undefined) return p.status !== cond.not;
+        return true;
+      });
       const { _allPayments, ...rest } = row;
       return { ...rest, payments };
     };
@@ -333,10 +340,12 @@ describe("BookkeepingService", () => {
       expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ amount: 40 }) }),
       );
-      // Proves the fix is at the payment level (scoped include), not just invoice status.
+      // Proves the fix is at the payment level (scoped include), not just invoice
+      // status. F03 narrowed the include to the CONFIRMED predicate, which still
+      // excludes VOID (it is strictly narrower than `not: VOID`).
       expect(prisma.invoice.findUnique).toHaveBeenCalledWith(
         expect.objectContaining({
-          include: { payments: { where: { status: { not: "VOID" } } } },
+          include: { payments: { where: { status: "PAID" } } },
         }),
       );
     });
@@ -354,10 +363,11 @@ describe("BookkeepingService", () => {
 
       // Full 100 is still outstanding — the bounced payment must not net it out.
       expect(result.outstandingReceivables).toBe(100);
-      // The weekly-receipts aggregate must exclude VOID at the payment level.
+      // The weekly-receipts aggregate must exclude VOID at the payment level —
+      // F03's CONFIRMED predicate does that and drops DRAFT as well.
       expect(prisma.invoicePayment.aggregate).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ status: { not: "VOID" } }),
+          where: expect.objectContaining({ status: "PAID" }),
         }),
       );
     });
@@ -528,6 +538,12 @@ describe("BookkeepingService", () => {
   // getCashFlow already sums PAID-only and would report $200 here; these
   // dashboards must report the SAME $200, not $500 (PAID + DRAFT).
   //
+  // The same fixture also drives the three reads whose PAYMENTS RELATION the
+  // fix narrowed: getMobileDashboard's outstanding select, getFinanceDashboard's
+  // AR-aging include, and getPeriodSummary's due include. On a $1,000 invoice the
+  // confirmed basis leaves $800 still owed; a `not: "VOID"` relation would net the
+  // DRAFT $300 out as well and under-report the balance as $500.
+  //
   // NOTE: `getDashboard` (bookkeeping.controller.ts `GET /bookkeeping/dashboard`)
   // is a route alias with no logic of its own — it calls `getMobileDashboard()`
   // directly — so it is exercised transitively by the getMobileDashboard cases
@@ -539,6 +555,9 @@ describe("BookkeepingService", () => {
       { amount: 200, status: "PAID", createdAt: NOW },
       { amount: 300, status: "DRAFT", createdAt: NOW }, // must NOT count as collected
     ];
+    // The unpaid invoice those payments sit on, and the balance it must still show.
+    const INVOICE_TOTAL = 1000;
+    const CONFIRMED_BALANCE = 800; // 1000 - 200 PAID; the not-VOID basis would say 500
 
     const matchesStatus = (value: string, cond: any): boolean => {
       if (cond === undefined) return true;
@@ -567,9 +586,25 @@ describe("BookkeepingService", () => {
       return { _sum: { amount: sum } };
     };
 
+    // Simulates the invoice reads that carry the predicate on their PAYMENTS
+    // RELATION rather than in an aggregate `where`: one unpaid invoice whose
+    // payments array honors whatever `where` the service put on the relation.
+    // The assertions then pin the resulting BALANCE, so reverting any of those
+    // three relations to `not: "VOID"` drops it from $800 to $500.
+    const simulateInvoiceFindMany = (args: any) => {
+      const relation = args?.include?.payments ?? args?.select?.payments;
+      const where = relation && typeof relation === "object" ? relation.where : undefined;
+      const payments = FAKE_PAYMENTS.filter((p) => matchesStatus(p.status, where?.status));
+      // dueDate null → the AR-aging "current" bucket.
+      return [{ id: "inv-b11", total: INVOICE_TOTAL, dueDate: null, payments }];
+    };
+
     beforeEach(() => {
       prisma.invoicePayment.aggregate.mockImplementation(async (args: any) =>
         simulateAggregate(args),
+      );
+      prisma.invoice.findMany.mockImplementation(async (args: any) =>
+        simulateInvoiceFindMany(args),
       );
     });
 
@@ -590,6 +625,93 @@ describe("BookkeepingService", () => {
       const result = await service.getFinanceDashboard();
 
       expect(result.summaryTable.today.receipts).toBe(200);
+    });
+
+    it("T-B11s: getMobileDashboard's totalOutstanding still owes the DRAFT $300 ($800, not $500)", async () => {
+      const result = await service.getMobileDashboard();
+
+      expect(result.totalOutstanding).toBe(CONFIRMED_BALANCE);
+    });
+
+    it("T-B11s: getFinanceDashboard's AR aging ages the full $800 balance, not $500", async () => {
+      const result = await service.getFinanceDashboard();
+
+      expect(result.arAging.total).toBe(CONFIRMED_BALANCE);
+      expect(result.arAging.current).toBe(CONFIRMED_BALANCE);
+    });
+
+    it("T-B11s: getFinanceDashboard's summary-table 'today' due balance is $800, not $500", async () => {
+      const result = await service.getFinanceDashboard();
+
+      expect(result.summaryTable.today.due).toBe(CONFIRMED_BALANCE);
+    });
+
+    // ── the sibling endpoints in this same file ──────────────────────────────
+    // GET /bookkeeping/summary, the AR-aging report and the record-payment guard
+    // compute the SAME money as the dashboards above, off the same fixture, and
+    // the same operator reads them side by side (apps/web/lib/api/bookkeeping.ts,
+    // apps/mobile/lib/api/admin.ts). A DRAFT payment must not make one of them
+    // report money the others don't.
+
+    it("T-B11s: getSummary reports paymentsThisWeek $200 / outstanding $800, agreeing with the dashboards", async () => {
+      const result = await service.getSummary();
+
+      // On the old `not: VOID` basis: $500 collected this week and $500
+      // outstanding — while GET /bookkeeping/dashboard said $200 and $800 for the
+      // same tenant, from the same rows.
+      expect(result.paymentsThisWeek).toBe(200);
+      expect(result.outstandingReceivables).toBe(CONFIRMED_BALANCE);
+    });
+
+    it("T-B11s: getArAgingInvoices ages the full $800 balance, not $500", async () => {
+      const result = await service.getArAgingInvoices();
+
+      // Same number getFinanceDashboard's AR-aging bucket reports above.
+      expect(result.totals.total).toBe(CONFIRMED_BALANCE);
+    });
+
+    it("T-B11s: recordPayment sizes the remaining balance from CONFIRMED money only", async () => {
+      const create = jest.fn();
+      const update = jest.fn().mockResolvedValue({
+        id: "inv-b11",
+        status: "PARTIAL",
+        customerId: "cust-1",
+        issueDate: NOW,
+        invoiceNumber: "INV-B11",
+        total: INVOICE_TOTAL,
+        customer: { id: "cust-1", businessName: "Acme" },
+        order: null,
+        payments: [],
+      });
+      prisma.tenantTransaction.mockImplementation(async (fn: any) =>
+        fn({
+          invoice: {
+            findUnique: jest.fn(async (args: any) => ({
+              id: "inv-b11",
+              total: INVOICE_TOTAL,
+              payments: FAKE_PAYMENTS.filter((pay) =>
+                matchesStatus(pay.status, args?.include?.payments?.where?.status),
+              ),
+            })),
+            update,
+          },
+          invoicePayment: { create },
+        }),
+      );
+
+      // $700 fits inside the $800 genuinely still owed. On the old `not: VOID`
+      // basis remaining was only $500 and this legitimate payment was rejected.
+      await service.recordPayment("inv-b11", { amount: 700, method: "CASH" as any });
+
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ amount: 700 }) }),
+      );
+      // $200 confirmed + $700 new = $900 < $1,000 ⇒ PARTIAL. The DRAFT $300 must
+      // not let this write PAID off money nobody has (the lying-status class B74
+      // fixes on the invoices side).
+      expect(update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "PARTIAL" }) }),
+      );
     });
   });
 

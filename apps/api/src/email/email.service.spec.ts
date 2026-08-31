@@ -442,7 +442,16 @@ describe("EmailService.sendInvoice — payment truth (T-B102, R8, REG-B102)", ()
     const html = sendSpy.mock.calls[0][0].html;
     const tfoot = tfootOf(html);
     expect(tfoot).toContain("$200.00");
-    expect(tfoot).not.toContain("$500.00");
+    // Scoped to the DEMANDED-amount row, not the whole tfoot: R8 wants this footer
+    // to mirror the PDF's totals box, and a correct one may legitimately also carry
+    // a "Total $500.00" line. A bare `expect(tfoot).not.toContain("$500.00")` would
+    // fail that correct build for the wrong reason. What must never happen is the
+    // Balance Due row itself demanding the stale total.
+    const balanceRow = (tfoot.match(/<tr[^>]*>(?:(?!<\/tr>)[\s\S])*Balance Due[\s\S]*?<\/tr>/i) ?? [
+      "",
+    ])[0];
+    expect(balanceRow).toContain("$200.00");
+    expect(balanceRow).not.toContain("$500.00");
   });
 });
 
@@ -509,5 +518,39 @@ describe("EmailService.sendInvoice — BOGO/promo item display (T-B103, R9, REG-
     // never the naive qty×unit = $60 a re-derive-from-qty bug would show.
     expect(row).toContain("$50.00");
     expect(row).not.toContain("$60.00");
+  });
+
+  it("REG-B103: hideOriginalPrice suppresses the strike — the tenant's hidden pre-promo price never reaches the buyer", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({
+      to: "buyer@example.com",
+      customerName: "Acme Buyer",
+      invoiceNumber: "INV-2003",
+      invoiceId: "inv-2003",
+      issueDate: "Jan 1, 2026",
+      dueDate: "Jan 31, 2026",
+      total: 50,
+      totalPaid: 0,
+      balanceDue: 50,
+      items: [bogoItem],
+      // The tenant set invoice.hideOriginalPrice — the PDF attached to this very
+      // message and the web detail page both show $10 only. The body must agree.
+      hideOriginalPrice: true,
+    } as any);
+
+    const row = itemRowsOf(sendSpy.mock.calls[0][0].html);
+
+    // The $12 pre-promo price is gone in every shape it could take.
+    expect(row).not.toContain("$12.00");
+    expect(row).not.toMatch(/text-decoration:\s*line-through/i);
+    // …but the line is otherwise unchanged: the free-unit note and the charged
+    // price/subtotal still render (hiding the base price is not hiding the promo).
+    expect(row).toContain("1 free");
+    expect(row).toContain("$10.00");
+    expect(row).toContain("$50.00");
   });
 });
