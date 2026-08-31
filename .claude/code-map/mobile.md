@@ -1083,3 +1083,42 @@ lastAt}` state).
   `Invalid call ... process.env.EXPO_ROUTER_APP_ROOT` — the same babel-preset-expo/expo-router
   resolution class the Dockerfile already pins with `ENV NODE_PATH` (commits fdf60a49/7cab3863). A
   warm Metro cache masks it; `--clear` exposes it. Not a defect in this change.
+
+### 2026-08-31 — Native build & distribution (EAS Android + OTA)
+
+The first EAS config that can actually produce an installable build. Until now the ONLY way a
+client got this app was mobile web (`Dockerfile` → `expo export --platform web` → nginx on
+Railway, phone-UA-proxied behind `www.routeflow.info` by `apps/web/middleware.ts`); the single
+native build ever attempted (2026-04-20) died in EAS's Install-dependencies phase and produced
+no artifact.
+
+- **`app.json`** — `version 1.1.0` / `android.versionCode 5`. NEW config plugins for
+  `expo-camera`, `expo-location`, `expo-image-picker`: all three were dependencies with no
+  plugin, so a native build shipped without their permissions. ⚠️ `expo-location` MUST carry
+  `isAndroidBackgroundLocationEnabled` + `isAndroidForegroundServiceEnabled` — the library
+  manifest adds neither, and `lib/location-tracker.native.ts` runs `startLocationUpdatesAsync`
+  with a foreground service, so driver tracking degrades silently without them. iOS usage
+  strings ride along in the same plugin props.
+  ⚠️ **`android.blockedPermissions: [RECORD_AUDIO]` is load-bearing.** The camera plugin's
+  `recordAudioAndroid: false` only stops the PLUGIN adding it; `expo-camera`'s own library
+  manifest declares it, so the merger re-adds it. Nothing here records audio or video.
+- **OTA (`updates.url` + `runtimeVersion.policy = "appVersion"`).** ⚠️ Must be present in a
+  binary for that binary to ever receive an update — adding it later does not reach installs
+  already in the field. Policy is `appVersion`, NOT `fingerprint`: `app.config.js` injects
+  `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` into the react-native-maps plugin, so a fingerprint computed
+  with that var unset differs from one computed with it set and updates strand silently.
+- **`eas.json`** — `staging` is the retest profile (internal + apk + production API) and carries
+  `channel: "staging"`; `production` carries its own. All profiles pin `node: "20.19.4"` (that
+  is the lever that fixes the builder's bundled npm to 10.8.x, matching this repo's
+  `packageManager` — the npm that wrote the lockfile) and set `HUSKY: "0"` (the root
+  `prepare: husky` runs on the builder, whose uploaded archive has no `.git`; husky v9 errors —
+  the leading suspect for the April 8.5-second install failure).
+- **Deleted the repo-ROOT `eas.json` + `app.json`** — a second, conflicting EAS identity
+  (projectId `0196542f…`, bundle `com.najathakram1.routeflow`, `appVersionSource: "remote"`)
+  referenced by nothing. An `eas` command run from the root silently targeted the wrong project.
+- ⚠️ **`npx expo prebuild` REWRITES `package.json`'s `android`/`ios` scripts** to
+  `expo run:android`/`run:ios` (bare-workflow assumption). This is a managed project — revert
+  those two lines after any prebuild, and never commit the generated `android/` directory
+  (its presence flips EAS to the bare workflow and `app.json`'s plugins stop applying).
+- Install any dep here with `npx -y npm@10.8.0` — the local npm 11 rewrites lockfile metadata.
+  `npm run validate-lock` (`missing 0`) is the gate.
