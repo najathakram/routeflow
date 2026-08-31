@@ -4,7 +4,8 @@
 >
 > **Do not resume any batch until the owner says so.** Nothing is mid-flight: the F03 pipeline
 > (run `wf_7bd33cd7-ac3`) was stopped deliberately, every worktree is committed and clean, and
-> master is green at `d616a47d` with all three Railway services deployed and the post-deploy
+> master is green (last code commit `d616a47d`, now `4d57a4ca` after two docs-only merges) with
+> all three Railway services deployed and the post-deploy
 > E2E passing (run 33395261653).
 >
 > **State at pause — 24 of 193 bugs terminal (12.4% by count, 17.9% severity-weighted).**
@@ -13,7 +14,9 @@
 >
 > ## To resume, in this order
 >
-> 1. `git fetch origin master` — confirm master is still `d616a47d` and no one else moved it.
+> 1. `git fetch origin master` — expect `4d57a4ca`. The last CODE commit is `d616a47d` (#556);
+>    everything above it is docs-only (#557 pause banner, #558 code-map). If master carries code
+>    commits newer than `d616a47d`, someone else moved it — reconcile before resuming.
 > 2. **F03 first** (worktree `.claude/worktrees/rf-F03`, branch `fix/F03-payment-truth`,
 >    2 commits ahead of master). Its pipeline stopped at the implement/review boundary with
 >    REAL but WHOLLY UNVERIFIED output — no red gate, no jest run, no review lenses, no mutation
