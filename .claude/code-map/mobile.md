@@ -1120,5 +1120,19 @@ no artifact.
   `expo run:android`/`run:ios` (bare-workflow assumption). This is a managed project — revert
   those two lines after any prebuild, and never commit the generated `android/` directory
   (its presence flips EAS to the bare workflow and `app.json`'s plugins stop applying).
+- ⚠️ **EAS installs MUST set `npm_config_engine_strict=false`** (in every `eas.json` profile's
+  `env`). The root `.npmrc` sets `engine-strict=true`; EAS copies it into the build and runs
+  `npm ci --include=dev` from the workspace ROOT, so apps/api's tree installs too and
+  `@prisma/streams-local` (dev-only, `node>=22`) turns into a hard EBADENGINE — **this is what
+  killed the 2026-04-20 build and the first 2026-08-31 attempt**, in the Install-dependencies
+  phase both times. `@zxing/library` (`node>=24`) is a second one waiting behind it. ci.yml
+  already solves this with `npm ci --engine-strict=false`; the Dockerfiles escape it only because
+  they never COPY `.npmrc`. Correct behaviour = these appear as `npm warn`, not `npm error`.
+- **Reading a failed EAS build's logs** (they are NOT in the CLI): POST to `api.expo.dev/graphql`
+  with the `expo-session` secret from `~/.expo/state.json` and a NON-default `User-Agent`
+  (Cloudflare 403s urllib's default with `error code: 1010`), query
+  `builds{byId(buildId:$id){status error{message} logFiles}}`, then fetch `logFiles[0]` — it is
+  **Brotli**-encoded JSON-lines keyed by `phase`. The signed URLs expire quickly, which is why
+  the April failure went undiagnosed for four months.
 - Install any dep here with `npx -y npm@10.8.0` — the local npm 11 rewrites lockfile metadata.
   `npm run validate-lock` (`missing 0`) is the gate.
