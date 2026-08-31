@@ -263,9 +263,16 @@ homeAddress` (the driver-home origin), and orders inherit `fulfillPath` from the
   `prisma migrate resolve --applied 0_init` ONCE before any further `migrate deploy`, or
   deploys block with P3009. `AiUsageEvent` + `IdempotencyKey` are modelled in schema.prisma
   purely so Prisma stops treating the app's runtime-created tables as drift and DROPping them.
-- **`prisma/rls.sql`** — Postgres row-level-security policies (defense-in-depth under the
-  `forTenant` client-side scoping); 2026-08-15 repaired dollar-quoting + the verification
-  query at the end.
+- **`prisma/migrations/20260909000000_rls/migration.sql`** — Postgres row-level-security
+  policies (defense-in-depth under the `forTenant` client-side scoping), applied by
+  `migrate deploy`, never by hand: per-table `ENABLE`/`FORCE ROW LEVEL SECURITY` +
+  `tenant_isolation` policy, then a post-apply `DO` block that RAISES on any listed table
+  missing enable/force/policy (the policy loop swallows its own errors, so a 0 exit proves
+  nothing). **Sole copy of the policied-table list** — `scripts/rls-preflight.mjs` parses
+  `tables := ARRAY[...]` out of this file to count NULL-`tenantId` rows before arming.
+- **`prisma/rls.sql`** — superseded pointer stub (comments only). The policy DDL lived here
+  until it moved into the migration above; a second copy of the table list is how a table
+  gets armed without the pre-flight ever checking it. Do not re-add DDL here.
 
 ## Feature modules (`src/<module>/`)
 

@@ -1236,6 +1236,12 @@ describe("CustomersService", () => {
   // ─── credit-note deletes must clear order↔credit-note links first ─────────
   // OrderCreditNote.creditNoteId has no onDelete (Restrict), so deleting a
   // credit note that is still linked to an order aborts the whole transaction.
+  //
+  // GREEN BY DESIGN — R0's fix is cherry-picked onto this branch (94e98afe,
+  // retitled by d32a1fe5). The three REG-B189 describes below are ORDERING
+  // pins that protect the picked fix from a later edit to any of the three
+  // purge sites; they are NOT this batch's red, and a RED-gate run must not
+  // count them as proof of F02b's own behavior changes.
 
   describe("REG-B189 deleteAllCustomers — order↔credit-note links", () => {
     it("deletes orderCreditNote rows for the customers' credit notes before the notes", async () => {
@@ -1276,6 +1282,7 @@ describe("CustomersService", () => {
     });
   });
 
+  // Green by design — R0's fix is cherry-picked (94e98afe); ordering pin, not this batch's red.
   describe("REG-B189 deleteCustomer (hard delete) — order↔credit-note links", () => {
     it("deletes orderCreditNote rows for the customer's credit notes before the notes", async () => {
       prisma.customer.findUnique.mockResolvedValue({
@@ -1297,6 +1304,7 @@ describe("CustomersService", () => {
     });
   });
 
+  // Green by design — R0's fix is cherry-picked (94e98afe); ordering pin, not this batch's red.
   describe("REG-B189 deleteImportedCustomers — order↔credit-note links", () => {
     it("deletes orderCreditNote rows for the imported customers' credit notes before the notes", async () => {
       prisma.customer.findMany.mockResolvedValue([
@@ -1318,6 +1326,333 @@ describe("CustomersService", () => {
       const linkDelete = prisma.orderCreditNote.deleteMany.mock.invocationCallOrder[0];
       const noteDelete = prisma.creditNote.deleteMany.mock.invocationCallOrder[0];
       expect(linkDelete).toBeLessThan(noteDelete);
+    });
+  });
+
+  // ─── mergeCustomers: re-pointing + FK-violation guard (F02b R4 / B101) ─────────
+  // createMockPrisma()'s tenantTransaction is a pass-through (`fn(models)`) and every
+  // model method defaults to a benign resolved value that can never reject — a spec
+  // built on that alone cannot tell a genuine re-point from a no-op, because
+  // `customer.delete` would "succeed" either way (the vacuity trap, test-plan.md).
+  // These specs instead give `customer.delete` a REAL in-memory relational check: it
+  // throws the same Prisma-shaped P2003 Postgres itself raises whenever a row in a
+  // tracked child table still points at the id being deleted. Re-pointing those rows
+  // before the delete (or catching the residual violation) is therefore load-bearing —
+  // a merge that skips it genuinely fails here, not merely on a mock inspected after
+  // the fact.
+  describe("mergeCustomers — re-pointing + FK-violation guard (F02b R4 / B101)", () => {
+    const PRIMARY_ID = "cust-primary-b101";
+    const SECONDARY_ID = "cust-secondary-b101";
+    const PRIMARY = { id: PRIMARY_ID, userId: "user-p-b101" };
+    const SECONDARY = { id: SECONDARY_ID, userId: "user-s-b101" };
+
+    // The same shape Prisma.PrismaClientKnownRequestError carries for a foreign-key
+    // RESTRICT violation (code P2003; meta.field_name names the failing constraint) —
+    // see e.g. routes.service.ts's own `err?.code === "P2003"` handling.
+    class FakeForeignKeyError extends Error {
+      code = "P2003";
+      meta: { field_name: string };
+      constructor(fieldName: string) {
+        super(`Foreign key constraint failed on the field: ${fieldName}`);
+        this.meta = { field_name: fieldName };
+      }
+    }
+
+    // Array-backed CRUD for one relation table, keyed by customerId, wired onto a
+    // model's existing jest.fn()s — a re-point (update/updateMany to the primary) or a
+    // drop (delete/deleteMany) is genuinely reflected in what customer.delete sees next.
+    function relationRows<T extends { id: string; customerId: string }>(seed: T[]) {
+      let rows = seed.map((r) => ({ ...r }));
+      return {
+        rows: () => rows,
+        wire(mock: {
+          findMany: jest.Mock;
+          update: jest.Mock;
+          updateMany: jest.Mock;
+          delete: jest.Mock;
+          deleteMany: jest.Mock;
+        }) {
+          mock.findMany.mockImplementation(async ({ where }: any = {}) =>
+            rows.filter((r) => r.customerId === where?.customerId),
+          );
+          mock.update.mockImplementation(async ({ where, data }: any) => {
+            const row = rows.find((r) => r.id === where.id);
+            if (row) Object.assign(row, data);
+            return row ?? null;
+          });
+          mock.updateMany.mockImplementation(async ({ where, data }: any) => {
+            let count = 0;
+            for (const r of rows) {
+              if (r.customerId === where?.customerId) {
+                Object.assign(r, data);
+                count++;
+              }
+            }
+            return { count };
+          });
+          mock.delete.mockImplementation(async ({ where }: any) => {
+            const idx = rows.findIndex((r) => r.id === where.id);
+            if (idx === -1) throw new Error("relationRows: no such row");
+            const [removed] = rows.splice(idx, 1);
+            return removed;
+          });
+          mock.deleteMany.mockImplementation(async ({ where }: any = {}) => {
+            const before = rows.length;
+            rows = rows.filter((r) => r.customerId !== where?.customerId);
+            return { count: before - rows.length };
+          });
+        },
+      };
+    }
+
+    beforeEach(() => {
+      // These four models postdate createMockPrisma()'s model list (sales-agents /
+      // buyer-portal features) — attached ad-hoc, same as the CUSTOMERS-soft-cap
+      // `tenantSubscription` shim near the top of this file, rather than editing the
+      // shared mock (out of this package's file scope).
+      for (const m of [
+        "agentAssignment",
+        "commissionAccrual",
+        "customerCommissionRate",
+        "buyerPaymentRequest",
+        "customerDocument",
+      ]) {
+        if (!(prisma as any)[m]) {
+          (prisma as any)[m] = {
+            findMany: jest.fn().mockResolvedValue([]),
+            update: jest.fn().mockResolvedValue({}),
+            updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+            delete: jest.fn().mockResolvedValue({}),
+            deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+          };
+        }
+      }
+
+      prisma.customer.findUnique.mockImplementation(async ({ where }: any) =>
+        where.id === PRIMARY_ID ? PRIMARY : where.id === SECONDARY_ID ? SECONDARY : null,
+      );
+      prisma.customerAuthorization.findMany.mockResolvedValue([]);
+
+      // Rewire tenantTransaction to hand the callback THIS prisma object — the shared
+      // mock's tenantTransaction closes over its OWN internal model list, captured
+      // before the ad-hoc attachments above existed, so it would silently omit them.
+      prisma.tenantTransaction.mockImplementation((fn: any) =>
+        fn({
+          ...(prisma as any),
+          $executeRaw: jest.fn().mockResolvedValue(0),
+          $queryRaw: jest.fn().mockResolvedValue([]),
+        }),
+      );
+    });
+
+    it("REG-B101a / T-B101a: re-points CustomerLink/AgentAssignment/CommissionAccrual/CustomerCommissionRate so customer.delete succeeds", async () => {
+      const link = relationRows([{ id: "cl-1", customerId: SECONDARY_ID }]);
+      const assign = relationRows([{ id: "aa-1", customerId: SECONDARY_ID }]);
+      const accrual = relationRows([{ id: "ca-1", customerId: SECONDARY_ID }]);
+      const rate = relationRows([{ id: "ccr-1", customerId: SECONDARY_ID }]);
+      link.wire(prisma.customerLink as any);
+      assign.wire((prisma as any).agentAssignment);
+      accrual.wire((prisma as any).commissionAccrual);
+      rate.wire((prisma as any).customerCommissionRate);
+
+      // RESTRICT is the schema default for all four (no onDelete override in
+      // schema.prisma) — the delete fails whenever any of them still points at the id
+      // being deleted, exactly like Postgres would.
+      prisma.customer.delete.mockImplementation(async ({ where }: any) => {
+        for (const [name, store] of [
+          ["CustomerLink", link],
+          ["AgentAssignment", assign],
+          ["CommissionAccrual", accrual],
+          ["CustomerCommissionRate", rate],
+        ] as const) {
+          if (store.rows().some((r) => r.customerId === where.id)) {
+            throw new FakeForeignKeyError(`${name}_customerId_fkey (index)`);
+          }
+        }
+        return {};
+      });
+
+      // Asserted rather than bare-awaited so today's failure reads as an
+      // ASSERTION ("merge rejected with P2003" against an expected resolve)
+      // instead of an uncaught FakeForeignKeyError escaping the test body —
+      // the two are indistinguishable in a gate report, and only one of them
+      // says "the behavior is missing" rather than "the fixture is broken".
+      // mergeCustomers resolves with the reloaded primary customer, so
+      // toBeDefined() is satisfied by the real return value on green.
+      await expect(service.mergeCustomers(PRIMARY_ID, SECONDARY_ID)).resolves.toBeDefined();
+
+      expect(link.rows().find((r) => r.id === "cl-1")?.customerId).toBe(PRIMARY_ID);
+      expect(assign.rows().find((r) => r.id === "aa-1")?.customerId).toBe(PRIMARY_ID);
+      expect(accrual.rows().find((r) => r.id === "ca-1")?.customerId).toBe(PRIMARY_ID);
+      expect(rate.rows().find((r) => r.id === "ccr-1")?.customerId).toBe(PRIMARY_ID);
+      expect(prisma.customer.delete).toHaveBeenCalledWith({ where: { id: SECONDARY_ID } });
+    });
+
+    it("REG-B101b / T-B101b: re-points BuyerPaymentRequest/CustomerDocument/RouteRunStop without ever deleting the RouteRunStop rows", async () => {
+      const bpr = relationRows([{ id: "bpr-1", customerId: SECONDARY_ID }]);
+      const doc = relationRows([{ id: "doc-1", customerId: SECONDARY_ID }]);
+      const stops = relationRows([
+        { id: "rrs-1", customerId: SECONDARY_ID, routeStopId: "rs-1" },
+        { id: "rrs-2", customerId: SECONDARY_ID, routeStopId: "rs-2" },
+      ]);
+      // The RouteStop parents those run stops hang off. RouteRunStop.routeStopId is a
+      // required relation with no onDelete override, i.e. ON DELETE RESTRICT
+      // (0_init/migration.sql) — so once the run stops are re-pointed rather than
+      // deleted, dropping their parents raises P2003 and rolls the merge back.
+      const parents = relationRows([
+        { id: "rs-1", customerId: SECONDARY_ID },
+        { id: "rs-2", customerId: SECONDARY_ID },
+      ]);
+      bpr.wire((prisma as any).buyerPaymentRequest);
+      doc.wire((prisma as any).customerDocument);
+      stops.wire(prisma.routeRunStop as any);
+      parents.wire(prisma.routeStop as any);
+      const dropParents = (prisma.routeStop.deleteMany as jest.Mock).getMockImplementation()!;
+      (prisma.routeStop.deleteMany as jest.Mock).mockImplementation(async (args: any) => {
+        const doomed = parents.rows().filter((p) => p.customerId === args?.where?.customerId);
+        if (stops.rows().some((rr) => doomed.some((p) => p.id === rr.routeStopId))) {
+          throw new FakeForeignKeyError("RouteRunStop_routeStopId_fkey (index)");
+        }
+        return dropParents(args);
+      });
+
+      // Asserted, not bare-awaited: a bare `await` on a rejecting merge surfaces as an
+      // uncaught ERROR instead of an assertion failure, which reads as an infrastructure
+      // problem rather than the regression this test exists to catch (same guard as B101a).
+      await expect(service.mergeCustomers(PRIMARY_ID, SECONDARY_ID)).resolves.toBeDefined();
+
+      expect(bpr.rows().find((r) => r.id === "bpr-1")?.customerId).toBe(PRIMARY_ID);
+      expect(doc.rows().find((r) => r.id === "doc-1")?.customerId).toBe(PRIMARY_ID);
+      expect(stops.rows().map((r) => r.customerId)).toEqual([PRIMARY_ID, PRIMARY_ID]);
+      // B101's original bug: an unconditional deleteMany here destroyed delivered-run
+      // photos/signatures instead of leaving the POD rows intact under the primary.
+      expect(prisma.routeRunStop.deleteMany).not.toHaveBeenCalled();
+      // …and the parent RouteStops must be re-pointed too, not deleted: deleting them
+      // while the re-pointed run stops still reference them is a RESTRICT violation
+      // that would 409 the whole merge for any customer with delivery history.
+      expect(parents.rows().map((r) => r.customerId)).toEqual([PRIMARY_ID, PRIMARY_ID]);
+      expect(prisma.routeStop.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("REG-B101c / T-B101c: an unresolvable Restrict relation surfaces as a named ConflictException, not a raw 500", async () => {
+      // Models a residual FK the merge's known re-point list cannot possibly cover — a
+      // schema addition still to come. Proves the guard is generic: ANY leftover P2003
+      // at delete time is caught and turned into a 409 naming the relation from the
+      // real Prisma error's meta.field_name, never left to bubble up as a raw crash.
+      prisma.customer.delete.mockImplementation(async () => {
+        throw new FakeForeignKeyError("LoyaltyPointsLedger_customerId_fkey (index)");
+      });
+
+      let caught: any;
+      try {
+        await service.mergeCustomers(PRIMARY_ID, SECONDARY_ID);
+      } catch (e) {
+        caught = e;
+      }
+
+      expect(caught).toBeInstanceOf(ConflictException);
+      expect(caught.message).toContain("LoyaltyPointsLedger");
+    });
+  });
+
+  // ─── deleteCustomer: `force` stays reversible for HTTP callers (F02b R5 / B130) ──
+  describe("deleteCustomer — force=true is the web's reversible soft-delete (F02b R5 / B130)", () => {
+    const CUSTOMER = { id: "cust-force-b130", userId: "user-force-b130" };
+
+    beforeEach(() => {
+      prisma.customer.findUnique.mockImplementation(async ({ where }: any) =>
+        where.id === CUSTOMER.id ? { ...CUSTOMER, user: { status: "ACTIVE" } } : null,
+      );
+      // Record-free: nothing to orphan, so the 409 never fires either way.
+      prisma.order.count.mockResolvedValue(0);
+      prisma.invoice.count.mockResolvedValue(0);
+      prisma.return.count.mockResolvedValue(0);
+    });
+
+    it("REG-B130b: soft-deletes a RECORD-FREE customer when force=true (the detail page's Undo contract)", async () => {
+      // DELETE /customers/:id?force=true is the only delete on the customer detail
+      // page (useSoftDeleteCustomer), and its 8-second Undo calls
+      // POST /customers/:id/restore — so force must never hard-delete, not even for
+      // a customer with no orders/invoices/returns, or the Undo 404s against a row
+      // that no longer exists.
+      await expect(service.deleteCustomer(CUSTOMER.id, true)).resolves.toEqual({
+        success: true,
+        softDeleted: true,
+      });
+
+      expect(prisma.customer.update).toHaveBeenCalledWith({
+        where: { id: CUSTOMER.id },
+        data: { deletedAt: expect.any(Date) },
+      });
+      expect(prisma.customer.delete).not.toHaveBeenCalled();
+      expect(prisma.user.delete).not.toHaveBeenCalled();
+    });
+
+    it("REG-B130b: hard-deletes a record-free customer when the caller opts into hardDeleteWhenRecordFree", async () => {
+      // batchDelete's narrowing — force means "waive the 409 only" there, so an
+      // empty customer is genuinely removed (T-B130a's customer Z).
+      await expect(
+        service.deleteCustomer(CUSTOMER.id, true, { hardDeleteWhenRecordFree: true }),
+      ).resolves.toEqual({ success: true });
+
+      expect(prisma.customer.delete).toHaveBeenCalledWith({ where: { id: CUSTOMER.id } });
+      expect(prisma.customer.update).not.toHaveBeenCalledWith({
+        where: { id: CUSTOMER.id },
+        data: { deletedAt: expect.any(Date) },
+      });
+    });
+  });
+
+  // ─── batchDelete: force pass-through for record-holding customers (F02b R5 / B130) ──
+  describe("batchDelete — force pass-through for record-holding customers (F02b R5 / B130)", () => {
+    const CUSTOMER_X = { id: "cust-x-b130", userId: "user-x-b130" };
+    const CUSTOMER_Y = { id: "cust-y-b130", userId: "user-y-b130" };
+    const CUSTOMER_Z = { id: "cust-z-b130", userId: "user-z-b130" };
+
+    // R5's contract, precisely: `force` lifts the 409 pre-flight ONLY. The soft-vs-hard
+    // choice stays keyed on whether the customer actually holds records, which is why
+    // batchDelete opts in with `{ hardDeleteWhenRecordFree: true }` — a blanket "force means
+    // soft-delete everything" would leave Z as a ghost row and the assertion on
+    // `customer.delete` below is the only thing that tells the two apart.
+    it("REG-B130a / T-B130a: soft-deletes a record-holding customer (Y), hard-deletes a record-free one (Z); a PAID-invoice customer (X) still 409s pre-flight", async () => {
+      // Whole-batch pre-flight: blocked only when a PAID/SENT invoice is in the set.
+      prisma.invoice.groupBy.mockImplementation(async ({ where }: any) => {
+        const ids: string[] = where.customerId.in;
+        return ids.includes(CUSTOMER_X.id)
+          ? [{ customerId: CUSTOMER_X.id, _count: { _all: 1 } }]
+          : [];
+      });
+
+      await expect(service.batchDelete([CUSTOMER_X.id, CUSTOMER_Y.id])).rejects.toThrow(
+        ConflictException,
+      );
+
+      prisma.customer.findUnique.mockImplementation(async ({ where }: any) => {
+        if (where.id === CUSTOMER_Y.id) return { ...CUSTOMER_Y, user: { status: "ACTIVE" } };
+        if (where.id === CUSTOMER_Z.id) return { ...CUSTOMER_Z, user: { status: "ACTIVE" } };
+        return null;
+      });
+      // Y has orders (no PAID/SENT invoices — that's what let it past the pre-flight
+      // above); Z has no records at all.
+      prisma.order.count.mockImplementation(async ({ where }: any) =>
+        where.customerId === CUSTOMER_Y.id ? 3 : 0,
+      );
+      prisma.invoice.count.mockResolvedValue(0);
+      prisma.return.count.mockResolvedValue(0);
+
+      const result = await service.batchDelete([CUSTOMER_Y.id, CUSTOMER_Z.id]);
+
+      expect(result).toEqual({ deleted: 2, failed: [] });
+
+      // Y: soft-deleted — deletedAt set, never hard-deleted, its 3 orders untouched.
+      expect(prisma.customer.update).toHaveBeenCalledWith({
+        where: { id: CUSTOMER_Y.id },
+        data: { deletedAt: expect.any(Date) },
+      });
+      expect(prisma.customer.delete).not.toHaveBeenCalledWith({ where: { id: CUSTOMER_Y.id } });
+
+      // Z: no records — hard-deleted.
+      expect(prisma.customer.delete).toHaveBeenCalledWith({ where: { id: CUSTOMER_Z.id } });
     });
   });
 });

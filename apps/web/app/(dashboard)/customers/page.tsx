@@ -35,6 +35,7 @@ import {
 } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerFormModal } from "./_components/CustomerFormModal";
 import {
   useCustomers,
@@ -260,6 +261,7 @@ export default function CustomersPage() {
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = React.useState(false);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = React.useState(false);
   const [deactivatingCustomer, setDeactivatingCustomer] = React.useState<{
     id: string;
     name: string;
@@ -279,6 +281,29 @@ export default function CustomersPage() {
     typeFilter,
     tagFilter,
     regulatedFilter,
+  ]);
+
+  // REG-B154 class fix: selection used to accumulate across page/search/filter
+  // changes with no reset (toggleSelect only ever adds/removes one id — see
+  // below), so a bulk action could silently include ids from a page/filter the
+  // operator is no longer looking at. Reset whenever the visible set changes —
+  // deps must cover EVERY input of customersQueryParams below (page size and
+  // sort re-fetch a different set without ever changing `page`).
+  React.useEffect(() => {
+    setSelected(new Set());
+    setShowBulkDeleteConfirm(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    page,
+    limit,
+    debouncedSearch,
+    statusFilter,
+    typeFilter,
+    tagFilter,
+    regulatedFilter,
+    unassignedOnly,
+    sortBy,
+    sortDir,
   ]);
 
   // ── API data ─────────────────────────────────────────────────────────────
@@ -344,14 +369,25 @@ export default function CustomersPage() {
           variant: "success",
         });
       } else {
+        // R5/REG-B130: surface the 409/failed[] breakdown by reason instead of
+        // a bare count — the per-customer ConflictException message names the
+        // blocking relation (PAID/SENT invoices, etc).
         toast({
-          title: `Deleted ${res.deleted}, failed ${res.failed.length}`,
+          title: `Deleted ${res.deleted}, ${res.failed.length} failed`,
+          description: res.failed.map((f) => f.reason).join("; "),
           variant: res.deleted > 0 ? "success" : "error",
         });
       }
       exitSelectMode();
-    } catch {
-      toast({ title: "Failed to delete customers", variant: "error" });
+    } catch (err: any) {
+      // R5/REG-B130: batchDelete's PAID/SENT pre-flight throws a ConflictException
+      // for the WHOLE batch, so the per-customer breakdown arrives as a 409 message
+      // rather than in failed[]. Surface it, same shape as the branch above.
+      toast({
+        title: "Failed to delete customers",
+        description: err?.response?.data?.message,
+        variant: "error",
+      });
     } finally {
       setIsDeleting(false);
     }
@@ -700,7 +736,7 @@ export default function CustomersPage() {
               variant="danger"
               leftIcon={<Trash2 className="h-4 w-4" />}
               loading={isDeleting}
-              onClick={handleBulkDelete}
+              onClick={() => setShowBulkDeleteConfirm(true)}
             >
               Delete {selected.size}
             </Button>
@@ -1026,6 +1062,30 @@ export default function CustomersPage() {
           </div>
         )}
       </div>
+
+      {/* Bulk delete confirmation — names the selected customers where feasible
+          (REG-B130), falling back to a bare count past a readable cap. */}
+      <ConfirmDialog
+        open={showBulkDeleteConfirm}
+        onClose={() => setShowBulkDeleteConfirm(false)}
+        onConfirm={async () => {
+          await handleBulkDelete();
+          setShowBulkDeleteConfirm(false);
+        }}
+        title={`Delete ${selected.size} customer${selected.size !== 1 ? "s" : ""}?`}
+        description={(() => {
+          const names = customers.filter((c) => selected.has(c.id)).map((c) => c.businessName);
+          const preview =
+            names.length > 0
+              ? names.slice(0, 5).join(", ") +
+                (names.length > 5 ? `, and ${names.length - 5} more` : "")
+              : `${selected.size} customer${selected.size !== 1 ? "s" : ""}`;
+          return `${preview} will be deleted. Customers with orders, invoices, or returns are deactivated instead of hard-deleted; customers with PAID or SENT invoices cannot be deleted here.`;
+        })()}
+        confirmLabel="Delete"
+        variant="danger"
+        loading={isDeleting}
+      />
 
       {/* Deactivate confirmation modal */}
       <Modal
