@@ -1586,127 +1586,197 @@ export class CustomersService {
     const primary = await this.findCustomerOrThrow(primaryId);
     const secondary = await this.findCustomerOrThrow(secondaryId);
 
-    return this.prisma.tenantTransaction(
-      async (tx) => {
-        // Move invoices
-        await tx.invoice.updateMany({
-          where: { customerId: secondaryId },
-          data: { customerId: primaryId },
-        });
+    try {
+      return await this.prisma.tenantTransaction(
+        async (tx) => {
+          // Move invoices
+          await tx.invoice.updateMany({
+            where: { customerId: secondaryId },
+            data: { customerId: primaryId },
+          });
 
-        // Move orders
-        await tx.order.updateMany({
-          where: { customerId: secondaryId },
-          data: { customerId: primaryId },
-        });
+          // Move orders
+          await tx.order.updateMany({
+            where: { customerId: secondaryId },
+            data: { customerId: primaryId },
+          });
 
-        // Move estimates
-        await tx.estimate.updateMany({
-          where: { customerId: secondaryId },
-          data: { customerId: primaryId },
-        });
+          // Move estimates
+          await tx.estimate.updateMany({
+            where: { customerId: secondaryId },
+            data: { customerId: primaryId },
+          });
 
-        // Move credit notes
-        await tx.creditNote.updateMany({
-          where: { customerId: secondaryId },
-          data: { customerId: primaryId },
-        });
+          // Move credit notes
+          await tx.creditNote.updateMany({
+            where: { customerId: secondaryId },
+            data: { customerId: primaryId },
+          });
 
-        // Move returns
-        await tx.return.updateMany({
-          where: { customerId: secondaryId },
-          data: { customerId: primaryId },
-        });
+          // Move returns
+          await tx.return.updateMany({
+            where: { customerId: secondaryId },
+            data: { customerId: primaryId },
+          });
 
-        // Move advance payments
-        await tx.advancePayment.updateMany({
-          where: { customerId: secondaryId },
-          data: { customerId: primaryId },
-        });
+          // Move advance payments
+          await tx.advancePayment.updateMany({
+            where: { customerId: secondaryId },
+            data: { customerId: primaryId },
+          });
 
-        // Move expenses
-        await tx.expense.updateMany({
-          where: { customerId: secondaryId },
-          data: { customerId: primaryId },
-        });
+          // Move expenses
+          await tx.expense.updateMany({
+            where: { customerId: secondaryId },
+            data: { customerId: primaryId },
+          });
 
-        // Move transactions
-        await tx.transaction.updateMany({
-          where: { customerId: secondaryId },
-          data: { customerId: primaryId },
-        });
+          // Move transactions
+          await tx.transaction.updateMany({
+            where: { customerId: secondaryId },
+            data: { customerId: primaryId },
+          });
 
-        // Clean up secondary's own records before deleting
-        await tx.contactPerson.deleteMany({ where: { customerId: secondaryId } });
-        await tx.customerTagAssignment.deleteMany({ where: { customerId: secondaryId } });
-        await tx.customerComment.deleteMany({ where: { customerId: secondaryId } });
-        await tx.customerPrice.deleteMany({ where: { customerId: secondaryId } });
-        await tx.customerAddress.deleteMany({ where: { customerId: secondaryId } });
-        await tx.routeRunStop.deleteMany({ where: { customerId: secondaryId } });
-        await tx.routeCustomer.deleteMany({ where: { customerId: secondaryId } });
-        await tx.routeStop.deleteMany({ where: { customerId: secondaryId } });
-        await tx.recurringInvoice.updateMany({
-          where: { customerId: secondaryId },
-          data: { customerId: primaryId },
-        });
-        await tx.orderTemplate.updateMany({
-          where: { customerId: secondaryId },
-          data: { customerId: primaryId },
-        });
-
-        // Regulated compliance: re-point the secondary's licenses/overrides to the
-        // primary. Both CustomerAuthorization and AuthorizationOverride FK-cascade on
-        // customer delete, so WITHOUT this the merge below would silently destroy the
-        // secondary's regulated authorizations. CustomerAuthorization is unique per
-        // (customerId, trackedCategoryId), so per-category collisions are resolved by
-        // keeping the stronger authorization (see authSecondaryWins); the loser is
-        // deleted so the re-point never trips the unique constraint.
-        const [primaryAuths, secondaryAuths] = await Promise.all([
-          tx.customerAuthorization.findMany({ where: { customerId: primaryId } }),
-          tx.customerAuthorization.findMany({ where: { customerId: secondaryId } }),
-        ]);
-        const primaryAuthByCategory = new Map<string, (typeof primaryAuths)[number]>(
-          primaryAuths.map((a) => [a.trackedCategoryId, a]),
-        );
-        for (const sec of secondaryAuths) {
-          const pri = primaryAuthByCategory.get(sec.trackedCategoryId);
-          if (!pri) {
-            await tx.customerAuthorization.update({
-              where: { id: sec.id },
-              data: { customerId: primaryId },
-            });
-          } else if (this.authSecondaryWins(sec, pri)) {
-            await tx.customerAuthorization.delete({ where: { id: pri.id } });
-            await tx.customerAuthorization.update({
-              where: { id: sec.id },
-              data: { customerId: primaryId },
-            });
+          // Portal link, sales-agent bookkeeping, buyer-portal artifacts, and delivery
+          // history must be RE-POINTED to the primary, never dropped (B101): these are
+          // Restrict relations, so an unconditional delete/deleteMany here either
+          // destroys history (RouteRunStop's POD photos/signatures) or crashes the
+          // customer.delete below with a P2003.
+          //
+          // CustomerLink.customerId is unique — a primary that already has a link
+          // cannot also receive the secondary's, so the secondary's (now-redundant)
+          // link is dropped instead of re-pointed.
+          const primaryLink = await tx.customerLink.findFirst({
+            where: { customerId: primaryId },
+          });
+          if (primaryLink) {
+            await tx.customerLink.deleteMany({ where: { customerId: secondaryId } });
           } else {
-            await tx.customerAuthorization.delete({ where: { id: sec.id } });
+            await tx.customerLink.updateMany({
+              where: { customerId: secondaryId },
+              data: { customerId: primaryId },
+            });
           }
-        }
-        // Overrides carry no per-category uniqueness — move them all.
-        await tx.authorizationOverride.updateMany({
-          where: { customerId: secondaryId },
-          data: { customerId: primaryId },
-        });
+          // Optional-chained: these five models postdate several older tests' fixtures
+          // (see the ad-hoc attachment in customers.service.spec.ts) — a real Prisma tx
+          // always has them, so this is a no-op only against those older test doubles.
+          await tx.agentAssignment?.updateMany({
+            where: { customerId: secondaryId },
+            data: { customerId: primaryId },
+          });
+          await tx.commissionAccrual?.updateMany({
+            where: { customerId: secondaryId },
+            data: { customerId: primaryId },
+          });
+          await tx.customerCommissionRate?.updateMany({
+            where: { customerId: secondaryId },
+            data: { customerId: primaryId },
+          });
+          await tx.buyerPaymentRequest?.updateMany({
+            where: { customerId: secondaryId },
+            data: { customerId: primaryId },
+          });
+          await tx.customerDocument?.updateMany({
+            where: { customerId: secondaryId },
+            data: { customerId: primaryId },
+          });
 
-        // Delete secondary customer and their user
-        await tx.customer.delete({ where: { id: secondaryId } });
-        await tx.user.delete({ where: { id: secondary.userId } });
+          // Clean up secondary's own records before deleting
+          await tx.contactPerson.deleteMany({ where: { customerId: secondaryId } });
+          await tx.customerTagAssignment.deleteMany({ where: { customerId: secondaryId } });
+          await tx.customerComment.deleteMany({ where: { customerId: secondaryId } });
+          await tx.customerPrice.deleteMany({ where: { customerId: secondaryId } });
+          await tx.customerAddress.deleteMany({ where: { customerId: secondaryId } });
+          // POD photos/signatures live on RouteRunStop — re-point, never delete (B101).
+          await tx.routeRunStop.updateMany({
+            where: { customerId: secondaryId },
+            data: { customerId: primaryId },
+          });
+          await tx.routeCustomer.deleteMany({ where: { customerId: secondaryId } });
+          // RouteStop must be re-pointed too, NOT deleted: the run stops re-pointed just
+          // above still carry their original routeStopId, and
+          // RouteRunStop_routeStopId_fkey is ON DELETE RESTRICT (0_init/migration.sql) —
+          // deleting the parent stops here would raise a P2003 and roll the whole merge
+          // back for exactly the customers with delivery history (B101). RouteStop has no
+          // (routeId, customerId) uniqueness, so a re-point can never collide.
+          await tx.routeStop.updateMany({
+            where: { customerId: secondaryId },
+            data: { customerId: primaryId },
+          });
+          await tx.recurringInvoice.updateMany({
+            where: { customerId: secondaryId },
+            data: { customerId: primaryId },
+          });
+          await tx.orderTemplate.updateMany({
+            where: { customerId: secondaryId },
+            data: { customerId: primaryId },
+          });
 
-        // Return the primary customer
-        return tx.customer.findUnique({
-          where: { id: primaryId },
-          include: {
-            user: { select: { id: true, email: true, username: true, status: true } },
-            addresses: true,
-            tagAssignments: { include: { tag: true } },
-          },
-        });
-      },
-      { timeout: 30_000 },
-    );
+          // Regulated compliance: re-point the secondary's licenses/overrides to the
+          // primary. Both CustomerAuthorization and AuthorizationOverride FK-cascade on
+          // customer delete, so WITHOUT this the merge below would silently destroy the
+          // secondary's regulated authorizations. CustomerAuthorization is unique per
+          // (customerId, trackedCategoryId), so per-category collisions are resolved by
+          // keeping the stronger authorization (see authSecondaryWins); the loser is
+          // deleted so the re-point never trips the unique constraint.
+          const [primaryAuths, secondaryAuths] = await Promise.all([
+            tx.customerAuthorization.findMany({ where: { customerId: primaryId } }),
+            tx.customerAuthorization.findMany({ where: { customerId: secondaryId } }),
+          ]);
+          const primaryAuthByCategory = new Map<string, (typeof primaryAuths)[number]>(
+            primaryAuths.map((a) => [a.trackedCategoryId, a]),
+          );
+          for (const sec of secondaryAuths) {
+            const pri = primaryAuthByCategory.get(sec.trackedCategoryId);
+            if (!pri) {
+              await tx.customerAuthorization.update({
+                where: { id: sec.id },
+                data: { customerId: primaryId },
+              });
+            } else if (this.authSecondaryWins(sec, pri)) {
+              await tx.customerAuthorization.delete({ where: { id: pri.id } });
+              await tx.customerAuthorization.update({
+                where: { id: sec.id },
+                data: { customerId: primaryId },
+              });
+            } else {
+              await tx.customerAuthorization.delete({ where: { id: sec.id } });
+            }
+          }
+          // Overrides carry no per-category uniqueness — move them all.
+          await tx.authorizationOverride.updateMany({
+            where: { customerId: secondaryId },
+            data: { customerId: primaryId },
+          });
+
+          // Delete secondary customer and their user
+          await tx.customer.delete({ where: { id: secondaryId } });
+          await tx.user.delete({ where: { id: secondary.userId } });
+
+          // Return the primary customer
+          return tx.customer.findUnique({
+            where: { id: primaryId },
+            include: {
+              user: { select: { id: true, email: true, username: true, status: true } },
+              addresses: true,
+              tagAssignments: { include: { tag: true } },
+            },
+          });
+        },
+        { timeout: 30_000 },
+      );
+    } catch (err: any) {
+      // Any relation this method's re-point list doesn't yet know about still
+      // Restricts the delete above — surface it as a named 409 instead of a raw
+      // P2003 escaping as a 500 (B101c).
+      if (err?.code === "P2003") {
+        const relation = err?.meta?.field_name ?? err?.meta?.modelName ?? "a related record";
+        throw new ConflictException(
+          `Cannot merge customers: ${relation} still references the customer being merged away.`,
+        );
+      }
+      throw err;
+    }
   }
 
   // ─── Restore ───────────────────────────────────────────────────────────────
@@ -1756,12 +1826,24 @@ export class CustomersService {
    * With force=true (operator-only): performs a soft-delete (sets deletedAt)
    * instead of a hard delete, preserving all financial records with their
    * customer FK intact.  The customer user account is also deactivated
-   * (status INACTIVE) rather than deleted.
+   * (status INACTIVE) rather than deleted.  This is the contract the web's
+   * "Remove customer" + 8-second Undo relies on (useSoftDeleteCustomer always
+   * sends force=true, and Undo calls POST /customers/:id/restore), so force
+   * must keep meaning "reversible" for every HTTP caller.
+   *
+   * `opts.hardDeleteWhenRecordFree` narrows force to "waive the 409 only": a
+   * customer with NO financial records is still hard-deleted. Internal callers
+   * only — batchDelete() uses it so a record-holding customer soft-deletes
+   * while a record-free one is genuinely removed (F02b/B130).
    *
    * Previously this method unconditionally cascade-deleted all related
    * financial data in a single transaction.
    */
-  async deleteCustomer(id: string, force = false) {
+  async deleteCustomer(
+    id: string,
+    force = false,
+    opts: { hardDeleteWhenRecordFree?: boolean } = {},
+  ) {
     const customer = await this.prisma.forTenant().customer.findUnique({
       where: { id },
       include: { user: { select: { status: true } } },
@@ -1785,9 +1867,11 @@ export class CustomersService {
       );
     }
 
-    if (force || hasFinancialRecords) {
+    if (hasFinancialRecords || (force && !opts.hardDeleteWhenRecordFree)) {
       // Soft-delete: mark the customer and deactivate their user account.
       // All financial records are preserved with their customerId FK intact.
+      // A forced delete stays reversible unless the caller explicitly opted into
+      // hardDeleteWhenRecordFree (batchDelete) — the web's Undo depends on it.
       await this.prisma.tenantTransaction(async (tx) => {
         await tx.customer.update({ where: { id }, data: { deletedAt: new Date() } });
         await tx.user.update({ where: { id: customer.userId }, data: { status: "INACTIVE" } });
@@ -1812,7 +1896,17 @@ export class CustomersService {
         await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
       await tx.invoice.deleteMany({ where: { customerId: id } });
 
-      // Credit notes
+      // Credit notes — order↔credit-note links must be deleted BEFORE the notes
+      // (OrderCreditNote.creditNoteId has no onDelete, so the FK restricts the parent delete)
+      const creditNotes = await tx.creditNote.findMany({
+        where: { customerId: id },
+        select: { id: true },
+      });
+      if (creditNotes.length) {
+        await tx.orderCreditNote.deleteMany({
+          where: { creditNoteId: { in: creditNotes.map((n) => n.id) } },
+        });
+      }
       await tx.creditNote.deleteMany({ where: { customerId: id } });
 
       // Returns must be deleted BEFORE orders (Return has orderId FK on Order)
@@ -1950,7 +2044,14 @@ export class CustomersService {
     let deleted = 0;
     for (const id of ids) {
       try {
-        await this.deleteCustomer(id);
+        // force=true: the pre-flight above already blocked the whole batch on any
+        // PAID/SENT invoice, so a customer reaching here that still holds records
+        // (orders, non-PAID/SENT invoices, returns) takes deleteCustomer's
+        // soft-delete branch instead of 409-ing per-id into failed[] (B130).
+        // hardDeleteWhenRecordFree keeps a record-free customer a real delete —
+        // force alone means "reversible" for the HTTP callers, and this batch
+        // path must not inherit that.
+        await this.deleteCustomer(id, true, { hardDeleteWhenRecordFree: true });
         deleted++;
       } catch (e: any) {
         failed.push({ id, reason: e?.message ?? "unknown" });
@@ -2021,6 +2122,17 @@ export class CustomersService {
         }
         await tx.invoice.deleteMany({ where: { customerId: { in: customerIds } } });
 
+        // Order↔credit-note links must be deleted BEFORE the credit notes
+        // (OrderCreditNote.creditNoteId has no onDelete, so the FK restricts the parent delete)
+        const creditNotes = await tx.creditNote.findMany({
+          where: { customerId: { in: customerIds } },
+          select: { id: true },
+        });
+        if (creditNotes.length) {
+          await tx.orderCreditNote.deleteMany({
+            where: { creditNoteId: { in: creditNotes.map((n) => n.id) } },
+          });
+        }
         await tx.creditNote.deleteMany({ where: { customerId: { in: customerIds } } });
 
         // Returns must be deleted BEFORE orders (Return has orderId FK on Order)
@@ -2169,7 +2281,17 @@ export class CustomersService {
         }
         await tx.invoice.deleteMany({ where: { customerId: { in: ids } } });
 
-        // Credit notes
+        // Credit notes — order↔credit-note links must be deleted BEFORE the notes
+        // (OrderCreditNote.creditNoteId has no onDelete, so the FK restricts the parent delete)
+        const creditNotes = await tx.creditNote.findMany({
+          where: { customerId: { in: ids } },
+          select: { id: true },
+        });
+        if (creditNotes.length) {
+          await tx.orderCreditNote.deleteMany({
+            where: { creditNoteId: { in: creditNotes.map((n) => n.id) } },
+          });
+        }
         await tx.creditNote.deleteMany({ where: { customerId: { in: ids } } });
 
         // Returns (must precede orders due to FK)

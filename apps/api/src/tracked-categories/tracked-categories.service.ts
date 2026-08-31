@@ -229,11 +229,16 @@ export class TrackedCategoriesService {
     // Compliance-pack sync: isTobacco mirrors membership in the Tobacco type.
     // Applied to the full id set (movers AND rows already in this category) so
     // a drifted mirror is healed by any re-assign.
-    await this.prisma.forTenant().product.updateMany({
+    const { count: processed } = await this.prisma.forTenant().product.updateMany({
       where: { id: { in: productIds } },
       data: { isTobacco: isTobaccoCategoryName((category as { name?: string }).name) },
     });
-    return { assigned: count };
+    // `assigned` is MOVERS ONLY — rows already in this category are excluded by
+    // the NOT clause though they were processed just the same. `processed` is
+    // every requested row this tenant can see (the mirror sync above spans the
+    // full id set), so a caller can tell "already in this type" from "not in
+    // this tenant" instead of reporting the first as a skip.
+    return { assigned: count, processed };
   }
 
   /** Remove the given products from this category (revert to standard). */

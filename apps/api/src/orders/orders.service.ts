@@ -393,6 +393,12 @@ export class OrdersService implements OnApplicationBootstrap {
             total: true,
             // Applied credit-note payments, so clients can show per-credit dollars
             // actually applied without a second roundtrip.
+            // Classification pending: whether this credit-note-application read
+            // should count DRAFT rows is decided by campaign batch F03's
+            // confirmed-payment sweep (sums go PAID-only, listings keep not-VOID
+            // with visible status). F03 converts this site or writes the reasoned
+            // exemption here.
+            // scan-ok: draft-payment-not-void — pending F03 classification, see above.
             payments: {
               where: { method: "CREDIT_NOTE", status: { not: "VOID" } },
               select: { id: true, amount: true, creditNoteId: true },

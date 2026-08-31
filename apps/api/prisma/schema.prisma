@@ -925,6 +925,10 @@ model DriverLocation {
   lng        Decimal  @db.Decimal(10, 7)
   heading    Decimal? @db.Decimal(6, 2)
   speedKph   Decimal? @db.Decimal(6, 2)
+  // F01/B185: horizontal accuracy radius in meters, straight from the device
+  // fix — lets readers drop or flag low-confidence pings. F25 wires the
+  // tracker payload and the DTO.
+  accuracy   Decimal? @db.Decimal(8, 2)
   batteryPct Int?
   recordedAt DateTime
   createdAt  DateTime @default(now())
@@ -1189,22 +1193,28 @@ model RouteCustomer {
 }
 
 model RouteRun {
-  id                String         @id @default(uuid())
-  routeId           String
-  driverId          String?
-  status            RouteRunStatus @default(SCHEDULED)
-  scheduledDate     DateTime
-  startTime         String?
-  depotLat          Float?
-  depotLng          Float?
-  depotAddress      String?
-  startedAt         DateTime?
-  completedAt       DateTime?
-  manuallyReordered Boolean        @default(false)
-  notes             String?
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
-  tenantId          String?
+  id                 String         @id @default(uuid())
+  routeId            String
+  driverId           String?
+  status             RouteRunStatus @default(SCHEDULED)
+  scheduledDate      DateTime
+  startTime          String?
+  depotLat           Float?
+  depotLng           Float?
+  depotAddress       String?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  manuallyReordered  Boolean        @default(false)
+  notes              String?
+  // F01/B167: the run-close settlement result, in dedicated surfaced fields —
+  // today the variance note is appended to free-text `notes`, whose only
+  // reader (EditRunModal) is hidden once the run completes. F05 wires the
+  // driver settlement write and the run-detail read.
+  settlementVariance Decimal?       @db.Decimal(10, 2)
+  settlementNote     String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  tenantId           String?
 
   route     Route            @relation(fields: [routeId], references: [id])
   tenant    Tenant?          @relation(fields: [tenantId], references: [id])
@@ -1232,8 +1242,16 @@ model RouteRunStop {
   arrivedAt             DateTime?
   completedAt           DateTime?
   notes                 String?
+  // F01/B34: why the driver skipped this stop (written with status=SKIPPED).
+  // F11 wires the driver screen; nothing writes it before then.
+  skipReason            String?
   podPhotoUrls          String[]
   signatureUrl          String?
+  // F01/B120: append-only archive of POD pointers displaced by reopenStop —
+  // entries {archivedAt, signatureUrl, podPhotoUrls, reason}. The columns above
+  // are the SOLE pointers to stored objects (#477), so nulling them without
+  // archiving destroys regulated-delivery evidence. F10 wires the write.
+  podHistory            Json?
   safeDropEnabled       Boolean            @default(false)
   // Phase 4: per-stop regulated-delivery flags surfaced on the driver stop card
   // (set when the stop contains a category demanding age / identity verification).
@@ -1892,6 +1910,8 @@ model Invoice {
   recurringInvoice   RecurringInvoice?     @relation(fields: [recurringInvoiceId], references: [id])
   paymentRequests    BuyerPaymentRequest[]
   commissionAccruals CommissionAccrual[]
+  // F01/B17+B70: back-relation of Estimate.invoiceId (the converted-from estimate).
+  estimate           Estimate?             @relation("EstimateInvoice")
 
   @@unique([tenantId, invoiceNumber])
   @@index([customerId])
@@ -2347,9 +2367,16 @@ model Estimate {
   taxAmount      Decimal        @default(0) @db.Decimal(10, 2)
   discount       Decimal        @default(0) @db.Decimal(10, 2)
   total          Decimal        @db.Decimal(10, 2)
+  // F01/B79: the operator-picked issue date (backdatable). Nullable: existing
+  // rows keep reading as createdAt until edited; F27 wires the write path.
+  issueDate      DateTime?
   expiresAt      DateTime?
   notes          String?
   terms          String?
+  // F01/B17+B70: the invoice a CONVERTED estimate produced. One estimate, one
+  // invoice; a second conversion attempt has this non-null to trip over. F27
+  // wires the write; SetNull so deleting an invoice never deletes the estimate.
+  invoiceId      String?        @unique
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
   tenantId       String?
@@ -2357,6 +2384,7 @@ model Estimate {
   customer Customer       @relation(fields: [customerId], references: [id])
   tenant   Tenant?        @relation(fields: [tenantId], references: [id])
   items    EstimateItem[]
+  invoice  Invoice?       @relation("EstimateInvoice", fields: [invoiceId], references: [id], onDelete: SetNull)
 
   @@unique([tenantId, estimateNumber])
   @@index([customerId])
@@ -2674,6 +2702,10 @@ model ReturnItem {
   qty       Decimal @db.Decimal(10, 3)
   reason    String?
   restock   Boolean @default(true)
+  // F01/B20: the per-item "Condition / notes" the operator types at return
+  // creation — previously collected by the form and silently dropped.
+  condition String?
+  notes     String?
   tenantId  String?
 
   return  Return  @relation(fields: [returnId], references: [id], onDelete: Cascade)
@@ -2744,22 +2776,28 @@ enum RecurringFrequency {
 }
 
 model RecurringInvoice {
-  id          String             @id @default(uuid())
-  customerId  String
-  frequency   RecurringFrequency
-  dayOfWeek   Int?
-  dayOfMonth  Int?
-  isActive    Boolean            @default(true)
-  autoSend    Boolean            @default(false)
-  notes       String?
-  terms       String?
-  discount    Decimal            @default(0) @db.Decimal(10, 2)
-  shippingFee Decimal            @default(0) @db.Decimal(10, 2)
-  nextRunAt   DateTime
-  lastRunAt   DateTime?
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
-  tenantId    String?
+  id            String             @id @default(uuid())
+  customerId    String
+  frequency     RecurringFrequency
+  dayOfWeek     Int?
+  dayOfMonth    Int?
+  isActive      Boolean            @default(true)
+  autoSend      Boolean            @default(false)
+  notes         String?
+  terms         String?
+  discount      Decimal            @default(0) @db.Decimal(10, 2)
+  shippingFee   Decimal            @default(0) @db.Decimal(10, 2)
+  nextRunAt     DateTime
+  lastRunAt     DateTime?
+  // F01/B106: outcome of the last cron cycle. The claim stamps lastRunAt before
+  // creating the invoice, so on a create failure lastRunAt alone reads as
+  // success — these two make the failure visible. F13 wires the writes.
+  // Values (F13): "SUCCESS" | "FAILED".
+  lastRunStatus String?
+  lastError     String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  tenantId      String?
 
   customer Customer               @relation(fields: [customerId], references: [id])
   tenant   Tenant?                @relation(fields: [tenantId], references: [id])
@@ -3271,15 +3309,19 @@ model BuyerEmailVerificationToken {
 // ─── Audit Logging ────────────────────────────────────────────────────────────
 
 model AuditLog {
-  id         String   @id @default(uuid())
-  tenantId   String?
-  userId     String?
-  action     String
-  entityType String
-  entityId   String?
-  ip         String?
-  meta       Json?
-  createdAt  DateTime @default(now())
+  id             String   @id @default(uuid())
+  tenantId       String?
+  userId         String?
+  // F01/B165: when a platform operator acts under impersonation, the acting
+  // operator's user id — so the tenant-visible trail names who really wrote.
+  // F14 wires the guard that stamps it.
+  impersonatedBy String?
+  action         String
+  entityType     String
+  entityId       String?
+  ip             String?
+  meta           Json?
+  createdAt      DateTime @default(now())
 
   @@index([tenantId])
   @@index([userId])
@@ -3776,10 +3818,14 @@ model NumberingSequence {
   prefix     String             @default("")
   nextNumber Int                @default(1)
   padding    Int                @default(4)
+  // F01/B100: per-year series (INV-2026-0001 restarts each January). 0 = the
+  // year-agnostic series, which is what every pre-existing row means — so the
+  // default keeps them valid and the widened unique key cannot collide them.
+  year       Int                @default(0)
   createdAt  DateTime           @default(now())
   updatedAt  DateTime           @updatedAt
 
-  @@unique([tenantId, docType])
+  @@unique([tenantId, docType, year])
   @@index([tenantId])
 }
 
@@ -3788,6 +3834,10 @@ enum DocumentNumberType {
   ESTIMATE
   CREDIT_NOTE
   PAYMENT
+  // F01/G6: the two remaining findFirst-max minters the register names get
+  // routed through NumberingService by F16 — their series need a docType.
+  RETURN
+  ORDER
 }
 
 // ─── Migration & Batch Import (Phase 2: idempotency substrate) ────────────────

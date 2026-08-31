@@ -188,20 +188,37 @@ export function useClearAllProducts() {
 /** Matches the server's @ArrayMaxSize on DELETE /products/bulk (F9-009). */
 const BULK_DELETE_CHUNK = 500;
 
+/**
+ * DELETE /products/bulk classifies each id (R1): reference-free products are
+ * hard-deleted, products with history are deactivated, and products with active
+ * order items are skipped with a per-product reason built from the product name.
+ */
+export interface BulkDeleteProductsResult {
+  deleted: number;
+  softDeleted: number;
+  skipped: Array<{ id: string; reason: string }>;
+}
+
 export function useBulkDeleteProducts() {
   const qc = useQueryClient();
   return useMutation({
     // The server caps each request at 500 ids (F9-009 DTO). Chunk large selections
     // ("Show all → Select all → Delete" on a >500-product tenant) into sequential
     // batches so a wholesale delete still succeeds instead of 400-ing on the cap.
-    mutationFn: async (ids: string[]): Promise<{ deleted: number }> => {
+    // Every chunk's counts are summed and its `skipped` entries concatenated, so
+    // the caller sees one merged result for the whole selection.
+    mutationFn: async (ids: string[]): Promise<BulkDeleteProductsResult> => {
       let deleted = 0;
+      let softDeleted = 0;
+      const skipped: BulkDeleteProductsResult["skipped"] = [];
       for (let i = 0; i < ids.length; i += BULK_DELETE_CHUNK) {
         const chunk = ids.slice(i, i + BULK_DELETE_CHUNK);
         const r = await apiClient.delete("/products/bulk", { data: { ids: chunk } });
         deleted += Number(r.data?.deleted ?? 0);
+        softDeleted += Number(r.data?.softDeleted ?? 0);
+        if (Array.isArray(r.data?.skipped)) skipped.push(...r.data.skipped);
       }
-      return { deleted };
+      return { deleted, softDeleted, skipped };
     },
     onSuccess: () => invalidateProductSet(qc),
   });

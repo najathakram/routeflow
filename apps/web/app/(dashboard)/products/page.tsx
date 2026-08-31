@@ -39,6 +39,7 @@ import { ProductCreateModal } from "@/components/ProductCreateModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { AssignToSectionModal } from "@/components/AssignToSectionModal";
 import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { SectionEditCell } from "./_components/SectionEditCell";
 
@@ -737,6 +738,7 @@ export default function ProductsPage() {
   const [selectMode, setSelectMode] = React.useState(false);
   const [showGroupAsVariants, setShowGroupAsVariants] = React.useState(false);
   const [showAssignToSection, setShowAssignToSection] = React.useState(false);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = React.useState(false);
   const [page, setPage] = useUrlPage();
   const [pageSize, setPageSize] = React.useState(50);
   const hasMsrpAddon = useHasAddon(MSRP_ADDON);
@@ -1015,6 +1017,21 @@ export default function ProductsPage() {
     pageSize,
   ]);
 
+  // REG-B154: the selection Set used to accumulate across page/search/category/
+  // section changes (toggleAll only ever concatenated — see toggleAll below), so
+  // a selection made on one page silently carried into another page's bulk
+  // actions. Reset it whenever the visible set could have changed underneath it.
+  // Deps must mirror the useProducts query keys below (NOT just the inputs
+  // useResetPageOnChange watches): on page 1 its setPage(1) is a no-op, so `page`
+  // never changes and a stock-filter or page-size switch would otherwise leave a
+  // stale selection pointing at rows that are no longer visible.
+  React.useEffect(() => {
+    setSelected(new Set());
+    setShowBulkDeleteConfirm(false);
+    setShowAssignToSection(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, debouncedSearch, categoryFilter, stockFilter, sectionFilter, pageSize]);
+
   const {
     data: result,
     isLoading,
@@ -1055,6 +1072,11 @@ export default function ProductsPage() {
 
   const filteredIds = filtered.map((p) => p.id);
   const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selected.has(id));
+  // Lookup for the FULL selection (not just the currently-visible page) — REG-B154:
+  // AssignToSectionModal used to receive `filtered.filter(p => selected.has(p.id))`,
+  // the intersection of the selection with whatever page happened to be loaded, which
+  // silently dropped any id selected on a different page/filter view.
+  const productById = React.useMemo(() => new Map(filtered.map((p) => [p.id, p])), [filtered]);
 
   const toggleOne = (id: string) =>
     setSelected((prev) => {
@@ -1076,11 +1098,18 @@ export default function ProductsPage() {
   const handleBulkDelete = async () => {
     const ids = Array.from(selected);
     try {
+      // R1's server contract is {deleted, softDeleted, skipped[]} (vendor-bills'
+      // processed-vs-skipped shape); the hook merges those three across chunks.
       const res = await bulkDelete.mutateAsync(ids);
       setSelected(new Set());
+      const { softDeleted, skipped } = res;
+      const parts = [`${res.deleted} deleted`];
+      if (softDeleted > 0) parts.push(`${softDeleted} deactivated (has history)`);
+      if (skipped.length > 0) parts.push(`${skipped.length} skipped`);
       toast({
-        title: `${res.deleted} product${res.deleted !== 1 ? "s" : ""} deleted`,
-        variant: "success",
+        title: parts.join(", "),
+        description: skipped.length > 0 ? skipped.map((s) => s.reason).join("; ") : undefined,
+        variant: res.deleted > 0 || softDeleted > 0 ? "success" : "error",
       });
     } catch {
       toast({ title: "Failed to delete products", variant: "error" });
@@ -1358,7 +1387,7 @@ export default function ProductsPage() {
               variant="danger"
               leftIcon={<Trash2 className="h-4 w-4" />}
               loading={bulkDelete.isPending}
-              onClick={handleBulkDelete}
+              onClick={() => setShowBulkDeleteConfirm(true)}
             >
               Delete {selected.size} item{selected.size !== 1 ? "s" : ""}
             </Button>
@@ -1382,17 +1411,37 @@ export default function ProductsPage() {
         }}
       />
 
-      {/* Assign to section modal (bulk) */}
+      {/* Assign to section modal (bulk) — the FULL selection, not the
+          intersection with whatever page is currently loaded (see productById
+          above). Falls back to trackedCategoryId: null for an id the loaded
+          page doesn't carry, which only affects the "None — remove" grouping
+          (the assign path only needs the id). */}
       <AssignToSectionModal
         isOpen={showAssignToSection}
         onClose={() => setShowAssignToSection(false)}
-        products={filtered
-          .filter((p) => selected.has(p.id))
-          .map((p) => ({ id: p.id, trackedCategoryId: p.trackedCategoryId ?? null }))}
+        products={Array.from(selected).map((id) => ({
+          id,
+          trackedCategoryId: productById.get(id)?.trackedCategoryId ?? null,
+        }))}
         onSuccess={() => {
           setSelected(new Set());
           setShowAssignToSection(false);
         }}
+      />
+
+      {/* Bulk delete confirmation */}
+      <ConfirmDialog
+        open={showBulkDeleteConfirm}
+        onClose={() => setShowBulkDeleteConfirm(false)}
+        onConfirm={async () => {
+          await handleBulkDelete();
+          setShowBulkDeleteConfirm(false);
+        }}
+        title={`Delete ${selected.size} product${selected.size !== 1 ? "s" : ""}?`}
+        description="Products referenced by an order, invoice, or other record are deactivated instead of deleted; products with active order items are skipped entirely. Only reference-free products are removed permanently."
+        confirmLabel="Delete"
+        variant="danger"
+        loading={bulkDelete.isPending}
       />
 
       {/* Content */}

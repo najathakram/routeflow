@@ -1,8 +1,14 @@
 # HANDOFF — current state & what to pick up next
 
-**Written:** 2026-08-30 · **Visibility:** private (verified by read-back) · **Campaign:** the
-bug-register burn-down is EXECUTING — `W1 in flight (F00 PR open) · 2/180 closed · next: merge
-F00, then F01`.
+**Written:** 2026-08-31 · **Visibility:** ⚠️ **PUBLIC by owner directive until the campaign completes** (do NOT flip private mid-campaign; the final flip is the owner's if the session dies) · **Campaign:** `W3 in flight · F00+F01 SHIPPED LIVE · F02b merging (9/181 closed: B24,96,101,126,127,130,154,188,189 — three discharge post-deploy via e2e) · F03/F04/F17 staged · next: RLS pre-flight → auto-arm per D3 → parallel F04+F03 pipelines`. Owner delegations ACTIVE (.claude/campaign/DECISIONS.md D1–D6 + memory): Fable review replaces owner approval except system-harm/client-data risk; merge-as-ready any hour; repair-as-we-go per batch; repo stays public.
+
+> **W1 ✅ SHIPPED 2026-08-30:** F00 = PR #545 → master `7e5c2d98`; deploy-signal E2E **proven
+> live** (run started 21s after deploy SUCCESS; echo event self-skipped without cancelling);
+> post-deploy 9/9 + feature-smoke green; measured Verify = 5m11s/run. ⚠️ **Actions billing still
+> refuses private minutes account-wide** (0-step failures) — every CI green still needs a public
+> window until the owner fixes Settings → Billing. F01 adds migration slot
+> `20260908000000_campaign_schema_foundation` (additive only, 12 columns + 2 enum values across
+> 8 models — see `.claude/pipeline/2026-08-30-campaign-schema-foundation/`).
 
 ## 🟡 ACTIVE — bug-register burn-down campaign (W1: F00)
 

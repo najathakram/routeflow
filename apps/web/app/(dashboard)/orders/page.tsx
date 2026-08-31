@@ -286,6 +286,26 @@ export default function OrdersPage() {
     fulfillPathFilter,
   ]);
 
+  // REG-B154 class fix: selection used to accumulate across page/search/filter
+  // changes with no reset (toggleSelect only ever adds/removes one id — see
+  // below), so a bulk action could silently include ids from a page/filter the
+  // operator is no longer looking at. Reset whenever the visible set changes.
+  React.useEffect(() => {
+    setSelected(new Set());
+    setDeleteConfirm(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    page,
+    limit,
+    statusFilter,
+    urgentOnly,
+    dateFrom,
+    dateTo,
+    productIdFilter,
+    fulfillPathFilter,
+    customerSearch,
+  ]);
+
   // Active saved view detection
   const activeSavedView = React.useMemo(() => {
     return (
