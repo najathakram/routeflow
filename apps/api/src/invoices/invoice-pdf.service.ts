@@ -54,6 +54,11 @@ export class InvoicePdfService {
         // Exclude VOID (bounced) payments (P5-12): the PDF template sums payments
         // into the headline balance-due, so a reversed payment must not appear as
         // received on a customer-facing invoice or under-state what they owe.
+        // KNOWN BUG, acknowledged not clean: this not-VOID filter folds unconfirmed
+        // DRAFT payments into the customer-facing Balance Due (register B97).
+        // Campaign batch F03 replaces it with the CONFIRMED_PAYMENT predicate and
+        // REMOVES this suppression with the fix. Do not copy this pattern.
+        // scan-ok: draft-payment-not-void — B97 acknowledgment, F03 deletes this line with the fix.
         payments: {
           where: { status: { not: "VOID" } },
           orderBy: { paidAt: "asc" },

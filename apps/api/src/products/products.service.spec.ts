@@ -1912,3 +1912,279 @@ describe("ProductsService", () => {
     });
   });
 });
+
+// ─── bulkDelete — REG-B24 / T-B24a (destructive-write guard) ────────────────
+//
+// bulkDelete() today hard-deletes every id unconditionally in one
+// unconditional transaction and returns `{ deleted: ids.length }` — see the
+// "delete all dependent records first" comment on the method itself. R1
+// requires per-id classification instead: active order items -> SKIPPED
+// (reported by name); any other order/invoice/stock/bill reference ->
+// SOFT-DELETE (`isActive:false`, the referencing rows left intact);
+// reference-free -> hard delete. createMockPrisma()'s model methods are
+// stateless jest.fn()s that just replay a configured return value — they
+// cannot prove "B's invoiceItem rows survived the call", only that some
+// deleteMany was invoked with some args. This describe therefore builds its
+// OWN small, stateful fake datastore (scoped to this block only) so the
+// surviving/removed rows can be inspected after the call — the same
+// reasoning as the "vacuity trap" callout in test-plan.md, applied here to
+// reference-integrity rather than tenancy: no multi-tenant partitioning is at
+// stake in this scenario, so unlike the tenancy specs this fake does not need
+// to route through the real _wrapTxWithTenant.
+
+type FakeProductRow = { id: string; name: string; isActive: boolean };
+type FakeRefRow = {
+  id: string;
+  productId: string;
+  status?: string;
+  // Relation payload so a classification query can filter through the parent
+  // order (`where: { order: { status: { notIn: [...] } } }`) as well as on the
+  // item's own status — both shapes are legitimate implementations of R1.
+  order?: { status: string };
+};
+
+function refWhereMatches(row: any, where?: any): boolean {
+  if (!where) return true;
+  return Object.entries(where).every(([key, cond]: [string, any]) => {
+    const val = row[key];
+    if (cond && typeof cond === "object" && !Array.isArray(cond)) {
+      if (cond.in) return cond.in.includes(val);
+      if (cond.notIn) return !cond.notIn.includes(val);
+      if ("not" in cond) return val !== cond.not;
+      if ("equals" in cond) return val === cond.equals;
+      // No scalar operator on this object ⇒ it is a nested RELATION filter
+      // (e.g. `order: { status: { notIn: [...] } }`). Recurse into the row's
+      // relation payload rather than falling through to `val === cond`, which
+      // would make every relation-scoped query silently match nothing and pin
+      // the test to one particular implementation shape.
+      return refWhereMatches(val ?? {}, cond);
+    }
+    return val === cond;
+  });
+}
+
+function makeBulkDeleteReferenceStore() {
+  const products: FakeProductRow[] = [
+    { id: "prod-a", name: "Product A", isActive: true },
+    { id: "prod-b", name: "Product B", isActive: true },
+    { id: "prod-c", name: "Product C", isActive: true },
+  ];
+  // A: an in-flight order item — the ACTIVE reference that must SKIP it.
+  // B: a SETTLED order item plus a historical invoice line — references, but
+  //    not active ones, so B must be soft-deleted rather than skipped, and
+  //    both rows must survive.
+  // Statuses are real `enum ItemStatus` / `enum OrderStatus` members
+  // (schema.prisma) — ItemStatus has no IN_PROGRESS, so an implementation
+  // classifying active as `status: { in: [PENDING, CONFIRMED, PARTIAL] }`
+  // matches oi-1 and not oi-2, exactly as intended.
+  const orderItems: FakeRefRow[] = [
+    { id: "oi-1", productId: "prod-a", status: "CONFIRMED", order: { status: "CONFIRMED" } },
+    { id: "oi-2", productId: "prod-b", status: "DELIVERED", order: { status: "DELIVERED" } },
+  ];
+  const invoiceItems: FakeRefRow[] = [{ id: "ii-1", productId: "prod-b" }];
+  // C: no rows anywhere — the reference-free, hard-delete case.
+
+  // Relation name (as it appears on `Product` in schema.prisma) → the seeded rows behind it.
+  // Only the two that carry rows need entries; anything else legitimately counts zero.
+  const relationRowsByName: Record<string, FakeRefRow[]> = {
+    orderItems: orderItems,
+    invoiceItems: invoiceItems,
+  };
+  const countRefsFor = (relation: string, productId: string) =>
+    (relationRowsByName[relation] ?? []).filter((r) => r.productId === productId).length;
+
+  const productModel = {
+    findUnique: jest.fn(async ({ where }: any) => products.find((p) => p.id === where.id) ?? null),
+    findFirst: jest.fn(
+      async ({ where }: any = {}) => products.find((p) => refWhereMatches(p, where)) ?? null,
+    ),
+    // `include: { _count: { select: { orderItems: true, … } } }` is a perfectly natural way to
+    // write R1's classification pass in one query. Honour the projection rather than returning
+    // rows without `_count`, or that implementation dies on `undefined` — an ERROR, not the
+    // assertion failure this test is meant to produce.
+    findMany: jest.fn(async ({ where, include }: any = {}) => {
+      const matched = products.filter((p) => refWhereMatches(p, where));
+      const counted = include?._count?.select ?? include?._count;
+      if (!counted) return matched;
+      return matched.map((p) => ({
+        ...p,
+        _count: Object.fromEntries(
+          Object.keys(counted).map((rel) => [rel, countRefsFor(rel, p.id)]),
+        ),
+      }));
+    }),
+    count: jest.fn(
+      async ({ where }: any = {}) => products.filter((p) => refWhereMatches(p, where)).length,
+    ),
+    update: jest.fn(async ({ where, data }: any) => {
+      const row = products.find((p) => p.id === where.id);
+      if (!row) throw new Error(`no product ${where.id}`);
+      Object.assign(row, data);
+      return { ...row };
+    }),
+    updateMany: jest.fn(async ({ where, data }: any = {}) => {
+      const matched = products.filter((p) => refWhereMatches(p, where));
+      matched.forEach((p) => Object.assign(p, data));
+      return { count: matched.length };
+    }),
+    delete: jest.fn(async ({ where }: any) => {
+      const idx = products.findIndex((p) => p.id === where.id);
+      if (idx === -1) throw new Error(`no product ${where.id}`);
+      return products.splice(idx, 1)[0];
+    }),
+    deleteMany: jest.fn(async ({ where }: any = {}) => {
+      const before = products.length;
+      const keep = products.filter((p) => !refWhereMatches(p, where));
+      products.length = 0;
+      products.push(...keep);
+      return { count: before - products.length };
+    }),
+  };
+
+  // Read surface is deliberately broad (findMany / findFirst / count / groupBy)
+  // so R1's per-id classification can be written any of the natural ways —
+  // one grouped query, one query per id, or an existence probe — without the
+  // fixture dying on `… is not a function`. A TypeError is an ERROR, not the
+  // assertion failure this test is supposed to produce.
+  const refModel = (rows: FakeRefRow[]) => ({
+    findMany: jest.fn(async ({ where }: any = {}) => rows.filter((r) => refWhereMatches(r, where))),
+    findFirst: jest.fn(
+      async ({ where }: any = {}) => rows.find((r) => refWhereMatches(r, where)) ?? null,
+    ),
+    count: jest.fn(
+      async ({ where }: any = {}) => rows.filter((r) => refWhereMatches(r, where)).length,
+    ),
+    groupBy: jest.fn(async ({ where }: any = {}) => rows.filter((r) => refWhereMatches(r, where))),
+    // Write surface too: an implementation that detaches historical references
+    // (`productId: null`) or stamps them instead of counting them is a legitimate
+    // reading of R1, and must fail on the assertions below rather than on
+    // `update is not a function`.
+    update: jest.fn(async ({ where, data }: any = {}) => {
+      const row = rows.find((r) => r.id === where?.id) ?? null;
+      if (row) Object.assign(row, data);
+      return row;
+    }),
+    updateMany: jest.fn(async ({ where, data }: any = {}) => {
+      const matched = rows.filter((r) => refWhereMatches(r, where));
+      matched.forEach((r) => Object.assign(r, data));
+      return { count: matched.length };
+    }),
+    deleteMany: jest.fn(async ({ where }: any = {}) => {
+      const before = rows.length;
+      const keep = rows.filter((r) => !refWhereMatches(r, where));
+      rows.length = 0;
+      rows.push(...keep);
+      return { count: before - rows.length };
+    }),
+  });
+
+  // Every other model bulkDelete's current implementation deletes through —
+  // no rows are seeded for this scenario, so a real dependent-table sweep is
+  // a no-op, but the calls must not crash on an undefined model. They get the
+  // same (empty) refModel surface so a classification pass that probes them
+  // for references reads "none" rather than blowing up.
+  const noopDeleteManyModel = () => refModel([]);
+
+  const models: Record<string, any> = {
+    product: productModel,
+    orderItem: refModel(orderItems),
+    invoiceItem: refModel(invoiceItems),
+    customerPrice: noopDeleteManyModel(),
+    recurringInvoiceItem: noopDeleteManyModel(),
+    productMapping: noopDeleteManyModel(),
+    vendorBillItem: noopDeleteManyModel(),
+    estimateItem: noopDeleteManyModel(),
+    returnItem: noopDeleteManyModel(),
+    purchaseOrderItem: noopDeleteManyModel(),
+    orderTemplateItem: noopDeleteManyModel(),
+    deliveryMutation: noopDeleteManyModel(),
+    stockLot: noopDeleteManyModel(),
+    stockMovement: noopDeleteManyModel(),
+  };
+
+  const prisma = {
+    ...models,
+    getTenantId: jest.fn().mockReturnValue("test-tenant"),
+    forTenant: jest.fn().mockReturnValue(models),
+    // Supports BOTH the array form bulkDelete uses today
+    // (`$transaction([...])`, whose entries are already-settled promises by
+    // the time they land here) and a callback form, in case the fix
+    // restructures the transaction around one.
+    $transaction: jest.fn((arg: unknown) =>
+      Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => unknown)(models),
+    ),
+    tenantTransaction: jest.fn((fn: (tx: unknown) => unknown) => fn(models)),
+  };
+
+  return { products, orderItems, invoiceItems, prisma };
+}
+
+async function buildBulkDeleteProductsService(prisma: unknown): Promise<ProductsService> {
+  const module: TestingModule = await Test.createTestingModule({
+    providers: [
+      ProductsService,
+      { provide: PrismaService, useValue: prisma },
+      {
+        provide: StorageService,
+        useValue: {
+          presignedUrl: jest.fn().mockResolvedValue("http://mock-url"),
+          presignedUrls: jest.fn().mockResolvedValue([]),
+          upload: jest.fn(),
+          delete: jest.fn(),
+        },
+      },
+      { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
+      { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+      { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+      {
+        provide: PlanCatalogService,
+        useValue: { upgradeTargetForFlag: jest.fn().mockResolvedValue(null) },
+      },
+    ],
+  }).compile();
+  return module.get<ProductsService>(ProductsService);
+}
+
+describe("bulkDelete — REG-B24 / T-B24a (reference classification guard)", () => {
+  it("REG-B24 / T-B24a: skips products with active order items, soft-deletes products with only historical references, hard-deletes reference-free products", async () => {
+    const { products, orderItems, invoiceItems, prisma } = makeBulkDeleteReferenceStore();
+    const service = await buildBulkDeleteProductsService(prisma);
+
+    const result = (await service.bulkDelete(["prod-a", "prod-b", "prod-c"])) as unknown as {
+      deleted: number;
+      softDeleted: number;
+      skipped: Array<{ id: string; reason: string }>;
+    };
+
+    // RED TODAY: current bulkDelete() has no per-id classification — it hard-
+    // deletes every id in one unconditional transaction and returns
+    // `{ deleted: 3 }`, with no softDeleted/skipped keys at all.
+    expect(result).toEqual({
+      deleted: 1,
+      softDeleted: 1,
+      skipped: [{ id: "prod-a", reason: expect.stringContaining("Product A") }],
+    });
+
+    // A: skipped means untouched.
+    const productA = products.find((p) => p.id === "prod-a");
+    expect(productA).toBeDefined();
+    expect(productA?.isActive).toBe(true);
+    expect(orderItems.some((oi) => oi.productId === "prod-a")).toBe(true);
+
+    // B: soft-deleted — the product flips inactive, but the row (and its
+    // historical invoice line) is NOT removed. This is the assertion the plan
+    // pins as the one that must go red on current master: today's code
+    // deleteMany's invoiceItem unconditionally for every id in the batch, so
+    // B's historical line vanishes along with everything else.
+    const productB = products.find((p) => p.id === "prod-b");
+    expect(productB).toBeDefined();
+    expect(productB?.isActive).toBe(false);
+    expect(invoiceItems.some((ii) => ii.productId === "prod-b")).toBe(true);
+    // …and B's settled ORDER line survives too, so the soft-delete branch is
+    // proven through an order-item reference and not the invoiceItem alone.
+    expect(orderItems.some((oi) => oi.id === "oi-2")).toBe(true);
+
+    // C: no references anywhere — hard-deleted, the row itself is gone.
+    expect(products.find((p) => p.id === "prod-c")).toBeUndefined();
+  });
+});

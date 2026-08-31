@@ -33,6 +33,7 @@ import { useRunSettlementStore } from "../../../../../store/runSettlementStore";
 import type { CollectedMethod } from "../../../../../lib/run-settlement";
 import {
   buildDeliveries,
+  freeUnitSizeFor,
   reconciledTotal,
   type ShortPickLine,
 } from "../../../../../lib/short-pick";
@@ -100,6 +101,13 @@ export default function PaymentScreen() {
           productId: li.productId,
           orderedQty: Number(li.qty),
           subtotal: li.subtotal ?? null,
+          freeUnits: li.promoFreeUnits ?? 0,
+          // `promoFreeUnits` counts whole SELLING units (BOXES on a box-split
+          // line) while `orderedQty` and the delivery plan are in PIECES — the
+          // same axis bridge the server oracle calls `freeUnitSize`
+          // (invoices.service.ts#buildInvoiceItemData). Without it a boxed BOGO
+          // line's partial estimate under-bills by up to one box.
+          freeUnitSize: freeUnitSizeFor(li),
         })),
     [order],
   );

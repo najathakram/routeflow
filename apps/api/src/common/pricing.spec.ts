@@ -43,6 +43,78 @@ describe("pricing — money discipline", () => {
       expect(roundMoney(NaN)).toBe(0);
       expect(roundMoney(Infinity)).toBe(0);
     });
+
+    // REG-B122: `Number.EPSILON` (~2.22e-16) is far below one half-ULP of any
+    // double >= 2, so the "+ EPSILON" nudge is a no-op there and values whose
+    // 3rd decimal digit is exactly 5 round DOWN instead of half-away-from-zero.
+    // Every pin below is hand-worked base-10 arithmetic (the 3rd-decimal digit
+    // is 5, so the cent above is always correct), independent of whatever an
+    // IEEE-754 double happens to store for the literal.
+    it("REG-B122: rounds 2.135 up to 2.14 (half-away-from-zero, not the current round-down)", () => {
+      expect(roundMoney(2.135)).toBe(2.14);
+    });
+
+    it("REG-B122: rounds 2.175 up to 2.18", () => {
+      expect(roundMoney(2.175)).toBe(2.18);
+    });
+
+    it("REG-B122: rounds 2.385 up to 2.39", () => {
+      expect(roundMoney(2.385)).toBe(2.39);
+    });
+
+    it("REG-B122: rounds 2.425 up to 2.43", () => {
+      expect(roundMoney(2.425)).toBe(2.43);
+    });
+
+    it("REG-B122: rounds 4.015 up to 4.02", () => {
+      expect(roundMoney(4.015)).toBe(4.02);
+    });
+
+    it("REG-B122: rounds -2.135 to -2.14 (sign preserved, magnitude half-away-from-zero)", () => {
+      expect(roundMoney(-2.135)).toBe(-2.14);
+    });
+
+    it("REG-B122: end-to-end — 7.5% of $29.00 is $2.18, not $2.17", () => {
+      // 0.075 * 29.00 = 2.175 -> half-away-from-zero rounds to 2.18.
+      expect(roundMoney(0.075 * 29.0)).toBe(2.18);
+    });
+
+    it("REG-B122: end-to-end — 7.5% of $27.40 is $2.06", () => {
+      // 0.075 * 27.40 = 2.055 -> 2.06.
+      expect(roundMoney(0.075 * 27.4)).toBe(2.06);
+    });
+
+    it("REG-B122: end-to-end — 15% off $9.50 nets $8.08", () => {
+      // 9.50 * (1 - 0.15) = 9.50 * 0.85 = 8.075 -> 8.08.
+      expect(roundMoney(9.5 * (1 - 15 / 100))).toBe(8.08);
+    });
+
+    it("REG-B122: deterministic half-cent sweep, $0.005 to $999.995 in cent steps — zero round-downs", () => {
+      // Every half-cent value from $0.005 to $999.995 (100,000 of them). Each
+      // is built from integer cents via string interpolation — the same
+      // precision guarantee as typing a literal like `2.135` in source — so
+      // this never leans on the implementation to construct its own inputs.
+      // Half-away-from-zero means every one of these rounds UP to the next
+      // cent; the sweep asserts there are zero exceptions.
+      const failures: string[] = [];
+      for (let c = 0; c < 100000; c++) {
+        const dollars = Math.floor(c / 100);
+        const cents = c % 100;
+        const n = Number(`${dollars}.${String(cents).padStart(2, "0")}5`);
+        let upDollars = dollars;
+        let upCents = cents + 1;
+        if (upCents === 100) {
+          upCents = 0;
+          upDollars += 1;
+        }
+        const expected = Number(`${upDollars}.${String(upCents).padStart(2, "0")}`);
+        const actual = roundMoney(n);
+        if (actual !== expected) {
+          failures.push(`roundMoney(${n}) = ${actual}, expected ${expected} (half-away-from-zero)`);
+        }
+      }
+      expect(failures).toEqual([]);
+    });
   });
 
   describe("computeLineSubtotal — the reported bug", () => {
@@ -93,6 +165,11 @@ describe("pricing — money discipline", () => {
       expect(perUnitPrice(10, null)).toBeNull();
       expect(perUnitPrice(10, 0)).toBeNull();
       expect(perUnitPrice(10, 1)).toBeNull();
+    });
+
+    it("REG-B122: perUnitPrice(4.27, 2) rounds the half-cent case up to $2.14, not $2.13", () => {
+      // 4.27 / 2 = 2.135 -> half-away-from-zero rounds to 2.14.
+      expect(perUnitPrice(4.27, 2)).toBe(2.14);
     });
 
     it("is display-only: the line subtotal, not perUnitPrice x pieces, is authoritative", () => {
@@ -768,6 +845,88 @@ describe("promoBogoFreeUnits (via applyBestPromotion) — the owner's exact tabl
     const r = applyBestPromotion(35, [scoped], ctxUnits(12));
     expect(r.appliedPromoId).toBeNull();
     expect(r.freeUnits).toBe(0);
+  });
+});
+
+// ─── REG-B109: applyBestPromotion must select by money ACTUALLY billed ────────
+// (R3/T-B109) On a mixed box+piece line, the old saving basis for price promos
+// — `(base - net) * qtyUnits` — counts only WHOLE boxes, silently dropping the
+// loose pieces from the comparison even though `computeLineSubtotal` bills
+// them. A BUY_N_GET_M line's saving (`freeUnits * base`) is exact because a
+// free unit is always a whole box. That mismatch lets a worse-for-the-buyer
+// BOGO promo "win" over a PERCENT promo that would truly bill less. The fix
+// computes each candidate's saving via the SAME computeLineSubtotal path
+// billing uses, on the full entered quantity — see the register's worked case.
+describe("applyBestPromotion — REG-B109 selects by money actually billed (mixed box+piece lines)", () => {
+  // Register's worked case: 2 boxes + 23 pieces of a 24-pack @ $120/box.
+  // Full-price bill: 120 * (2 + 23/24) = 355.00.
+  // The ctx carries the line's real box/piece split — that IS the fix's contract:
+  // 71 pieces + 2 whole units cannot be decomposed back into boxes/upb (24 and 35
+  // both fit), so the caller must hand over the denomination it already holds.
+  const line = {
+    productId: "p1",
+    category: "Beverages",
+    qtyPieces: 71,
+    qtyUnits: 2,
+    boxes: 2,
+    pieces: 23,
+    unitsPerBox: 24,
+  };
+  const bogo = promo({ id: "bogo", type: "BUY_N_GET_M", minQty: 1, value: 1 }); // buy 1 get 1 free
+  const pct = promo({ id: "pct", type: "PERCENT", value: 49 });
+
+  it("REG-B109: PERCENT truly saves more than BOGO on the mixed line and must be selected, billing $181.05 not $235.00", () => {
+    // BOGO: 1 free box (floor(2/(1+1))*1=1) -> bills 120*(2-1+23/24) = 235.00, saves 120.00.
+    // PERCENT: net = 120*(1-49/100) = 61.20 -> bills 61.20*(2+23/24) = 181.05, saves 173.95.
+    // 173.95 > 120.00, so PERCENT must win — today's buggy basis compares
+    // BOGO's exact 120.00 against PERCENT's truncated (120-61.20)*2 = 117.60
+    // and picks BOGO instead.
+    const result = applyBestPromotion(120, [bogo, pct], line);
+    expect(result.appliedPromoId).toBe("pct");
+    expect(result.unitPrice).toBe(61.2);
+    expect(result.originalPrice).toBe(120);
+    expect(result.freeUnits).toBe(0);
+
+    const billed = computeLineSubtotal({
+      unitPrice: result.unitPrice,
+      qty: 71,
+      boxes: 2,
+      pieces: 23,
+      unitsPerBox: 24,
+      freeUnits: result.freeUnits,
+    });
+    expect(billed).toBe(181.05);
+    expect(billed).not.toBe(235.0); // guard: the BOGO overcharge this bug produces today
+  });
+});
+
+// Whole-box-only control (R3/T-B109 guard against over-correction): kept
+// OUT of the REG-B109 describe above (and titled without that token) because
+// it already passes today — with no loose pieces, boxEquivalent == qtyUnits
+// exactly, so the old and new saving bases agree. It must keep picking the
+// same promo after the fix, proving the fix doesn't flip an already-correct
+// whole-box selection.
+describe("applyBestPromotion — whole-box-only control (guards T-B109 against over-correction)", () => {
+  it("keeps picking BOGO on a whole-box-only line where both saving bases already agree", () => {
+    const line = { productId: "p1", category: "Beverages", qtyPieces: 144, qtyUnits: 6 };
+    const bogo = promo({ id: "bogo", type: "BUY_N_GET_M", minQty: 1, value: 1 });
+    const pct = promo({ id: "pct", type: "PERCENT", value: 49 });
+    // BOGO: 3 free boxes (floor(6/2)*1=3) -> saves 3*120 = 360.00.
+    // PERCENT: net=61.20 -> saves (120-61.20)*6 = 352.80 under EITHER basis
+    // (no loose pieces means the two bases can't disagree here).
+    const result = applyBestPromotion(120, [bogo, pct], line);
+    expect(result.appliedPromoId).toBe("bogo");
+    expect(result.freeUnits).toBe(3);
+
+    const billed = computeLineSubtotal({
+      unitPrice: result.unitPrice,
+      qty: 144,
+      boxes: 6,
+      pieces: 0,
+      unitsPerBox: 24,
+      freeUnits: result.freeUnits,
+    });
+    expect(billed).toBe(360); // 3 of 6 boxes free @ $120 = $360.00
   });
 });
 

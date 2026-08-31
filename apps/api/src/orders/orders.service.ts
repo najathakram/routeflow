@@ -123,6 +123,20 @@ export class OrdersService implements OnApplicationBootstrap {
     qtyPieces: number,
     qtyUnits: number,
     rememberedPrice?: number | null,
+    /**
+     * REG-B109: the line's box/piece denomination — the SAME values the caller
+     * then feeds `computeLineSubtotal` — so promo SELECTION compares candidates
+     * by the money this line will actually be billed, loose pieces included.
+     * Without it, a mixed line (whole boxes + loose pieces) is compared on whole
+     * boxes only and a BUY_N_GET_M can beat a deeper price promo that in fact
+     * bills less. Optional and defaulted: omitting it keeps the whole-selling-unit
+     * approximation, which is already exact for any line with no loose pieces.
+     */
+    denomination?: {
+      boxes: number | null;
+      pieces: number | null;
+      unitsPerBox: number | null;
+    },
   ): {
     unitPrice: number;
     originalPrice: number | null;
@@ -153,6 +167,9 @@ export class OrdersService implements OnApplicationBootstrap {
       category: product.category,
       qtyPieces,
       qtyUnits,
+      boxes: denomination?.boxes ?? null,
+      pieces: denomination?.pieces ?? null,
+      unitsPerBox: denomination?.unitsPerBox ?? null,
     });
     if (promo.appliedPromoId) {
       return {
@@ -376,6 +393,12 @@ export class OrdersService implements OnApplicationBootstrap {
             total: true,
             // Applied credit-note payments, so clients can show per-credit dollars
             // actually applied without a second roundtrip.
+            // Classification pending: whether this credit-note-application read
+            // should count DRAFT rows is decided by campaign batch F03's
+            // confirmed-payment sweep (sums go PAID-only, listings keep not-VOID
+            // with visible status). F03 converts this site or writes the reasoned
+            // exemption here.
+            // scan-ok: draft-payment-not-void — pending F03 classification, see above.
             payments: {
               where: { method: "CREDIT_NOTE", status: { not: "VOID" } },
               select: { id: true, amount: true, creditNoteId: true },
@@ -1887,6 +1910,8 @@ export class OrdersService implements OnApplicationBootstrap {
           qtyPieces,
           qtyUnits,
           rememberedForLine,
+          // REG-B109: the exact denomination this line bills with below.
+          { boxes, pieces, unitsPerBox: upb },
         );
         unitPrice = resolved.unitPrice;
         priceType = resolved.priceType;
@@ -2988,6 +3013,8 @@ export class OrdersService implements OnApplicationBootstrap {
                   qtyPieces,
                   qtyUnits,
                   buyerPriceHistory[item.productId]?.lastPrice ?? null,
+                  // REG-B109: the exact denomination this line bills with below.
+                  { boxes, pieces, unitsPerBox: upb },
                 )
               : {
                   unitPrice: Number(product.pricePerUnit),
@@ -3162,6 +3189,8 @@ export class OrdersService implements OnApplicationBootstrap {
                         qtyPieces,
                         qtyUnits,
                         null,
+                        // REG-B109: the exact denomination this line bills with below.
+                        { boxes, pieces, unitsPerBox: upb },
                       )
                     : {
                         // Non-staff caller: legacy list pricing, no tier resolution.
@@ -3324,6 +3353,12 @@ export class OrdersService implements OnApplicationBootstrap {
                           qtyPieces,
                           qtyUnits,
                           null,
+                          // REG-B109: the exact denomination this line bills with below.
+                          {
+                            boxes: boxesForLine,
+                            pieces: piecesForLine,
+                            unitsPerBox: unitsPerBoxNum,
+                          },
                         )
                       : {
                           // Non-staff caller (driver diff add): legacy list pricing.
@@ -4621,6 +4656,8 @@ export class OrdersService implements OnApplicationBootstrap {
               qtyPieces,
               qtyUnits,
               priceHistory[product.id]?.lastPrice ?? null,
+              // REG-B109: the exact denomination this line bills with below.
+              { boxes: split.boxes, pieces: split.pieces, unitsPerBox: upb },
             );
             const created = await tx.orderItem.create({
               data: {

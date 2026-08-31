@@ -135,7 +135,18 @@ if (!url && !LIST) {
 const client = url ? new pg.Client({ connectionString: url }) : null;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-const roundMoney = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+// Mirrors apps/api/src/common/pricing.ts#roundMoney — half-away-from-zero at the
+// cent. This script WRITES the values it rounds, so it must agree with the API
+// to the cent; the old `+ Number.EPSILON` nudge rounded every exact half-cent
+// (2.135 → 2.13) DOWN and would re-introduce the very divergence this script
+// exists to repair. Kept as a tiny local copy so the script has zero project
+// imports beyond the test-tenant guard.
+const roundMoney = (n) => {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return 0;
+  const sign = v < 0 ? -1 : 1;
+  return (sign * Math.round(Number((Math.abs(v) * 100).toFixed(4)))) / 100;
+};
 
 /** Mirror of InvoicesService.recomputeStatus — byte-for-byte semantics. */
 function recomputeStatus(totalPaid, total, dueDate, currentStatus) {

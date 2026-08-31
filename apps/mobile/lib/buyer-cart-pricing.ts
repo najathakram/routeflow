@@ -84,18 +84,24 @@ export function priceCart(items: CartLineInput[], rules: PromotionRule[]): Price
       pieces: item.pieces ?? null,
       unitsPerBox,
     });
-    const promo = applyBestPromotion(base, rules, {
-      productId: item.productId,
-      category: item.category ?? null,
-      qtyPieces,
-      qtyUnits,
-    });
     const lineArgs = {
       qty: item.qty,
       boxes: item.boxes ?? null,
       pieces: item.pieces ?? null,
       unitsPerBox,
     };
+    const promo = applyBestPromotion(base, rules, {
+      productId: item.productId,
+      category: item.category ?? null,
+      qtyPieces,
+      qtyUnits,
+      // REG-B109: select by the money this line actually bills — the SAME
+      // denomination `lineArgs` bills with below, so a mixed box+piece line's
+      // loose pieces count in the comparison instead of being dropped.
+      boxes: lineArgs.boxes,
+      pieces: lineArgs.pieces,
+      unitsPerBox: lineArgs.unitsPerBox,
+    });
     return {
       productId: item.productId,
       base,

@@ -92,13 +92,20 @@ export class ProductsController {
     return this.productsService.bulkSetMsrp(dto);
   }
 
-  // Must be declared before :id to avoid route collision
+  // Must be declared before :id to avoid route collision.
+  //
+  // R1: this is no longer a wipe. clearAll() runs every product through
+  // bulkDelete()'s classification, so the confirmation text describes the three
+  // real outcomes and the response carries the {deleted, softDeleted, skipped}
+  // breakdown rather than a bare count that would under-report the result.
   @Delete("clear-all")
   @Roles(UserRole.OPERATOR)
   clearAll(@Query("confirm") confirm?: string) {
     if (confirm !== "true") {
       throw new BadRequestException(
-        "This action permanently deletes ALL products and cascades to orders, invoices, and inventory. Pass ?confirm=true to proceed.",
+        "This action clears the whole catalog: reference-free products are permanently deleted, " +
+          "products referenced by an order, invoice or stock record are deactivated instead, and " +
+          "products with active order items are skipped. Pass ?confirm=true to proceed.",
       );
     }
     return this.productsService.clearAll();

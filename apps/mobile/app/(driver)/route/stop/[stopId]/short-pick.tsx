@@ -17,6 +17,7 @@ import { useDriverPayments } from "../../../../../lib/api/addons";
 import { useOrder, type OrderItem } from "../../../../../lib/api/orders";
 import { useDeliveryPlanStore } from "../../../../../store/delivery-plan-store";
 import {
+  freeUnitSizeFor,
   reconciledTotal,
   deliveryTypeForQty,
   type ShortPickLine,
@@ -63,6 +64,16 @@ export default function ShortPickScreen() {
         productId: li.productId,
         orderedQty: Number(li.qty),
         subtotal: li.subtotal ?? null,
+        // Must stay byte-identical to payment.tsx's mapping: both screens feed
+        // the SAME reconciledTotal, and omitting freeUnits here would silently
+        // fall back to the plain linear proration (freeUnits ?? 0) — so this
+        // review screen would quote one number and the very next screen would
+        // collect another for the same delivery plan (REG-B50).
+        freeUnits: li.promoFreeUnits ?? 0,
+        // `promoFreeUnits` counts whole SELLING units (BOXES on a box-split
+        // line) while `orderedQty` and the qty steppers below are in PIECES —
+        // the server oracle's `freeUnitSize` bridges the two axes.
+        freeUnitSize: freeUnitSizeFor(li),
       })),
     [lines],
   );
