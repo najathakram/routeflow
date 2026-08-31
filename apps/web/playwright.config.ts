@@ -313,5 +313,20 @@ export default defineConfig({
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
+
+    // ── Payment-status truth (F03, spec 22) ────────────────────────────────────
+    // REG-B11: a DRAFT (unconfirmed) InvoicePayment must be VISIBLE on the
+    // invoice payment-history row with a "Draft - unconfirmed" badge, while
+    // being excluded from every money SUM (balanceDue, dashboards, documents).
+    // The server half is T1-proven in apps/api; this spec is the T2 leg and
+    // proves the badge against the DEPLOYED build.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS - see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "payment-truth",
+      testMatch: /22-payment-truth\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
   ],
 });

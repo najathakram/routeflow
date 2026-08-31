@@ -903,7 +903,23 @@ export default function InvoiceDetailScreen() {
                     ]}
                   >
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.payMethod}>{p.method}</Text>
+                      <View style={styles.payMethodRow}>
+                        <Text style={styles.payMethod}>{p.method}</Text>
+                        {/* F03/R2 (REG-B11) — mirrors web's DraftPaymentBadge. A DRAFT
+                            payment is excluded from every CONFIRMED_PAYMENT sum on the
+                            server, so balanceDue/paidAmount above ignore this row. Without
+                            the badge the screen contradicts itself: a listed +$200 next to
+                            an unmoved balance. Web carries the explanation in a tooltip;
+                            there's no hover on a phone, so it's a meta line here. */}
+                        {p.status === "DRAFT" ? (
+                          <Pill variant="yellow" small>
+                            Draft — unconfirmed
+                          </Pill>
+                        ) : null}
+                      </View>
+                      {p.status === "DRAFT" ? (
+                        <Text style={styles.payMeta}>Not counted toward the balance due</Text>
+                      ) : null}
                       <Text style={styles.payMeta}>
                         {new Date(p.paidAt ?? p.createdAt).toLocaleDateString()}
                       </Text>
@@ -1452,6 +1468,7 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
   payRow: { flexDirection: "row", alignItems: "center", paddingVertical: 10, gap: 10 },
+  payMethodRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 },
   payMethod: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
   payMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   payAmount: {

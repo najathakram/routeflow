@@ -14,6 +14,7 @@ import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { roundMoney } from "../common/pricing";
+import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { geocodeAddress, GeocodableAddress, GeocodeCoords } from "../common/geocode.util";
 import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
@@ -1422,13 +1423,15 @@ export class CustomersService {
 
     const sixMonthsAgo = months[0].start;
 
-    // Get all invoice payments for this customer's invoices in the last 6 months
+    // Get the CONFIRMED invoice payments for this customer's invoices in the last 6 months
     const payments = await this.prisma.forTenant().invoicePayment.findMany({
       where: {
         invoice: { customerId },
-        // A bounced/reversed payment (VOID in P5-12) was never really received, so it
-        // must not inflate a month's income.
-        status: { not: "VOID" },
+        // Only confirmed money is income: a DRAFT row is an unconfirmed import and a
+        // bounced/reversed payment (VOID in P5-12) was never really received, so neither
+        // may inflate a month's income. Same predicate as getCashFlow / the bookkeeping
+        // dashboards, so this chart cannot diverge from them.
+        ...CONFIRMED_PAYMENT,
         paidAt: { gte: sixMonthsAgo },
       },
       select: { amount: true, paidAt: true },

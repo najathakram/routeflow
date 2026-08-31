@@ -18,6 +18,7 @@ import {
   type CategoryTaxType,
 } from "../common/pricing";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
+import { CONFIRMED_PAYMENT, sumConfirmed } from "./payment-predicates";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { loadMsrpMap } from "../common/msrp";
@@ -890,9 +891,22 @@ export class InvoicesService {
       });
     } else {
       // Telescoping cumulative rounding — exact and drift-free across partials.
+      // F04/REG-B50 oracle-cap check (this lane): CAP each point at basisQty.
+      // With freeUnitSize > 1 the floored free-unit allocation (freeUnitsThrough)
+      // lands only near 100% delivered, so an uncapped billedThrough can exceed
+      // basisQty for a cumQty still short of orderQty — e.g. 2 free boxes of 8
+      // (unitsPerBox 6): at cumQty = 47 of 48, freeUnitsThrough floors to 1 (not
+      // yet 2), so billedThrough = 47 − 6 = 41 > basisQty 36, and an uncapped
+      // partial would bill 41/36 of the line — MORE than its whole agreed
+      // subtotal. `prorateLineSubtotal` in the web/mobile pricing.ts mirrors
+      // already carry this cap (F04); the reference oracle here did not.
+      // Unreachable at freeUnitSize 1 (billedThrough ≤ cumQty ≤ orderQty =
+      // basisQty then); a full bill (prior 0, billQty orderQty) still copies the
+      // stored subtotal back verbatim since billedThrough(orderQty) === basisQty.
       subtotal = roundMoney(
-        roundMoney((storedSubtotal * billedThrough(prior + billQty)) / basisQty) -
-          roundMoney((storedSubtotal * billedThrough(prior)) / basisQty),
+        roundMoney(
+          (storedSubtotal * Math.min(billedThrough(prior + billQty), basisQty)) / basisQty,
+        ) - roundMoney((storedSubtotal * Math.min(billedThrough(prior), basisQty)) / basisQty),
       );
     }
 
@@ -1404,13 +1418,10 @@ export class InvoicesService {
     // 0 — the overpayment itself is surfaced by the existing credit-note workflow,
     // not by this reconcile. depositDueDate/dueDate are never part of this update —
     // they anchor to placement/terms, not to edits, so they're preserved verbatim.
+    // F03/R1: CONFIRMED (PAID) payments only.
     const nextStatus = isDepositMirror
       ? this.recomputeStatus(
-          roundMoney(
-            ((draft as any).payments ?? [])
-              .filter((p: any) => p.status !== "VOID")
-              .reduce((s: number, p: any) => s + Number(p.amount), 0),
-          ),
+          roundMoney(sumConfirmed((draft as any).payments)),
           total,
           (draft as any).dueDate ?? null,
           draft.status,
@@ -1830,11 +1841,10 @@ export class InvoicesService {
       // still stays DRAFT). This is what surfaces the "new balance" on a paid edit.
       let nextStatus: InvoiceStatus = InvoiceStatus.DRAFT;
       if (opts?.preserveStatus) {
-        // Exclude VOID payments (a bounced check reverses to VOID) — mirrors the
-        // balanceDue math in findAll/findOne so the recomputed status agrees.
-        const paid = (pd.draft.payments ?? [])
-          .filter((p: any) => p.status !== "VOID")
-          .reduce((s: number, p: any) => s + Number(p.amount ?? 0), 0);
+        // F03/R1: CONFIRMED (PAID) payments only — mirrors the balanceDue math in
+        // findAll/findOne so the recomputed status agrees. An unconfirmed DRAFT
+        // payment must not count toward the balance any more than a VOID one does.
+        const paid = sumConfirmed(pd.draft.payments);
         nextStatus = this.recomputeStatus(
           paid,
           pd.total,
@@ -2663,52 +2673,65 @@ export class InvoicesService {
     const tenantId = this.prisma.getTenantId();
     const invoiceNumber = await this.generateInvoiceNumber();
 
-    let invoice: any;
-    try {
-      invoice = await this.prisma.forTenant().invoice.create({
-        data: {
-          invoiceNumber,
-          customerId: order.customerId,
-          orderId: order.id,
-          status: InvoiceStatus.DRAFT,
-          subtotal,
-          taxAmount,
-          discount: 0,
-          shippingFee: feeRemaining,
-          total,
-          dueDate,
-          terms: dto.terms ?? overrideTerms ?? tenantDefaults.terms ?? defaultTerms,
-          paymentTermsLabel,
-          issueDate,
-          notes:
-            dto.notes ??
-            tenantDefaults.notes ??
-            (order.orderNumber ? `Order #${order.orderNumber}` : null),
-          ...depositFields,
-          items: { create: itemsData },
-          ...(tenantId ? { tenantId } : {}),
-        },
-        include: {
-          customer: {
-            select: { id: true, businessName: true, email: true, phone: true, mobile: true },
+    // F03/R7/T-B85: the create + invoicedQty bump + credit-note settle run inside
+    // ONE tenantTransaction — mirrors createSplitInvoices's runCreation(tx) shape.
+    // Previously this ran with no transaction at all AND never settled the
+    // order's explicit-amount OrderCreditNote selections, so a leftover selection
+    // was neither auto-applied (send()'s explicitIds exclusion assumes settle
+    // already ran) nor settled here — stranding it.
+    const runCreation = async (tx: any) => {
+      let created: any;
+      try {
+        created = await tx.invoice.create({
+          data: {
+            invoiceNumber,
+            customerId: order.customerId,
+            orderId: order.id,
+            status: InvoiceStatus.DRAFT,
+            subtotal,
+            taxAmount,
+            discount: 0,
+            shippingFee: feeRemaining,
+            total,
+            dueDate,
+            terms: dto.terms ?? overrideTerms ?? tenantDefaults.terms ?? defaultTerms,
+            paymentTermsLabel,
+            issueDate,
+            notes:
+              dto.notes ??
+              tenantDefaults.notes ??
+              (order.orderNumber ? `Order #${order.orderNumber}` : null),
+            ...depositFields,
+            items: { create: itemsData },
+            ...(tenantId ? { tenantId } : {}),
           },
-          items: true,
-          payments: true,
-        },
-      });
-    } catch (err: any) {
-      if (err?.code === "P2002")
-        throw new ConflictException("Invoice number conflict — please retry.");
-      throw err;
-    }
+          include: {
+            customer: {
+              select: { id: true, businessName: true, email: true, phone: true, mobile: true },
+            },
+            items: true,
+            payments: true,
+          },
+        });
+      } catch (err: any) {
+        if (err?.code === "P2002")
+          throw new ConflictException("Invoice number conflict — please retry.");
+        throw err;
+      }
 
-    // Increment invoicedQty on each chosen order item.
-    for (const req of dto.items) {
-      await this.prisma.forTenant().orderItem.update({
-        where: { id: req.orderItemId },
-        data: { invoicedQty: { increment: req.qty } },
-      });
-    }
+      // Increment invoicedQty on each chosen order item.
+      for (const req of dto.items) {
+        await tx.orderItem.update({
+          where: { id: req.orderItemId },
+          data: { invoicedQty: { increment: req.qty } },
+        });
+      }
+
+      await this.creditNotes.settleOrderCreditsInTx(tx, order.id, tenantId);
+      return created;
+    };
+
+    const invoice = await this.prisma.tenantTransaction(runCreation);
 
     if (dto.send) {
       return this.send(invoice.id);
@@ -2857,11 +2880,12 @@ export class InvoicesService {
     // Business rule: grace period extends through the end of the due date.
     const todayIso = new Date().toISOString().slice(0, 10);
     const computedData = data.map((inv) => {
-      // Exclude VOID payments (a bounced check reverses to VOID in P5-12) so the list's
-      // balanceDue/isOverdue match findOne — a VOID payment sits on a still-open invoice.
-      const paidAmount = inv.payments
-        .filter((p) => p.status !== "VOID")
-        .reduce((s, p) => s + Number(p.amount), 0);
+      // F03/R1/T-B11s: CONFIRMED (PAID) payments only. An unconfirmed DRAFT
+      // payment (e.g. a bulk bank-reconciliation entry an operator hasn't
+      // confirmed yet) must not be folded into the list's own balance-due number
+      // any more than a VOID (bounced check, P5-12) one is — both must match
+      // findOne's paidAmount/balanceDue.
+      const paidAmount = sumConfirmed(inv.payments);
       const isSettled =
         inv.status === InvoiceStatus.PAID ||
         inv.status === InvoiceStatus.VOID ||
@@ -2935,11 +2959,10 @@ export class InvoicesService {
       // A customer must never see an upsell's base price on their invoice.
       redactUpsellForCustomer(inv);
     }
-    // P5-12: VOID payments (manually voided OR bounced checks) must not count
-    // toward the paid amount — every other paid-sum already excludes non-VOID.
-    const paidAmount = inv.payments
-      .filter((p) => p.status !== "VOID")
-      .reduce((s, p) => s + Number(p.amount), 0);
+    // F03/R1: CONFIRMED (PAID) payments only. VOID payments (manually voided OR
+    // bounced checks) must not count toward the paid amount — and neither must an
+    // unconfirmed DRAFT one; every other paid-sum in this file matches.
+    const paidAmount = sumConfirmed(inv.payments);
     const isSettled =
       inv.status === InvoiceStatus.PAID ||
       inv.status === InvoiceStatus.VOID ||
@@ -3290,10 +3313,9 @@ export class InvoicesService {
     const newDueDate = dto.dueDate ? new Date(dto.dueDate) : oldDueDate;
     const newDueDateStr = newDueDate ? newDueDate.toISOString().slice(0, 10) : "none";
 
-    // Same non-VOID payment sum every other status computation in this file uses.
-    const totalPaid = inv.payments
-      .filter((p: any) => p.status !== "VOID")
-      .reduce((s: number, p: any) => s + Number(p.amount), 0);
+    // F03/R1: CONFIRMED (PAID) payments only — same predicate every other status
+    // computation in this file uses.
+    const totalPaid = sumConfirmed(inv.payments);
     const newStatus = this.recomputeStatus(totalPaid, Number(inv.total), newDueDate, inv.status);
 
     const auditLine = `[${new Date().toLocaleDateString()} — Terms updated: ${oldDueDateStr} → ${newDueDateStr}]`;
@@ -3398,11 +3420,8 @@ export class InvoicesService {
         if (!auto.invoiceStatus) {
           const fresh = await tx.invoice.findUnique({ where: { id }, include: { payments: true } });
           if (fresh) {
-            const paid = roundMoney(
-              (fresh.payments ?? [])
-                .filter((p: any) => p.status !== "VOID")
-                .reduce((s: number, p: any) => s + Number(p.amount), 0),
-            );
+            // F03/R1: CONFIRMED (PAID) payments only.
+            const paid = roundMoney(sumConfirmed(fresh.payments));
             const st = this.recomputeStatus(paid, Number(fresh.total), fresh.dueDate, fresh.status);
             if (st !== fresh.status) {
               await tx.invoice.update({
@@ -3456,6 +3475,8 @@ export class InvoicesService {
       include: {
         customer: { select: { id: true, businessName: true, contactName: true, email: true } },
         items: true,
+        // F03/R8: CONFIRMED (PAID) payments only — feeds totalPaid/balanceDue below.
+        payments: { where: CONFIRMED_PAYMENT },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -3498,7 +3519,26 @@ export class InvoicesService {
       );
     }
 
-    const sendResult = await this.emailService.sendInvoice({
+    // F03/R8/T-B102: CONFIRMED (PAID) basis — mirrors the PDF and the invoice
+    // detail's own paidAmount/balanceDue math. A DRAFT (unconfirmed) payment must
+    // not inflate what the email tells the customer they've already paid.
+    const totalPaid = sumConfirmed(inv.payments);
+    const balanceDue = roundMoney(Math.max(0, Number(inv.total) - totalPaid));
+
+    // F03/R9: the SAME tenant setting findOneOrThrow and the PDF read. The email
+    // body renders the same item table as the PDF attached to this very message,
+    // so it has to honour the hide-original-price preference too — otherwise
+    // forwarding the promo scalars below would newly leak the struck pre-promo
+    // price a tenant deliberately configured away.
+    const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
+
+    // Built as a variable (not an inline literal) so the extra totalPaid/
+    // balanceDue fields don't trip TS's excess-property check ahead of the F03
+    // batch's matching email.service.ts `sendInvoice` param-type update (a
+    // different file/package in this same campaign batch) — the runtime call
+    // carries them either way, which is what email.service.spec.ts and the
+    // T-B102 caller-leg assertion here both need.
+    const emailPayload = {
       to: recipientEmail,
       customerName: inv.customer?.businessName ?? "Customer",
       invoiceNumber: inv.invoiceNumber,
@@ -3507,20 +3547,31 @@ export class InvoicesService {
       dueDate: formatDate(inv.dueDate),
       paymentTermsLabel: inv.paymentTermsLabel ?? undefined,
       total: Number(inv.total),
+      totalPaid,
+      balanceDue,
       items: inv.items.map((it: any) => ({
         description: it.description,
         qty: Number(it.qty),
         unitPrice: Number(it.unitPrice),
         subtotal: Number(it.subtotal),
         msrp: it.msrp != null ? Number(it.msrp) : null,
+        // F03/R9: the strikethrough + "N free" note buildInvoiceEmail renders are
+        // dead without these three scalars — the renderer can only show what this
+        // caller passes, and a BOGO line's reduced subtotal reads as a pricing
+        // error otherwise. Mirrors the PDF item payload and the web detail renderer.
+        originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
+        priceType: it.priceType ?? null,
+        promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
       })),
       pdfUrl,
       isReminder: false,
+      hideOriginalPrice,
       // Deposit schedule (display-only): derive with the same read-time math the
       // detail endpoint uses; null when the invoice carries no deposit.
       depositAmount: this.computeDepositFields(inv as any, 0).depositAmount,
       depositDueDate: inv.depositDueDate ? formatDate(inv.depositDueDate) : null,
-    });
+    };
+    const sendResult = await this.emailService.sendInvoice(emailPayload);
 
     // R5: the email server was configured but the actual send did NOT succeed
     // (bad SMTP credentials, Resend rejected the domain/key, etc.). Do NOT mark the
@@ -3564,11 +3615,8 @@ export class InvoicesService {
         if (!auto.invoiceStatus) {
           const fresh = await tx.invoice.findUnique({ where: { id }, include: { payments: true } });
           if (fresh) {
-            const paid = roundMoney(
-              (fresh.payments ?? [])
-                .filter((p: any) => p.status !== "VOID")
-                .reduce((s: number, p: any) => s + Number(p.amount), 0),
-            );
+            // F03/R1: CONFIRMED (PAID) payments only.
+            const paid = roundMoney(sumConfirmed(fresh.payments));
             const st = this.recomputeStatus(paid, Number(fresh.total), fresh.dueDate, fresh.status);
             if (st !== fresh.status) {
               await tx.invoice.update({
@@ -3629,6 +3677,8 @@ export class InvoicesService {
       include: {
         customer: { select: { id: true, businessName: true, contactName: true, email: true } },
         items: true,
+        // F03/R8: CONFIRMED (PAID) payments only — feeds totalPaid/balanceDue below.
+        payments: { where: CONFIRMED_PAYMENT },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -3663,7 +3713,20 @@ export class InvoicesService {
       /* non-critical */
     }
 
-    const sendResult = await this.emailService.sendInvoice({
+    // F03/R8/T-B102: CONFIRMED (PAID) basis, same as sendEmail — a reminder must
+    // demand the true outstanding balance, never the DRAFT-inflated figure a
+    // non-VOID sum would give.
+    const totalPaid = sumConfirmed(inv.payments);
+    const balanceDue = roundMoney(Math.max(0, Number(inv.total) - totalPaid));
+
+    // F03/R9: see sendEmail's matching comment — the reminder renders the same item
+    // table, so it honours the same hide-original-price setting.
+    const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
+
+    // See sendEmail's matching comment: a variable, not an inline literal, so the
+    // extra fields don't trip TS's excess-property check ahead of email.service.ts's
+    // param-type update landing in this same campaign batch.
+    const reminderPayload = {
       to: recipientEmail,
       customerName: inv.customer?.businessName ?? "Customer",
       invoiceNumber: inv.invoiceNumber,
@@ -3672,16 +3735,25 @@ export class InvoicesService {
       dueDate: formatDate(inv.dueDate),
       paymentTermsLabel: inv.paymentTermsLabel ?? undefined,
       total: Number(inv.total),
+      totalPaid,
+      balanceDue,
       items: inv.items.map((it: any) => ({
         description: it.description,
         qty: Number(it.qty),
         unitPrice: Number(it.unitPrice),
         subtotal: Number(it.subtotal),
         msrp: it.msrp != null ? Number(it.msrp) : null,
+        // F03/R9: see sendEmail's matching comment — a reminder renders the same
+        // item table, so it needs the same promo scalars.
+        originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
+        priceType: it.priceType ?? null,
+        promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
       })),
       pdfUrl,
       isReminder: true,
-    });
+      hideOriginalPrice,
+    };
+    const sendResult = await this.emailService.sendInvoice(reminderPayload);
 
     if (!sendResult.delivered) {
       throw new BadRequestException({
@@ -3734,11 +3806,15 @@ export class InvoicesService {
   async releaseWalletPaymentsInTx(tx: any, invoiceId: string) {
     const credits = await this.creditNotes.releaseInvoiceCreditsInTx(tx, invoiceId);
 
+    // F03/R1: CONFIRMED (PAID) rows only. Advances have no meaningful DRAFT phase
+    // (they're an internal wallet debit applied at record time, never a pending
+    // bank entry), so this is a no-op for the common case and simply keeps this
+    // site on the same predicate as every other money-summing read in this file.
     const advancePays = await tx.invoicePayment.findMany({
       where: {
         invoiceId,
         method: "ADVANCE" as any,
-        status: { not: "VOID" },
+        ...CONFIRMED_PAYMENT,
         advancePaymentId: { not: null },
       },
     });
@@ -3758,18 +3834,29 @@ export class InvoicesService {
   /** The void itself, inside a caller's tx: flip to VOID, release the billed qty
    *  back to the order, and reverse the regulated ledger rows. No guards — the
    *  caller owns those (see voidInvoice) — and no credit handling, so callers that
-   *  want the money back must call releaseWalletPaymentsInTx first. */
+   *  want the money back must call releaseWalletPaymentsInTx first.
+   *
+   * F03/R6/T-B84: the flip is an ATOMIC CLAIM — `updateMany` on a status guard,
+   * abort on count===0 — mirroring returns.service's receive() claim shape
+   * (:244-250). A plain `update()` has no way to express "someone else already
+   * voided this row", so a double-click or a retried request let two concurrent
+   * voids both "succeed" and both release invoicedQty.
+   */
   async voidInvoiceInTx(tx: any, id: string, orderId: string | null) {
-    const voided = await tx.invoice.update({
-      where: { id },
+    const claimed = await tx.invoice.updateMany({
+      where: { id, status: { not: InvoiceStatus.VOID } },
       data: { status: InvoiceStatus.VOID },
     });
+    if (claimed.count === 0) {
+      throw new ConflictException("Invoice was already voided.");
+    }
     await this.adjustInvoicedQtyForInvoice(tx, id, orderId, -1);
     await this.ledger.reverseInvoiceEntries({ invoiceId: id, db: tx });
     // Sales agents & commissions: a voided invoice targets zero — this
     // emits the compensating CLAWBACK adjustment when commission was claimed.
     await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
-    return voided;
+    // Status already flipped to VOID by the claim above; return the fresh record.
+    return tx.invoice.findUnique({ where: { id } });
   }
 
   async voidInvoice(id: string) {
@@ -4299,7 +4386,10 @@ export class InvoicesService {
 
       const inv = await tx.invoice.findUnique({
         where: { id },
-        include: { payments: { where: { status: { not: "VOID" as any } } } },
+        // F03/R1: CONFIRMED (PAID) rows only — this feeds the remaining-balance
+        // check and recomputeStatus below, never a listing, so it narrows at the
+        // query rather than fetch-then-filter.
+        include: { payments: { where: CONFIRMED_PAYMENT } },
       });
       if (!inv) throw new NotFoundException("Invoice not found");
       if (inv.status === InvoiceStatus.VOID)
@@ -4494,8 +4584,9 @@ export class InvoicesService {
       // Row-lock (like recordPayment) then read paid FRESH, so a concurrent
       // back-office payment on the same invoice can't also read 0 and over-collect.
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${inv.id} FOR UPDATE`;
+      // F03/R1: CONFIRMED (PAID) payments only.
       const priorPayments = await tx.invoicePayment.findMany({
-        where: { invoiceId: inv.id, status: { not: "VOID" as any } },
+        where: { invoiceId: inv.id, ...CONFIRMED_PAYMENT },
         select: { amount: true },
       });
       const total = Number(inv.total);
@@ -4582,15 +4673,40 @@ export class InvoicesService {
       const payment = inv.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException("Payment not found");
 
+      // F03/R5/T-B81: read the STORED method, not just the incoming dto — the same
+      // guard deletePayment (:4653) and voidPayment (:4941) already have. Neither
+      // sibling lets a CREDIT_NOTE/ADVANCE payment unwind any way but its dedicated
+      // reversal path; updatePayment had no equivalent, so a PATCH with an
+      // unrelated method (e.g. "CASH") silently rewrote the row with no balance
+      // compensation, permanently orphaning the credit note's amountUsed / the
+      // advance wallet's debit.
+      if (
+        ((payment.method as any) === "CREDIT_NOTE" || (payment.method as any) === "ADVANCE") &&
+        dto.method !== payment.method
+      ) {
+        throw new ConflictException(
+          `This payment is an applied ${
+            payment.method === "CREDIT_NOTE" ? "credit note" : "advance"
+          }. Void it and use the dedicated action instead so the source balance stays correct.`,
+        );
+      }
+
       const newPaymentStatus = dto.status ?? payment.status ?? "PAID";
 
-      // When voiding: treat the payment as $0 for balance checks
-      const effectiveAmount = newPaymentStatus === "VOID" ? 0 : dto.amount;
+      // F03/R1: only a CONFIRMED (PAID) row funds the recomputed status — VOID and
+      // DRAFT both contribute $0, mirroring recordPayment (:4415). Counting a DRAFT
+      // here let an operator flip an invoice to PAID (and stamp paidAt) off money
+      // nobody confirmed — either by editing an unconfirmed payment or by
+      // un-confirming a real one — while sumConfirmed still reported the full
+      // balance due: exactly the B11 damage class CONFIRMED_PAYMENT removes. The
+      // remaining-balance guard below deliberately stays on the raw dto.amount so a
+      // DRAFT still cannot be parked above the invoice total.
+      const effectiveAmount = newPaymentStatus === "PAID" ? dto.amount : 0;
 
-      // Sum all other non-void payments plus the effective new amount
-      const othersTotal = inv.payments
-        .filter((p) => p.id !== paymentId && p.status !== "VOID")
-        .reduce((s, p) => s + Number(p.amount), 0);
+      // F03/R1: sum all other CONFIRMED (PAID) payments plus the effective new
+      // amount — an unconfirmed DRAFT "other" payment must not inflate the
+      // remaining-balance check or the recomputed status any more than a VOID one.
+      const othersTotal = sumConfirmed(inv.payments.filter((p) => p.id !== paymentId));
       const total = Number(inv.total);
       if (newPaymentStatus !== "VOID" && dto.amount > total - othersTotal + 0.001) {
         throw new BadRequestException(`Payment amount exceeds remaining balance`);
@@ -4677,11 +4793,10 @@ export class InvoicesService {
 
       await tx.invoicePayment.delete({ where: { id: paymentId } });
 
-      // Exclude the deleted payment AND any VOID (bounced) payment — otherwise a voided
-      // payment left on the invoice would be counted as paid and mis-recompute the status.
-      const remaining = inv.payments
-        .filter((p) => p.id !== paymentId && p.status !== "VOID")
-        .reduce((s, p) => s + Number(p.amount), 0);
+      // F03/R1: exclude the deleted payment and count only CONFIRMED (PAID)
+      // survivors — a VOID (bounced) or unconfirmed DRAFT payment left on the
+      // invoice must not be counted as paid and mis-recompute the status.
+      const remaining = sumConfirmed(inv.payments.filter((p) => p.id !== paymentId));
       const total = Number(inv.total);
       const newStatus = this.recomputeStatus(remaining, total, inv.dueDate, inv.status);
       const updated = await tx.invoice.update({
@@ -4842,17 +4957,18 @@ export class InvoicesService {
         const alloc = dto.allocations[i];
         const paymentNumber = `PAY-${String(counter.next - dto.allocations.length + i).padStart(4, "0")}`;
 
-        // Validate invoice belongs to customer and is not voided
+        // Validate invoice belongs to customer and is not voided. F03/R1:
+        // CONFIRMED (PAID) rows only feed the balance check below.
         const invoice = await tx.invoice.findFirst({
           where: { id: alloc.invoiceId, customerId: dto.customerId },
-          include: { payments: { where: { status: { not: "VOID" as any } } } },
+          include: { payments: { where: CONFIRMED_PAYMENT } },
         });
         if (!invoice)
           throw new NotFoundException(`Invoice ${alloc.invoiceId} not found for customer`);
         if (invoice.status === "VOID")
           throw new BadRequestException(`Invoice ${alloc.invoiceId} is voided`);
         if (opts?.assertAllocationsWithinBalance) {
-          const alreadyPaid = invoice.payments.reduce((s, p) => s + Number(p.amount), 0);
+          const alreadyPaid = sumConfirmed(invoice.payments);
           const balance = roundMoney(Number(invoice.total) - alreadyPaid);
           if (alloc.amount > balance + 0.001) {
             // Rolls back the whole group; the caller recomputes and retries.
@@ -4881,10 +4997,11 @@ export class InvoicesService {
         payments.push(payment);
 
         if (status === "PAID") {
+          // F03/R1: CONFIRMED (PAID) rows only feed recomputeStatus.
           const allPayments = await tx.invoicePayment.findMany({
-            where: { invoiceId: alloc.invoiceId, status: { not: "VOID" as any } },
+            where: { invoiceId: alloc.invoiceId, ...CONFIRMED_PAYMENT },
           });
-          const totalPaid = allPayments.reduce((s, p) => s + Number(p.amount), 0);
+          const totalPaid = sumConfirmed(allPayments);
           const newStatus = this.recomputeStatus(
             totalPaid,
             Number(invoice.total),
@@ -4962,16 +5079,16 @@ export class InvoicesService {
         data: { status: "VOID" as any },
       });
 
-      // Recompute invoice status treating this payment as $0
+      // Recompute invoice status treating this payment as $0. F03/R1: CONFIRMED
+      // (PAID) rows only — an unconfirmed DRAFT payment left on the invoice must
+      // not be counted as paid.
       const invoice = await tx.invoice.findUnique({
         where: { id: invoiceId },
-        include: { payments: { where: { status: { not: "VOID" as any } } } },
+        include: { payments: { where: CONFIRMED_PAYMENT } },
       });
       if (!invoice) throw new NotFoundException("Invoice not found");
 
-      const totalPaid = invoice.payments
-        .filter((p) => p.id !== paymentId)
-        .reduce((s, p) => s + Number(p.amount), 0);
+      const totalPaid = sumConfirmed(invoice.payments.filter((p) => p.id !== paymentId));
       const newStatus = this.recomputeStatus(
         totalPaid,
         Number(invoice.total),
@@ -5088,9 +5205,10 @@ export class InvoicesService {
         throw new BadRequestException("Payment is voided — its check status can no longer change");
       }
 
+      // F03/R1: CONFIRMED (PAID) payments only.
       const invoice = await tx.invoice.findUnique({
         where: { id: invoiceId },
-        include: { payments: { where: { status: { not: "VOID" as any } } } },
+        include: { payments: { where: CONFIRMED_PAYMENT } },
       });
       if (!invoice) throw new NotFoundException("Invoice not found");
 
@@ -5118,9 +5236,7 @@ export class InvoicesService {
         newTotal = roundMoney(newTotal + fee);
       }
 
-      const totalPaid = invoice.payments
-        .filter((p) => p.id !== paymentId)
-        .reduce((s, p) => s + Number(p.amount), 0);
+      const totalPaid = sumConfirmed(invoice.payments.filter((p) => p.id !== paymentId));
       const newStatus = this.recomputeStatus(totalPaid, newTotal, invoice.dueDate, invoice.status);
       await tx.invoice.update({
         where: { id: invoiceId },
@@ -5251,7 +5367,8 @@ export class InvoicesService {
   ) {
     const invoice = await this.prisma.forTenant().invoice.findUnique({
       where: { id },
-      include: { items: true },
+      // F03/R4: CONFIRMED (PAID) payments only — feeds the status recompute below.
+      include: { items: true, payments: { where: CONFIRMED_PAYMENT } },
     });
     if (!invoice) throw new NotFoundException("Invoice not found");
 
@@ -5266,6 +5383,16 @@ export class InvoicesService {
       );
     }
 
+    // F03/R3: category (excise) tax follows the customer's exemption exactly like
+    // the regular sales tax — foldCategoryTax zeroes every line's snapshot at creation
+    // for an exempt customer, so the per-line recompute below must PRESERVE that zero
+    // rather than re-derive a levy the customer does not owe. ALL_CUSTOMER_SINCE only
+    // ever targets this same customer's invoices, so one read covers every target.
+    const adjustmentCustomer = await this.prisma
+      .forTenant()
+      .customer.findFirst({ where: { id: invoice.customerId }, select: { isTaxExempt: true } });
+    const isTaxExempt = !!(adjustmentCustomer as any)?.isTaxExempt;
+
     // Build a map of itemId → newUnitPrice for quick lookup
     const priceMap = new Map(dto.items.map((i) => [i.itemId, i.newUnitPrice]));
 
@@ -5275,6 +5402,61 @@ export class InvoicesService {
     // Helper: update items on a single invoice and recalculate totals
     const applyToInvoice = async (inv: typeof invoice, localPriceMap: Map<string, number>) => {
       const auditLine = `[${new Date().toLocaleDateString()} — Price adjusted by operator]`;
+
+      // F03/R3/T-B57: batch-fetch the tracked-category tax config for every
+      // REGULATED line being re-priced, so a PERCENT_OF_SALE (or other
+      // category-taxed) line's categoryTaxAmount can be re-derived from its NEW
+      // subtotal below — mirrors orders.service's recomputeLineCategoryTaxes
+      // (:233-275). Before this, the item loop wrote only unitPrice/subtotal, so a
+      // regulated line kept its PRE-adjustment excise amount even though the
+      // taxable subtotal changed.
+      const regulatedItems = inv.items.filter(
+        (item: any) => localPriceMap.get(item.id) != null && item.trackedCategoryId,
+      );
+      const regulatedCatIds = [
+        ...new Set(regulatedItems.map((item: any) => item.trackedCategoryId as string)),
+      ];
+      const categoriesById = new Map<string, any>(
+        regulatedCatIds.length
+          ? (
+              await this.prisma
+                .forTenant()
+                .trackedCategory.findMany({ where: { id: { in: regulatedCatIds } } })
+            ).map((c: any) => [c.id, c])
+          : [],
+      );
+      // Each re-priced regulated line's PRODUCT unitsPerBox, so linePieceQty can
+      // expand a boxed line ordered in SELLING UNITS: create only snapshots
+      // unitsPerBox on box-split lines while it computed the ORIGINAL levy from the
+      // product's box size, so without this fallback a per-unit levy collapses by a
+      // factor of unitsPerBox on the first re-price. The same fetch
+      // orders.service.recomputeLineCategoryTaxes carries, for the same reason.
+      const regulatedProductIds = [
+        ...new Set(regulatedItems.map((item: any) => item.productId).filter(Boolean)),
+      ] as string[];
+      const unitsPerBoxByProduct = new Map<string, number>(
+        regulatedProductIds.length
+          ? (
+              await this.prisma.forTenant().product.findMany({
+                where: { id: { in: regulatedProductIds } },
+                select: { id: true, unitsPerBox: true },
+              })
+            ).map((pr: any) => [pr.id, Number(pr.unitsPerBox ?? 0)])
+          : [],
+      );
+      // Mirrors orders.service's linePieceQty: a box-split line stores qty already in
+      // pieces; a boxed selling-unit line expands by its snapshotted unitsPerBox,
+      // falling back to the product's. Unused by PERCENT_OF_SALE (unitBasisQty is
+      // ignored there) but correct for an EXCISE_PER_UNIT / PER_VOLUME /
+      // DEPOSIT_PER_CONTAINER line.
+      const linePieceQty = (li: any): number => {
+        const qty = Number(li.qty) || 0;
+        if (li.boxes != null) return qty;
+        const upb = Number(
+          li.unitsPerBox ?? (li.productId ? unitsPerBoxByProduct.get(li.productId) : null) ?? 0,
+        );
+        return upb > 1 ? qty * upb : qty;
+      };
 
       for (const item of inv.items) {
         const newPrice = localPriceMap.get(item.id);
@@ -5290,9 +5472,27 @@ export class InvoicesService {
             ? (Number(item.subtotal) + oldDiscount) / oldUnitPrice
             : Number(item.qty);
         const newSubtotal = roundMoney(newPrice * multiplier - oldDiscount);
+        const itemData: Record<string, any> = { unitPrice: newPrice, subtotal: newSubtotal };
+        const category = (item as any).trackedCategoryId
+          ? categoriesById.get((item as any).trackedCategoryId)
+          : null;
+        if (category) {
+          // An exempt customer owes $0 of category tax just as they owe $0 of the
+          // regular tax (foldCategoryTax's contract) — re-deriving it here would bill
+          // excise that the creation path correctly zeroed.
+          itemData.categoryTaxAmount = isTaxExempt
+            ? 0
+            : computeCategoryTax({
+                taxType: category.taxType as CategoryTaxType,
+                rate: Number(category.rate),
+                unitBasisQty: linePieceQty(item),
+                lineSubtotal: newSubtotal,
+                priceIncludesTax: category.priceIncludesTax,
+              });
+        }
         await this.prisma.forTenant().invoiceItem.update({
           where: { id: item.id },
-          data: { unitPrice: newPrice, subtotal: newSubtotal },
+          data: itemData,
         });
       }
 
@@ -5307,9 +5507,9 @@ export class InvoicesService {
       // Category (regulated/excise) tax is persisted per line and is NOT part of
       // taxRate. Every other recompute in this file folds it in; omitting it here
       // silently under-bills excise and propagates the shortfall to the linked
-      // order via recomputeOrderFromInvoices below. No exemption re-derivation is
-      // needed: categoryTaxAmount is already zeroed at creation for exempt
-      // customers, and a price adjustment never changes exemption.
+      // order via recomputeOrderFromInvoices below. Exemption is honoured in the
+      // per-line write above (an exempt customer's lines are re-written as 0), so this
+      // Σ is exemption-correct by construction.
       const categoryTaxTotal = roundMoney(
         updatedItems.reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0),
       );
@@ -5319,12 +5519,33 @@ export class InvoicesService {
       );
 
       const existingInternal = (inv as any).internalNotes ?? "";
+      // F03/R4/T-B74: recompute + persist invoice status from CONFIRMED (PAID)
+      // payments against the NEW total. Previously this wrote money without ever
+      // touching status, so a lowered total a payment already covered kept its
+      // stale SENT/PARTIAL status forever — mis-gating write-off/reminder
+      // eligibility, both of which branch on status. An overpayment result needs
+      // no special handling here: recomputeStatus flips to PAID and balanceDue
+      // floors at 0 in findAll/findOne, exactly the "surfaced by the credit-note
+      // workflow, not by this recompute" convention every sibling site follows.
+      const newStatus = this.recomputeStatus(
+        sumConfirmed((inv as any).payments),
+        total,
+        (inv as any).dueDate ?? null,
+        inv.status,
+      );
       await this.prisma.forTenant().invoice.update({
         where: { id: inv.id },
         data: {
           subtotal,
           taxAmount,
           total,
+          status: newStatus,
+          // Every sibling status writer in this file (recordPayment, updatePayment,
+          // deletePayment, voidPayment, setCheckStatus) pairs the status with paidAt.
+          // Without it an invoice this settles to PAID keeps paidAt NULL and vanishes
+          // from every "status: PAID + paidAt" revenue window — bookkeeping's
+          // getSummary totalRevenue, the P&L window and getTimeToGetPaid.
+          paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null,
           internalNotes: existingInternal ? `${existingInternal}\n${auditLine}` : auditLine,
         },
       });
@@ -5358,7 +5579,8 @@ export class InvoicesService {
             notIn: [InvoiceStatus.PAID, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF],
           },
         },
-        include: { items: true },
+        // F03/R4: CONFIRMED (PAID) payments only — feeds the status recompute below.
+        include: { items: true, payments: { where: CONFIRMED_PAYMENT } },
       });
 
       for (const inv of targetInvoices) {

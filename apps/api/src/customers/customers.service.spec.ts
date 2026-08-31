@@ -1144,7 +1144,10 @@ describe("CustomersService", () => {
       );
     });
 
-    it("getIncomeChart: the monthly-income query filters out VOID payments", async () => {
+    // F03 (R1): the monthly-income query must use the same CONFIRMED predicate as
+    // getCashFlow / the bookkeeping dashboards — a DRAFT (unconfirmed) payment showed
+    // as collected income here while every other money read reported 0.
+    it("getIncomeChart: the monthly-income query counts only CONFIRMED payments", async () => {
       prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
       prisma.invoicePayment.findMany.mockResolvedValue([]);
       prisma.expense.findMany.mockResolvedValue([]);
@@ -1153,7 +1156,7 @@ describe("CustomersService", () => {
 
       expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ status: { not: "VOID" } }),
+          where: expect.objectContaining({ status: "PAID" }),
         }),
       );
     });

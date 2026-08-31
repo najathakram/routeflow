@@ -406,6 +406,30 @@ homeAddress` (the driver-home origin), and orders inherit `fulfillPath` from the
   - **Universal one-step demotion + reopen DELIVERED + delete-any (2026-08-25, sale-integrity phase 2 WP3):** `changeStatus`'s `allowed` map gained `PENDING → DRAFT` and `DELIVERED → [CONFIRMED, PARTIALLY_DELIVERED]` (owner reversed BUG-ORD-01: reopening a delivered order is legal again) — every state may now step back one stage. The new transitions join the requires-reason demotion set and are staff-only for free: the role gates that run BEFORE the map already limit CUSTOMER to cancelling its own PENDING/DRAFT order and DRIVER to `PENDING → CONFIRMED`. A DELIVERED demotion additionally (a) 409s (`ConflictException`) when `order.routeRunStopId` points at a `RouteRunStop` whose `status === "COMPLETED"` — one extra lookup, only on this transition, message sends staff to reopen the run stop instead (that path reverses stock and payments correctly) — and (b) writes `deliveredAt: null` so a reopened order leaves delivered-on-date reports. The DELIVERED branch's side effects (draft reconcile / auto-invoice / credit settle) are keyed on `dto.status === DELIVERED` and so fire on NEITHER demotion. Mirrored byte-for-byte by `apps/mobile/lib/order-status-flow.ts`'s `ORDER_STATUS_TRANSITIONS`/`demotionRequiresReason`. — **Delete-any:** `deleteOrder(id, user?)` / `bulkDeleteOrders(ids, user?)` (`user` optional so change-requests' abandoned-draft cleanup keeps its single-arg call). Money, not status, is the gate now: staff (OPERATOR/TENANT_ADMIN, and any internal caller passing no user) may delete an order in ANY status; a non-staff caller keeps the old `Only DRAFT, PENDING, or CANCELLED` allowlist verbatim. Two 409s precede the delete — `Return` rows against the order (the one restrict-linked child; every other one cascades or is deleted in the transaction, so a delivered-and-partly-returned order would otherwise blow up with a raw FK error) and blocking payments off `cancelImpact` (external cash only; #341's wallet behaviour is preserved — credit-note/advance money is still handed back and the delete proceeds). The old `assertCancellableOrThrow` 400 became that ConflictException so the client shows "void the invoice first". Controller routes `changeStatus`/`bulkDelete`/`remove` are widened to TENANT_ADMIN. Specs: `orders.service.spec` "changeStatus — one-step-back demotions" + "deleteOrder — delete-any".
   - **Delivery-date picker (2026-08-25, sale-integrity phase 2 WP4):** `CreateSaleDto.deliveredOn?: string` (`@IsDateString`) REPLACES `deliveredNow`'s binary in `createSale` when present (`deliveredNow` still honoured alone for older/mobile clients; when both are sent `deliveredOn` wins). A date > end-of-today UTC ⇒ deliver-later: the order stays PENDING with its DRAFT mirror invoice and `requestedDeliveryDate = deliveredOn`. A past/today date ⇒ delivered: it runs through `parseOrderDate` (so backdating keeps its staff-only gate and 2-year floor) and becomes the order's `deliveredAt` — overriding `orderDate`'s fallback — then the invoice is generated and issued as usual. Specs: `orders.service.spec` `createSale` WP4 block (past/future/today, non-staff backdate 403, deliveredOn-absent path unchanged).
 
+  - **F03 payment-status truth (2026-08-31, batch F03 — no migration):** `invoices/payment-predicates.ts`
+    (NEW) is the single source of truth — `CONFIRMED_PAYMENT` = `{status:"PAID"}` and
+    `sumConfirmed(rows)`. ⚠️ **Every payment SUM narrows to PAID; every payment LISTING keeps all rows
+    and carries `status` through to the renderer** — narrowing a listing hides the DRAFT row the badge
+    exists to show, which is the opposite of R2. Routed: `invoices.service` (findAll `balanceDue`,
+    `recomputeStatus` feeders, the PDF query), `bookkeeping.service` (three dashboards PLUS `getSummary`,
+    `getArAgingInvoices`, `recordPayment` and the balance reports), `customers.service`,
+    `buyer/statement.service`, `payment-requests.service`. ⚠️ `getCashFlow` and
+    `getPaymentsReceivedReport` are **byte-untouched on purpose** — they were already PAID-only and are
+    the reference reads the rest were aligned to. The original three-function fence WAS the defect: it
+    left the same tenant reading $200 outstanding on `/bookkeeping/summary` and $500 on
+    `/bookkeeping/dashboard`. ⚠️ Fixtures asserting `status: "RECORDED"` were corrected to `"PAID"` —
+    `PaymentStatus` is exactly `DRAFT|PAID|VOID`, so RECORDED was a fiction no writer can produce and it
+    was masking three unrouted sites. Documents: `invoice-pdf.service`/`invoice-pdf-template` and
+    `email.service` sum confirmed rows only, list DRAFT rows under a "Pending confirmation" label, and a
+    reminder now demands the BALANCE not the total; the shared item type is `invoices/invoice-pdf-item.ts`
+    (`originalPrice`/`priceType`/`promoFreeUnits` for the strikethrough + N-free disclosure).
+    ⚠️ **`T-B50s`, never a bare `REG-B50` token** — `REG-B50` also selects F04's shipped
+    `pricing-parity.spec.ts` tests, which makes a red gate structurally incapable of reporting 0 passed.
+    It pins the F04 oracle cap on the SERVER telescope (`Math.min(billedThrough(x), basisQty)` on BOTH
+    points); mutation-verified by hand — removing the cap from ONE point goes red. `scripts/repair-f03.mjs`
+    is the D4 repair tool (dry-run default, `--execute` + `--i-have-a-fresh-backup`, per-row
+    compare-and-set that SKIPS drifted rows, JSONL log under `local-assets/`); **it has never been run
+    against production.**
   - **F30 server half (2026-08-31, batch F30 — migration `20260910000000_order_idempotency`, additive):**
     - **`Order.idempotencyKey String?` + `@@unique([tenantId, idempotencyKey])` (R8, REG-B196).** `POST /orders`
       reads an `Idempotency-Key` **header** (`@Headers`, `@ApiHeader(required:false)`) — never a DECLARED
