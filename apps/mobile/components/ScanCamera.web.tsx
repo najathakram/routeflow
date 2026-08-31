@@ -11,6 +11,8 @@ import {
 import { type ScanOutcome } from "../lib/scan-loop";
 import { createScanEngine, frameScanned, manualScanned, scanSettled } from "../lib/scan-engine";
 import { scanFallbackContent } from "../lib/scan-fallback";
+import { cueForOutcome } from "../lib/scan-feedback";
+import { playScanCue, unlockScanCue } from "../lib/scan-cue";
 
 export interface ScanCameraProps {
   onScanned: (code: string) => ScanOutcome | Promise<ScanOutcome>;
@@ -234,6 +236,13 @@ export function ScanCamera({
     async (code: string) => {
       try {
         const outcome = await onScannedRef.current(code);
+        // Audible + haptic accept/reject cue (F30 / REG-B202 PR1 commit 2):
+        // purely observational — `cueForOutcome` only READS the outcome
+        // already destined for `onOutcomeRef` below, and `playScanCue` never
+        // throws (see its header), so this can't alter what happens next.
+        // Placed here, not inside the engine or scan-loop.ts, precisely so a
+        // cue bug can never touch scan state.
+        playScanCue(cueForOutcome(outcome));
         if (outcome?.close) stop();
         onOutcomeRef.current?.(outcome);
       } finally {
@@ -341,6 +350,14 @@ export function ScanCamera({
     stoppedRef.current = false;
 
     const start = async () => {
+      // Mounting this screen already required the operator to navigate/tap
+      // into it, so this counts as "after a user gesture" for the browser's
+      // autoplay policy — least-invasive spot to unlock the scan cue's
+      // AudioContext, and it fires whether the camera opens or falls back to
+      // manual mode (`unlockScanCue` is a safe-to-call-repeatedly no-op
+      // otherwise). See `lib/scan-cue.web.ts`.
+      unlockScanCue();
+
       if (!navigator.mediaDevices?.getUserMedia) {
         setError("Camera access isn't available. Use HTTPS in Chrome or Safari.");
         setManualMode(true);
