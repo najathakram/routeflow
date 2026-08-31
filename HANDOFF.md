@@ -1,6 +1,6 @@
 # HANDOFF — current state & what to pick up next
 
-**Written:** 2026-08-31 · **Visibility:** ⚠️ **PUBLIC by owner directive until the campaign completes** (do NOT flip private mid-campaign; the final flip is the owner's if the session dies) · **Campaign:** `W3 in flight · F00+F01 SHIPPED LIVE · F02b merging (9/181 closed: B24,96,101,126,127,130,154,188,189 — three discharge post-deploy via e2e) · F03/F04/F17 staged · next: RLS pre-flight → auto-arm per D3 → parallel F04+F03 pipelines`. Owner delegations ACTIVE (.claude/campaign/DECISIONS.md D1–D6 + memory): Fable review replaces owner approval except system-harm/client-data risk; merge-as-ready any hour; repair-as-we-go per batch; repo stays public.
+**Written:** 2026-08-31 · **Visibility:** ⚠️ **PUBLIC by owner directive until the campaign completes** (do NOT flip private mid-campaign; the final flip is the owner's if the session dies) · **Campaign:** `F00+F01+F02(9)+F04(3) SHIPPED LIVE · F30 closing out (12 more: B190–B201 — scan-loss cluster, mobile+api one PR, migration 20260910 order_idempotency prod-applies BEFORE its merge) · 24/193 at F30's merge · F03/F17 staged next (F03 owes the oracle-cap check + deletes its scan-known-bugs block), then the audited two-track schedule (board artifact 9e97d8f6…)`. Owner delegations ACTIVE (.claude/campaign/DECISIONS.md D1–D6 + memory): Fable review replaces owner approval except system-harm/client-data risk; merge-as-ready any hour; repair-as-we-go per batch; repo stays public. ⚠️ Register debt SETTLED at F30 close-out (chips for F02/F04, new articles B189–B201, artifact republished) — keep it settled: every later batch updates the register in its own close-out.
 
 > **W1 ✅ SHIPPED 2026-08-30:** F00 = PR #545 → master `7e5c2d98`; deploy-signal E2E **proven
 > live** (run started 21s after deploy SUCCESS; echo event self-skipped without cancelling);
@@ -9,6 +9,18 @@
 > window until the owner fixes Settings → Billing. F01 adds migration slot
 > `20260908000000_campaign_schema_foundation` (additive only, 12 columns + 2 enum values across
 > 8 models — see `.claude/pipeline/2026-08-30-campaign-schema-foundation/`).
+
+> **F30 ✅ CLOSING (this PR):** the owner-reported mobile scan-loss cluster, B190–B201 (12 bugs,
+> 13/13 + 1325 mobile green, campaign-check 12/12). Mobile: 4-slot scan gate, pending buffer,
+> resolve abort, archived outcome, boxed-qty fold, synchronous wedge clear, never-silent offline
+> drain (hook-level wiring test kills the escaped `notifyFailed` mutant — proven red under the
+> mutation), iOS toast host, per-cart-session Idempotency-Key. API: replay + content-409 +
+> first-key-wins on POST /orders, all-or-nothing diff-add, explicit-only replaceAll,
+> denomination-aware atomic merge (MANUAL-only price survival), buyer scan endpoint.
+> **Migration `20260910000000_order_idempotency` (additive) prod-applies BEFORE the merge.**
+> Residuals recorded in the fix card: `POST /orders/sell` has no idempotency (candidate future
+> register entry); single-slot key carry on multi-loser merges (Low, by design). Client retest +
+> an Expo release are owed to the owner — the mobile half only reaches devices via a build.
 
 ## 🟡 ACTIVE — bug-register burn-down campaign (W1: F00)
 

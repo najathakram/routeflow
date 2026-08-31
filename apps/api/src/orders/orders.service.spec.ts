@@ -6328,7 +6328,10 @@ describe("OrdersController — merge choice vs orderDate", () => {
     status: "PENDING",
     total: 10,
     createdAt: new Date(),
-    lineItems: [{ productId: "prod-1", qty: 2, unitPrice: 5, name: null }],
+    // priceType MANUAL: only an operator override survives the fold (F30/R11 refined
+    // contract) — derived prices are omitted so updateOrderItems re-derives at the
+    // merged qty; orders.scan-hardening.spec.ts pins that branch.
+    lineItems: [{ productId: "prod-1", qty: 2, unitPrice: 5, priceType: "MANUAL", name: null }],
   };
 
   beforeEach(async () => {
