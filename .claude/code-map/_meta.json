@@ -1,6 +1,6 @@
 {
   "mappedSha": "92cced83",
-  "generatedAt": "2026-08-31T14:20:00.000Z",
+  "generatedAt": "2026-08-31T15:40:00.000Z",
   "areas": [
     "api",
     "web",
@@ -8,5 +8,5 @@
     "packages"
   ],
   "fileCount": 918,
-  "notes": "**2026-08-31** — (master `92cced83`; CAMPAIGN PAUSED by the owner) — map pass for the E2E heal #556 only (docs-only commits #557–#559 follow it): `web.md` 02-operator entry records why OP-09c/OP-11b must never target \"the first row\" (spec 21 guard fixtures the guard itself refuses to delete sort into row 1; OP-09c wrote 9.75 onto a $1.00-list leftover, the tier-monotonicity glyph joined the label text node and killed the exact-match locator — the chronic deploy-signal red). Both now resolve a stable seeded product by API and match /^Tier 2/. ⚠️ DELIBERATELY UNMAPPED: the 24 files the Stop gate flags under `fix/F03-payment-truth` are UNMERGED WIP (commit d1269474) plus an isolated, droppable repo-wide prettier pass (80b75ff9) — the map tracks master, and F03 gets its entries when it merges, not before. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "**2026-08-31** — (branch `fix/B199-merge-lock-scope-decision`, off master `da8a61b6`; no schema change) — **B199 merge-lock scope: DEFERRED ON EVIDENCE, not left dangling.** `@routeflow/api` runs exactly ONE instance — no `numReplicas` in `apps/api/railway.toml`, `numReplicas = null` for every service in Railway's API (no dashboard override), live deployment reports 1 running instance — so `withOrderMergeLock`'s per-process scope is sufficient and the cross-replica lost update is UNREACHABLE. Restructuring `updateOrderItems` (money-critical) to close an unreachable race was judged the larger risk. ⚠️ The trigger is SCALING and it is SILENT — wrong money with no error, log or failing test — and Railway injects no replica-count variable, so nothing in-process can detect it; the guard is therefore a comment in `apps/api/railway.toml`'s `[deploy]` block, at the point the decision is made. Three designs recorded in `withOrderMergeLock`'s doc comment, cheapest first: Redis lock (Redis already a dependency, smallest diff, keeps the T-B199 spec's one-instance framing valid), optimistic CAS + 409 retry, then the full fold-inside-the-transaction (which requires MOVING, never deleting, the spec's \"two concurrent merges on ONE INSTANCE serialize\" block). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

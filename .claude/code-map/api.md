@@ -447,8 +447,20 @@ homeAddress` (the driver-home origin), and orders inherit `fulfillPath` from the
       by the time a queued turn runs — `fn` re-reads `findActiveOrder` inside the lock and writes to / returns
       THAT order. ⚠️ **SCOPE: the Map is per controller INSTANCE, so this serializes one API process only.**
       Two Railway replicas merging the same order still race their reads: the row lock inside
-      `updateOrderItems` serializes the WRITE, not the read the absolute totals were computed from. Closing
-      that means folding inside `updateOrderItems`' own transaction — tracked, deliberately not done here.
+      `updateOrderItems` serializes the WRITE, not the read the absolute totals were computed from.
+      **DEFERRED ON EVIDENCE (2026-08-31), not merely pending:** `@routeflow/api` runs exactly ONE instance —
+      no `numReplicas` in `apps/api/railway.toml`, `numReplicas = null` for every service in Railway's API
+      (so no dashboard override either), and the live deployment reports 1 running instance — so the
+      cross-replica race is UNREACHABLE and restructuring a money-critical write path to close it would be
+      the bigger risk. ⚠️ **The trigger is scaling, and it is silent** (wrong money, no error/log/test), and
+      the process cannot self-detect it because Railway injects no replica-count variable — so the guard is a
+      comment in `apps/api/railway.toml`'s `[deploy]` block, where the scaling decision is actually made;
+      do not remove it. When picked up, three designs are spelled out in `withOrderMergeLock`'s doc comment,
+      cheapest first: (1) **Redis lock** (SET NX PX + token-checked release; Redis is already a dependency via
+      the Socket.io adapter, diff stays inside the method, and the T-B199 spec's one-instance framing survives),
+      (2) optimistic CAS on version/updatedAt inside `updateOrderItems`' transaction with a 409 + client retry,
+      (3) the "full" fix — fold inside that transaction, which REQUIRES moving (never deleting)
+      `orders.scan-hardening.spec.ts`'s "two concurrent merges on ONE INSTANCE serialize" block.
     - **`UpdateOrderItemsDto.replaceAll` is EXPLICIT-ONLY (R10, REG-B198).** The legacy heuristic
       (`replaceAll = dto.replaceAll ?? allNewItems`, "every item lacks an id ⇒ replace") is GONE — that is exactly the
       shape of a mobile per-scan "just add these" PATCH, which wiped the order. Omitted or `false` ⇒ incremental merge.

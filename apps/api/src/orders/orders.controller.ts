@@ -276,8 +276,38 @@ export class OrdersController {
    * within ONE API process only. Two replicas merging the same order still
    * race their controller-side reads (updateOrderItems' SELECT … FOR UPDATE
    * serializes the WRITE, not the read the absolute totals were computed
-   * from). Closing that fully means folding inside updateOrderItems' own
-   * transaction — tracked, not done here.
+   * from).
+   *
+   * DEFERRED — DELIBERATELY, ON EVIDENCE (2026-08-31). The @routeflow/api
+   * service runs exactly ONE instance, verified three independent ways:
+   * apps/api/railway.toml declares no numReplicas; Railway's API reports
+   * numReplicas = null for every service (so no dashboard override exists
+   * either); and the live deployment reports 1 running instance. With one
+   * process the cross-replica race is UNREACHABLE, and this lock is
+   * sufficient — restructuring a money-critical write path to close a race
+   * that cannot occur would be the larger risk.
+   *
+   * ⚠️ THE TRIGGER IS SCALING, AND IT IS SILENT. The day anyone runs this
+   * service on 2+ replicas, merged order lines start getting clobbered with
+   * no error, no log and no failing test — the money is simply wrong. The
+   * guard therefore lives where that decision is made, in
+   * apps/api/railway.toml's [deploy] block; do not remove it. Nothing in the
+   * process can self-detect this: Railway injects no replica-count variable.
+   *
+   * WHEN IT IS PICKED UP, three designs, cheapest first:
+   *   1. Redis lock — swap mergeLocksByOrder for a Redis key (SET NX PX +
+   *      token-checked release). Redis is ALREADY a dependency (the Socket.io
+   *      adapter), the diff stays inside this method, the money path is not
+   *      restructured, and the T-B199 spec's one-instance framing stays valid.
+   *   2. Optimistic claim — CAS on the order's version/updatedAt inside
+   *      updateOrderItems' transaction; 409 + client retry on mismatch.
+   *      Cheap server-side, but every merge caller must handle the retry.
+   *   3. Fold inside updateOrderItems' transaction (the "full" fix). Most
+   *      correct, most invasive: it moves money math into a locked section
+   *      and REQUIRES rewriting orders.scan-hardening.spec.ts's concurrency
+   *      block, which drives this controller against a fully mocked
+   *      OrdersService and is titled "two concurrent merges on ONE INSTANCE
+   *      serialize". Move that block; never delete it.
    */
   private withOrderMergeLock<T>(orderId: string, fn: () => Promise<T>): Promise<T> {
     const prior = this.mergeLocksByOrder.get(orderId) ?? Promise.resolve();
