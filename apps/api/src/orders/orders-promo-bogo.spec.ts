@@ -110,6 +110,16 @@ const BOXED_PRODUCT = {
   unitsPerBox: 100,
 };
 
+// REG-B109 fixture: the register's worked overcharge case — a $120 case of 24,
+// ordered as a MIXED line (whole boxes + loose pieces below a full box).
+const BOXED_24_PRODUCT = {
+  id: "prod-box24",
+  name: "Case of 24",
+  pricePerUnit: 120,
+  unit: "case",
+  unitsPerBox: 24,
+};
+
 /** N=5, M=1 — "buy 5, get the 6th free" (the owner's actual promo). */
 const BOGO_5_1 = {
   id: "promo-bogo",
@@ -342,6 +352,58 @@ describe("OrdersService — BUY_N_GET_M (BOGO)", () => {
       expect(line.originalPrice).toBe(35);
       expect(line.promoFreeUnits).toBeNull();
       expect(line.subtotal).toBe(105); // 6 * $17.50
+    });
+
+    // ── REG-B109: a MIXED line is compared on the money it actually bills ────
+    // Comparing candidates on whole SELLING UNITS only dropped a mixed line's
+    // loose pieces from the compare even though billing counts them: BOGO
+    // "saved" 1 x $120 = $120 against PERCENT's (120 - 61.20) x 2 boxes =
+    // $117.60, so BOGO won and the line billed $235.00 — where PERCENT in fact
+    // bills $181.05. A $53.95 overcharge on one line. This pins the fix at the
+    // ORDER-WRITE boundary (not just in pricing.ts): the denomination the line
+    // is billed with is the denomination promo selection compares on.
+    const PERCENT_49 = { ...PERCENT_5, id: "promo-percent-49", value: 49 };
+    /** N=1, M=1 — "buy one case, get one free". */
+    const BOGO_1_1 = { ...BOGO_5_1, id: "promo-bogo-1-1", minQty: 1 };
+
+    it("REG-B109: 2 boxes + 23 pieces picks PERCENT and bills $181.05, not BOGO's $235.00", async () => {
+      seedBuyerMocks(BOXED_24_PRODUCT, [PERCENT_49, BOGO_1_1]);
+
+      await service.create(
+        { items: [{ productId: "prod-box24", boxes: 2, pieces: 23 }] },
+        customerPayload,
+      );
+
+      const line = createdLine();
+      expect(line.boxes).toBe(2); // 23 < 24, so nothing rolls into a 3rd box
+      expect(line.pieces).toBe(23);
+      expect(line.priceType).toBe("PROMO");
+      expect(line.unitPrice).toBe(61.2); // 49% off the $120 case price
+      expect(line.originalPrice).toBe(120);
+      expect(line.promoFreeUnits).toBeNull(); // BOGO lost — no free box earned
+      // 61.20 * (2 + 23/24) = 122.40 + 58.65
+      expect(line.subtotal).toBe(181.05);
+      // What the whole-selling-units-only comparison billed: 120 * (2 - 1 free)
+      // + 120 * 23/24 = 120.00 + 115.00.
+      expect(line.subtotal).not.toBe(235);
+    });
+
+    it("REG-B109 guard: a WHOLE-BOX line (no loose pieces) still picks BOGO — no over-correction", async () => {
+      seedBuyerMocks(BOXED_24_PRODUCT, [PERCENT_49, BOGO_1_1]);
+
+      await service.create(
+        { items: [{ productId: "prod-box24", boxes: 2, pieces: 0 }] },
+        customerPayload,
+      );
+
+      const line = createdLine();
+      // Both bases agree here: BOGO bills 120 * 1 = $120, PERCENT bills
+      // 61.20 * 2 = $122.40 — BOGO genuinely wins and must keep winning.
+      expect(line.priceType).toBe("PROMO");
+      expect(line.unitPrice).toBe(120);
+      expect(line.originalPrice).toBeNull();
+      expect(line.promoFreeUnits).toBe(1);
+      expect(line.subtotal).toBe(120);
     });
   });
 

@@ -1,3 +1,5 @@
+import { roundMoney } from "../common/pricing";
+
 export function getTierPrice(product: any, tier: number): number {
   const fallback = Number(product.pricePerUnit) || 0;
   switch (tier) {
@@ -43,6 +45,11 @@ export const TIER_FIELDS: readonly TierField[] = [
  *
  * Change detection ("the user focused and typed but did not actually change anything")
  * belongs to the caller's commit mechanism, never to this function.
+ *
+ * REG-B122: the cent rounding MUST go through {@link roundMoney} — never re-inline a
+ * rounding expression here. An inlined `+ Number.EPSILON` nudge round-DOWNS every
+ * half-cent value (2.135 -> "2.13"), which is a tier price a cent below what the same
+ * number becomes on every other money path.
  */
 export function cascadeTierPrices(
   field: TierField,
@@ -50,7 +57,7 @@ export function cascadeTierPrices(
 ): Partial<Record<TierField, string>> {
   const idx = TIER_FIELDS.indexOf(field);
   if (idx < 1 || !Number.isFinite(value) || value < 0) return {};
-  const v = (Math.round((Math.abs(value) + Number.EPSILON) * 100) / 100).toFixed(2);
+  const v = roundMoney(Math.abs(value)).toFixed(2);
   const patch: Partial<Record<TierField, string>> = {};
   for (let i = idx + 1; i < TIER_FIELDS.length; i++) patch[TIER_FIELDS[i]] = v;
   return patch;

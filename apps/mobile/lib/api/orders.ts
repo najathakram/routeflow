@@ -35,6 +35,14 @@ export interface OrderItem {
   boxes?: number | null;
   pieces?: number | null;
   /**
+   * SALE-TIME box size for a box-split line (null on selling-unit lines). The
+   * server already sends it (mirrors `apps/web/lib/api/orders.ts#OrderItem`);
+   * declaring it is what lets `short-pick.ts#freeUnitSizeFor` prefer this
+   * snapshot over the LIVE `product.unitsPerBox`, so a repacked product never
+   * re-prorates an old line's free boxes at the new box size.
+   */
+  unitsPerBox?: number | null;
+  /**
    * BUY_N_GET_M snapshot: whole free SELLING units on this line (BOXES for a
    * boxed line). The stored `subtotal` already nets them off — any local
    * recompute MUST pass them to `computeLineSubtotal` or it over-charges.

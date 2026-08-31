@@ -57,6 +57,11 @@ export const TIER_FIELDS: readonly TierField[] = [
  *
  * Change detection ("the user focused and typed but did not actually change anything")
  * belongs to the caller's commit mechanism, never to this function.
+ *
+ * REG-B122: the cent rounding MUST go through {@link roundMoney} — never re-inline a
+ * rounding expression here. An inlined `+ Number.EPSILON` nudge round-DOWNS every
+ * half-cent value (2.135 -> "2.13"), which is a tier price a cent below what the same
+ * number becomes on every other money path.
  */
 export function cascadeTierPrices(
   field: TierField,
@@ -64,7 +69,7 @@ export function cascadeTierPrices(
 ): Partial<Record<TierField, string>> {
   const idx = TIER_FIELDS.indexOf(field);
   if (idx < 1 || !Number.isFinite(value) || value < 0) return {};
-  const v = (Math.round((Math.abs(value) + Number.EPSILON) * 100) / 100).toFixed(2);
+  const v = roundMoney(Math.abs(value)).toFixed(2);
   const patch: Partial<Record<TierField, string>> = {};
   for (let i = idx + 1; i < TIER_FIELDS.length; i++) patch[TIER_FIELDS[i]] = v;
   return patch;
@@ -97,11 +102,25 @@ export interface LineSubtotalInput {
 /**
  * Round a monetary amount to cents — single rounding policy mirrored from
  * `apps/api/src/common/pricing.ts#roundMoney`. Keep all three in sync.
+ *
+ * REG-B122: the previous nudge (`+ Number.EPSILON` before scaling and
+ * rounding) added only ~2.22e-16 — far below one half-ULP of any double
+ * >= 2 — so it was a no-op for ordinary money values, and every input whose
+ * 3rd decimal digit is exactly 5 (2.135, 4.015, 7.5% of $29.00, ...) rounded
+ * DOWN instead of the documented half-away-from-zero. `toFixed(4)` fixes this
+ * by a different mechanism: it re-renders the scaled value through DECIMAL
+ * string formatting, which snaps away the noisy binary tail a double leaves
+ * behind (e.g. `2.135 * 100` is actually `213.49999999999997`) back to the
+ * base-10 digits the literal means (`"213.5000"`) BEFORE `Math.round` sees
+ * it — a fix that holds regardless of how far the true value sits from its
+ * nearest representable double, unlike a fixed epsilon nudge. `Math.round`
+ * itself is half-up for positive numbers, so the sign is split off first.
  */
 export function roundMoney(n: number): number {
   if (!Number.isFinite(n)) return 0;
   const sign = n < 0 ? -1 : 1;
-  return (sign * Math.round((Math.abs(n) + Number.EPSILON) * 100)) / 100;
+  const cents = Math.round(Number((Math.abs(n) * 100).toFixed(4)));
+  return (sign * cents) / 100;
 }
 
 /**
@@ -117,7 +136,10 @@ export function roundMoney(n: number): number {
 export function roundUnitCost(n: number): number {
   if (!Number.isFinite(n)) return 0;
   const sign = n < 0 ? -1 : 1;
-  return (sign * Math.round((Math.abs(n) + Number.EPSILON) * 10000)) / 10000;
+  // Same decimal-string path as roundMoney (REG-B122): EPSILON is <= half a ULP
+  // for any |n| above ~2e-4 once scaled by 1e4, so the old nudge was a no-op and
+  // half-at-the-4th-decimal values rounded DOWN against the documented intent.
+  return (sign * Math.round(Number((Math.abs(n) * 10000).toFixed(4)))) / 10000;
 }
 
 export interface NormalizedQty {
@@ -168,6 +190,83 @@ export function computeLineSubtotal({
     return roundMoney(unitPrice * boxEquivalent);
   }
   return roundMoney(unitPrice * Math.max(0, qty - free));
+}
+
+/**
+ * Prorate a line's ALREADY-AGREED subtotal for a partial delivered/billed
+ * quantity — e.g. the driver at-door short-pick estimate, or any other "what
+ * does `deliveredQty` of `orderQty` cost" question asked outside the invoice
+ * itself. Reference oracle: `invoices.service.ts`'s `buildInvoiceItemData`
+ * (READ-ONLY here — another lane owns that file), specialised to a single
+ * bill from scratch (its `priorBilledQty` is always 0 in this shape).
+ *
+ * MONEY COMES FROM THE STORED SUBTOTAL, never a live re-price — same rule as
+ * the reference oracle, so a partial estimate agrees with what the invoice
+ * will actually bill.
+ *
+ * `freeUnits` (default 0) is the line's BUY_N_GET_M snapshot, counted in whole
+ * SELLING units — which on a box-split line means BOXES, while
+ * `deliveredQty`/`orderQty` stay in that line's own qty axis (PIECES). The two
+ * axes are bridged by `freeUnitSize` (default 1): how many qty units one free
+ * unit is worth — the oracle's `freeUnitSize`, i.e. `unitsPerBox` when the line
+ * was stored WITH a box/piece split and that box size is known, and 1 otherwise
+ * (selling-unit lines, where the axes already coincide). Feeding a boxes-axis
+ * `freeUnits` alongside a pieces-axis `orderQty` at the default `freeUnitSize`
+ * under-bills a partial by up to one box, so a box-split caller MUST pass it.
+ * At `freeUnits = 0` this reduces to the plain linear formula
+ * `storedSubtotal * deliveredQty / orderQty` — REG-B50's bug was exactly that
+ * linear formula applied unconditionally, even when the line HAD free units.
+ *
+ * The general case is the reference oracle's PAID-BASIS floored cumulative
+ * telescope: a free unit is a whole unit while a subtotal prorated over the
+ * raw delivered quantity would disagree with the floored free-unit
+ * allocation by up to one unit price on a partial, so this prorates over the
+ * PAID quantity instead (`orderQty - freeUnits * freeUnitSize`). That keeps the
+ * stored subtotal equal to `computeLineSubtotal(..., freeUnits)` and makes a
+ * full delivery (`deliveredQty === orderQty`) copy it back verbatim.
+ *
+ * Web mirror of `apps/api/src/common/pricing.ts#prorateLineSubtotal` — keep
+ * all three in sync. Exported only; no web call site adopts it yet (F05+).
+ */
+export function prorateLineSubtotal(
+  storedSubtotal: number,
+  deliveredQty: number,
+  orderQty: number,
+  freeUnits = 0,
+  freeUnitSize = 1,
+): number {
+  const stored = Number(storedSubtotal) || 0;
+  const order = Number(orderQty) || 0;
+  if (!(order > 0)) return 0;
+  const delivered = Math.max(0, Number(deliveredQty) || 0);
+  const free = Math.max(0, Math.trunc(Number(freeUnits) || 0));
+  // Qty units per whole free unit; anything non-positive means "same axis".
+  const rawSize = Math.trunc(Number(freeUnitSize) || 0);
+  const size = rawSize > 0 ? rawSize : 1;
+
+  const paidQty = order - free * size;
+  const onPaidBasis = free > 0 && paidQty > 0;
+  const basisQty = onPaidBasis ? paidQty : order;
+
+  // Free units consumed by the first `cumQty` units delivered, floored so a
+  // partial never claims a fraction of a whole free unit early — mirrors the
+  // oracle's `freeUnitsThrough`.
+  const freeUnitsThrough = (cumQty: number) =>
+    Math.min(free, Math.floor((free * Math.max(0, cumQty)) / order));
+  // The PAID share of `cumQty` units delivered — the basis the telescope
+  // prorates over — mirrors the oracle's `billedThrough`.
+  const billedThrough = (cumQty: number) =>
+    onPaidBasis ? cumQty - freeUnitsThrough(cumQty) * size : cumQty;
+
+  // CAP at basisQty: with size > 1 the floored free-unit allocation lands only
+  // near 100% delivered, so an uncapped billed share can exceed the paid basis
+  // and a PARTIAL delivery would bill MORE than the whole line's agreed
+  // subtotal (worked case: 2 boxes + 2 loose of a 4-pack @ $10/box, BUY_1_GET_1,
+  // stored $15 — delivered 9 of 10 billed $22.50 uncapped, 1.5x the agreed
+  // price). Unreachable at size 1, opened by the freeUnitSize axis; the cap
+  // makes every partial bill at most the stored subtotal, and a full delivery
+  // still copies it back verbatim.
+  return roundMoney((stored * Math.min(billedThrough(delivered), basisQty)) / basisQty);
 }
 
 /**
@@ -244,11 +343,7 @@ export function classifyMargin(margin: number | null, floor: number): MarginClas
 // over-charge. Keep all three mirrors in sync.
 
 export type CategoryTaxType =
-  | "EXCISE_PER_UNIT"
-  | "PERCENT_OF_SALE"
-  | "PER_VOLUME"
-  | "DEPOSIT_PER_CONTAINER"
-  | "NONE";
+  "EXCISE_PER_UNIT" | "PERCENT_OF_SALE" | "PER_VOLUME" | "DEPOSIT_PER_CONTAINER" | "NONE";
 
 export interface CategoryTaxInput {
   taxType: CategoryTaxType;
@@ -362,6 +457,24 @@ export interface PromoContext {
    * pricing outside a cart, mirroring how `qtyPieces` is sourced today.
    */
   qtyUnits: number;
+  /**
+   * REG-B109: the line's full box/piece denomination, so `applyBestPromotion`
+   * can compare candidates by the money `computeLineSubtotal` would ACTUALLY
+   * bill on the FULL entered quantity — a whole-box-only comparison
+   * (`qtyUnits` alone) silently drops a mixed line's loose pieces from the
+   * comparison even though billing counts them. All three OPTIONAL and
+   * additive so the signature stays source-compatible (R7) — but every
+   * line-pricing call site DOES pass them, and omitting them is the genuine
+   * no-split case (a single would-be-added unit, or a candidate list that is
+   * all BUY_N_GET_M on one axis), not a way to keep the old basis: the
+   * comparison then degrades to `qtyUnits` alone, which is exact whenever the
+   * line has no loose pieces. Same shape as `computeLineSubtotal`'s own
+   * `boxes`/`pieces`/`unitsPerBox` — pass the line's stored (or
+   * about-to-be-stored) split straight through.
+   */
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
 }
 
 export interface PromoResult {
@@ -448,16 +561,23 @@ function promoBogoFreeUnits(promo: PromotionRule, ctx: PromoContext): number | n
 
 /**
  * Apply the best (largest-saving) applicable promotion to a base selling-unit
- * price. Single, non-stacking: the promo yielding the largest total dollar
- * saving for the line's current quantity wins; equal savings fall back to the
- * LOWEST net unit price and then to promo id (determinism, as today) — so a
- * line with no whole selling units yet, where every price promo saves $0, still
- * picks the deepest discount exactly as it did before. Price promos
- * (PERCENT/FIXED/QTY_BREAK) save `(base - net) × qtyUnits`; BUY_N_GET_M saves
- * `freeUnits × base` and returns `unitPrice = base` unchanged — the free units
- * reduce the SUBTOTAL via `computeLineSubtotal`'s `freeUnits` param, never a
- * rounded net unit price (see the header). Returns the base unchanged,
- * `freeUnits: 0`, when none apply.
+ * price. Single, non-stacking: the promo that leaves the line billing the
+ * LEAST wins — computed via the SAME `computeLineSubtotal` path billing
+ * itself uses, on the FULL entered quantity (REG-B109: a whole-box-only
+ * comparison silently drops a mixed line's loose pieces even though billing
+ * counts them); equal billed totals fall back to the LOWEST net unit price
+ * and then to promo id (determinism, as today) — so a line with no whole
+ * selling units yet, where every price promo saves $0, still picks the
+ * deepest discount exactly as it did before. BUY_N_GET_M never has a net
+ * price — its "candidate" for the comparison IS the base, billed with its
+ * `freeUnits` subtracted, and it returns `unitPrice = base` unchanged; the
+ * free units reduce the SUBTOTAL via `computeLineSubtotal`'s `freeUnits`
+ * param, never a rounded net unit price (see the header). `ctx.boxes` /
+ * `pieces` / `unitsPerBox` stay optional for signature compatibility (R7), but
+ * every line-pricing call site supplies them; without them the comparison
+ * falls back to `qtyUnits` (whole selling units only), which is the exact
+ * answer for a line with no loose pieces. Returns the base
+ * unchanged, `freeUnits: 0`, when none apply.
  */
 export function applyBestPromotion(
   basePrice: number,
@@ -466,38 +586,57 @@ export function applyBestPromotion(
 ): PromoResult {
   const base = roundMoney(basePrice);
   const qtyUnits = Number(ctx.qtyUnits) || 0;
-  let bestSaving: number | null = null;
+  // REG-B109: price each candidate the way billing actually will
+  // (computeLineSubtotal on the FULL entered quantity) so a mixed line's loose
+  // pieces count in the comparison instead of being silently dropped. Every
+  // line-pricing call site passes the same split it then bills with; a caller
+  // with no split to give falls back to the whole-selling-unit basis, which
+  // agrees with billing to the cent whenever there are no loose pieces.
+  const hasFullQty = ctx.boxes != null || ctx.pieces != null;
+  const billFull = (unitPrice: number, freeUnits: number): number =>
+    hasFullQty
+      ? computeLineSubtotal({
+          unitPrice,
+          qty: ctx.qtyPieces,
+          boxes: ctx.boxes,
+          pieces: ctx.pieces,
+          unitsPerBox: ctx.unitsPerBox,
+          freeUnits,
+        })
+      : roundMoney(unitPrice * Math.max(0, qtyUnits - freeUnits));
+
+  let bestBilled: number | null = null;
   let bestId: string | null = null;
   let bestNet = base;
   let bestFreeUnits = 0;
   for (const promo of promos) {
-    let saving: number;
+    let billed: number;
     let net = base;
     let freeUnits = 0;
     if (promo.type === "BUY_N_GET_M") {
       const free = promoBogoFreeUnits(promo, ctx);
       if (free == null) continue;
       freeUnits = free;
-      saving = roundMoney(freeUnits * base);
+      billed = billFull(base, freeUnits);
     } else {
       const promoNet = promoNetPrice(base, promo, ctx);
       if (promoNet == null) continue;
       net = promoNet;
-      saving = roundMoney((base - net) * qtyUnits);
+      billed = billFull(net, 0);
     }
     if (
-      bestSaving == null ||
-      saving > bestSaving ||
-      (saving === bestSaving &&
+      bestBilled == null ||
+      billed < bestBilled ||
+      (billed === bestBilled &&
         (net < bestNet || (net === bestNet && bestId != null && promo.id < bestId)))
     ) {
-      bestSaving = saving;
+      bestBilled = billed;
       bestId = promo.id;
       bestNet = net;
       bestFreeUnits = freeUnits;
     }
   }
-  if (bestSaving == null || bestId == null) {
+  if (bestBilled == null || bestId == null) {
     return { unitPrice: base, originalPrice: null, appliedPromoId: null, freeUnits: 0 };
   }
   if (bestFreeUnits > 0) {

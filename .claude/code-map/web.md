@@ -211,6 +211,11 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   label). **Never re-declare a method list — import from here**; mirror is
   `apps/mobile/lib/payment-methods.ts`, source of truth is the Prisma `PaymentMethod` enum.
 - **`lib/pricing.ts`** — `getTierPrice`, `computeLineSubtotal`, `normalizeBoxesPieces`, `roundMoney`,
+  **`prorateLineSubtotal(stored, delivered, ordered, freeUnits = 0, freeUnitSize = 1)`** (F04/REG-B50,
+  2026-08-31 — partial-delivery money off the STORED subtotal; the paid-basis floored cumulative
+  telescope of the oracle `invoices.service.ts#buildInvoiceItemData`, **never** a linear
+  `stored × delivered / ordered`. No web caller yet — it exists so the three mirrors stay identical and
+  the api parity spec can pin them),
   the margin helpers `costPerSellingUnit`/`computeMarginFraction`/`priceForMarginFloor`/`classifyMargin`
   (box-vs-piece aware; the sale-builder "negotiation floor"), **`applyBestPromotion`/`promotionMatchesProduct`**
   (P5-04), and the zero-price guard `ruleCanZeroPrice`/`promotionZeroesProduct`/`scanPromotionZeroPrice`/

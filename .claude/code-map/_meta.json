@@ -1,7 +1,7 @@
 {
-  "mappedSha": "91094f01",
-  "generatedAt": "2026-08-31T02:05:00.000Z",
+  "mappedSha": "77a8c058",
+  "generatedAt": "2026-08-31T13:10:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
-  "fileCount": 900,
-  "notes": "2026-08-30 - (branch `chore/b126-eslint-selectors`, off master 7213ac29; no schema change) - Landed the two B126 `no-restricted-syntax` ESLint selectors held back from #506 (#503, part of #502): zero-arg `deleteMany()`/`updateMany()` and empty-object `deleteMany({})`/`updateMany({})` are now lint ERRORS in `apps/api/eslint.config.mjs`. The rejected third selector (`where` missing `tenantId`) and the money-math AST selector stay out per #502's design record. `npm run lint` on the real tree is clean, zero new eslint-disable lines - confirms #506 (cc8c7d46) already cleared the ten real hits in `system-config/settings.controller.ts`. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it - never accumulate history here."
+  "fileCount": 903,
+  "notes": "**2026-08-31** — (branch fix/F04-pricing-mirrors; MONEY KERNEL, no schema change) — F04: B50/B109/B122 fixed across all mirrors; roundMoney decimal-string in five copies; applyBestPromotion bills-basis selection incl. orders.service ctx call sites; prorateLineSubtotal telescope + freeUnitSize + basisQty cap (final-pass major: partials could bill 150%); G3 parity spec + tier ladder. F03 lane owes the oracle-cap check; D4 owes the historic over-bill report (#517). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
