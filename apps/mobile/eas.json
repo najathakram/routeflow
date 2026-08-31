@@ -15,8 +15,10 @@
         "simulator": false
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "http://192.168.4.25:3000"
-      }
+        "EXPO_PUBLIC_API_URL": "http://192.168.4.25:3000",
+        "HUSKY": "0"
+      },
+      "node": "20.19.4"
     },
     "preview": {
       "distribution": "internal",
@@ -24,8 +26,10 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "http://192.168.4.25:3000"
-      }
+        "EXPO_PUBLIC_API_URL": "http://192.168.4.25:3000",
+        "HUSKY": "0"
+      },
+      "node": "20.19.4"
     },
     "staging": {
       "distribution": "internal",
@@ -33,14 +37,20 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://routeflowapi-production.up.railway.app"
-      }
+        "EXPO_PUBLIC_API_URL": "https://routeflowapi-production.up.railway.app",
+        "HUSKY": "0"
+      },
+      "node": "20.19.4",
+      "channel": "staging"
     },
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://routeflowapi-production.up.railway.app"
-      }
+        "EXPO_PUBLIC_API_URL": "https://routeflowapi-production.up.railway.app",
+        "HUSKY": "0"
+      },
+      "node": "20.19.4",
+      "channel": "production"
     }
   },
   "submit": {
