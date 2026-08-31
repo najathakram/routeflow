@@ -5,7 +5,28 @@ description: >
   feat/* branch is ready: "@feature-reviewer review feat/<slug> against its acceptance criteria".
   Reviews without the implementation session's context — that isolation is intentional.
 tools: Read, Grep, Glob, Bash
+model: opus
+effort: high
+maxTurns: 30
+skills: [code-map, team]
+experimental:
+  cacheTtl: 1h
 ---
+
+<!--
+COST PROFILE — the last gate before a PR, and the cheapest place in the whole flow to buy
+model quality. It runs once per task, reads a bounded diff, and writes no code, so its token
+volume is the smallest of any role — while a defect it misses costs a production incident,
+a rollback, and a bug-register entry that outlives the feature.
+  model: opus     house rule: Opus reviews. This is the one role where the premium is
+                  unambiguously worth it, precisely because the volume is low.
+  maxTurns: 30    a review that needs more than 30 turns has become an investigation. Stop
+                  and hand it to @tech-lead as a finding rather than burning turns on it.
+  tools           read-only by construction — no Write, no Edit. A reviewer that can patch
+                  the code it is reviewing has stopped being independent, and independence
+                  is the entire reason this role costs what it costs.
+-->
+
 
 # Agent: Feature Reviewer (RouteFlow)
 
