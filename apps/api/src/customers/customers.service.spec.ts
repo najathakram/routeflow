@@ -1232,4 +1232,92 @@ describe("CustomersService", () => {
       );
     });
   });
+
+  // ─── credit-note deletes must clear order↔credit-note links first ─────────
+  // OrderCreditNote.creditNoteId has no onDelete (Restrict), so deleting a
+  // credit note that is still linked to an order aborts the whole transaction.
+
+  describe("deleteAllCustomers — order↔credit-note links", () => {
+    it("deletes orderCreditNote rows for the customers' credit notes before the notes", async () => {
+      prisma.customer.findMany.mockResolvedValue([
+        { id: "cust-1", userId: "user-1" },
+        { id: "cust-2", userId: "user-2" },
+      ]);
+      prisma.creditNote.findMany.mockResolvedValue([{ id: "cn-1" }, { id: "cn-2" }]);
+
+      const result = await service.deleteAllCustomers();
+
+      expect(result).toEqual({ deleted: 2 });
+      expect(prisma.creditNote.findMany).toHaveBeenCalledWith({
+        where: { customerId: { in: ["cust-1", "cust-2"] } },
+        select: { id: true },
+      });
+      expect(prisma.orderCreditNote.deleteMany).toHaveBeenCalledWith({
+        where: { creditNoteId: { in: ["cn-1", "cn-2"] } },
+      });
+      expect(prisma.creditNote.deleteMany).toHaveBeenCalledWith({
+        where: { customerId: { in: ["cust-1", "cust-2"] } },
+      });
+      const linkDelete = prisma.orderCreditNote.deleteMany.mock.invocationCallOrder[0];
+      const noteDelete = prisma.creditNote.deleteMany.mock.invocationCallOrder[0];
+      expect(linkDelete).toBeLessThan(noteDelete);
+    });
+
+    it("skips the link delete when the customers have no credit notes", async () => {
+      prisma.customer.findMany.mockResolvedValue([{ id: "cust-1", userId: "user-1" }]);
+      prisma.creditNote.findMany.mockResolvedValue([]);
+
+      await service.deleteAllCustomers();
+
+      expect(prisma.orderCreditNote.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.creditNote.deleteMany).toHaveBeenCalledWith({
+        where: { customerId: { in: ["cust-1"] } },
+      });
+    });
+  });
+
+  describe("deleteCustomer (hard delete) — order↔credit-note links", () => {
+    it("deletes orderCreditNote rows for the customer's credit notes before the notes", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        ...MOCK_CUSTOMER,
+        user: { status: "ACTIVE" },
+      });
+      // No orders/invoices/returns → the hard-delete path is taken (counts default to 0).
+      prisma.creditNote.findMany.mockResolvedValue([{ id: "cn-9" }]);
+
+      const result = await service.deleteCustomer("cust-1");
+
+      expect(result).toEqual({ success: true });
+      expect(prisma.orderCreditNote.deleteMany).toHaveBeenCalledWith({
+        where: { creditNoteId: { in: ["cn-9"] } },
+      });
+      const linkDelete = prisma.orderCreditNote.deleteMany.mock.invocationCallOrder[0];
+      const noteDelete = prisma.creditNote.deleteMany.mock.invocationCallOrder[0];
+      expect(linkDelete).toBeLessThan(noteDelete);
+    });
+  });
+
+  describe("deleteImportedCustomers — order↔credit-note links", () => {
+    it("deletes orderCreditNote rows for the imported customers' credit notes before the notes", async () => {
+      prisma.customer.findMany.mockResolvedValue([
+        { id: "cust-1", userId: "user-1", customerLink: null },
+        { id: "cust-2", userId: "user-2", customerLink: { status: "ACTIVE" } },
+      ]);
+      prisma.creditNote.findMany.mockResolvedValue([{ id: "cn-3" }]);
+
+      const result = await service.deleteImportedCustomers();
+
+      expect(result).toEqual({ deleted: 1, preserved: 1 });
+      expect(prisma.creditNote.findMany).toHaveBeenCalledWith({
+        where: { customerId: { in: ["cust-1"] } },
+        select: { id: true },
+      });
+      expect(prisma.orderCreditNote.deleteMany).toHaveBeenCalledWith({
+        where: { creditNoteId: { in: ["cn-3"] } },
+      });
+      const linkDelete = prisma.orderCreditNote.deleteMany.mock.invocationCallOrder[0];
+      const noteDelete = prisma.creditNote.deleteMany.mock.invocationCallOrder[0];
+      expect(linkDelete).toBeLessThan(noteDelete);
+    });
+  });
 });

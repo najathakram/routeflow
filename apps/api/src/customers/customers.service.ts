@@ -1812,7 +1812,17 @@ export class CustomersService {
         await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
       await tx.invoice.deleteMany({ where: { customerId: id } });
 
-      // Credit notes
+      // Credit notes — order↔credit-note links must be deleted BEFORE the notes
+      // (OrderCreditNote.creditNoteId has no onDelete, so the FK restricts the parent delete)
+      const creditNotes = await tx.creditNote.findMany({
+        where: { customerId: id },
+        select: { id: true },
+      });
+      if (creditNotes.length) {
+        await tx.orderCreditNote.deleteMany({
+          where: { creditNoteId: { in: creditNotes.map((n) => n.id) } },
+        });
+      }
       await tx.creditNote.deleteMany({ where: { customerId: id } });
 
       // Returns must be deleted BEFORE orders (Return has orderId FK on Order)
@@ -2021,6 +2031,17 @@ export class CustomersService {
         }
         await tx.invoice.deleteMany({ where: { customerId: { in: customerIds } } });
 
+        // Order↔credit-note links must be deleted BEFORE the credit notes
+        // (OrderCreditNote.creditNoteId has no onDelete, so the FK restricts the parent delete)
+        const creditNotes = await tx.creditNote.findMany({
+          where: { customerId: { in: customerIds } },
+          select: { id: true },
+        });
+        if (creditNotes.length) {
+          await tx.orderCreditNote.deleteMany({
+            where: { creditNoteId: { in: creditNotes.map((n) => n.id) } },
+          });
+        }
         await tx.creditNote.deleteMany({ where: { customerId: { in: customerIds } } });
 
         // Returns must be deleted BEFORE orders (Return has orderId FK on Order)
@@ -2169,7 +2190,17 @@ export class CustomersService {
         }
         await tx.invoice.deleteMany({ where: { customerId: { in: ids } } });
 
-        // Credit notes
+        // Credit notes — order↔credit-note links must be deleted BEFORE the notes
+        // (OrderCreditNote.creditNoteId has no onDelete, so the FK restricts the parent delete)
+        const creditNotes = await tx.creditNote.findMany({
+          where: { customerId: { in: ids } },
+          select: { id: true },
+        });
+        if (creditNotes.length) {
+          await tx.orderCreditNote.deleteMany({
+            where: { creditNoteId: { in: creditNotes.map((n) => n.id) } },
+          });
+        }
         await tx.creditNote.deleteMany({ where: { customerId: { in: ids } } });
 
         // Returns (must precede orders due to FK)
