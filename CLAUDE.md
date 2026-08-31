@@ -117,6 +117,19 @@ Names only — see each app's example file. Never commit values.
 
 ### Canonical deploy flow: **public → push/CI → merge → private** (deploy continues private)
 
+> **UPDATE 2026-08-31 (#545 / F00):** CI is now ONE `verify` job on PRs (there is deliberately NO
+> `push:` trigger — the revert recipe lives in ci.yml's `on:` block), and the Playwright E2E suite
+> starts **automatically from Railway's deploy signal** (`on: deployment_status` — proven live on
+> the first post-merge deploy: run 33348165462, suite green in 5m52s; zero secrets, zero
+> Railway-side setup). Do NOT watch for or dispatch E2E manually after a merge — it fires itself,
+> and its freshness guard discards Railway's duplicate stale-`success` events. The public window
+> now exists ONLY because GitHub Actions **billing is still broken for private minutes** (private
+> runs die as 0-step failures in ~3s; owner fix pending in Settings → Billing). Until that is
+> fixed, PR CI still needs the flip routine below; once billing works, PR CI runs private
+> (~2,076 min/mo central projection against the 2,000 cap — verify the first real month) and the
+> flip routine RETIRES. A post-merge E2E run failing with 0 steps while private is a billing
+> block, not a suite failure.
+
 The repo is **private by default** (commercial source). CI (public repos = free Actions) needs it
 public; Railway's GitHub deploy does **not** (the Railway GitHub App clones private repos fine —
 proven on #244/#245 and every batch since, incl. #318 which shipped fully private). The public
@@ -174,7 +187,8 @@ window exists ONLY to run CI, so keep it to minutes.
    Do this even if CI failed or the merge was aborted. Flipping in the same breath as the merge is
    what caused five consecutive `repository not found` deploy failures — see the corrected note above.
 5. **Watch the deploy** (`railway deployment list --service @routeflow/{api,web,mobile}`) until
-   SUCCESS, then `npm run post-deploy-check`.
+   SUCCESS, then `npm run post-deploy-check`. E2E runs by itself off the deploy signal — read its
+   result on the Actions tab; do not dispatch it.
 
 > ⚠️ Don't `railway up` an UNMERGED branch when master will later auto-deploy: a subsequent master
 > push auto-deploys master-without-your-branch and can briefly regress it (hit + fixed on
