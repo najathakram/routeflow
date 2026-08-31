@@ -305,6 +305,19 @@ homeAddress` (the driver-home origin), and orders inherit `fulfillPath` from the
 
 - **controller** `customers` — export, tags CRUD, merge, pending-portal-approvals; `me`/`me/statement`/`@Patch me`; per-id: status, routes, orders, statement, **`GET :id/statements` + `GET :id/statements/:month` (2026-08-12, OPERATOR)** — operator twins of the buyer statement-PDF endpoints delegating to the SAME `StatementService`/`StatementPdfService` (registered DIRECTLY in `customers.module` providers — BuyerModule imports CustomersModule, importing back would cycle; both services are stateless Prisma+Storage); `:month` returns `{url}` presigned (downloads WITHOUT a JWT), format guard 400s inside `buildMonthlyStatement`; role guard locked by reflection spec in `customers.security.spec.ts` — advance-payments, prices CRUD, addresses, contacts, comments, tax-documents, documents, portal invite/approve/disconnect; `DELETE :id` (soft-delete w/ `force`), **`POST :id/restore`** (server side of the 8s Undo). **`GET :id/orders` @Roles fix (2026-08-26, audit P0)** — the route had NO `@Roles` decorator and `RolesGuard` fails closed on missing metadata, so it 403'd for EVERYONE (customer profile "ORDERS 0" + empty Orders tab in prod); now `@Roles(OPERATOR, CUSTOMER)` (service enforces own-data for customers), with an every-handler-declares-@Roles reflection regression spec.
 - **service** — `findAll`, `findOne`, `create`, `update`, `updateStatus`, `getStatement`, `mergeCustomers`, `add{Tag,Address,Contact,Price}`, `exportCSV`, portal flows; `deleteCustomer(force)` soft-deletes (sets `deletedAt` + deactivates user) preserving financial records, `restoreCustomer` reverses it (clears `deletedAt` + reactivates user, idempotent). side effects: Customer + related writes; portal-invite email; presigned doc URLs; ledger updates on price/advance changes.
+- **`deleteAllCustomers` PAID/SENT pre-flight (B127, 2026-08-30)** — sibling
+  `batchDelete` already refused to delete customers with PAID/SENT invoices (`ConflictException`);
+  `deleteAllCustomers` had no such check and would destroy paid invoices along with the customer.
+  Now runs the same pre-flight (same statuses, same exception/message shape) **before** any
+  deletion and before `tenantTransaction` is entered. Also **refuses a null `tenantId`**
+  (`ForbiddenException`, ahead of the listing query) — `DELETE /customers/all` is reachable by
+  SUPER_ADMIN, whose tenantId is null, and `forTenant()`/`tenantTransaction` are unscoped there,
+  so without it the listing, the pre-flight and the wipe all spanned every tenant (see the
+  `tenantTransaction` pass-through/injector lesson under `system-config/` — the fall-through is
+  not a guard, so every destructive bulk handler must refuse a null tenant itself). Unlike
+  `batchDelete` — bounded by the caller's id list — the blocker breakdown is capped at
+  `MAX_LISTED_BLOCKERS` (10) + "and N more"; under the cap the two messages stay byte-identical.
+  Spec `customers.service.delete-all.spec.ts`.
 - **buyer-request approvals (2026-08-20, no migration)** — `POST /customers/:id/portal-approve` → `approveBuyerRequest` (409 unless `PENDING_SELLER_APPROVAL`, then ACTIVE + `linkedAt`); NEW `POST /customers/:id/portal-decline` → `declineBuyerRequest` — same guards, 404/409 gates, then **DELETES** the row so the `@unique customerId` slot is freed for a future invite (DISCONNECTED stays reserved for severing an ACTIVE link) **EXCEPT** when the row still carries a LIVE `inviteToken` (a request made against an outstanding invite preserves it): those revert to `INVITED` + `buyerAccountId: null` so the seller's emailed invite survives the decline; an EXPIRED token falls through to the delete. `listPendingPortalApprovals` + `getPortalStatus` additively carry `buyerName`/`buyerEmail` (who is asking) — the web bell's pinned "Action needed" rows. Spec `customers/portal-approvals.spec.ts`.
 - **(2026-07-30, WP15) "Sells regulated items" filter** — `ListCustomersDto.regulated?: string`; `findAll` applies `where.authorizations = { some: { trackedCategory: { requiresLicense: true } } }` when `"1"` (mirrors the `tag` relation filter) and the `findMany` include gains a filtered `_count: { select: { authorizations: { where: { trackedCategory: { requiresLicense: true } } } } }` surfaced per-row as `regulatedCount`. Consumed by web customers list chip (WP14) + mobile `customers/index.tsx` `FilterChipRow` (regulated param passed through `useAdminCustomers` via an inline cast since `lib/api/admin.ts` params type is untouched). Spec: `customers.service.spec.ts` `findAll` block.
 - **Wallet double-count fix (P5-13, money-critical)** — `getMyStatement` (buyer, self) + `getStatementForOperator` (operator + `buyer.controller` `GET /buyer/statement`) both now select `amountUsed`+`expiresAt` and compute `availableCredit = Σ roundMoney(amount − amountUsed)` over the canonical open predicate (`credit-notes/` entry) instead of the old `Σ amount over status===ISSUED`, which double-counted a partially-applied credit (its full face amount PLUS the same dollars already sitting on an invoice as a `CREDIT_NOTE` payment). Each `CREDIT_NOTE` transaction row now reports remaining (not face) via `runningBalance` and exposes `expiresAt` (consumed by the buyer wallet tile). `advanceBalance`/`pendingOrdersAmount` (separate `AdvancePayment` concept) are untouched — never netted into `availableCredit`. **`email` is OPTIONAL** (DTO `@IsOptional`): `create` mints a unique `no-email+<uuid>@placeholder.local` for the required `User.email` and leaves `Customer.email` null; `sendPortalInvite` ignores `@placeholder.local` fallbacks. **`mergeCustomers` (T1-16#7 fix)** re-points the secondary's `CustomerAuthorization`+`AuthorizationOverride` to the primary before deleting it — both FK-cascade on customer delete, so without this a merge silently DESTROYED the secondary's regulated licenses. `CustomerAuthorization` is unique per `(customerId,trackedCategoryId)`, so per-category collisions keep the stronger auth via `authRank`/`authSecondaryWins` (live VERIFIED > pending > lapsed/expired > rejected > none; later expiry breaks ties; else primary kept), deleting the loser so the re-point never trips the constraint. Spec: `customers.service.spec.ts` (`mergeCustomers (regulated authorizations)` block; prisma-mock gained `estimate`/`estimateItem`/`customerTagAssignment`).
@@ -700,8 +713,47 @@ flag OFF ⇒ the engine returns before touching a commission table and every rou
 ### `system-config/` (settings)
 
 - **controller** `system-config`/`settings` — config get/patch, anthropic, email (+test), route, invoice, delete financial-data.
-- **service** — config CRUD, AI endpoint config, email test, `deleteFinancialData`. side effects: SystemConfig/TenantConfig writes. **Secret-at-rest (F5-004):** `SystemConfigService` injects `EncryptionService` and encrypts a `SECRET_KEYS` allowlist (`email.smtpPassword`, `anthropic.apiKey`, `zoho.clientSecret`, `zoho.refreshToken`) on `set`, decrypts on `get`/`getAll`; a cipher-shape regex (`IV:TAG:B64`) gates decrypt so legacy plaintext rows pass through until re-saved (empty = cleared, never encrypted). Consumers (bookkeeping/route-analysis/vendor-bills anthropic key; settings email mask/`configured`; `getZohoConfig`) read via the service so decrypt is transparent; email SENDING uses TenantConfig SMTP, not these. Spec `system-config.service.spec.ts`.
+- **service** — config CRUD, AI endpoint config, email test. side effects: SystemConfig/TenantConfig writes. **Secret-at-rest (F5-004):** `SystemConfigService` injects `EncryptionService` and encrypts a `SECRET_KEYS` allowlist (`email.smtpPassword`, `anthropic.apiKey`, `zoho.clientSecret`, `zoho.refreshToken`) on `set`, decrypts on `get`/`getAll`; a cipher-shape regex (`IV:TAG:B64`) gates decrypt so legacy plaintext rows pass through until re-saved (empty = cleared, never encrypted). Consumers (bookkeeping/route-analysis/vendor-bills anthropic key; settings email mask/`configured`; `getZohoConfig`) read via the service so decrypt is transparent; email SENDING uses TenantConfig SMTP, not these. Spec `system-config.service.spec.ts`.
 - **`settings.controller.ts` `PATCH /settings` — `taxRate` range validation (2026-08-18).** The handler writes `String(dto[k])` for its `allowed` keys with no validation, which is how a QA tenant came to hold `"150"` despite the web form's `min(0).max(100)` (a direct API call bypasses the form, and the stored value is a PERCENT later divided by 100 — see `common/tax-rate.ts`). `taxRate` alone is now checked before the write: `Number.isFinite(n) && n >= 0 && n <= 100`, else `BadRequestException("Tax rate must be between 0 and 100 (percent)")`. Every other key's handling is untouched. Spec `settings.controller.spec.ts`.
+- **`DELETE /settings/financial-data` hardened (B126, 2026-08-30)** — was a cross-tenant wipe:
+  `deleteMany({})` with no `where` on the finance models nukes EVERY tenant's data, and it was
+  irreversible with no confirmation step. Now: (1) refuses when `prisma.getTenantId()` is null
+  (`ForbiddenException`) rather than falling through to an unscoped delete; (2) requires
+  `ClearFinancialDataDto.confirmTenantId` (new, `dto/clear-financial-data.dto.ts`) to equal the
+  caller's own tenantId (`BadRequestException` otherwise); (3) parents delete on
+  `where: { tenantId }`, children on a **relation filter over the parent's tenantId**
+  (`invoicePayment`/`invoiceItem` via `{ invoice: { tenantId } }`, `billPayment`/`vendorBillItem`
+  via `{ vendorBill: … }`, `purchaseOrderItem` via `{ po: … }`, `orderCreditNote` via
+  `{ creditNote: … }`) — child `tenantId` is nullable and nested-created rows carry
+  `tenantId: null`, so scoping a child by its OWN `tenantId` skips them, and that is fatal rather
+  than untidy: `InvoicePayment.invoiceId`, `BillPayment.vendorBillId`, `OrderCreditNote.creditNoteId`
+  are **ON DELETE RESTRICT**, so one surviving NULL-tenant child aborts its parent's delete (P2003)
+  and rolls the whole wipe back. A relation filter is also parameter-free — no id list in memory,
+  no 32767-bind-variable ceiling on the biggest tenants. (4) ⚠️ **Runs on `prisma.$transaction`,
+  NOT `tenantTransaction`** — see the proxy lesson below; it re-scopes the child filters and
+  reintroduces exactly the bug above. Deletion order respects FKs (children before parents).
+  ⚠️ KNOWN LIMITATION: `CommissionAccrual.invoiceId` is also RESTRICT and is NOT cleared (that
+  would cascade into commission statements/payouts, out of scope), so a tenant holding commission
+  accruals still fails this wipe on that FK. (5) `@Roles(TENANT_ADMIN)` on the handler overrides the
+  class-level `@Roles(OPERATOR)`. ⚠️ Prove a role gate by RUNNING `RolesGuard`, never by reading the
+  `@Roles` metadata: a containment check passes on any SUPERSET, so it green-lights a decorator that
+  re-admits `OPERATOR` alongside `TENANT_ADMIN` — and `RolesGuard` grants on
+  `requiredRoles.some(...)`, i.e. exactly the role the gate exists to exclude.
+  Spec `settings.controller.clear-financial.spec.ts`.
+- ⚠️ **Durable lesson, BOTH directions — `prisma.tenantTransaction` is a pass-through when
+  `tenantId` is null and an INJECTOR when it is not.** (a) With no tenant it hands back the raw
+  client (`prisma.service.ts` — `if (!tenantId) return fn(rawTx)`), same as `forTenant()`; that is
+  a fall-through, not a guard, so a destructive bulk handler must refuse a null tenant itself.
+  (b) With a tenant it hands back `_wrapTxWithTenant`, whose `SCOPED_METHODS` include `deleteMany`
+  and which rewrites EVERY call as `where: { ...args.where, tenantId }`. That injection is
+  invisible at the call site and silently re-scopes a deliberate parent-scoped filter back onto the
+  row's own `tenantId`. Since `tenantId` is `String?` (nullable) on finance/child models and
+  nested-created child rows carry `tenantId: null`, a handler that must reach those rows CANNOT use
+  `tenantTransaction` — use `prisma.$transaction` with explicit filters (plus a null-tenant refusal
+  to make that safe), and match children through a relation filter on the parent. Mocks hide this:
+  both `createMockPrisma` and hand-rolled fakes usually implement `tenantTransaction` as
+  `(fn) => fn(models)` with no injection, so a spec that must observe it should call the real
+  `_wrapTxWithTenant` (as `settings.controller.clear-financial.spec.ts` does).
 - **Remittance / how-to-pay config (P5-14, no migration)** — `REMITTANCE_FIELDS`/`RemittanceField`/`RemittanceConfig` exported from `system-config.service.ts`. Unlike margin config (per-key strings), remittance is stored as **ONE JSON document** under a single key `SystemConfigService.REMITTANCE_KEY = "remittance.config"` (tenant-scoped via existing `get`/`set`). `getRemittanceConfig()` parses+filters to known non-empty string fields (`{}` on missing/corrupt JSON, never throws); `setRemittanceConfig(dto)` merges over the current doc — `undefined` field = untouched, `""` = cleared. **Deliberately NOT in `SECRET_KEYS`** — it's the seller's own remit-to info, buyer-visible by design (same data printed on an invoice). `dto/remittance-config.dto.ts` — `RemittanceConfigDto`, all 10 fields `@IsOptional @IsString @MaxLength` (200 short fields, 2000 instruction/notes fields); validated by the global `ValidationPipe` (no per-method `@UsePipes`). `settings.controller.ts`: `GET /settings/remittance` (any OPERATOR, class-level `@Roles(OPERATOR)`), `PATCH /settings/remittance` (`@Roles(TENANT_ADMIN)`) — returns the config after merge. Spec: `system-config.service.spec.ts` remittance block.
 
 ### `import/`
