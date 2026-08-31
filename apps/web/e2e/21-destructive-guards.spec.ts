@@ -74,12 +74,13 @@ test.describe("Destructive-write guards (F02b / P4)", () => {
     request,
   }) => {
     await page.goto("/products");
-    await expect(
-      page
-        .locator("table tbody tr")
-        .first()
-        .or(page.getByText(/no products/i)),
-    ).toBeVisible({
+    // Page-ready = the toolbar's Select button, not a table row: the deployed
+    // products page loads in CARD view (zero <table> elements — verified live
+    // 2026-08-31), so a table-row wait can never succeed before the Table-view
+    // toggle is clicked, and that toggle only works once React has hydrated.
+    // The Select button is rendered by the same toolbar, so its visibility is
+    // the hydration signal every later interaction needs.
+    await expect(page.getByRole("button", { name: "Select", exact: true })).toBeVisible({
       timeout: 15_000,
     });
 
@@ -193,9 +194,11 @@ test.describe("Destructive-write guards (F02b / P4)", () => {
     const throwaway: ApiProduct = await createRes.json();
 
     await page.goto(`/products/${throwaway.id}`);
-    await expect(page.getByRole("heading", { name: throwaway.name })).toBeVisible({
-      timeout: 15_000,
-    });
+    // The product name renders as a heading in BOTH the sticky banner and the
+    // page body — scope to main or strict mode fails on the double match.
+    await expect(
+      page.locator("#main-content").getByRole("heading", { name: throwaway.name }),
+    ).toBeVisible({ timeout: 15_000 });
     await page.getByRole("button", { name: "Delete", exact: true }).click();
 
     const detailConfirm = page.getByRole("dialog");
@@ -250,7 +253,11 @@ test.describe("Destructive-write guards (F02b / P4)", () => {
     // condition. Skipping there would discharge REG-B130, R5's only web-side
     // proof, on a run that executed none of its assertions.
     expect(customerRes.ok(), `POST /customers returned ${customerRes.status()}`).toBe(true);
-    const customer: { id: string } = await customerRes.json();
+    // POST /customers nests its result: { customer: {...}, ... } (verified live
+    // 2026-08-31) — reading .id off the envelope yields undefined, and the
+    // order POST below then 400s with "customerId is required".
+    const customer: { id: string } = (await customerRes.json()).customer;
+    expect(customer?.id, "POST /customers response carried no customer.id").toBeTruthy();
 
     const orderRes = await request.post(`${api}/api/v1/orders`, {
       headers: headers!,
@@ -299,6 +306,11 @@ test.describe("Destructive-write guards (F02b / P4)", () => {
     request,
   }) => {
     await page.goto("/products");
+    // Same hydration signal as REG-B24: the Table-view toggle is inert until
+    // React attaches its handler, and this test's first UI act is that click.
+    await expect(page.getByRole("button", { name: "Select", exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
 
     const headers = await apiHeaders(page);
     test.skip(!headers, "No operator access token available in localStorage");
@@ -338,7 +350,14 @@ test.describe("Destructive-write guards (F02b / P4)", () => {
     // ── Part 2: with a fresh selection, AssignToSectionModal's count must
     // equal the FULL selection — not its intersection with whatever page
     // happened to be loaded (the bug this batch fixes).
-    await page.reload();
+    // Fresh navigation, NOT reload(): Part 1 left ?search=zzz-e2e-nomatch-b154
+    // in the URL, and a reload restores that no-match filter — the table would
+    // be legitimately empty forever. And any navigation restarts hydration, so
+    // the inert-toggle wait applies again.
+    await page.goto("/products");
+    await expect(page.getByRole("button", { name: "Select", exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
     await page.getByTitle("Table view").click();
     await expect(rows.first()).toBeVisible({ timeout: 15_000 });
     await page.getByRole("button", { name: "Select", exact: true }).click();
