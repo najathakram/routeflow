@@ -5,9 +5,49 @@
  * Role: OPERATOR (admin / Admin@123) within the seeded tenant
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page, type APIRequestContext } from "@playwright/test";
 import { setTenantCookie, loginAsOperator, logout, fillWorkspaceIfShown } from "./helpers/auth";
 import { TENANT_SLUG } from "./helpers/constants";
+import { apiBase, operatorAccessToken } from "./helpers/api";
+
+/** Bearer + tenant headers for a direct API call, or null when unauthenticated. */
+async function apiHeaders(
+  page: Page,
+): Promise<{ authorization: string; "x-tenant-slug": string } | null> {
+  const token = await operatorAccessToken(page);
+  if (!token) return null;
+  return { authorization: `Bearer ${token}`, "x-tenant-slug": TENANT_SLUG };
+}
+
+/**
+ * The stable seeded product OP-09c/OP-11b exercise the tier editor on.
+ * NEVER "the first row": spec 21's B24 guard fixtures sort newest-first and
+ * a failed run leaves them behind (the guard under test refuses their
+ * deletion), so row 1 is fixture roulette. Espresso Beans lists at $24, which
+ * keeps OP-09c's 9.75 below list — the tier-monotonicity warning otherwise
+ * appends "⚠" to the label's own text node and no exact match survives it.
+ */
+async function gotoTierEditorProduct(page: Page, request: APIRequestContext): Promise<void> {
+  await page.goto("/products");
+  await expect(page.getByRole("button", { name: /table view/i })).toBeVisible({
+    timeout: 15_000,
+  });
+  const headers = await apiHeaders(page);
+  test.skip(!headers, "No operator access token available in localStorage");
+  const listRes = await request.get(
+    `${apiBase(page.url())}/api/v1/products?search=${encodeURIComponent("E2E Espresso Beans")}`,
+    { headers: headers! },
+  );
+  expect(listRes.ok()).toBe(true);
+  const body = await listRes.json();
+  const rows = (body.data ?? body.products ?? body) as Array<{ id: string; name: string }>;
+  const target = rows.find?.((p) => p.name === "E2E Espresso Beans 1kg");
+  expect(
+    target,
+    "seeded product 'E2E Espresso Beans 1kg' must exist on e2e-routeflow",
+  ).toBeTruthy();
+  await page.goto(`/products/${target!.id}`);
+}
 
 test.describe("Operator — Tenant Dashboard", () => {
   // Storage state (operator.json) is pre-loaded by the "operator" Playwright project,
@@ -200,23 +240,23 @@ test.describe("Operator — Tenant Dashboard", () => {
 
   test('OP-09c tier prices save on a standalone product (regression: parentProductId "" → 400)', async ({
     page,
+    request,
   }) => {
-    await page.goto("/products");
-    // Products defaults to Grid view (cards, no <table>) — switch to Table view
-    // so the row-click locator below has a table to match.
-    await page.getByRole("button", { name: /table view/i }).click();
-    // Open the first product's detail page. Click the FIRST cell specifically
-    // (product name/thumbnail) — several other cells (SKU, Category, Price)
-    // wrap their content in onClick={e => e.stopPropagation()} for their own
-    // inline-edit controls, so a raw row click can land there and silently
-    // swallow the row's onRowClick navigation.
-    await page.locator("table tbody tr td").first().click();
-    await page.waitForURL(/\/products\/.+/);
+    // See gotoTierEditorProduct: a stable seeded product, never row-1 roulette.
+    // Row 1 once handed this test a $1.00-list guard leftover; its 9.75 write
+    // tripped the monotonicity warning and poisoned the label for every later
+    // run ("Tier 2 ⚠" — this suite's chronic red of 2026-08-31).
+    await gotoTierEditorProduct(page, request);
     // Enter edit mode (icon button)
     await page.locator('button[title="Edit product"]').first().click();
     // Set Tier 2 to a valid price. (The tier editor is a DecimalInput —
-    // type="text" inputMode="decimal" since the money-input fix.)
-    const tier2 = page.getByText("Tier 2", { exact: true }).locator("xpath=..").locator("input");
+    // type="text" inputMode="decimal" since the money-input fix.) The label
+    // match is prefix-tolerant: a monotonicity violation appends "⚠" to the
+    // SAME text node, which an exact match can never survive.
+    const tier2 = page
+      .getByText(/^Tier 2/)
+      .locator("xpath=..")
+      .locator("input");
     await expect(tier2).toBeVisible({ timeout: 10_000 });
     await tier2.fill("9.75");
     // Save must produce a 2xx PATCH — the old spread payload sent
@@ -261,21 +301,18 @@ test.describe("Operator — Tenant Dashboard", () => {
 
   test("OP-11b money inputs never reformat while typing (2.50 stays 2.50, not 2.05)", async ({
     page,
+    request,
   }) => {
     // The product tier editor uses the shared DecimalInput — the same component
     // behind every price/discount field. Typing must be sanitize-only; the old
     // numeric-bound input echoed toFixed(2) mid-keystroke ("2." → "2.00" → "2.05").
-    await page.goto("/products");
-    // Products defaults to Grid view (cards, no <table>) — switch to Table view
-    // so the row-click locator below has a table to match.
-    await page.getByRole("button", { name: /table view/i }).click();
-    // Click the FIRST cell specifically — see OP-09c's comment: other cells
-    // (SKU, Category, Price) stopPropagation() for their own inline-edit
-    // controls, so a raw row click can silently swallow the navigation.
-    await page.locator("table tbody tr td").first().click();
-    await page.waitForURL(/\/products\/.+/);
+    // Stable product + prefix-tolerant label per OP-09c — see gotoTierEditorProduct.
+    await gotoTierEditorProduct(page, request);
     await page.locator('button[title="Edit product"]').first().click();
-    const tier2 = page.getByText("Tier 2", { exact: true }).locator("xpath=..").locator("input");
+    const tier2 = page
+      .getByText(/^Tier 2/)
+      .locator("xpath=..")
+      .locator("input");
     await expect(tier2).toBeVisible({ timeout: 10_000 });
 
     await tier2.fill("");
