@@ -32,7 +32,11 @@
 #   3. Correctness runs on the PR, ONCE. It does not re-run on the master push —
 #      see the `verify` job's `if:` for why that is sound here.
 #   4. A runner that is sleeping still bills. Before adding a wait/poll loop, ask
-#      whether the thing being waited for can signal instead.
+#      whether the thing being waited for can signal instead. APPLIED 2026-08-30:
+#      E2E no longer starts on the master push and then polls for ~320s while
+#      Railway builds — it starts when Railway SAYS the deploy succeeded. The poll
+#      loop is still there, because it is the correctness gate; it just exits on
+#      its first attempt now instead of being paid to sleep through the build.
 #
 # ═══ LOCAL GATE IS AUTHORITATIVE ════════════════════════════════════════════════
 # `.husky/pre-push` runs `npm run verify` — the SAME command this workflow runs —
@@ -42,23 +46,24 @@
 # and nothing else. If CI is failing on something the local gate should have
 # caught, fix the local gate.
 #
-# Triggers stay narrow: trunk pushes + PRs into master only, minus paths-ignore.
+# Triggers stay narrow: PRs into master (minus paths-ignore) drive correctness, and
+# a SUCCESSFUL Railway deploy — not the master push — drives E2E.
+#
+# ⚠️ THERE IS NO `push:` TRIGGER, AND ITS ABSENCE IS DELIBERATE (2026-08-30).
+# `verify` already skipped the master push, and `e2e` now starts from the deploy
+# instead. Re-adding `push:` does not "make CI safer" — it re-adds a second, full
+# -price E2E run per merge that duplicates the deploy-triggered one. If the
+# deployment_status path ever has to be abandoned, restore it as:
+#     push:
+#       branches: [master]
+#       paths-ignore: [ …the same list as pull_request below… ]
+# and add `(github.event_name == 'push' && github.ref == 'refs/heads/master')`
+# back to the e2e job's `if:` — those two edits are the whole revert.
 # ────────────────────────────────────────────────────────────────────────────────
 
 name: CI
 
-# NOTE: the lists below are duplicated on purpose — the GitHub Actions workflow
-# parser does not support YAML anchors/aliases, so `&x` / `*x` would not work here.
 on:
-  push:
-    branches: [master]
-    paths-ignore:
-      - "**.md"
-      - ".claude/**"
-      - "docs/**"
-      - ".vscode/**"
-      - "local-assets/**"
-      - "LICENSE"
   pull_request:
     branches: [master]
     paths-ignore:
@@ -68,10 +73,39 @@ on:
       - ".vscode/**"
       - "local-assets/**"
       - "LICENSE"
+
+  # ── The E2E trigger ────────────────────────────────────────────────────────
+  # Railway's GitHub App already tells GitHub when a deploy finishes: it creates
+  # a GitHub Deployment per master commit (creator `railway-app[bot]`, environment
+  # "routeflow / production", `sha` = the deployed commit) and posts `in_progress`
+  # → `success` statuses onto it. GitHub turns each of those into a
+  # `deployment_status` event for free.
+  #
+  # That makes this the ONE option in the E2E cost list that needs no secret, no
+  # PAT, no Railway dashboard change and no bridge service: GitHub's dispatches
+  # API requires an `Authorization` header, and a plain Railway webhook cannot set
+  # one, so `repository_dispatch` would have needed a proxy. This does not.
+  #
+  # No state filter is possible in `on:` — see the e2e job's `if:`, which takes
+  # only `success`, and its freshness guard, which is NOT optional (Railway
+  # re-posts `success` onto the PREVIOUS deployment when a new one goes live).
+  deployment_status:
+
+  # The Railway-webhook path, kept declared but unwired. It costs nothing to
+  # accept and is the fallback if the GitHub App ever stops posting deployments.
+  # Owner setup, if it is ever needed, is in the e2e job header. This event used
+  # to be handled by post-deploy.yml; that trigger was removed when this one was
+  # added, so exactly one workflow consumes `railway-deploy`.
+  repository_dispatch:
+    types: [railway-deploy]
+
   # Manual trigger — runs BOTH jobs. This is the documented recovery path after a
   # Railway deploy is re-run (see the e2e job's readiness gate).
   workflow_dispatch:
 
+# `github.ref` is empty or a bare SHA on deployment_status, so this groups all
+# deploy-driven runs together while PR runs stay per-ref. The e2e job narrows it
+# further with its own group — see there for why cross-SHA cancellation is wrong.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -100,10 +134,18 @@ jobs:
   # reaches this job.
   verify:
     name: Verify
-    # PRs and manual dispatch, never the master push. Draft PRs are skipped: the
-    # pre-push hook already gated them locally, and a draft is by definition not
-    # asking for a merge decision yet. Marking a PR ready-for-review triggers a run.
-    if: github.event_name != 'push' && github.event.pull_request.draft != true
+    # PRs and manual dispatch ONLY. Draft PRs are skipped: the pre-push hook
+    # already gated them locally, and a draft is by definition not asking for a
+    # merge decision yet. Marking a PR ready-for-review triggers a run.
+    #
+    # Stated as an allow-list, not as `!= 'push'`. The old exclusion form was a
+    # trap the moment this workflow gained a third trigger: `deployment_status`
+    # is not `push`, so the negative form would have run the entire correctness
+    # suite on every production deploy — the exact opposite of this file's point.
+    # Add an event here deliberately or it does not reach this job.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.draft != true)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -207,29 +249,56 @@ jobs:
         run: npm audit --omit=dev --audit-level=high || true
 
   # ─── Playwright E2E ────────────────────────────────────────────────────────
-  # Runs on master push (where Railway deploys from) and manual dispatch.
+  # Runs when RAILWAY REPORTS A SUCCESSFUL DEPLOY — plus repository_dispatch and
+  # manual dispatch. NOT on the master push; see the `on:` block for the revert.
   #
   # This job is POST-deploy verification, not a merge gate: production is already
-  # serving the commit by the time the suite starts. It is also the most expensive
-  # thing in this file, and it gets MORE expensive under this restructure, not
-  # less — measured at 9 billed min/run while `needs: [lint, type-check, test]`
-  # held it back ~5 min (by which time Railway had already finished building),
-  # and PROJECTED at ~13 now that it starts immediately and waits out the deploy
-  # on its own runner. Measured step medians it is built from: install 76s,
-  # browsers 24s, playwright 325s.
+  # serving the commit by the time the suite starts.
   #
-  # If the budget has to give again, this is the lever, in preference order:
-  #   1. Trigger this from Railway's deploy webhook instead of the master push.
-  #      post-deploy.yml already carries `repository_dispatch: [railway-deploy]`
-  #      and the one-time Railway setup in its header, and has never fired. That
-  #      deletes the ~320s the runner spends ASLEEP polling, at zero cost to
-  #      coverage — the only option here that gives nothing up.
+  # ═══ WHY THE TRIGGER MOVED (option 1 of the cost list, taken 2026-08-30) ═════
+  # It was the most expensive thing in this file and it got MORE expensive when
+  # the correctness jobs stopped gating it — measured 9 billed min/run while
+  # `needs: [lint, type-check, test]` held it back ~5 min (by which time Railway
+  # had finished building), and PROJECTED ~13 once it started immediately and
+  # waited out the deploy on its own runner. Roughly 320s of every run was a
+  # billed runner asleep in a curl loop.
+  #
+  # The four options that were priced against that:
+  #   1. TAKEN — start from the deploy signal instead of the push. Gives up
+  #      nothing: the same suite, the same gate, the same commit. ~8 billed min.
   #   2. Raise playwright.config.ts's `workers: process.env.CI ? 1 : 2`. Big win,
-  #      real risk: the suite shares one e2e-routeflow tenant.
-  #   3. Run only when apps/web or packages changed (~56% of merges). Cheapest to
-  #      implement, and it gives up detection of API regressions that surface
-  #      through the UI.
-  # None was taken unilaterally — each trades away something the owner should price.
+  #      real risk: the suite shares one e2e-routeflow tenant. NOT taken.
+  #   3. Run only when apps/web or packages changed (~56% of merges). Gives up
+  #      detection of API regressions that surface through the UI. NOT taken.
+  #   4. Drop `synchronize` from the PR trigger — a PR's final state may then
+  #      never see CI. NOT taken.
+  #
+  # The design assumed option 1 meant wiring a Railway webhook to GitHub's
+  # `repository_dispatch` API. It does not have to: GitHub's dispatches endpoint
+  # authenticates by header and a plain Railway webhook cannot send one, so that
+  # route needs a PAT and a proxy. Railway's GitHub App is ALREADY posting
+  # deployment statuses to this repo — verified on every master commit back
+  # through 2026-08-28 — so `deployment_status` gets the same signal with no
+  # secret, no proxy and no dashboard change. `repository_dispatch` stays declared
+  # as the fallback.
+  #
+  # OWNER RUNBOOK — only if the GitHub App path ever dies (E2E silently stops
+  # appearing on master commits). One-time Railway setup:
+  #   1. Create a fine-grained PAT scoped to najathakram/routeflow with the
+  #      Contents:read + Metadata:read + "Repository dispatch"(write) permissions.
+  #   2. Railway → project → Settings → Webhooks cannot set an Authorization
+  #      header, so the PAT cannot be used directly. Point the webhook at any
+  #      relay you control that re-POSTs to
+  #      https://api.github.com/repos/najathakram/routeflow/dispatches
+  #      with `Authorization: Bearer <PAT>`, `Accept: application/vnd.github+json`
+  #      and body {"event_type":"railway-deploy"}.
+  #   3. Nothing in this repo changes — the trigger is already declared above.
+  # DO NOT store that PAT in the repo or in Actions secrets; this workflow never
+  # reads one. The relay is the only thing that needs it.
+  #
+  # Measured step medians the ~8 min is built from: install 76s, browsers 24s,
+  # playwright 325s. The readiness gate stays, but the deploy it waits for has
+  # already reported success, so it exits on its first attempt instead of ~32.
   #
   # It no longer `needs:` the correctness jobs, because they no longer run on the
   # master push at all (see the verify job). Nothing is lost: `needs` only ever
@@ -245,34 +314,110 @@ jobs:
   e2e:
     name: E2E (Playwright)
     runs-on: ubuntu-latest
-    # 45, not 25: the readiness gate below actually waits for the Railway web
-    # deploy (up to 15 min), so the suite needs its own budget on top of that.
+    # 45, not 25: the readiness gate below still owns a 15-minute budget for the
+    # case where Railway reports success before the web service is actually
+    # serving, so the suite needs its own budget on top of that.
     timeout-minutes: 45
     if: >
-      (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+      (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success') ||
+      github.event_name == 'repository_dispatch' ||
       github.event_name == 'workflow_dispatch'
+    # Keyed on the COMMIT, deliberately not on a constant.
+    #
+    # A constant group with cancel-in-progress looks right ("a newer deploy
+    # supersedes an in-flight check" — post-deploy.yml says exactly that) and is
+    # wrong here, because of the Railway behaviour documented on the freshness
+    # guard below: when deployment N succeeds, Railway ALSO re-posts `success`
+    # onto deployment N-1, about 4 seconds later (measured: 19:49:41 then
+    # 19:49:45). Under a constant group that STALE event would cancel the run for
+    # the commit that actually shipped, and then skip itself — E2E would silently
+    # never run. Per-SHA grouping lets the stale run start and bail out on its own.
+    concurrency:
+      group: ci-e2e-${{ github.event.deployment.sha || github.sha }}
+      cancel-in-progress: true
     steps:
+      # ─── Freshness guard ─────────────────────────────────────────────────────
+      # Railway posts more `success` statuses than there are deploys. Measured
+      # over the 12 most recent deployments (2026-08-28..29): 18 `success` events
+      # for 12 deploys, because a new deployment going live re-marks the previous
+      # one — and sometimes the one before that — as succeeded. Those extra events
+      # carry the OLD commit as `deployment.sha`.
+      #
+      # Acting on one would check out a superseded commit, find production
+      # correctly serving a NEWER one, and — since the newer commit's web files
+      # legitimately differ — sit in the readiness gate for its full 15 minutes
+      # and then fail. That is a false red AND ~17 billed minutes, per deploy.
+      #
+      # So: bail out before the checkout. `gh` and GITHUB_TOKEN are already on the
+      # runner, this costs ~2s of a 1-minute minimum billing increment, and it
+      # cannot be expressed in the `if:` above — nothing in the event payload says
+      # whether the deployment is still current.
+      #
+      # It never fails the job. A skipped stale run reporting green is correct:
+      # the commit it describes has already been replaced in production.
+      - name: Skip superseded deployments
+        id: freshness
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          DEPLOY_SHA: ${{ github.event.deployment.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'master' }}
+        run: |
+          set -uo pipefail
+
+          if [ "$EVENT_NAME" != "deployment_status" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "$EVENT_NAME run — the freshness guard only applies to deployment_status."
+            exit 0
+          fi
+
+          tip=$(gh api "repos/$GITHUB_REPOSITORY/commits/$DEFAULT_BRANCH" --jq .sha 2>/dev/null || true)
+          if [ -z "$tip" ]; then
+            echo "::warning::Could not read $DEFAULT_BRANCH's tip — proceeding rather than skipping, so a GitHub API blip cannot silently cancel E2E coverage."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$DEPLOY_SHA" = "$tip" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Deployment is for $DEPLOY_SHA, which is $DEFAULT_BRANCH's tip — running the suite."
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping — this success is for $DEPLOY_SHA but $DEFAULT_BRANCH is now $tip. Railway re-posts success on the previous deployment when a new one goes live; the newer deployment has its own run."
+          fi
+
       - uses: actions/checkout@v7
+        if: steps.freshness.outputs.run == 'true'
         with:
+          # The DEPLOYED commit, which is what every spec below asserts against.
+          # On deployment_status that is the deployment's sha; the fallback covers
+          # repository_dispatch and workflow_dispatch, where github.sha is the ref
+          # that was dispatched.
+          ref: ${{ github.event.deployment.sha || github.sha }}
           # Full history: the readiness gate diffs the commit the deployed web
           # app reports against this one, and that commit is an ancestor the
           # default depth-1 clone does not contain.
           fetch-depth: 0
 
       - uses: actions/setup-node@v7
+        if: steps.freshness.outputs.run == 'true'
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
       - name: Install dependencies
+        if: steps.freshness.outputs.run == 'true'
         run: npm ci --engine-strict=false
 
       # Deliberately BEFORE the readiness gate. Both this and the install above
       # are work that has to happen regardless, and doing them first means their
       # ~100s runs down the same clock the gate would otherwise spend asleep
       # waiting for Railway. A billed runner should poll only once it has nothing
-      # useful left to do.
+      # useful left to do. Still true now that the gate normally exits on its
+      # first attempt: it is exactly the ordering that keeps the residual wait at
+      # zero rather than merely small.
       - name: Install Playwright browsers
+        if: steps.freshness.outputs.run == 'true'
         working-directory: apps/web
         run: npx playwright install chromium --with-deps
 
@@ -303,14 +448,27 @@ jobs:
       # detected here and a spec depending on new API behaviour can still race.
       # Closing that gap means adding the same field to the API health payload.
       - name: Wait for the deployed app to match this commit
+        if: steps.freshness.outputs.run == 'true'
         env:
           API_BASE: ${{ secrets.SMOKE_BASE_URL || 'https://routeflowapi-production.up.railway.app' }}
           WEB_BASE: ${{ secrets.PLAYWRIGHT_BASE_URL || 'https://routeflowweb-production.up.railway.app' }}
-          EXPECTED_SHA: ${{ github.sha }}
-          # The SHA match is only meaningful on master — see the guard below.
-          REQUIRE_SHA: ${{ github.ref == 'refs/heads/master' }}
-          # 15 min. A cold web image (npm ci + next build in Docker) runs ~5-9
-          # min, and on a packages/** push the web service queues behind the api.
+          # Same expression as the checkout `ref:` above — the gate must assert on
+          # the commit that was actually checked out, or the `git diff` below
+          # compares the wrong trees.
+          EXPECTED_SHA: ${{ github.event.deployment.sha || github.sha }}
+          # Stated as an allow-list of the events whose SHA is genuinely a commit
+          # Railway deploys, rather than as `github.ref == 'refs/heads/master'`:
+          # on deployment_status `github.ref` is empty or a bare SHA, so the old
+          # form would have silently downgraded EVERY deploy-triggered run to the
+          # reachability-only path — losing the whole point of the gate while
+          # still reporting green. Only a workflow_dispatch off master is exempt.
+          REQUIRE_SHA: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/master' }}
+          # 15 min. Railway's `success` is a project-level signal and has been
+          # observed ~106s after the deploy starts, which is faster than a cold web
+          # image (npm ci + next build in Docker, ~5-9 min) can possibly be — so
+          # "Railway says success" does not prove the WEB service is serving yet.
+          # Normally this gate now exits on attempt 1; this budget is what covers
+          # the case where it does not.
           WAIT_SECONDS: "900"
         run: |
           set -uo pipefail
@@ -446,6 +604,7 @@ jobs:
           exit 1
 
       - name: Run Playwright tests
+        if: steps.freshness.outputs.run == 'true'
         working-directory: apps/web
         run: npx playwright test
         env:
@@ -459,7 +618,9 @@ jobs:
           CI: "true"
 
       - name: Upload Playwright report
-        if: failure()
+        # `failure()` alone would be true for a stale-deployment run too, and
+        # there is no report to upload there.
+        if: failure() && steps.freshness.outputs.run == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report-ci-${{ github.run_number }}
