@@ -6,7 +6,7 @@ import path from "node:path";
 // prisma-isolation.spec.ts characterizes engine behavior that already existed; this file is
 // R9's actual proof obligation. It reads the filesystem — no mocks, nothing this suite can
 // configure to agree with itself — and every assertion below is red on the untouched branch,
-// where `apps/api/prisma/migrations/20260909000000_rls/` simply does not exist.
+// where the built RLS migration simply does not exist. PARKED 2026-08-31: it now lives at apps/api/prisma/deferred-rls/ (owner rule D3 — 15 prod tables held NULL-tenantId rows; see that folder's README for the arming runbook). These assertions pin the PARKED copy: the file, its dual table lists, and its RAISE assertion must stay intact so un-parking is a pure git mv.
 //
 // Why the shape of these assertions matters: the policy loop in the migration swallows every
 // per-table failure (`WHEN OTHERS => RAISE NOTICE`), so `prisma migrate deploy` exiting 0
@@ -20,7 +20,7 @@ const MIGRATION_DIR = path.join(
   "..",
   "..",
   "prisma",
-  "migrations",
+  "deferred-rls",
   "20260909000000_rls",
 );
 const MIGRATION_SQL = path.join(MIGRATION_DIR, "migration.sql");
@@ -33,7 +33,7 @@ function tableListLiterals(sql: string): string[][] {
 }
 
 describe("REG-G8b RLS migration (R9 / T-G8b)", () => {
-  it("REG-G8b: the RLS migration occupies slot 20260909000000_rls", () => {
+  it("REG-G8b: the built RLS migration exists (parked at deferred-rls awaiting the D3 pre-flight)", () => {
     // rls.sql sitting outside migration control was the whole defect: nothing applied it, and
     // nothing could tell whether it had ever been applied.
     expect(fs.existsSync(MIGRATION_SQL)).toBe(true);

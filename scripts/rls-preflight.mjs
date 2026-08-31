@@ -50,7 +50,7 @@ const RLS_MIGRATION_PATH = path.join(
   "apps",
   "api",
   "prisma",
-  "migrations",
+  "deferred-rls",
   "20260909000000_rls",
   "migration.sql",
 );
