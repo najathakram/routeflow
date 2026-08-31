@@ -68,6 +68,12 @@ export function deriveTilePrice(
     category: product.category ?? null,
     qtyPieces,
     qtyUnits,
+    // REG-B109: the cart line's own denomination, so selection compares by the
+    // money the CART bills (loose pieces included) and the tile keeps matching
+    // it to the cent. No cart line yet => null, i.e. the 1-unit add above.
+    boxes: cartItem?.boxes ?? null,
+    pieces: cartItem?.pieces ?? null,
+    unitsPerBox,
   });
 }
 

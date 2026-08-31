@@ -103,18 +103,24 @@ export default function BuyerCartPage() {
       // lines count ONLY full boxes; loose pieces never earn a free unit),
       // qty itself for a piece line. Feeds the BUY_N_GET_M gate.
       const qtyUnits = norm.boxes != null ? norm.boxes : norm.qty;
-      const promo = applyBestPromotion(base, promoRules, {
-        productId: item.productId,
-        category: meta?.category ?? null,
-        qtyPieces,
-        qtyUnits,
-      });
       const lineArgs = {
         qty: item.qty,
         boxes: item.boxes ?? null,
         pieces: item.pieces ?? null,
         unitsPerBox,
       };
+      const promo = applyBestPromotion(base, promoRules, {
+        productId: item.productId,
+        category: meta?.category ?? null,
+        qtyPieces,
+        qtyUnits,
+        // REG-B109: select by the money this line actually bills — the SAME
+        // denomination `lineArgs` bills with below, so a mixed box+piece line's
+        // loose pieces count in the comparison instead of being dropped.
+        boxes: lineArgs.boxes,
+        pieces: lineArgs.pieces,
+        unitsPerBox: lineArgs.unitsPerBox,
+      });
       const net = promo.unitPrice;
       const original = promo.originalPrice; // null when no promo applied (incl. BUY_N_GET_M)
       const freeUnits = promo.freeUnits ?? 0;

@@ -17,6 +17,46 @@ export interface ShortPickLine {
   orderedQty: number;
   /** Stored line subtotal — the agreed money for the FULL ordered qty. */
   subtotal: number | null;
+  /**
+   * BUY_N_GET_M snapshot: whole free SELLING units already netted out of
+   * `subtotal` (mirrors `OrderItem.promoFreeUnits`). Default 0 — REG-B50:
+   * omitting this on a promo line makes `reconciledTotal` silently fall back
+   * to the plain linear proration, which over/under-bills a partial delivery.
+   */
+  freeUnits?: number;
+  /**
+   * Piece-equivalents per whole free unit — `unitsPerBox` on a BOX-SPLIT line
+   * (`OrderItem.boxes != null`), 1 otherwise. `freeUnits` counts BOXES on such
+   * a line while `orderedQty` counts PIECES, so without this bridge the
+   * proration under-bills a partial by up to one box (the server oracle's
+   * `freeUnitSize`, invoices.service.ts). Default 1 = both already on the same
+   * axis, which is every selling-unit line.
+   */
+  freeUnitSize?: number;
+}
+
+/**
+ * `ShortPickLine.freeUnitSize` for an order line — the server oracle's
+ * `freeUnitSize` (invoices.service.ts#buildInvoiceItemData), derived the same
+ * way: a line stored WITH a box/piece split (`boxes != null`) counts its free
+ * units in BOXES while its `qty` is in PIECES, so one free unit is worth
+ * `unitsPerBox` pieces there; every other line is already on a single axis, so
+ * it is 1. Prefers the line's SALE-TIME `unitsPerBox` snapshot over the live
+ * product (a later packaging change must not re-price an agreed line), falling
+ * back to `product.unitsPerBox` for legacy rows created before that column
+ * shipped — same order as the oracle.
+ *
+ * Both driver screens map their lines through this and feed the SAME
+ * `reconciledTotal`, so neither may derive it on its own.
+ */
+export function freeUnitSizeFor(li: {
+  boxes?: number | null;
+  unitsPerBox?: number | null;
+  product?: { unitsPerBox?: number | null } | null;
+}): number {
+  if (li.boxes == null) return 1;
+  const upb = Math.trunc(Number(li.unitsPerBox ?? li.product?.unitsPerBox ?? 0));
+  return upb > 0 ? upb : 1;
 }
 
 /** DELIVERED at the full ordered qty, REFUSED at 0, else PARTIAL. */
@@ -68,8 +108,10 @@ export function buildDeliveries(
 
 /**
  * The reconciled ESTIMATE shown on the payment screen — sum of each line's
- * stored subtotal prorated by delivered/ordered qty (server-exact formula,
- * see pricing.ts#prorateLineSubtotal). REFUSED lines contribute $0. Display
+ * stored subtotal prorated by delivered/ordered qty AND the line's
+ * `freeUnits`/`freeUnitSize` snapshot (server-exact formula, see
+ * pricing.ts#prorateLineSubtotal — its paid-basis floored cumulative
+ * telescope, not a plain linear ratio). REFUSED lines contribute $0. Display
  * estimate only; the server computes the real invoice total independently
  * via the identical formula.
  */
@@ -81,7 +123,13 @@ export function reconciledTotal(
   for (const li of lines) {
     const raw = deliveredQtyById[li.orderItemId] ?? li.orderedQty;
     const clamped = Math.max(0, Math.min(raw, li.orderedQty));
-    sum += prorateLineSubtotal(li.subtotal, clamped, li.orderedQty);
+    sum += prorateLineSubtotal(
+      li.subtotal,
+      clamped,
+      li.orderedQty,
+      li.freeUnits ?? 0,
+      li.freeUnitSize ?? 1,
+    );
   }
   return roundMoney(sum);
 }

@@ -54,6 +54,21 @@
       "inputs": ["$TURBO_DEFAULT$"],
       "outputs": ["coverage/**"]
     },
+    "@routeflow/api#test": {
+      "dependsOn": ["^build"],
+      // api's pricing-parity.spec.ts imports the web and mobile pricing mirrors by
+      // relative path, but a package's $TURBO_DEFAULT$ only ever covers its OWN
+      // directory — so a mirror-only edit left this task's hash untouched and turbo
+      // replayed a cached green for the very test that proves the mirrors agree.
+      // $TURBO_ROOT$ pulls those two files into this task's key (and only this one).
+      // Add an entry here whenever a spec in apps/api reaches outside apps/api.
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/apps/web/lib/pricing.ts",
+        "$TURBO_ROOT$/apps/mobile/lib/pricing.ts"
+      ],
+      "outputs": ["coverage/**"]
+    },
     "test:e2e": {
       "dependsOn": ["^build"],
       "inputs": ["test/**", "**/*.e2e-spec.ts"],
