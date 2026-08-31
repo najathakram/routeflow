@@ -936,7 +936,8 @@ The wholesaler-reported "scanned items go missing / land twice" cluster. Server 
   longer one `{lastCode,lastAt}` pair: new exported `ScanSlot {code, lastAcceptAt, lastSeenAt}` and
   `slots?: ScanSlot[]` (MRU-first, capped at new `SCAN_SLOTS` = 4), with `lastAt`/`lastAcceptAt`/
   `lastSeenAt` now OPTIONAL top-level mirrors of `slots[0]` so legacy constructors (`ScanCamera.web.tsx`,
-  untouched here) keep compiling and an external write RE-ANCHORS the head slot. Detections match a slot
+  untouched in THIS PR — rewired onto the gate properly by REG-B202, below) keep compiling and an
+  external write RE-ANCHORS the head slot. Detections match a slot
   when their `normalizeScanCode` candidate SETS intersect (one label read as UPC-A then EAN-13 is one
   item). ⚠️ **`lastAcceptAt` moves only on ACCEPT** — refreshing it on a rejected per-frame repeat is
   precisely REG-B191 (a deliberate re-scan gets swallowed into the first scan's count); `lastSeenAt`
@@ -1013,3 +1014,72 @@ The wholesaler-reported "scanned items go missing / land twice" cluster. Server 
   uses (same fields, one selling unit, so a re-scan increments the line instead of duplicating it), and
   the lookup is wrapped in `SCAN_RESOLVE_TIMEOUT_MS`'s `AbortController` for the same reason the operator
   ladder is — an abandoned resolve must never add the item after the buyer was told the scan failed.
+
+### 2026-08-31 — REG-B202: port the F30 scan engine into `ScanCamera.web.tsx`
+
+`ScanCamera.web.tsx` was deliberately skipped by the F30 batch above and kept three defects native
+removed: **decode starvation** (its rAF loop awaited the FULL resolve via `fire(code)` before
+releasing `inFlightRef`, so no frame was even decoded mid-resolve — buffering fixes nothing if the
+buffer is never offered a code), **drop-not-queue** (`fire()`'s `busyRef` bailed BEFORE the gate,
+discarding arrivals with zero feedback — REG-B192 verbatim), and **legacy re-anchor** (its `finally`
+wrote `gateRef.current = {lastCode, lastAt: Date.now()}` on every settle, pinning the gate to the
+single-slot shape and defeating `scan-loop.ts`'s multi-slot cooldown).
+
+- **`lib/scan-engine.ts` (NEW, pure, platform-free).** The sequencing seam: `ScanEngineState
+{gate: ScanGateState | null, buffer: PendingBufferState}`, `createScanEngine()`,
+  `frameScanned(state, code, now) → ScanEngineStep {next, startResolving, indicator}` (gates via
+  `gateScan` FIRST — always keeps the returned gate state, even on reject, so a rejected repeat's
+  clock still advances — then `pushScan`s on accept), `manualScanned(state, code)` (skips the gate
+  entirely, still `pushScan`s — the actual W3 fix: a manual submit mid-resolve is buffered, not
+  dropped), `scanSettled(state)` (`completeResolve` + drain). `indicator` is `"on"`/`"off"` only on
+  the buffer's `isResolving` EDGE, `null` otherwise. No dedupe/capping/clock of its own — those stay
+  owned by `scan-loop.ts`/`scan-pending-buffer.ts` respectively. Spec: `__tests__/scan-engine.test.ts`
+  (built RED-first against a signature-only stub, per this repo's F30 convention).
+- **`components/ScanCamera.web.tsx` rewired.** `busyRef` + `gateRef` → one `engineRef =
+useRef(createScanEngine())`; new `onResolvingChange?(isResolving)` prop (mirrors native). `fire()`
+  split into sync `handleFrame`/`handleManual` (thread one event through the engine, kick off
+  `resolveCode` when `startResolving` is set) + async recursive `resolveCode` (mirrors
+  `ScanCamera.tsx`'s drain; web's `outcome?.close → stop()` branch is preserved, but the drain after
+  it is now UNCONDITIONAL like native, not special-cased). The decode loop's `.then()` now calls
+  `handleFrame` SYNCHRONOUSLY and releases `inFlightRef` in `.finally()` as soon as the decode
+  settles — no longer nested inside the resolve's own await, which is what starved the decoder.
+  `submitManual` now calls `handleManual` directly (no `deliberate` flag needed — the gate is never
+  reached by that path).
+- **`lib/scan-loop.ts` — a pre-existing, unrelated stale-comment note.** Its `ScanGateState.lastAt`
+  doc still frames the top-level mirror as accommodating `ScanCamera.web.tsx`'s legacy write; that
+  write is now gone (see above). Left as-is since `scan-loop.ts` was out of scope for REG-B202 and
+  the mirror fields still have a legitimate purpose (any external caller building a raw `{lastCode,
+lastAt}` state).
+- **`lib/scan-feedback.ts` + `lib/scan-cue.ts` / `lib/scan-cue.web.ts` (NEW) — the web accept cue.**
+  `cueForOutcome(outcome) → "accepted" | "rejected" | "none"` is the pure decision (added/error/
+  everything-else), kept apart from the player so it unit-tests in node Jest. `scan-cue.web.ts`
+  plays a short WebAudio blip (1000Hz/80ms accept, 300Hz/180ms reject) over ONE lazily-created,
+  reused `AudioContext` plus `navigator.vibrate`; `unlockScanCue()` resumes the context and is
+  called from the camera-start effect (mount already implies a user gesture, so it satisfies the
+  autoplay policy). `scan-cue.ts` is the native no-op sibling — resolved by the bundler's
+  platform-suffix rule, same convention as `location-tracker.*`; it deliberately does NOT wire
+  `lib/haptics.ts`'s `scanHaptic`, which already covers native at the SHEET level
+  (`ScanOrderSheet`, stock-count) and early-returns on web. ⚠️ Both cue modules are TOTAL — a cue
+  is pure ergonomics and must never fail a scan, so `ScanCamera.web.tsx` calls `playScanCue` as a
+  read-only observation on an already-resolved outcome, never inside the engine.
+  ⚠️ **Testing trap:** asserting `.not.toThrow()` on the web player in a bare node env proves
+  NOTHING — with no `window` the beep returns early and `navigator.vibrate?.()` optional-chains
+  away, so the test passes even with the try/catch deleted (verified by mutation). The pins
+  (REG-B202/CUE10-14) install a host whose AudioContext constructor THROWS.
+- **`lib/build-info.ts` (NEW) + `Dockerfile` + `app/(auth)/login.tsx` — the build stamp.**
+  `shortBuildSha(raw)`/`buildLabel(raw?)` are the single source of truth for the display string:
+  a hex string ≥7 chars shortens to 7 lowercase, a human-set tag (`local`, `v1.1.0`) survives
+  as-is, blank/undefined reads `"dev"`. `BUILD_SHA` reads `process.env.EXPO_PUBLIC_BUILD_SHA` at
+  MODULE SCOPE via a literal static member access — ⚠️ Expo's babel plugin inlines `EXPO_PUBLIC_*`
+  by literal text replacement, so a computed lookup would silently read `undefined` in the shipped
+  bundle. The Dockerfile adds `ARG EXPO_PUBLIC_BUILD_SHA` + `ARG RAILWAY_GIT_COMMIT_SHA` with
+  `ENV EXPO_PUBLIC_BUILD_SHA=${EXPO_PUBLIC_BUILD_SHA:-$RAILWAY_GIT_COMMIT_SHA}` before the export.
+  ⚠️ Whether Railway forwards `RAILWAY_GIT_COMMIT_SHA` into the build as an ARG is UNVERIFIED; if a
+  deploy renders "build dev", add a service variable `EXPO_PUBLIC_BUILD_SHA=${{RAILWAY_GIT_COMMIT_SHA}}`
+  on routeflowmobile. Rendered on the login screen in `ios.label2` (NOT the fainter `label3` — the
+  stamp exists to be read aloud by a client confirming their deploy, so it must clear a contrast
+  floor). Inlining verified end-to-end against a real `expo export --platform web`.
+- ⚠️ **Local `expo export --platform web` needs `NODE_PATH=$(pwd)/node_modules`** or it dies with
+  `Invalid call ... process.env.EXPO_ROUTER_APP_ROOT` — the same babel-preset-expo/expo-router
+  resolution class the Dockerfile already pins with `ENV NODE_PATH` (commits fdf60a49/7cab3863). A
+  warm Metro cache masks it; `--clear` exposes it. Not a defect in this change.

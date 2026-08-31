@@ -1,12 +1,12 @@
 {
-  "mappedSha": "92cced83",
-  "generatedAt": "2026-08-31T15:40:00.000Z",
+  "mappedSha": "45c857ac",
+  "generatedAt": "2026-08-31T15:10:00.000Z",
   "areas": [
     "api",
     "web",
     "mobile",
     "packages"
   ],
-  "fileCount": 918,
-  "notes": "**2026-08-31** — (branch `fix/B199-merge-lock-scope-decision`, off master `da8a61b6`; no schema change) — **B199 merge-lock scope: DEFERRED ON EVIDENCE, not left dangling.** `@routeflow/api` runs exactly ONE instance — no `numReplicas` in `apps/api/railway.toml`, `numReplicas = null` for every service in Railway's API (no dashboard override), live deployment reports 1 running instance — so `withOrderMergeLock`'s per-process scope is sufficient and the cross-replica lost update is UNREACHABLE. Restructuring `updateOrderItems` (money-critical) to close an unreachable race was judged the larger risk. ⚠️ The trigger is SCALING and it is SILENT — wrong money with no error, log or failing test — and Railway injects no replica-count variable, so nothing in-process can detect it; the guard is therefore a comment in `apps/api/railway.toml`'s `[deploy]` block, at the point the decision is made. Three designs recorded in `withOrderMergeLock`'s doc comment, cheapest first: Redis lock (Redis already a dependency, smallest diff, keeps the T-B199 spec's one-instance framing valid), optimistic CAS + 409 retry, then the full fold-inside-the-transaction (which requires MOVING, never deleting, the spec's \"two concurrent merges on ONE INSTANCE serialize\" block). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "fileCount": 923,
+  "notes": "**2026-08-31** — (branch `fix/B202-web-scan-engine`, off master `45c857ac`; no schema change) — **REG-B202: the F30 scan engine ported to the mobile-WEB camera path, plus two operator-facing riders.** `ScanCamera.web.tsx` had kept decode starvation, drop-not-queue and the legacy gate re-anchor; it is now a thin adapter over new pure `lib/scan-engine.ts`. Riders: an audible/haptic accept cue for web (`lib/scan-feedback.ts` + `lib/scan-cue{,.web}.ts` — web previously had NO scan confirmation, `scanHaptic` early-returns there) and a login-screen build stamp (`lib/build-info.ts` + Dockerfile `EXPO_PUBLIC_BUILD_SHA`). See `mobile.md`'s REG-B202 section for the traps (cue-totality tests are vacuous without a throwing host; local web export needs NODE_PATH). Master at this point also carries #561's B199 replica-evidence deferral (docs-only). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
