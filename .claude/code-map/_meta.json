@@ -1,7 +1,7 @@
 {
   "mappedSha": "b074a4f4",
-  "generatedAt": "2026-08-31T17:45:00.000Z",
+  "generatedAt": "2026-08-31T19:10:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 918,
-  "notes": "**2026-08-31 (branch `fix/F03-payment-truth`, WIP — NOT master)** — Stop-gate acknowledgment, not a map pass: F03's five in-flight code files are deliberately left UNMAPPED because they are unverified (no red gate, no review, no mutation probe) and P2/P3 are not implemented at all, so mapping them would assert behaviour that will change — most sharply the F04 oracle cap, which has no regression until T-B50s is authored. api.md carries a short IN-FLIGHT marker instead. Master's own map is unaffected: none of these files are on master. Full entries + mappedSha bump land at F03 close-out. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "**2026-08-31 (branch `fix/F03-payment-truth`, WIP - NOT master)** - two surgical map edits, no mappedSha bump (none of this is on master yet). web.md's e2e table gains rows for spec 21 (destructive-guards, incl. the note that ITS B24 fixtures are what poisoned OP-09c/OP-11b) and spec 22 (payment-truth, F03's in-flight T2 leg). \u26a0\ufe0f Spec 22 is the THIRD time a spec has been authored without its `playwright.config.ts` project entry - the config uses explicit per-spec testMatch, so an unwired spec NEVER runs and any proof resting on it is vapor (precedents: 08, 12). F03's five in-flight code files remain deliberately UNMAPPED pending verification - see api.md's IN-FLIGHT marker. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it - never accumulate history here."
 }
