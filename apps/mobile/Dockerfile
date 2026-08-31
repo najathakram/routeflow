@@ -45,14 +45,14 @@ ENV EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=$EXPO_PUBLIC_GOOGLE_MAPS_API_KEY
 # RAILWAY_GIT_COMMIT_SHA is a best-effort fallback to the deploying commit.
 # `${VAR:-default}` is standard Dockerfile environment-replacement syntax, so
 # the fallback costs nothing when the explicit arg is set.
-# ⚠️ Whether Railway forwards RAILWAY_GIT_COMMIT_SHA into the BUILD as an arg
-# is unverified here — it is documented as available to the build environment,
-# but Dockerfile ARGs only receive what the builder passes. If a deploy shows
-# "build dev" instead of a sha, that fallback did NOT arrive: fix it by adding
-# a service variable EXPO_PUBLIC_BUILD_SHA=${{RAILWAY_GIT_COMMIT_SHA}} on the
-# routeflowmobile service, which Railway does pass through as a build arg.
-# Either way this degrades to "dev" rather than breaking the build — which is
-# exactly why `shortBuildSha` is total.
+# VERIFIED 2026-08-31 on the #562 deploy: Railway DOES forward
+# RAILWAY_GIT_COMMIT_SHA into the build, so the fallback alone is enough and no
+# service variable is needed — the shipped bundle carried the full merge sha and
+# the login screen read "build e2bc8b3". Should that ever stop being true, the
+# symptom is a deploy rendering "build dev", and the fix is a service variable
+# EXPO_PUBLIC_BUILD_SHA=${{RAILWAY_GIT_COMMIT_SHA}} on the routeflowmobile
+# service. It degrades to "dev" rather than breaking the build either way —
+# which is exactly why `shortBuildSha` is total.
 ARG EXPO_PUBLIC_BUILD_SHA
 ARG RAILWAY_GIT_COMMIT_SHA
 ENV EXPO_PUBLIC_BUILD_SHA=${EXPO_PUBLIC_BUILD_SHA:-$RAILWAY_GIT_COMMIT_SHA}

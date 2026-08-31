@@ -1074,12 +1074,65 @@ lastAt}` state).
   by literal text replacement, so a computed lookup would silently read `undefined` in the shipped
   bundle. The Dockerfile adds `ARG EXPO_PUBLIC_BUILD_SHA` + `ARG RAILWAY_GIT_COMMIT_SHA` with
   `ENV EXPO_PUBLIC_BUILD_SHA=${EXPO_PUBLIC_BUILD_SHA:-$RAILWAY_GIT_COMMIT_SHA}` before the export.
-  ⚠️ Whether Railway forwards `RAILWAY_GIT_COMMIT_SHA` into the build as an ARG is UNVERIFIED; if a
-  deploy renders "build dev", add a service variable `EXPO_PUBLIC_BUILD_SHA=${{RAILWAY_GIT_COMMIT_SHA}}`
-  on routeflowmobile. Rendered on the login screen in `ios.label2` (NOT the fainter `label3` — the
+  VERIFIED 2026-08-31 (#562 deploy): Railway DOES forward `RAILWAY_GIT_COMMIT_SHA` into the build,
+  so no service variable is needed — the deployed bundle carried the full merge sha. If a deploy ever
+  renders "build dev", add `EXPO_PUBLIC_BUILD_SHA=${{RAILWAY_GIT_COMMIT_SHA}}` on routeflowmobile. Rendered on the login screen in `ios.label2` (NOT the fainter `label3` — the
   stamp exists to be read aloud by a client confirming their deploy, so it must clear a contrast
   floor). Inlining verified end-to-end against a real `expo export --platform web`.
 - ⚠️ **Local `expo export --platform web` needs `NODE_PATH=$(pwd)/node_modules`** or it dies with
   `Invalid call ... process.env.EXPO_ROUTER_APP_ROOT` — the same babel-preset-expo/expo-router
   resolution class the Dockerfile already pins with `ENV NODE_PATH` (commits fdf60a49/7cab3863). A
   warm Metro cache masks it; `--clear` exposes it. Not a defect in this change.
+
+### 2026-08-31 — Native build & distribution (EAS Android + OTA)
+
+The first EAS config that can actually produce an installable build. Until now the ONLY way a
+client got this app was mobile web (`Dockerfile` → `expo export --platform web` → nginx on
+Railway, phone-UA-proxied behind `www.routeflow.info` by `apps/web/middleware.ts`); the single
+native build ever attempted (2026-04-20) died in EAS's Install-dependencies phase and produced
+no artifact.
+
+- **`app.json`** — `version 1.1.0` / `android.versionCode 5`. NEW config plugins for
+  `expo-camera`, `expo-location`, `expo-image-picker`: all three were dependencies with no
+  plugin, so a native build shipped without their permissions. ⚠️ `expo-location` MUST carry
+  `isAndroidBackgroundLocationEnabled` + `isAndroidForegroundServiceEnabled` — the library
+  manifest adds neither, and `lib/location-tracker.native.ts` runs `startLocationUpdatesAsync`
+  with a foreground service, so driver tracking degrades silently without them. iOS usage
+  strings ride along in the same plugin props.
+  ⚠️ **`android.blockedPermissions: [RECORD_AUDIO]` is load-bearing.** The camera plugin's
+  `recordAudioAndroid: false` only stops the PLUGIN adding it; `expo-camera`'s own library
+  manifest declares it, so the merger re-adds it. Nothing here records audio or video.
+- **OTA (`updates.url` + `runtimeVersion.policy = "appVersion"`).** ⚠️ Must be present in a
+  binary for that binary to ever receive an update — adding it later does not reach installs
+  already in the field. Policy is `appVersion`, NOT `fingerprint`: `app.config.js` injects
+  `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` into the react-native-maps plugin, so a fingerprint computed
+  with that var unset differs from one computed with it set and updates strand silently.
+- **`eas.json`** — `staging` is the retest profile (internal + apk + production API) and carries
+  `channel: "staging"`; `production` carries its own. All profiles pin `node: "20.19.4"` (that
+  is the lever that fixes the builder's bundled npm to 10.8.x, matching this repo's
+  `packageManager` — the npm that wrote the lockfile) and set `HUSKY: "0"` (the root
+  `prepare: husky` runs on the builder, whose uploaded archive has no `.git`; husky v9 errors —
+  the leading suspect for the April 8.5-second install failure).
+- **Deleted the repo-ROOT `eas.json` + `app.json`** — a second, conflicting EAS identity
+  (projectId `0196542f…`, bundle `com.najathakram1.routeflow`, `appVersionSource: "remote"`)
+  referenced by nothing. An `eas` command run from the root silently targeted the wrong project.
+- ⚠️ **`npx expo prebuild` REWRITES `package.json`'s `android`/`ios` scripts** to
+  `expo run:android`/`run:ios` (bare-workflow assumption). This is a managed project — revert
+  those two lines after any prebuild, and never commit the generated `android/` directory
+  (its presence flips EAS to the bare workflow and `app.json`'s plugins stop applying).
+- ⚠️ **EAS installs MUST set `npm_config_engine_strict=false`** (in every `eas.json` profile's
+  `env`). The root `.npmrc` sets `engine-strict=true`; EAS copies it into the build and runs
+  `npm ci --include=dev` from the workspace ROOT, so apps/api's tree installs too and
+  `@prisma/streams-local` (dev-only, `node>=22`) turns into a hard EBADENGINE — **this is what
+  killed the 2026-04-20 build and the first 2026-08-31 attempt**, in the Install-dependencies
+  phase both times. `@zxing/library` (`node>=24`) is a second one waiting behind it. ci.yml
+  already solves this with `npm ci --engine-strict=false`; the Dockerfiles escape it only because
+  they never COPY `.npmrc`. Correct behaviour = these appear as `npm warn`, not `npm error`.
+- **Reading a failed EAS build's logs** (they are NOT in the CLI): POST to `api.expo.dev/graphql`
+  with the `expo-session` secret from `~/.expo/state.json` and a NON-default `User-Agent`
+  (Cloudflare 403s urllib's default with `error code: 1010`), query
+  `builds{byId(buildId:$id){status error{message} logFiles}}`, then fetch `logFiles[0]` — it is
+  **Brotli**-encoded JSON-lines keyed by `phase`. The signed URLs expire quickly, which is why
+  the April failure went undiagnosed for four months.
+- Install any dep here with `npx -y npm@10.8.0` — the local npm 11 rewrites lockfile metadata.
+  `npm run validate-lock` (`missing 0`) is the gate.

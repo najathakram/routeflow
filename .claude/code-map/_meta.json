@@ -1,12 +1,7 @@
 {
-  "mappedSha": "45c857ac",
+  "mappedSha": "e2bc8b33",
   "generatedAt": "2026-08-31T15:10:00.000Z",
-  "areas": [
-    "api",
-    "web",
-    "mobile",
-    "packages"
-  ],
+  "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 923,
-  "notes": "**2026-08-31** — (branch `fix/B202-web-scan-engine`, off master `45c857ac`; no schema change) — **REG-B202: the F30 scan engine ported to the mobile-WEB camera path, plus two operator-facing riders.** `ScanCamera.web.tsx` had kept decode starvation, drop-not-queue and the legacy gate re-anchor; it is now a thin adapter over new pure `lib/scan-engine.ts`. Riders: an audible/haptic accept cue for web (`lib/scan-feedback.ts` + `lib/scan-cue{,.web}.ts` — web previously had NO scan confirmation, `scanHaptic` early-returns there) and a login-screen build stamp (`lib/build-info.ts` + Dockerfile `EXPO_PUBLIC_BUILD_SHA`). See `mobile.md`'s REG-B202 section for the traps (cue-totality tests are vacuous without a throwing host; local web export needs NODE_PATH). Master at this point also carries #561's B199 replica-evidence deferral (docs-only). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "**2026-08-31** — (branch `build/mobile-eas-android-ota`, off master `e2bc8b33`; no schema change) — **the first EAS config that can actually produce an installable Android build, plus OTA.** Config plugins for camera/location/image-picker (none existed, so a native build shipped without their permissions), `blockedPermissions: [RECORD_AUDIO]`, `expo-updates` with the appVersion runtime policy, EAS profiles pinned to node 20.19.4 with `HUSKY=0`, and the stale conflicting repo-root `eas.json`/`app.json` deleted. See `mobile.md`'s \"Native build & distribution\" section for the traps (prebuild rewrites package.json scripts; never commit `android/`; OTA must ship IN the binary). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
