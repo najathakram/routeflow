@@ -10,6 +10,23 @@ The script was end-to-end tested on 2026-08-29 against a local DB seeded with sy
 of every damaged state (same UUIDs, `qa-repair-test` tenant): every executable path ran, every
 scoped forensic re-check came back clean, and the audit log captured before-state + SQL.
 
+**Per-batch repair lanes (campaign D4, repair-as-we-go).** Each batch that fixed a
+damage-writing bug ships its own scoped script beside this runbook, same safety model
+(dry-run default, explicit `--execute` + backup attestation + per-row confirm, one
+transaction per row with an in-transaction re-read, JSONL log to `local-assets/`):
+
+| Script                                                         | Batch      | Repairs                                                                                                                                                                 | Report-only                                                                                                                                                                                  |
+| -------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`repair-f03.mjs`](repair-f03.mjs)                             | F03        | payment-status truth                                                                                                                                                    | —                                                                                                                                                                                            |
+| [`repair-f17.mjs`](repair-f17.mjs)                             | F17        | duplicate import payments                                                                                                                                               | clusters > 2                                                                                                                                                                                 |
+| [`repair-f10-reopen-damage.mjs`](repair-f10-reopen-damage.mjs) | F10 (#591) | **B55** — `Product.currentStock` inflated by pre-fix reopens, derived from the only rows that record them (`type:SALE`, `quantity>0`, `reference LIKE 'Reopen stop %'`) | **B54** — invoices left PAID/PARTIAL on a reopened stop. NEVER auto-mutated: the money really was collected, so whether the order state or the invoice is wrong is a per-case owner judgment |
+
+⚠️ **`Reopen stop %` is load-bearing.** It is simultaneously the B55 damage footprint and the
+only historical trace of a pre-fix reopen (F10 added an `AuditLog` + `podHistory` trail going
+forward). A new writer reusing that `reference` prefix would poison the repair query.
+Reopens of stops that recorded no DELIVERED/PARTIAL mutation left no trace at all and are
+recorded as unrepairable rather than guessed.
+
 ---
 
 ## 1. Command sequence (always in this order)
