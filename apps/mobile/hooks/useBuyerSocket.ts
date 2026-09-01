@@ -4,6 +4,7 @@ import { io, type Socket } from "socket.io-client";
 import { useQueryClient } from "@tanstack/react-query";
 import { useBuyerSessionStore } from "../lib/buyer-session-store";
 import { BUYER_KEYS } from "../lib/auth-keys";
+import { toSecureStoreKey } from "../lib/secure-key";
 
 const SOCKET_URL = (process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000").replace(/\/$/, "");
 
@@ -64,7 +65,7 @@ export function useBuyerSocket() {
         token = localStorage.getItem(BUYER_KEYS.accessToken);
       } else {
         const { getItemAsync } = await import("expo-secure-store");
-        token = await getItemAsync(BUYER_KEYS.accessToken);
+        token = await getItemAsync(toSecureStoreKey(BUYER_KEYS.accessToken));
       }
 
       dbg(`storage read key=${BUYER_KEYS.accessToken} token=${token ? "[present]" : "[null]"}`);

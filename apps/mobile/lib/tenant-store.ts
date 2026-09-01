@@ -1,12 +1,13 @@
 import { create } from "zustand";
 import { Platform } from "react-native";
+import { toSecureStoreKey } from "./secure-key";
 
 // ─── Platform-safe storage ────────────────────────────────────────────────────
 
 async function storageGet(key: string): Promise<string | null> {
   if (Platform.OS === "web") return localStorage.getItem(key);
   const { getItemAsync } = await import("expo-secure-store");
-  return getItemAsync(key);
+  return getItemAsync(toSecureStoreKey(key));
 }
 
 async function storageSet(key: string, value: string): Promise<void> {
@@ -15,7 +16,7 @@ async function storageSet(key: string, value: string): Promise<void> {
     return;
   }
   const { setItemAsync } = await import("expo-secure-store");
-  await setItemAsync(key, value);
+  await setItemAsync(toSecureStoreKey(key), value);
 }
 
 async function storageDel(key: string): Promise<void> {
@@ -24,7 +25,7 @@ async function storageDel(key: string): Promise<void> {
     return;
   }
   const { deleteItemAsync } = await import("expo-secure-store");
-  await deleteItemAsync(key);
+  await deleteItemAsync(toSecureStoreKey(key));
 }
 
 const STORAGE_KEY = "tenantSlug";

@@ -2,6 +2,7 @@ import axios, { type InternalAxiosRequestConfig } from "axios";
 import { Platform } from "react-native";
 import { useOfflineQueue } from "../store/offlineQueue";
 import { OP_KEYS, DRIVER_KEYS, CURRENT_ROLE_KEY, type CurrentRole } from "./auth-keys";
+import { toSecureStoreKey } from "./secure-key";
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000";
 
@@ -12,7 +13,7 @@ export const apiClient = axios.create({ baseURL: `${BASE_URL}/api/v1`, timeout: 
 async function storageGet(key: string): Promise<string | null> {
   if (Platform.OS === "web") return localStorage.getItem(key);
   const { getItemAsync } = await import("expo-secure-store");
-  return getItemAsync(key);
+  return getItemAsync(toSecureStoreKey(key));
 }
 
 async function storageSet(key: string, value: string): Promise<void> {
@@ -21,7 +22,7 @@ async function storageSet(key: string, value: string): Promise<void> {
     return;
   }
   const { setItemAsync } = await import("expo-secure-store");
-  await setItemAsync(key, value);
+  await setItemAsync(toSecureStoreKey(key), value);
 }
 
 async function storageDel(key: string): Promise<void> {
@@ -30,7 +31,7 @@ async function storageDel(key: string): Promise<void> {
     return;
   }
   const { deleteItemAsync } = await import("expo-secure-store");
-  await deleteItemAsync(key);
+  await deleteItemAsync(toSecureStoreKey(key));
 }
 
 /**

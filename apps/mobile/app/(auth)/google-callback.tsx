@@ -6,6 +6,7 @@ import { useAuthStore } from "../../lib/auth-store";
 import { useBuyerSessionStore } from "../../lib/buyer-session-store";
 import { BUYER_KEYS, OP_KEYS, DRIVER_KEYS } from "../../lib/auth-keys";
 import { isValidReturnedState, OAUTH_STATE_KEY } from "../../lib/oauth-state";
+import { toSecureStoreKey } from "../../lib/secure-key";
 
 /**
  * Safety-net deep-link handler for the Google OAuth callback.
@@ -52,7 +53,7 @@ export default function GoogleCallbackScreen() {
       // unsolicited deep link (no pending flow → no stored state) is rejected.
       const storedState = isWebForState
         ? window.localStorage.getItem(OAUTH_STATE_KEY)
-        : await SecureStoreForState.getItemAsync(OAUTH_STATE_KEY);
+        : await SecureStoreForState.getItemAsync(toSecureStoreKey(OAUTH_STATE_KEY));
 
       if (!isValidReturnedState(storedState, params.state)) {
         // Reject WITHOUT clearing the nonce: an unsolicited deep link (no/bad state)
@@ -63,7 +64,7 @@ export default function GoogleCallbackScreen() {
       }
       // Matched → consume the one-time nonce now.
       if (isWebForState) window.localStorage.removeItem(OAUTH_STATE_KEY);
-      else await SecureStoreForState.deleteItemAsync(OAUTH_STATE_KEY);
+      else await SecureStoreForState.deleteItemAsync(toSecureStoreKey(OAUTH_STATE_KEY));
 
       const [, payloadPart] = accessToken.split(".");
       let payload: Record<string, unknown> | null = null;
@@ -85,8 +86,8 @@ export default function GoogleCallbackScreen() {
           window.localStorage.setItem(BUYER_KEYS.accessToken, accessToken);
           window.localStorage.setItem(BUYER_KEYS.refreshToken, refreshToken);
         } else {
-          await SecureStore.setItemAsync(BUYER_KEYS.accessToken, accessToken);
-          await SecureStore.setItemAsync(BUYER_KEYS.refreshToken, refreshToken);
+          await SecureStore.setItemAsync(toSecureStoreKey(BUYER_KEYS.accessToken), accessToken);
+          await SecureStore.setItemAsync(toSecureStoreKey(BUYER_KEYS.refreshToken), refreshToken);
         }
         if (payload) {
           setBuyer({
@@ -107,8 +108,8 @@ export default function GoogleCallbackScreen() {
           window.localStorage.setItem(staffKeys.accessToken, accessToken);
           window.localStorage.setItem(staffKeys.refreshToken, refreshToken);
         } else {
-          await SecureStore.setItemAsync(staffKeys.accessToken, accessToken);
-          await SecureStore.setItemAsync(staffKeys.refreshToken, refreshToken);
+          await SecureStore.setItemAsync(toSecureStoreKey(staffKeys.accessToken), accessToken);
+          await SecureStore.setItemAsync(toSecureStoreKey(staffKeys.refreshToken), refreshToken);
         }
         if (payload) {
           setUser({
