@@ -112,6 +112,10 @@ The register and the user guide are companions in `local-assets/docs/` and move 
 3. Refuted claims go to **Investigated & Cleared** with why — never deleted.
 4. When a fix ships: flip the chip to `Fixed · #PR`, update the matching guide entry if
    user-visible behaviour changed, and republish **both** artifacts to their existing URLs.
+5. Then record what the bug **taught** in [`.claude/lessons/LESSONS.md`](../../lessons/LESSONS.md)
+   — the register says what broke, the lessons file says what to do differently. That write
+   belongs to the fix session, not to a hunt (hunting stays read-only); read the lessons file
+   before a hunt too, so a known class isn't re-derived from scratch.
 
 Full protocol and both artifact URLs: memory `project_bug_register_2026-08-28`.
 

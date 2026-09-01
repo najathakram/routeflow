@@ -58,6 +58,21 @@ skill). **Use it instead of re-reading the repo.**
 - Trust the code over the map when they disagree, and fix the map. Money math lives in
   `apps/{api/src/common,web/lib,mobile/lib}/pricing.ts` — keep all three mirrors in sync.
 
+## Lessons learned routine
+
+The rules this project has already paid for live at
+[`.claude/lessons/LESSONS.md`](.claude/lessons/LESSONS.md) (the `lessons-learned` skill).
+
+- **Before any major task, implementation, or bug fix:** read it alongside the code map and
+  carry the relevant **Lesson** lines into the plan — cite entry ids (`L-016`) when one changes
+  the approach.
+- **After _every_ bug fix:** append an entry (Symptom / Root cause / **Lesson** / Guard) and
+  bump `_meta.json`. **Gate 3 of `.claude/hooks/stop.mjs` blocks the turn otherwise** on
+  `fix/*` branches and on `fix:` commits that landed since the register last changed. A fix with
+  no transferable lesson bumps `_meta.json.updatedAt` alone — never invent a junk entry.
+- Caps: ≤ 40 active entries / ~25 KB, overflow to `ARCHIVE.md`. Entries are generalizable rules,
+  not incident diaries, and carry **no client identifiers** (this repo goes public for CI).
+
 ## Money discipline
 
 All line/tax/total math goes through `pricing.ts` helpers: `computeLineSubtotal` (boxed proration),

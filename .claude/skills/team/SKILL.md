@@ -18,12 +18,12 @@ decision, costs nothing, and cannot be paywalled.
 
 ## The roles
 
-| Agent | Owns | Never does |
-| --- | --- | --- |
-| `@tech-lead` | Scope, breakdown, sequencing, plan files | Write feature code |
-| `@builder` | One claimed task, test-first, in a worktree | Review or merge its own work |
-| `@feature-reviewer` | Independent pre-PR review against acceptance criteria | Re-implement |
-| `@qa-engineer` | Edge cases, tenant isolation, money math, stress | Fix what it finds |
+| Agent               | Owns                                                  | Never does                   |
+| ------------------- | ----------------------------------------------------- | ---------------------------- |
+| `@tech-lead`        | Scope, breakdown, sequencing, plan files              | Write feature code           |
+| `@builder`          | One claimed task, test-first, in a worktree           | Review or merge its own work |
+| `@feature-reviewer` | Independent pre-PR review against acceptance criteria | Re-implement                 |
+| `@qa-engineer`      | Edge cases, tenant isolation, money math, stress      | Fix what it finds            |
 
 The split is deliberate: the reviewer and QA are given the diff and the acceptance criteria but
 **not** the builder's reasoning. A verifier who has absorbed the author's mental model inherits the
@@ -66,15 +66,15 @@ node scripts/team/team.mjs reap                  # release every expired lease
 Board position is computed from live PR, CI and review state — adapted from Agent Orchestrator's
 SCM-observer design. Nobody has to remember to move a card, so the board cannot lie:
 
-| Lane | Derived from |
-| --- | --- |
-| **Needs you** | issue carries `blocked:owner` |
-| **CI failing** | linked PR has a failing check |
+| Lane                | Derived from                      |
+| ------------------- | --------------------------------- |
+| **Needs you**       | issue carries `blocked:owner`     |
+| **CI failing**      | linked PR has a failing check     |
 | **Review comments** | linked PR has `CHANGES_REQUESTED` |
-| **Ready to merge** | linked PR green **and** approved |
-| **In review** | linked PR open |
-| **In progress** | a live claim, no PR yet |
-| **Ready** | labelled `ready`, unclaimed |
+| **Ready to merge**  | linked PR green **and** approved  |
+| **In review**       | linked PR open                    |
+| **In progress**     | a live claim, no PR yet           |
+| **Ready**           | labelled `ready`, unclaimed       |
 
 The link is the `Closes #N` line in the PR body. Without it the board cannot see the PR — so every
 PR must carry one.
@@ -116,23 +116,23 @@ Tokens are the real budget here — GitHub is free, the box is paid for, and Cla
 actually scales with output. The tiering is declared in each agent's frontmatter, so it applies
 without anyone remembering to ask for it:
 
-| Role | Model | Effort | Why |
-| --- | --- | --- | --- |
-| `@tech-lead` | `fable` | high | One run per requirement; shapes every downstream token |
-| `@builder` | `sonnet` | medium | Highest volume, longest turns — executes a spec that is already decided |
-| `@qa-engineer` | `sonnet` | high | Cheap tier + high effort is the best value point in the team |
-| `@feature-reviewer` | `opus` | high | Lowest volume, last gate, highest cost of a miss |
-| gates (`verify`, `scan`, e2e) | — | — | No model at all. Deterministic checks are free; prefer them |
+| Role                          | Model    | Effort | Why                                                                     |
+| ----------------------------- | -------- | ------ | ----------------------------------------------------------------------- |
+| `@tech-lead`                  | `fable`  | high   | One run per requirement; shapes every downstream token                  |
+| `@builder`                    | `sonnet` | medium | Highest volume, longest turns — executes a spec that is already decided |
+| `@qa-engineer`                | `sonnet` | high   | Cheap tier + high effort is the best value point in the team            |
+| `@feature-reviewer`           | `opus`   | high   | Lowest volume, last gate, highest cost of a miss                        |
+| gates (`verify`, `scan`, e2e) | —        | —      | No model at all. Deterministic checks are free; prefer them             |
 
 **Escalate the model only for money math, migrations, and new tenant-scoped queries.** Those are
 where a miss is unrecoverable. Everywhere else, a builder that seems to need Opus is telling you the
-*plan* was underspecified — fix the plan, which is cheap, rather than paying the premium on every
+_plan_ was underspecified — fix the plan, which is cheap, rather than paying the premium on every
 token of a long implementation turn.
 
 ### The main session orchestrates; it does not implement
 
 Your interactive session runs on Opus. Every token it spends is billed at the top tier — so work
-done *inline* in the main loop is the most expensive work in the system, and implementation is
+done _inline_ in the main loop is the most expensive work in the system, and implementation is
 exactly the work that runs longest.
 
 **Delegate volume work to `@builder` rather than writing the code in the main session.** The main
@@ -160,7 +160,7 @@ auth and quietly meters you per token. Both are unset today.
    Exit code 3 means stop.
 5. **Cheap gates first.** `verify` runs the signature scan (~20s) before typecheck before tests, so a
    known-bad shape fails in seconds rather than after a full suite.
-6. **Small diffs.** One acceptance criterion, ~400 lines. Cheaper to review *and* reviewed better —
+6. **Small diffs.** One acceptance criterion, ~400 lines. Cheaper to review _and_ reviewed better —
    defect detection runs ~87% under 100 lines and ~28% over 1,000.
 7. **Parallelise reads, serialise writes.** Run `@feature-reviewer` and `@qa-engineer` at the same
    time — they are independent and read-only. Never run two builders on the same file set.
@@ -188,3 +188,5 @@ verification to save tokens trades a small, predictable cost for a large, unpred
 - **Client confidentiality**: the repo goes public during merge windows and issue events are
   permanently archived. Use opaque `client:cN` codes; the map lives in gitignored `local-assets/`.
 - Update `.claude/code-map/` with every change — the `Stop` hook blocks the turn otherwise.
+- **Read `.claude/lessons/LESSONS.md` before claiming a task**, and record the lesson after any
+  bug fix — the same `Stop` hook (Gate 3) blocks fix-shaped turns that leave it untouched.

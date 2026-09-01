@@ -8,9 +8,11 @@ description: >
 
 # Skill: New Feature (RouteFlow)
 
-Confirm scope before coding (name, one-line description, ≥3 testable acceptance criteria,
-DB/API/UI impact). Then follow **Red → Green → Refactor → gate → PR**. The `/new-feature`
-command has the full step list; this skill is the file-scaffold map.
+Skim [`.claude/lessons/LESSONS.md`](../../lessons/LESSONS.md) first — especially `domain`,
+`testing`, and the entitlement-gate rule (L-016) — then confirm scope before coding (name,
+one-line description, ≥3 testable acceptance criteria, DB/API/UI impact). Then follow
+**Red → Green → Refactor → gate → PR**. The `/new-feature` command has the full step list; this
+skill is the file-scaffold map.
 
 ## Golden rule
 
