@@ -11,6 +11,34 @@
 
 ## process
 
+### L-026 · 2026-09-01 · process
+
+- **Symptom:** an approved fix spec instructed editing a root manifest field "because it pins three
+  of the five modules". It pinned none of them; following the instruction would have ADDED three
+  pins the scope never asked for.
+- **Root cause:** the spec was written from an audit summary rather than from the manifests. Two
+  further claims in the same five-line item were also wrong — one module was pinned *ahead* of the
+  framework's bundled version (the fix was a downgrade, not a catch-up), and a command it presented
+  as a one-liner only accepts an interactive prompt.
+- **Lesson:** **A spec's factual claims about a file are a hypothesis, not evidence — read the file
+  before editing it, and report the correction rather than quietly conforming or quietly diverging.**
+- **Guard:** none — judgment. A spec item naming a specific file + field is a cue to open that file
+  first.
+
+### L-027 · 2026-09-01 · process
+
+- **Symptom:** with several sessions running in git worktrees, a repo-file gate was about to be
+  satisfied by writing into a *different* session's working tree — surfacing later as a mystery diff
+  in someone else's PR.
+- **Root cause:** worktrees are nested inside the main checkout, and hooks resolve their paths
+  against that main checkout, not the worktree the session is working in. Whatever branch the shared
+  checkout happens to be parked on is the file the gate points at.
+- **Lesson:** **Never satisfy a gate by writing into whatever tree the hook happens to run from —
+  defer the write to your own worktree and say plainly why. Keep the shared checkout on the
+  integration branch; it is the only sane resting state for a tree that hooks resolve against.**
+- **Guard:** none — judgment. A gate demanding a repo file while you work in a worktree is the cue
+  to check which tree that path actually lands in.
+
 ### L-007 · 2026-08-31 · process · #562
 
 - **Symptom:** an operator kept losing scans after the fix for exactly that had shipped.
@@ -84,6 +112,23 @@
 - **Guard:** none — judgment.
 
 ## tooling
+
+### L-028 · 2026-09-01 · tooling
+
+- **Symptom:** a grouped dependency bump advertised a security update for a file-upload library. The
+  PR title, changelog and lockfile diff all showed the new version — and every upload path kept
+  running the old one, advisories intact.
+- **Root cause:** a framework package declared that library at an **exact** version, so the hoisted
+  copy stayed pinned there; the bump installed the new version only nested under one workspace,
+  which nothing imports from. A version appearing in the lockfile says it was installed, never that
+  it is what resolves at a call site.
+- **Lesson:** **A dependency bump is proven by what RESOLVES at the call sites, not by the lockfile
+  diff — for any security bump, check whether a parent's exact pin holds the hoisted copy, or the
+  merge closes the ticket without closing the hole.**
+- **Guard:** none yet — inspect the hoisted entry (and any parent's exact pin) before believing a
+  security bump. Note the fix for this class is a root `overrides` pin, which [[L-012]] otherwise
+  forbids: `overrides` is the only mechanism that beats a parent's exact pin on a **runtime**
+  transitive, so state the exception in the PR or the next reader reverts it as a violation.
 
 ### L-009 · 2026-08-29 · tooling · #501
 
