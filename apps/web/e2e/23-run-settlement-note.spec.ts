@@ -72,7 +72,10 @@ test.describe("Run settlement visibility (F05 / B167)", () => {
     const api = apiBase(page.url());
 
     const suffix = Date.now();
-    const routeName = `E2E B167 Settlement ${suffix}`;
+    // Deliberately does NOT contain "Settlement": this name renders as an <h1>
+    // in both the shell banner and #main-content, and any substring-matching
+    // heading assertion on the card would collide with it.
+    const routeName = `E2E B167 Run ${suffix}`;
     // Two distinct unique tokens so the two halves of R9 cannot satisfy each
     // other: a page that rendered ONLY the legacy notes, or ONLY the new
     // settlement note, fails on the other assertion instead of passing on a
@@ -163,7 +166,15 @@ test.describe("Run settlement visibility (F05 / B167)", () => {
       page.locator("#main-content").getByRole("heading", { name: routeName }),
     ).toBeVisible({ timeout: 20_000 });
 
-    const settlementHeading = page.getByRole("heading", { name: "Settlement" });
+    // `exact: true` is load-bearing, not tidiness. getByRole matches the
+    // accessible name by SUBSTRING by default, and the run's own name is
+    // rendered as an <h1> twice (shell banner + #main-content). The first
+    // post-deploy run of this spec failed exactly here — a strict-mode
+    // violation resolving to 3 elements — because the fixture route was named
+    // "E2E B167 Settlement <ts>" and both of those h1s contained the word.
+    // The fixture is renamed below so the collision cannot recur, and this
+    // stays exact so a future rename cannot reintroduce it.
+    const settlementHeading = page.getByRole("heading", { name: "Settlement", exact: true });
     await expect(settlementHeading).toBeVisible({ timeout: 15_000 });
     // Card renders its `title` as an <h3> sibling of the content that follows it
     // in the same wrapper div (packages/ui/src/web/Card.tsx) — the direct parent
