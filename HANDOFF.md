@@ -39,6 +39,34 @@
 > ⚠️ **Three PRs were competing to rewrite HANDOFF.md** (#575, #579, #580). #575 is closed;
 > **#579 and #580 still collide.** Sequence them deliberately — do not let a rebase pick a winner.
 >
+> ## 2b. ⚠️ The Android publish-readiness session — a DECIDED, UNSTARTED fix PR
+>
+> The other live session was **not** doing campaign work. It produced a Google Maps key, an
+> on-device test of the real APK, and an 11-agent publish-readiness audit, then the owner
+> **chose a fix scope and nothing was implemented.** Its handoff was sitting **uncommitted**
+> in the main checkout; it is now preserved as commit `1c81e2e4` on
+> `chore/lessons-learned-system` (PR #571). **Read that banner before starting Android work** —
+> only the headline is repeated here:
+>
+> - **A hard blocker, verified by hand:** `apps/mobile/app/(auth)/google-callback.tsx:47,79` do
+>   `const { default: SecureStore } = await import("expo-secure-store")`. That package has **no
+>   default export**, and the call sits in the `!isWeb` branch — so **native Google Sign-In is
+>   completely broken** and always has been. Web is fine via the localStorage branch, which is
+>   why nobody saw it. Fix is a namespace import, matching `lib/auth.ts:1`. Predates B204.
+> - **Five native modules still pinned pre-SDK-55** — the exact class that crashed the first APK
+>   (B203). ⚠️ **`npx expo install --fix` is WRONG here:** root `package.json` `overrides` pin
+>   three of them and the root override wins on `npm ci`, silently reverting a workspace-only
+>   bump. Edit the workspace manifest **and** the root overrides in one commit.
+> - **Versioning is a duplicate-versionCode generator today** (`appVersionSource: "local"` +
+>   production `autoIncrement: true`); Play rejects a reused versionCode outright. The decided
+>   fix moves to `"remote"`.
+> - **Maps key done except one read-back** — the application restriction was never re-read after
+>   the console hung. ⚠️ **Never restrict the other key** ("Maps Platform API Key"): the API
+>   re-serves it to browsers, so restricting it repeats the 2026-08-26 outage.
+> - Two new lessons landed in the same commit: **L-024** (one credential per call origin) and
+>   **L-025** (a `Platform`/`isWeb` branch is untested code unless something runs that platform —
+>   the general form of the Sign-In bug above).
+>
 > ## 3. Worktrees — live vs prunable, and an ancestry trap
 >
 > | Worktree      | Branch                         | Status                                             |
