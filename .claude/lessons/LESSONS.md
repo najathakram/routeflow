@@ -322,6 +322,27 @@
 - **Guard:** `REG-B64 (T7)` asserts a DRAFT cancel neither credits stock nor marks its lines;
   mutation probe 3 (make the mark unconditional) turns it red.
 
+### L-031 · 2026-09-01 · domain
+
+- **Symptom:** a bug report (written from a review lens's own finding) named `deleteCustomer` as
+  destroying invoices without reversing their regulated-ledger entries. Reading it on master, that
+  site cannot destroy an invoice at all — its hard-delete path is only reached when the pre-flight
+  counted ZERO invoices. Meanwhile two sibling paths in the same file, named nowhere in the report,
+  destroy invoices freely: one blocks only PAID/SENT (so it deletes DRAFTs), the other has no
+  invoice guard whatsoever.
+- **Root cause:** the finding was recorded by pattern-match — "invoice.deleteMany with no ledger
+  call nearby" — without evaluating the guard that decides whether the block is reachable. The
+  pattern was real; the location was wrong, and the two worse instances were missed because they
+  did not match the grep as cleanly.
+- **Lesson:** **A reported location is a hypothesis, not a finding. Before fixing, re-derive which
+  call sites can actually REACH the bad state, and sweep the whole file for siblings — the
+  reachable ones are often not the reported one.** Fixing the reported site alone would have
+  shipped a green test over an untouched leak.
+- **Guard:** `customers.purge-ledger.spec.ts` covers all three sites and pins the reversal-before-
+  delete ordering. Second-order fact worth keeping: **a DRAFT invoice already carries ledger rows**
+  (`createSplitInvoices` writes them in the transaction that creates the DRAFT), so "we only delete
+  drafts" never justifies skipping the reversal. Same family as [[L-029]].
+
 ### L-022 · 2026-08-21 · domain · #393
 
 - **Symptom:** 40% of a live buyer portal showed $0.00 — and the server would have billed it.
