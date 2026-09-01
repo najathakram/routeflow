@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import {
   NotFoundException,
   ForbiddenException,
@@ -53,10 +54,12 @@ describe("CustomersService", () => {
   let meter: { read: jest.Mock };
   let catalog: { getPublishedVersion: jest.Mock };
   let configGet: jest.Mock;
+  let ledger: { reverseInvoiceEntries: jest.Mock };
   const originalFetch = global.fetch;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    ledger = { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) };
     // Defaults to "no key configured" so geocoding is a no-op (returns null without
     // calling fetch) for every pre-existing test — narrow it per-test to exercise
     // the geocode-on-create paths below.
@@ -111,6 +114,7 @@ describe("CustomersService", () => {
           provide: EntitlementsService,
           useValue: { hasFlag: jest.fn().mockResolvedValue(false) },
         },
+        { provide: RegulatedLedgerService, useValue: ledger },
       ],
     }).compile();
 

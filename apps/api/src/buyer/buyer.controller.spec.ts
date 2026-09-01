@@ -34,6 +34,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { UserRole } from "@prisma/client";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 
 const MOCK_CTX = {
   customerId: "cust-abc",

@@ -98,6 +98,7 @@ import { CustomersService } from "../customers/customers.service";
 import { OrderTemplatesService } from "../order-templates/order-templates.service";
 import { AuthorizationsService } from "../authorizations/authorizations.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 
 const operatorPayload = {
   sub: "user-op",

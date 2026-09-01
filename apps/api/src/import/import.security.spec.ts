@@ -16,6 +16,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 
 describe("ImportService — security (F8-003 / F9-008)", () => {
   let service: ImportService;

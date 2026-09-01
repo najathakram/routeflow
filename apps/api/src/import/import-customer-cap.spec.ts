@@ -11,6 +11,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 
 describe("ImportService — CUSTOMERS soft cap", () => {
   let service: ImportService;

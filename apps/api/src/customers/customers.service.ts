@@ -13,6 +13,7 @@ import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { roundMoney } from "../common/pricing";
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { geocodeAddress, GeocodableAddress, GeocodeCoords } from "../common/geocode.util";
@@ -52,6 +53,10 @@ export class CustomersService {
     private readonly catalog: PlanCatalogService,
     private readonly entitlements: EntitlementsService,
     private readonly commissionEngine: CommissionEngineService,
+    // Every path that DESTROYS an invoice must reverse its regulated-sales
+    // ledger rows first — the ledger is append-only with no FK to Invoice, so
+    // once the invoice row is gone the entries can never be matched back.
+    private readonly ledger: RegulatedLedgerService,
   ) {}
 
   /**
@@ -1891,6 +1896,14 @@ export class CustomersService {
         select: { id: true },
       });
       const invoiceIds = invoices.map((i) => i.id);
+      // DEFENSIVE, and deliberately not dead code: this path is only reached
+      // when the pre-flight counted ZERO invoices, but that count is read
+      // OUTSIDE this transaction, so an invoice created in between would be
+      // destroyed here. Reversing keeps the file-wide invariant uniform —
+      // every invoice destruction reverses its ledger entries first.
+      for (const invoiceId of invoiceIds) {
+        await this.ledger.reverseInvoiceEntries({ invoiceId, db: tx });
+      }
       if (invoiceIds.length)
         await tx.invoicePayment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
 
@@ -2120,6 +2133,17 @@ export class CustomersService {
         });
         const invoiceIds = invoices.map((i) => i.id);
         if (invoiceIds.length) {
+          // Reverse each invoice's regulated-sales ledger rows BEFORE its items
+          // are removed. The ledger keeps its own snapshot and has no FK to
+          // Invoice, so an invoice destroyed without this leaves entries that
+          // permanently overstate regulated sales and excise. Same ordering and
+          // shape as invoices.service deleteInvoice. NOTE: a DRAFT invoice DOES
+          // carry ledger rows — createSplitInvoices writes them at creation,
+          // before the DRAFT is ever sent — so filtering by status here would
+          // reintroduce the leak.
+          for (const invoiceId of invoiceIds) {
+            await this.ledger.reverseInvoiceEntries({ invoiceId, db: tx });
+          }
           await tx.invoicePayment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
           await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
         }
@@ -2279,6 +2303,17 @@ export class CustomersService {
         });
         const invoiceIds = invoices.map((i) => i.id);
         if (invoiceIds.length) {
+          // Reverse each invoice's regulated-sales ledger rows BEFORE its items
+          // are removed. The ledger keeps its own snapshot and has no FK to
+          // Invoice, so an invoice destroyed without this leaves entries that
+          // permanently overstate regulated sales and excise. Same ordering and
+          // shape as invoices.service deleteInvoice. NOTE: a DRAFT invoice DOES
+          // carry ledger rows — createSplitInvoices writes them at creation,
+          // before the DRAFT is ever sent — so filtering by status here would
+          // reintroduce the leak.
+          for (const invoiceId of invoiceIds) {
+            await this.ledger.reverseInvoiceEntries({ invoiceId, db: tx });
+          }
           await tx.invoicePayment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
           await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
         }
