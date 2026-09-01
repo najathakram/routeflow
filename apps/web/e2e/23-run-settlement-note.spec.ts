@@ -163,7 +163,13 @@ test.describe("Run settlement visibility (F05 / B167)", () => {
       page.locator("#main-content").getByRole("heading", { name: routeName }),
     ).toBeVisible({ timeout: 20_000 });
 
-    const settlementHeading = page.getByRole("heading", { name: "Settlement" });
+    // ⚠️ exact:true is load-bearing. Playwright's `name` match is substring-based,
+    // and this spec's OWN fixture route is called "E2E B167 Settlement <suffix>",
+    // so a loose match also selects that h1 — plus one more for every fixture a
+    // failed run leaked, which is how this resolved to 3 elements and failed
+    // strict mode post-deploy. Same class as OP-09c/OP-11b: a spec must not be
+    // broken by the fixtures it creates. The Card title is literally "Settlement".
+    const settlementHeading = page.getByRole("heading", { name: "Settlement", exact: true });
     await expect(settlementHeading).toBeVisible({ timeout: 15_000 });
     // Card renders its `title` as an <h3> sibling of the content that follows it
     // in the same wrapper div (packages/ui/src/web/Card.tsx) — the direct parent
