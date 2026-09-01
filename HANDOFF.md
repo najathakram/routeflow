@@ -1,5 +1,108 @@
 # HANDOFF — current state & what to pick up next
 
+> # ▶️ MULTI-SESSION STATE — MERGE #580 FIRST (2026-09-01, master `df1ef9a3`)
+>
+> Several sessions ran concurrently today and the repo state is not obvious from any one of
+> them. This banner is the reconciled picture, verified against `origin/master` — not a single
+> session's view.
+>
+> **Ledger on master: 193 rows — 35 `done`, 2 `already-fixed`, 156 `queued`.** PR #580 takes
+> `done` to 43. Shipped: F00, F01, F02 (9), F03 (9), F04 (3), **F05 (5)**, F06 (6), F17 (4),
+> F30 (12). **B167 is the only row mid-flight** (`proven-pending-deploy`).
+>
+> ## 1. FIRST ACTION — merge #580, then discharge B167
+>
+> **PR #580** (`docs/status-refresh`, MERGEABLE) fixes B167's post-deploy e2e failure, flips
+> F05's four T1 rows to `done`, and refreshes this file. Merge it, wait for the
+> deployment_status-triggered e2e, and only then flip **B167 → `done`**. Do not discharge B167
+> on the strength of the fix alone.
+>
+> ⚠️ **The B167 failure was the SPEC, not the product.**
+> `getByRole("heading", { name: "Settlement" })` resolved to 3 elements: Playwright matches
+> accessible names by SUBSTRING, and the fixture route was named `E2E B167 Settlement <ts>`,
+> which renders as an `<h1>` in both the shell banner and `#main-content`. **The failure output
+> is itself the proof the feature works** — element 3 was `<h3>Settlement</h3>` on a COMPLETED
+> run's detail page, exactly what B167 requires. #580 fixes it with `exact: true`. Two comments
+> on #580 carry a further belt-and-braces step worth folding in: **rename the fixture** to
+> `E2E B167 Run <ts>` so the colliding word is gone entirely rather than merely dodged.
+>
+> ## 2. Open PRs — and the collision to sequence
+>
+> | PR       | Branch                         | State         | What                                                               |
+> | -------- | ------------------------------ | ------------- | ------------------------------------------------------------------ |
+> | **#580** | `docs/status-refresh`          | **MERGEABLE** | B167 fix + F05 ledger + handoff. **Merge first.**                  |
+> | #579     | `docs/handoff-f17-session`     | CONFLICTING   | F17 handoff close-out — **also rewrites this file**                |
+> | #574     | `dependabot/…e1a987a042`       | UNKNOWN       | 16 dep bumps — recheck lock counts + the `react-test-renderer` pin |
+> | #571     | `chore/lessons-learned-system` | CONFLICTING   | lessons register + `stop.mjs` hook; touches `_meta.json`           |
+> | ~~#575~~ | `fix/F05-b167-e2e-selector`    | CLOSED        | superseded by #580 (F05 session's duplicate of the same fix)       |
+>
+> ⚠️ **Three PRs were competing to rewrite HANDOFF.md** (#575, #579, #580). #575 is closed;
+> **#579 and #580 still collide.** Sequence them deliberately — do not let a rebase pick a winner.
+>
+> ## 3. Worktrees — live vs prunable, and an ancestry trap
+>
+> | Worktree      | Branch                         | Status                                             |
+> | ------------- | ------------------------------ | -------------------------------------------------- |
+> | main checkout | `chore/lessons-learned-system` | **LIVE**, uncommitted work — ⚠️ do not commit here |
+> | `rf-docs`     | `docs/status-refresh`          | **LIVE** — #580's session                          |
+> | `rf-F05`      | `docs/multi-session-state`     | this banner's branch                               |
+> | `rf-F06`      | `master`                       | idle, reusable                                     |
+> | `rf-F03`      | `fix/F03-payment-truth`        | **prunable** — landed in #564                      |
+> | `rf-F17`      | `fix/F17-import-robustness`    | **prunable** — landed in #566                      |
+>
+> ⚠️ **rf-F03 and rf-F17 look unmerged and are NOT.** `git log master..branch` shows 8 and 5
+> commits because squash-merge rewrote the SHAs. **And the three-dot `git diff master...branch`
+> is equally misleading here** — the merge-base is ancient, so it reports thousands of
+> already-landed lines. Verify by CONTENT: `scripts/repair-f03.mjs`,
+> `apps/web/e2e/22-payment-truth.spec.ts`, `scripts/repair-f17.mjs` and
+> `apps/web/e2e/26-import-duplicates.spec.ts` are all on master.
+>
+> ## 4. Two campaign-wide traps — each cost a failed run today
+>
+> - ⚠️ **`npx playwright test --list` POISONS the campaign artifact.** It writes
+>   `.campaign/runs/web-e2e.json` as an **all-skipped** report, so the whole-ledger
+>   `campaign-check` then fails on OTHER batches' T2 rows (it produced a confusing red on
+>   F02b's B24/B130/B154, discharged weeks earlier). **Always `--list --reporter=list`.**
+> - ⚠️ **After a rebase that pulls in another batch's ledger rows, regenerate the jest JSON
+>   before pushing.** Rebasing onto F06 made the pre-push `campaign-check` **reject the push**
+>   for B47/B51/B60/B63/B78 — F06's tokens were in the ledger but not in the stale local
+>   artifact. `cd apps/api && npx jest --json --outputFile=../../.campaign/runs/api.json`.
+>
+> Same root cause both times: **the gate reads run artifacts, so a stale artifact reads as an
+> undischarged claim.** Both are documented in F05's build-plan.
+>
+> ## 5. Small, queued, not started
+>
+> `apps/mobile/.tmpjest/` (dev-pipeline probe scratch) is **not gitignored** — it shows as `??`,
+> so a `git add -A` would commit throwaway probes. Add it to root `.gitignore` beside
+> `.campaign/` (:109) and `local-assets/` (:105). **Do not delete the files — a live session may
+> be using them.**
+>
+> ## 6. F05 shipped — what the next routes batch inherits
+>
+> **#569 → master `86844f88`**, both Railway services SUCCESS, `post-deploy-check` green,
+> `feature-smoke` green (91/91 on re-runs; the FIRST run reported 1 failure in S1–S5, none of
+> which touch routes/settlement, and two of those sections are first-run-vs-rerun sensitive —
+> recorded rather than buried). **G7 delivered:** `RUN_LINE_ITEMS_SELECT` is the single run-read
+> lineItems select — **F10/F11/F12/F22 extend that const, never re-inline the literal.**
+>
+> ⚠️ **The register missed the real settlement bypass:** RF-016 auto-complete inside
+> `completeStop`/`completeWithPayment` flips a run COMPLETED in its own tx, so gating
+> `updateRunStatus` alone would never have fired on the common path. All three paths now carry
+> the predicate. ⚠️ **B148 was the reachability blocker** — every stop completion 400'd on a
+> DTO/payload mismatch, so no money fix was reachable until it landed.
+>
+> **F11 inherits two gates F05 deliberately did not take** (found by the Fable final pass): the
+> CANCEL path and `deleteRun` can still close or destroy a cash-carrying run unsettled.
+> `settleRun` now accepts CANCELLED post-hoc so the money is never _stranded_, but nothing
+> forces reconciliation there. Full write-up is on F11's fix-card.
+>
+> **Next per the schedule:** F07 on track A; F10 in the routes lane behind F05.
+>
+> ---
+>
+> <details><summary>Previous banner (F03 + F17 shipped, F05 in flight)</summary>
+>
 > # ▶️ CAMPAIGN RESUMED — F03 + F17 SHIPPED, F05 IN FLIGHT (2026-09-01)
 >
 > The pause below was lifted by the owner. Since it was written: **F03 SHIPPED** (#564, master
@@ -91,6 +194,8 @@ batch with an e2e (no web unit runner). (2) **B99's repair flight is owed post-d
 >
 > Register artifact `310ae33a…` is CURRENT. The user-guide artifact `cae40575…` is
 > shared-not-owned — guide changes must be flagged to the owner.
+
+> </details>
 
 **Written:** 2026-09-01 · **Visibility:** ⚠️ **PUBLIC by owner directive until the campaign completes** (do NOT flip private mid-campaign; the final flip is the owner's if the session dies) · **Campaign:** `W-serial (D6: merge as ready, no windows) · F00+F01+F02(9)+F04(3)+F30(12)+F03(9)+F17(4) SHIPPED LIVE · F05(5)+F06(6) SHIPPED LIVE · 39/193 at F06's discharge · next: F07 track A (⚠️ F06 filed B208 in F07's file region: honour STORED MANUAL overrides on the buyer merge, never client ones), F10 behind F05 in the routes lane`. Owner delegations ACTIVE (.claude/campaign/DECISIONS.md D1–D6 + memory): Fable review replaces owner approval except system-harm/client-data risk; merge-as-ready any hour; repair-as-we-go per batch; repo stays public. ⚠️ Register debt SETTLED — keep it settled: every batch updates the register in its own close-out.
 
