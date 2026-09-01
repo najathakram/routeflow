@@ -261,7 +261,10 @@ export default function OrderDetailScreen() {
         .then((impact) => {
           const copy = describeCancelImpact(impact);
           if (copy.blockedReason) {
-            confirm("Can't cancel yet", copy.blockedReason, () => {}, { confirmText: "OK" });
+            // B56: the title is reason-aware ("Can't cancel yet" for money that
+            // must be refunded, "Can't cancel" for goods already delivered) — a
+            // hardcoded title contradicts the body copy it sits above.
+            confirm(copy.title, copy.blockedReason, () => {}, { confirmText: "OK" });
             return;
           }
           const body = [`Order ${order.orderNumber ?? ""} will be cancelled.`, ...copy.lines]

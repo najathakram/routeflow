@@ -3401,6 +3401,17 @@ export class InvoicesService {
           where: { id },
           data: { status: nextStatus, sentAt: new Date() },
         });
+        // B108: make the "send() catches up" comment above actually true. An
+        // operator's explicit-amount OrderCreditNote intents are settled HERE,
+        // at their recorded amount, before the oldest-first sweep runs.
+        // settleOrderCreditsInTx clamps to the remaining balance, so money can
+        // never move twice even if it already ran (e.g. at order-create time).
+        // The explicitIds exclusion just below is deliberately KEPT — settling
+        // an explicit intent doesn't change that the sweep must still never
+        // override it.
+        if (updated.orderId) {
+          await this.creditNotes.settleOrderCreditsInTx(tx, updated.orderId);
+        }
         // An operator's EXPLICIT-amount order selection must not be overridden by the
         // oldest-first sweep; null-amount intents are already settled and clamp to 0.
         const explicitIds = updated.orderId
@@ -3596,6 +3607,17 @@ export class InvoicesService {
           where: { id },
           data: { status: nextStatus, sentAt: new Date() },
         });
+        // B108: make the "send() catches up" comment above actually true. An
+        // operator's explicit-amount OrderCreditNote intents are settled HERE,
+        // at their recorded amount, before the oldest-first sweep runs.
+        // settleOrderCreditsInTx clamps to the remaining balance, so money can
+        // never move twice even if it already ran (e.g. at order-create time).
+        // The explicitIds exclusion just below is deliberately KEPT — settling
+        // an explicit intent doesn't change that the sweep must still never
+        // override it.
+        if (updated.orderId) {
+          await this.creditNotes.settleOrderCreditsInTx(tx, updated.orderId);
+        }
         // An operator's EXPLICIT-amount order selection must not be overridden by the
         // oldest-first sweep; null-amount intents are already settled and clamp to 0.
         const explicitIds = updated.orderId

@@ -11,6 +11,13 @@ export interface CancelImpactLike {
   advanceToRestore: number;
   blockingPayments: Array<{ invoiceNumber: string; amount: number }>;
   canCancel: boolean;
+  /**
+   * B56: units already delivered. OPTIONAL on purpose — a client build can be
+   * older or newer than the API that answers it, and an absent field must read
+   * as "no delivered goods" rather than crash the only warning an operator gets
+   * before live invoices are voided.
+   */
+  deliveredUnits?: number;
 }
 
 const money = (n: number) => `$${Number(n).toFixed(2)}`;
@@ -38,14 +45,35 @@ export function describeCancelImpact(impact: CancelImpactLike | undefined): Canc
   }
 
   if (!impact.canCancel) {
-    const detail = impact.blockingPayments
-      .map((b) => `${money(b.amount)} on ${b.invoiceNumber || "an invoice"}`)
-      .join(", ");
+    if (impact.blockingPayments.length > 0) {
+      const detail = impact.blockingPayments
+        .map((b) => `${money(b.amount)} on ${b.invoiceNumber || "an invoice"}`)
+        .join(", ");
+      return {
+        title: "Can't cancel yet",
+        lines: [],
+        // Cash already left the customer's hands; only a human can give it back.
+        blockedReason: `This order has been paid: ${detail}. Refund or reverse that payment first, then cancel.`,
+        confirmLabel: null,
+      };
+    }
+
+    if ((impact.deliveredUnits ?? 0) > 0.001) {
+      return {
+        title: "Can't cancel",
+        lines: [],
+        // Goods already handed over; a cancel would erase revenue the customer
+        // already has the product for. A return handles the delivered portion.
+        blockedReason:
+          "Some items on this order have already been delivered. Record a return for the delivered goods, or edit the order down to the undelivered items instead of cancelling.",
+        confirmLabel: null,
+      };
+    }
+
     return {
-      title: "Can't cancel yet",
+      title: "Can't cancel",
       lines: [],
-      // Cash already left the customer's hands; only a human can give it back.
-      blockedReason: `This order has been paid: ${detail}. Refund or reverse that payment first, then cancel.`,
+      blockedReason: "This order can't be cancelled right now.",
       confirmLabel: null,
     };
   }

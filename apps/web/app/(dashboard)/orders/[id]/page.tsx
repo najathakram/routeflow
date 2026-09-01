@@ -2224,6 +2224,16 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   );
   const editTotal = editSubtotal + editTax + orderCategoryTax + editShippingFee;
 
+  // B64: cancelling an order now marks every surviving line CANCELLED, so the
+  // usual "active lines" filter would report "Line items 0 / Total quantity 0"
+  // beside the order's real money totals. On a cancelled order every line IS
+  // cancelled, so the filter carries no information there — show what the order
+  // contained instead of nothing.
+  const summaryLineItems =
+    order.status === "CANCELLED"
+      ? order.lineItems
+      : order.lineItems.filter((li) => li.status !== "CANCELLED");
+
   return (
     <div className="space-y-5 p-6">
       {/* Back */}
@@ -2288,10 +2298,14 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             </Button>
           )}
 
-          {/* P5-08: editing closed once the order is out for delivery (dispatched). */}
-          {!canEdit && order?.editWindow?.closedReason === "DISPATCHED" && !isEditing && (
+          {/* P5-08 / R1: staff editing closes only once the order is CANCELLED
+              ("STATUS"); the buyer-facing window instead closes once dispatched
+              ("DISPATCHED") — see the canEdit comment above. Either reason shows here. */}
+          {!canEdit && order?.editWindow?.closedReason && !isEditing && (
             <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
-              Out for delivery — editing closed
+              {order.editWindow.closedReason === "DISPATCHED"
+                ? "Out for delivery — editing closed"
+                : "Order cancelled — editing closed"}
             </span>
           )}
 
@@ -3217,18 +3231,12 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
               )}
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Line items</dt>
-                <dd className="mono font-medium text-navy">
-                  {order.lineItems.filter((li) => li.status !== "CANCELLED").length}
-                </dd>
+                <dd className="mono font-medium text-navy">{summaryLineItems.length}</dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Total quantity</dt>
                 <dd className="mono font-medium text-navy">
-                  {formatQty(
-                    order.lineItems
-                      .filter((li) => li.status !== "CANCELLED")
-                      .reduce((s, li) => s + Number(li.qty), 0),
-                  )}
+                  {formatQty(summaryLineItems.reduce((s, li) => s + Number(li.qty), 0))}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-3">

@@ -396,5 +396,25 @@ export default defineConfig({
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
+
+    // ── Cancelled-order "editing closed" banner (F07, spec 27) ────────────────
+    // REG-B10: the operator order-detail page must explain WHY the edit window
+    // is closed on a CANCELLED order ("Order cancelled — editing closed")
+    // instead of silently dropping the Edit Items button. The server already
+    // emits editWindow.closedReason "STATUS"; only the page's render condition
+    // is wrong, so this has no jest half — it is R17's ONLY proof.
+    // Mutating but self-contained: it creates its own throwaway `E2E B10 …`
+    // customer + product + PENDING order on the approved seed tenant and
+    // API-deletes the order in a `finally`, pass or fail. NOT part of F07's red
+    // gate — it runs only against the DEPLOYED site and is expected red until
+    // F07 ships.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "cancelled-edit-banner",
+      testMatch: /27-cancelled-edit-banner\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
   ],
 });

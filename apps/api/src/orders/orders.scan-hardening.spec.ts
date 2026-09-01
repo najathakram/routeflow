@@ -75,6 +75,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { normalizeBoxesPieces } from "../common/pricing";
 import { normalizeScanCode } from "../common/barcode-normalize";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -212,6 +213,11 @@ async function buildOrdersService(
         },
       },
       { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
+      // B65: deleteOrder's per-invoice teardown reverses regulated-ledger entries.
+      {
+        provide: RegulatedLedgerService,
+        useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+      },
     ],
   }).compile();
 
