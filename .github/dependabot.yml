@@ -58,6 +58,19 @@ updates:
       # sanitize with allowedTags: [], allowedAttributes: {}).
       - dependency-name: "sanitize-html"
         update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+      # react-test-renderer must move in LOCKSTEP with apps/mobile's `react`, which
+      # is pinned exact to Expo SDK 55's bundledNativeModules (react 19.2.0). PR
+      # #546 offered rtr 19.2.8, whose peer is `react: ^19.2.8` — unsatisfiable
+      # without moving react off the SDK pin, so npm resolves it by forking a
+      # SECOND nested copy under jest-expo: two renderers against one React, and
+      # the lock-edge validator's peer count goes 4 -> 5. Neither gate can fail on
+      # it (the validator reports peers without erroring, and `npm ci` installs the
+      # lock verbatim without re-resolving peers), so it would land silently.
+      # ⚠️ Do NOT drop this ignore or the pin as "redundant" — @testing-library/
+      # react-native carries its own react-test-renderer peer. Unpin only as part
+      # of an Expo SDK upgrade that moves `react`, and bump both together.
+      - dependency-name: "react-test-renderer"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
