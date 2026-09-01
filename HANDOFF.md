@@ -1,43 +1,51 @@
 # HANDOFF — current state & what to pick up next
 
-> # ▶️ MULTI-SESSION STATE — MERGE #580 FIRST (2026-09-01, master `df1ef9a3`)
+> # ▶️ MULTI-SESSION STATE — #580 MERGED, B167 AWAITING ITS E2E (2026-09-01, master `0771a9d9`)
 >
 > Several sessions ran concurrently today and the repo state is not obvious from any one of
 > them. This banner is the reconciled picture, verified against `origin/master` — not a single
-> session's view.
+> session's view. It is maintained by the merge-coordinator session running the train
+> **#580 → B167 discharge → #581 → #579 → #571 → #574**.
 >
-> **Ledger on master: 193 rows — 35 `done`, 2 `already-fixed`, 156 `queued`.** PR #580 takes
-> `done` to 43. Shipped: F00, F01, F02 (9), F03 (9), F04 (3), **F05 (5)**, F06 (6), F17 (4),
-> F30 (12). **B167 is the only row mid-flight** (`proven-pending-deploy`).
+> **Ledger after #580: 193 rows — 45 `done`, 2 `already-fixed`, 1 `proven-pending-deploy`
+> (B167), 145 `queued`** — counted off the shards, not carried forward from an earlier banner.
+> Shipped: F00, F01, F02 (9), F03 (9), F04 (3), **F05 (5)**, F06 (6), F17 (4), F30 (12).
+> **B167 is the only row mid-flight.**
 >
-> ## 1. FIRST ACTION — merge #580, then discharge B167
+> ## 1. FIRST ACTION — discharge B167 once its e2e is green
 >
-> **PR #580** (`docs/status-refresh`, MERGEABLE) fixes B167's post-deploy e2e failure, flips
-> F05's four T1 rows to `done`, and refreshes this file. Merge it, wait for the
-> deployment_status-triggered e2e, and only then flip **B167 → `done`**. Do not discharge B167
-> on the strength of the fix alone.
+> **PR #580 is MERGED** (master `0771a9d9`): it fixed B167's post-deploy e2e failure, flipped
+> F05's four T1 rows to `done`, and refreshed this file. Its diff touches `apps/web/**`, so
+> Railway redeploys web and the **e2e fires itself off the deployment_status signal — do not
+> dispatch it.** Only on a genuinely green run does **B167 → `done`** (via a small chore PR
+> carrying the run id as `dischargeEvidence`). Do not discharge it on the strength of the fix
+> alone.
 >
 > ⚠️ **The B167 failure was the SPEC, not the product.**
 > `getByRole("heading", { name: "Settlement" })` resolved to 3 elements: Playwright matches
 > accessible names by SUBSTRING, and the fixture route was named `E2E B167 Settlement <ts>`,
 > which renders as an `<h1>` in both the shell banner and `#main-content`. **The failure output
 > is itself the proof the feature works** — element 3 was `<h3>Settlement</h3>` on a COMPLETED
-> run's detail page, exactly what B167 requires. #580 fixes it with `exact: true`. Two comments
-> on #580 carry a further belt-and-braces step worth folding in: **rename the fixture** to
-> `E2E B167 Run <ts>` so the colliding word is gone entirely rather than merely dodged.
+> run's detail page, exactly what B167 requires. #580 shipped **both** halves: `exact: true` on
+> the assertion **and** the fixture renamed to `E2E B167 Run <ts>` (salvaged from closed #575),
+> so the colliding word is gone rather than merely dodged — the rename alone would not have
+> covered fixtures leaked by earlier failed runs, which is why both landed.
 >
 > ## 2. Open PRs — and the collision to sequence
 >
-> | PR       | Branch                         | State         | What                                                               |
-> | -------- | ------------------------------ | ------------- | ------------------------------------------------------------------ |
-> | **#580** | `docs/status-refresh`          | **MERGEABLE** | B167 fix + F05 ledger + handoff. **Merge first.**                  |
-> | #579     | `docs/handoff-f17-session`     | CONFLICTING   | F17 handoff close-out — **also rewrites this file**                |
-> | #574     | `dependabot/…e1a987a042`       | UNKNOWN       | 16 dep bumps — recheck lock counts + the `react-test-renderer` pin |
-> | #571     | `chore/lessons-learned-system` | CONFLICTING   | lessons register + `stop.mjs` hook; touches `_meta.json`           |
-> | ~~#575~~ | `fix/F05-b167-e2e-selector`    | CLOSED        | superseded by #580 (F05 session's duplicate of the same fix)       |
+> | PR       | Branch                         | State        | What                                                               |
+> | -------- | ------------------------------ | ------------ | ------------------------------------------------------------------ |
+> | ~~#580~~ | `docs/status-refresh`          | **MERGED**   | B167 fix + fixture rename + F05 ledger + handoff (`0771a9d9`)      |
+> | **#581** | `docs/multi-session-state`     | in the train | **this banner** — rebased onto `0771a9d9` with corrected counts    |
+> | #579     | `docs/handoff-f17-session`     | CONFLICTING  | F17 handoff close-out — **also rewrites this file**                |
+> | #571     | `chore/lessons-learned-system` | CONFLICTING  | lessons register + `stop.mjs` hook; **also rewrites this file**    |
+> | #574     | `dependabot/…e1a987a042`       | MERGEABLE    | 16 dep bumps — recheck lock counts + the `react-test-renderer` pin |
+> | ~~#575~~ | `fix/F05-b167-e2e-selector`    | CLOSED       | superseded by #580 (its fixture rename was salvaged)               |
 >
-> ⚠️ **Three PRs were competing to rewrite HANDOFF.md** (#575, #579, #580). #575 is closed;
-> **#579 and #580 still collide.** Sequence them deliberately — do not let a rebase pick a winner.
+> ⚠️ **FOUR PRs have competed to rewrite HANDOFF.md**, not three: #575 (closed), #580 (merged),
+> #579, and **#571 — which carries the entire Android publish-readiness banner** (commit
+> `1c81e2e4`). Sequence them deliberately and preserve each one's unique content — do not let a
+> rebase pick a winner.
 >
 > ## 2b. ⚠️ The Android publish-readiness session — a DECIDED, UNSTARTED fix PR
 >
@@ -69,21 +77,28 @@
 >
 > ## 3. Worktrees — live vs prunable, and an ancestry trap
 >
-> | Worktree      | Branch                         | Status                                             |
-> | ------------- | ------------------------------ | -------------------------------------------------- |
-> | main checkout | `chore/lessons-learned-system` | **LIVE**, uncommitted work — ⚠️ do not commit here |
-> | `rf-docs`     | `docs/status-refresh`          | **LIVE** — #580's session                          |
-> | `rf-F05`      | `docs/multi-session-state`     | this banner's branch                               |
-> | `rf-F06`      | `master`                       | idle, reusable                                     |
-> | `rf-F03`      | `fix/F03-payment-truth`        | **prunable** — landed in #564                      |
-> | `rf-F17`      | `fix/F17-import-robustness`    | **prunable** — landed in #566                      |
+> All worktrees are **clean** (no uncommitted work anywhere) as of this banner. What matters is
+> which have a **live session** attached — never remove one of those; message its session instead.
+>
+> | Worktree      | Branch                                       | Status                                        |
+> | ------------- | -------------------------------------------- | --------------------------------------------- |
+> | main checkout | `fix/mobile-google-signin-sdk55`             | **LIVE** — the Android session, mid-edit      |
+> | `rf-F07`      | `fix/F07-order-lifecycle-stock-conservation` | **LIVE** — F07 batch (board #520)             |
+> | `rf-F10`      | `fix/F10-reopen-stop-state-guards`           | **LIVE** — F10 batch (board #523)             |
+> | `rf-F05`      | `docs/multi-session-state`                   | this banner's branch (#581)                   |
+> | `rf-docs`     | `docs/status-refresh`                        | #580 — MERGED; prunable once the train clears |
+> | `rf-F06`      | `master`                                     | idle, reusable                                |
+> | `rf-F17`      | `fix/F17-import-robustness`                  | **prunable** — landed in #566                 |
+> | ~~`rf-F03`~~  | ~~`fix/F03-payment-truth`~~                  | **PRUNED** 2026-09-01 — had landed in #564    |
 >
 > ⚠️ **rf-F03 and rf-F17 look unmerged and are NOT.** `git log master..branch` shows 8 and 5
 > commits because squash-merge rewrote the SHAs. **And the three-dot `git diff master...branch`
 > is equally misleading here** — the merge-base is ancient, so it reports thousands of
 > already-landed lines. Verify by CONTENT: `scripts/repair-f03.mjs`,
 > `apps/web/e2e/22-payment-truth.spec.ts`, `scripts/repair-f17.mjs` and
-> `apps/web/e2e/26-import-duplicates.spec.ts` are all on master.
+> `apps/web/e2e/26-import-duplicates.spec.ts` are all on master. rf-F03 was pruned on that
+> evidence; ⚠️ on Windows `git worktree remove` can die with `Filename too long` and leave a
+> half-deleted directory — mirror an empty dir over it with `robocopy /MIR`, then delete.
 >
 > ## 4. Two campaign-wide traps — each cost a failed run today
 >
@@ -99,12 +114,11 @@
 > Same root cause both times: **the gate reads run artifacts, so a stale artifact reads as an
 > undischarged claim.** Both are documented in F05's build-plan.
 >
-> ## 5. Small, queued, not started
+> ## 5. Small — ✅ done in this PR
 >
-> `apps/mobile/.tmpjest/` (dev-pipeline probe scratch) is **not gitignored** — it shows as `??`,
-> so a `git add -A` would commit throwaway probes. Add it to root `.gitignore` beside
-> `.campaign/` (:109) and `local-assets/` (:105). **Do not delete the files — a live session may
-> be using them.**
+> `apps/mobile/.tmpjest/` (dev-pipeline probe scratch) was **not gitignored**, so a `git add -A`
+> from any session would commit another session's throwaway probes. Added to root `.gitignore`
+> beside `.campaign/`. The files themselves are left alone — a live session may be using them.
 >
 > ## 6. F05 shipped — what the next routes batch inherits
 >
@@ -165,9 +179,10 @@ batch with an e2e (no web unit runner). (2) **B99's repair flight is owed post-d
 > stop completion.
 >
 > **State (verified against the ledger at this commit, 2026-09-01): 47 of 193 closed — 45 `done`
-> + 2 `already-fixed` LIVE (24.4%), plus B167 held at `proven-pending-deploy`. 145 queued across
-> 22 batches, 11 Criticals still open** (B46 B48 B52 B53 B54 B55 B56 B58 B59 B128 B129).
-> Complete: F00+F01 enablement, F02 (9), F03 (9), F04 (3), F05 (5), **F06 (6)**, F17 (4), F30 (12).
+>
+> - 2 `already-fixed` LIVE (24.4%), plus B167 held at `proven-pending-deploy`. 145 queued across
+>   22 batches, 11 Criticals still open** (B46 B48 B52 B53 B54 B55 B56 B58 B59 B128 B129).
+>   Complete: F00+F01 enablement, F02 (9), F03 (9), F04 (3), F05 (5), **F06 (6)**, F17 (4), F30 (12).
 >
 > ⚠️ **B167 is NOT discharged — its post-deploy e2e is RED and the cause is the spec, not the
 > product.** Run 33478558164: `23-run-settlement-note.spec.ts` fails strict mode because
