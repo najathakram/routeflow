@@ -1,5 +1,172 @@
 # HANDOFF — current state & what to pick up next
 
+> # 📱 ANDROID PUBLISH-READINESS + MAPS KEY (2026-09-01) — THE FIX PR IS NOW **PR #583**
+>
+> The session that produced this did **no code changes**. It produced a Google Maps key, an
+> on-device test of the real APK, and an 11-agent publish-readiness audit + release-engineering
+> research (all three adversarial lenses **refuted** the delivery plan and their corrections are
+> folded in below). The owner then **chose the fix scope**.
+>
+> ⚠️ **Status update (2026-09-01, later):** the decided scope below is **implemented as PR #583**
+> (`fix/mobile-google-signin-sdk55`, off master `0771a9d9`, pre-push verify green — 18/18 turbo
+> tasks, **0 cached**). Its own session owns rebasing it; **do not resolve its lockfile from
+> another session.** What is still owed is in the ⚠️ notes below — chiefly the EAS versionCode
+> seeding, which only the owner can do.
+>
+> ## ▶️ The decided fix scope (owner-approved 2026-09-01) — implemented in #583
+>
+> **One PR** — `fix(mobile): repair native Google Sign-In and align native modules to SDK 55`:
+>
+> 1. **OAuth defect (verified by hand, hard blocker).** `apps/mobile/app/(auth)/google-callback.tsx:47`
+>    and `:79` do `const { default: SecureStore } = await import("expo-secure-store")`. That package
+>    has **14 named exports and no default export** (confirmed in `build/SecureStore.js` _and_
+>    `build/SecureStore.d.ts`). The import is unconditional, so on native the `!isWeb` branch calls
+>    `getItemAsync`/`setItemAsync` on `undefined` → **Google Sign-In is completely broken on the
+>    native app**. Web is fine via the localStorage branch, which is why it was never seen. Fix:
+>    namespace import (`import * as SecureStore`), matching `lib/auth.ts:1`. Predates the B204 work.
+> 2. **Five native modules pinned pre-SDK-55** — the exact class that crashed the first APK (B203):
+>    `expo-location`→`~55.1.14`, `expo-task-manager`→`~55.0.20`, `expo-sharing`→`~55.0.24`,
+>    `@react-native-async-storage/async-storage`→`2.2.0`, `@react-native-community/netinfo`→`11.5.2`.
+>    ⚠️ **CORRECTED 2026-09-01 (verified at source, twice — this paragraph previously said the
+>    opposite): root `package.json` `overrides` pins NONE of the five.** It carries `react-native`,
+>    `react-native-reanimated`, `react-native-worklets`, `react-native-gesture-handler`,
+>    `react-native-screens`, `react-native-safe-area-context`, `react-native-maps`,
+>    `react-native-svg`, the jest family, `sanitize-html` and `standardwebhooks` — and nothing else.
+>    Editing root would have ADDED three pins the scope never asked for, so the change is
+>    **workspace-manifest-only**. `npx expo install --fix` is still WRONG here, but for the
+>    RN-family reason (it would move the modules root `overrides` DOES pin), not the stated one.
+>    ⚠️ Two of the five are deliberate **DOWNGRADES, not catch-ups**: master has async-storage at
+>    `^3.1.1` (ahead of SDK 55's bundled `2.2.0`) and netinfo at `^12.0.1` → `11.5.2`, both pinned
+>    for ABI alignment. Both still export a default at the pinned version, so their default imports
+>    stay correct — unlike `expo-secure-store` in item 1 — and tsc typechecks clean against the
+>    downgraded types.
+> 3. **Rider:** delete `react-native-worklets-core` — autolinked into the APK, **imported nowhere**
+>    (grep: zero source hits), absent from `bundledNativeModules.json`, and duplicates
+>    `react-native-worklets@0.7.4` — two JSI worklets runtimes installing at app init.
+> 4. **Rider:** add `"expo": { "install": { "exclude": ["jest", "@types/react"] } }` to
+>    `apps/mobile/package.json`. Without it `expo install --check` exits 1 forever (both are
+>    deliberately held), so it can never become a CI gate.
+> 5. **Versioning, same PR:** `app.json` `version` → **1.1.1**, **delete `android.versionCode`**;
+>    `eas.json` `cli.appVersionSource` → **`"remote"`**. Today `appVersionSource: "local"` + production
+>    `autoIncrement: true` is a **duplicate-versionCode generator** (cloud builds discard the local
+>    write; parallel worktrees can't see each other's) and Play rejects a reused versionCode outright.
+>    Safe here: the documented incompatibility is remote + `runtimeVersion: "nativeVersion"`; this repo
+>    uses `"appVersion"`.
+>
+>    🔴 **OWNER ACTION, and it blocks the next build — the counter seeding is NOT scriptable.**
+>    `eas build:version:set -p android` takes its value **ONLY from an interactive stdin prompt**;
+>    piping fails with `Input is required, but stdin is not readable.` The remote counter is
+>    **UNSEEDED** — EAS reports that the project with application ID `com.routeflow.mobile`
+>    "does not have any versionCode configured" — so **a build before seeding gets versionCode 1,
+>    below the installed 5, and is refused as a downgrade.** Answer **5** at the prompt; the next
+>    build is then 6.
+>
+> **Then rebuild WITH the Maps key** (owner choice). Owner runs this first — the assistant does not
+> transfer key values — pasting the key from the Cloud console:
+>
+> ```bash
+> npx eas-cli env:create --scope project --name EXPO_PUBLIC_GOOGLE_MAPS_API_KEY \
+>   --value PASTE_KEY_HERE --visibility sensitive \
+>   --environment preview --environment production --environment development
+> ```
+>
+> Then `eas build -p android --profile staging`. ⚠️ **Prove the key reached the artifact** —
+> `env:list` is not proof: with an empty value the config plugins _silently strip_
+> `com.google.android.geo.API_KEY` from the manifest (proven both ways via
+> `npx expo config --type introspect --json`). Check with
+> `aapt2 dump xmltree <apk> --file AndroidManifest.xml | grep -A2 geo.API_KEY`.
+> ⚠️ **The aapt2 check is not optional paranoia — it is the only proof.** On #583's branch
+> `expo config --type introspect` resolves the key to `""` locally, which is _exactly_ the state
+> in which the plugins strip the manifest entry without erroring. A silent strip and a correct
+> build look identical everywhere except in the artifact.
+>
+> ## 🗺️ Maps key — DONE except one read-back
+>
+> Google Cloud project **`routeflow-506615`** (trial: $300, 84 days left as of 2026-09-01).
+> **Enabled Maps SDK for Android** (was off) and created key **“RouteFlow Android (mobile)”** —
+> API restriction _Maps SDK for Android_ only, application restriction _Android apps_ =
+> `com.routeflow.mobile` + SHA-1 `CF:2E:92:09:74:68:49:08:F2:7E:61:C3:B8:02:47:09:89:DA:87:53`.
+> That fingerprint was **verified against the shipped binary**, not remembered: the APK was pulled
+> off the emulator and its v2 signing block parsed (it is v2-only, so `keytool -printcert -jarfile`
+> says “Not a signed jar file”, and no `apksigner` is installed) — script kept at
+> `scratchpad/apkcert.py`, SHA-256 `10:F7:5A:AE:…:25:57`.
+> ⚠️ **RESIDUAL:** the console hung when reopening the key, so the _application_ restriction was
+> never read back. 10-second check next time you're in there.
+> ⚠️ **NEVER touch the other key** (“Maps Platform API Key”, 4 APIs). Its Application restriction
+> **must stay `None`** — the API re-serves that same value to browsers at
+> `GET /public/places/config`, so it has both a server and a browser origin; restricting it repeats
+> the 2026-08-26 outage. Full three-key model + the stale `docs/plans/maps-key-split-note.md`
+> warning: memory `project_maps_key_architecture_2026-09-01`.
+>
+> ## 🧪 On-device test of the real APK (build 1ae45279, v1.1.0/5, targetSdk 36, minSdk 24)
+>
+> **Healthy.** Zero FATALs, zero ANRs, zero JS exceptions across the session; session persisted
+> across an emulator restart (B204 fix holds). Verified working: Home, Orders (search/filters/
+> drafts), New order → customer picker → order builder, **the scanner** (permission rationale →
+> live preview → torch → running total), the full More menu, Dispatch, Warehouse, Products.
+> **Not tested:** driver role (dev-gated behind `developer_mode`), customer/buyer role, tenant
+> dashboard (B95 unreachable), Invoices/Finance/Contacts, and barcode _decode_ (no scannable
+> target on an emulator — phone-only, still owed).
+> Minor findings: expo-blur `dimezisBlurView` selected with no `blurTarget` → blur silently falls
+> back to none on Android; camera preview doesn't fill its frame (white gaps top-left); Home says
+> “0 runs today” while its own “Routes today” list is populated and Dispatch says “No runs
+> scheduled today”.
+> Emulator recipe that works: `rf_test`, `-gpu angle_indirect`; screenshots need
+> `MSYS_NO_PATHCONV=1` for the device path **and a Windows-style local path** for `adb pull`.
+>
+> ## 🚧 12 HARD publish blockers (all reproduced at source; the false-blockers lens failed to kill any)
+>
+> Beyond the OAuth defect and the native pins above:
+> **Play will reject:** no privacy policy anywhere (and `apps/web/app/(auth)/signup/page.tsx:416,420`
+> already links `/terms` and `/privacy` — **both 404 today**); `ACCESS_BACKGROUND_LOCATION` requested
+> from a mount effect with no prominent disclosure — and it **cannot even be granted** on Android 11+
+> from a dialog chained off the foreground prompt, so it is Play's strictest review burden for a
+> non-functional capability (recommend `isAndroidBackgroundLocationEnabled: false` + blockedPermission);
+> **⚠️ two the audit initially MISSED** — Play Console **“App access” reviewer credentials** (the app is
+> 100% login-gated behind a company code, so review is auto-rejected without them) and
+> **`FOREGROUND_SERVICE_LOCATION` carries its own declaration** which dropping background location does
+> _not_ remove.
+> **Driver role non-functional:** B148 (stop completion always 400s — `deliveries[].productId` rejected
+> by nested whitelist validation), B49 (at-door totals re-derive `qty × unitPrice`, overcharging every
+> boxed line _including collected cash_), B128, B34.
+> **Data integrity:** B140 (sign-out never clears the query cache — next tenant sees the previous
+> tenant's figures), B137, B136.
+> Also owed regardless: `stopLocationTracking()` has exactly **one** caller (`route/index.tsx:137`) —
+> logout and the session-expired handler don't call it, so tracking outlives sign-out (B150).
+>
+> ## 📦 Release engineering — corrections that matter
+>
+> - **RouteFlow is NOT sideloaded-only.** `eas.json` `production` sets neither `distribution` nor
+>   `android`, so EAS defaults to **store / app-bundle (AAB)** → Play auto-update and the In-App
+>   Updates API _do_ apply once listed. Only `staging`/`preview` emit internal APKs — that's the
+>   fleet in hand today, not the destination. (An earlier statement in this session said the
+>   opposite; this is the corrected version.)
+> - **⚠️ `eas update` would have bricked every client.** It does **not** read `eas.json`
+>   build-profile `env` (build-only). It exports locally, loading `apps/mobile/.env`, which pins
+>   `EXPO_PUBLIC_API_URL=http://192.168.4.25:3000`; Babel statically inlines that into
+>   `lib/api-client.ts:7`. **Move publish-time env to EAS Environment Variables before ever running
+>   `eas update`.**
+> - `development` and `preview` declare **no `channel`**, so APKs from them can never receive an OTA.
+> - `eas update:rollback` **is not a command** — it's `update:republish` /
+>   `update:roll-back-to-embedded`, rollout via `eas channel:rollout`.
+> - Do **not** switch to `runtimeVersion: "fingerprint"`: `app.config.js` injects the Maps key into the
+>   resolved config, so the publish-time fingerprint won't match the binary's and updates reach zero
+>   devices silently.
+> - `.web.tsx` resolution means an OTA of #562 delivers **nothing** to a phone — its only channel was
+>   ever the Railway web deploy.
+> - **Playwright cannot drive a native app** — but `routeflowmobile-production` is a real public
+>   browser-drivable Expo-web export of the same codebase with **zero** assertions against it today
+>   (the only two references in `apps/web/e2e` rewrite that host to the API host). Cheapest win
+>   available. Note its nginx SPA fallback returns HTML for `/api/health`, so the existing sha gate
+>   can't be reused as-is. `@testing-library/react-native` + `jest-expo` are **already installed and
+>   unused** (the pyramid's middle is empty) — but a naive second Jest project throws
+>   `ReferenceError: … outside of the scope of the test code` on root-hoisted `expo`.
+> - `lib/sentry.ts` is the **web** SDK, sets no `release`, no session tracking → no release health.
+>   Play's own gates: 1.09% user-perceived crash, 0.47% ANR.
+>
+> Full audit + research (11 agents, 75 sources) in the workflow transcript:
+> `.../subagents/workflows/wf_c465d48c-385/journal.jsonl`.
+
 > # ▶️ MULTI-SESSION STATE — F05 FULLY CLOSED, B167 DISCHARGED (2026-09-01, master `896d5f7e`)
 >
 > Several sessions ran concurrently today and the repo state is not obvious from any one of
@@ -351,10 +518,12 @@ batch with an e2e (no web unit runner). (2) **B99's repair flight is owed post-d
 >
 > ## Owner-blocked (nothing I can do)
 >
-> - **Expo build** — F30's mobile scan fixes are merged but only reach devices via a build; the
->   server half is live and stricter, so old clients are safe meanwhile. Client retest after.
-> - **GitHub Actions billing** for private minutes — until fixed, every CI green needs the repo
->   PUBLIC, which it already is per the standing directive.
+> - ~~**Expo build**~~ **DONE 2026-08-31/09-01** — first native APK ever built (#563 config, #565
+>   two launch blockers), latest is build `1ae45279`, emulator-verified. Mobile-web scan fix is live
+>   (#562). What's left is the owner pasting the Maps key into EAS + a rebuild — see the 2026-09-01
+>   banner at the top. Client retest round 1 (mobile web) still owed; round 2 (native) after rebuild.
+> - **GitHub Actions billing** for private minutes — until fixed, every CI green needs the public
+>   window and the repo stays PUBLIC per the standing directive.
 > - **Final flip to private** when the campaign closes.
 > - **RLS arming** (D3) stays parked at `prisma/deferred-rls/`; 15 tables still hold NULL-tenant rows.
 > - **Policy-layer proposal** (artifact `b3592216…`) — four asks still open.

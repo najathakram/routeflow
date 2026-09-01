@@ -135,6 +135,19 @@
 
 ## testing
 
+### L-025 · 2026-09-01 · testing
+
+- **Symptom:** native Google Sign-In had been dead the whole time — the callback destructured a
+  `default` export `expo-secure-store` does not have, so token storage threw on every device.
+- **Root cause:** the throw sits inside a `!isWeb` branch. Every automated surface runs the web
+  build, which takes the `localStorage` branch, so nothing ever executed the failing line. This is
+  narrower than L-019: no native *module* misbehaved — ordinary JS was shielded by a platform
+  conditional.
+- **Lesson:** **A `Platform`/`isWeb` branch is untested code unless something runs that platform.
+  When you touch one side of such a branch, either exercise the other side or state plainly that
+  it is unverified.**
+- **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
+
 ### L-014 · 2026-08-31 · testing · #562
 
 - **Symptom:** two mutation probes survived a green suite.
@@ -228,6 +241,19 @@
 - **Guard:** invoices spec "does NOT double-count a price override".
 
 ## security
+
+### L-024 · 2026-09-01 · security
+
+- **Symptom:** the obvious plan — restrict the one Maps key to the Android app — would have taken
+  down server geocoding, address autocomplete and every browser map at once.
+- **Root cause:** one key served three call origins (Android app, Railway server, browser), and a
+  cloud API key accepts exactly **one** application-restriction type. The key had to stay
+  unrestricted because the API deliberately re-serves it to browsers at runtime.
+- **Lesson:** **One credential per call origin. Before restricting any shared key, enumerate who
+  calls it and from where — a key with both a server and a browser origin can carry no application
+  restriction at all until the callers are split.**
+- **Guard:** three-key model recorded in memory `project_maps_key_architecture_2026-09-01`;
+  `docs/plans/maps-key-split-note.md` is STALE and must not be followed verbatim.
 
 ### L-023 · 2026-07 · security
 
