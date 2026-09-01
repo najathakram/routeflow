@@ -385,8 +385,8 @@ homeAddress` (the driver-home origin), and orders inherit `fulfillPath` from the
 
 ### `orders/`
 
-> 🔧 **IN-FLIGHT (branch `fix/F06-update-order-items-authorization-line-build`, campaign batch F06 —
-> NOT on master, no migration).** Six register bugs in `updateOrderItems` (now L2735-3856) and its
+> **F06 updateOrderItems authorization + line build (2026-09-01, batch F06 — no migration).**
+> Six register bugs in `updateOrderItems` (now L2735-3856) and its
 > buyer-portal caller. New pure module **`orders/merge-items.ts`** — F30's `foldMergeItems` +
 > `deriveUnitsPerBox` MOVED out of `orders.controller.ts` byte-identical (staff `POST /orders` merge
 > unchanged, still pinned by REG-B199) plus TWO new denomination normalizers, because a box-UNAWARE
@@ -408,8 +408,21 @@ homeAddress` (the driver-home origin), and orders inherit `fulfillPath` from the
 > strikethrough base or who authorized the price); B78 new
 > `applyBuyerMergeHeader` carries notes/urgent/date onto a merged order. ⚠️ The register's B60 premise
 > was WRONG — `loadActivePromotions` is `[]` for staff by design (P5-04), so the "PROMO priced at full
-> price" case is unreachable; the real defect is replace-all destroying the snapshot. Full entry +
-> `mappedSha` land at close-out once proven.
+> price" case is unreachable; the real defect is replace-all destroying the snapshot.
+> ⚠️ **The B60 counterpart map is keyed to UNAMBIGUOUS pairs only** — exactly one pre-edit line AND
+> one incoming line for that product. An order may legitimately hold several lines of one product and
+> a `replaceAll` payload carries no line ids, so a productId-keyed map handed the snapshot (and the
+> override attribution) to a sibling that never earned one: two prod-X lines echoed by a no-op save
+> billed the second `5.00 x (5-1) = 20.00` instead of `25.00`. There is no sound N-to-N mapping to
+> recover, so any other shape falls through to the pre-F06 behavior rather than guessing. Caught by
+> the Fable final pass, pinned by `REG-B60: a sibling line of the same product never inherits…`,
+> hand mutation-probed. ⚠️ `merge-items.ts`'s SCOPE comment names TWO gaps F06 deliberately did not
+> close — a bare buyer qty for a product with NO stored line (`updateOrderItems` re-splits it as loose
+> PIECES via a pre-F06 clause; needs a client-contract decision) and the STAFF scan-merge caller,
+> still unnormalized on its stored side because R12 froze it byte-identical. Both filed. A third
+> filed residual: the fold's price-survival contract is inert on the buyer path, because the CUSTOMER
+> branch re-prices every catalog line and never reads `item.unitPrice` (so an operator's MANUAL
+> courtesy price does not survive a buyer merge — the fix belongs in that branch, F07's region).
 
 - **controller** `orders` (+ `route-runs`) — `active`, `price-history` (GET, OPERATOR, ?customerId → last-given price per product), `@Get/:id`, `:id/tracking`, `@Patch :id/status|items|urgent`, `:id/reopen`, `sweep-pending`, `force-consolidate/:customerId`, bulk/single delete; RouteRun stop complete. **(2026-08-24) `PATCH :id/fulfill-path`** (OPERATOR/TENANT_ADMIN, same precedent as the commission-rate override) sets `Order.fulfillPath`; rejects `OUT_FOR_DELIVERY`/`DELIVERED`/`CANCELLED` (400 — the shipping/routing decision is locked once fulfillment has started), and additionally rejects `→ SHIP` while the order sits on an **active** run (`routeRunStopId != null` + run `SCHEDULED`/`IN_PROGRESS`, message names the driver) — the dispatch sweep attaches orders while they're still `CONFIRMED`, so status alone would let a dispatched order read as "Shipped" while still standing as a stop on a driver's live run; stale attachments (finished/cancelled runs — `routeRunStopId` is never cleared) and `→ ROUTE` are unaffected. Same ON_ACTIVE_RUN predicate as `trips.service.ts checkEligibility`.
 - **`Order.fulfillPath FulfillPath @default(ROUTE)`** (migration `20260904000000_adhoc_trips_and_fulfillment`, additive, REUSES the pre-existing `FulfillPath` enum — no redeclare, no backfill) on list/detail payloads. `ListOrdersDto.fulfillPath` filters `findAll` — omitted ⇒ no `where` key added (spec-pinned, so existing "all orders" list calls are unaffected). `create()` defaults `dto.fulfillPath ?? customer.fulfillPath ?? ROUTE`. `SHIP` orders are the ones eligible for `PATCH /orders/:id/fulfill-path`; ad-hoc trip eligibility (`trips.service.ts checkEligibility`) requires `fulfillPath: ROUTE`.
