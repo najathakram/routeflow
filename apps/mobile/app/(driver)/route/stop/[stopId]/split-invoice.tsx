@@ -131,6 +131,9 @@ function DriverSplitForOrder({ orderId, onClose }: { orderId: string; onClose: (
         qty: Number(li.qty),
         invoicedQty: Number(li.invoicedQty ?? 0),
         unitPrice: Number(li.unitPrice),
+        // Stored subtotal so the split preview prorates it the same way the server
+        // bills — never a raw qty × unitPrice (over-charges boxed lines).
+        subtotal: li.subtotal != null ? Number(li.subtotal) : undefined,
         unit: li.product?.unit,
       }))}
       onCancel={onClose}

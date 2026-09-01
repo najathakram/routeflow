@@ -12,14 +12,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
-import { useRouteRun, useUpdateRun, useUpdateRunStatus } from "../../../lib/api/routes";
-import { useAuthStore } from "../../../lib/auth-store";
+import { useRouteRun, useSettleRun, useUpdateRunStatus } from "../../../lib/api/routes";
 import { useRunSettlementStore } from "../../../store/runSettlementStore";
 import {
   summarizeCollections,
   computeVariance,
+  expectedPhysicalCash,
   isReconciled,
-  buildSettlementNote,
   type CollectedMethod,
   type CollectionEntry,
 } from "../../../lib/run-settlement";
@@ -49,14 +48,19 @@ export default function RunSettlementScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ runId: string }>();
   const runId = params.runId;
-  const { data: run, isLoading } = useRouteRun(runId ?? "");
-  const user = useAuthStore((s) => s.user);
+  const { data: run, isLoading, refetch: refetchRun } = useRouteRun(runId ?? "");
 
   const collections = useRunSettlementStore((s) =>
     runId ? (s.collectionsByRun[runId] ?? EMPTY_COLLECTIONS) : EMPTY_COLLECTIONS,
   );
   const clearRun = useRunSettlementStore((s) => s.clearRun);
   const summary = useMemo(() => summarizeCollections(collections), [collections]);
+  // F05 / R8: server-truth expected cash — this device's own tally is only a
+  // fallback for the brief window before `collectedPayments` has loaded. Both
+  // sides are the same basis (CASH + CHECK, the physical money this screen's
+  // label asks the driver to count); `collectedPayments` splits cash and checks,
+  // so reading `cashTotal` alone would drop every check and invent a variance.
+  const expectedCash = expectedPhysicalCash(run?.collectedPayments) ?? summary.cashTotal;
 
   const [counted, setCounted] = useState("");
   const [reason, setReason] = useState("");
@@ -64,19 +68,22 @@ export default function RunSettlementScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const countedNum = Number(counted) || 0;
-  const variance = computeVariance(summary.cashTotal, countedNum);
+  const variance = computeVariance(expectedCash, countedNum);
   const reconciled = counted !== "" && isReconciled(variance);
-  const needsReason = counted !== "" && !isReconciled(variance);
+  // The server recomputes `expected` at settle time, so its variance can differ
+  // from this screen's: a CONFIRMED payment landing between the run fetch and
+  // the POST (an office operator recording a walk-in payment, or an offline
+  // completeWithPayment replaying) moves the server figure only. That 400 would
+  // otherwise be unrecoverable — the reason field is gated on the CLIENT
+  // variance, so it would never render and every retry would re-400. The catch
+  // in closeRun latches this, which forces the field open regardless.
+  const [serverDemandsReason, setServerDemandsReason] = useState(false);
+  const needsReason = (counted !== "" && !isReconciled(variance)) || serverDemandsReason;
 
-  const updateRun = useUpdateRun();
+  const settleRun = useSettleRun();
   const updateStatus = useUpdateRunStatus();
-  // The note append and the status flip are two separate, non-transactional
-  // PATCHes. Once the note write has succeeded we must never send it again —
-  // otherwise a failure on the status write (which leaves us on this screen for
-  // a retry) would append a SECOND settlement note, because both mutations
-  // invalidate the route-runs query and `run.notes` is refetched with the first
-  // note already present. Guarded so a retry re-runs ONLY the status mutation.
-  const notesAppendedRef = useRef(false);
+  // Set once the settlement is on record server-side — see closeRun.
+  const settledRef = useRef(false);
 
   async function closeRun() {
     if (!runId || !run) return;
@@ -90,31 +97,51 @@ export default function RunSettlementScreen() {
     }
     setError(null);
     setSaving(true);
-    const driverLabel = user?.username ?? "Driver";
-    const note =
-      buildSettlementNote({
-        expectedCash: summary.cashTotal,
-        countedCash: countedNum,
-        variance,
-        overridden: needsReason,
-        driverLabel,
-      }) + (needsReason ? ` Reason: ${reason.trim()}` : "");
     try {
-      // NOTE: `RouteRun` (lib/api/routes.ts) doesn't declare a `notes` field on
-      // the run itself (only on RouteRunStop/RouteRunOrder) — the server does
-      // accept/return it (see plan §2.3), the mobile type just hasn't caught
-      // up. Read via `any` rather than widening that shared type here.
-      if (!notesAppendedRef.current) {
-        const existingNotes = (run as any).notes ?? "";
-        await updateRun.mutateAsync({ id: runId, notes: existingNotes + note } as any);
-        notesAppendedRef.current = true;
+      // F05 / R6 / R8: the server records the settlement (expected computed
+      // server-side, never trusted from the client) into its own
+      // settlementNote/settlementVariance columns — no more notes-append PATCH.
+      //
+      // The settlement and the COMPLETED flip are two non-atomic writes: if the
+      // settlement lands and the status flip fails, the driver stays here to
+      // retry — and the server refuses a DRIVER's SECOND settle, which would
+      // dead-end the run on this screen. So a retry re-runs ONLY the status
+      // flip: `settledRef` remembers this attempt, `run.settlementNote` covers
+      // a settlement recorded before this screen mounted, and the server's own
+      // RUN_ALREADY_SETTLED refusal covers a settle whose response was lost.
+      if (!settledRef.current && run.settlementNote == null) {
+        try {
+          await settleRun.mutateAsync({
+            id: runId,
+            countedCash: countedNum,
+            varianceReason: needsReason ? reason : undefined,
+          });
+        } catch (e: any) {
+          if (e?.response?.data?.code !== "RUN_ALREADY_SETTLED") throw e;
+        }
+        settledRef.current = true;
+      } else {
+        // Skipping the settle is never silent: a driver amends only through an
+        // operator, so say so rather than let a re-typed count look recorded.
+        showToast("Settlement already recorded — closing the run.");
       }
       await updateStatus.mutateAsync({ id: runId, status: "COMPLETED" });
       clearRun(runId);
       router.replace("/(driver)/route");
     } catch (e: any) {
       setSaving(false);
-      showToast(e?.response?.data?.message ?? e?.message ?? "Couldn't close the run. Try again.");
+      const message = e?.response?.data?.message ?? e?.message ?? "Couldn't close the run.";
+      // The server refused because ITS expected figure disagrees with this
+      // screen's (a payment landed since the run was fetched). Latch the reason
+      // field open — it is gated on the client variance and would otherwise stay
+      // hidden — and refetch so the expected line stops showing a stale total.
+      if (typeof message === "string" && message.includes("varianceReason")) {
+        setServerDemandsReason(true);
+        setError("The expected amount changed — add a reason for the variance and close again.");
+        refetchRun();
+        return;
+      }
+      showToast(message || "Couldn't close the run. Try again.");
     }
   }
 
@@ -159,7 +186,7 @@ export default function RunSettlementScreen() {
             ))}
           <View style={[styles.row, styles.rowTotal]}>
             <Text style={styles.rowTotalLabel}>Cash & checks to reconcile</Text>
-            <Text style={styles.rowTotalValue}>${summary.cashTotal.toFixed(2)}</Text>
+            <Text style={styles.rowTotalValue}>${expectedCash.toFixed(2)}</Text>
           </View>
         </View>
 

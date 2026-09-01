@@ -3522,6 +3522,8 @@ describe("InvoicesService", () => {
       jest.spyOn(service, "createInvoiceFromOrder").mockResolvedValue([] as any);
       prisma.paymentCounter.upsert.mockResolvedValue({ next: 2 } as any);
       prisma.invoice.update.mockResolvedValue({} as any);
+      // T-B83 / R4 / REG-B83: deterministic id for the excess-advance assertions.
+      prisma.advancePayment.create.mockResolvedValue({ id: "adv-1" } as any);
     });
 
     it("records an InvoicePayment against the order's existing invoice and marks it PAID", async () => {
@@ -3750,17 +3752,117 @@ describe("InvoicesService", () => {
       ]);
     });
 
-    it("caps at the invoice's remaining (over-collection leaves a reported residual)", async () => {
+    it("caps at the invoice's remaining and books the residual as a single-customer advance (T-B83 / R4 / REG-B83)", async () => {
       prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" });
       prisma.invoice.findMany.mockResolvedValue([inv()]);
       prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 30 }]); // prior paid → remaining 70
 
-      const res = await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
+      const res = await service.recordDeliveryPaymentInTx(
+        prisma as any,
+        ["ord-1"],
+        100,
+        "CASH",
+        undefined,
+        { runId: "run-1", stopId: "stop-1" },
+      );
 
-      expect(res.applied).toBe(70); // 30 residual not applied
+      expect(res.applied).toBe(70); // 30 residual not applied to the invoice
       expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ amount: 70 }) }),
       );
+      // REG-B83: the $30 residual is never dropped — 100 - 70 = 30 books as a
+      // single-customer advance against the touched invoice's own customerId
+      // (the inv() fixture: cust-1), tagged with the run/stop reference token.
+      expect((res as any).excess).toBe(30);
+      expect(prisma.advancePayment.create).toHaveBeenCalledTimes(1);
+      expect(prisma.advancePayment.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            customerId: "cust-1",
+            amount: 30,
+            balance: 30,
+            method: "CASH",
+            reference: "RUN:run-1:STOP:stop-1",
+          }),
+        }),
+      );
+      expect((res as any).advancePaymentId).toBe("adv-1");
+    });
+
+    it("REG-B83: zero payable invoices advances the WHOLE collected amount via an order-lookup fallback", async () => {
+      // A live (non-payable, e.g. already-PAID) invoice exists for the order, so
+      // no new DRAFT is created — but there is nothing payable to apply the cash
+      // to. Today this returns { applied: 0, invoiceIds: [], paymentIds: [] } and
+      // silently drops the entire $100; the fix must fall back to the order's own
+      // customerId and advance the whole amount.
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-existing" });
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.order.findMany.mockResolvedValue([{ customerId: "cust-1" }]);
+
+      const res = await service.recordDeliveryPaymentInTx(
+        prisma as any,
+        ["ord-1"],
+        100,
+        "CASH",
+        undefined,
+        { runId: "run-1", stopId: "stop-1" },
+      );
+
+      expect(res.applied).toBe(0);
+      expect((res as any).excess).toBe(100);
+      expect(prisma.advancePayment.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            customerId: "cust-1",
+            amount: 100,
+            balance: 100,
+            method: "CASH",
+            reference: "RUN:run-1:STOP:stop-1",
+          }),
+        }),
+      );
+    });
+
+    it("REG-B83: a multi-customer stop anomaly books NO advance but still returns the residual", async () => {
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-either" });
+      prisma.invoice.findMany.mockResolvedValue([
+        inv({ id: "inv-1", customerId: "cust-1", total: 60 }),
+        inv({ id: "inv-2", customerId: "cust-2", total: 40 }),
+      ]);
+      prisma.invoicePayment.findMany.mockResolvedValue([]); // neither invoice has prior payments
+
+      const res = await service.recordDeliveryPaymentInTx(
+        prisma as any,
+        ["ord-1", "ord-2"],
+        150,
+        "CASH",
+        undefined,
+        { runId: "run-1", stopId: "stop-1" },
+      );
+
+      expect(res.applied).toBe(100); // 60 + 40 fully paid across the two siblings
+      expect((res as any).excess).toBe(50); // 150 - 100, never dropped from the response
+      expect(prisma.advancePayment.create).not.toHaveBeenCalled();
+    });
+
+    it("REG-B83: an exact-match payment (excess ≤ 0.001) books no advance", async () => {
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" });
+      prisma.invoice.findMany.mockResolvedValue([inv()]); // total 100, no prior payment
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+
+      const res = await service.recordDeliveryPaymentInTx(
+        prisma as any,
+        ["ord-1"],
+        100,
+        "CASH",
+        undefined,
+        { runId: "run-1", stopId: "stop-1" },
+      );
+
+      expect(res.applied).toBe(100);
+      expect((res as any).excess).toBe(0);
+      expect(prisma.advancePayment.create).not.toHaveBeenCalled();
+      expect((res as any).advancePaymentId).toBeNull();
     });
 
     it("row-locks the invoice and reads prior paid CONFIRMED-only (F03/R1)", async () => {

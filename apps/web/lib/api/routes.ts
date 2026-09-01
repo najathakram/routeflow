@@ -80,6 +80,13 @@ export interface RouteRun {
   startedAt?: string;
   completedAt?: string;
   notes?: string;
+  /** F05 / R6 — POST /route-runs/:id/settlement writes these; legacy runs (or
+   *  a pre-F05 mobile build mid-deploy-skew) instead carry their settlement
+   *  text in `notes` above, so a reader must check both. */
+  settlementNote?: string | null;
+  /** Prisma `Decimal` column — serializes over JSON as a numeric string, so
+   *  callers must `Number(...)` before formatting or comparing it. */
+  settlementVariance?: number | string | null;
   stops?: RouteRunStop[];
   _count?: { stops: number };
   /** Dispatch response only — how many orders the sweep actually attached to

@@ -42,7 +42,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Badge, Button, Modal, cn, useToast } from "@routeflow/ui/web";
+import { Badge, Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
@@ -853,6 +853,21 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
   const canDelete = isOperator && run.status === "SCHEDULED";
   const canCancel = isOperator && (run.status === "IN_PROGRESS" || run.status === "SCHEDULED");
 
+  // ── Settlement (F05 / R9, B167) — read-only, rendered for EVERY run status
+  // so a driver's end-of-day cash reconciliation stays visible after the run
+  // closes. `settlementVariance` is a Prisma Decimal, so it arrives as a
+  // numeric string over JSON; `run.notes` is the legacy home for this same
+  // text on runs a pre-F05 mobile build settled.
+  const settlementVarianceNumber =
+    run.settlementVariance === null || run.settlementVariance === undefined
+      ? null
+      : Number(run.settlementVariance);
+  const hasSettlementVariance =
+    settlementVarianceNumber !== null && !Number.isNaN(settlementVarianceNumber);
+  const hasSettlementNote = Boolean(run.settlementNote);
+  const hasLegacyNotes = Boolean(run.notes);
+  const showSettlementCard = hasSettlementNote || hasSettlementVariance || hasLegacyNotes;
+
   const selectedVariant =
     routeVariants.data?.variants.find((v) => v.key === selectedVariantKey) ?? null;
 
@@ -1043,6 +1058,40 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
           </div>
         </div>
       </div>
+
+      {/* Settlement — read-only for every run status (F05 / R9, B167) */}
+      {showSettlementCard && (
+        <div className="shrink-0 border-b border-surface-border bg-surface-raised px-6 py-4">
+          <Card title="Settlement" className="max-w-2xl">
+            <div className="space-y-3">
+              {hasSettlementVariance && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-navy/70">Cash variance</span>
+                  <Badge
+                    data-testid="settlement-variance"
+                    variant={settlementVarianceNumber! >= 0 ? "success" : "danger"}
+                    label={`${settlementVarianceNumber! >= 0 ? "+" : "-"}$${Math.abs(settlementVarianceNumber!).toFixed(2)}`}
+                  />
+                </div>
+              )}
+              {hasSettlementNote && (
+                <div className="flex items-start gap-2">
+                  <FileText className="mt-0.5 h-4 w-4 shrink-0 text-navy/70" />
+                  <p className="whitespace-pre-line text-sm text-navy/80">{run.settlementNote}</p>
+                </div>
+              )}
+              {hasLegacyNotes && (
+                <div className={cn(hasSettlementNote && "border-t border-surface-border pt-3")}>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/50">
+                    Run notes
+                  </p>
+                  <p className="whitespace-pre-line text-sm text-navy/80">{run.notes}</p>
+                </div>
+              )}
+            </div>
+          </Card>
+        </div>
+      )}
 
       {/* Main split layout */}
       <div className="flex flex-1 overflow-hidden">

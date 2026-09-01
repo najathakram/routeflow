@@ -21,6 +21,12 @@ export interface RouteRunOrderItem {
   qty: number;
   unitPrice: number;
   status: string;
+  // F05 / R2 / G7: box-aware line money, straight off `RUN_LINE_ITEMS_SELECT`.
+  // Prisma Decimals may arrive as strings — see lib/run-money.ts#lineItemSubtotal.
+  subtotal?: number | string | null;
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
 }
 
 export interface RouteRunOrder {
@@ -92,6 +98,13 @@ export interface RouteRun {
   startedAt?: string;
   completedAt?: string;
   stops?: RouteRunStop[];
+  notes?: string | null;
+  // F05 / R6 / R8: end-of-run cash/check settlement, server-truth — the
+  // gate `shouldForceSettlement` (lib/run-settlement.ts) reads these.
+  settlementNote?: string | null;
+  settlementVariance?: number | string | null;
+  // F05 / R5: server-computed cash+check collected this run (getRunCashCollections).
+  collectedPayments?: { cashTotal: number; checkTotal: number; count: number };
 }
 
 export interface PackingListItem {
@@ -193,6 +206,30 @@ export function useUpdateRunStatus() {
       qc.invalidateQueries({ queryKey: ["route-runs", id] });
     },
   });
+}
+
+/**
+ * F05 / R6 / R8 — POST /route-runs/:id/settlement. Records the driver's (or
+ * operator's) end-of-run cash/check count against the server-computed
+ * expected total; the server derives `expected` itself (never trusts a
+ * client-supplied figure) and returns the updated run plus
+ * expectedCash/countedCash/variance. Same invalidation as useUpdateRunStatus
+ * since both mutate the same run resource.
+ */
+export function useSettleRun() {
+  const qc = useQueryClient();
+  return useMutation<RouteRun, Error, { id: string; countedCash: number; varianceReason?: string }>(
+    {
+      mutationFn: ({ id, countedCash, varianceReason }) =>
+        apiClient
+          .post(`/route-runs/${id}/settlement`, { countedCash, varianceReason })
+          .then((r) => r.data),
+      onSuccess: (_, { id }) => {
+        qc.invalidateQueries({ queryKey: ["route-runs"] });
+        qc.invalidateQueries({ queryKey: ["route-runs", id] });
+      },
+    },
+  );
 }
 
 export type ItemDeliveryType = "DELIVERED" | "PARTIAL" | "REFUSED" | "ADD_ON";
@@ -360,16 +397,13 @@ export function useCreateRun() {
   });
 }
 
-export function useUpdateRun() {
-  const qc = useQueryClient();
-  return useMutation<RouteRun, Error, { id: string; scheduledDate?: string; notes?: string }>({
-    mutationFn: ({ id, ...dto }) => apiClient.patch(`/route-runs/${id}`, dto).then((r) => r.data),
-    onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ["route-runs"] });
-      qc.invalidateQueries({ queryKey: ["route-runs", id] });
-    },
-  });
-}
+// F05 removed `useUpdateRun` (PATCH /route-runs/:id with scheduledDate/notes). Its only caller
+// was the settlement screen's notes-append, and appending the settlement into free-text `notes`
+// is exactly B167: the sole renderer of that column is hidden once a run closes. Settlement now
+// posts to /route-runs/:id/settlement (`useSettleRun`), which writes the dedicated
+// settlementNote/settlementVariance columns the web run-detail page reads for every status.
+// The endpoint itself stays — web still uses it, and its inline unvalidated body is why F05
+// added a NEW route rather than retrofitting it.
 
 export function useAllRoutes() {
   return useQuery<{ data: { id: string; name: string; isActive: boolean }[]; meta: any }>({

@@ -21,7 +21,13 @@ import {
   RouteOriginKind,
   RouteEndKind,
   RouteOptimizeMetric,
+  PaymentMethod,
 } from "@prisma/client";
+import { roundMoney } from "../common/pricing";
+// F03/F05: the settlement cash basis stays pinned to the shared CONFIRMED
+// predicate rather than a literal `status: "PAID"`, so it can never silently
+// desync from every other confirmed-money read in the codebase.
+import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { geocodeAddress } from "../common/geocode.util";
 import { TripOriginDto, TripOriginType } from "../trips/dto/create-trip.dto";
 import { TripEndDto, TripEndType } from "../trips/dto/route-planning.dto";
@@ -39,6 +45,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 import { formatMoney } from "../messaging/messaging.helpers";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { CompleteWithPaymentDto } from "./dto/complete-with-payment.dto";
+import { SettleRunDto } from "./dto/settle-run.dto";
 import { AttachPodArtifactDto } from "./dto/attach-pod-artifact.dto";
 import { StorageService } from "../storage/storage.service";
 import { compressImage } from "../storage/compress.util";
@@ -55,6 +62,27 @@ import {
   loadAgeIdCategorySets,
   type RegulatedDeliveryDb,
 } from "../common/regulated-delivery";
+
+// G7: single shared `lineItems` select for the ENTIRE run read path —
+// RUN_STOP_INCLUDE below, findOneRun's main query, and findOneRun's
+// unlinked-orders fallback all reference this SAME object (never re-literal
+// it) so the three can never drift out of sync again. Carries the
+// box-aware money fields (subtotal/boxes/pieces/unitsPerBox) the old
+// six-field literal lacked — consumed by mobile's `run-money.ts` and,
+// once they land, F10/F11/F12/F22 (route money summaries, driver payout
+// reconciliation, per-stop invoicing).
+export const RUN_LINE_ITEMS_SELECT = {
+  id: true,
+  productId: true,
+  product: { select: { id: true, name: true, unit: true } },
+  qty: true,
+  unitPrice: true,
+  status: true,
+  subtotal: true,
+  boxes: true,
+  pieces: true,
+  unitsPerBox: true,
+} as const;
 
 // Shared per-stop include used by both list (`findAllRuns`) and detail
 // (`findOneRun`) so the two endpoints stay in lockstep. Driver list views need
@@ -80,16 +108,7 @@ const RUN_STOP_INCLUDE = {
       status: true,
       urgent: true,
       notes: true,
-      lineItems: {
-        select: {
-          id: true,
-          productId: true,
-          product: { select: { id: true, name: true, unit: true } },
-          qty: true,
-          unitPrice: true,
-          status: true,
-        },
-      },
+      lineItems: { select: RUN_LINE_ITEMS_SELECT },
     },
   },
   routeStop: {
@@ -1042,11 +1061,15 @@ export class RoutesService {
       where.scheduledDate = { gte: d, lt: nextDay };
     }
 
+    let isDriverScoped = false;
     if (user.role === UserRole.DRIVER || assignedToMe) {
       const driver = await this.prisma
         .forTenant()
         .driver.findFirst({ where: { userId: user.sub } });
-      if (driver) where.driverId = driver.id;
+      if (driver) {
+        where.driverId = driver.id;
+        isDriverScoped = true;
+      }
     }
 
     const [data, total] = await Promise.all([
@@ -1092,8 +1115,15 @@ export class RoutesService {
       })),
     }));
 
+    // F05 / R5: `collectedPayments` only for a driver's own list — operator-wide
+    // lists (every run, every driver) skip it; the operator reads cash truth
+    // per-run on the detail page instead, not summed across a whole page.
+    const enrichedData = isDriverScoped
+      ? await this.enrichRunsWithCollectedPayments(normalisedData)
+      : normalisedData;
+
     return {
-      data: normalisedData,
+      data: enrichedData,
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
@@ -1136,16 +1166,7 @@ export class RoutesService {
                 status: true,
                 urgent: true,
                 notes: true,
-                lineItems: {
-                  select: {
-                    id: true,
-                    productId: true,
-                    product: { select: { id: true, name: true, unit: true } },
-                    qty: true,
-                    unitPrice: true,
-                    status: true,
-                  },
-                },
+                lineItems: { select: RUN_LINE_ITEMS_SELECT },
               },
             },
             routeStop: {
@@ -1190,6 +1211,12 @@ export class RoutesService {
       if (!driver || run.driverId !== driver.id)
         throw new ForbiddenException("You do not have access to this route run");
     }
+
+    // F05 / R5: server cash truth, always exposed on the detail read — the
+    // driver settlement screen and the web read-only Settlement card both
+    // need it, and it's cheap (two indexed findMany calls) next to everything
+    // else this endpoint already joins.
+    const collectedPayments = await this.getRunCashCollections(id, run.startedAt);
 
     // Normalise stops: if the run stop lacks direct customer/address links, fall back to the
     // template RouteStop's data (happens with seeded or legacy runs created before dispatch logic
@@ -1242,16 +1269,7 @@ export class RoutesService {
             urgent: true,
             notes: true,
             customerId: true,
-            lineItems: {
-              select: {
-                id: true,
-                productId: true,
-                product: { select: { id: true, name: true, unit: true } },
-                qty: true,
-                unitPrice: true,
-                status: true,
-              },
-            },
+            lineItems: { select: RUN_LINE_ITEMS_SELECT },
           },
         });
         const byCustomer: Record<string, any[]> = {};
@@ -1264,11 +1282,12 @@ export class RoutesService {
             ...s,
             orders: s._resolvedCustomerId ? (byCustomer[s._resolvedCustomerId] ?? []) : [],
           })),
+          collectedPayments,
         };
       }
     }
 
-    return { ...run, stops: normalisedStops };
+    return { ...run, stops: normalisedStops, collectedPayments };
   }
 
   async updateRun(
@@ -1372,6 +1391,19 @@ export class RoutesService {
           `Cannot complete run: ${incomplete.length} stop(s) are still pending. Complete or skip all stops first.`,
         );
       }
+
+      // R7a / B152 backstop: a run still carrying physical money (cash OR
+      // check) cannot close unsettled via ANY path (role-agnostic — no
+      // web/operator surface sends COMPLETED here today, but this must hold
+      // regardless of who/what does). The helper short-circuits to 0 once a
+      // settlement note exists, so re-checking a settled run never re-queries
+      // payments.
+      const outstanding = await this.getUnsettledPhysicalMoney(id, run);
+      if (outstanding > 0.001) {
+        throw new BadRequestException(
+          `This run collected $${outstanding.toFixed(2)} in cash/checks. Record the run settlement before completing.`,
+        );
+      }
     }
 
     const updates: any = { status: dto.status };
@@ -1396,6 +1428,253 @@ export class RoutesService {
     }
 
     return updated;
+  }
+
+  /**
+   * F05 / R5 — the server's own cash truth for a run: CONFIRMED (PAID)
+   * CASH/CHECK InvoicePayments billed to orders on this run (optionally
+   * windowed to `paidAt >= startedAt`, so a driver's collections on a PRIOR
+   * run against the same customer never bleed in) PLUS any AdvancePayment
+   * booked from a driver's at-door over-collection on THIS run (B83 tags
+   * those `RUN:<runId>:STOP:<stopId>` — see `recordDeliveryPaymentInTx`).
+   * Never trust a client-supplied total — this is always server-computed.
+   *
+   * `client` lets a caller already inside a transaction (`completeStop` /
+   * `completeWithPayment`'s RF-016 gate) pass its `tx` so a payment just
+   * recorded earlier in THAT SAME transaction is visible here; every
+   * out-of-transaction caller (`findOneRun`, `updateRunStatus`, `settleRun`,
+   * the list enrichments) omits it and reads through `forTenant()`.
+   */
+  private async getRunCashCollections(
+    runId: string,
+    startedAt?: Date | null,
+    client?: any,
+  ): Promise<{ cashTotal: number; checkTotal: number; count: number }> {
+    const db = client ?? this.prisma.forTenant();
+    const [invoicePayments, advances] = await Promise.all([
+      db.invoicePayment.findMany({
+        where: {
+          ...CONFIRMED_PAYMENT,
+          method: { in: [PaymentMethod.CASH, PaymentMethod.CHECK] },
+          invoice: { order: { routeRunId: runId } },
+          ...(startedAt ? { paidAt: { gte: startedAt } } : {}),
+        },
+        select: { amount: true, method: true },
+      }),
+      db.advancePayment.findMany({
+        where: {
+          method: { in: [PaymentMethod.CASH, PaymentMethod.CHECK] },
+          reference: { startsWith: `RUN:${runId}` },
+        },
+        select: { amount: true, method: true },
+      }),
+    ]);
+
+    let cashTotal = 0;
+    let checkTotal = 0;
+    let count = 0;
+    for (const p of [...invoicePayments, ...advances]) {
+      const amt = Number((p as any).amount);
+      if ((p as any).method === PaymentMethod.CASH) cashTotal = roundMoney(cashTotal + amt);
+      else if ((p as any).method === PaymentMethod.CHECK) checkTotal = roundMoney(checkTotal + amt);
+      count++;
+    }
+    return { cashTotal, checkTotal, count };
+  }
+
+  /**
+   * F05 / R7 — physical money the driver is still carrying unreconciled for
+   * this run: CASH **plus CHECK**, the same basis mobile's
+   * `shouldForceSettlement` gates on (`lib/run-settlement.ts`). A cash-only
+   * predicate would let a check-only run auto-complete before the driver ever
+   * reached the settlement screen — the B152 gap again, just via CHECK.
+   * Returns 0 once a settlement is already on record, so every gate
+   * short-circuits without re-querying payments.
+   */
+  private async getUnsettledPhysicalMoney(
+    runId: string,
+    run: { startedAt?: Date | null; settlementNote?: string | null },
+    client?: any,
+  ): Promise<number> {
+    if (run.settlementNote != null) return 0;
+    const { cashTotal, checkTotal } = await this.getRunCashCollections(
+      runId,
+      run.startedAt,
+      client,
+    );
+    return roundMoney(cashTotal + checkTotal);
+  }
+
+  /**
+   * F05 / R5 — batched `collectedPayments` for a PAGE of driver-scoped runs
+   * (`findAllRuns` when driver/`assignedToMe`-scoped, `findMyRuns` always).
+   * ONE `invoicePayment.findMany` over every run's id plus one
+   * `advancePayment.findMany` over their RUN-tagged references, bucketed per
+   * run against THAT run's own `startedAt` — never N+1 (one
+   * `getRunCashCollections` round-trip per run). Operator-wide lists never
+   * call this.
+   */
+  private async enrichRunsWithCollectedPayments<
+    T extends { id: string; startedAt?: Date | string | null },
+  >(
+    runs: T[],
+  ): Promise<
+    (T & { collectedPayments: { cashTotal: number; checkTotal: number; count: number } })[]
+  > {
+    if (runs.length === 0) return runs as any;
+    const runIds = runs.map((r) => r.id);
+    const [invoicePayments, advances] = await Promise.all([
+      this.prisma.forTenant().invoicePayment.findMany({
+        where: {
+          ...CONFIRMED_PAYMENT,
+          method: { in: [PaymentMethod.CASH, PaymentMethod.CHECK] },
+          invoice: { order: { routeRunId: { in: runIds } } },
+        },
+        select: {
+          amount: true,
+          method: true,
+          paidAt: true,
+          invoice: { select: { order: { select: { routeRunId: true } } } },
+        },
+      }),
+      this.prisma.forTenant().advancePayment.findMany({
+        where: {
+          method: { in: [PaymentMethod.CASH, PaymentMethod.CHECK] },
+          OR: runIds.map((rid) => ({ reference: { startsWith: `RUN:${rid}` } })),
+        },
+        select: { amount: true, method: true, reference: true },
+      }),
+    ]);
+
+    const startedAtByRun = new Map(
+      runs.map((r) => [r.id, r.startedAt ? new Date(r.startedAt) : null]),
+    );
+    const buckets = new Map<string, { cashTotal: number; checkTotal: number; count: number }>();
+    for (const id of runIds) buckets.set(id, { cashTotal: 0, checkTotal: 0, count: 0 });
+
+    for (const p of invoicePayments as any[]) {
+      const rid = p.invoice?.order?.routeRunId;
+      const bucket = rid ? buckets.get(rid) : undefined;
+      if (!bucket) continue;
+      const startedAt = startedAtByRun.get(rid);
+      if (startedAt && p.paidAt && new Date(p.paidAt) < startedAt) continue;
+      const amt = Number(p.amount);
+      if (p.method === PaymentMethod.CASH) bucket.cashTotal = roundMoney(bucket.cashTotal + amt);
+      else if (p.method === PaymentMethod.CHECK)
+        bucket.checkTotal = roundMoney(bucket.checkTotal + amt);
+      bucket.count++;
+    }
+    for (const a of advances as any[]) {
+      const rid = runIds.find((id) => (a.reference ?? "").startsWith(`RUN:${id}`));
+      const bucket = rid ? buckets.get(rid) : undefined;
+      if (!bucket) continue;
+      const amt = Number(a.amount);
+      if (a.method === PaymentMethod.CASH) bucket.cashTotal = roundMoney(bucket.cashTotal + amt);
+      else if (a.method === PaymentMethod.CHECK)
+        bucket.checkTotal = roundMoney(bucket.checkTotal + amt);
+      bucket.count++;
+    }
+
+    return runs.map((r) => ({ ...r, collectedPayments: buckets.get(r.id)! }));
+  }
+
+  /**
+   * F05 / R6 — POST /route-runs/:id/settlement. A NEW endpoint (never a
+   * retrofit of `PATCH :id`, which shipped mobile builds still use to PATCH
+   * `notes` mid-deploy-skew). Records a driver's or operator's end-of-run
+   * cash/check reconciliation into the dedicated `settlementNote` /
+   * `settlementVariance` columns — `run.notes` is never touched. The
+   * server computes `expected` itself via `getRunCashCollections`; a
+   * client-supplied total is never trusted.
+   */
+  async settleRun(id: string, dto: SettleRunDto, user: JwtPayload): Promise<any> {
+    const run = await this.prisma.forTenant().routeRun.findUnique({ where: { id } });
+    if (!run) throw new NotFoundException("Route run not found");
+
+    // R6 accepts IN_PROGRESS (the driver's own end-of-run flow), COMPLETED (an
+    // operator's post-hoc correction) and CANCELLED — nothing else. Settling a
+    // run that never started is a $0 no-op that still writes `settlementNote`,
+    // which would permanently disarm R7's gates for every collection made
+    // afterwards.
+    //
+    // CANCELLED is accepted deliberately (Fable final pass, 2026-08-31). A run
+    // cancelled mid-route — a breakdown after five paid stops — still has the
+    // driver's cash in the truck, and R7 gates only the COMPLETED transition,
+    // so the cancel itself is not blocked here. Refusing to settle afterwards
+    // would strand that money: unreconcilable forever, invisible on every
+    // settlement surface. Post-hoc reconciliation is the whole point, and the
+    // web Settlement card already renders for every status.
+    //
+    // ⚠️ Gating the CANCEL path itself (and `deleteRun`, whose only guard is an
+    // existing deliveryMutation — which a payment-only completion never
+    // creates) belongs to F11 "Run cancel and skip reconciliation", which owns
+    // those transitions by charter and is next in this lane. See the F05
+    // close-out handoff.
+    if (
+      run.status !== RouteRunStatus.IN_PROGRESS &&
+      run.status !== RouteRunStatus.COMPLETED &&
+      run.status !== RouteRunStatus.CANCELLED
+    ) {
+      throw new BadRequestException(
+        "Cannot settle a route run that has not started — start the run first.",
+      );
+    }
+
+    if (user.role === UserRole.DRIVER) {
+      const driver = await this.prisma
+        .forTenant()
+        .driver.findFirst({ where: { userId: user.sub } });
+      if (!driver || run.driverId !== driver.id) {
+        throw new ForbiddenException("You can only settle your own route runs");
+      }
+      // A driver settles once; only an operator may amend/overwrite an
+      // existing settlement (e.g. after a dispute or a counting correction).
+      // Coded so a client whose settle response was lost can tell "your write
+      // already landed" apart from a real refusal and carry on to the COMPLETED
+      // flip instead of dead-ending on the settlement screen.
+      if (run.settlementNote != null) {
+        throw new BadRequestException({
+          code: "RUN_ALREADY_SETTLED",
+          message: "This run has already been settled. Ask an operator to amend it.",
+        });
+      }
+    }
+
+    // The reconciliation basis is the PHYSICAL money the driver carries —
+    // cash AND checks. `getRunCashCollections` keeps the two split for
+    // reporting; every settlement comparison uses their sum, matching the
+    // mobile screen's "Cash & checks to reconcile" line, its device-local
+    // `summarizeCollections().cashTotal`, and `shouldForceSettlement`.
+    const expected = await this.getRunCashCollections(id, run.startedAt);
+    const expectedPhysical = roundMoney(expected.cashTotal + expected.checkTotal);
+    const variance = roundMoney(dto.countedCash - expectedPhysical);
+    if (Math.abs(variance) > 0.01 && !dto.varianceReason) {
+      throw new BadRequestException(
+        "Counted cash does not match the expected amount — a varianceReason is required.",
+      );
+    }
+
+    const when = new Date();
+    const sign = variance < 0 ? "-" : "+";
+    const noteLines = [
+      `Settlement recorded by ${user.username} at ${when.toISOString()}`,
+      `Expected (cash + checks): $${expectedPhysical.toFixed(2)}`,
+      `Counted: $${dto.countedCash.toFixed(2)}`,
+      `Variance: ${sign}$${Math.abs(variance).toFixed(2)}`,
+    ];
+    if (dto.varianceReason) noteLines.push(`Reason: ${dto.varianceReason}`);
+
+    const updated = await this.prisma.forTenant().routeRun.update({
+      where: { id },
+      data: { settlementNote: noteLines.join("\n"), settlementVariance: variance },
+    });
+
+    return {
+      ...updated,
+      expectedCash: expectedPhysical,
+      countedCash: dto.countedCash,
+      variance,
+    };
   }
 
   async updateStopStatus(
@@ -1712,13 +1991,20 @@ export class RoutesService {
         for (const d of dto.deliveries) {
           const item = await tx.orderItem.findFirst({
             where: { id: d.orderItemId },
-            select: { orderId: true, unitPrice: true },
+            select: { orderId: true, productId: true, unitPrice: true },
           });
           if (!item) continue;
           await tx.deliveryMutation.create({
             data: {
               orderId: item.orderId,
               orderItemId: d.orderItemId,
+              // B148/R3: `DeliveryMutation.productId` is a real Product FK, so
+              // it comes from the tenant-scoped order item — never verbatim
+              // from the body. A stale/blank/foreign client id would either
+              // blow up the whole completion transaction on the FK or park a
+              // cross-tenant reference the owning tenant's product purge can
+              // never see. Unlisted (free-text) lines have no product: null.
+              productId: item.productId ?? null,
               routeRunStopId: stopId,
               ...(driver ? { driverId: driver.id } : {}),
               type: (d.type as any) ?? "DELIVERED",
@@ -1750,11 +2036,28 @@ export class RoutesService {
         (s: any) => s.id === stopId || s.status === "COMPLETED" || s.status === "SKIPPED",
       );
       if (allDone) {
-        await tx.routeRun.update({
-          where: { id: runId },
-          data: { status: RouteRunStatus.COMPLETED, completedAt: new Date() },
-        });
-        autoCompleted = true;
+        // R7b / B152: same cash-settlement gate as updateRunStatus's backstop,
+        // but here because RF-016 bypasses updateRunStatus entirely on the
+        // common path (last stop closes -> auto-complete). Read via `tx` so a
+        // payment recorded earlier in THIS transaction is visible. Leaves the
+        // run IN_PROGRESS — the driver lands on settle-then-complete instead.
+        const outstanding = await this.getUnsettledPhysicalMoney(runId, run, tx);
+        if (outstanding > 0.001) {
+          // Withholding the auto-completion is otherwise invisible —
+          // `autoCompleted: false` has no client consumer, so without this line
+          // an operator asking "every stop is done, why is the run still open?"
+          // finds nothing in the logs.
+          this.logger.log(
+            `completeStop: RF-016 auto-completion withheld for run ${runId} (stop ${stopId}) — ` +
+              `$${outstanding.toFixed(2)} in cash/checks is unsettled.`,
+          );
+        } else {
+          await tx.routeRun.update({
+            where: { id: runId },
+            data: { status: RouteRunStatus.COMPLETED, completedAt: new Date() },
+          });
+          autoCompleted = true;
+        }
       }
     });
 
@@ -1860,6 +2163,10 @@ export class RoutesService {
 
     let autoCompleted = false;
     let paymentIds: string[] = [];
+    // B83: over-collection additively surfaced on the response (undefined when
+    // no payment was collected this completion — no payment call, no fields).
+    let excess: number | undefined;
+    let advancePaymentId: string | null | undefined;
     await this.prisma.tenantTransaction(async (tx) => {
       // Phase 4 (W7b): regulated-delivery POD gate (same as completeStop).
       const db = tx as unknown as RegulatedDeliveryDb;
@@ -1899,7 +2206,7 @@ export class RoutesService {
         for (const d of dto.deliveries) {
           const item = await tx.orderItem.findFirst({
             where: { id: d.orderItemId },
-            select: { orderId: true },
+            select: { orderId: true, productId: true },
           });
           if (!item) continue;
           deliveredOrderIdSet.add(item.orderId);
@@ -1907,6 +2214,9 @@ export class RoutesService {
             data: {
               orderId: item.orderId,
               orderItemId: d.orderItemId,
+              // B148/R3: from the tenant-scoped order item, never verbatim from
+              // the body — see the completeStop create site for why.
+              productId: item.productId ?? null,
               routeRunStopId: stopId,
               ...(driver ? { driverId: driver.id } : {}),
               type: (d.type as any) ?? "DELIVERED",
@@ -1945,18 +2255,24 @@ export class RoutesService {
         const deliveredOrderIds = stop.orders
           .filter((o) => o.status !== OrderStatus.CANCELLED)
           .map((o) => o.id);
-        const { applied, paymentIds: recordedPaymentIds } =
-          await this.invoicesService.recordDeliveryPaymentInTx(
-            tx,
-            deliveredOrderIds,
-            dto.payment.amount,
-            dto.payment.method,
-            Array.from(deliveredOrderIdSet),
+        const recorded = await this.invoicesService.recordDeliveryPaymentInTx(
+          tx,
+          deliveredOrderIds,
+          dto.payment.amount,
+          dto.payment.method,
+          Array.from(deliveredOrderIdSet),
+          { runId, stopId },
+        );
+        paymentIds = recorded.paymentIds;
+        excess = recorded.excess;
+        advancePaymentId = recorded.advancePaymentId;
+        if (advancePaymentId) {
+          this.logger.log(
+            `completeWithPayment: ${excess} over-collection booked to advance ${advancePaymentId} (run ${runId}, stop ${stopId})`,
           );
-        paymentIds = recordedPaymentIds;
-        if (applied + 0.005 < dto.payment.amount) {
+        } else if (recorded.applied + 0.005 < dto.payment.amount) {
           this.logger.warn(
-            `completeWithPayment: collected ${dto.payment.amount} but only ${applied} applied to ` +
+            `completeWithPayment: collected ${dto.payment.amount} but only ${recorded.applied} applied to ` +
               `invoices for orders ${deliveredOrderIds.join(",")} (remainder unrecorded).`,
           );
         }
@@ -1971,11 +2287,26 @@ export class RoutesService {
         (s: any) => s.id === stopId || s.status === "COMPLETED" || s.status === "SKIPPED",
       );
       if (allDone) {
-        await tx.routeRun.update({
-          where: { id: runId },
-          data: { status: RouteRunStatus.COMPLETED, completedAt: new Date() },
-        });
-        autoCompleted = true;
+        // R7b / B152: same cash-settlement gate as updateRunStatus's backstop,
+        // but here because RF-016 bypasses updateRunStatus entirely on the
+        // common path (last stop closes -> auto-complete). Read via `tx` so a
+        // payment recorded earlier in THIS transaction is visible. Leaves the
+        // run IN_PROGRESS — the driver lands on settle-then-complete instead.
+        const outstanding = await this.getUnsettledPhysicalMoney(runId, run, tx);
+        if (outstanding > 0.001) {
+          // See completeStop's gate: without this the withheld completion
+          // leaves no trace at all in the logs.
+          this.logger.log(
+            `completeWithPayment: RF-016 auto-completion withheld for run ${runId} (stop ${stopId}) — ` +
+              `$${outstanding.toFixed(2)} in cash/checks is unsettled.`,
+          );
+        } else {
+          await tx.routeRun.update({
+            where: { id: runId },
+            data: { status: RouteRunStatus.COMPLETED, completedAt: new Date() },
+          });
+          autoCompleted = true;
+        }
       }
     });
 
@@ -2016,7 +2347,7 @@ export class RoutesService {
     // Additive: ids of the InvoicePayment row(s) created in step 4 (empty when no
     // payment was collected). Consumed by the driver app to attach a best-effort
     // payment photo to paymentIds[0] after the stop completes.
-    const response = { ...result, paymentIds };
+    const response = { ...result, paymentIds, excess, advancePaymentId };
 
     // RF-019: persist idempotency key
     if (dto.idempotencyKey) {
@@ -2189,9 +2520,13 @@ export class RoutesService {
       })),
     }));
 
+    // F05 / R5: this endpoint is always driver-scoped (the authenticated
+    // driver's own runs), so it always gets `collectedPayments`.
+    const enrichedData = await this.enrichRunsWithCollectedPayments(normalisedData);
+
     return {
-      data: normalisedData,
-      meta: { total: normalisedData.length, page: 1, limit: normalisedData.length, totalPages: 1 },
+      data: enrichedData,
+      meta: { total: enrichedData.length, page: 1, limit: enrichedData.length, totalPages: 1 },
     };
   }
 
@@ -2362,12 +2697,24 @@ export class RoutesService {
         },
       });
 
-      // 7. If run was COMPLETED, reopen it too
+      // 7. If run was COMPLETED, reopen it too — and drop any settlement
+      // record either way (F05 / R7). Reopening a stop means this run can
+      // collect money again, while R7's three gates all key on
+      // `settlementNote == null`: a note left over from the earlier, smaller
+      // count would disarm every one of them for the re-collection AND keep
+      // the web Settlement card describing a count that no longer covers the
+      // run. The driver/operator settles again after the re-delivery.
+      const settlementReset =
+        run.settlementNote != null || run.settlementVariance != null
+          ? { settlementNote: null, settlementVariance: null }
+          : null;
       if (run.status === "COMPLETED") {
         await tx.routeRun.update({
           where: { id: runId },
-          data: { status: "IN_PROGRESS", completedAt: null },
+          data: { status: "IN_PROGRESS", completedAt: null, ...(settlementReset ?? {}) },
         });
+      } else if (settlementReset) {
+        await tx.routeRun.update({ where: { id: runId }, data: settlementReset });
       }
     });
 

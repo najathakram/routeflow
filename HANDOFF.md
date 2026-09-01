@@ -1,11 +1,12 @@
 # HANDOFF — current state & what to pick up next
 
-> # ▶️ CAMPAIGN RESUMED — F03 SHIPPED, F17 IN FLIGHT (2026-08-31/09-01)
+> # ▶️ CAMPAIGN RESUMED — F03 + F17 SHIPPED, F05 IN FLIGHT (2026-09-01)
 >
 > The pause below was lifted by the owner. Since it was written: **F03 SHIPPED** (#564, master
-> `f1599490` — 8 of its 9 bugs `done`, B11 T2 `proven-pending-deploy`), **#565** landed the two
-> native launch blockers (B203/B204), and **F17 is in flight as PR #566** (branch
-> `fix/F17-import-robustness`, merge commit `56a965e0`).
+> `f1599490` — 8 of its 9 bugs `done`, B11 since discharged by #568), **#565** landed the two
+> native launch blockers (B203/B204), **F17 SHIPPED** (#566, ledger discharged in #567), and
+> **F05 is in flight as PR #569** (branch `fix/F05-driver-at-door-money-settlement`, rebased
+> onto master `e41a1e28`).
 >
 > **F17 — import robustness (B98, B99 both Critical; B112; B08).** `parseFloat("1,234.56")` is
 > `1`, so $1,234.56 imported as $1.00 across four importers; a payments re-upload had no dedupe
@@ -24,58 +25,58 @@ path that calls`ProductsService.create()`in-process, so the DTO never runs. It n
 batch with an e2e (no web unit runner). (2) **B99's repair flight is owed post-deploy**:`scripts/repair-f17.mjs`, fresh backup first, dry run, apply only exact-signature duplicate
 > pairs.
 >
-> **State — 24 of 193 terminal before F17; F17 adds 4 (3 immediately, B08 on deploy).**
-> Complete: F00+F01 enablement, F02 (9), F04 (3), F30 (12), F03 (9).
+> **F05 — driver at-door money and settlement (B49 Critical, B83, B148, B152, B167), PR #569.**
+> The route-run payload never carried the billed line money, so five driver surfaces re-derived
+> `qty × unitPrice` and over-collected ~`unitsPerBox` on every boxed stop — then posted that
+> figure as `payment.amount`. **G7 landed:** `RUN_LINE_ITEMS_SELECT` is the single run-read
+> lineItems select. ⚠️ **B148 gated everything else** — the mobile payload always sent
+> `deliveries[].productId`, the DTO never declared it, and `forbidNonWhitelisted` 400'd _every_
+> stop completion.
 >
-> ## To resume, in this order
+> **State — 28 of 193 terminal after F17; F05 adds 5 (4 immediately, B167 on deploy).**
+> Complete: F00+F01 enablement, F02 (9), F04 (3), F30 (12), F03 (9), F17 (4), **F05 (5)**.
 >
-> 1. `git fetch origin master` — expect `4d57a4ca`. The last CODE commit is `d616a47d` (#556);
->    everything above it is docs-only (#557 pause banner, #558 code-map). If master carries code
->    commits newer than `d616a47d`, someone else moved it — reconcile before resuming.
-> 2. **F03 first** (worktree `.claude/worktrees/rf-F03`, branch `fix/F03-payment-truth`,
->    2 commits ahead of master). Its pipeline stopped at the implement/review boundary with
->    REAL but WHOLLY UNVERIFIED output — no red gate, no jest run, no review lenses, no mutation
->    probe. Before anything else:
->    - **Drop `80b75ff9`** (`chore(format)`) — it is the pipeline's repo-wide prettier pass over
->      47 files F03 never touched, isolated on purpose so it can be reverted in one move.
->    - Resume the engine: `Workflow({scriptPath: "C:/Users/nakram/.claude/skills/dev-pipeline/pipeline.js", resumeFromRunId: "wf_7bd33cd7-ac3"})`.
->      Completed agents replay from cache; read `journal.jsonl` in the run's transcript dir first
->      rather than assuming what landed.
->    - Finish the two known loose ends: `scan-known-bugs.json` still needs the whole
->      `draft-payment-not-void` block deleted (only one site was pruned), and F03 owes a prod
->      **repair flight** (backup → `repair-f03.mjs` dry-run → apply → integrity re-check, board #516).
->    - ⚠️ Notable finding already banked in `d1269474`: the **F04 oracle-cap check confirmed the
->      server shared the mirrors' over-billing hole**; `buildInvoiceItemData` now caps
->      `billedThrough` at `basisQty`. That needs a REG-B50-tokened proof before it can be claimed.
-> 3. Then the audited schedule: F06 → F07 → F11 → F22+F24 → F16 on track A; F05, F10, F09, F15,
->    F13, F14, F12, F17 (staged, artifacts committed), F19 → F20, F21 after F16, F25 → F26, F08,
+> ## Next up
+>
+> 1. **F05 unblocks the routes lane.** F10, F11, F12 and F22 all consume G7's
+>    `RUN_LINE_ITEMS_SELECT` — extend that const, never re-inline the literal.
+> 2. **F11 owes two gates F05 deliberately did not take** (Fable final pass): the CANCEL path and
+>    `deleteRun` can still close/destroy a cash-carrying run unsettled. `settleRun` now accepts
+>    CANCELLED post-hoc so the money is never stranded, but nothing forces the reconciliation on
+>    those paths. `deleteRun`'s only guard is an existing deliveryMutation — which a
+>    payment-only completion never creates.
+> 3. Then the audited schedule: F06 → F07 → F11 → F22+F24 → F16 on track A; F10, F09, F15, F13,
+>    F14, F12, F17 (staged, artifacts committed), F19 → F20, F21 after F16, F25 → F26, F08,
 >    Wave C, then F31.
 >
 > ## Owner-blocked (nothing I can do)
 >
 > - **Expo build** — F30's mobile scan fixes are merged but only reach devices via a build; the
 >   server half is live and stricter, so old clients are safe meanwhile. Client retest after.
-> - **GitHub Actions billing** for private minutes — until fixed, every CI green needs the public
->   window and the repo stays PUBLIC per the standing directive.
+> - **GitHub Actions billing** for private minutes — until fixed, every CI green needs the repo
+>   PUBLIC, which it already is per the standing directive.
 > - **Final flip to private** when the campaign closes.
 > - **RLS arming** (D3) stays parked at `prisma/deferred-rls/`; 15 tables still hold NULL-tenant rows.
 > - **Policy-layer proposal** (artifact `b3592216…`) — four asks still open.
 >
-> ## Verified-clean inventory at pause
+> ## Worktrees
 >
-> | Worktree                  | Branch                      | State                                                 |
-> | ------------------------- | --------------------------- | ----------------------------------------------------- |
-> | main                      | `master` @ `d616a47d`       | clean, green, deployed                                |
-> | rf-F03                    | `fix/F03-payment-truth`     | MERGED (#564) — prunable                              |
-> | rf-F30                    | `fix/F30-scan-loss`         | clean, MERGED (#555) — prunable                       |
-> | rf-F04                    | `fix/F04-pricing-mirrors`   | clean, MERGED (#554) — prunable                       |
-> | rf-F17                    | `fix/F17-import-robustness` | **IN FLIGHT — PR #566**, verify green, ledger flipped |
-> | rf-F02b, campaign-kickoff | merged branches             | prunable                                              |
+> | Worktree                  | Branch                                                | State                    |
+> | ------------------------- | ----------------------------------------------------- | ------------------------ |
+> | main                      | `master` @ `e41a1e28`                                 | clean, green, deployed   |
+> | rf-F05                    | `fix/F05-driver-at-door-money-settlement`             | **IN FLIGHT — PR #569**  |
+> | rf-F06                    | `fix/F06-update-order-items-authorization-line-build` | staged, batch unstarted  |
+> | rf-F03                    | `fix/F03-payment-truth`                               | MERGED (#564) — prunable |
+> | rf-F17                    | `fix/F17-import-robustness`                           | MERGED (#566) — prunable |
+> | rf-F30, rf-F04            | merged branches                                       | prunable                 |
+> | rf-F02b, campaign-kickoff | merged branches                                       | prunable                 |
 >
-> Register artifact `310ae33a…` is CURRENT (198 findings, every shipped fix chipped). The
-> user-guide artifact `cae40575…` is shared-not-owned — guide changes must be flagged to the owner.
+> Register artifact `310ae33a…` is CURRENT. The user-guide artifact `cae40575…` is
+> shared-not-owned — guide changes must be flagged to the owner.
 
-**Written:** 2026-08-31 · **Visibility:** ⚠️ **PUBLIC by owner directive until the campaign completes** (do NOT flip private mid-campaign; the final flip is the owner's if the session dies) · **Campaign:** `F00+F01+F02(9)+F04(3) SHIPPED LIVE · F30 closing out (12 more: B190–B201 — scan-loss cluster, mobile+api one PR, migration 20260910 order_idempotency prod-applies BEFORE its merge) · 24/193 at F30's merge · F03/F17 staged next (F03 owes the oracle-cap check + deletes its scan-known-bugs block), then the audited two-track schedule (board artifact 9e97d8f6…)`. Owner delegations ACTIVE (.claude/campaign/DECISIONS.md D1–D6 + memory): Fable review replaces owner approval except system-harm/client-data risk; merge-as-ready any hour; repair-as-we-go per batch; repo stays public. ⚠️ Register debt SETTLED at F30 close-out (chips for F02/F04, new articles B189–B201, artifact republished) — keep it settled: every later batch updates the register in its own close-out.
+**Written:** 2026-09-01 · **Visibility:** ⚠️ **PUBLIC by owner directive until the campaign completes** (do NOT flip private mid-campaign; the final flip is the owner's if the session dies) · **Campaign:** `W-serial (D6: merge as ready, no windows) · F00+F01+F02(9)+F04(3)+F30(12)+F03(9)+F17(4) SHIPPED LIVE · F05(5) shipping now · 33/193 at F05's merge · next: F06 track A, F10 behind F05 in the routes lane`. Owner delegations ACTIVE (.claude/campaign/DECISIONS.md D1–D6 + memory): Fable review replaces owner approval except system-harm/client-data risk; merge-as-ready any hour; repair-as-we-go per batch; repo stays public. ⚠️ Register debt SETTLED — keep it settled: every batch updates the register in its own close-out.
+
+> **F05 ✅ SHIPPED (this PR):** driver at-door money truth + run settlement — **B49 (Critical), B83, B148, B152, B167**. No migration (F01's `settlementNote`/`settlementVariance` columns were already live and dead). **G7 delivered:** `RUN_LINE_ITEMS_SELECT` is now the single run-read lineItems select, carrying `subtotal`/`boxes`/`pieces`/`unitsPerBox` — **F10/F11/F12/F22 consume it; extend, never re-inline.** ⚠️ **B148 was the reachability blocker:** mobile always sent `deliveries[].productId`, the DTO never declared it, and the global `forbidNonWhitelisted` pipe 400'd _every_ stop completion — none of the money fixes were reachable until it landed. ⚠️ **The register missed the real settlement bypass:** RF-016 auto-complete inside `completeStop`/`completeWithPayment` flips a run COMPLETED in its own tx, so gating `updateRunStatus` alone would never have fired on the common path — all three paths now carry the predicate. B83 books over-collection as an `AdvancePayment` (`RUN:<runId>:STOP:<stopId>` reference — load-bearing, matched by prefix). Proof: 3339 api + 1383 mobile jest green, 26 review findings fixed across 2 rounds, mutation probe 6/6 caught + restore-verified, red gate properly red; B167 rides its T2 leg (e2e spec 23, project entry wired — `playwright test --list` shows 134 tests in 23 files). **Handed to F11:** the CANCEL path and `deleteRun` remain ungated for a cash-carrying run.
 
 > **W1 ✅ SHIPPED 2026-08-30:** F00 = PR #545 → master `7e5c2d98`; deploy-signal E2E **proven
 > live** (run started 21s after deploy SUCCESS; echo event self-skipped without cancelling);

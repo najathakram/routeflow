@@ -10,12 +10,15 @@ interface RunSettlementState {
 /**
  * In-memory (non-persisted, matches store/podStore.ts) local tally of cash/
  * check collected during the CURRENT run session. This is a DEVICE-LOCAL
- * record, not a server aggregate — no backend endpoint exists to fetch "all
- * payments for run X" independent of what THIS device recorded (see plan
- * §2.3 and the adjacent §3 finding: driver payments don't even reliably
- * persist server-side today), so an app kill mid-run or a second device on
- * the same run will under-count. Accepted, documented limitation for a
- * mobile-only, additive-only increment.
+ * record, not a server aggregate — an app kill mid-run or a second device on
+ * the same run will under-count. It is NO LONGER the settlement gate: F05
+ * (spec R8) moved that to the server-truth `collectedPayments` /
+ * `settlementNote` fields on the run payload (see
+ * `lib/run-settlement.ts#shouldForceSettlement`), which this store's signal
+ * only OR's into for the brief query-staleness window right after a
+ * collection, before the run has been refetched. This store remains a
+ * per-device echo — the settlement screen's live "collected so far" breakdown
+ * — for immediacy, not a record of truth.
  */
 export const useRunSettlementStore = create<RunSettlementState>((set) => ({
   collectionsByRun: {},

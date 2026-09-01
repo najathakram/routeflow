@@ -20,6 +20,15 @@ export class RunDeliveryDto {
   @IsString() type: string;
   @IsNumber() quantityDelivered: number;
   @IsOptional() @IsString() note?: string;
+  // B148/R3: the mobile client (payment.tsx, short-pick.ts) sends productId on
+  // every delivery line, so the whitelist must accept the key or
+  // `forbidNonWhitelisted` 400s the whole completion. class-validator's
+  // @IsOptional() skips validation (including @IsString()) when the value is
+  // `null`, so an explicit null is accepted alongside a real id or an omitted
+  // key. The value itself is ADVISORY: `DeliveryMutation.productId` is a real
+  // Product FK, so the service persists the order item's own productId read
+  // through the tenant-scoped transaction, never this field.
+  @IsOptional() @IsString() productId?: string | null;
 }
 
 /**

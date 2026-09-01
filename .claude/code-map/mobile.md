@@ -189,6 +189,28 @@ nonce}` so a re-scan re-flashes),
 
 ### `(driver)/` — tabs: Route, Map, Orders, Menu
 
+- **At-door money is server-derived, never `qty × unitPrice` (F05, B49/B152).** `lib/run-money.ts`
+  (pure, jest'd `__tests__/run-money.test.ts`) is the single source for every driver money figure:
+  `lineItemSubtotal` prefers the server's `subtotal` (a Prisma Decimal — arrives as a STRING, so
+  it goes through `Number()`) and falls back to `computeLineSubtotal` from `lib/pricing.ts` for a
+  payload cached before F05; `sumOrderLineItems`/`sumStopOrders` reduce over it. It replaced four
+  independent `qty * unitPrice` reducers — route total value (`route/index.tsx`), per-stop amount
+  due (`stop/[stopId]/index.tsx`), at-door `fullOrderTotal` (`payment.tsx`) and the return screen's
+  original total — each of which over-charged a boxed line by ~`unitsPerBox` (48 pieces at a $30
+  BOX price billed $1,440 instead of $60) **and posted that inflated figure as `payment.amount`**.
+  `payment.tsx`'s two-tier `invoiceTotal` (first order keeps the short-pick `reconciledTotal`) and
+  its `Math.min(received, invoiceTotal)` change-giving cap are unchanged — only the basis was wrong.
+- **Run settlement is server-gated (F05, B152/B167).** `shouldForceSettlement(run, storeSignal)` in
+  `lib/run-settlement.ts` decides the complete-route branch from the run payload
+  (`collectedPayments` + `settlementNote`), OR'd with the device store only to cover the moments
+  after a collection before the query refetches. `store/runSettlementStore.ts` is still RAM-only by
+  design but is **no longer the gate** — it was, which meant any app restart made the reconciliation
+  step silently vanish. `settlement.tsx` shows the server's expected figure, submits through
+  `useSettleRun` (`POST /route-runs/:id/settlement`) and then flips COMPLETED; the old
+  notes-append PATCH is gone. Two non-atomic writes, so a retry re-runs only the status flip
+  (`settledRef` + the server's `RUN_ALREADY_SETTLED` code). If the server's recomputed expected
+  disagrees (a payment landed since the screen loaded) its 400 latches the reason field open and
+  refetches — the field is gated on the CLIENT variance and would otherwise never render.
 - root `_layout.tsx` — Tabs, `useSocket()`, OfflineBanner.
 - `route/index.tsx` (active run, stop list, optimize, complete-route),
   `route/stop/[stopId]/` → `index.tsx` (detail + delivery mutations), `photo.tsx` (POD →
