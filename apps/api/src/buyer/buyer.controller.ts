@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
   Param,
   Patch,
   Post,
@@ -50,6 +51,11 @@ import { UpdateOrderItemsDto } from "../orders/dto/update-order-items.dto";
 import { SubmitAuthorizationDto } from "../authorizations/dto/submit-authorization.dto";
 import { normalizeScanCode, pickBestScanMatch } from "../common/barcode-normalize";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
+import {
+  foldMergeItems,
+  normalizeBareIncomingSellingUnits,
+  normalizeBoxUnawareSnapshots,
+} from "../orders/merge-items";
 
 /** Upper bound on `GET /buyer/products?ids=` — a cart is far smaller than this. */
 const MAX_PRODUCT_IDS = 200;
@@ -83,6 +89,8 @@ function makePseudoUser(ctx: {
 @UseGuards(BuyerJwtAuthGuard)
 @ApiBearerAuth()
 export class BuyerController {
+  private readonly logger = new Logger(BuyerController.name);
+
   constructor(
     private readonly buyerService: BuyerService,
     private readonly catalogService: BuyerCatalogService,
@@ -519,35 +527,87 @@ export class BuyerController {
     if (!dto.forceNew) {
       const activeOrder = await this.ordersService.findActiveOrder(ctx.customerId);
       if (activeOrder) {
-        // Merge: combine existing items with new cart items
-        const mergedMap = new Map<string, number>();
-        // Preserve any operator-added unlisted (catalog-free) lines through the merge.
-        const unlisted: Array<{ name?: string; qty: number; unitPrice: number }> = [];
-        for (const li of activeOrder.lineItems) {
-          if (!li.productId) {
-            unlisted.push({
-              name: li.name ?? undefined,
-              qty: Number(li.qty),
-              unitPrice: Number(li.unitPrice),
-            });
-            continue;
-          }
-          mergedMap.set(li.productId, Number(li.qty));
-        }
-        for (const item of dto.items) {
-          mergedMap.set(item.productId, (mergedMap.get(item.productId) ?? 0) + item.qty);
-        }
-        const mergedItems = [
-          ...Array.from(mergedMap.entries()).map(([productId, qty]) => ({ productId, qty })),
-          ...unlisted,
-        ];
-
-        // Update existing order items with merged list
+        // REG-B47: denomination-aware fold (F30's staff exemplar, shared module) over
+        // LIVE-normalized snapshots — a box-unaware line of a boxed product counts
+        // selling units, so give the fold its real box split before summing.
+        // REG-B51: unlisted lines are server-preserved by updateOrderItems now —
+        // filter them out of the payload entirely (single owner).
+        const lineItems = activeOrder.lineItems ?? [];
+        const incomingItems = dto.items ?? [];
+        // REG-B47, denomination convention: on every BUYER path a bare `{productId,
+        // qty}` counts SELLING UNITS, never loose pieces — create() stores such a
+        // line box-unaware and bills qty x the BOX price, and both cart builders say
+        // so out loud (shelf.service.ts lowItems(), mobile shelf-logic.ts's header).
+        // foldMergeItems was written for the STAFF scan path, where a bare incoming
+        // qty IS a loose piece, so the two halves of the fold must be reconciled per
+        // denomination pair (see merge-items.ts): a box-UNAWARE stored line is
+        // rewritten only when its incoming counterpart carries a split, and a bare
+        // incoming item is expanded only when the STORED line is box-split (where
+        // the accumulator is in pieces). Where both sides are bare they already
+        // agree in selling units and neither is touched.
+        const boxAwareIncoming = new Set(
+          incomingItems.filter((i) => i.boxes != null || i.pieces != null).map((i) => i.productId),
+        );
+        const productIds = lineItems
+          .map((li: { productId?: string | null }) => li.productId)
+          .filter((id: string | null | undefined): id is string => !!id);
+        const products = productIds.length
+          ? await this.prisma.forTenant().product.findMany({
+              where: { id: { in: productIds } },
+              select: { id: true, unitsPerBox: true },
+            })
+          : [];
+        const upbByProduct = new Map(products.map((p) => [p.id, Number(p.unitsPerBox ?? 0)]));
+        const upbForStoredSnapshots = new Map(
+          [...upbByProduct].filter(([id]) => boxAwareIncoming.has(id)),
+        );
+        // ⚠️ The fold's R0/R11 price-survival contract ("a merge is never where an
+        // operator's price override silently disappears") does NOT hold on THIS
+        // caller, and not because of anything here: `updateOrderItems`' CUSTOMER
+        // branch re-prices every catalog line through `resolveBuyerLinePrice` and
+        // never reads `item.unitPrice`, so a preserved MANUAL override is dropped
+        // and the line re-prices at the tier ladder. That is pre-existing (the
+        // naive merge dropped it too) and B13-correct in posture — a buyer payload
+        // must never set a price — but it means an operator's courtesy price on the
+        // buyer's active order does not survive the buyer adding to it. Filed as a
+        // register entry rather than fixed here: the fix belongs in the CUSTOMER
+        // branch (honour a STORED override, still never a client-supplied one),
+        // which is F07's file region.
+        const mergedItems = foldMergeItems(
+          normalizeBoxUnawareSnapshots(lineItems, upbForStoredSnapshots),
+          normalizeBareIncomingSellingUnits(incomingItems, lineItems, upbByProduct),
+        ).filter((i) => i.productId);
         await this.ordersService.updateOrderItems(
           activeOrder.id,
-          { items: mergedItems } as any,
+          { items: mergedItems, replaceAll: true } as UpdateOrderItemsDto,
           makePseudoUser(ctx),
         );
+        // REG-B78: carry the buyer's header fields onto the merged order (append/OR/set
+        // semantics) BEFORE the sibling-order sweep, so they land on the surviving order.
+        // BEST-EFFORT ON PURPOSE: the line write above has already COMMITTED (it runs in
+        // its own transaction), so a throw here would report a merge that DID land as a
+        // failure. The cart clears only on success, so the buyer would re-submit — and
+        // the fold above computes ABSOLUTE totals, so the same cart would be added a
+        // second time. Losing a note/urgent flag is far cheaper than a double order; the
+        // realistic failure is a concurrent sweep consolidating this order away between
+        // the two calls, which the sweep below reconciles anyway.
+        try {
+          await this.ordersService.applyBuyerMergeHeader(
+            activeOrder.id,
+            {
+              notes: dto.notes,
+              urgent: dto.urgent,
+              requestedDeliveryDate: dto.requestedDeliveryDate,
+            },
+            makePseudoUser(ctx),
+          );
+        } catch (err) {
+          this.logger.error(
+            `Buyer merge header (notes/urgent/date) not applied to order ${activeOrder.id}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
 
         // Sweep any other PENDING orders for this customer into the winner. The
         // buyer drove this, so a merged BUY_N_GET_M line earns the free units the

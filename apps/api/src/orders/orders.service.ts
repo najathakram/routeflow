@@ -69,6 +69,19 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 
+/**
+ * B63 (REG-B63): the statuses past which a BUYER may no longer self-edit an
+ * order's items. `updateOrderItems`'s write gate and the read-side `editWindow`
+ * descriptor (`computeEditWindow`) both read THIS list, so a buyer client is
+ * never told the window is open on an order the API is about to refuse.
+ * Operators and drivers keep editing at every live stage.
+ */
+const BUYER_EDIT_CLOSED_STATUSES: OrderStatus[] = [
+  OrderStatus.OUT_FOR_DELIVERY,
+  OrderStatus.PARTIALLY_DELIVERED,
+  OrderStatus.DELIVERED,
+];
+
 @Injectable()
 export class OrdersService implements OnApplicationBootstrap {
   private readonly logger = new Logger(OrdersService.name);
@@ -455,7 +468,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // P5-08 edit window (G7): free editing is open until the order's run dispatches.
     // `editableUntil` (the soft cutoff countdown) stays null until the per-weekday
     // routes-cutoff config lands — the HARD close is dispatch, which is authoritative.
-    (order as any).editWindow = this.computeEditWindow(order);
+    (order as any).editWindow = this.computeEditWindow(order, user.role);
 
     return order;
   }
@@ -466,12 +479,26 @@ export class OrdersService implements OnApplicationBootstrap {
    * stage (incl. OUT_FOR_DELIVERY / DELIVERED, on dispatched runs), with the write
    * gate re-syncing any linked invoice + ledger. Single source of truth shared by
    * the read and the write gate. `dispatched` no longer closes the window.
+   *
+   * B63 (REG-B63): for a CUSTOMER the window DOES close once the order is out the
+   * door — the same `BUYER_EDIT_CLOSED_STATUSES` the write gate refuses on, so the
+   * descriptor never reports "nothing is wrong" while `updateOrderItems` answers
+   * 403. `closedReason: "DISPATCHED"` is what buyer clients read to explain it.
    */
-  private computeEditWindow(order: {
-    status: string;
-    routeRunId?: string | null;
-    routeRun?: { status: string } | null;
-  }): { editable: boolean; editableUntil: string | null; closedReason: string | null } {
+  private computeEditWindow(
+    order: {
+      status: string;
+      routeRunId?: string | null;
+      routeRun?: { status: string } | null;
+    },
+    role?: UserRole,
+  ): { editable: boolean; editableUntil: string | null; closedReason: string | null } {
+    if (
+      role === UserRole.CUSTOMER &&
+      BUYER_EDIT_CLOSED_STATUSES.includes(order.status as OrderStatus)
+    ) {
+      return { editable: false, editableUntil: null, closedReason: "DISPATCHED" };
+    }
     const editable = order.status !== "CANCELLED";
     return {
       editable,
@@ -2752,6 +2779,25 @@ export class OrdersService implements OnApplicationBootstrap {
       throw new BadRequestException("Items can't be edited on a cancelled order");
     }
 
+    // B63 (REG-B63): buyers self-edit only pre-dispatch orders — the post-dispatch
+    // relaxation in the comment above is operator + driver only. Thrown BEFORE any
+    // side effect (invoice revert, line writes, revision, status event); buyers use
+    // the change-request flow once the order is out the door.
+    // Ownership is settled FIRST: this message names the order's dispatch state,
+    // so a non-owner must keep meeting the same bare 403 the in-transaction
+    // ownership check below already gives them on every other status — otherwise
+    // an authenticated buyer could read another customer's order status off the
+    // response body. The extra read only runs on the path about to throw anyway.
+    if (user?.role === UserRole.CUSTOMER && BUYER_EDIT_CLOSED_STATUSES.includes(order.status)) {
+      const owner = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub } });
+      if (!owner || order.customerId !== owner.id) throw new ForbiddenException();
+      throw new ForbiddenException(
+        "This order is already out for delivery. Send a change request instead.",
+      );
+    }
+
     // A4: the mobile item editor is SHARED between the operator and driver screens
     // and always sends an incremental diff — {id, action} entries with
     // replaceAll:false — while the CUSTOMER/DRIVER branch below is a full replace
@@ -2947,13 +2993,24 @@ export class OrdersService implements OnApplicationBootstrap {
               .map((li) => li.productId as string),
           );
 
-          await tx.orderItem.deleteMany({ where: { orderId } });
+          // B51 (REG-B51): buyers can neither author, reprice, nor drop unlisted
+          // (catalog-free) lines — create()'s staff-only rule, mirrored. Stored
+          // unlisted rows are preserved IN PLACE (same row ids — invoice/delivery
+          // references survive); client-supplied unlisted input is ignored on the
+          // buyer path. Drivers keep today's authoring behavior.
+          await tx.orderItem.deleteMany({
+            where: { orderId, ...(isBuyerEdit ? { productId: { not: null } } : {}) },
+          });
           // R2: full replace — the client's item array IS the desired order, so
           // stamp position from a counter that only advances on a real create
           // (skipped/invalid items `continue` before it).
           let pos = 0;
           for (const item of dto.items) {
             if (!item.productId) {
+              // B51: buyers never author/rename/drop an unlisted line — the
+              // stored row above already survived the scoped delete; a buyer's
+              // own unlisted payload entry is simply ignored.
+              if (isBuyerEdit) continue;
               // Preserve an operator-added unlisted (catalog-free) line carried
               // through a buyer's cart merge. Buyers can't author these themselves.
               const name = (item.name ?? "").trim();
@@ -2990,6 +3047,10 @@ export class OrdersService implements OnApplicationBootstrap {
             const shouldSplit =
               upb > 1 &&
               (pieceDenominated.has(item.productId) ||
+                // REG-B47: a folded merge payload carries an explicit box/piece split —
+                // treat it as piece-denominated and re-split server-side from qty + LIVE
+                // unitsPerBox (B13 posture: the split is a signal, never trusted verbatim).
+                (isBuyerEdit && (item.boxes != null || item.pieces != null)) ||
                 (isBuyerEdit && !existingProductIds.has(item.productId)));
             const split = shouldSplit
               ? normalizeBoxesPieces({ qty: item.qty, unitsPerBox: upb })
@@ -3056,6 +3117,19 @@ export class OrdersService implements OnApplicationBootstrap {
               },
             });
           }
+          if (isBuyerEdit) {
+            // B51: the buyer's payload never mentions preserved unlisted rows,
+            // so they were never re-stamped by the loop above — re-stamp them
+            // to continue the position sequence after the client's own lines,
+            // keeping R2's "client array order" contract for a mixed order.
+            const preservedUnlisted = await tx.orderItem.findMany({
+              where: { orderId, productId: null },
+              orderBy: { position: "asc" },
+            });
+            for (const row of preservedUnlisted) {
+              await tx.orderItem.update({ where: { id: row.id }, data: { position: pos++ } });
+            }
+          }
         } else {
           // Operator/admin path.
           // Whether to wipe + recreate (mobile "replace-all") vs. merge incrementally.
@@ -3111,6 +3185,76 @@ export class OrdersService implements OnApplicationBootstrap {
             const products = await tx.product.findMany({ where: { id: { in: productIds } } });
             const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
 
+            // B60 (REG-B60): a staff replaceAll at an unchanged/echoed price must
+            // land exactly where a qty edit of the same line lands — reuse the
+            // stored price + priceType and RESCALE (never drop) the line's
+            // BUY_N_GET_M snapshot instead of silently re-creating it at full
+            // price. Built once from the PRE-edit lines, before the delete below
+            // erases them.
+            //
+            // ⚠️ UNAMBIGUOUS PAIRS ONLY. A replaceAll payload carries no line ids,
+            // and an order may legitimately hold SEVERAL lines of one product (the
+            // diff-add branch creates a new row for an id-less item even when a line
+            // for that product exists). Keying a counterpart by productId alone then
+            // hands the snapshot — and its override attribution — to every echoed
+            // line of that product, including a sibling that never earned one: two
+            // lines of prod-X (qty 10 with 2 free units, qty 5 with none) echoed by a
+            // no-op save would bill the second 5.00 x (5-1) = 20.00 instead of 25.00
+            // and stamp it with the first line's overrideReason/overriddenBy. The
+            // qty-edit oracle this arm copies yields 0 free units for that sibling
+            // (storedFreeUnits 0, canEarnNew false), and rescaleBogoFreeUnits' own
+            // contract is that no operator line gains a promo it never had.
+            // There is no sound N-to-N mapping to recover here, so preservation is
+            // registered ONLY when the pairing is unambiguous: exactly one pre-edit
+            // non-cancelled line for that product AND exactly one incoming line for
+            // it. Any other shape falls through to the pre-F06 behavior (re-created
+            // at the resolved price, snapshot dropped) — that shape is not fixed by
+            // F06, but it is never granted a snapshot it did not earn.
+            const preEditLinesByProduct = new Map<string, number>();
+            for (const li of order.lineItems ?? []) {
+              if (!li.productId || li.status === "CANCELLED") continue;
+              preEditLinesByProduct.set(
+                li.productId,
+                (preEditLinesByProduct.get(li.productId) ?? 0) + 1,
+              );
+            }
+            const incomingLinesByProduct = new Map<string, number>();
+            for (const it of dto.items ?? []) {
+              if (!it.productId) continue;
+              incomingLinesByProduct.set(
+                it.productId,
+                (incomingLinesByProduct.get(it.productId) ?? 0) + 1,
+              );
+            }
+            const bogoCounterparts = new Map<string, any>();
+            for (const li of order.lineItems ?? []) {
+              if (
+                li.productId &&
+                li.status !== "CANCELLED" &&
+                Number((li as any).promoFreeUnits ?? 0) > 0 &&
+                preEditLinesByProduct.get(li.productId) === 1 &&
+                incomingLinesByProduct.get(li.productId) === 1 &&
+                !bogoCounterparts.has(li.productId)
+              ) {
+                bogoCounterparts.set(li.productId, {
+                  qty: Number(li.qty),
+                  boxes: li.boxes ?? null,
+                  unitPrice: Number(li.unitPrice),
+                  priceType: li.priceType,
+                  // A counterpart is ANY line carrying a free-unit snapshot — it can
+                  // be SPECIAL (tier strikethrough) or MANUAL (operator override), not
+                  // only PROMO. Its strikethrough base and override attribution are
+                  // captured too: the qty-edit oracle writes originalPrice /
+                  // overrideReason / overriddenBy ONLY under isManualOverride, so at an
+                  // unchanged price they must survive this re-create untouched.
+                  originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
+                  overrideReason: (li as any).overrideReason ?? null,
+                  overriddenBy: (li as any).overriddenBy ?? null,
+                  promoFreeUnits: Number((li as any).promoFreeUnits ?? 0),
+                });
+              }
+            }
+
             await tx.orderItem.deleteMany({ where: { orderId } });
             // R2: full replace — stamp position from the client's array order.
             let pos = 0;
@@ -3165,21 +3309,64 @@ export class OrdersService implements OnApplicationBootstrap {
 
               const catalogPrice = Number(product.pricePerUnit);
               const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
+              // B60 (REG-B60): a client price that is ABSENT or merely ECHOES this
+              // line's pre-edit BOGO snapshot price (tolerance 0.005 — float/decimal
+              // round-trip, not an override decision) is not a repricing decision —
+              // land where a qty edit of the same line lands (:3529-3675 is the
+              // semantic oracle), never a bare re-create at full price.
+              const bogoCounterpart = bogoCounterparts.get(item.productId);
+              const bogoPriceUnchanged =
+                bogoCounterpart != null &&
+                (overridePrice === null ||
+                  Math.abs(overridePrice - bogoCounterpart.unitPrice) <= 0.005);
+              // Not a repricing decision ⇒ the line's override attribution survives
+              // the re-create, exactly as the qty-edit oracle leaves it untouched.
+              const preservedOverride = bogoPriceUnchanged ? bogoCounterpart : null;
               // An explicit price DIFFERENT from catalog is a genuine operator override
               // (MANUAL); one that EQUALS catalog is still an operator-typed price and is
               // stored verbatim as STANDARD/list — unchanged behavior, and the only way to
               // sell a tiered customer at list for one order. WP1: ONLY a line carrying no
-              // price at all falls through to the tier ladder, and only for staff.
-              const isManualOverride = overridePrice !== null && overridePrice !== catalogPrice;
+              // price at all falls through to the tier ladder, and only for staff. A price
+              // the BOGO branch above already treated as unchanged is never a MANUAL
+              // override either, even if it differs from today's catalog list price.
+              const isManualOverride =
+                !bogoPriceUnchanged && overridePrice !== null && overridePrice !== catalogPrice;
               const upb = Number(product.unitsPerBox ?? 0);
               const qtyPieces = boxes != null ? qty : upb > 1 ? qty * upb : qty;
               const qtyUnits = boxes != null ? boxes : qty;
-              const priced =
-                overridePrice !== null
+              const priced: {
+                unitPrice: number;
+                originalPrice: number | null;
+                priceType: PriceType;
+                freeUnits: number;
+              } = bogoPriceUnchanged
+                ? {
+                    unitPrice: bogoCounterpart.unitPrice,
+                    // The stored strikethrough base, NOT null — a SPECIAL counterpart
+                    // carries the list price here and dropping it erases the "was $x"
+                    // from the order page, the invoice and every savings report.
+                    originalPrice: bogoCounterpart.originalPrice,
+                    priceType: bogoCounterpart.priceType,
+                    // Copies the stored-price qty-edit branch's rescale shape
+                    // verbatim (:3615-3632 is the oracle) — same promos context,
+                    // same product row, oldUnits/newUnits in whole selling units.
+                    freeUnits: this.rescaleBogoFreeUnits({
+                      promos: bogoPromos,
+                      productId: item.productId,
+                      category: product.category ?? null,
+                      unitPrice: bogoCounterpart.unitPrice,
+                      storedFreeUnits: bogoCounterpart.promoFreeUnits,
+                      oldUnits:
+                        bogoCounterpart.boxes != null ? bogoCounterpart.boxes : bogoCounterpart.qty,
+                      newUnits: boxes != null ? boxes : qty,
+                    }),
+                  }
+                : overridePrice !== null
                   ? {
                       unitPrice: overridePrice,
                       originalPrice: isManualOverride ? catalogPrice : null,
                       priceType: isManualOverride ? PriceType.MANUAL : PriceType.STANDARD,
+                      freeUnits: 0,
                     }
                   : isStaffEdit
                     ? this.resolveBuyerLinePrice(
@@ -3197,6 +3384,7 @@ export class OrdersService implements OnApplicationBootstrap {
                         unitPrice: catalogPrice,
                         originalPrice: null as number | null,
                         priceType: PriceType.STANDARD,
+                        freeUnits: 0,
                       };
               const unitPrice = priced.unitPrice;
               const subtotal = computeLineSubtotal({
@@ -3205,6 +3393,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 boxes,
                 pieces,
                 unitsPerBox: product.unitsPerBox,
+                freeUnits: priced.freeUnits,
               });
               await tx.orderItem.create({
                 data: {
@@ -3224,8 +3413,16 @@ export class OrdersService implements OnApplicationBootstrap {
                   notes: item.notes,
                   priceType: priced.priceType,
                   originalPrice: priced.originalPrice,
-                  overrideReason: isManualOverride ? (item.overrideReason ?? null) : null,
-                  overriddenBy: isManualOverride ? (user?.sub ?? null) : null,
+                  // BUY_N_GET_M sale-time snapshot; null for every other line.
+                  promoFreeUnits: priced.freeUnits > 0 ? priced.freeUnits : null,
+                  // B60: on the preservation arm the attribution of WHO authorized
+                  // this price is carried over, not erased by a no-op save.
+                  overrideReason: isManualOverride
+                    ? (item.overrideReason ?? null)
+                    : (preservedOverride?.overrideReason ?? null),
+                  overriddenBy: isManualOverride
+                    ? (user?.sub ?? null)
+                    : (preservedOverride?.overriddenBy ?? null),
                   // Snapshot the regulated category (spec §7).
                   trackedCategoryId: product.trackedCategoryId ?? null,
                   // RF-3: reporting-only subcategory snapshot (mirrors trackedCategoryId).
@@ -3344,6 +3541,7 @@ export class OrdersService implements OnApplicationBootstrap {
                         unitPrice: overridePrice,
                         originalPrice: isManualOverride ? catalogPrice : null,
                         priceType: isManualOverride ? PriceType.MANUAL : PriceType.STANDARD,
+                        freeUnits: 0,
                       }
                     : isStaffEdit
                       ? this.resolveBuyerLinePrice(
@@ -3365,6 +3563,7 @@ export class OrdersService implements OnApplicationBootstrap {
                           unitPrice: catalogPrice,
                           originalPrice: null as number | null,
                           priceType: PriceType.STANDARD,
+                          freeUnits: 0,
                         };
                 const unitPrice = priced.unitPrice;
                 const subtotal = computeLineSubtotal({
@@ -3373,6 +3572,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   boxes: boxesForLine,
                   pieces: piecesForLine,
                   unitsPerBox: product.unitsPerBox,
+                  freeUnits: priced.freeUnits,
                 });
                 await tx.orderItem.create({
                   data: {
@@ -3392,6 +3592,10 @@ export class OrdersService implements OnApplicationBootstrap {
                     notes: item.notes,
                     priceType: priced.priceType,
                     originalPrice: priced.originalPrice,
+                    // BUY_N_GET_M sale-time snapshot; null for every other line. A fresh
+                    // add has no prior line to preserve a snapshot from (R9 plumbing only
+                    // here — always 0 for staff, P5-04's promos-[] invariant).
+                    promoFreeUnits: priced.freeUnits > 0 ? priced.freeUnits : null,
                     overrideReason: isManualOverride ? (item.overrideReason ?? null) : null,
                     overriddenBy: isManualOverride ? (user?.sub ?? null) : null,
                     // Snapshot the regulated category (spec §7).
@@ -4881,6 +5085,39 @@ export class OrdersService implements OnApplicationBootstrap {
     // If caller provides an explicit value, SET it; otherwise toggle (legacy web clients)
     const newValue = urgent !== undefined ? urgent : !order.urgent;
     return this.prisma.forTenant().order.update({ where: { id }, data: { urgent: newValue } });
+  }
+
+  /**
+   * REG-B78: header fields a buyer's cart merge must carry onto the EXISTING
+   * order — merge semantics, not create semantics: notes APPEND (never clobber),
+   * urgent only ever SETS true (a non-urgent add never clears an urgent order),
+   * requestedDeliveryDate sets when provided and never clears.
+   */
+  async applyBuyerMergeHeader(
+    orderId: string,
+    header: { notes?: string; urgent?: boolean; requestedDeliveryDate?: string },
+    user: JwtPayload,
+  ): Promise<void> {
+    const order = await this.prisma.forTenant().order.findFirst({ where: { id: orderId } });
+    if (!order) throw new NotFoundException("Order not found");
+    if (user.role === UserRole.CUSTOMER) {
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub } });
+      if (!customer || order.customerId !== customer.id) throw new ForbiddenException();
+    }
+    const data: Record<string, unknown> = {};
+    const notes = (header.notes ?? "").trim();
+    if (notes) data.notes = order.notes ? `${order.notes}\n${notes}` : notes;
+    if (header.urgent === true) data.urgent = true;
+    if (header.requestedDeliveryDate) {
+      // Mirrors create()'s exact parse (:2107-2109) so merge and create agree
+      // on timezone handling.
+      data.requestedDeliveryDate = new Date(header.requestedDeliveryDate);
+    }
+    if (Object.keys(data).length) {
+      await this.prisma.forTenant().order.update({ where: { id: orderId }, data });
+    }
   }
 
   async getOrderTracking(orderId: string, user: JwtPayload) {

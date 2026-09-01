@@ -373,5 +373,28 @@ export default defineConfig({
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
+
+    // ── Order-edit pricing readiness gate (F06, spec 24) ───────────────────────
+    // REG-B62: the order-edit page's add-product and substitute controls must
+    // stay disabled (with a "Loading customer pricing…" hint) until the
+    // customer detail + customer-price queries settle, so a line can never be
+    // added or substituted at a transient list price before the customer's
+    // contracted tier loads. Makes the race deterministic via `page.route`
+    // holding GET /customers/:id rather than racing real network timing.
+    // Mutating but self-contained: creates its own throwaway `E2E B62 …`
+    // customer + two products + a DRAFT order on the approved seed tenant and
+    // deletes nothing (same tolerance 21-destructive-guards/22-payment-truth's
+    // own throwaway fixtures take). NOT part of F06's red gate — this spec
+    // proves a client-side query race with no web unit runner behind it
+    // (campaign decision D1), so it runs only against the DEPLOYED site and is
+    // expected red until F06 ships.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "order-edit-pricing",
+      testMatch: /24-order-edit-pricing\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
   ],
 });
