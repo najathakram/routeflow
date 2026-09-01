@@ -35,6 +35,12 @@ describe("CustomersService — F4-002 sort-field allowlist", () => {
           },
         },
         CustomersService,
+        // B65-class invariant: CustomersService now reverses a destroyed
+        // invoice's regulated-ledger entries, so the collaborator must be provided.
+        {
+          provide: RegulatedLedgerService,
+          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(null) } },
         {
@@ -100,6 +106,7 @@ import "reflect-metadata";
 import { UserRole } from "@prisma/client";
 import { CustomersController } from "./customers.controller";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 
 describe("CustomersController — statement endpoints role guard", () => {
   it.each([["getStatementMonths"], ["getStatementPdf"]] as const)(

@@ -15,9 +15,21 @@ import { CommissionsModule } from "../sales-agents/commissions.module";
 // operator statement endpoints.
 import { StatementService } from "../buyer/statement.service";
 import { StatementPdfService } from "../buyer/statement-pdf.service";
+// The bulk purge paths hard-delete invoices, and the regulated-sales ledger is
+// append-only with no FK to Invoice — so they must reverse a destroyed invoice's
+// entries first, exactly as invoices.service's voidInvoiceInTx/deleteInvoice and
+// orders.service's deleteOrder (B65) already do.
+import { RegulatedModule } from "../regulated/regulated.module";
 
 @Module({
-  imports: [AuthModule, ConfigModule, StorageModule, EntitlementsModule, CommissionsModule],
+  imports: [
+    AuthModule,
+    ConfigModule,
+    StorageModule,
+    EntitlementsModule,
+    CommissionsModule,
+    RegulatedModule,
+  ],
   controllers: [CustomersController],
   providers: [CustomersService, StatementService, StatementPdfService],
   exports: [CustomersService],

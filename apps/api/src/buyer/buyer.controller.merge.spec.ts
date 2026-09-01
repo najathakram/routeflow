@@ -44,6 +44,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 
 const MOCK_CTX = {
   customerId: "cust-merge-1",
