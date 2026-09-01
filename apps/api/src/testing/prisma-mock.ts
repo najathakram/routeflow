@@ -155,6 +155,11 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     stockAlert: modelProxy(),
     stockCountSession: modelProxy(),
     stockCountLine: modelProxy(),
+    // B120 (F10): reopenStop archives POD pointers via `tx.auditLog.create`, so the
+    // model must exist on the object the default tenantTransaction/$transaction mocks
+    // spread — a per-spec `(prisma as any).auditLog = ...` only reaches the returned
+    // object, never this one.
+    auditLog: modelProxy(),
   });
 
   const txModels = () => ({

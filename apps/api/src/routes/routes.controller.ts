@@ -230,15 +230,20 @@ export class RouteRunsController {
     @Param("id") runId: string,
     @Param("stopId") stopId: string,
     @Body() body: AttachPodArtifactDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.routesService.attachPodArtifact(runId, stopId, body);
+    return this.routesService.attachPodArtifact(runId, stopId, body, user);
   }
 
   @Get(":id/stops/:stopId/pod")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
-  getStopPod(@Param("id") runId: string, @Param("stopId") stopId: string) {
-    return this.routesService.getStopPod(runId, stopId);
+  getStopPod(
+    @Param("id") runId: string,
+    @Param("stopId") stopId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.routesService.getStopPod(runId, stopId, user);
   }
 
   @Patch(":id/stops/:stopId")

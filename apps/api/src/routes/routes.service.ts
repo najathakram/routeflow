@@ -15,13 +15,13 @@ import {
   RouteRunStatus,
   OrderStatus,
   NotificationEvent,
-  Prisma,
   RouteKind,
   FulfillPath,
   RouteOriginKind,
   RouteEndKind,
   RouteOptimizeMetric,
   PaymentMethod,
+  InvoiceStatus,
 } from "@prisma/client";
 import { roundMoney } from "../common/pricing";
 // F03/F05: the settlement cash basis stays pinned to the shared CONFIRMED
@@ -36,7 +36,7 @@ import { CreateRouteDto } from "./dto/create-route.dto";
 import { UpdateRouteDto } from "./dto/update-route.dto";
 import { AddStopDto } from "./dto/add-stop.dto";
 import { CreateRouteRunDto } from "./dto/create-route-run.dto";
-import { UpdateRunStatusDto } from "./dto/update-run-status.dto";
+import { UpdateRunStatusDto, forbiddenRunTransition } from "./dto/update-run-status.dto";
 import { ListRunsDto } from "./dto/list-runs.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -1369,7 +1369,19 @@ export class RoutesService {
     const run = await this.prisma.forTenant().routeRun.findUnique({ where: { id } });
     if (!run) throw new NotFoundException("Route run not found");
 
+    // B72: OWNERSHIP FIRST, then state. A state guard that fires before the
+    // driver binding tells an unassigned driver whether the run is CANCELLED or
+    // COMPLETED — a driver who may not touch the run should not learn its state
+    // either. `attachPodArtifact` orders these the same way; keep all four
+    // entry points consistent.
     if (user.role === UserRole.DRIVER) {
+      const driver = await this.prisma
+        .forTenant()
+        .driver.findFirst({ where: { userId: user.sub } });
+      if (!driver || run.driverId !== driver.id) {
+        throw new ForbiddenException("You do not have access to this route run");
+      }
+
       const allowedStatuses: RouteRunStatus[] = [
         RouteRunStatus.IN_PROGRESS,
         RouteRunStatus.COMPLETED,
@@ -1377,6 +1389,30 @@ export class RoutesService {
       if (!allowedStatuses.includes(dto.status)) {
         throw new ForbiddenException("Drivers can only set IN_PROGRESS or COMPLETED");
       }
+
+      // B72: un-cancelling is an operator decision. The matrix keeps
+      // CANCELLED→SCHEDULED/IN_PROGRESS legal because it is the only recovery an
+      // accidentally cancelled run has (deleteRun refuses runs with recorded
+      // deliveries), but a stale driver device must not resurrect a called-off
+      // run by replaying "start run".
+      if (run.status === RouteRunStatus.CANCELLED) {
+        throw new ForbiddenException("This run was cancelled — ask your operator to restart it.");
+      }
+    }
+
+    // B72: from-state guard — see forbiddenRunTransition's doc for the matrix.
+    const denied = forbiddenRunTransition(run.status, dto.status);
+    if (denied) throw new ConflictException(denied);
+
+    // B72 (composite path): the matrix is edge-wise, so it cannot see
+    // COMPLETED → IN_PROGRESS → SCHEDULED — two individually-legal PATCHes that
+    // together re-schedule a completed run, which the matrix's own contract says
+    // can never happen. `completedAt` survives the first hop, so it is the
+    // durable evidence that this run has already been completed once.
+    if (dto.status === RouteRunStatus.SCHEDULED && run.completedAt) {
+      throw new ConflictException(
+        "This run has already been completed — it cannot go back to scheduled. Reopen a stop instead.",
+      );
     }
 
     // Require all stops to be completed or skipped before marking run as COMPLETED
@@ -1688,16 +1724,35 @@ export class RoutesService {
     });
     if (!stop) throw new NotFoundException("Stop not found");
 
+    const run = await this.prisma
+      .forTenant()
+      .routeRun.findFirst({ where: { id: runId }, select: { driverId: true, status: true } });
+    if (!run) throw new NotFoundException("Route run not found");
+
+    // B72: OWNERSHIP FIRST, then state — same ordering as updateRunStatus and
+    // attachPodArtifact. A driver with no claim on this run must not learn from
+    // the error whether the stop is completed or the run cancelled.
     if (user.role === UserRole.DRIVER) {
-      const run = await this.prisma
-        .forTenant()
-        .routeRun.findFirst({ where: { id: runId }, select: { driverId: true } });
       const driver = await this.prisma
         .forTenant()
         .driver.findFirst({ where: { userId: user.sub } });
-      if (!driver || !run || run.driverId !== driver.id) {
+      if (!driver || run.driverId !== driver.id) {
         throw new ForbiddenException("You do not have access to this route run");
       }
+    }
+
+    // B71: COMPLETED is exited only via reopenStop — it reverses the delivery's
+    // mutations, stock-truth and payment guard; flipping the column here would
+    // strand those side effects and blind the delivered-order demotion guard,
+    // which keys on stop.status === COMPLETED.
+    if (stop.status === "COMPLETED") {
+      throw new ConflictException(
+        "This stop is completed. Reopen it instead — that reverses the delivery correctly.",
+      );
+    }
+
+    if (run.status === RouteRunStatus.COMPLETED || run.status === RouteRunStatus.CANCELLED) {
+      throw new ConflictException(`Cannot change a stop on a ${run.status.toLowerCase()} run.`);
     }
 
     const updates: any = { status: dto.status };
@@ -1825,13 +1880,30 @@ export class RoutesService {
    * queue replays them in the same order). Idempotent per artifactId so a
    * replay whose response was lost never duplicates a photo.
    */
-  async attachPodArtifact(runId: string, stopId: string, dto: AttachPodArtifactDto) {
+  async attachPodArtifact(
+    runId: string,
+    stopId: string,
+    dto: AttachPodArtifactDto,
+    user: JwtPayload,
+  ) {
     const run = await this.prisma.forTenant().routeRun.findUnique({ where: { id: runId } });
     if (!run) throw new NotFoundException("Route run not found");
     const stop = await this.prisma
       .forTenant()
       .routeRunStop.findFirst({ where: { id: stopId, routeRunId: runId } });
     if (!stop) throw new NotFoundException("Stop not found");
+
+    // B121: same driver binding as reopenStop/updateStopStatus — checked before
+    // the idempotent read so another driver's replay cannot read the stored
+    // artifact either.
+    if (user.role === UserRole.DRIVER) {
+      const driver = await this.prisma
+        .forTenant()
+        .driver.findFirst({ where: { userId: user.sub } });
+      if (!driver || run.driverId !== driver.id) {
+        throw new ForbiddenException("You do not have access to this route run");
+      }
+    }
 
     if (!parseImageDataUrl(dto.dataUrl)) {
       throw new BadRequestException("dataUrl must be a data:image/... URL");
@@ -1852,6 +1924,20 @@ export class RoutesService {
       return { key: existing, url: await this.storage.presignedUrl(existing) };
     }
 
+    // B121: the signature that satisfied the regulated-delivery gate is
+    // immutable once the stop is COMPLETED — a different artifact may not
+    // replace it (the same-artifactId offline replay returned above). Photos
+    // stay appendable; reopenStop is the sanctioned path to re-capture.
+    if (
+      dto.kind === "signature" &&
+      stop.status === "COMPLETED" &&
+      (stop.signatureUrl ?? "").trim().length > 0
+    ) {
+      throw new ConflictException(
+        "This completed stop already has a signature. Reopen the stop to re-capture it.",
+      );
+    }
+
     const key = await this.ingestPodDataUrl(dto.dataUrl, stopId, dto.kind, artifactId);
     if (!key) throw new BadRequestException("File is not a decodable image");
 
@@ -1867,11 +1953,28 @@ export class RoutesService {
    * URLs passed through, legacy strings surfaced only as counts/flags so the
    * web UI can say "captured by an older app version" instead of lying.
    */
-  async getStopPod(runId: string, stopId: string) {
+  async getStopPod(runId: string, stopId: string, user: JwtPayload) {
     const stop = await this.prisma
       .forTenant()
       .routeRunStop.findFirst({ where: { id: stopId, routeRunId: runId } });
     if (!stop) throw new NotFoundException("Stop not found");
+
+    // B121: POD is regulated-delivery evidence and personal data (the customer's
+    // signature) — bind the read to the run's CURRENT driver exactly as
+    // attachPodArtifact binds the write, otherwise a driver whose run was
+    // reassigned keeps presigning its signature/photos indefinitely.
+    if (user.role === UserRole.DRIVER) {
+      const run = await this.prisma
+        .forTenant()
+        .routeRun.findFirst({ where: { id: runId }, select: { driverId: true } });
+      if (!run) throw new NotFoundException("Route run not found");
+      const driver = await this.prisma
+        .forTenant()
+        .driver.findFirst({ where: { userId: user.sub } });
+      if (!driver || run.driverId !== driver.id) {
+        throw new ForbiddenException("You do not have access to this route run");
+      }
+    }
 
     const tenantId = this.requireTenantId();
     const photos: { url: string }[] = [];
@@ -1936,6 +2039,17 @@ export class RoutesService {
     if (!stop) throw new NotFoundException("Stop not found");
     if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
 
+    const driver =
+      user.role === UserRole.DRIVER
+        ? await this.prisma.forTenant().driver.findFirst({ where: { userId: user.sub } })
+        : null;
+    // B72: a driver may only complete stops on a run assigned to them — checked
+    // before the idempotency read and POD ingest so a hijacker's capture is
+    // never stored.
+    if (user.role === UserRole.DRIVER && (!driver || run.driverId !== driver.id)) {
+      throw new ForbiddenException("You do not have access to this route run");
+    }
+
     // RF-019: Idempotency check (outside transaction for speed)
     if (dto.idempotencyKey) {
       const scope = `completeStop:${runId}:${stopId}`;
@@ -1946,11 +2060,6 @@ export class RoutesService {
     // Durable POD: rewrite data-URL artifacts to storage keys before the tx
     // (after the idempotency check so a cached replay never re-uploads).
     await this.ingestPodCapture(dto, stopId);
-
-    const driver =
-      user.role === UserRole.DRIVER
-        ? await this.prisma.forTenant().driver.findFirst({ where: { userId: user.sub } })
-        : null;
 
     let autoCompleted = false;
     await this.prisma.tenantTransaction(async (tx) => {
@@ -2135,6 +2244,17 @@ export class RoutesService {
     if (!stop) throw new NotFoundException("Stop not found");
     if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
 
+    const driver =
+      user.role === UserRole.DRIVER
+        ? await this.prisma.forTenant().driver.findFirst({ where: { userId: user.sub } })
+        : null;
+    // B72: a driver may only complete stops on a run assigned to them — checked
+    // before the idempotency read and POD ingest so a hijacker's capture is
+    // never stored.
+    if (user.role === UserRole.DRIVER && (!driver || run.driverId !== driver.id)) {
+      throw new ForbiddenException("You do not have access to this route run");
+    }
+
     // RF-006: reject physical-money payment with zero amount
     if (dto.payment && dto.payment.amount <= 0) {
       const physicalMethods = ["CASH", "CHECK", "CREDIT_CARD"];
@@ -2155,11 +2275,6 @@ export class RoutesService {
     // Durable POD: rewrite data-URL artifacts to storage keys before the tx
     // (after the idempotency check so a cached replay never re-uploads).
     await this.ingestPodCapture(dto, stopId);
-
-    const driver =
-      user.role === UserRole.DRIVER
-        ? await this.prisma.forTenant().driver.findFirst({ where: { userId: user.sub } })
-        : null;
 
     let autoCompleted = false;
     let paymentIds: string[] = [];
@@ -2590,12 +2705,32 @@ export class RoutesService {
         throw new ForbiddenException("You do not have access to this route run");
     }
 
-    // Load delivery mutations for this stop
-    const mutations = await this.prisma.forTenant().deliveryMutation.findMany({
-      where: { routeRunStopId: stopId },
-      include: { order: { select: { orderNumber: true } } },
-    });
     const orderIds = [...new Set(stop.orders.map((o) => o.id))];
+
+    // B54: the live at-door writer is InvoicePayment via
+    // recordDeliveryPaymentInTx — the legacy `transaction` model has no writer
+    // left, so the guard below it can never fire on new data. Block the reopen
+    // while confirmed money stands against any of this stop's orders' invoices:
+    // reversing delivery state under a live payment strands a PAID invoice on
+    // an order the system then says was never delivered, and the re-delivery's
+    // second collection is unrecorded (PAYABLE excludes PAID).
+    if (orderIds.length > 0) {
+      const liveMoney = await this.prisma.forTenant().invoice.findFirst({
+        where: {
+          orderId: { in: orderIds },
+          OR: [
+            { status: { in: [InvoiceStatus.PAID, InvoiceStatus.PARTIAL] } },
+            { payments: { some: CONFIRMED_PAYMENT } },
+          ],
+        },
+        select: { id: true },
+      });
+      if (liveMoney) {
+        throw new BadRequestException(
+          "Payment already recorded against this delivery — contact your operator to correct",
+        );
+      }
+    }
 
     // Check for recorded payments on any transaction — block reopen if payment exists
     if (orderIds.length > 0) {
@@ -2613,73 +2748,86 @@ export class RoutesService {
     }
 
     await this.prisma.tenantTransaction(async (tx) => {
-      // 1. Reverse stock movements for each SALE created by this stop's mutations.
-      // Written as a compensating SALE with POSITIVE quantity carrying the
-      // original sale's unit cost, so signed COGS aggregations net to zero —
-      // an un-costed ADJUSTMENT would leave the original cost in COGS forever.
-      for (const mutation of mutations) {
-        const qty = Number(mutation.quantityDelivered ?? 0);
-        if (
-          qty > 0 &&
-          mutation.productId &&
-          (mutation.type === "DELIVERED" || mutation.type === "PARTIAL")
-        ) {
-          const product = await tx.product.findFirst({
-            where: { id: mutation.productId },
-            select: { currentStock: true, averageCost: true },
-          });
-          // Cost of the original SALE for this order, else current average
-          const originalSale = await tx.stockMovement.findFirst({
-            where: {
-              productId: mutation.productId,
-              type: "SALE",
-              quantity: { lt: 0 },
-              reference: mutation.order?.orderNumber ?? undefined,
-            },
-            orderBy: { createdAt: "desc" },
-            select: { unitCost: true },
-          });
-          const unitCost = originalSale?.unitCost ?? product?.averageCost ?? null;
-          const stockAfter = (product?.currentStock ?? new Prisma.Decimal(0)).add(qty);
-
-          await tx.stockMovement.create({
-            data: {
-              productId: mutation.productId,
-              type: "SALE",
-              quantity: new Prisma.Decimal(qty),
-              unitCost,
-              avgCostAfter: product?.averageCost ?? null,
-              stockAfter,
-              reference: `Reopen stop ${stopId}`,
-              performedById: user.sub,
-            },
-          });
-          await tx.product.update({
-            where: { id: mutation.productId },
-            data: { currentStock: { increment: qty } },
-          });
-        }
-      }
-
-      // 2. Delete delivery mutations for this stop
+      // 1. Delete delivery mutations for this stop
       await tx.deliveryMutation.deleteMany({ where: { routeRunStopId: stopId } });
 
-      // 3. Reset order items → PENDING
+      // 2. Reset order items → PENDING, order status → CONFIRMED (safe
+      // fallback — it was at least CONFIRMED before going OUT_FOR_DELIVERY),
+      // and delete UNPAID transactions.
+      //
+      // `deliveredQty` MUST be reset with the status. `completeWithPayment`
+      // writes it per item (`deliveredQty: REFUSED ? 0 : quantityDelivered`)
+      // independently of whether money changed hands, and
+      // `reconcileOrderDraftInvoice(basis:"delivered")` bills
+      // `Number(li.deliveredQty ?? 0)`. Leaving it standing after a reversal
+      // bills the UNDONE delivery: complete a stop on account (item A 5, item B
+      // 3, $0 collected) → reopen (permitted, since the B54 live-money guard
+      // sees no confirmed payment) → re-deliver only item A with payment, and
+      // item B is invoiced for 3 units nobody delivered. One order maps to one
+      // stop (`Order.routeRunStopId`), so zeroing every item of this stop's
+      // orders reverses exactly this stop's delivery and nothing else.
       for (const order of stop.orders) {
         await tx.orderItem.updateMany({
           where: { orderId: order.id },
-          data: { status: "PENDING" },
+          data: { status: "PENDING", deliveredQty: 0 },
         });
-        // 4. Reset order status → CONFIRMED (safe fallback — it was at least CONFIRMED before going OUT_FOR_DELIVERY)
         if (order.status === "DELIVERED" || order.status === "OUT_FOR_DELIVERY") {
           await tx.order.update({ where: { id: order.id }, data: { status: "CONFIRMED" } });
         }
-        // 5. Delete UNPAID transactions
         await tx.transaction.deleteMany({ where: { orderId: order.id, status: "UNPAID" } });
       }
 
-      // 6. Reset stop (incl. Phase 4 W7b regulated POD capture so a re-completion
+      // 3. B120: the reset below discards the only pointers to the stored POD
+      // artifacts (these columns are storage keys since #477). Archive them in
+      // this same transaction so regulated-delivery evidence stays recoverable
+      // and the storage objects stay referenced; tenantId is injected by the
+      // tenantTransaction write proxy.
+      await tx.auditLog.create({
+        data: {
+          userId: user.sub ?? null,
+          action: "route_stop.reopened",
+          entityType: "RouteRunStop",
+          entityId: stopId,
+          meta: {
+            runId,
+            signatureUrl: stop.signatureUrl ?? null,
+            podPhotoUrls: stop.podPhotoUrls ?? [],
+            safeDropEnabled: stop.safeDropEnabled ?? false,
+            driverNote: stop.driverNote ?? null,
+            completedAt: stop.completedAt ? stop.completedAt.toISOString() : null,
+            ageVerified: stop.ageVerified ?? false,
+            identityVerified: stop.identityVerified ?? false,
+            identityType: stop.identityType ?? null,
+            identityVerifiedAt: stop.identityVerifiedAt
+              ? stop.identityVerifiedAt.toISOString()
+              : null,
+          },
+        },
+      });
+
+      // 4. Reset stop (incl. Phase 4 W7b regulated POD capture so a re-completion
       // must re-capture the age/ID checks; requirement flags are re-derived then).
+      // B120: the audit row above is the who/when trail; `podHistory` is the
+      // stop-local, append-only pointer archive the F01 schema batch added for
+      // exactly this write (schema.prisma RouteRunStop.podHistory), so a stop
+      // read surface can recover displaced evidence without an AuditLog query.
+      // Prisma has no `push` for Json, so prior entries are re-spread; nothing
+      // is appended when the reopen displaces no pointers (a SKIPPED stop).
+      const displaced =
+        (stop.signatureUrl ?? "").trim().length > 0 || (stop.podPhotoUrls ?? []).length > 0;
+      const podArchive = displaced
+        ? {
+            podHistory: [
+              ...(Array.isArray(stop.podHistory) ? stop.podHistory : []),
+              {
+                archivedAt: new Date().toISOString(),
+                signatureUrl: stop.signatureUrl ?? null,
+                podPhotoUrls: stop.podPhotoUrls ?? [],
+                reason: "reopen",
+              },
+            ],
+          }
+        : null;
       await tx.routeRunStop.update({
         where: { id: stopId },
         data: {
@@ -2694,10 +2842,11 @@ export class RoutesService {
           identityVerified: false,
           identityType: null,
           identityVerifiedAt: null,
+          ...(podArchive ?? {}),
         },
       });
 
-      // 7. If run was COMPLETED, reopen it too — and drop any settlement
+      // 5. If run was COMPLETED, reopen it too — and drop any settlement
       // record either way (F05 / R7). Reopening a stop means this run can
       // collect money again, while R7's three gates all key on
       // `settlementNote == null`: a note left over from the earlier, smaller

@@ -1,0 +1,102 @@
+{
+  "_comment": "EXACT args for Workflow({scriptPath, resumeFromRunId: 'wf_7011dc41-445', args}) — the runtime does NOT store args, so they must be re-passed verbatim or unchanged agent calls will not replay from cache. See RESUME.md next to this file.",
+  "planPath": "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F10\\.claude\\pipeline\\2026-09-01-F10-reopen-stop-state-guards\\build-plan.md",
+  "discoveryPath": "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F10\\.claude\\pipeline\\2026-09-01-F10-reopen-stop-state-guards\\discovery.md",
+  "specPath": "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F10\\.claude\\pipeline\\2026-09-01-F10-reopen-stop-state-guards\\spec.md",
+  "testPlanPath": "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F10\\.claude\\pipeline\\2026-09-01-F10-reopen-stop-state-guards\\test-plan.md",
+  "scale": "major",
+  "workdir": "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F10",
+  "context": "Campaign batch F10 — six register bugs (B54,B55,B71,B72,B120,B121) in the RouteFlow NestJS API's delivery stop/run state machine (apps/api/src/routes). Jest T1 proofs titled REG-B##. Test tenants/placeholder ids only; never reference live clients. Do NOT touch deleteRun, the CANCELLED side effects (F11's scope), or RUN_LINE_ITEMS_SELECT (G7).",
+  "formatCommand": "npx prettier --write \"apps/api/src/routes/**/*.ts\"",
+  "testPackages": [
+    {
+      "id": "TP-guards",
+      "title": "REG-B54/B55/B71/B72/B120/B121 unit specs (T1-T19)",
+      "files": ["apps/api/src/routes/routes.service.stop-state-guards.spec.ts"],
+      "brief": "Author the NEW spec file with tests T1-T19 exactly as specified in test-plan.md (verbatim it() titles, oracles, and red-anchors). Mirror the setup block of apps/api/src/routes/routes.service.spec.ts:76-141 (createMockPrisma, provider list, jest.mock of ../common/geocode.util and ../storage/compress.util). Use (service as any) for every attachPodArtifact call (its 4-arg signature does not exist yet) and require(\"./dto/update-run-status.dto\") + toBeDefined() for forbiddenRunTransition (does not exist yet) so every test fails on an ASSERTION pre-implementation, never a compile/import error. Import CONFIRMED_PAYMENT from ../invoices/payment-predicates for T3's where-shape assertion. reopenStop fixtures: prisma.routeRun.findUnique returns the run WITH stops:[stop] (the service reads run.stops[0]) and prisma.transaction.findMany returns []. Implementation code is FORBIDDEN — tests only."
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "cd apps/api && npx jest src/routes/routes.service.stop-state-guards.spec.ts --silent"
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "WP-dto",
+      "title": "forbiddenRunTransition deny-list in update-run-status.dto.ts",
+      "files": ["apps/api/src/routes/dto/update-run-status.dto.ts"],
+      "effort": "low",
+      "satisfies": ["R4"],
+      "provenBy": ["T9", "T10", "T11"],
+      "brief": "Execute work package WP-dto from build-plan.md exactly — the complete code to append (helper + doc comment) is given verbatim in the plan. Keep the existing DTO class byte-for-byte."
+    },
+    {
+      "id": "WP-service",
+      "title": "Six guard edits in routes.service.ts + existing-spec updates",
+      "files": [
+        "apps/api/src/routes/routes.service.ts",
+        "apps/api/src/routes/routes.service.spec.ts"
+      ],
+      "dependsOn": ["WP-dto"],
+      "satisfies": ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8"],
+      "provenBy": [
+        "T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "T9", "T10",
+        "T12", "T13", "T14", "T15", "T16", "T17", "T18", "T19"
+      ],
+      "brief": "Execute work package WP-service from build-plan.md: six surgical edits (exact insertion code and line anchors in the plan) — updateRunStatus matrix+ownership, updateStopStatus from-state guards, completeStop and completeWithPayment ownership (move the driver lookup up, delete the old one), attachPodArtifact user param + driver binding + signature immutability, reopenStop live-money guard + stock-loop removal + audit archival. Add imports: forbiddenRunTransition from ./dto/update-run-status.dto, InvoiceStatus into the existing @prisma/client import. Then apply the existing-spec updates listed in test-plan.md 'Regression pins' (4th arg operatorPayload on existing attachPodArtifact calls, photos-appendable pin, driver.findFirst mock {id:\"drv-1\"} in the two driver updateRunStatus tests). Run the full existing routes suite; fix only missing-mock breakage, never weaken an assertion. Do not touch deleteRun, CANCELLED side effects, RUN_LINE_ITEMS_SELECT, getUnsettledPhysicalMoney, the RF-016 blocks, the B152 backstop, or the legacy transaction.findMany guard (it STAYS)."
+    },
+    {
+      "id": "WP-controller",
+      "title": "attachPodArtifact controller passes @CurrentUser",
+      "files": ["apps/api/src/routes/routes.controller.ts"],
+      "effort": "low",
+      "dependsOn": ["WP-service"],
+      "satisfies": ["R8"],
+      "provenBy": ["T18", "T19"],
+      "brief": "Execute work package WP-controller from build-plan.md: in the attachPodArtifact endpoint (around line 226-235) add @CurrentUser() user: JwtPayload as the last parameter and pass it as the 4th argument to routesService.attachPodArtifact. @CurrentUser and JwtPayload are already imported in this file — copy the neighbouring endpoints' decorator style. No other changes."
+    }
+  ],
+  "verifyCommands": {
+    "perRound": ["cd apps/api && npx tsc -p tsconfig.build.json --noEmit"],
+    "final": [
+      "cd apps/api && npx jest src/routes --silent",
+      "cd apps/api && npx eslint src/routes"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/api/src/routes/routes.service.ts",
+        "behavior": "reopenStop blocks when a live invoice/payment exists (remove the liveMoney BadRequestException throw)",
+        "test": "cd apps/api && npx jest src/routes/routes.service.stop-state-guards.spec.ts -t \"REG-B54\" --silent"
+      },
+      {
+        "file": "apps/api/src/routes/routes.service.ts",
+        "behavior": "reopenStop writes no stock (re-introduce a tx.stockMovement.create inside the reopen transaction)",
+        "test": "cd apps/api && npx jest src/routes/routes.service.stop-state-guards.spec.ts -t \"REG-B55\" --silent"
+      },
+      {
+        "file": "apps/api/src/routes/routes.service.ts",
+        "behavior": "updateStopStatus rejects COMPLETED stops (remove the ConflictException throw)",
+        "test": "cd apps/api && npx jest src/routes/routes.service.stop-state-guards.spec.ts -t \"REG-B71\" --silent"
+      },
+      {
+        "file": "apps/api/src/routes/routes.service.ts",
+        "behavior": "updateRunStatus enforces the from-state matrix (skip the forbiddenRunTransition call)",
+        "test": "cd apps/api && npx jest src/routes/routes.service.stop-state-guards.spec.ts -t \"REG-B72\" --silent"
+      },
+      {
+        "file": "apps/api/src/routes/routes.service.ts",
+        "behavior": "attachPodArtifact signature immutability on completed stops (remove the ConflictException throw)",
+        "test": "cd apps/api && npx jest src/routes/routes.service.stop-state-guards.spec.ts -t \"REG-B121\" --silent"
+      },
+      {
+        "file": "apps/api/src/routes/routes.service.ts",
+        "behavior": "completeStop driver-ownership (remove the run.driverId comparison)",
+        "test": "cd apps/api && npx jest src/routes/routes.service.stop-state-guards.spec.ts -t \"REG-B72\" --silent"
+      }
+    ]
+  }
+}
