@@ -18,6 +18,15 @@
  * Test/spec files (`*.spec.ts`, `*.test.ts`, `__tests__/`) don't count as
  * "code" for either gate — they don't need a map entry of their own.
  *
+ * Gate 3 — lesson capture: CLAUDE.md's lessons-learned routine requires every
+ * bug fix to leave a rule behind in `.claude/lessons/`. Only runs when
+ * `.claude/lessons/LESSONS.md` exists. Blocks when bug-fix-shaped work left the
+ * register untouched — (a) a fix/* branch with uncommitted code changes, or
+ * (b) conventional `fix:` commits landed after the last commit that touched
+ * `.claude/lessons/` (self-anchoring like Gate 2b). Any change under
+ * `.claude/lessons/` — including a bare `_meta.json` updatedAt bump, the
+ * "no transferable lesson" acknowledgement — silences both.
+ *
  * Why prettier-only (no eslint here): ESLint flat config resolves from the
  * current working directory, and this repo has NO root eslint.config — eslint
  * only runs per-workspace via `npm run lint` / Turbo. tsc is likewise excluded
@@ -118,6 +127,46 @@ if (hasMap && !changed.some(isMap)) {
           `.claude/code-map/ update (${lastMap.slice(0, 7)}) without refreshing the map ` +
           `(CLAUDE.md code-map routine).\n${HOW_TO_FIX}\n\n` +
           `Unmapped code files (first 10 of ${codeDrift.length}):\n  ${list}\n`,
+      );
+      process.exit(2);
+    }
+  }
+}
+
+// ── Gate 3: lesson capture after a bug fix ────────────────────────────────
+const isLesson = (f) => norm(f).startsWith(".claude/lessons/");
+const hasLessons = existsSync(".claude/lessons/LESSONS.md");
+
+if (hasLessons && !changed.some(isLesson)) {
+  const LESSON_FIX =
+    "Append an entry to .claude/lessons/LESSONS.md (Symptom / Root cause / Lesson / Guard) " +
+    "and bump _meta.json (nextId, activeCount, updatedAt). If this fix genuinely carries no " +
+    "transferable lesson (typo-class), bump _meta.json.updatedAt alone to acknowledge.";
+
+  // (a) session-local: live work on a fix branch
+  const branch = sh("git rev-parse --abbrev-ref HEAD").out.trim();
+  if (/^(fix|hotfix|bugfix)\//.test(branch) && uncommittedCode.length > 0) {
+    process.stderr.write(
+      `Stop gate: bug-fix work on ${branch} without a recorded lesson ` +
+        `(CLAUDE.md lessons-learned routine).\n${LESSON_FIX}\n`,
+    );
+    process.exit(2);
+  }
+
+  // (b) committed drift: fix commits landed after the last lessons update
+  const lastLessons = sh("git log -1 --format=%H -- .claude/lessons").out.trim();
+  if (/^[0-9a-f]{40}$/i.test(lastLessons)) {
+    const fixCommits = sh(`git log ${lastLessons}..HEAD --format=%s`)
+      .out.split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter((s) => /^fix(\(.+\))?!?:/.test(s));
+    if (fixCommits.length > 0) {
+      const list = fixCommits.slice(0, 5).join("\n  ");
+      process.stderr.write(
+        `Stop gate: ${fixCommits.length} fix commit(s) landed after the last ` +
+          `.claude/lessons/ update (${lastLessons.slice(0, 7)}) without a recorded lesson ` +
+          `(CLAUDE.md lessons-learned routine).\n${LESSON_FIX}\n\n` +
+          `Fix commits (first 5):\n  ${list}\n`,
       );
       process.exit(2);
     }
