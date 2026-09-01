@@ -31,6 +31,7 @@ import { usePodStore } from "../../../../../store/podStore";
 import { useDeliveryPlanStore } from "../../../../../store/delivery-plan-store";
 import { useRunSettlementStore } from "../../../../../store/runSettlementStore";
 import type { CollectedMethod } from "../../../../../lib/run-settlement";
+import { sumOrderLineItems } from "../../../../../lib/run-money";
 import {
   buildDeliveries,
   freeUnitSizeFor,
@@ -68,11 +69,9 @@ async function readDriverLocation(): Promise<{ lat: number; lng: number } | null
 // short-pick overrides, or a stale deep link straight to this screen).
 const EMPTY_DELIVERY_PLAN: Record<string, number> = {};
 
+// REG-B49 (spec R2): box-aware line money, never qty * unitPrice.
 function fullOrderTotal(order: RouteRunOrder): number {
-  return (order.lineItems ?? []).reduce(
-    (s, li) => s + Number(li.qty ?? 0) * Number(li.unitPrice ?? 0),
-    0,
-  );
+  return sumOrderLineItems(order);
 }
 
 export default function PaymentScreen() {

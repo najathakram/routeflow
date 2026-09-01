@@ -27,6 +27,7 @@ import {
 } from "../../../../../lib/api/routes";
 import { usePodStore } from "../../../../../store/podStore";
 import { openInMaps } from "../../../../../components/openInMaps";
+import { sumStopOrders } from "../../../../../lib/run-money";
 
 function initialsFrom(name: string): string {
   return (
@@ -170,12 +171,8 @@ export default function StopDetailScreen() {
   // R1e: the stop's order for the direct "Edit items" flow. A stop usually has one
   // order (a delivery); a consolidated multi-order stop edits the first.
   const editOrderId = stop.orders?.[0]?.id;
-  const dollarTotal = (stop.orders ?? []).reduce(
-    (sum, o) =>
-      sum +
-      (o.lineItems ?? []).reduce((s, li) => s + Number(li.qty ?? 0) * Number(li.unitPrice ?? 0), 0),
-    0,
-  );
+  // REG-B49 (spec R2): box-aware line money, never qty * unitPrice.
+  const dollarTotal = sumStopOrders(stop);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>

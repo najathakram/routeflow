@@ -98,3 +98,32 @@ names; do not expand beyond them without a specific reason. Classify every bug I
 `CONFIRMED on master@<sha>`, `ALREADY FIXED (evidence)`, or `EVIDENCE MOVED (new path:line)`
 before writing any code. An already-fixed ID is flipped in the register with its evidence —
 never silently carried, never silently dropped.
+
+---
+
+## ⚠️ Inbound handoff from F05 (2026-09-01, PR pending) — two ungated terminal paths
+
+F05 made a cash-carrying run impossible to **COMPLETE** unsettled, gating all three completion
+paths (`updateRunStatus`, plus the RF-016 auto-complete inside `completeStop` and
+`completeWithPayment` — that auto-complete bypasses `updateRunStatus` entirely, which is why one
+guard was not enough). Its Fable final pass then found the two paths F05 deliberately did NOT
+take, because this batch owns them by charter:
+
+1. **CANCEL is ungated.** `updateRunStatus` gates only `dto.status === COMPLETED`, so an operator
+   cancelling a broken-down run (web `routes/[id]/page.tsx` sends `PATCH :id/status` CANCELLED;
+   `canCancel` is true for IN_PROGRESS) closes it with the driver's cash still in the truck and
+   `settlementNote` null. **F05 already removed the money-trap half:** `settleRun` now accepts
+   CANCELLED so the cash can be reconciled post-hoc and is never stranded. What is left is the
+   forcing function — decide whether cancel should refuse while unsettled physical money exists
+   (same predicate and message as the COMPLETED backstop), or whether an operator prompt is the
+   better UX. This is a workflow-policy call, which is why F05 left it here rather than shipping a
+   new block on an operator's emergency action.
+2. **`deleteRun` is ungated.** Its only guard is an existing `deliveryMutation` — which a
+   payment-only `completeWithPayment` (payment, no `deliveries[]`) never creates — and it checks
+   no run status. So a cash-collected run can be hard-deleted, and because delete unlinks
+   `order.routeRunId`, it destroys the very linkage `getRunCashCollections` uses to find those
+   payments: the cash becomes unattributable, not just unreconciled.
+
+Reuse, do not reinvent: `RoutesService.getRunCashCollections(runId, startedAt?, client?)` already
+returns `{ cashTotal, checkTotal, count }` over CONFIRMED CASH/CHECK payments plus RUN-referenced
+advances, and the COMPLETED backstop's message is the wording to match.

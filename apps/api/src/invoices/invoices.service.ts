@@ -4485,8 +4485,14 @@ export class InvoicesService {
    * @param reconcileOrderIds the subset of `orderIds` actually delivered in this
    *          completion — only these have their DRAFT rebuilt on the delivered
    *          quantity (and only when single-invoice). Defaults to all `orderIds`.
-   * @returns the amount actually applied (< amount only when the orders'
-   *          invoices were already covered — the caller should log any residual).
+   * @param context optional `{ runId, stopId }` used only to tag a booked
+   *          over-collection advance's `reference` (`RUN:<runId>:STOP:<stopId>`).
+   * @returns `applied` (< amount only when the orders' invoices were already
+   *          covered, or there is a residual over-collection) plus `excess` — the
+   *          undropped remainder. When the delivered orders resolve to exactly one
+   *          customer, `excess` is booked as an AdvancePayment (`advancePaymentId`
+   *          set); a multi-customer stop books no advance (`advancePaymentId`
+   *          null) and the caller keeps its warn for that case.
    */
   async recordDeliveryPaymentInTx(
     tx: any,
@@ -4494,14 +4500,21 @@ export class InvoicesService {
     amount: number,
     method: string,
     reconcileOrderIds?: string[],
-  ): Promise<{ applied: number; invoiceIds: string[]; paymentIds: string[] }> {
+    context?: { runId?: string; stopId?: string },
+  ): Promise<{
+    applied: number;
+    invoiceIds: string[];
+    paymentIds: string[];
+    excess: number;
+    advancePaymentId: string | null;
+  }> {
     if (!(amount > 0) || orderIds.length === 0)
-      return { applied: 0, invoiceIds: [], paymentIds: [] };
+      return { applied: 0, invoiceIds: [], paymentIds: [], excess: 0, advancePaymentId: null };
     // CREDIT_NOTE/ADVANCE must debit a source balance (see recordPayment); a driver
     // at-door collection is never one of these (On-account sends amount 0), so
     // refuse to book a phantom payment rather than bypass the source debit.
     if (method === "CREDIT_NOTE" || method === "ADVANCE")
-      return { applied: 0, invoiceIds: [], paymentIds: [] };
+      return { applied: 0, invoiceIds: [], paymentIds: [], excess: 0, advancePaymentId: null };
 
     // Payable statuses — exclude terminal VOID/WRITTEN_OFF: a written-off bad debt
     // must not swallow the cash (recomputeStatus can't advance it), which would also
@@ -4573,7 +4586,10 @@ export class InvoicesService {
         customerId: true,
       },
     });
-    if (invoices.length === 0) return { applied: 0, invoiceIds: [], paymentIds: [] };
+    // NOTE: no early return when `invoices` is empty — the loop below is then a
+    // no-op (`remaining` stays the full `amount`) and falls through to the tail,
+    // where the whole collected amount becomes `excess` and is booked as an
+    // advance via the order-lookup fallback below, instead of silently vanishing.
 
     // 3. Spread the lump-sum oldest-first, capped at each invoice's remaining.
     let remaining = roundMoney(amount);
@@ -4640,7 +4656,58 @@ export class InvoicesService {
       paymentIds.push(pay.id);
       remaining = roundMoney(remaining - applyHere);
     }
-    return { applied: roundMoney(amount - remaining), invoiceIds, paymentIds };
+
+    // 4. Never drop a residual over-collection: whatever is left of the driver's
+    // cash after applying to every payable invoice becomes `excess`. When the
+    // delivered orders resolve to exactly one customer, book it as an
+    // AdvancePayment against that customer's wallet (the office's manual
+    // payments-modal flow does the same thing at :5028 — this mirrors that
+    // shape). A multi-customer stop is an anomaly today's UI can't produce
+    // deliberately, so it books no advance and the caller keeps its warn.
+    const excess = remaining;
+    let advancePaymentId: string | null = null;
+    if (excess > 0.001) {
+      // Same-customer resolution: prefer the payable invoices already loaded
+      // above (covers the common "invoice(s) existed" path); only when there
+      // were none to load (the :4576 zero-payable-invoice case) fall back to
+      // the orders themselves so the whole amount still resolves a customer
+      // instead of being discarded.
+      const customerIds =
+        invoices.length > 0
+          ? new Set(invoices.map((i: any) => i.customerId))
+          : new Set(
+              (
+                await tx.order.findMany({
+                  where: { id: { in: orderIds } },
+                  select: { customerId: true },
+                })
+              ).map((o: any) => o.customerId),
+            );
+      if (customerIds.size === 1) {
+        const [customerId] = customerIds;
+        const advance = await tx.advancePayment.create({
+          data: {
+            customerId,
+            amount: excess,
+            balance: excess,
+            method: method as any,
+            receivedAt: new Date(),
+            reference: context?.runId ? `RUN:${context.runId}:STOP:${context.stopId}` : null,
+            notes: `Driver at-door over-collection — collected ${amount}, applied ${roundMoney(amount - remaining)} to invoice(s) ${invoiceIds.join(",")}; orders ${orderIds.join(",")}.`,
+          },
+        });
+        advancePaymentId = advance.id;
+      }
+      // size !== 1 (0 orders resolved, or a multi-customer anomaly): no advance
+      // booked — the caller logs/warns on the returned `excess` instead.
+    }
+    return {
+      applied: roundMoney(amount - remaining),
+      invoiceIds,
+      paymentIds,
+      excess,
+      advancePaymentId,
+    };
   }
 
   /** Tenant-scoped `PAY-XXXX-####` sequence — mirrors recordPayment's counter. */

@@ -329,6 +329,25 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── Run-settlement visibility (F05, spec 23) ───────────────────────────────
+    // REG-B167: a COMPLETED run's detail page must surface its settlementNote,
+    // the SIGNED settlementVariance, and the legacy run.notes a pre-F05 mobile
+    // build wrote its settlement text to — cash discrepancies currently close
+    // invisibly. The server half (settlement endpoint, cash truth, the
+    // close-unsettled backstops) is T1-proven in apps/api; this spec is the T2
+    // leg and proves the read surface against the DEPLOYED build.
+    // Mutating but self-contained: it creates its own stopless `E2E B167 …`
+    // route + run, settles and closes THAT run, and touches nothing it did not
+    // create. No at-door collection, so no driver_payments addon is needed.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS - see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "run-settlement",
+      testMatch: /23-run-settlement-note\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── Migration hub connector gate (F17, spec 25) ────────────────────────────
     // REG-B08: Start migration must be disabled and relabelled "Connector coming
     // soon" for sources with connected: false (Zoho Books, QuickBooks), and stay

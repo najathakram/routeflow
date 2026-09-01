@@ -31,7 +31,8 @@ import { OptionPickerSheet } from "../../../components/OptionPickerSheet";
 import { useAuthStore } from "../../../lib/auth-store";
 import { startLocationTracking, stopLocationTracking } from "../../../lib/location-tracker";
 import { useRunSettlementStore } from "../../../store/runSettlementStore";
-import type { CollectionEntry } from "../../../lib/run-settlement";
+import { shouldForceSettlement, type CollectionEntry } from "../../../lib/run-settlement";
+import { sumStopOrders } from "../../../lib/run-money";
 import { buildGoogleMapsLegs, type GmapsPoint } from "../../../lib/gmaps-export";
 
 /**
@@ -170,12 +171,10 @@ function StartOfDay({ run }: { run: RouteRun }) {
   const greetingName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
 
   const stopCount = run.stops?.length ?? 0;
-  const totalValue = (run.stops ?? []).reduce((sum, stop) => {
-    const orderTotal = (stop.orders ?? []).reduce((t, o) => {
-      return t + (o.lineItems ?? []).reduce((s, li) => s + li.qty * li.unitPrice, 0);
-    }, 0);
-    return sum + orderTotal;
-  }, 0);
+  // REG-B49 (spec R2): box-aware line money, never qty * unitPrice — a boxed
+  // line's `unitPrice` is the BOX price, so multiplying it by the piece-count
+  // `qty` over-charges by `unitsPerBox`.
+  const totalValue = (run.stops ?? []).reduce((sum, stop) => sum + sumStopOrders(stop), 0);
   // NEW-rweb-7: scheduledDate is a UTC ISO string whose date component is the
   // intended calendar date. Parsing it directly with `new Date()` interprets
   // midnight UTC as the previous evening in negative-offset timezones, making
@@ -287,7 +286,13 @@ function TodaysRoute({ run, onOpenStop }: { run: RouteRun; onOpenStop: (id: stri
   const optimize = useOptimizeRouteRun();
   const updateStatus = useUpdateRunStatus();
   const collections = useRunSettlementStore((s) => s.collectionsByRun[run.id] ?? EMPTY_COLLECTIONS);
-  const hasCashToReconcile = collections.some((c) => c.method === "CASH" || c.method === "CHECK");
+  // REG-B152 (spec R8): server-truth first (run.collectedPayments +
+  // settlementNote), OR'd with this device's own signal for the query-
+  // staleness window right after a collection — see shouldForceSettlement.
+  const hasCashToReconcile = shouldForceSettlement(
+    run,
+    collections.some((c) => c.method === "CASH" || c.method === "CHECK"),
+  );
 
   const gmapsLegs = useMemo(() => buildGoogleMapsLegs(buildRunMapPoints(run)), [run]);
   const [gmapsLegsSheetOpen, setGmapsLegsSheetOpen] = useState(false);

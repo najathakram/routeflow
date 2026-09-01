@@ -7,12 +7,17 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { RouteKind, OrderStatus, FulfillPath } from "@prisma/client";
-import { RoutesService } from "./routes.service";
+import { RoutesService, RUN_LINE_ITEMS_SELECT } from "./routes.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { InvoicesService } from "../invoices/invoices.service";
+// F03 owns the "counts as collected money" predicate. The settlement cash basis
+// must stay pinned to THAT shared const rather than a literal `status: "PAID"`,
+// so a future widening of CONFIRMED_PAYMENT can never silently desync run
+// settlement from every other confirmed-money read in the codebase.
+import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { StorageService } from "../storage/storage.service";
 import { geocodeAddress } from "../common/geocode.util";
 import { compressImage } from "../storage/compress.util";
@@ -585,6 +590,106 @@ describe("RoutesService", () => {
         service.updateRunStatus("nonexistent", { status: "COMPLETED" as any }, operatorPayload),
       ).rejects.toThrow(NotFoundException);
     });
+
+    // T-B152c / R7a / REG-B152 — a cash-carrying run cannot close unsettled via
+    // ANY path (role-agnostic). This is the backstop for the (rare, but real)
+    // case where something other than RF-016 drives the run to COMPLETED.
+    describe("cash-settlement backstop (T-B152c / R7a / REG-B152)", () => {
+      // Refusal AND allowance in ONE test, deliberately: a standalone
+      // "allows it once the note is set" case would PASS today (no guard exists,
+      // so every COMPLETED transition already succeeds) and would keep passing
+      // whether the guard is written correctly, incorrectly, or not at all.
+      // Folded behind the refusal, the whole test is red pre-fix on phase 1 and
+      // only goes green when BOTH halves of the predicate hold.
+      it("REG-B152: refuses COMPLETED when cash sits uncollected and no settlementNote is set, naming the amount — and allows it once the note is set", async () => {
+        // ── phase 1: cash outstanding, no note → refused, message names the amount
+        prisma.routeRun.findUnique.mockResolvedValue({
+          ...MOCK_RUN,
+          status: "IN_PROGRESS",
+          settlementNote: null,
+        });
+        prisma.routeRunStop.findMany.mockResolvedValue([{ status: "COMPLETED" }]);
+        prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 40, method: "CASH" }]);
+        prisma.advancePayment.findMany.mockResolvedValue([]);
+
+        const err: any = await service
+          .updateRunStatus("run-1", { status: "COMPLETED" as any }, operatorPayload)
+          .catch((e: any) => e);
+
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect(err.message).toEqual(expect.stringContaining("40"));
+
+        // ── phase 2: same run and same outstanding cash, note now present → completes.
+        // No invoicePayment assertion here on purpose — a correct implementation
+        // may short-circuit on `settlementNote != null` before it ever queries.
+        prisma.routeRun.findUnique.mockResolvedValue({
+          ...MOCK_RUN,
+          status: "IN_PROGRESS",
+          settlementNote: "settled at close",
+        });
+        prisma.routeRun.update.mockResolvedValue({ ...MOCK_RUN, status: "COMPLETED" });
+
+        await service.updateRunStatus("run-1", { status: "COMPLETED" as any }, operatorPayload);
+
+        expect(prisma.routeRun.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }),
+        );
+      });
+
+      // The gate's basis is PHYSICAL money — CASH **and CHECK** — matching
+      // mobile's `shouldForceSettlement`. A cash-only predicate would let a
+      // check-only run close with no settlement on record: the same B152 gap,
+      // reached through CHECK instead of CASH.
+      it("REG-B152: refuses COMPLETED when the run's only at-door money was a CHECK", async () => {
+        prisma.routeRun.findUnique.mockResolvedValue({
+          ...MOCK_RUN,
+          status: "IN_PROGRESS",
+          settlementNote: null,
+        });
+        prisma.routeRunStop.findMany.mockResolvedValue([{ status: "COMPLETED" }]);
+        prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 500, method: "CHECK" }]);
+        prisma.advancePayment.findMany.mockResolvedValue([]);
+
+        const err: any = await service
+          .updateRunStatus("run-1", { status: "COMPLETED" as any }, operatorPayload)
+          .catch((e: any) => e);
+
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect(err.message).toEqual(expect.stringContaining("500"));
+        expect(prisma.routeRun.update).not.toHaveBeenCalled();
+      });
+
+      it("REG-B152: completes a run with nothing collected, having actually evaluated the cash predicate", async () => {
+        prisma.routeRun.findUnique.mockResolvedValue({
+          ...MOCK_RUN,
+          status: "IN_PROGRESS",
+          settlementNote: null,
+        });
+        prisma.routeRunStop.findMany.mockResolvedValue([{ status: "COMPLETED" }]);
+        // invoicePayment/advancePayment findMany default to [] in the prisma mock —
+        // i.e. a run that collected nothing.
+        prisma.routeRun.update.mockResolvedValue({ ...MOCK_RUN, status: "COMPLETED" });
+
+        await service.updateRunStatus("run-1", { status: "COMPLETED" as any }, operatorPayload);
+
+        expect(prisma.routeRun.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }),
+        );
+        // The discriminating half: the completion must have been ALLOWED by a
+        // zero balance, not by a guard that was never evaluated. False today
+        // (updateRunStatus reads no payments at all), true only once R7a's
+        // predicate runs on this path.
+        expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({
+              invoice: expect.objectContaining({
+                order: expect.objectContaining({ routeRunId: "run-1" }),
+              }),
+            }),
+          }),
+        );
+      });
+    });
   });
 
   describe("createRun", () => {
@@ -923,6 +1028,111 @@ describe("RoutesService", () => {
       expect(txMock.routeRun.update).not.toHaveBeenCalled();
     });
 
+    // T-B152d / R7b / REG-B152 — RF-016 bypasses updateRunStatus entirely, so on
+    // the common path (last stop closes with cash in hand) no backstop there can
+    // ever fire. The auto-complete itself must refuse to flip the run when cash
+    // sits uncollected and no settlementNote exists yet.
+    it("REG-B152: RF-016 does not auto-complete when cash sits uncollected and no settlementNote is set", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...IN_PROGRESS_RUN, settlementNote: null });
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        orders: [],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 40, method: "CASH" }]);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([
+            { id: "stop-1", status: "PENDING" },
+            { id: "stop-2", status: "COMPLETED" },
+          ]),
+          update: jest.fn().mockResolvedValue({}),
+          findUniqueOrThrow: jest.fn().mockResolvedValue({ id: "stop-1", status: "COMPLETED" }),
+        },
+        routeRun: {
+          ...prisma.routeRun,
+          update: jest.fn().mockResolvedValue({}),
+        },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        orderItem: { ...prisma.orderItem, findFirst: jest.fn().mockResolvedValue(null) },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+
+      await service.completeStop("run-1", "stop-1", {}, operatorPayload);
+
+      // Every stop is done (allDone=true) yet the run must stay IN_PROGRESS.
+      expect(txMock.routeRun.update).not.toHaveBeenCalled();
+    });
+
+    // T-B148b / R3 / REG-B148 — findOneRun selects productId and reopenStop gates
+    // stock-restore on it, but both deliveryMutation.create sites omit it. The
+    // value persisted is the ORDER ITEM's productId (a real Product FK read
+    // through the tenant-scoped tx), never the client's — the payload below
+    // deliberately carries a different id to pin that.
+    it("REG-B148: deliveryMutation.create receives the order item's productId, not the client's", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        orders: [],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn() },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        orderItem: {
+          ...prisma.orderItem,
+          findFirst: jest
+            .fn()
+            .mockResolvedValue({ orderId: "ord-1", productId: "prod-1", unitPrice: 10 }),
+        },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+
+      await service.completeStop(
+        "run-1",
+        "stop-1",
+        {
+          deliveries: [
+            {
+              orderItemId: "oi-1",
+              productId: "prod-from-client",
+              type: "DELIVERED",
+              quantityDelivered: 3,
+            },
+          ],
+        } as any,
+        operatorPayload,
+      );
+
+      expect(txMock.deliveryMutation.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ productId: "prod-1" }) }),
+      );
+    });
+
     // P6-5: transactional trigger — DELIVERED fires per eligible order after
     // the tx commits (driver completion bypasses changeStatus entirely).
     it("fires DELIVERED once for the eligible order and skips CANCELLED/DELIVERED", async () => {
@@ -1244,12 +1454,15 @@ describe("RoutesService", () => {
 
       // 5th arg = the orders delivered in THIS completion (empty here — no
       // deliveries were sent — so nothing is reconciled to the delivered basis).
+      // 6th arg = the run/stop context B83 turns into the AdvancePayment
+      // `reference` token — load-bearing for the settlement cash lookup.
       expect(invoicesService.recordDeliveryPaymentInTx).toHaveBeenCalledWith(
         txMock,
         ["ord-1"],
         50,
         "CASH",
         [],
+        { runId: "run-1", stopId: "stop-1" },
       );
       // Additive field: the driver app attaches a best-effort payment photo to
       // paymentIds[0] after the stop completes — must be surfaced on the response.
@@ -1318,6 +1531,7 @@ describe("RoutesService", () => {
         50,
         "CASH",
         ["ord-1"],
+        { runId: "run-1", stopId: "stop-1" },
       );
     });
 
@@ -1339,6 +1553,170 @@ describe("RoutesService", () => {
           operatorPayload,
         ),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    // T-B152d / R7b / REG-B152 — same RF-016 bypass as completeStop, but on the
+    // path that JUST collected the cash in the same call.
+    it("REG-B152: RF-016 does not auto-complete when cash sits uncollected and no settlementNote is set", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...IN_PROGRESS_RUN, settlementNote: null });
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        signatureUrl: null,
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+        ],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 40, method: "CASH" }]);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        orderItem: { ...prisma.orderItem, findFirst: jest.fn().mockResolvedValue(null) },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+      invoicesService.recordDeliveryPaymentInTx.mockResolvedValue({
+        applied: 50,
+        invoiceIds: ["inv-1"],
+        paymentIds: ["pay-1"],
+      });
+
+      await service.completeWithPayment(
+        "run-1",
+        "stop-1",
+        { payment: { amount: 50, method: "CASH" } },
+        operatorPayload,
+      );
+
+      expect(txMock.routeRun.update).not.toHaveBeenCalled();
+    });
+
+    // T-B152d / R7b / REG-B152 — the allowance half of the gate above. Without
+    // it, deleting the whole RF-016 auto-complete block from THIS flow would
+    // still pass (the driver would silently never get the run closed out).
+    it("REG-B152: RF-016 still auto-completes on the paid path once the run is settled", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...IN_PROGRESS_RUN,
+        settlementNote: "Cash settled: 50.00",
+      });
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        signatureUrl: null,
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+        ],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        orderItem: { ...prisma.orderItem, findFirst: jest.fn().mockResolvedValue(null) },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+      invoicesService.recordDeliveryPaymentInTx.mockResolvedValue({
+        applied: 50,
+        invoiceIds: ["inv-1"],
+        paymentIds: ["pay-1"],
+      });
+
+      await service.completeWithPayment(
+        "run-1",
+        "stop-1",
+        { payment: { amount: 50, method: "CASH" } },
+        operatorPayload,
+      );
+
+      expect(txMock.routeRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "run-1" },
+          data: expect.objectContaining({ status: "COMPLETED" }),
+        }),
+      );
+    });
+
+    // T-B148b / R3 / REG-B148 — same create-args gap as completeStop, and the
+    // same rule: the persisted productId is the order item's, not the body's.
+    it("REG-B148: deliveryMutation.create receives the order item's productId, not the client's", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        signatureUrl: null,
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+        ],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        orderItem: {
+          ...prisma.orderItem,
+          findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1", productId: "prod-1" }),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+
+      await service.completeWithPayment(
+        "run-1",
+        "stop-1",
+        {
+          deliveries: [
+            {
+              orderItemId: "oi-1",
+              productId: "prod-from-client",
+              type: "DELIVERED",
+              quantityDelivered: 3,
+            },
+          ],
+        } as any,
+        operatorPayload,
+      );
+
+      expect(txMock.deliveryMutation.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ productId: "prod-1" }) }),
+      );
     });
   });
 
@@ -1397,6 +1775,349 @@ describe("RoutesService", () => {
       prisma.driver.findFirst.mockResolvedValue(null);
       const result = await service.findMyRuns(driverPayload);
       expect(result.data).toHaveLength(0);
+    });
+  });
+
+  // ─── G7 / F05: RUN_LINE_ITEMS_SELECT shared across the run read path ─────
+
+  // T-B49a / R1 / REG-B49 — today the `{ id, productId, product, qty, unitPrice,
+  // status }` lineItems select literal is duplicated three times (RUN_STOP_INCLUDE,
+  // findOneRun's main query, its unlinked-orders fallback) and none carries
+  // subtotal/boxes/pieces/unitsPerBox. No RUN_LINE_ITEMS_SELECT export exists yet,
+  // so the imported binding is `undefined` — every assertion below is red until
+  // all three sites are collapsed onto one shared, enriched const.
+  describe("RUN_LINE_ITEMS_SELECT (G7) — enriched money fields (T-B49a / R1 / REG-B49)", () => {
+    it("REG-B49: carries subtotal/boxes/pieces/unitsPerBox alongside the existing fields", () => {
+      expect(RUN_LINE_ITEMS_SELECT).toEqual({
+        id: true,
+        productId: true,
+        product: { select: { id: true, name: true, unit: true } },
+        qty: true,
+        unitPrice: true,
+        status: true,
+        subtotal: true,
+        boxes: true,
+        pieces: true,
+        unitsPerBox: true,
+      });
+    });
+
+    // The three identity tests below assert `toBe(RUN_LINE_ITEMS_SELECT)` and
+    // never inspect a field, so they would pass against ANY shared object. The
+    // `toEqual` test above is the SOLE content oracle for R1 — delete or weaken
+    // it and all four tests here go green on a const carrying the wrong fields.
+    it("REG-B49: findAllRuns' RUN_STOP_INCLUDE references the exact same select object", async () => {
+      prisma.routeRun.findMany.mockResolvedValue([]);
+      prisma.routeRun.count.mockResolvedValue(0);
+
+      await service.findAllRuns({} as any, operatorPayload);
+
+      const call = prisma.routeRun.findMany.mock.calls[0][0];
+      const actualSelect = call.include.stops.include.orders.select.lineItems.select;
+      expect(actualSelect).toBe(RUN_LINE_ITEMS_SELECT);
+    });
+
+    it("REG-B49: findOneRun's main query references the exact same select object", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...MOCK_RUN, stops: [] });
+
+      await service.findOneRun("run-1");
+
+      const call = prisma.routeRun.findUnique.mock.calls[0][0];
+      const actualSelect = call.include.stops.include.orders.select.lineItems.select;
+      expect(actualSelect).toBe(RUN_LINE_ITEMS_SELECT);
+    });
+
+    it("REG-B49: findOneRun's unlinked-orders fallback references the exact same select object", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...MOCK_RUN,
+        stops: [
+          {
+            id: "stop-1",
+            customerId: "cust-1",
+            customer: null,
+            customerAddress: { id: "addr-1" },
+            routeStop: null,
+            orders: [], // no stop has a linked order -> triggers the fallback
+            deliveryMutations: [],
+          },
+        ],
+      });
+      prisma.order.findMany.mockResolvedValue([]);
+
+      await service.findOneRun("run-1");
+
+      expect(prisma.order.findMany).toHaveBeenCalled();
+      const call = prisma.order.findMany.mock.calls[0][0];
+      const actualSelect = call.select.lineItems.select;
+      expect(actualSelect).toBe(RUN_LINE_ITEMS_SELECT);
+    });
+  });
+
+  // ─── F05: server-truth run cash collections ──────────────────────────────
+
+  // T-B152a / R5 / REG-B152 — findOneRun exposes zero collected-payment data
+  // today (no invoicePayment reads in the file outside reopenStop's tx). The
+  // fix folds CONFIRMED CASH/CHECK InvoicePayments (via invoice.order.routeRunId,
+  // windowed on paidAt >= startedAt) PLUS AdvancePayments referenced to this run.
+  describe("findOneRun — collectedPayments (server cash truth) (T-B152a / R5 / REG-B152)", () => {
+    it("REG-B152: folds CONFIRMED CASH/CHECK invoice payments plus RUN-scoped advances into collectedPayments", async () => {
+      const startedAt = new Date("2026-08-01T00:00:00.000Z");
+      prisma.routeRun.findUnique.mockResolvedValue({ ...MOCK_RUN, startedAt, stops: [] });
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        { amount: 40, method: "CASH" },
+        { amount: 25, method: "CHECK" },
+      ]);
+      prisma.advancePayment.findMany.mockResolvedValue([
+        { amount: 30, method: "CASH", reference: "RUN:run-1:STOP:s2" },
+      ]);
+
+      const result: any = await service.findOneRun("run-1");
+
+      // 40 (CASH) + 30 (RUN-scoped advance) = 70; CHECK stays 25; 3 rows folded.
+      expect(result.collectedPayments).toEqual({ cashTotal: 70, checkTotal: 25, count: 3 });
+      expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            ...CONFIRMED_PAYMENT,
+            method: { in: ["CASH", "CHECK"] },
+            invoice: expect.objectContaining({
+              order: expect.objectContaining({ routeRunId: "run-1" }),
+            }),
+            paidAt: expect.objectContaining({ gte: startedAt }),
+          }),
+        }),
+      );
+      expect(prisma.advancePayment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ reference: { startsWith: "RUN:run-1" } }),
+        }),
+      );
+    });
+  });
+
+  // ─── F05: POST /route-runs/:id/settlement ────────────────────────────────
+
+  // T-B152b / R6 / REG-B152 — new endpoint (never a PATCH :id retrofit). The
+  // service method does not exist today, so every call below throws
+  // "service.settleRun is not a function" — the plan's own oracle for this row
+  // ("Endpoint does not exist — red (method undefined)").
+  describe("settleRun (POST :id/settlement) (T-B152b / R6 / REG-B152)", () => {
+    const SETTLE_RUN = {
+      ...MOCK_RUN,
+      status: "IN_PROGRESS" as const,
+      settlementNote: null as string | null,
+    };
+
+    beforeEach(() => {
+      prisma.routeRunStop.findMany.mockResolvedValue([{ status: "COMPLETED" }]);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+      prisma.routeRun.update.mockImplementation((args: any) =>
+        Promise.resolve({ ...SETTLE_RUN, ...args.data }),
+      );
+    });
+
+    it("REG-B152: counted cash matching the server's expected figure settles at variance 0, no reason required", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(SETTLE_RUN);
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 70, method: "CASH" }]);
+
+      const result: any = await (service as any).settleRun(
+        "run-1",
+        { countedCash: 70 },
+        operatorPayload,
+      );
+
+      expect(result.variance).toBe(0);
+      expect(prisma.routeRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "run-1" },
+          data: expect.objectContaining({ settlementVariance: 0 }),
+        }),
+      );
+    });
+
+    // The reconciliation basis is the PHYSICAL money the driver carries — cash
+    // AND checks. Every other fixture in this block is CASH-only, which a
+    // cash-only basis satisfies just as well, so this mixed fixture is the sole
+    // oracle on the sum: revert the implementation to `expected.cashTotal` and a
+    // driver holding $100 cash + a $150 check is told they are $50 over, refused
+    // for want of a variance reason, and — once they invent one — has a phantom
+    // overage persisted to `settlementVariance` and badged on the web card.
+    it("REG-B152: folds CHECKS into the expected figure — a mixed cash/check run reconciles at variance 0", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(SETTLE_RUN);
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        { amount: 100, method: "CASH" },
+        { amount: 50, method: "CHECK" },
+      ]);
+
+      const result: any = await (service as any).settleRun(
+        "run-1",
+        { countedCash: 150 },
+        operatorPayload,
+      );
+
+      expect(result.expectedCash).toBe(150);
+      expect(result.variance).toBe(0);
+      expect(prisma.routeRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "run-1" },
+          data: expect.objectContaining({
+            settlementVariance: 0,
+            settlementNote: expect.stringContaining("$150.00"),
+          }),
+        }),
+      );
+    });
+
+    it("REG-B152: a mismatch without a varianceReason is refused", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(SETTLE_RUN);
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 70, method: "CASH" }]);
+
+      await expect(
+        (service as any).settleRun("run-1", { countedCash: 50 }, operatorPayload),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("REG-B152: a reasoned mismatch settles with the signed variance and the reason in the note", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(SETTLE_RUN);
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 70, method: "CASH" }]);
+
+      const result: any = await (service as any).settleRun(
+        "run-1",
+        { countedCash: 50, varianceReason: "Register short" },
+        operatorPayload,
+      );
+
+      // 50 - 70 = -20 (sign per mobile computeVariance: counted minus expected).
+      expect(result.variance).toBe(-20);
+      expect(prisma.routeRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            settlementVariance: -20,
+            settlementNote: expect.stringContaining("Register short"),
+          }),
+        }),
+      );
+    });
+
+    it("REG-B152: a DRIVER who does not own the run is forbidden", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(SETTLE_RUN);
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 70, method: "CASH" }]);
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-999", userId: "user-drv" });
+
+      await expect(
+        (service as any).settleRun("run-1", { countedCash: 70 }, driverPayload),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it("REG-B152: a DRIVER cannot re-settle a run that already carries a settlementNote", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...SETTLE_RUN, settlementNote: "existing" });
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 70, method: "CASH" }]);
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1", userId: "user-drv" });
+
+      await expect(
+        (service as any).settleRun("run-1", { countedCash: 70 }, driverPayload),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("REG-B152: an OPERATOR may overwrite an existing settlementNote", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...SETTLE_RUN, settlementNote: "existing" });
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 70, method: "CASH" }]);
+
+      const result: any = await (service as any).settleRun(
+        "run-1",
+        { countedCash: 70 },
+        operatorPayload,
+      );
+
+      expect(result.variance).toBe(0);
+      // `variance === 0` alone would pass an implementation that refused the
+      // overwrite and returned the run untouched — the overwrite itself is the
+      // claim, so pin that a replacement note was actually written.
+      expect(prisma.routeRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ settlementNote: expect.any(String) }),
+        }),
+      );
+    });
+
+    // A run cancelled mid-route still has the driver's cash in the truck, and
+    // nothing blocks the cancel itself (R7 gates only COMPLETED). Refusing to
+    // settle afterwards would strand that money as unreconcilable — so CANCELLED
+    // settles post-hoc, and the web card renders it for every status.
+    it("REG-B152: a CANCELLED run still settles post-hoc so its cash is not stranded", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...SETTLE_RUN, status: "CANCELLED" });
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        { amount: 300, method: "CASH", paidAt: new Date("2026-08-31T12:00:00Z") },
+      ]);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+
+      const res = await (service as any).settleRun(
+        "run-1",
+        { countedCash: 275, varianceReason: "Breakdown — $25 fuel paid from the bag" },
+        operatorPayload,
+      );
+
+      expect(res.expectedCash).toBe(300);
+      expect(res.variance).toBe(-25);
+      expect(prisma.routeRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ settlementVariance: -25 }),
+        }),
+      );
+    });
+
+    // A SCHEDULED run settles to $0 with no reason required, and the resulting
+    // settlementNote would disarm all three R7 gates for every collection the
+    // driver makes afterwards — R6 accepts IN_PROGRESS and COMPLETED only.
+    it("REG-B152: a run that never started refuses settlement", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...SETTLE_RUN, status: "SCHEDULED" });
+
+      await expect(
+        (service as any).settleRun("run-1", { countedCash: 0 }, driverPayload),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.routeRun.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── F05: reopening a stop invalidates the run's settlement ──────────────
+
+  // Every R7 gate keys on `settlementNote == null`. reopenStop puts a run back
+  // in a state where it can collect money again, so a note describing the
+  // earlier (smaller) count must not survive the reopen — otherwise the
+  // re-collected cash closes the run with no settlement covering it.
+  describe("reopenStop — settlement reset (R7 / REG-B152)", () => {
+    it("REG-B152: clears settlementNote/settlementVariance when a settled run is reopened", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...MOCK_RUN,
+        status: "COMPLETED",
+        settlementNote: "Expected: $200.00\nCounted: $200.00",
+        settlementVariance: 0,
+        stops: [{ id: "stop-1", status: "COMPLETED", orders: [] }],
+      });
+      prisma.deliveryMutation.findMany.mockResolvedValue([]);
+      const txMock = {
+        ...prisma,
+        deliveryMutation: {
+          ...prisma.deliveryMutation,
+          deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+        routeRunStop: { ...prisma.routeRunStop, update: jest.fn().mockResolvedValue({}) },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+
+      await service.reopenStop("run-1", "stop-1", operatorPayload);
+
+      expect(txMock.routeRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "run-1" },
+          data: expect.objectContaining({
+            status: "IN_PROGRESS",
+            settlementNote: null,
+            settlementVariance: null,
+          }),
+        }),
+      );
     });
   });
 });

@@ -29,6 +29,7 @@ import { UpdateRunStatusDto } from "./dto/update-run-status.dto";
 import { ListRunsDto } from "./dto/list-runs.dto";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { CompleteWithPaymentDto } from "./dto/complete-with-payment.dto";
+import { SettleRunDto } from "./dto/settle-run.dto";
 import { AttachPodArtifactDto } from "./dto/attach-pod-artifact.dto";
 import { DriverPaymentsGuard } from "./driver-payments.guard";
 
@@ -289,6 +290,16 @@ export class RouteRunsController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.routesService.updateRunStatus(id, dto, user);
+  }
+
+  // F05 / R6: NEW endpoint — never a retrofit of the PATCH :id notes field.
+  // Driver settles their own run; an operator may settle (and later amend)
+  // any run. Server computes expected cash itself (`getRunCashCollections`).
+  @Post(":id/settlement")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  settleRun(@Param("id") id: string, @Body() dto: SettleRunDto, @CurrentUser() user: JwtPayload) {
+    return this.routesService.settleRun(id, dto, user);
   }
 
   @Post(":id/stops/:stopId/reopen")

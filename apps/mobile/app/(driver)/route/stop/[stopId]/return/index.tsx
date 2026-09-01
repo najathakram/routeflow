@@ -13,6 +13,7 @@ import {
 } from "../../../../../../lib/api/routes";
 import { useCreateReturn, type ReturnReason } from "../../../../../../lib/api/returns";
 import { showToast } from "../../../../../../lib/toast";
+import { sumStopOrders } from "../../../../../../lib/run-money";
 
 function reasonForApi(label: string): ReturnReason {
   const m: Record<string, ReturnReason> = {
@@ -114,12 +115,8 @@ export default function ReturnScreen() {
   };
   const customerName = stop?.customer?.businessName ?? "Stop";
   const orderNumber = stop?.orders?.[0]?.orderNumber;
-  const originalTotal = (stop?.orders ?? []).reduce(
-    (sum, o) =>
-      sum +
-      (o.lineItems ?? []).reduce((s, li) => s + Number(li.qty ?? 0) * Number(li.unitPrice ?? 0), 0),
-    0,
-  );
+  // REG-B49 (spec R2): box-aware line money, never qty * unitPrice.
+  const originalTotal = stop ? sumStopOrders(stop) : 0;
   const creditTotal = rows.reduce((sum, r) => sum + r.amount, 0);
 
   if (isLoading) {
