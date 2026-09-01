@@ -37,6 +37,7 @@ interface ImportResult {
   updated?: number;
   created?: number;
   skipped?: number;
+  duplicates?: number;
   errors: string[];
   suppliersCreated?: number;
   suppliersUpdated?: number;
@@ -155,11 +156,15 @@ function ImportCard({ section, step }: { section: ImportSection; step: number })
       setResult(res.data);
       const d = res.data;
       const skipped = d.skipped ?? 0;
+      const duplicates = d.duplicates ?? 0;
       const created = d.created ?? d.imported ?? 0;
       let summary =
         d.updated !== undefined
           ? `${d.updated} updated, ${created} created, ${skipped} skipped`
           : `${d.imported} records imported, ${skipped} skipped`;
+      if (duplicates > 0) {
+        summary += `, ${duplicates} duplicate${duplicates !== 1 ? "s" : ""} skipped`;
+      }
       if (d.suppliersCreated || d.suppliersUpdated) {
         const parts: string[] = [];
         if (d.suppliersCreated)
@@ -185,6 +190,7 @@ function ImportCard({ section, step }: { section: ImportSection; step: number })
   };
 
   const skipped = result?.skipped ?? 0;
+  const duplicates = result?.duplicates ?? 0;
 
   return (
     <div className="rounded-xl border border-surface-border bg-white overflow-hidden flex flex-col">
@@ -219,6 +225,12 @@ function ImportCard({ section, step }: { section: ImportSection; step: number })
               <span className="flex items-center gap-1 text-warning">
                 <AlertCircle className="h-3.5 w-3.5" />
                 {skipped} skipped
+              </span>
+            )}
+            {duplicates > 0 && (
+              <span className="flex items-center gap-1 text-warning">
+                <AlertCircle className="h-3.5 w-3.5" />
+                {duplicates} duplicate{duplicates !== 1 ? "s" : ""} skipped
               </span>
             )}
           </div>

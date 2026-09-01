@@ -328,5 +328,31 @@ export default defineConfig({
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
+
+    // ── Migration hub connector gate (F17, spec 25) ────────────────────────────
+    // REG-B08: Start migration must be disabled and relabelled "Connector coming
+    // soon" for sources with connected: false (Zoho Books, QuickBooks), and stay
+    // enabled for CSV. Read-only: Start is never clicked, so no job is created.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS - see 22-payment-truth's precedent.
+    {
+      name: "migration-hub-gate",
+      testMatch: /25-migration-hub\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── Payments-import duplicate reporting (F17, spec 26) ─────────────────────
+    // REG-B99 web leg: /settings/import must surface importPayments' new
+    // `duplicates` count in the success toast summary and the Customer Payments
+    // card's result badge (the server half is jest-proven in apps/api).
+    // Fully mocked: POST /import/payments is intercepted, so no CSV is ever
+    // uploaded and nothing on the tenant is written.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS - see 22-payment-truth's precedent.
+    {
+      name: "import-duplicates",
+      testMatch: /26-import-duplicates\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
   ],
 });

@@ -3,6 +3,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
 import { roundMoney } from "../common/pricing";
+import { sumConfirmed } from "../invoices/payment-predicates";
+import { parseImportMoney, parseImportNumber } from "./parse-import-number";
 import { parse } from "csv-parse/sync";
 import { InvoiceStatus, UserRole } from "@prisma/client";
 import * as bcrypt from "bcrypt";
@@ -45,6 +47,7 @@ export class ImportService {
         relax_column_count: true,
         relax_quotes: true,
         trim: true,
+        bom: true,
       });
     } catch (e) {
       this.logger.error("CSV parse error", e);
@@ -620,11 +623,11 @@ export class ImportService {
         continue;
       }
 
-      const total = parseFloat(first["Total"] || "0") || 0;
-      const subtotal = parseFloat(first["SubTotal"] || first["Sub Total"] || "0") || total;
+      const total = parseImportMoney(first["Total"] || "0") || 0;
+      const subtotal = parseImportMoney(first["SubTotal"] || first["Sub Total"] || "0") || total;
       const discount =
-        parseFloat(first["Entity Discount Amount"] || first["Discount Amount"] || "0") || 0;
-      const shippingFee = parseFloat(first["Shipping Charge"] || "0") || 0;
+        parseImportMoney(first["Entity Discount Amount"] || first["Discount Amount"] || "0") || 0;
+      const shippingFee = parseImportMoney(first["Shipping Charge"] || "0") || 0;
       const invoiceNumber =
         first["Invoice Number"] || `INV-${year}-${String(seq++).padStart(4, "0")}`;
       const notes = first["Notes"] || null;
@@ -653,7 +656,7 @@ export class ImportService {
       // Determine status using Zoho's "Balance Due" field, which is more reliable
       // than the status label (Zoho may show "Overdue" for invoices paid in cash outside the system)
       const zohoStatus = this.mapInvoiceStatus(first["Invoice Status"]);
-      const balanceDue = parseFloat(
+      const balanceDue = parseImportMoney(
         first["Balance Due"] || first["Balance"] || first["Outstanding Amount"] || "NaN",
       );
 
@@ -681,12 +684,12 @@ export class ImportService {
       const itemsData: any[] = [];
       for (const row of invoiceRows) {
         const description = (row["Item Name"] || "").replace(/[\n\r]+/g, " ").trim() || "Item";
-        const qty = parseFloat(row["Quantity"] || "1") || 1;
+        const qty = parseImportNumber(row["Quantity"] || "1") || 1;
         if (qty <= 0) continue;
-        const unitPrice = parseFloat(row["Item Price"] || "0") || 0;
-        const itemDiscount = parseFloat(row["Discount Amount"] || "0") || 0;
+        const unitPrice = parseImportMoney(row["Item Price"] || "0") || 0;
+        const itemDiscount = parseImportMoney(row["Discount Amount"] || "0") || 0;
         const sub = roundMoney(
-          parseFloat(row["Item Total"] || "0") || qty * unitPrice - itemDiscount,
+          parseImportMoney(row["Item Total"] || "0") || qty * unitPrice - itemDiscount,
         );
         const sku = (row["SKU"] || "").trim();
 
@@ -815,11 +818,17 @@ export class ImportService {
   async importPayments(
     buffer: Buffer,
     userId: string,
-  ): Promise<{ imported: number; skipped: number; errors: string[] }> {
+  ): Promise<{ imported: number; skipped: number; duplicates: number; errors: string[] }> {
     const rows = this.parseCsv(buffer);
     let imported = 0,
-      skipped = 0;
+      skipped = 0,
+      duplicates = 0;
     const errors: string[] = [];
+
+    // Snapshot of payments that existed BEFORE this run's inserts, per invoice —
+    // dedupe compares against history only, so identical legit rows within one
+    // file still both import while a re-upload of the same file creates nothing.
+    const preRunPayments = new Map<string, { amount: number; method: string; createdAt: Date }[]>();
 
     for (const row of rows) {
       const invoiceNumber = row["Invoice Number"];
@@ -834,7 +843,31 @@ export class ImportService {
         continue;
       }
 
-      const amount = parseFloat(row["Amount Applied to Invoice"] || row["Amount"] || "0");
+      if (!preRunPayments.has(invoice.id)) {
+        const existing = await this.prisma
+          .forTenant()
+          .invoicePayment.findMany({ where: { invoiceId: invoice.id } });
+        preRunPayments.set(
+          invoice.id,
+          existing
+            // Not every existing row is history a new payment can duplicate:
+            // the synthetic "zoho-import" placeholder importInvoices writes for
+            // PAID/PARTIAL invoices is meant to be REPLACED by the real payment
+            // (it is deleted just below every create), so counting it would make
+            // the FIRST payments import after an invoices import "dedupe" the
+            // real row away — dropping its method/reference/notes and leaving the
+            // placeholder standing. VOID rows (e.g. a bounced check) are likewise
+            // not something a legitimately re-recorded payment collides with.
+            .filter((p) => p.reference !== "zoho-import" && p.status !== "VOID")
+            .map((p) => ({
+              amount: Number(p.amount),
+              method: p.method,
+              createdAt: p.createdAt,
+            })),
+        );
+      }
+
+      const amount = parseImportMoney(row["Amount Applied to Invoice"] || row["Amount"] || "0");
       if (amount <= 0) {
         skipped++;
         continue;
@@ -860,6 +893,35 @@ export class ImportService {
           });
           if (dup) {
             skipped++;
+            continue;
+          }
+        } else {
+          // Fallback dedupe: no external reference to key off, so compare
+          // against payments that existed before this run — cent-equal
+          // amount, same method, created within ±1 day. Catches a re-upload
+          // of the same payments file without double-counting two identical
+          // legit rows from ONE file (those are compared against the same
+          // pre-run snapshot, not against each other).
+          //
+          // CONSUME ON MATCH: each snapshot entry may dedupe AT MOST ONE
+          // incoming row, so the matched entry is spliced out. Without that,
+          // ONE history row absorbs MANY incoming rows — a file holding two
+          // identical legitimate payments (e.g. two $500 CASH rows the same
+          // day) where only the first persisted would, on the operator's
+          // documented re-upload, report both as duplicates and lose the
+          // second real payment. The array held in `preRunPayments` is this
+          // run's own private copy of history, so mutating it is safe and is
+          // exactly how the at-most-once rule is enforced.
+          const snapshot = preRunPayments.get(invoice.id) || [];
+          const duplicateIndex = snapshot.findIndex(
+            (p) =>
+              Math.abs(p.amount - amount) < 0.005 &&
+              p.method === method &&
+              Math.abs(p.createdAt.getTime() - createdAt.getTime()) <= 86_400_000,
+          );
+          if (duplicateIndex !== -1) {
+            snapshot.splice(duplicateIndex, 1);
+            duplicates++;
             continue;
           }
         }
@@ -903,15 +965,20 @@ export class ImportService {
     const statusUpdates: Array<{ id: string; status: InvoiceStatus; paidAt: Date | null }> = [];
     for (const inv of allInvoices) {
       if (TERMINAL_STATUSES.includes(inv.status)) continue;
-      // Exclude VOID (bounced) payments (P5-12) — a reversed payment must not
-      // count as paid here, or the recalc would mis-flip a live invoice to
-      // PAID/PARTIAL just like a VOID invoice would wrongly appear OVERDUE above.
-      const totalPaid = inv.payments
-        .filter((p) => p.status !== "VOID")
-        .reduce((s, p) => s + Number(p.amount), 0);
+      // CONFIRMED-only: a payment counts toward an invoice's status only once an
+      // operator has confirmed it (status === "PAID"). `status !== "VOID"` is the
+      // historical buggy shorthand (B11) that also folded in an unconfirmed DRAFT
+      // row — see ../invoices/payment-predicates.ts and campaign batch F03. This
+      // recalc sweeps EVERY invoice in the tenant, so the loose filter let an
+      // unrelated payments upload flip a live invoice to PAID on a DRAFT payment.
+      // Every payment THIS importer creates is CONFIRMED (schema default PAID),
+      // so only pre-existing DRAFT rows change behaviour here.
+      const totalPaid = sumConfirmed(inv.payments);
       const total = Number(inv.total);
       let newStatus: InvoiceStatus;
-      if (totalPaid >= total - 0.01) newStatus = InvoiceStatus.PAID;
+      // Match InvoicesService.recomputeStatus — a tenth of a cent of slack, not a
+      // whole cent (which would call a 1-cent-short invoice fully PAID).
+      if (totalPaid >= total - 0.001) newStatus = InvoiceStatus.PAID;
       else if (totalPaid > 0) newStatus = InvoiceStatus.PARTIAL;
       else if (inv.dueDate && inv.dueDate < now) newStatus = InvoiceStatus.OVERDUE;
       else newStatus = inv.status;
@@ -934,7 +1001,7 @@ export class ImportService {
       );
     }
 
-    return { imported, skipped, errors };
+    return { imported, skipped, duplicates, errors };
   }
 
   async importExpenses(
@@ -1083,7 +1150,7 @@ export class ImportService {
         continue;
       }
 
-      const amount = parseFloat(row["Total"] || row["Expense Amount"] || "0");
+      const amount = parseImportMoney(row["Total"] || row["Expense Amount"] || "0");
       if (amount <= 0) {
         skipped++;
         continue;
@@ -1391,7 +1458,8 @@ export class ImportService {
         continue;
       }
 
-      const pricePerUnit = parseFloat(row["Rate"] || row["Sales Rate"] || row["Price"] || "0") || 0;
+      const pricePerUnit =
+        parseImportMoney(row["Rate"] || row["Sales Rate"] || row["Price"] || "0") || 0;
       const description = row["Description"] || row["Item Description"] || null;
       const unit = (row["Unit"] || row["Usage Unit"] || "unit").trim() || "unit";
       const sku = row["SKU"] || null;
@@ -1461,8 +1529,7 @@ export class ImportService {
       }
 
       // Parse closing stock — handle comma-formatted values like "2,100.00"
-      const closingStockRaw = (row["Closing Stock"] || "0").replace(/,/g, "");
-      const closingStock = parseFloat(closingStockRaw);
+      const closingStock = parseImportNumber(row["Closing Stock"] || "0");
       if (isNaN(closingStock)) {
         skipped++;
         continue;
