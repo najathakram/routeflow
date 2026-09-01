@@ -167,18 +167,39 @@
 > Full audit + research (11 agents, 75 sources) in the workflow transcript:
 > `.../subagents/workflows/wf_c465d48c-385/journal.jsonl`.
 
-> # ▶️ MULTI-SESSION STATE — F05 FULLY CLOSED, B167 DISCHARGED (2026-09-01, master `896d5f7e`)
+> # ▶️ MULTI-SESSION STATE — MERGE TRAIN COMPLETE (2026-09-01, master `02db5160`)
 >
-> Several sessions ran concurrently today and the repo state is not obvious from any one of
+> Several sessions ran concurrently today and the repo state was not obvious from any one of
 > them. This banner is the reconciled picture, verified against `origin/master` — not a single
-> session's view. It is maintained by the merge-coordinator session running the train
-> **#580 ✅ → B167 discharge ✅ → #581 ✅ → #579 (this) → #571 → #574**.
+> session's view.
+>
+> ✅ **The train is DONE. All eight PRs merged serially (D6), deploys SUCCESS on api + web,
+> `post-deploy-check` 9/9 green:** #580 → #582 → #584 (B167 discharged) → #581 → #579 → #571
+> (lessons register + Gate 3 now LIVE) → #574 (16 dep bumps) → #585 (three fleet lessons).
 >
 > **Ledger now: 193 rows — 46 `done`, 2 `already-fixed`, 145 `queued`, NOTHING mid-flight**
 > (48 of 193 = 24.9% terminal) — counted off the shards, not carried forward from an earlier
 > banner. Shipped and fully discharged: F00, F01, F02 (9), F03 (9), F04 (3), **F05 (5)**,
 > F06 (6), F17 (4), F30 (12). **11 Criticals still open** (B46 B48 B52 B53 B54 B55 B56 B58 B59
 > B128 B129).
+>
+> **In flight now:** F07 (track A, board #520) and F10 (routes lane, board #523), each in its own
+> worktree, each merging strictly after the other per D6.
+>
+> 🔴 **Waiting on the owner — nothing else unblocks these:**
+>
+> 1. **PR #583** (`fix/mobile-google-signin-sdk55`) — MERGEABLE/CLEAN, Verify green. Implements
+>    the owner-approved Android scope in the banner below. **Deliberately NOT merged by the
+>    coordinator session:** it is a product change that deploys the `routeflowmobile` Railway
+>    service and its follow-ups are owner-gated. ⚠️ Until it merges, the shared root
+>    `node_modules` holds ITS module versions, not master's (expo-location 55.1.14, task-manager
+>    55.0.20, sharing 55.0.24, async-storage 2.2.0, netinfo 11.5.2, worklets-core absent) — every
+>    worktree shares that install, so a mobile jest result right now reflects #583's tree
+>    whichever branch you are on. It self-heals when #583 lands.
+> 2. **EAS versionCode seeding** — see item 5 of the Android banner. Blocks the next build and
+>    cannot be scripted.
+> 3. **RLS arming decision** and the **user-guide republish** — §8 below.
+> 4. **Multer is still on the vulnerable 2.2.0 at every upload endpoint** despite #574 — §10.
 >
 > ## 1. ✅ B167 is DISCHARGED — F05 is closed
 >
@@ -200,27 +221,28 @@
 > so the colliding word is gone rather than merely dodged — the rename alone would not have
 > covered fixtures leaked by earlier failed runs, which is why both landed.
 >
-> ## 2. PRs — what landed today and what is still open
+> ## 2. PRs — the train, in the order it landed
 >
-> | PR       | Branch                           | State         | What                                                              |
-> | -------- | -------------------------------- | ------------- | ----------------------------------------------------------------- |
-> | ~~#580~~ | `docs/status-refresh`            | **MERGED**    | B167 fix + fixture rename + F05 ledger (`0771a9d9`)               |
-> | ~~#582~~ | `docs/supersede-blockers-plan`   | **MERGED**    | old release-blockers plan marked SUPERSEDED (`a8220795`)          |
-> | ~~#584~~ | `chore/discharge-b167`           | **MERGED**    | B167 → `done` on the green e2e (`f5812191`)                       |
-> | ~~#581~~ | `docs/multi-session-state`       | **MERGED**    | the reconciled banner + `.tmpjest` gitignore (`896d5f7e`)         |
-> | **#579** | `docs/handoff-f17-session`       | **this PR**   | F17's close-out threads, rebased onto the reconciled banner       |
-> | #571     | `chore/lessons-learned-system`   | next in train | lessons register + `stop.mjs` Gate 3; **also rewrites this file** |
-> | #583     | `fix/mobile-google-signin-sdk55` | open, owner's | the Android fix PR below — **its session rebases it, not you**    |
-> | #574     | `dependabot/…e1a987a042`         | last in train | 16 dep bumps — see the multer finding in §10                      |
-> | ~~#575~~ | `fix/F05-b167-e2e-selector`      | CLOSED        | superseded by #580 (its fixture rename was salvaged)              |
+> | PR       | Branch                           | State                   | What                                                       |
+> | -------- | -------------------------------- | ----------------------- | ---------------------------------------------------------- |
+> | ~~#580~~ | `docs/status-refresh`            | **MERGED**              | B167 e2e fix + fixture rename + F05 T1 flips (`0771a9d9`)  |
+> | ~~#582~~ | `docs/supersede-blockers-plan`   | **MERGED**              | old release-blockers plan marked SUPERSEDED (`a8220795`)   |
+> | ~~#584~~ | `chore/discharge-b167`           | **MERGED**              | B167 → `done` on the green e2e (`f5812191`)                |
+> | ~~#581~~ | `docs/multi-session-state`       | **MERGED**              | the reconciled banner + `.tmpjest` gitignore (`896d5f7e`)  |
+> | ~~#579~~ | `docs/handoff-f17-session`       | **MERGED**              | F17's close-out threads (`5cc338a3`)                       |
+> | ~~#571~~ | `chore/lessons-learned-system`   | **MERGED**              | lessons register + `stop.mjs` Gate 3 (`10a0dd3e`)          |
+> | ~~#574~~ | `dependabot/…e1a987a042`         | **MERGED**              | 16 dep bumps (`dae6abc1`) — ⚠️ read §10 before trusting it |
+> | ~~#585~~ | `chore/lessons-fleet-batch`      | **MERGED**              | L-026 / L-027 / L-028 (`02db5160`)                         |
+> | **#583** | `fix/mobile-google-signin-sdk55` | **OPEN** — owner's call | the Android fix PR — see §2b                               |
+> | ~~#575~~ | `fix/F05-b167-e2e-selector`      | CLOSED                  | superseded by #580 (its fixture rename was salvaged)       |
 >
-> ⚠️ **FIVE things have competed to rewrite HANDOFF.md**, not three: #575 (closed), #580, #581,
-> this PR, and **#571 — which carries the entire Android publish-readiness banner** (commit
-> `1c81e2e4`). #583 additionally collides on `.claude/code-map/CHANGELOG.md` (the usual prepend
-> conflict — **re-append the anchor bullet**). Sequence deliberately and preserve each one's
-> unique content; never let a rebase pick a winner.
+> ⚠️ **SIX things competed to rewrite HANDOFF.md today** — #575 (closed), #580, #581, #579, #571
+> (which carried the Android banner, commit `1c81e2e4`) and this close-out. All are reconciled
+> here; nothing was lost to a rebase. #583 still collides on `.claude/code-map/CHANGELOG.md` (the
+> usual prepend conflict — **re-append the anchor bullet**, which is the pre-2026-07-08 block at
+> the bottom of that file). **Preserve each PR's unique content; never let a rebase pick a winner.**
 >
-> ## 2b. ⚠️ The Android publish-readiness session — a DECIDED, UNSTARTED fix PR
+> ## 2b. ⚠️ The Android publish-readiness scope — implemented as PR #583, awaiting the owner
 >
 > The other live session was **not** doing campaign work. It produced a Google Maps key, an
 > on-device test of the real APK, and an 11-agent publish-readiness audit, then the owner
@@ -253,16 +275,23 @@
 > All worktrees are **clean** (no uncommitted work anywhere) as of this banner. What matters is
 > which have a **live session** attached — never remove one of those; message its session instead.
 >
-> | Worktree      | Branch                                       | Status                                        |
-> | ------------- | -------------------------------------------- | --------------------------------------------- |
-> | main checkout | `fix/mobile-google-signin-sdk55`             | **LIVE** — the Android session, mid-edit      |
-> | `rf-F07`      | `fix/F07-order-lifecycle-stock-conservation` | **LIVE** — F07 batch (board #520)             |
-> | `rf-F10`      | `fix/F10-reopen-stop-state-guards`           | **LIVE** — F10 batch (board #523)             |
-> | `rf-F17`      | `docs/handoff-f17-session`                   | **this PR's branch** (was F17's, reused)      |
-> | `rf-F05`      | `docs/multi-session-state`                   | #581 — MERGED; prunable once the train clears |
-> | `rf-docs`     | `docs/status-refresh`                        | #580 — MERGED; prunable once the train clears |
-> | `rf-F06`      | `chore/discharge-b167`                       | #584 — MERGED; reusable                       |
-> | ~~`rf-F03`~~  | ~~`fix/F03-payment-truth`~~                  | **PRUNED** 2026-09-01 — had landed in #564    |
+> | Worktree      | Branch                                       | Status                               |
+> | ------------- | -------------------------------------------- | ------------------------------------ |
+> | main checkout | `master`                                     | parked on master — **keep it there** |
+> | `rf-F07`      | `fix/F07-order-lifecycle-stock-conservation` | **LIVE** — F07 batch (board #520)    |
+> | `rf-F10`      | `fix/F10-reopen-stop-state-guards`           | **LIVE** — F10 batch (board #523)    |
+> | `rf-lessons`  | `chore/lessons-fleet-batch`                  | #585 — MERGED; prunable              |
+> | `rf-F06`      | `docs/train-close-out`                       | this PR; reusable after              |
+> | ~~`rf-F03`~~  | ~~`fix/F03-payment-truth`~~                  | **PRUNED** — had landed in #564      |
+> | ~~`rf-F17`~~  | ~~`fix/F17-import-robustness`~~              | **PRUNED** — had landed in #566      |
+> | ~~`rf-docs`~~ | ~~`docs/status-refresh`~~                    | **PRUNED** — #580 merged             |
+> | ~~`rf-F05`~~  | ~~`docs/multi-session-state`~~               | **PRUNED** — #581 merged             |
+>
+> ⚠️ **Keep the main checkout on master.** A worktree session's hooks resolve paths against the
+> MAIN checkout, not the worktree (worktrees are nested under `.claude/worktrees/`), so whatever
+> branch the shared tree is parked on is the file a gate points at. With it parked on a feature
+> branch, a session satisfying Gate 3 would append its lesson into someone else's working tree and
+> surface it as a mystery diff in their PR. That rule is now **L-027**.
 >
 > ⚠️ **`fix/F03-payment-truth` and `fix/F17-import-robustness` looked unmerged and were NOT.**
 > `git log master..branch` showed 8 and 5 commits because squash-merge rewrote the SHAs. **And
@@ -270,8 +299,11 @@
 > ancient, so it reports thousands of already-landed lines. Verify by CONTENT:
 > `scripts/repair-f03.mjs`, `apps/web/e2e/22-payment-truth.spec.ts`, `scripts/repair-f17.mjs`
 > and `apps/web/e2e/26-import-duplicates.spec.ts` are all on master, so both had landed (#564,
-> #566). Both were pruned on that evidence — the `rf-F17` **directory** is reused above for this
-> PR's branch, which is not the same thing as its old branch being live.
+> #566). Both were pruned on that evidence.
+>
+> ⚠️ **On Windows `git worktree remove` can die with `Filename too long`**, leaving a
+> deregistered but half-deleted directory. Recover with `robocopy <empty-dir> <worktree> /MIR`
+> then delete — that is how all four were pruned.
 >
 > ## 4. Two campaign-wide traps — each cost a failed run today
 >
@@ -411,7 +443,12 @@
 >   half-deleted directory that is already deregistered. Recover by mirroring an empty directory
 >   over it (`robocopy <empty> <dir> /MIR`) and then deleting it.
 >
-> ## 10. Dependabot #574 — reviewed, and one bump does NOT do what it says
+> ## 10. Dependabot #574 — MERGED, and one of its bumps does NOT do what it says
+>
+> 🔴 **Bottom line for the owner: `multer` is still on the vulnerable 2.2.0 at every upload
+> endpoint, even though #574 merged and its changelog says 2.3.0.** Merging it was not a
+> regression, but it bought no security. The scoped fix (root `overrides` + `fieldArrayIndexLimit`)
+> is filed as a follow-up task and is NOT done. Detail below; the general rule is now **L-028**.
 >
 > #546 cleared 13 of these bumps. Its one blocker was `react-test-renderer@19.2.8`, whose peer
 > wants `react ^19.2.8` while `apps/mobile` pins `react` exact at 19.2.0 per Expo SDK 55 — npm
@@ -545,7 +582,7 @@ batch with an e2e (no web unit runner). (2) **B99's repair flight is owed post-d
 
 > </details>
 
-**Written:** 2026-09-01 · **Visibility:** ⚠️ **PUBLIC by owner directive until the campaign completes** (do NOT flip private mid-campaign; the final flip is the owner's if the session dies) · **Campaign:** `W-serial (D6: merge as ready, no windows) · F00+F01+F02(9)+F04(3)+F30(12)+F03(9)+F17(4)+F05(5)+F06(6) SHIPPED LIVE AND FULLY DISCHARGED · 48/193 = 24.9% terminal, nothing mid-flight · in flight: F07 track A (claimed, board #520 — ⚠️ F06 filed B208 in F07's file region: honour STORED MANUAL overrides on the buyer merge, never client ones), F10 in the routes lane (claimed, board #523 — extend G7's RUN_LINE_ITEMS_SELECT, never re-inline; the CANCEL/deleteRun gates belong to F11, not F10)`. Owner delegations ACTIVE (.claude/campaign/DECISIONS.md D1–D6 + memory): Fable review replaces owner approval except system-harm/client-data risk; merge-as-ready any hour; repair-as-we-go per batch; repo stays public. ⚠️ Register debt SETTLED — keep it settled: every batch updates the register in its own close-out.
+**Written:** 2026-09-01 · **Visibility:** ⚠️ **PUBLIC by owner directive until the campaign completes** (do NOT flip private mid-campaign; the final flip is the owner's if the session dies) · **Campaign:** `W-serial (D6: merge as ready, no windows) · F00+F01+F02(9)+F04(3)+F30(12)+F03(9)+F17(4)+F05(5)+F06(6) SHIPPED LIVE AND FULLY DISCHARGED · 48/193 = 24.9% terminal, nothing mid-flight · master 02db5160, api+web deploys SUCCESS, post-deploy-check 9/9 · in flight: F07 track A (claimed, board #520 — ⚠️ F06 filed B208 in F07's file region: honour STORED MANUAL overrides on the buyer merge, never client ones), F10 in the routes lane (claimed, board #523 — extend G7's RUN_LINE_ITEMS_SELECT, never re-inline; the CANCEL/deleteRun gates belong to F11, not F10)`. **Lessons register LIVE** — 28 active / 17.5 KB of 40 / ~25 KB; take the next id from `.claude/lessons/_meta.json.nextId`, never from the highest visible entry. Owner delegations ACTIVE (.claude/campaign/DECISIONS.md D1–D6 + memory): Fable review replaces owner approval except system-harm/client-data risk; merge-as-ready any hour; repair-as-we-go per batch; repo stays public. ⚠️ Register debt SETTLED — keep it settled: every batch updates the register in its own close-out.
 
 > **F05 ✅ SHIPPED (this PR):** driver at-door money truth + run settlement — **B49 (Critical), B83, B148, B152, B167**. No migration (F01's `settlementNote`/`settlementVariance` columns were already live and dead). **G7 delivered:** `RUN_LINE_ITEMS_SELECT` is now the single run-read lineItems select, carrying `subtotal`/`boxes`/`pieces`/`unitsPerBox` — **F10/F11/F12/F22 consume it; extend, never re-inline.** ⚠️ **B148 was the reachability blocker:** mobile always sent `deliveries[].productId`, the DTO never declared it, and the global `forbidNonWhitelisted` pipe 400'd _every_ stop completion — none of the money fixes were reachable until it landed. ⚠️ **The register missed the real settlement bypass:** RF-016 auto-complete inside `completeStop`/`completeWithPayment` flips a run COMPLETED in its own tx, so gating `updateRunStatus` alone would never have fired on the common path — all three paths now carry the predicate. B83 books over-collection as an `AdvancePayment` (`RUN:<runId>:STOP:<stopId>` reference — load-bearing, matched by prefix). Proof: 3339 api + 1383 mobile jest green, 26 review findings fixed across 2 rounds, mutation probe 6/6 caught + restore-verified, red gate properly red; B167 rides its T2 leg (e2e spec 23, project entry wired — `playwright test --list` shows 134 tests in 23 files). **Handed to F11:** the CANCEL path and `deleteRun` remain ungated for a cash-carrying run.
 
