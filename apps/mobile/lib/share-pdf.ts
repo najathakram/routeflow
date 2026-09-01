@@ -1,5 +1,11 @@
 import { Linking, Platform } from "react-native";
-import * as FileSystem from "expo-file-system";
+// expo-file-system/legacy, not the package root: SDK 54 rewrote this module and moved
+// downloadAsync/writeAsStringAsync/cacheDirectory — the three APIs used below — behind
+// this entry point. Pinning the package to its pre-SDK-54 major to keep them instead is
+// what made the native build crash on launch (NoClassDefFoundError
+// expo/modules/filesystem/FilePermissionModule): the old native module predates the class
+// expo-modules-core 55 loads. Web never linked the native module, so it looked fine there.
+import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import { showToast } from "./toast";
 import { chooseAction } from "./confirm";

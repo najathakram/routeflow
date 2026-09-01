@@ -1084,6 +1084,33 @@ lastAt}` state).
   resolution class the Dockerfile already pins with `ENV NODE_PATH` (commits fdf60a49/7cab3863). A
   warm Metro cache masks it; `--clear` exposes it. Not a defect in this change.
 
+### 2026-08-31 — Native-only launch blockers found by running the first APK (B203/B204)
+
+The first APK ever installed (emulator, Android 14) surfaced two defects invisible on mobile web
+because web never links the native modules:
+
+- **B203 — `expo-file-system` major-version pin crashed launch.** `~18.1.11` vs SDK 55's
+  `~55.0.26`: the old native module predates `FilePermissionModule`, which expo-modules-core 55
+  loads at startup → `NoClassDefFoundError`, fatal, pre-UI. The pin existed for the legacy
+  `downloadAsync`/`writeAsStringAsync`/`cacheDirectory` API used by ONE file (`lib/share-pdf.ts`);
+  SDK 54 moved that API to **`expo-file-system/legacy`**, which is where it now imports from.
+  ⚠️ npm left a stale nested 18.1.11 under `apps/mobile/node_modules` that it itself reported
+  `invalid` — it had to be deleted from BOTH the tree and the lockfile before `npm install`
+  resolved one deduped copy.
+- **B204 — SecureStore rejects every app storage key; buyer boot gate froze forever.**
+  `expo-secure-store` validates keys against `/^[\w.-]+$/` on reads AND writes; every key is
+  colon-namespaced (`auth-keys.ts`: `rf:op:accessToken` …), so on device every session
+  read/write threw. `buyer-session-store.initialize` was the only boot store with no catch and
+  the root layout's `bootstrapping` gate ANDs all three stores → eternal splash spinner; even
+  unfrozen, no login could persist. **Fix = native-only spelling change**: new pure
+  `lib/secure-key.ts#toSecureStoreKey` (`:` → `_`) wrapped around every native SecureStore call —
+  22 call sites across 8 files (`auth.ts`, `api-client.ts`, `buyer-auth.ts`, `tenant-store.ts`,
+  `last-username.ts`, `useSocket.ts`, `useBuyerSocket.ts`, `google-callback.tsx`) — swept to zero
+  unwrapped `*ItemAsync(` calls. Web keeps its exact keys (nobody signed out); there was no
+  native install base, so no migration. ⚠️ EVERY new native SecureStore call MUST route through
+  `toSecureStoreKey`; `__tests__/secure-key.test.ts` pins the real key set collision-free and
+  the buyer gate's throw-resilience (written RED against the unhardened store).
+
 ### 2026-08-31 — Native build & distribution (EAS Android + OTA)
 
 The first EAS config that can actually produce an installable build. Until now the ONLY way a

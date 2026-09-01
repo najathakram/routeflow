@@ -6,27 +6,28 @@ import { apiClient } from "./api-client";
 import { OP_KEYS, DRIVER_KEYS, BUYER_KEYS, CURRENT_ROLE_KEY, type CurrentRole } from "./auth-keys";
 import { setLastUsername } from "./last-username";
 import { generateOAuthState, isValidReturnedState, OAUTH_STATE_KEY } from "./oauth-state";
+import { toSecureStoreKey } from "./secure-key";
 
 // ─── Web-safe storage (SecureStore is native-only) ────────────────────────────
 
 const storage = {
   async get(key: string): Promise<string | null> {
     if (Platform.OS === "web") return localStorage.getItem(key);
-    return SecureStore.getItemAsync(key);
+    return SecureStore.getItemAsync(toSecureStoreKey(key));
   },
   async set(key: string, value: string): Promise<void> {
     if (Platform.OS === "web") {
       localStorage.setItem(key, value);
       return;
     }
-    await SecureStore.setItemAsync(key, value);
+    await SecureStore.setItemAsync(toSecureStoreKey(key), value);
   },
   async del(key: string): Promise<void> {
     if (Platform.OS === "web") {
       localStorage.removeItem(key);
       return;
     }
-    await SecureStore.deleteItemAsync(key);
+    await SecureStore.deleteItemAsync(toSecureStoreKey(key));
   },
 };
 

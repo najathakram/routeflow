@@ -1,4 +1,5 @@
 import { Platform } from "react-native";
+import { toSecureStoreKey } from "./secure-key";
 
 /**
  * Remembers the last successfully signed-in staff username so the login screen
@@ -12,7 +13,7 @@ export const LAST_USERNAME_KEY = "rf:lastUsername";
 async function storageGet(key: string): Promise<string | null> {
   if (Platform.OS === "web") return localStorage.getItem(key);
   const { getItemAsync } = await import("expo-secure-store");
-  return getItemAsync(key);
+  return getItemAsync(toSecureStoreKey(key));
 }
 
 async function storageSet(key: string, value: string): Promise<void> {
@@ -21,7 +22,7 @@ async function storageSet(key: string, value: string): Promise<void> {
     return;
   }
   const { setItemAsync } = await import("expo-secure-store");
-  await setItemAsync(key, value);
+  await setItemAsync(toSecureStoreKey(key), value);
 }
 
 export async function getLastUsername(): Promise<string | null> {
