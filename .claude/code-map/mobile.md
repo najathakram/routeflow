@@ -1141,7 +1141,8 @@ Railway, phone-UA-proxied behind `www.routeflow.info` by `apps/web/middleware.ts
 native build ever attempted (2026-04-20) died in EAS's Install-dependencies phase and produced
 no artifact.
 
-- **`app.json`** — `version 1.1.0` / `android.versionCode 5`. NEW config plugins for
+- **`app.json`** — `version 1.1.1`; `android.versionCode` DELETED 2026-09-01 (the counter is
+  REMOTE now — see the 2026-09-01 section below). NEW config plugins for
   `expo-camera`, `expo-location`, `expo-image-picker`: all three were dependencies with no
   plugin, so a native build shipped without their permissions. ⚠️ `expo-location` MUST carry
   `isAndroidBackgroundLocationEnabled` + `isAndroidForegroundServiceEnabled` — the library
@@ -1185,3 +1186,35 @@ no artifact.
   the April failure went undiagnosed for four months.
 - Install any dep here with `npx -y npm@10.8.0` — the local npm 11 rewrites lockfile metadata.
   `npm run validate-lock` (`missing 0`) is the gate.
+
+### 2026-09-01 — Native Google Sign-In repair + SDK-55 module alignment (`fix/mobile-google-signin-sdk55`)
+
+The owner-approved publish-readiness fix PR (HANDOFF.md banner 2026-09-01).
+
+- **`(auth)/google-callback.tsx`** — both `await import("expo-secure-store")` sites destructured
+  `{ default: SecureStore }`; the package has 14 named exports and **no default export**, so on
+  native every `getItemAsync`/`setItemAsync` call ran on `undefined` → **Google Sign-In was
+  completely broken on every native build** (web fine via the localStorage branch — exactly
+  L-025's untested-platform-branch class). Both sites now bind the module namespace (the
+  dynamic-import equivalent of `lib/auth.ts:1`'s `import * as SecureStore`).
+- **Five native modules re-pinned to SDK 55's bundled versions** (B203's crash class):
+  `expo-location ~55.1.14` (was ~19), `expo-task-manager ~55.0.20` (was ~14),
+  `expo-sharing ~55.0.24` (was ~13), `@react-native-async-storage/async-storage 2.2.0`
+  (was ^3 — AHEAD of SDK 55, not behind), `@react-native-community/netinfo 11.5.2` (was ^12).
+  All five live ONLY in `apps/mobile/package.json` — root `overrides` never pinned any of them
+  (the HANDOFF banner's "three of them" claim was checked and is wrong). ⚠️ Still never
+  `expo install --fix` here: it would also touch the root-override-pinned RN packages and the
+  override silently wins on `npm ci` (L-012).
+- **Deleted `react-native-worklets-core`** — imported nowhere (grep: zero source hits), absent
+  from `bundledNativeModules.json`, and autolinked a SECOND JSI worklets runtime beside
+  `react-native-worklets@0.7.4` (which stays, root-pinned).
+- **`expo.install.exclude: ["jest", "@types/react"]`** added to `package.json` — both are
+  deliberately held back, so `expo install --check` can now become a CI gate instead of
+  exiting 1 forever.
+- **Versioning is REMOTE:** `app.json` `version 1.1.1` with `android.versionCode` deleted;
+  `eas.json` `cli.appVersionSource: "remote"`; the remote counter is seeded once at 5 via
+  `eas build:version:set` (next build = versionCode 6). The old `local` source + production
+  `autoIncrement: true` was a duplicate-versionCode generator — the cloud builder increments a
+  local file it then discards, parallel worktrees can't see each other's counter, and Play
+  rejects a reused versionCode outright. Safe because `runtimeVersion.policy` is `appVersion`
+  (the documented remote-source incompatibility is `nativeVersion`).

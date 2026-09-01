@@ -44,7 +44,9 @@ export default function GoogleCallbackScreen() {
         return;
       }
 
-      const { default: SecureStoreForState } = await import("expo-secure-store");
+      // expo-secure-store has no default export — destructuring `default` yields
+      // undefined and every native call below throws. Use the module namespace.
+      const SecureStoreForState = await import("expo-secure-store");
       const isWebForState = typeof window !== "undefined" && !!window.localStorage;
 
       // F12-005: this route is the session-fixation surface — any app or web page
@@ -76,7 +78,7 @@ export default function GoogleCallbackScreen() {
         }
       }
 
-      const { default: SecureStore } = await import("expo-secure-store");
+      const SecureStore = await import("expo-secure-store");
       const isWeb = typeof window !== "undefined" && window.localStorage;
 
       if (type === "BUYER") {
