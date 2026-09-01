@@ -219,6 +219,7 @@ export default function MigrationHubPage() {
     );
 
   const detail = activeJob.data;
+  const selected = SOURCES.find((s) => s.key === source);
 
   return (
     <div className="space-y-6 p-6">
@@ -262,10 +263,14 @@ export default function MigrationHubPage() {
             </div>
             <button
               onClick={start}
-              disabled={createJob.isPending}
+              disabled={createJob.isPending || !selected?.connected}
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-brand-500 py-2.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40"
             >
-              {createJob.isPending ? "Starting…" : "Start migration"}
+              {createJob.isPending
+                ? "Starting…"
+                : selected?.connected
+                  ? "Start migration"
+                  : "Connector coming soon"}
               <ArrowRight className="h-4 w-4" />
             </button>
             <p className="mt-2 text-center text-[11px] text-navy/50">

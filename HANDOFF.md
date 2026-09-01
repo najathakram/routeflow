@@ -1,16 +1,31 @@
 # HANDOFF — current state & what to pick up next
 
-> # ⏸️ CAMPAIGN PAUSED BY THE OWNER — 2026-08-31
+> # ▶️ CAMPAIGN RESUMED — F03 SHIPPED, F17 IN FLIGHT (2026-08-31/09-01)
 >
-> **Do not resume any batch until the owner says so.** Nothing is mid-flight: the F03 pipeline
-> (run `wf_7bd33cd7-ac3`) was stopped deliberately, every worktree is committed and clean, and
-> master is green (last code commit `d616a47d`, now `4d57a4ca` after two docs-only merges) with
-> all three Railway services deployed and the post-deploy
-> E2E passing (run 33395261653).
+> The pause below was lifted by the owner. Since it was written: **F03 SHIPPED** (#564, master
+> `f1599490` — 8 of its 9 bugs `done`, B11 T2 `proven-pending-deploy`), **#565** landed the two
+> native launch blockers (B203/B204), and **F17 is in flight as PR #566** (branch
+> `fix/F17-import-robustness`, merge commit `56a965e0`).
 >
-> **State at pause — 24 of 193 bugs terminal (12.4% by count, 17.9% severity-weighted).**
-> Complete: F00+F01 enablement, F02 (9), F04 (3), F30 (12). In progress: F03 (0 of 9 proven).
-> Remaining: 169 bugs across 26 batches, 19 of them Critical.
+> **F17 — import robustness (B98, B99 both Critical; B112; B08).** `parseFloat("1,234.56")` is
+> `1`, so $1,234.56 imported as $1.00 across four importers; a payments re-upload had no dedupe
+> at all despite a comment promising one, so every retry doubled recorded payments and flipped
+> invoices to PAID; Excel's UTF-8 BOM blanked column one; the Migration Hub started jobs for
+> connectors that only exist as a stub that throws. All four fixed, ledger flipped to
+> `proven` / `proven-pending-deploy`, campaign-check green 4/4, full `npm run verify` green
+> (3338/3338 api tests).
+>
+> ⚠️ **Two things F17 leaves for whoever picks up next.** (1) **B205 is a NEW register entry**,
+> not a miss: the Migration Hub's own products-CSV path still carries B98's class. A fix was
+> written in F17 and **deliberately reverted** after adversarial review — routing `pricePerUnit`
+> through a lenient parser turned a present-but-unparseable price from a loud `products.create`
+> throw into a **silent $0.00 commit**, and `parseFloat` leniency admitted `-$5`/`12abc`on a
+path that calls`ProductsService.create()`in-process, so the DTO never runs. It needs its own
+batch with an e2e (no web unit runner). (2) **B99's repair flight is owed post-deploy**:`scripts/repair-f17.mjs`, fresh backup first, dry run, apply only exact-signature duplicate
+> pairs.
+>
+> **State — 24 of 193 terminal before F17; F17 adds 4 (3 immediately, B08 on deploy).**
+> Complete: F00+F01 enablement, F02 (9), F04 (3), F30 (12), F03 (9).
 >
 > ## To resume, in this order
 >
@@ -48,14 +63,14 @@
 >
 > ## Verified-clean inventory at pause
 >
-> | Worktree | Branch | State |
-> |---|---|---|
-> | main | `master` @ `d616a47d` | clean, green, deployed |
-> | rf-F03 | `fix/F03-payment-truth` | clean; 2 commits (1 WIP + 1 droppable format) |
-> | rf-F30 | `fix/F30-scan-loss` | clean, MERGED (#555) — prunable |
-> | rf-F04 | `fix/F04-pricing-mirrors` | clean, MERGED (#554) — prunable |
-> | rf-F17 | `fix/F17-import-robustness` | clean; build-plan staged, batch unstarted |
-> | rf-F02b, campaign-kickoff | merged branches | prunable |
+> | Worktree                  | Branch                      | State                                                 |
+> | ------------------------- | --------------------------- | ----------------------------------------------------- |
+> | main                      | `master` @ `d616a47d`       | clean, green, deployed                                |
+> | rf-F03                    | `fix/F03-payment-truth`     | MERGED (#564) — prunable                              |
+> | rf-F30                    | `fix/F30-scan-loss`         | clean, MERGED (#555) — prunable                       |
+> | rf-F04                    | `fix/F04-pricing-mirrors`   | clean, MERGED (#554) — prunable                       |
+> | rf-F17                    | `fix/F17-import-robustness` | **IN FLIGHT — PR #566**, verify green, ledger flipped |
+> | rf-F02b, campaign-kickoff | merged branches             | prunable                                              |
 >
 > Register artifact `310ae33a…` is CURRENT (198 findings, every shipped fix chipped). The
 > user-guide artifact `cae40575…` is shared-not-owned — guide changes must be flagged to the owner.

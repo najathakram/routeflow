@@ -77,7 +77,7 @@
     "apps/mobile/app/(driver)/route/stop/[stopId]/return/index.tsx::{action ? <Text style={styles.sectionLink}>{action}</Text> : null}"
   ],
   "money-rederive": [
-    "apps/api/src/import/import.service.ts::parseFloat(row[\"Item Total\"] || \"0\") || qty * unitPrice - itemDiscount,",
+    "apps/api/src/import/import.service.ts::parseImportMoney(row[\"Item Total\"] || \"0\") || qty * unitPrice - itemDiscount,",
     "apps/mobile/app/(driver)/route/index.tsx::return t + (o.lineItems ?? []).reduce((s, li) => s + li.qty * li.unitPrice, 0);"
   ],
   "calendar-date": [
@@ -125,7 +125,8 @@
     "apps/mobile/app/(operator)/settings/index.tsx::<Text style={styles.cardTitle}>Coming soon on mobile</Text>",
     "apps/mobile/app/(operator)/settings/index.tsx::<Text style={styles.comingSoonBadgeText}>Coming soon</Text>",
     "apps/mobile/components/MessagesScreen.tsx::title=\"Messaging is coming soon\"",
-    "apps/web/app/(dashboard)/settings/migration/page.tsx::desc: \"Export a CSV — connector coming soon\","
+    "apps/web/app/(dashboard)/settings/migration/page.tsx::desc: \"Export a CSV — connector coming soon\",",
+    "apps/web/app/(dashboard)/settings/migration/page.tsx::: \"Connector coming soon\"}"
   ],
   "phantom-copy": [
     "apps/mobile/app/(operator)/settings/index.tsx::configured in the web dashboard.",

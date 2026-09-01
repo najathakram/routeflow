@@ -455,8 +455,9 @@ A `const <moneyish> = ... parseFloat(...)` under `apps/api/src/import/` with no 
 pass — CP-07's float-artifact class applied at parse time, where a 4-dp or exponent-notation
 source column lands in a monetary column unrounded.
 
-The 9 sites present when this landed are straight column reads with no arithmetic before the
-write; they are baselined per occurrence, so a new one gates.
+F17 (B98) fixed all 9 baselined sites in `import.service.ts` via `parseImportMoney` /
+`parseImportNumber` (`apps/api/src/import/parse-import-number.ts`); the baseline block is
+removed and the signature now gates fresh, at 0 suppressed sites.
 
 ## 25. `api-calendar-date` — Server-side calendar date via a local getter _(scanner: auto, HIGH-signal)_
 
@@ -496,7 +497,7 @@ it had succeeded. Suppress with `// scan-ok: log-only-catch — <why losing it i
 | unimported-component | high           | 9    | dead components in both apps                                    |
 | hardcoded-threshold  | medium         | 4    | the B25 `stock <= 5` family                                     |
 | fetch-cap-aggregate  | medium         | 6    | limit:100–999 feeding KPIs                                      |
-| coming-soon          | medium         | 10   | the NEVER-demo placeholder list                                 |
+| coming-soon          | medium         | 11   | the NEVER-demo placeholder list                                 |
 | unscoped-tenant      | noisy-excluded | ~294 | security audit mode only (`--only`)                             |
 | phantom-copy         | medium         | 5    | copy → human walks the referenced path                          |
 | edit-form-omission   | noisy-excluded | 3    | heuristic re-finds B09; human confirms                          |
@@ -515,6 +516,6 @@ scan is at **0 unsuppressed hits** and every new instance gates.
 | unscoped-wipe           | high   | 0               | B126/B127 fixed in #506; the guard stays armed               |
 | draft-payment-not-void  | high   | 24              | correct only while nothing writes DRAFT — all baselined      |
 | boxed-rederive          | high   | 0               | boxed twin of money-rederive; clean at landing               |
-| import-parsefloat-money | high   | 9               | straight column reads in `import.service.ts`, baselined      |
+| import-parsefloat-money | high   | 0               | F17 fixed all 9 sites via parseImportMoney/parseImportNumber |
 | api-calendar-date       | high   | 0               | the API side of the calendar-date class; clean at landing    |
 | log-only-catch          | medium | 0               | needs a "safe to lose?" verdict per hit, so it does not gate |
