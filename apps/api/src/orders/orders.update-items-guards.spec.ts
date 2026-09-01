@@ -71,6 +71,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { Prisma } from "@prisma/client";
 
 const MOCK_ORDER = {
@@ -228,6 +229,11 @@ describe("OrdersService — F06 guards (TP2)", () => {
         {
           provide: EntitlementsService,
           useValue: { hasFlag: jest.fn().mockResolvedValue(true) },
+        },
+        // B65: deleteOrder's per-invoice teardown reverses regulated-ledger entries.
+        {
+          provide: RegulatedLedgerService,
+          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
         },
       ],
     }).compile();

@@ -45,6 +45,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { OrderStatus, UserRole, Prisma } from "@prisma/client";
 
 const MOCK_PRODUCT = {
@@ -231,6 +232,11 @@ describe("OrdersService", () => {
         {
           provide: EntitlementsService,
           useValue: { hasFlag: jest.fn().mockResolvedValue(true) },
+        },
+        // B65: deleteOrder's per-invoice teardown reverses regulated-ledger entries.
+        {
+          provide: RegulatedLedgerService,
+          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
         },
       ],
     }).compile();
@@ -1530,32 +1536,85 @@ describe("OrdersService", () => {
         (service as any).systemConfig.get.mockResolvedValue("0");
       });
 
+      /**
+       * B116 (REG-B116 / R15) replaced create()'s per-line `tx.product.update`
+       * with ONE aggregated raw `UPDATE … FROM (VALUES …)`, so the qty BASIS
+       * this describe() pins is now read off that statement's bindings. Same
+       * oracle (27 pieces / 2 selling units), new call site — the returned
+       * reader hands back the `[productId, qty]` pairs in VALUES-list order.
+       */
+      function captureStockDecrement() {
+        const txExecuteRaw: jest.Mock = jest.fn().mockResolvedValue(0);
+        prisma.tenantTransaction.mockImplementation((fn: any) =>
+          fn({
+            ...(prisma as unknown as Record<string, any>),
+            $executeRaw: txExecuteRaw,
+            $queryRaw: jest.fn().mockResolvedValue([]),
+          }),
+        );
+        const isSql = (v: any) => typeof v?.sql === "string" && Array.isArray(v?.values);
+        const sqlText = (v: any): string =>
+          v == null
+            ? ""
+            : typeof v === "string"
+              ? v
+              : isSql(v)
+                ? v.sql
+                : Array.isArray(v)
+                  ? v.map(sqlText).join(" ")
+                  : "";
+        const flatValues = (v: any): any[] =>
+          v == null
+            ? []
+            : isSql(v)
+              ? flatValues(v.values)
+              : Array.isArray(v)
+                ? v.flatMap(flatValues)
+                : [v];
+        return () => {
+          // The lock statement is a separate `SELECT … FOR UPDATE`; only the
+          // decrement names currentStock.
+          const call = txExecuteRaw.mock.calls.find((c: any[]) =>
+            (sqlText(c[0]) + " " + sqlText(c.slice(1))).includes("currentStock"),
+          );
+          if (!call) return [];
+          // Tagged-template form binds after the strings; function form
+          // (`$executeRaw(Prisma.sql…)`) carries both inside call[0].
+          return isSql(call[0]) ? flatValues(call[0]) : flatValues(call.slice(1));
+        };
+      }
+
       it("a box/piece split ({boxes:2, pieces:3}) decrements 27 — the PIECES basis", async () => {
         prisma.product.findMany.mockResolvedValue([BOXED_12]);
+        const readDecrement = captureStockDecrement();
 
         await service.create(
           { items: [{ productId: "prod-box12", qty: 1, boxes: 2, pieces: 3 }] } as any,
           customerPayload,
         );
 
-        expect(prisma.product.update).toHaveBeenCalledWith({
-          where: { id: "prod-box12" },
-          data: { currentStock: { decrement: 27 } },
-        });
+        expect(prisma.product.update).not.toHaveBeenCalled();
+        // The money basis is the leading (productId, qty) pair. The trailing
+        // bound value is the tenantId the raw UPDATE re-states for itself —
+        // raw SQL bypasses the tenant proxy that scoped the ORM call it
+        // replaced — so it is asserted separately rather than folded into the
+        // basis oracle.
+        expect(readDecrement().slice(0, 2)).toEqual(["prod-box12", 27]);
+        expect(readDecrement()).toContain("test-tenant");
       });
 
       it("the same boxed product ordered legacy-style with bare qty:2 (no boxes/pieces keys) decrements 2 — the SELLING-UNITS basis", async () => {
         prisma.product.findMany.mockResolvedValue([BOXED_12]);
+        const readDecrement = captureStockDecrement();
 
         await service.create(
           { items: [{ productId: "prod-box12", qty: 2 }] } as any,
           customerPayload,
         );
 
-        expect(prisma.product.update).toHaveBeenCalledWith({
-          where: { id: "prod-box12" },
-          data: { currentStock: { decrement: 2 } },
-        });
+        expect(prisma.product.update).not.toHaveBeenCalled();
+        expect(readDecrement().slice(0, 2)).toEqual(["prod-box12", 2]);
+        expect(readDecrement()).toContain("test-tenant");
       });
     });
   });
@@ -2179,23 +2238,27 @@ describe("OrdersService", () => {
       );
     });
 
-    it("a credit-settle failure after DELIVERED is swallowed (warn), never thrown — send()'s auto-apply catches up", async () => {
+    // B108 (REG-B108 / R11): the settle now retries up to 3 attempts and a
+    // final failure logs at ERROR (not warn) — so the rejection has to persist
+    // across every attempt for the give-up path to be reached. The oracle this
+    // test exists for is unchanged: delivery still resolves, never throws.
+    it("a credit-settle failure after DELIVERED is swallowed (logged at error), never thrown — send()'s auto-apply catches up", async () => {
       prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, status: "CONFIRMED" });
       prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "DELIVERED" });
       const invoices = (service as any).invoicesService;
       invoices.findOpenOrderDraft.mockResolvedValueOnce({ id: "d1" });
-      creditNotesService.settleOrderCreditsInTx.mockRejectedValueOnce(
+      creditNotesService.settleOrderCreditsInTx.mockRejectedValue(
         new Error("serialization failure"),
       );
-      const warnSpy = jest
-        .spyOn((service as any).logger, "warn")
+      const errorSpy = jest
+        .spyOn((service as any).logger, "error")
         .mockImplementation(() => undefined);
 
       await expect(
         service.changeStatus("ord-1", { status: "DELIVERED" as any }, operatorPayload),
       ).resolves.toMatchObject({ status: "DELIVERED" });
 
-      expect(warnSpy).toHaveBeenCalledWith(
+      expect(errorSpy).toHaveBeenCalledWith(
         expect.stringContaining("Credit settle after delivery failed"),
       );
     });

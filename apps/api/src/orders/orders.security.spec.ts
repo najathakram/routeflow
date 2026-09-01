@@ -40,6 +40,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 
 // A row belonging to ANOTHER tenant — findUnique (post-filter defeated by the
 // exclusive select) hands it back; the scoped findFirst must miss it.
@@ -80,6 +81,11 @@ describe("OrdersService — cross-tenant id 404s on scoped reads", () => {
         },
         { provide: CommissionEngineService, useValue: {} },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
+        // B65: deleteOrder's per-invoice teardown reverses regulated-ledger entries.
+        {
+          provide: RegulatedLedgerService,
+          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
     service = module.get<OrdersService>(OrdersService);

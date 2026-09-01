@@ -18,6 +18,11 @@ import { CommissionsModule } from "../sales-agents/commissions.module";
 // flag.credit_limits (WP3). EntitlementsModule depends only on the global
 // PrismaService, so importing it here pulls in no Stripe/cron/controllers.
 import { EntitlementsModule } from "../billing/entitlements.module";
+// B65 (REG-B65): deleteOrder's per-invoice teardown needs RegulatedLedgerService
+// to reverse ledger entries, exactly like the two sibling teardown paths
+// (InvoicesService.voidInvoiceInTx, InvoicesService.deleteInvoice) already do.
+// RegulatedModule imports Storage/Audit/Billing only — no cycle with OrdersModule.
+import { RegulatedModule } from "../regulated/regulated.module";
 
 @Module({
   imports: [
@@ -34,6 +39,7 @@ import { EntitlementsModule } from "../billing/entitlements.module";
     CreditNotesModule,
     CommissionsModule,
     EntitlementsModule,
+    RegulatedModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService, ChangeRequestsService],

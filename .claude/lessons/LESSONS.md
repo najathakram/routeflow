@@ -262,6 +262,43 @@
 
 ## domain
 
+### L-029 · 2026-09-01 · domain · #588
+
+- **Symptom:** cancelling an order destroyed value three ways at once — it voided the invoice for
+  goods already delivered, never returned the creation-time stock decrement, and its sibling
+  `deleteOrder` skipped the regulated-ledger reversal both other invoice-destruction paths
+  performed. All three had shipped green.
+- **Root cause:** the conservation rules were built for the **edit** path and the **teardown**
+  paths were simply never enrolled in them. Every signal each fix needed already sat in the same
+  file — the delivered-qty clamp, the reversal call — and was not consulted. Nothing failed
+  loudly, because a conservation law has no natural test: stock is only wrong much later, and
+  nowhere near the cancel that caused it.
+- **Lesson:** **When a codebase establishes an invariant on one path, enumerate every OTHER path
+  that reaches the same state and enroll it explicitly — an invariant with a known exception is a
+  bug with a scheduled date.** Search by the STATE being mutated (who else deletes an invoice, who
+  else writes `order.status`), never by the feature name: the violating paths are the ones that
+  never mention it.
+- **Guard:** `orders.lifecycle-conservation.spec.ts` + its pins spec, 9 mutation probes. The same
+  search immediately found two more instances, recorded not fixed: `routes.service.ts` has **five**
+  `order.status` writers and only one runs the invoicing side effects (→ F11), and the customer
+  purge is a **fourth** `reverseInvoiceEntries`-skipped hard delete — at four instances the answer
+  is a shared guard, not a fourth point-fix. See [[L-008]] for why they stayed out of scope.
+
+### L-030 · 2026-09-01 · domain · #588
+
+- **Symptom:** the fix for the above introduced a NEW conservation bug. A DRAFT cancel correctly
+  credited no stock (a draft never decremented) but still marked its line items CANCELLED, and
+  `reopenOrder` re-decremented every marked line — so a draft's cancel→reopen round trip
+  understated stock by the full order quantity.
+- **Root cause:** the marker recording "this cancel gave stock back" was written unconditionally
+  while the give-back itself was conditional. Two halves of one decision, written as two
+  independent statements that happened to agree in the common case.
+- **Lesson:** **When one write is the RECORD of another write having happened, bind both to a
+  single named condition — not to two conditions that agree today.** A reader (and a reviewer) can
+  check one boolean; they cannot check that two predicates are equivalent in every state.
+- **Guard:** `REG-B64 (T7)` asserts a DRAFT cancel neither credits stock nor marks its lines;
+  mutation probe 3 (make the mark unconditional) turns it red.
+
 ### L-022 · 2026-08-21 · domain · #393
 
 - **Symptom:** 40% of a live buyer portal showed $0.00 — and the server would have billed it.

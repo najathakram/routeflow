@@ -207,6 +207,7 @@ export interface CancelImpact {
   advanceToRestore: number;
   blockingPayments: Array<{ invoiceNumber: string; amount: number }>;
   canCancel: boolean;
+  deliveredUnits: number;
 }
 
 /**

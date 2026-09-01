@@ -249,6 +249,8 @@ export interface CancelImpact {
   creditsToRestore: Array<{ creditNoteId: string; creditNoteNumber: string; amount: number }>;
   advanceToRestore: number;
   blockingPayments: Array<{ invoiceNumber: string; amount: number }>;
+  /** B56: units already delivered on this order — > 0 refuses the cancel. */
+  deliveredUnits: number;
   canCancel: boolean;
 }
 
