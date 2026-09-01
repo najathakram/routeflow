@@ -1,5 +1,68 @@
 # HANDOFF — current state & what to pick up next
 
+> # ▶️ F05 MERGED + DEPLOYED — ONE THREAD OPEN: PR #575 (2026-09-01)
+>
+> **Pick up here.** F05 shipped as **#569 → master `86844f88`**, both Railway services SUCCESS,
+> `post-deploy-check` green against prod, `feature-smoke` green (91/91). F06 has since merged
+> (#573) and B62 discharged (#577), so master has moved past F05.
+>
+> ## 1. FIRST ACTION: merge PR #575, then let the E2E discharge B167
+>
+> F05's deploy-triggered E2E ([run 33477334230]) went **red on F05's own new spec** — a
+> Playwright **strict-mode violation**, not a product defect:
+> `getByRole(heading, { name: Settlement })` resolved to 3 elements because getByRole
+> matches the accessible name by SUBSTRING and the fixture route was named
+> `E2E B167 Settlement <ts>`, which renders as an `<h1>` in BOTH the shell banner and
+> `#main-content`. ⚠️ **The failure output is itself the proof the feature works** — element 3
+> was `<h3>Settlement</h3>` present on a COMPLETED run's detail page, exactly what B167 asks
+> for; the assertion just could not pick it out.
+>
+> **PR #575** (`fix/F05-b167-e2e-selector`, head `67bbdefa`, MERGEABLE, CI was running at
+> hand-off) fixes it on both sides: the heading assertion is now `exact: true`, and the fixture
+> route is renamed `E2E B167 Run <ts>` so the colliding word is gone entirely. One commit, one
+> file, 13 lines. **Merge it, wait for the deploy-triggered E2E, then flip B167.**
+>
+> ## 2. F05 ledger state — what still owes a stamp
+>
+> `.claude/campaign/status/F05.jsonl`: B49/B83/B148/B152 = `proven` (passing REG- jest tokens),
+> **B167 = `proven-pending-deploy`** until #575's E2E is green. Per the campaign protocol the
+> `done` stamps ride the NEXT batch's PR (the pre-push hook blocks trunk pushes) — so F10 or
+> whichever batch goes next should carry all five to `done` plus B167's discharge evidence.
+>
+> ## 3. Two traps found the hard way — both cost a failed push/run
+>
+> - ⚠️ **`npx playwright test --list` POISONS the campaign artifact.** It writes
+>   `.campaign/runs/web-e2e.json` as an all-skipped report, so the whole-ledger
+>   `campaign-check` then fails on OTHER batches' T2 rows. **Always `--list --reporter=list`.**
+> - ⚠️ **After any rebase that pulls in another batch's ledger rows, REGENERATE the jest JSON
+>   before pushing.** Rebasing onto F06 made the pre-push `campaign-check` reject the push for
+>   B47/B51/B60/B63/B78 — F06's tokens were in the ledger but not in my stale local artifact.
+>   `cd apps/api && npx jest --json --outputFile=../../.campaign/runs/api.json` fixes it.
+>   Both are documented in F05's build-plan.
+>
+> ## 4. Queued, NOT started
+>
+> `apps/mobile/.tmpjest/` (dev-pipeline probe scratch: `jest.probe.js`, `probe.test.tsx`) is
+> **not gitignored** — `git check-ignore -v` says so and it shows as `??` in `git status`, so a
+> `git add -A` would commit throwaway probes. Add it to root `.gitignore` beside `.campaign/`
+> (:109) and `local-assets/` (:105). **Do not delete the files — a live session may be using
+> them.** A background-task chip is queued for this.
+>
+> ## 5. Still true from before
+>
+> **F11 owes two gates F05 deliberately did not take** (Fable final pass): the CANCEL path and
+> `deleteRun` can still close/destroy a cash-carrying run unsettled. `settleRun` now accepts
+> CANCELLED post-hoc so the money is never stranded, but nothing forces the reconciliation on
+> those paths. Full hand-off is on F11's fix-card. **F10/F11/F12/F22 consume G7's
+> `RUN_LINE_ITEMS_SELECT` — extend that const, never re-inline the literal.**
+>
+> Owner-blocked, unchanged: Expo build · Actions billing for private minutes (repo stays PUBLIC
+> by owner directive; do NOT flip private mid-campaign) · RLS arming (D3) · policy-layer asks.
+>
+> ---
+>
+> <details><summary>Previous banner (F03 + F17 shipped, F05 in flight)</summary>
+>
 > # ▶️ CAMPAIGN RESUMED — F03 + F17 SHIPPED, F05 IN FLIGHT (2026-09-01)
 >
 > The pause below was lifted by the owner. Since it was written: **F03 SHIPPED** (#564, master
@@ -74,7 +137,9 @@ batch with an e2e (no web unit runner). (2) **B99's repair flight is owed post-d
 > Register artifact `310ae33a…` is CURRENT. The user-guide artifact `cae40575…` is
 > shared-not-owned — guide changes must be flagged to the owner.
 
-**Written:** 2026-09-01 · **Visibility:** ⚠️ **PUBLIC by owner directive until the campaign completes** (do NOT flip private mid-campaign; the final flip is the owner's if the session dies) · **Campaign:** `W-serial (D6: merge as ready, no windows) · F00+F01+F02(9)+F04(3)+F30(12)+F03(9)+F17(4) SHIPPED LIVE · F05(5) shipping now · 33/193 at F05's merge · next: F06 track A, F10 behind F05 in the routes lane`. Owner delegations ACTIVE (.claude/campaign/DECISIONS.md D1–D6 + memory): Fable review replaces owner approval except system-harm/client-data risk; merge-as-ready any hour; repair-as-we-go per batch; repo stays public. ⚠️ Register debt SETTLED — keep it settled: every batch updates the register in its own close-out.
+> </details>
+
+**Written:** 2026-09-01 · **Visibility:** ⚠️ **PUBLIC by owner directive until the campaign completes** (do NOT flip private mid-campaign; the final flip is the owner's if the session dies) · **Campaign:** `W-serial (D6: merge as ready, no windows) · F00+F01+F02(9)+F04(3)+F30(12)+F03(9)+F17(4) SHIPPED LIVE · F05(5)+F06(6) SHIPPED LIVE · 39/193 · ⚠️ NEXT: merge PR #575 (B167 e2e selector fix) then flip B167 → done; then F10 in the routes lane`. Owner delegations ACTIVE (.claude/campaign/DECISIONS.md D1–D6 + memory): Fable review replaces owner approval except system-harm/client-data risk; merge-as-ready any hour; repair-as-we-go per batch; repo stays public. ⚠️ Register debt SETTLED — keep it settled: every batch updates the register in its own close-out.
 
 > **F05 ✅ SHIPPED (this PR):** driver at-door money truth + run settlement — **B49 (Critical), B83, B148, B152, B167**. No migration (F01's `settlementNote`/`settlementVariance` columns were already live and dead). **G7 delivered:** `RUN_LINE_ITEMS_SELECT` is now the single run-read lineItems select, carrying `subtotal`/`boxes`/`pieces`/`unitsPerBox` — **F10/F11/F12/F22 consume it; extend, never re-inline.** ⚠️ **B148 was the reachability blocker:** mobile always sent `deliveries[].productId`, the DTO never declared it, and the global `forbidNonWhitelisted` pipe 400'd _every_ stop completion — none of the money fixes were reachable until it landed. ⚠️ **The register missed the real settlement bypass:** RF-016 auto-complete inside `completeStop`/`completeWithPayment` flips a run COMPLETED in its own tx, so gating `updateRunStatus` alone would never have fired on the common path — all three paths now carry the predicate. B83 books over-collection as an `AdvancePayment` (`RUN:<runId>:STOP:<stopId>` reference — load-bearing, matched by prefix). Proof: 3339 api + 1383 mobile jest green, 26 review findings fixed across 2 rounds, mutation probe 6/6 caught + restore-verified, red gate properly red; B167 rides its T2 leg (e2e spec 23, project entry wired — `playwright test --list` shows 134 tests in 23 files). **Handed to F11:** the CANCEL path and `deleteRun` remain ungated for a cash-carrying run.
 
