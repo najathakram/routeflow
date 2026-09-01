@@ -11,6 +11,7 @@ import { AppModule } from "./app.module";
 import { RedisIoAdapter } from "./gateways/redis-io.adapter";
 import { ThrottlerExceptionFilter } from "./common/throttler-exception.filter";
 import { SentryExceptionFilter } from "./common/sentry-exception.filter";
+import { MulterExceptionFilter } from "./common/multer-exception.filter";
 
 const DEFAULT_CORS_ORIGINS = [
   "http://localhost:3001", // web dashboard
@@ -173,8 +174,19 @@ async function bootstrap() {
   // RF-160: emit Retry-After header on 429 throttle responses
   // Sentry filter runs first (reports 5xx before the throttler filter handles
   // its own exception type), then defers to Nest's default handling.
+  //
+  // ⚠️ ORDER IS LOAD-BEARING. Nest checks globally-registered filters in REVERSE
+  // registration order, so the narrow `@Catch(X)` filters must come AFTER the
+  // catch-all SentryExceptionFilter or they are never reached. MulterExceptionFilter
+  // maps multer 2.3.0's newer error codes (which @nestjs/platform-express does not
+  // know) to 400 — without it they arrive as raw MulterErrors, which the Sentry
+  // filter scores as 500 and captures once per request.
   const { httpAdapter } = app.get(HttpAdapterHost);
-  app.useGlobalFilters(new SentryExceptionFilter(httpAdapter), new ThrottlerExceptionFilter());
+  app.useGlobalFilters(
+    new SentryExceptionFilter(httpAdapter),
+    new ThrottlerExceptionFilter(),
+    new MulterExceptionFilter(),
+  );
 
   // ─── Validation ─────────────────────────────────────────────────────────────
   app.useGlobalPipes(

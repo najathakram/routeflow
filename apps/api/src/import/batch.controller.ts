@@ -23,6 +23,7 @@ import { RequireAddon } from "../billing/require-addon.decorator";
 import { BatchImportService } from "./batch-import.service";
 import { CreateBatchDto } from "./dto/create-batch.dto";
 import { UpdateBatchItemDto } from "./dto/update-batch-item.dto";
+import { MB, uploadLimits } from "../common/upload-limits";
 
 /**
  * Batch invoice import queue (spec §4). TENANT_ADMIN satisfies @Roles(OPERATOR).
@@ -52,7 +53,7 @@ export class BatchController {
   @Post(":id/scan")
   @UseGuards(AddonGuard)
   @RequireAddon("ocr")
-  @UseInterceptors(FilesInterceptor("files", 20, { limits: { fileSize: 25 * 1024 * 1024 } }))
+  @UseInterceptors(FilesInterceptor("files", 20, { limits: uploadLimits(MB(25)) }))
   scan(@Param("id") id: string, @UploadedFiles() files: Express.Multer.File[]) {
     if (!files?.length) throw new BadRequestException("No files uploaded");
     return this.batch.scanAndRecord(

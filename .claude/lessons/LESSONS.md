@@ -113,6 +113,29 @@
 
 ## tooling
 
+### L-032 · 2026-09-01 · tooling
+
+- **Symptom:** forcing a transitive past a parent's exact pin failed twice, each time silently.
+  First: adding the root `overrides` pin and regenerating with `--package-lock-only` left the
+  hoisted entry on the OLD version — a no-op fix for a no-op fix. Then: deleting just that one lock
+  entry and regenerating DID move it, and **broke every file upload in the process**, with no error
+  anywhere — requests returned 201 and the file was simply absent.
+- **Root cause:** two distinct properties of npm, both invisible in a green build. (1) An override
+  applies only when npm **resolves** an edge; `--package-lock-only` keeps pre-existing subtrees that
+  predate the pin. (2) Deleting a package's lock entry without its `node_modules/<pkg>/node_modules/*`
+  children orphans them: the nested `type-is` survived, its nested `media-typer@0.3.0` did not, so
+  `type-is` silently fell through to an incompatible root-hoisted `media-typer@1.1.0`, stopped
+  recognising `multipart/form-data`, and multer skipped every request without complaint.
+- **Lesson:** **Adding an override is not applying it, and pruning a lock entry prunes a subtree.
+  Remove the WHOLE `node_modules/<pkg>(/…)*` family, run a real `npm install` (never
+  `--package-lock-only`, which builds an ideal tree it never has to make work), then assert three
+  things separately: the hoisted version moved, `validate-lock` reports `skew 0 new`, and the
+  library still does its job.**
+- **Guard:** `multer-field-limits.security.spec.ts` — it resolves multer from
+  `@nestjs/platform-express`'s own directory and asserts >= 2.3.0, and it exercises a real
+  multipart request end-to-end, which is what actually caught the orphan. `validate-lock` names the
+  skew directly (`media-typer: found 1.1.0, wanted 0.3.0`), so it is a gate failure, not a mystery.
+
 ### L-028 · 2026-09-01 · tooling
 
 - **Symptom:** a grouped dependency bump advertised a security update for a file-upload library. The
@@ -331,6 +354,23 @@
 - **Guard:** invoices spec "does NOT double-count a price override".
 
 ## security
+
+### L-033 · 2026-09-01 · security
+
+- **Symptom:** the version bump that "fixed" a High-severity DoS advisory left the vulnerability
+  fully exploitable on every endpoint, even once the upgrade genuinely landed.
+- **Root cause:** the upstream fix was a new **opt-in** option (`fieldArrayIndexLimit`), gated on
+  `hasOwnProperty` and defaulting to `Infinity`. Nothing changed for a caller who upgraded and
+  passed the same options as before. Two further layers had to be crossed before it worked at all:
+  the framework's own closed `limits` type had no such key (a fresh object literal would not
+  compile), and the framework's error mapper had never heard of the new error code, so the guard
+  firing produced a 500 and a monitoring capture per request instead of a 400.
+- **Lesson:** **Upgrading past a CVE is not mitigating it. Read the upstream fix and ask whether it
+  is a new DEFAULT or a new OPTION — and if it is an option, trace it the whole way: does it
+  typecheck, does the framework forward it, and what does the caller actually receive when it
+  fires?**
+- **Guard:** `multer-field-limits.security.spec.ts` asserts the rejection is a 400 end-to-end, and
+  proves the guard is load-bearing by showing the same request succeeds without it.
 
 ### L-024 · 2026-09-01 · security
 

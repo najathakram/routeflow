@@ -16,6 +16,7 @@ import {
 } from "@nestjs/common";
 import { FilesInterceptor } from "@nestjs/platform-express";
 import { memoryStorage } from "multer";
+import { MB, uploadLimits } from "../common/upload-limits";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { UserRole } from "@prisma/client";
 import type { Response } from "express";
@@ -439,7 +440,7 @@ export class CustomersController {
   @UseInterceptors(
     FilesInterceptor("files", 5, {
       storage: memoryStorage(),
-      limits: { fileSize: 15 * 1024 * 1024 }, // 15 MB (frontend compresses first)
+      limits: uploadLimits(MB(15)), // 15 MB (frontend compresses first)
       fileFilter: (_req, file, cb) => {
         // RF-076/RF-157: Strict MIME allowlist — raster images and PDF only.
         // SVG is explicitly blocked (can embed JS). Any other type is also rejected.
@@ -491,7 +492,7 @@ export class CustomersController {
   @UseInterceptors(
     FilesInterceptor("files", 10, {
       storage: memoryStorage(),
-      limits: { fileSize: 15 * 1024 * 1024 },
+      limits: uploadLimits(MB(15)),
       fileFilter: (_req, file, cb) => {
         // RF-076/RF-157: Strict MIME allowlist — raster images and PDF only.
         // SVG is explicitly blocked (can embed JS). Any other type is also rejected.
