@@ -11,6 +11,20 @@
 
 ## process
 
+### L-035 · 2026-09-01 · process · #TBD
+
+- **Symptom:** B120's POD archive was designed onto a generic `AuditLog` row; review found
+  `RouteRunStop.podHistory` already existed, unused, with a schema comment naming the exact entry
+  shape and the words "F10 wires the write".
+- **Root cause:** an earlier enablement batch pre-added the column FOR this batch, and the design
+  was drawn from the register's suggested fix without grepping the schema for what was already
+  provisioned.
+- **Lesson:** **Before designing where something is stored, grep the schema for a column addressed
+  to your batch — the schema comment IS the spec.** Enablement batches leave columns waiting; a
+  field with no readers is a contract, not dead weight.
+- **Guard:** none — judgment. The mismatch also showed up as a blocker (the shared test mock had
+  no `auditLog` model), so "the harness fights you" is a hint you are off the intended path.
+
 ### L-026 · 2026-09-01 · process
 
 - **Symptom:** an approved fix spec instructed editing a root manifest field "because it pins three
@@ -113,6 +127,24 @@
 
 ## tooling
 
+### L-034 · 2026-09-01 · tooling · #TBD
+
+- **Symptom:** `campaign-check` red on another batch's rows after a rebase, and a mutation probe
+  that reported nothing. Both were reading an artifact no run had refreshed.
+- **Root cause:** the campaign artifact is written by a jest REPORTER, so it only refreshes when
+  jest actually EXECUTES. Repo-root ledger files are not hashed inputs (`globalDependencies` is
+  the lockfile plus package manifests; the test task's `inputs` are `$TURBO_DEFAULT$`), so a
+  rebase cannot bust the cache — turbo replays a green summary and the stale artifact survives.
+  Scoped runs (`jest -t REG-B##`, one per mutation probe) narrow it to just those tests, and a
+  cache-replayed "full suite" afterwards does not overwrite that.
+- **Lesson:** **A generated artifact is evidence only when you can name the tool and the run that
+  produced it.** Extends [[L-009]]: a cache replay does not merely fail to prove the tests ran —
+  it silently PRESERVES whatever the last scoped run wrote. Same shape as regenerating a lockfile
+  with the wrong npm major: the diff reads as content drift when it is tooling drift.
+- **Guard:** force execution (`turbo run test --force` or direct `npx jest`), then assert the
+  artifact's mtime post-dates the change, before reading any gate that consumes it. Freshness is
+  verified, never inferred from a green summary.
+
 ### L-032 · 2026-09-01 · tooling
 
 - **Symptom:** forcing a transitive past a parent's exact pin failed twice, each time silently.
@@ -211,6 +243,22 @@
 
 ## testing
 
+### L-036 · 2026-09-01 · testing · #TBD
+
+- **Symptom:** a transition deny-list whose every (from,to) pair was verified correct — by unit
+  assertions AND by adversarial refuters — was defeated by two individually-legal PATCHes:
+  `COMPLETED → IN_PROGRESS` (a documented allowance) then `IN_PROGRESS → SCHEDULED` (never
+  denied) re-scheduled a completed run, the exact state the matrix's contract forbids.
+- **Root cause:** the matrix is EDGE-wise, and so was every oracle pointed at it. Verifying each
+  edge in isolation is structurally incapable of finding a composite path; no amount of care
+  inside the matrix would have caught it.
+- **Lesson:** **When the artefact under test is a state machine, the oracle must walk PATHS, not
+  edges.** Ask which multi-step sequences compose into a forbidden state, and guard on durable
+  evidence outside the transition (here `completedAt`, which the endpoint only ever sets) rather
+  than on the current status.
+- **Guard:** `REG-B72 (T22)` walks the two-step path and pins that a never-completed run still
+  schedules normally; disabling the guard turns it red.
+
 ### L-025 · 2026-09-01 · testing
 
 - **Symptom:** native Google Sign-In had been dead the whole time — the callback destructured a
@@ -284,6 +332,22 @@
 - **Guard:** volume + PGDATA subdir + 2-hourly R2 dumps with an empty-dump guard.
 
 ## domain
+
+### L-037 · 2026-09-01 · domain · #TBD
+
+- **Symptom:** the fix for a reopen that wrongly credited stock still left the reopen billing the
+  delivery it had just undone — `OrderItem.deliveredQty` survived the reversal, and the
+  delivered-basis invoice reconcile bills exactly that field.
+- **Root cause:** the reversal was corrected for the field the bug report named and no other. The
+  forward path wrote `deliveredQty` unconditionally (whether or not money changed hands) while the
+  reversal reset only `status`.
+- **Lesson:** **A reversal must enumerate every field the forward operation wrote, not just the
+  one the bug report named** — and state, per write, whether it is undone by REVERSAL or covered
+  by REFUSAL (blocking the operation while that state stands). Those are different strategies and
+  the mix must be deliberate. ⚠️ Note the coupling: the new refusal guard is what made the
+  reversal gap REACHABLE, so a fix can open the path to a latent bug.
+- **Guard:** `REG-B55 (T21)`; the write-by-write enumeration is recorded in F11's fix card so the
+  next batch on this path starts from it rather than rebuilding it.
 
 ### L-029 · 2026-09-01 · domain · #588
 
