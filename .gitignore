@@ -107,3 +107,8 @@ local-assets/
 # ─── Bug-register campaign run artifacts (jest/Playwright JSON read by ────────
 #     scripts/campaign-check.mjs; regenerated per run, never committed) ───────
 .campaign/
+
+# ─── dev-pipeline mutation-probe scratch (throwaway jest config + probe spec) ──
+#     Written by a probe run, never part of the suite; without this a `git add -A`
+#     from any session commits another session's throwaway probes.
+apps/mobile/.tmpjest/

@@ -1,5 +1,150 @@
 # HANDOFF — current state & what to pick up next
 
+> # ▶️ MULTI-SESSION STATE — #580 MERGED, B167 AWAITING ITS E2E (2026-09-01, master `0771a9d9`)
+>
+> Several sessions ran concurrently today and the repo state is not obvious from any one of
+> them. This banner is the reconciled picture, verified against `origin/master` — not a single
+> session's view. It is maintained by the merge-coordinator session running the train
+> **#580 → B167 discharge → #581 → #579 → #571 → #574**.
+>
+> **Ledger after #580: 193 rows — 45 `done`, 2 `already-fixed`, 1 `proven-pending-deploy`
+> (B167), 145 `queued`** — counted off the shards, not carried forward from an earlier banner.
+> Shipped: F00, F01, F02 (9), F03 (9), F04 (3), **F05 (5)**, F06 (6), F17 (4), F30 (12).
+> **B167 is the only row mid-flight.**
+>
+> ## 1. FIRST ACTION — discharge B167 once its e2e is green
+>
+> **PR #580 is MERGED** (master `0771a9d9`): it fixed B167's post-deploy e2e failure, flipped
+> F05's four T1 rows to `done`, and refreshed this file. Its diff touches `apps/web/**`, so
+> Railway redeploys web and the **e2e fires itself off the deployment_status signal — do not
+> dispatch it.** Only on a genuinely green run does **B167 → `done`** (via a small chore PR
+> carrying the run id as `dischargeEvidence`). Do not discharge it on the strength of the fix
+> alone.
+>
+> ⚠️ **The B167 failure was the SPEC, not the product.**
+> `getByRole("heading", { name: "Settlement" })` resolved to 3 elements: Playwright matches
+> accessible names by SUBSTRING, and the fixture route was named `E2E B167 Settlement <ts>`,
+> which renders as an `<h1>` in both the shell banner and `#main-content`. **The failure output
+> is itself the proof the feature works** — element 3 was `<h3>Settlement</h3>` on a COMPLETED
+> run's detail page, exactly what B167 requires. #580 shipped **both** halves: `exact: true` on
+> the assertion **and** the fixture renamed to `E2E B167 Run <ts>` (salvaged from closed #575),
+> so the colliding word is gone rather than merely dodged — the rename alone would not have
+> covered fixtures leaked by earlier failed runs, which is why both landed.
+>
+> ## 2. Open PRs — and the collision to sequence
+>
+> | PR       | Branch                         | State        | What                                                               |
+> | -------- | ------------------------------ | ------------ | ------------------------------------------------------------------ |
+> | ~~#580~~ | `docs/status-refresh`          | **MERGED**   | B167 fix + fixture rename + F05 ledger + handoff (`0771a9d9`)      |
+> | **#581** | `docs/multi-session-state`     | in the train | **this banner** — rebased onto `0771a9d9` with corrected counts    |
+> | #579     | `docs/handoff-f17-session`     | CONFLICTING  | F17 handoff close-out — **also rewrites this file**                |
+> | #571     | `chore/lessons-learned-system` | CONFLICTING  | lessons register + `stop.mjs` hook; **also rewrites this file**    |
+> | #574     | `dependabot/…e1a987a042`       | MERGEABLE    | 16 dep bumps — recheck lock counts + the `react-test-renderer` pin |
+> | ~~#575~~ | `fix/F05-b167-e2e-selector`    | CLOSED       | superseded by #580 (its fixture rename was salvaged)               |
+>
+> ⚠️ **FOUR PRs have competed to rewrite HANDOFF.md**, not three: #575 (closed), #580 (merged),
+> #579, and **#571 — which carries the entire Android publish-readiness banner** (commit
+> `1c81e2e4`). Sequence them deliberately and preserve each one's unique content — do not let a
+> rebase pick a winner.
+>
+> ## 2b. ⚠️ The Android publish-readiness session — a DECIDED, UNSTARTED fix PR
+>
+> The other live session was **not** doing campaign work. It produced a Google Maps key, an
+> on-device test of the real APK, and an 11-agent publish-readiness audit, then the owner
+> **chose a fix scope and nothing was implemented.** Its handoff was sitting **uncommitted**
+> in the main checkout; it is now preserved as commit `1c81e2e4` on
+> `chore/lessons-learned-system` (PR #571). **Read that banner before starting Android work** —
+> only the headline is repeated here:
+>
+> - **A hard blocker, verified by hand:** `apps/mobile/app/(auth)/google-callback.tsx:47,79` do
+>   `const { default: SecureStore } = await import("expo-secure-store")`. That package has **no
+>   default export**, and the call sits in the `!isWeb` branch — so **native Google Sign-In is
+>   completely broken** and always has been. Web is fine via the localStorage branch, which is
+>   why nobody saw it. Fix is a namespace import, matching `lib/auth.ts:1`. Predates B204.
+> - **Five native modules still pinned pre-SDK-55** — the exact class that crashed the first APK
+>   (B203). ⚠️ **`npx expo install --fix` is WRONG here:** root `package.json` `overrides` pin
+>   three of them and the root override wins on `npm ci`, silently reverting a workspace-only
+>   bump. Edit the workspace manifest **and** the root overrides in one commit.
+> - **Versioning is a duplicate-versionCode generator today** (`appVersionSource: "local"` +
+>   production `autoIncrement: true`); Play rejects a reused versionCode outright. The decided
+>   fix moves to `"remote"`.
+> - **Maps key done except one read-back** — the application restriction was never re-read after
+>   the console hung. ⚠️ **Never restrict the other key** ("Maps Platform API Key"): the API
+>   re-serves it to browsers, so restricting it repeats the 2026-08-26 outage.
+> - Two new lessons landed in the same commit: **L-024** (one credential per call origin) and
+>   **L-025** (a `Platform`/`isWeb` branch is untested code unless something runs that platform —
+>   the general form of the Sign-In bug above).
+>
+> ## 3. Worktrees — live vs prunable, and an ancestry trap
+>
+> All worktrees are **clean** (no uncommitted work anywhere) as of this banner. What matters is
+> which have a **live session** attached — never remove one of those; message its session instead.
+>
+> | Worktree      | Branch                                       | Status                                        |
+> | ------------- | -------------------------------------------- | --------------------------------------------- |
+> | main checkout | `fix/mobile-google-signin-sdk55`             | **LIVE** — the Android session, mid-edit      |
+> | `rf-F07`      | `fix/F07-order-lifecycle-stock-conservation` | **LIVE** — F07 batch (board #520)             |
+> | `rf-F10`      | `fix/F10-reopen-stop-state-guards`           | **LIVE** — F10 batch (board #523)             |
+> | `rf-F05`      | `docs/multi-session-state`                   | this banner's branch (#581)                   |
+> | `rf-docs`     | `docs/status-refresh`                        | #580 — MERGED; prunable once the train clears |
+> | `rf-F06`      | `master`                                     | idle, reusable                                |
+> | `rf-F17`      | `fix/F17-import-robustness`                  | **prunable** — landed in #566                 |
+> | ~~`rf-F03`~~  | ~~`fix/F03-payment-truth`~~                  | **PRUNED** 2026-09-01 — had landed in #564    |
+>
+> ⚠️ **rf-F03 and rf-F17 look unmerged and are NOT.** `git log master..branch` shows 8 and 5
+> commits because squash-merge rewrote the SHAs. **And the three-dot `git diff master...branch`
+> is equally misleading here** — the merge-base is ancient, so it reports thousands of
+> already-landed lines. Verify by CONTENT: `scripts/repair-f03.mjs`,
+> `apps/web/e2e/22-payment-truth.spec.ts`, `scripts/repair-f17.mjs` and
+> `apps/web/e2e/26-import-duplicates.spec.ts` are all on master. rf-F03 was pruned on that
+> evidence; ⚠️ on Windows `git worktree remove` can die with `Filename too long` and leave a
+> half-deleted directory — mirror an empty dir over it with `robocopy /MIR`, then delete.
+>
+> ## 4. Two campaign-wide traps — each cost a failed run today
+>
+> - ⚠️ **`npx playwright test --list` POISONS the campaign artifact.** It writes
+>   `.campaign/runs/web-e2e.json` as an **all-skipped** report, so the whole-ledger
+>   `campaign-check` then fails on OTHER batches' T2 rows (it produced a confusing red on
+>   F02b's B24/B130/B154, discharged weeks earlier). **Always `--list --reporter=list`.**
+> - ⚠️ **After a rebase that pulls in another batch's ledger rows, regenerate the jest JSON
+>   before pushing.** Rebasing onto F06 made the pre-push `campaign-check` **reject the push**
+>   for B47/B51/B60/B63/B78 — F06's tokens were in the ledger but not in the stale local
+>   artifact. `cd apps/api && npx jest --json --outputFile=../../.campaign/runs/api.json`.
+>
+> Same root cause both times: **the gate reads run artifacts, so a stale artifact reads as an
+> undischarged claim.** Both are documented in F05's build-plan.
+>
+> ## 5. Small — ✅ done in this PR
+>
+> `apps/mobile/.tmpjest/` (dev-pipeline probe scratch) was **not gitignored**, so a `git add -A`
+> from any session would commit another session's throwaway probes. Added to root `.gitignore`
+> beside `.campaign/`. The files themselves are left alone — a live session may be using them.
+>
+> ## 6. F05 shipped — what the next routes batch inherits
+>
+> **#569 → master `86844f88`**, both Railway services SUCCESS, `post-deploy-check` green,
+> `feature-smoke` green (91/91 on re-runs; the FIRST run reported 1 failure in S1–S5, none of
+> which touch routes/settlement, and two of those sections are first-run-vs-rerun sensitive —
+> recorded rather than buried). **G7 delivered:** `RUN_LINE_ITEMS_SELECT` is the single run-read
+> lineItems select — **F10/F11/F12/F22 extend that const, never re-inline the literal.**
+>
+> ⚠️ **The register missed the real settlement bypass:** RF-016 auto-complete inside
+> `completeStop`/`completeWithPayment` flips a run COMPLETED in its own tx, so gating
+> `updateRunStatus` alone would never have fired on the common path. All three paths now carry
+> the predicate. ⚠️ **B148 was the reachability blocker** — every stop completion 400'd on a
+> DTO/payload mismatch, so no money fix was reachable until it landed.
+>
+> **F11 inherits two gates F05 deliberately did not take** (found by the Fable final pass): the
+> CANCEL path and `deleteRun` can still close or destroy a cash-carrying run unsettled.
+> `settleRun` now accepts CANCELLED post-hoc so the money is never _stranded_, but nothing
+> forces reconciliation there. Full write-up is on F11's fix-card.
+>
+> **Next per the schedule:** F07 on track A; F10 in the routes lane behind F05.
+>
+> ---
+>
+> <details><summary>Previous banner (F03 + F17 shipped, F05 in flight)</summary>
+>
 > # ▶️ CAMPAIGN RESUMED — F03 + F17 SHIPPED, F05 IN FLIGHT (2026-09-01)
 >
 > The pause below was lifted by the owner. Since it was written: **F03 SHIPPED** (#564, master
@@ -34,9 +179,10 @@ batch with an e2e (no web unit runner). (2) **B99's repair flight is owed post-d
 > stop completion.
 >
 > **State (verified against the ledger at this commit, 2026-09-01): 47 of 193 closed — 45 `done`
-> + 2 `already-fixed` LIVE (24.4%), plus B167 held at `proven-pending-deploy`. 145 queued across
-> 22 batches, 11 Criticals still open** (B46 B48 B52 B53 B54 B55 B56 B58 B59 B128 B129).
-> Complete: F00+F01 enablement, F02 (9), F03 (9), F04 (3), F05 (5), **F06 (6)**, F17 (4), F30 (12).
+>
+> - 2 `already-fixed` LIVE (24.4%), plus B167 held at `proven-pending-deploy`. 145 queued across
+>   22 batches, 11 Criticals still open** (B46 B48 B52 B53 B54 B55 B56 B58 B59 B128 B129).
+>   Complete: F00+F01 enablement, F02 (9), F03 (9), F04 (3), F05 (5), **F06 (6)**, F17 (4), F30 (12).
 >
 > ⚠️ **B167 is NOT discharged — its post-deploy e2e is RED and the cause is the spec, not the
 > product.** Run 33478558164: `23-run-settlement-note.spec.ts` fails strict mode because
@@ -91,6 +237,8 @@ batch with an e2e (no web unit runner). (2) **B99's repair flight is owed post-d
 >
 > Register artifact `310ae33a…` is CURRENT. The user-guide artifact `cae40575…` is
 > shared-not-owned — guide changes must be flagged to the owner.
+
+> </details>
 
 **Written:** 2026-09-01 · **Visibility:** ⚠️ **PUBLIC by owner directive until the campaign completes** (do NOT flip private mid-campaign; the final flip is the owner's if the session dies) · **Campaign:** `W-serial (D6: merge as ready, no windows) · F00+F01+F02(9)+F04(3)+F30(12)+F03(9)+F17(4) SHIPPED LIVE · F05(5)+F06(6) SHIPPED LIVE · 39/193 at F06's discharge · next: F07 track A (⚠️ F06 filed B208 in F07's file region: honour STORED MANUAL overrides on the buyer merge, never client ones), F10 behind F05 in the routes lane`. Owner delegations ACTIVE (.claude/campaign/DECISIONS.md D1–D6 + memory): Fable review replaces owner approval except system-harm/client-data risk; merge-as-ready any hour; repair-as-we-go per batch; repo stays public. ⚠️ Register debt SETTLED — keep it settled: every batch updates the register in its own close-out.
 
