@@ -1,51 +1,57 @@
 # HANDOFF — current state & what to pick up next
 
-> # ▶️ MULTI-SESSION STATE — #580 MERGED, B167 AWAITING ITS E2E (2026-09-01, master `0771a9d9`)
+> # ▶️ MULTI-SESSION STATE — F05 FULLY CLOSED, B167 DISCHARGED (2026-09-01, master `896d5f7e`)
 >
 > Several sessions ran concurrently today and the repo state is not obvious from any one of
 > them. This banner is the reconciled picture, verified against `origin/master` — not a single
 > session's view. It is maintained by the merge-coordinator session running the train
-> **#580 → B167 discharge → #581 → #579 → #571 → #574**.
+> **#580 ✅ → B167 discharge ✅ → #581 ✅ → #579 (this) → #571 → #574**.
 >
-> **Ledger after #580: 193 rows — 45 `done`, 2 `already-fixed`, 1 `proven-pending-deploy`
-> (B167), 145 `queued`** — counted off the shards, not carried forward from an earlier banner.
-> Shipped: F00, F01, F02 (9), F03 (9), F04 (3), **F05 (5)**, F06 (6), F17 (4), F30 (12).
-> **B167 is the only row mid-flight.**
+> **Ledger now: 193 rows — 46 `done`, 2 `already-fixed`, 145 `queued`, NOTHING mid-flight**
+> (48 of 193 = 24.9% terminal) — counted off the shards, not carried forward from an earlier
+> banner. Shipped and fully discharged: F00, F01, F02 (9), F03 (9), F04 (3), **F05 (5)**,
+> F06 (6), F17 (4), F30 (12). **11 Criticals still open** (B46 B48 B52 B53 B54 B55 B56 B58 B59
+> B128 B129).
 >
-> ## 1. FIRST ACTION — discharge B167 once its e2e is green
+> ## 1. ✅ B167 is DISCHARGED — F05 is closed
 >
-> **PR #580 is MERGED** (master `0771a9d9`): it fixed B167's post-deploy e2e failure, flipped
-> F05's four T1 rows to `done`, and refreshed this file. Its diff touches `apps/web/**`, so
-> Railway redeploys web and the **e2e fires itself off the deployment_status signal — do not
-> dispatch it.** Only on a genuinely green run does **B167 → `done`** (via a small chore PR
-> carrying the run id as `dischargeEvidence`). Do not discharge it on the strength of the fix
-> alone.
+> The `deployment_status`-triggered e2e for master `0771a9d9` (#580) went green
+> ([run 33522301206](https://github.com/najathakram/routeflow/actions/runs/33522301206)):
+> `✓ 134 [run-settlement] REG-B167 … (2.4s)`, suite **115 passed / 22 skipped / 0 failed** in
+> 4.0m, with the freshness gate satisfied so it ran against the deployed build of that sha. It
+> fired itself off Railway's deploy signal — nothing was dispatched. B167 flipped to `done` in
+> #584 carrying that run id as `dischargeEvidence`. **It was NOT discharged on the strength of
+> the fix** — that distinction is the whole reason the row was held.
 >
-> ⚠️ **The B167 failure was the SPEC, not the product.**
+> ⚠️ **The earlier B167 red was the SPEC, not the product.**
 > `getByRole("heading", { name: "Settlement" })` resolved to 3 elements: Playwright matches
 > accessible names by SUBSTRING, and the fixture route was named `E2E B167 Settlement <ts>`,
 > which renders as an `<h1>` in both the shell banner and `#main-content`. **The failure output
-> is itself the proof the feature works** — element 3 was `<h3>Settlement</h3>` on a COMPLETED
+> was itself the proof the feature works** — element 3 was `<h3>Settlement</h3>` on a COMPLETED
 > run's detail page, exactly what B167 requires. #580 shipped **both** halves: `exact: true` on
 > the assertion **and** the fixture renamed to `E2E B167 Run <ts>` (salvaged from closed #575),
 > so the colliding word is gone rather than merely dodged — the rename alone would not have
 > covered fixtures leaked by earlier failed runs, which is why both landed.
 >
-> ## 2. Open PRs — and the collision to sequence
+> ## 2. PRs — what landed today and what is still open
 >
-> | PR       | Branch                         | State        | What                                                               |
-> | -------- | ------------------------------ | ------------ | ------------------------------------------------------------------ |
-> | ~~#580~~ | `docs/status-refresh`          | **MERGED**   | B167 fix + fixture rename + F05 ledger + handoff (`0771a9d9`)      |
-> | **#581** | `docs/multi-session-state`     | in the train | **this banner** — rebased onto `0771a9d9` with corrected counts    |
-> | #579     | `docs/handoff-f17-session`     | CONFLICTING  | F17 handoff close-out — **also rewrites this file**                |
-> | #571     | `chore/lessons-learned-system` | CONFLICTING  | lessons register + `stop.mjs` hook; **also rewrites this file**    |
-> | #574     | `dependabot/…e1a987a042`       | MERGEABLE    | 16 dep bumps — recheck lock counts + the `react-test-renderer` pin |
-> | ~~#575~~ | `fix/F05-b167-e2e-selector`    | CLOSED       | superseded by #580 (its fixture rename was salvaged)               |
+> | PR       | Branch                           | State         | What                                                              |
+> | -------- | -------------------------------- | ------------- | ----------------------------------------------------------------- |
+> | ~~#580~~ | `docs/status-refresh`            | **MERGED**    | B167 fix + fixture rename + F05 ledger (`0771a9d9`)               |
+> | ~~#582~~ | `docs/supersede-blockers-plan`   | **MERGED**    | old release-blockers plan marked SUPERSEDED (`a8220795`)          |
+> | ~~#584~~ | `chore/discharge-b167`           | **MERGED**    | B167 → `done` on the green e2e (`f5812191`)                       |
+> | ~~#581~~ | `docs/multi-session-state`       | **MERGED**    | the reconciled banner + `.tmpjest` gitignore (`896d5f7e`)         |
+> | **#579** | `docs/handoff-f17-session`       | **this PR**   | F17's close-out threads, rebased onto the reconciled banner       |
+> | #571     | `chore/lessons-learned-system`   | next in train | lessons register + `stop.mjs` Gate 3; **also rewrites this file** |
+> | #583     | `fix/mobile-google-signin-sdk55` | open, owner's | the Android fix PR below — **its session rebases it, not you**    |
+> | #574     | `dependabot/…e1a987a042`         | last in train | 16 dep bumps — see the multer finding in §10                      |
+> | ~~#575~~ | `fix/F05-b167-e2e-selector`      | CLOSED        | superseded by #580 (its fixture rename was salvaged)              |
 >
-> ⚠️ **FOUR PRs have competed to rewrite HANDOFF.md**, not three: #575 (closed), #580 (merged),
-> #579, and **#571 — which carries the entire Android publish-readiness banner** (commit
-> `1c81e2e4`). Sequence them deliberately and preserve each one's unique content — do not let a
-> rebase pick a winner.
+> ⚠️ **FIVE things have competed to rewrite HANDOFF.md**, not three: #575 (closed), #580, #581,
+> this PR, and **#571 — which carries the entire Android publish-readiness banner** (commit
+> `1c81e2e4`). #583 additionally collides on `.claude/code-map/CHANGELOG.md` (the usual prepend
+> conflict — **re-append the anchor bullet**). Sequence deliberately and preserve each one's
+> unique content; never let a rebase pick a winner.
 >
 > ## 2b. ⚠️ The Android publish-readiness session — a DECIDED, UNSTARTED fix PR
 >
@@ -85,20 +91,20 @@
 > | main checkout | `fix/mobile-google-signin-sdk55`             | **LIVE** — the Android session, mid-edit      |
 > | `rf-F07`      | `fix/F07-order-lifecycle-stock-conservation` | **LIVE** — F07 batch (board #520)             |
 > | `rf-F10`      | `fix/F10-reopen-stop-state-guards`           | **LIVE** — F10 batch (board #523)             |
-> | `rf-F05`      | `docs/multi-session-state`                   | this banner's branch (#581)                   |
+> | `rf-F17`      | `docs/handoff-f17-session`                   | **this PR's branch** (was F17's, reused)      |
+> | `rf-F05`      | `docs/multi-session-state`                   | #581 — MERGED; prunable once the train clears |
 > | `rf-docs`     | `docs/status-refresh`                        | #580 — MERGED; prunable once the train clears |
-> | `rf-F06`      | `master`                                     | idle, reusable                                |
-> | `rf-F17`      | `fix/F17-import-robustness`                  | **prunable** — landed in #566                 |
+> | `rf-F06`      | `chore/discharge-b167`                       | #584 — MERGED; reusable                       |
 > | ~~`rf-F03`~~  | ~~`fix/F03-payment-truth`~~                  | **PRUNED** 2026-09-01 — had landed in #564    |
 >
-> ⚠️ **rf-F03 and rf-F17 look unmerged and are NOT.** `git log master..branch` shows 8 and 5
-> commits because squash-merge rewrote the SHAs. **And the three-dot `git diff master...branch`
-> is equally misleading here** — the merge-base is ancient, so it reports thousands of
-> already-landed lines. Verify by CONTENT: `scripts/repair-f03.mjs`,
-> `apps/web/e2e/22-payment-truth.spec.ts`, `scripts/repair-f17.mjs` and
-> `apps/web/e2e/26-import-duplicates.spec.ts` are all on master. rf-F03 was pruned on that
-> evidence; ⚠️ on Windows `git worktree remove` can die with `Filename too long` and leave a
-> half-deleted directory — mirror an empty dir over it with `robocopy /MIR`, then delete.
+> ⚠️ **`fix/F03-payment-truth` and `fix/F17-import-robustness` looked unmerged and were NOT.**
+> `git log master..branch` showed 8 and 5 commits because squash-merge rewrote the SHAs. **And
+> the three-dot `git diff master...branch` is equally misleading here** — the merge-base is
+> ancient, so it reports thousands of already-landed lines. Verify by CONTENT:
+> `scripts/repair-f03.mjs`, `apps/web/e2e/22-payment-truth.spec.ts`, `scripts/repair-f17.mjs`
+> and `apps/web/e2e/26-import-duplicates.spec.ts` are all on master, so both had landed (#564,
+> #566). Both were pruned on that evidence — the `rf-F17` **directory** is reused above for this
+> PR's branch, which is not the same thing as its old branch being live.
 >
 > ## 4. Two campaign-wide traps — each cost a failed run today
 >
@@ -106,10 +112,22 @@
 >   `.campaign/runs/web-e2e.json` as an **all-skipped** report, so the whole-ledger
 >   `campaign-check` then fails on OTHER batches' T2 rows (it produced a confusing red on
 >   F02b's B24/B130/B154, discharged weeks earlier). **Always `--list --reporter=list`.**
-> - ⚠️ **After a rebase that pulls in another batch's ledger rows, regenerate the jest JSON
->   before pushing.** Rebasing onto F06 made the pre-push `campaign-check` **reject the push**
->   for B47/B51/B60/B63/B78 — F06's tokens were in the ledger but not in the stale local
->   artifact. `cd apps/api && npx jest --json --outputFile=../../.campaign/runs/api.json`.
+> - ⚠️ **A rebase that pulls in another batch's ledger rows can red the pre-push
+>   `campaign-check` on rows you never touched** — it rejected a push here for F06's
+>   B47/B51/B60/B63/B78. **CORRECTED 2026-09-01, verified at source — the old advice to hand-run
+>   `jest --json --outputFile=…` is RETIRED.** `scripts/jest-campaign-reporter.cjs` is wired as a
+>   second jest reporter in both `apps/api/package.json` (`jest.reporters`) and
+>   `apps/mobile/jest.config.js`, so **every jest run rewrites the artifact by itself**, and
+>   `verify` orders the full test pass before `campaign-check` by design.
+>   ⚠️ **But the reporter only fires when jest actually EXECUTES, and a rebase does not bust
+>   turbo's test cache** — the ledger is not an input to the test task's hash, so pulling in
+>   another batch's rows can never invalidate it. That is exactly how the failure above happened:
+>   verify ran the test task, turbo replayed cached logs (L-009), jest never ran, and the artifact
+>   stayed two days stale. **So: if `campaign-check` reds on rows you did not touch, check the
+>   artifact's mtime FIRST.** If it predates your rebase, force execution (`turbo run test
+--force`, or a direct `npx jest`) — do not go debugging the ledger. A scoped jest run
+>   overwrites the artifact with only its own tests, which can produce a false RED but never a
+>   false green.
 >
 > Same root cause both times: **the gate reads run artifacts, so a stale artifact reads as an
 > undischarged claim.** Both are documented in F05's build-plan.
@@ -139,7 +157,125 @@
 > `settleRun` now accepts CANCELLED post-hoc so the money is never _stranded_, but nothing
 > forces reconciliation there. Full write-up is on F11's fix-card.
 >
-> **Next per the schedule:** F07 on track A; F10 in the routes lane behind F05.
+> **Next per the schedule:** F07 on track A (**claimed**, board #520); F10 in the routes lane
+> behind F05 (**claimed**, board #523). Both sessions rebase onto post-train master before
+> pushing, and both regenerate `.campaign/runs/api.json` after that rebase (see §4).
+>
+> ## 7. F17's close-out — the threads it left open
+>
+> **B99's repair flight is DONE, and it found nothing to repair.** `scripts/repair-f17.mjs` ran
+> as a dry run (read-only session, production DB) and reported no repairable duplicate pairs and
+> no ambiguous clusters. Its detection query — invoices carrying two or more non-VOID payments
+> with no distinguishing reference, B99's exact damage signature — matched **zero rows**, so no
+> tenant ever re-uploaded through the un-deduped path. No backup and no writes were needed; the
+> bug was real in code but never fired on live data. **F17 is fully closed, all four rows
+> `done`.**
+>
+> ⚠️ **B205 is a NEW register entry, not a miss.** The Migration Hub's own products-CSV path
+> still carries B98's class. A fix was written during F17 and **deliberately reverted** after
+> adversarial review: routing `pricePerUnit` through a lenient parser turned a
+> present-but-unparseable price from a loud `products.create` throw into a **silent $0.00
+> commit**, and `parseFloat` leniency admitted `-$5`/`12abc`on a path that calls`ProductsService.create()` in-process, so the DTO never runs. **It needs its own batch with an
+> e2e** (no web unit runner, per D1).
+>
+> ## 8. 🔴 Owed to the owner — decisions no session can take
+>
+> - **RLS arming (D3) — a decision, not a task.** Parked at `prisma/deferred-rls/`; ⚠️ **read
+>   that folder's README before touching it (#570).** The 15 blocked tables split four ways:
+>   2052 rows across five tables are the nested-create defect and backfill deterministically
+>   from a parent that does hold a `tenantId`; two rows need their headers first; five
+>   singletons need eyes; and **1795 rows cannot be backfilled at all.** Arming as written would
+>   **log every user out and kill platform-admin login** — FORCE ROW LEVEL SECURITY hides a
+>   null-tenant row from the app's own connection, not just from other tenants. The README
+>   previously assumed the 1729 `RefreshToken` nulls were super-admin tokens; they are not
+>   (OPERATOR 1104, SUPER_ADMIN 249, CUSTOMER 228, TENANT_ADMIN 129, DRIVER 19 — the column has
+>   simply never been populated), and backfilling from `User.tenantId` cannot fix it because the
+>   super-admin owners are themselves null by design. **Owner decision needed:** drop `User` /
+>   `RefreshToken` / `ExpenseCategory` from the policy list, as the file now recommends.
+>   Re-characterise any time with `local-assets/rls-null-triage.mjs` (gitignored, read-only).
+> - **User-guide republish.** `local-assets/docs/routeflow-user-guide.html` is UPDATED and waits
+>   only on an owner republish — the artifact is shared-not-owned, so no session can publish it.
+>   It now documents F17's two user-visible changes, F03's draft-payment/PDF/email behaviour and
+>   the F30+B202 scan improvements, and corrects a Migration Hub passage F17 made false.
+> - **3 TENANT_ADMIN users have no tenant** — surfaced by that RLS triage. A tenant admin
+>   without a tenant is a data defect, not a design choice, and wants chasing on its own merits.
+>   Not yet a register entry.
+>
+> ✅ **Policy layer is no longer owner-blocked — APPROVED 2026-09-01**, all four asks answered:
+> full default→tenant→category→customer scope chain; ONE append-only `PolicyValue` table
+> (`tenantId`, `key`, `scopeType`, `scopeId`, Json `value`, `setBy`, `supersededAt`) with a 30s
+> invalidate-on-write cache copying `EntitlementsService`; **all three pilots**
+> (`orders.driverAtDoorEdit` default `amend`, `credit.approvalThreshold` default `null`,
+> `invoicing.priceDisclosure`) with defaults reproducing today's behaviour exactly, so nothing
+> changes on deploy day; **build AFTER Wave A** — the first two pilots live in
+> `orders.service.ts` / `credit-notes.service.ts`, the files Wave A is rewriting. When Wave A
+> closes → `/feature-plan` phases 1–2. Do not start earlier; the rebase churn is the whole
+> reason for that sequencing answer.
+>
+> ## 9. More traps — each cost real time, recorded nowhere else
+>
+> - **`npm run post-deploy-check` silently defaults to `localhost:3000`** and reports "fetch
+>   failed". It needs `SMOKE_BASE_URL=https://routeflowapi-production.up.railway.app`.
+> - **In a dev-pipeline call, an implementation package's `dependsOn` must name IMPLEMENTATION
+>   packages.** Naming a testPackage raises a `(build-plan)` blocker even though phase ordering
+>   already guarantees it — two false blockers on the F17 run came from exactly this.
+> - **Republishing the register requires a genuine full `Read` of the ~3660-line fetched copy** —
+>   a structural diff is refused however conclusive, and the first publish attempt after the
+>   fetch is refused as "identical content already refused". The sequence that works:
+>   `action: "read"` the URL, `Read` every line of the saved file, `read` the URL once more,
+>   then publish. Budget ~150k tokens and do it LAST in a session so it cannot crowd out
+>   operational context.
+> - **Direct pushes to master are blocked by a pre-push hook** — even a one-line ledger flip
+>   needs a branch and a PR. That hook also runs the full `npm run verify`, so a push can take
+>   5+ minutes: never run push and `gh pr create` under one short timeout. ⚠️ It caches a
+>   **verified-tree marker keyed on the commit TREE hash** in `.git/rf-verified`, so re-pushing
+>   identical content skips the gate — which also means a clean worktree whose tree already
+>   passed can push another worktree's ref cheaply.
+> - **Commitlint rejects a subject starting with a bare batch token** (`F17 rows to done …`
+>   fails `subject-case`) and rejects uppercase words like `E2E` in the subject. Lead with a
+>   lowercase verb. ⚠️ A PowerShell here-string (`@'…'@`) mangles multi-line commit messages —
+>   write the message to a file and use `git commit -F`.
+> - **CI legitimately reports ZERO checks on a docs-only PR.** `ci.yml`'s `paths-ignore` covers
+>   `**.md`, `.claude/**`, `docs/**`, `local-assets/**` — so a ledger flip or a handoff edit
+>   produces no run at all, and the pre-push `verify` is the authoritative gate (ci.yml says so
+>   itself). Do not confuse this with the **CONFLICTING** PR case, which also shows zero checks
+>   but for a different reason: there, rebase first.
+> - ⚠️ **On Windows, `git worktree remove` can fail with `Filename too long`** and leave a
+>   half-deleted directory that is already deregistered. Recover by mirroring an empty directory
+>   over it (`robocopy <empty> <dir> /MIR`) and then deleting it.
+>
+> ## 10. Dependabot #574 — reviewed, and one bump does NOT do what it says
+>
+> #546 cleared 13 of these bumps. Its one blocker was `react-test-renderer@19.2.8`, whose peer
+> wants `react ^19.2.8` while `apps/mobile` pins `react` exact at 19.2.0 per Expo SDK 55 — npm
+> resolves that by forking a **second renderer** under `jest-expo`. ⚠️ **Neither gate catches
+> it:** the lock-edge validator reports peer mismatches without failing, and `npm ci` installs
+> the lock verbatim without re-resolving peers. The ignore rule with that reasoning is on master
+> (#572) and Dependabot's recreate correctly dropped it. **#574 then came back as 16 bumps**,
+> adding `@sentry/node`, `@sentry/react` and `multer`. Those three were reviewed here:
+>
+> - **`@sentry/node` 10.71.0 → 10.72.0 — safe, one behavioural note.** 10.72.0 stops sending an
+>   event for errors the AI frameworks propagate to your code. That path is live here
+>   (`bookkeeping.service.ts` calls `@anthropic-ai/sdk`), but the Anthropic call rethrows a raw
+>   `Error` → 500 → still captured by `common/sentry-exception.filter.ts`. Net effect is one
+>   fewer duplicate report, not lost visibility.
+> - **`@sentry/react` 10.71.0 → 10.72.0 — safe.** Nothing in the release touches browser
+>   `init`/transport, and `apps/mobile/lib/sentry.ts` returns early unless `Platform.OS === "web"`,
+>   so the browser SDK never loads in a native context — the RN-peer worry is moot by construction.
+> - ⚠️ **`multer` 2.2.0 → 2.3.0 — the bump is INEFFECTIVE and every upload endpoint stays on
+>   2.2.0.** `@nestjs/platform-express@11.2.3` declares `"multer": "2.2.0"` — an **exact** pin —
+>   and #574's lockfile adds `apps/api/node_modules/multer` @ 2.3.0 while leaving the hoisted
+>   `node_modules/multer` @ **2.2.0** untouched. `FileInterceptor`/`FilesInterceptor` come from
+>   platform-express, which resolves from the root, so all 15 interceptor sites keep 2.2.0. Only
+>   the two direct `import { memoryStorage } from "multer"` sites see 2.3.0. **multer < 2.3.0 is
+>   affected by four advisories; two apply here** — CVE-2026-82333 (High, event-loop DoS via the
+>   field parser; ⚠️ its fix is **opt-in** via the new `fieldArrayIndexLimit`, so upgrading alone
+>   does not mitigate it) and CVE-2026-77078 (Medium, uncaught `RangeError` kills the process).
+>   The other two do not: all three RouteFlow `fileFilter`s are synchronous, and the repo is
+>   `memoryStorage`-only with no `diskStorage` anywhere. **Merging #574 is not a regression, but
+>   it buys no security here.** The real fix is a root `overrides` entry (the only lever when the
+>   parent pins exactly — the repo already does this for `sanitize-html`) plus setting
+>   `fieldArrayIndexLimit`, as its own scoped PR. Filed as a follow-up task.
 >
 > ---
 >
@@ -240,7 +376,7 @@ batch with an e2e (no web unit runner). (2) **B99's repair flight is owed post-d
 
 > </details>
 
-**Written:** 2026-09-01 · **Visibility:** ⚠️ **PUBLIC by owner directive until the campaign completes** (do NOT flip private mid-campaign; the final flip is the owner's if the session dies) · **Campaign:** `W-serial (D6: merge as ready, no windows) · F00+F01+F02(9)+F04(3)+F30(12)+F03(9)+F17(4) SHIPPED LIVE · F05(5)+F06(6) SHIPPED LIVE · 39/193 at F06's discharge · next: F07 track A (⚠️ F06 filed B208 in F07's file region: honour STORED MANUAL overrides on the buyer merge, never client ones), F10 behind F05 in the routes lane`. Owner delegations ACTIVE (.claude/campaign/DECISIONS.md D1–D6 + memory): Fable review replaces owner approval except system-harm/client-data risk; merge-as-ready any hour; repair-as-we-go per batch; repo stays public. ⚠️ Register debt SETTLED — keep it settled: every batch updates the register in its own close-out.
+**Written:** 2026-09-01 · **Visibility:** ⚠️ **PUBLIC by owner directive until the campaign completes** (do NOT flip private mid-campaign; the final flip is the owner's if the session dies) · **Campaign:** `W-serial (D6: merge as ready, no windows) · F00+F01+F02(9)+F04(3)+F30(12)+F03(9)+F17(4)+F05(5)+F06(6) SHIPPED LIVE AND FULLY DISCHARGED · 48/193 = 24.9% terminal, nothing mid-flight · in flight: F07 track A (claimed, board #520 — ⚠️ F06 filed B208 in F07's file region: honour STORED MANUAL overrides on the buyer merge, never client ones), F10 in the routes lane (claimed, board #523 — extend G7's RUN_LINE_ITEMS_SELECT, never re-inline; the CANCEL/deleteRun gates belong to F11, not F10)`. Owner delegations ACTIVE (.claude/campaign/DECISIONS.md D1–D6 + memory): Fable review replaces owner approval except system-harm/client-data risk; merge-as-ready any hour; repair-as-we-go per batch; repo stays public. ⚠️ Register debt SETTLED — keep it settled: every batch updates the register in its own close-out.
 
 > **F05 ✅ SHIPPED (this PR):** driver at-door money truth + run settlement — **B49 (Critical), B83, B148, B152, B167**. No migration (F01's `settlementNote`/`settlementVariance` columns were already live and dead). **G7 delivered:** `RUN_LINE_ITEMS_SELECT` is now the single run-read lineItems select, carrying `subtotal`/`boxes`/`pieces`/`unitsPerBox` — **F10/F11/F12/F22 consume it; extend, never re-inline.** ⚠️ **B148 was the reachability blocker:** mobile always sent `deliveries[].productId`, the DTO never declared it, and the global `forbidNonWhitelisted` pipe 400'd _every_ stop completion — none of the money fixes were reachable until it landed. ⚠️ **The register missed the real settlement bypass:** RF-016 auto-complete inside `completeStop`/`completeWithPayment` flips a run COMPLETED in its own tx, so gating `updateRunStatus` alone would never have fired on the common path — all three paths now carry the predicate. B83 books over-collection as an `AdvancePayment` (`RUN:<runId>:STOP:<stopId>` reference — load-bearing, matched by prefix). Proof: 3339 api + 1383 mobile jest green, 26 review findings fixed across 2 rounds, mutation probe 6/6 caught + restore-verified, red gate properly red; B167 rides its T2 leg (e2e spec 23, project entry wired — `playwright test --list` shows 134 tests in 23 files). **Handed to F11:** the CANCEL path and `deleteRun` remain ungated for a cash-carrying run.
 
