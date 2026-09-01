@@ -867,6 +867,7 @@ function EditableLineItems({
   priceHistory,
   tierPriceFor,
   isSpecialTierFor,
+  pricingReady,
 }: {
   items: EditItemState[];
   onChange: (items: EditItemState[]) => void;
@@ -884,6 +885,10 @@ function EditableLineItems({
   /** True when this customer's effective tier for the product is not tier 1 — a
    *  contracted price a stale remembered price must never outrank. */
   isSpecialTierFor: (product: SubstituteOption) => boolean;
+  /** B62 (REG-B62): false while customer/customer-price queries are in flight —
+   *  gates the add-product control and the Substitute trigger so neither can
+   *  bake a list price before the customer's contracted tier is known. */
+  pricingReady: boolean;
 }) {
   const { toast } = useToast();
   // Scroll the just-scanned/added row into view so rapid scanning stays visible.
@@ -923,11 +928,23 @@ function EditableLineItems({
   });
   const products: any[] = (productsData as any)?.data ?? [];
 
-  // Auto-focus the scan input when the component mounts (edit mode opened)
+  // Auto-focus the scan input when the component mounts (edit mode opened) so a
+  // wedge scanner's keystrokes land in it straight away. B62 (REG-B62): the
+  // input is `disabled` until `pricingReady`, and focus() on a disabled input
+  // is a no-op — so this re-runs when pricing settles. It only claims focus
+  // while nothing else holds it (ux-spec: no focus stealing when the controls
+  // enable), so an operator who clicked elsewhere during the wait keeps it.
   React.useEffect(() => {
-    const t = setTimeout(() => addInputRef.current?.focus(), 100);
+    if (!pricingReady) return;
+    const t = setTimeout(() => {
+      const el = addInputRef.current;
+      if (!el || el.disabled) return;
+      const active = document.activeElement;
+      if (active && active !== document.body && active !== el) return;
+      el.focus();
+    }, 100);
     return () => clearTimeout(t);
-  }, []);
+  }, [pricingReady]);
 
   React.useEffect(() => {
     function onClickOutside(e: MouseEvent) {
@@ -1203,7 +1220,8 @@ function EditableLineItems({
                 <>
                   {!item.substituteProductId && !item.isUnlisted && (
                     <button
-                      className="rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy"
+                      className="rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy disabled:opacity-50"
+                      disabled={!pricingReady}
                       onClick={() => setSubstituteOpenId((p) => (p === item.id ? null : item.id))}
                     >
                       Substitute
@@ -1333,6 +1351,7 @@ function EditableLineItems({
             type="text"
             placeholder="Scan barcode or type name…"
             value={addSearch}
+            disabled={!pricingReady}
             onChange={(e) => {
               setAddSearch(e.target.value);
               if (e.target.value) setAddOpen(true);
@@ -1353,6 +1372,17 @@ function EditableLineItems({
             }}
             className="flex-1 bg-transparent text-sm text-navy placeholder:text-navy/70 outline-none"
           />
+          {!pricingReady && (
+            // shrink-0 + whitespace-nowrap keep this row exactly as tall as it is
+            // without the hint (ux-spec: no layout jump); below sm only the spinner
+            // shows, so the label can never wrap the row open on a phone.
+            <span className="flex shrink-0 items-center gap-1 text-xs text-navy/70">
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+              <span className="sr-only whitespace-nowrap sm:not-sr-only">
+                Loading customer pricing…
+              </span>
+            </span>
+          )}
         </div>
         {addOpen && products.length > 0 && (
           <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
@@ -1361,8 +1391,9 @@ function EditableLineItems({
                 <li key={p.id}>
                   <button
                     type="button"
+                    disabled={!pricingReady}
                     onMouseDown={() => addProduct(p)}
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-brand-50 flex items-center justify-between gap-2"
+                    className="w-full px-3 py-2 text-left text-sm hover:bg-brand-50 flex items-center justify-between gap-2 disabled:opacity-50"
                   >
                     <span className="font-medium text-navy">{p.name}</span>
                     <span className="text-xs text-navy/70">{p.unit}</span>
@@ -1536,8 +1567,24 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const { data: priceHistory } = useCustomerPriceHistory(order?.customerId);
   // Customer tier pricing (mirrors mobile's edit-items screen): a substituted
   // line prices off the customer's effective tier, not the raw list price.
-  const { data: customerDetail } = useCustomer(order?.customerId ?? "");
-  const { data: customerPrices } = useCustomerPrices(order?.customerId);
+  const {
+    data: customerDetail,
+    isPending: customerPending,
+    isError: customerFailed,
+  } = useCustomer(order?.customerId ?? "");
+  const {
+    data: customerPrices,
+    isPending: pricesPending,
+    isError: pricesFailed,
+  } = useCustomerPrices(order?.customerId);
+  // B62 (REG-B62): tier defaults to 1 while these queries are in flight, so any
+  // line added/substituted in that window bakes the LIST price (the substitute
+  // path even SENDS it). Gate pricing-dependent controls until both settle.
+  // NOTE: a disabled query is isPending forever — short-circuit when there is no
+  // customer. An errored fetch falls back to today's tier-1 degraded mode.
+  const pricingReady =
+    !order?.customerId ||
+    ((!customerPending || customerFailed) && (!pricesPending || pricesFailed));
   const cpMap = React.useMemo(() => {
     const m = new Map<string, number | null>();
     for (const cp of (customerPrices ?? []) as Array<{
@@ -2601,6 +2648,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                   priceHistory={priceHistory}
                   tierPriceFor={tierPriceFor}
                   isSpecialTierFor={isSpecialTierFor}
+                  pricingReady={pricingReady}
                 />
 
                 {/* Live total preview */}

@@ -59,6 +59,7 @@ or `orders-promo-bogo.spec.ts` (pinned suites — they must pass UNMODIFIED).
 ## Test packages
 
 ### TP1 — merge fold + normalization units
+
 - **writes:** `apps/api/src/orders/merge-items.spec.ts` (NEW)
 - **tests:** T1, T2
 - **brief:** Direct unit tests of `foldMergeItems` and `normalizeBoxUnawareSnapshots` from
@@ -73,8 +74,19 @@ or `orders-promo-bogo.spec.ts` (pinned suites — they must pass UNMODIFIED).
   Titles carry `REG-B47`; describe `(T-B47 / REG-B47)`.
 - **must fail with:** guarded-import assertion ("merge-items exports … expected true,
   received false").
+- **⚠️ red-gate provenance (added at review):** the test author shipped a signature-only
+  STUB at `apps/api/src/orders/merge-items.ts` (every export returns undefined) instead of
+  the guarded dynamic import above, so all seven reds read "received undefined" —
+  informationally identical to a module-not-found and satisfiable by any module that returns
+  something. **The stub is NOT evidence, and WP1 must delete it wholesale** before writing
+  the real module (never edit around it — a no-op export left in `src/` ships). The mutation
+  probe on `merge-items.ts` (probe 4 in `mutationProbe.targets`) is therefore **MANDATORY,
+  not optional**: it is the only thing proving TP1's seven oracles bite on a real fold rather
+  than having flipped green in one step. TP1's T1 cases are additionally **R12 move-pins**,
+  not B47 proof — the fold moves byte-identical, so they were already satisfied pre-F06.
 
 ### TP2 — updateOrderItems guards (service level)
+
 - **writes:** `apps/api/src/orders/orders.update-items-guards.spec.ts` (NEW)
 - **tests:** T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13
 - **brief:** Copy the mocked-Prisma harness style from `orders.service.spec.ts`'s
@@ -91,13 +103,14 @@ or `orders-promo-bogo.spec.ts` (pinned suites — they must pass UNMODIFIED).
   "expected ForbiddenException, resolved instead").
 
 ### TP3 — buyer merge controller wiring
+
 - **writes:** `apps/api/src/buyer/buyer.controller.merge.spec.ts` (NEW)
 - **tests:** T14, T16
 - **brief:** Copy the module setup from `buyer.controller.spec.ts`. Mock OrdersService
   (`findActiveOrder`, `updateOrderItems`, `applyBuyerMergeHeader`, `mergeAllPendingForCustomer`,
   `create`, `findOne`) and PrismaService (product findMany → upb map). T14 + a REG-B47
   companion: merge branch calls `updateOrderItems(activeOrder.id, {items: <folded, catalog
-  only, e.g. {productId, qty:36, boxes:3, pieces:0}>, replaceAll:true}, pseudoUser)` — never
+only, e.g. {productId, qty:36, boxes:3, pieces:0}>, replaceAll:true}, pseudoUser)` — never
   the naive `{qty:14}` sum, never unlisted entries; `applyBuyerMergeHeader` called with
   {notes, urgent, requestedDeliveryDate} BEFORE `mergeAllPendingForCustomer` (assert call
   order via mock.invocationCallOrder). T16: no active order → `create` called with the same
@@ -106,6 +119,7 @@ or `orders-promo-bogo.spec.ts` (pinned suites — they must pass UNMODIFIED).
   method undefined"; "expected items[0].boxes 3, received undefined (payload {qty:14})".
 
 ### TP4 — e2e spec 24 (B62)
+
 - **writes:** `apps/web/e2e/24-order-edit-pricing.spec.ts` (NEW), `apps/web/playwright.config.ts`
   (append ONE `projects[]` entry — this is test wiring, not implementation)
 - **tests:** T15
@@ -137,6 +151,7 @@ cd apps/api && npx jest merge-items orders.update-items-guards buyer.controller.
 ## Work packages
 
 ### WP1 — extract merge-items module + snapshot normalization
+
 - **files:** `apps/api/src/orders/merge-items.ts` (NEW), `apps/api/src/orders/orders.controller.ts`
 - **satisfies:** R12, enables R1
 - **provenBy:** T1, T2 (+ existing `orders.scan-hardening.spec.ts` staying green, zero edits)
@@ -173,6 +188,7 @@ export function normalizeBoxUnawareSnapshots(
 ```
 
 ### WP2 — updateOrderItems guards + BOGO preservation + header helper (service)
+
 - **files:** `apps/api/src/orders/orders.service.ts`, `apps/api/src/orders/dto/update-order-items.dto.ts`
 - **satisfies:** R2, R3, R4, R5, R6, R7, R8, R9, part of R1 (shouldSplit), part of R10 (helper)
 - **provenBy:** T3-T13, T14 (helper semantics)
@@ -215,6 +231,7 @@ await tx.orderItem.deleteMany({
   where: { orderId, ...(isBuyerEdit ? { productId: { not: null } } : {}) },
 });
 ```
+
 In the recreate loop's `!item.productId` arm: `if (isBuyerEdit) continue;` before the
 existing driver/unlisted create logic. After the loop (buyer path only): findMany the
 surviving `productId: null` rows ordered by position and re-stamp `position: pos++`.
@@ -233,15 +250,16 @@ const shouldSplit =
     (isBuyerEdit && (item.boxes != null || item.pieces != null)) ||
     (isBuyerEdit && !existingProductIds.has(item.productId)));
 ```
+
 Update the stale DTO comment at `dto/update-order-items.dto.ts:58-59` (client boxes/pieces
 now serve as a denomination signal on the buyer path).
 
 **(d) B60** — two parts.
-*Plumbing (R9, behavior-neutral):* in BOTH operator add blocks (:3141-3236 replaceAll,
+_Plumbing (R9, behavior-neutral):_ in BOTH operator add blocks (:3141-3236 replaceAll,
 :3306-3405 diff-add): add `freeUnits: 0` to the two non-resolver arms of the `priced`
 ternary, destructure and pass `freeUnits: priced.freeUnits` into `computeLineSubtotal`, and
 add `promoFreeUnits: priced.freeUnits > 0 ? priced.freeUnits : null` to the create data.
-*Preservation (R7/R8, the real fix — replaceAll block only):* build once, before the
+_Preservation (R7/R8, the real fix — replaceAll block only):_ build once, before the
 replaceAll loop, a map of pre-edit BOGO counterparts from `order.lineItems` (first
 non-cancelled line per productId with `Number(promoFreeUnits ?? 0) > 0`, capturing qty,
 boxes, unitPrice, priceType, promoFreeUnits). For each recreated catalog line with a
@@ -292,9 +310,11 @@ async applyBuyerMergeHeader(
   }
 }
 ```
+
 (The ownership-check shape mirrors `toggleUrgent`'s — read it and keep them consistent.)
 
 ### WP3 — buyer merge rewrite (controller)
+
 - **files:** `apps/api/src/buyer/buyer.controller.ts`
 - **satisfies:** R1, R2 (controller leg), R10, R13
 - **provenBy:** T14, T16 (+ T3 end-to-end shape)
@@ -336,6 +356,7 @@ await this.ordersService.applyBuyerMergeHeader(
   makePseudoUser(ctx),
 );
 ```
+
 Keep the existing `mergeAllPendingForCustomer` + `findOne` tail exactly as is. Import
 `foldMergeItems`, `normalizeBoxUnawareSnapshots` from `../orders/merge-items` and
 `UpdateOrderItemsDto` if not already imported. Verify the controller's PrismaService
@@ -343,6 +364,7 @@ injection + `forTenant()` usage pattern against its existing methods (it has bot
 `addAllLow` (:721-731) delegates to `createOrder` and inherits the fix — do not touch it.
 
 ### WP4 — web pricing-readiness gate
+
 - **files:** `apps/web/app/(dashboard)/orders/[id]/page.tsx`
 - **satisfies:** R11
 - **provenBy:** T15 (post-deploy)
@@ -367,28 +389,27 @@ const {
 // NOTE: a disabled query is isPending forever — short-circuit when there is no
 // customer. An errored fetch falls back to today's tier-1 degraded mode.
 const pricingReady =
-  !order?.customerId ||
-  ((!customerPending || customerFailed) && (!pricesPending || pricesFailed));
+  !order?.customerId || ((!customerPending || customerFailed) && (!pricesPending || pricesFailed));
 ```
 
-  Thread `pricingReady` into `EditableLineItems` (defined in-file at :861, rendered at
-  :2595) as a prop. Gate, using the page's own vocabulary (design-system.md): the
-  add-product `<input>` in the scan row (:1324-1356) gets `disabled={!pricingReady}` and its
-  container shows, while `!pricingReady`,
-  `<span className="flex items-center gap-1 text-xs text-navy/70"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading customer pricing…</span>`;
-  the suggestion-dropdown rows (:1357-1374) and the Substitute trigger (:1205-1210) get
-  `disabled={!pricingReady}` + `disabled:opacity-50` (raw-button pattern at :206-207).
-  Also gate the custom-item "Add" path only if it consumes tier pricing (it does not —
-  leave it). Do NOT delay the page render or the DRAFT auto-edit effect (:1637-1689).
+Thread `pricingReady` into `EditableLineItems` (defined in-file at :861, rendered at
+:2595) as a prop. Gate, using the page's own vocabulary (design-system.md): the
+add-product `<input>` in the scan row (:1324-1356) gets `disabled={!pricingReady}` and its
+container shows, while `!pricingReady`,
+`<span className="flex items-center gap-1 text-xs text-navy/70"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading customer pricing…</span>`;
+the suggestion-dropdown rows (:1357-1374) and the Substitute trigger (:1205-1210) get
+`disabled={!pricingReady}` + `disabled:opacity-50` (raw-button pattern at :206-207).
+Also gate the custom-item "Add" path only if it consumes tier pricing (it does not —
+leave it). Do NOT delay the page render or the DRAFT auto-edit effect (:1637-1689).
 
 ### Package map
 
-| WP | satisfies | provenBy | dependsOn | Wave |
-|---|---|---|---|---|
-| WP1 | R12 (+R1 enabler) | T1, T2 | — | 1 |
-| WP2 | R2-R9, R10(helper), R1(signal) | T3-T13 | — | 1 |
-| WP4 | R11 | T15 | — | 1 |
-| WP3 | R1, R2, R10, R13 | T14, T16, T3 | WP1, WP2 | 2 |
+| WP  | satisfies                      | provenBy     | dependsOn | Wave |
+| --- | ------------------------------ | ------------ | --------- | ---- |
+| WP1 | R12 (+R1 enabler)              | T1, T2       | —         | 1    |
+| WP2 | R2-R9, R10(helper), R1(signal) | T3-T13       | —         | 1    |
+| WP4 | R11                            | T15          | —         | 1    |
+| WP3 | R1, R2, R10, R13               | T14, T16, T3 | WP1, WP2  | 2    |
 
 Cross-check: every R1-R13 appears in a `satisfies:` except R12's proof (existing pinned
 suite) and R11/R13 covered above. Every T1-T16 appears in a `provenBy:`.
@@ -425,15 +446,32 @@ cd apps/api && npx tsc -p tsconfig.build.json --noEmit
 cd apps/api && npx jest merge-items orders.update-items-guards buyer.controller.merge orders.scan-hardening --silent
 ```
 
-Final:
+Final (the pass/fail gate):
 
 ```bash
 cd apps/api && npx jest src/orders src/buyer src/common --silent
+```
+
+Informational only — **excluded from the pass/fail decision**:
+
+```bash
 npm run verify
 ```
 
-(`npm run verify` = lock-edge validator → scanner self-test → scanner → turbo
-check-types/lint/test → campaign-check. It is green on the untouched baseline.)
+`npm run verify` = lock-edge validator → scanner self-test → scanner → turbo
+check-types/lint/test → campaign-check. **It is NOT green on the untouched baseline**: the
+final `campaign-check` step already fails there over pre-existing _undischarged affirmative
+claims_ in the bug register — 30 on this worktree (B24, B50, B57, B74, B81, B84, B85, B96,
+B97, B101–B103, B109, B122, B130, B154, B188–B201); the exact set moves with whichever
+jest / playwright report happens to be on disk. **None of them are F06's** — B47 / B51 / B60 /
+B62 / B63 / B78 still sit at `state: queued` in `.claude/campaign/status/F06.jsonl`, so
+campaign-check makes no claim about them yet; they start being checked at Phase 6 close-out,
+when the rows flip to `proven` with a `buildPlan`, and it is the `REG-B*` titles written by
+TP1–TP4 that discharge them then. So: a campaign-check failure confined to those pre-existing
+ids is the known register backlog, **not** an F06 regression — and conversely, a _new_ id
+appearing in that list is a real signal, never "the known baseline break". The
+earlier `verify` steps (lock edges, scanner, check-types / lint / test) are still worth
+running by hand; the gate is the jest line above plus the per-round commands.
 
 ---
 
@@ -447,14 +485,14 @@ post-deploy via e2e spec 24 — see Risks). The design-system lens still reviews
 
 ## Risks & rollback
 
-| Risk | Likelihood | Blast radius | Watch |
-|---|---|---|---|
-| B60 preservation over-reaches (keeps snapshot on a genuinely repriced line) | low | money wrong | T12 pins the MANUAL flip; refuters + final pass |
-| B63 gate over-blocks (CONFIRMED or DRIVER) | low | buyer/driver workflow break | T8/T9 pins |
-| B51 preservation breaks totals (preserved rows missed by recompute) | low | order totals wrong | T4 asserts totals include unlisted |
-| Fold normalization misreads a non-boxed product | low | money wrong | T2's pass-through cases |
-| Web gate wedges the editor (disabled query pending forever) | med | operator cannot add lines | short-circuits on !customerId + isError; e2e T15 |
-| B62 has no pre-deploy browser proof | accepted | — | post-deploy e2e spec 24 discharges REG-B62; manual browser spot-check after deploy |
+| Risk                                                                        | Likelihood | Blast radius                | Watch                                                                              |
+| --------------------------------------------------------------------------- | ---------- | --------------------------- | ---------------------------------------------------------------------------------- |
+| B60 preservation over-reaches (keeps snapshot on a genuinely repriced line) | low        | money wrong                 | T12 pins the MANUAL flip; refuters + final pass                                    |
+| B63 gate over-blocks (CONFIRMED or DRIVER)                                  | low        | buyer/driver workflow break | T8/T9 pins                                                                         |
+| B51 preservation breaks totals (preserved rows missed by recompute)         | low        | order totals wrong          | T4 asserts totals include unlisted                                                 |
+| Fold normalization misreads a non-boxed product                             | low        | money wrong                 | T2's pass-through cases                                                            |
+| Web gate wedges the editor (disabled query pending forever)                 | med        | operator cannot add lines   | short-circuits on !customerId + isError; e2e T15                                   |
+| B62 has no pre-deploy browser proof                                         | accepted   | —                           | post-deploy e2e spec 24 discharges REG-B62; manual browser spot-check after deploy |
 
 - **Rollback:** revert the squash commit; no schema change; no data written that a revert
   strands (D4 repair of PRE-existing damage is a separate post-deploy step).
@@ -486,8 +524,11 @@ post-deploy via e2e spec 24 — see Risks). The design-system lens still reviews
       'cd apps/api && npx jest merge-items orders.update-items-guards buyer.controller.merge orders.scan-hardening --silent'
     ],
     final: [
-      'cd apps/api && npx jest src/orders src/buyer src/common --silent',
-      'npm run verify'
+      'cd apps/api && npx jest src/orders src/buyer src/common --silent'
+      // 'npm run verify' is deliberately NOT here: it fails on the UNTOUCHED baseline at its
+      // campaign-check step over pre-existing undischarged register claims (none of them
+      // F06's), so gating on it would report a false red. Run it informationally instead —
+      // see "Verification commands".
     ]
   },
   mutationProbe: { targets: [

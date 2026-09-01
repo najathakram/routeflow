@@ -185,9 +185,27 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const { data: priceHistory } = useCustomerPriceHistory(customerId);
   // Customer tier pricing (mirrors NewOrderScreen): a newly added line prices
   // off the customer's effective tier, not the raw list price.
-  const { data: customerDetail } = useCustomer(customerId ?? "");
-  const { data: customerPrices } = useCustomerPrices(customerId ?? "");
+  const {
+    data: customerDetail,
+    isPending: customerPending,
+    isError: customerFailed,
+  } = useCustomer(customerId ?? "");
+  const {
+    data: customerPrices,
+    isPending: pricesPending,
+    isError: pricesFailed,
+  } = useCustomerPrices(customerId ?? "");
   const customerTier = customerDetail?.pricingTier ?? 1;
+  // B62 (REG-B62): the tier defaults to 1 while those two queries are in flight,
+  // so a line added or substituted in that window bakes the LIST price (the
+  // substitute path even SENDS it). Gate the pricing-dependent controls — the
+  // product picker and Substitute — until both settle, mirroring web's order
+  // editor (apps/web/app/(dashboard)/orders/[id]/page.tsx).
+  // NOTE: a disabled query stays `isPending` forever, so short-circuit when
+  // there is no customer; an errored fetch falls back to the tier-1 degraded
+  // mode rather than wedging the editor.
+  const pricingReady =
+    !customerId || ((!customerPending || customerFailed) && (!pricesPending || pricesFailed));
   const cpMap = useMemo(() => {
     const m = new Map<string, number | null>();
     for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
@@ -893,6 +911,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                     item={it}
                     canSplitBoxes={canSplitBoxes}
                     canEditPrice={!isDriver && order.status !== "CANCELLED"}
+                    pricingReady={pricingReady}
                     marginFloor={floorForCategory(marginConfig, it.category)}
                     acked={floorAcked.has(it.lineId ?? it.productId)}
                     onSetToFloor={(price) => setLinePrice(it.productId, price)}
@@ -935,9 +954,21 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                   }
                 />
               ))}
-              <Pressable style={styles.addBtn} onPress={() => setShowPicker(true)}>
-                <Ionicons name="add-circle-outline" size={18} color={ios.brand} />
-                <Text style={styles.addBtnText}>Add product</Text>
+              {/* B62 (REG-B62): the picker is the only way a line gets priced
+                  here, so it stays shut until the customer's contract is loaded. */}
+              <Pressable
+                style={[styles.addBtn, !pricingReady && styles.addBtnDisabled]}
+                onPress={() => setShowPicker(true)}
+                disabled={!pricingReady}
+              >
+                {pricingReady ? (
+                  <Ionicons name="add-circle-outline" size={18} color={ios.brand} />
+                ) : (
+                  <ActivityIndicator size="small" color={ios.brand} />
+                )}
+                <Text style={styles.addBtnText}>
+                  {pricingReady ? "Add product" : "Loading customer pricing…"}
+                </Text>
               </Pressable>
               <Pressable style={styles.addUnlistedBtn} onPress={() => setUnlistedModalOpen(true)}>
                 <Ionicons name="create-outline" size={18} color={ios.brand} />
@@ -993,6 +1024,7 @@ function DraftItemCard({
   item,
   canSplitBoxes,
   canEditPrice,
+  pricingReady,
   marginFloor,
   acked,
   onSetToFloor,
@@ -1012,6 +1044,10 @@ function DraftItemCard({
   canSplitBoxes: boolean;
   /** Price / discount editing is offered while the order is editable (DRAFT/PENDING/CONFIRMED). */
   canEditPrice: boolean;
+  /** B62 (REG-B62): false while the customer/customer-price queries are in
+   *  flight — gates Substitute, which prices (and SENDS) the replacement line
+   *  off the tier that isn't known yet. */
+  pricingReady: boolean;
   /** Category margin floor (fraction) for the live cost/margin hint. */
   marginFloor: number;
   /** Whether this line was already acked as "sell anyway" below the floor. */
@@ -1199,7 +1235,12 @@ function DraftItemCard({
 
       {/* Actions */}
       <View style={styles.cardActions}>
-        <Pressable style={styles.actionChip} onPress={onPressSubstitute} hitSlop={4}>
+        <Pressable
+          style={[styles.actionChip, !pricingReady && styles.actionChipDisabled]}
+          onPress={onPressSubstitute}
+          disabled={!pricingReady}
+          hitSlop={4}
+        >
           <Ionicons name="swap-horizontal-outline" size={14} color={ios.brand} />
           <Text style={styles.actionChipText}>Substitute</Text>
         </Pressable>
@@ -2094,6 +2135,7 @@ const styles = StyleSheet.create({
   actionChipActive: {
     backgroundColor: ios.system.orangeWash,
   },
+  actionChipDisabled: { opacity: 0.5 },
   actionChipText: {
     fontSize: 12,
     fontFamily: "Inter_600SemiBold",
@@ -2119,6 +2161,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     marginTop: 4,
   },
+  addBtnDisabled: { opacity: 0.5 },
   addBtnText: { color: ios.brand, fontSize: 15, fontFamily: "Inter_600SemiBold" },
   addUnlistedBtn: {
     flexDirection: "row",
