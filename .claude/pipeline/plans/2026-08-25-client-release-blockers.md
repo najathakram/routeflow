@@ -7,7 +7,7 @@
 > absolute paths under the worktree for every edit. Do not commit/stage/push — the
 > orchestrator does. **NO Prisma schema change, NO migration.**
 
-> Authored by Fable 5 on 2026-08-25. Status: READY (RESCOPED 2026-08-26 against master post-#442/#446 — see SCOPE CHANGES).
+> Authored by Fable 5 on 2026-08-25. Status: SUPERSEDED — IMPLEMENTED via #449 (2026-08-26); verified on master 2026-09-01: all four fixes live (settleStockForEdit, lib/invoice-terms linkage, calendarDaysUntil badges, address CRUD). Do NOT resume or re-run this plan.
 > Grounded in a 6-agent release-verification sweep (2026-08-25) whose three HIGH findings the
 > orchestrator re-confirmed by hand against master `754df625`. Anchors below are from that
 > re-confirmation; if a line drifted, re-find by the quoted symbol, never by number.
