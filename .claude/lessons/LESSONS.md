@@ -17,7 +17,7 @@
   of the five modules". It pinned none of them; following the instruction would have ADDED three
   pins the scope never asked for.
 - **Root cause:** the spec was written from an audit summary rather than from the manifests. Two
-  further claims in the same five-line item were also wrong — one module was pinned *ahead* of the
+  further claims in the same five-line item were also wrong — one module was pinned _ahead_ of the
   framework's bundled version (the fix was a downgrade, not a catch-up), and a command it presented
   as a one-liner only accepts an interactive prompt.
 - **Lesson:** **A spec's factual claims about a file are a hypothesis, not evidence — read the file
@@ -28,7 +28,7 @@
 ### L-027 · 2026-09-01 · process
 
 - **Symptom:** with several sessions running in git worktrees, a repo-file gate was about to be
-  satisfied by writing into a *different* session's working tree — surfacing later as a mystery diff
+  satisfied by writing into a _different_ session's working tree — surfacing later as a mystery diff
   in someone else's PR.
 - **Root cause:** worktrees are nested inside the main checkout, and hooks resolve their paths
   against that main checkout, not the worktree the session is working in. Whatever branch the shared
@@ -126,9 +126,17 @@
   diff — for any security bump, check whether a parent's exact pin holds the hoisted copy, or the
   merge closes the ticket without closing the hole.**
 - **Guard:** none yet — inspect the hoisted entry (and any parent's exact pin) before believing a
-  security bump. Note the fix for this class is a root `overrides` pin, which [[L-012]] otherwise
-  forbids: `overrides` is the only mechanism that beats a parent's exact pin on a **runtime**
-  transitive, so state the exception in the PR or the next reader reverts it as a violation.
+  security bump. The check that settles it is the **resolution**, which holds whatever the install
+  state is:
+  `node -e "console.log(require.resolve('<lib>',{paths:[require('path').dirname(require.resolve('<parent>/package.json'))]}))"`.
+  ⚠️ A version string read out of `node_modules` is **not** independent confirmation: a tree that
+  predates the bump's install reads the old version for the trivial reason that nothing installed
+  the new one. Both this entry's author and its first reader made exactly that substitution within
+  hours of filing it — **having written a rule makes you quicker, not slower, to accept a reading
+  that confirms it.** Note the fix for this class is a root `overrides` pin, which [[L-012]]
+  otherwise forbids: `overrides` is the only mechanism that beats a parent's exact pin on a
+  **runtime** transitive, so state the exception in the PR or the next reader reverts it as a
+  violation.
 
 ### L-009 · 2026-08-29 · tooling · #501
 
@@ -186,7 +194,7 @@
   `default` export `expo-secure-store` does not have, so token storage threw on every device.
 - **Root cause:** the throw sits inside a `!isWeb` branch. Every automated surface runs the web
   build, which takes the `localStorage` branch, so nothing ever executed the failing line. This is
-  narrower than L-019: no native *module* misbehaved — ordinary JS was shielded by a platform
+  narrower than L-019: no native _module_ misbehaved — ordinary JS was shielded by a platform
   conditional.
 - **Lesson:** **A `Platform`/`isWeb` branch is untested code unless something runs that platform.
   When you touch one side of such a branch, either exercise the other side or state plainly that
