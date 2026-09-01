@@ -30,6 +30,7 @@ import { CheckVendorBillDuplicateDto } from "./dto/check-vendor-bill-duplicate.d
 import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
 import { SaveProductMappingDto } from "./dto/save-product-mapping.dto";
 import { RecordSupplierPaymentDto } from "./dto/supplier-payment.dto";
+import { MB, uploadLimits } from "../common/upload-limits";
 
 // OPERATOR-only end to end. AddonGuard passes handlers without @RequireAddon
 // metadata — only the AI scan endpoint below is addon-gated.
@@ -73,7 +74,7 @@ export class VendorBillsController {
   @UseInterceptors(
     // Up to 10 pages, 25MB per file, under the field name `images` (multer
     // matches the field name exactly — clients MUST use "images").
-    FilesInterceptor("images", 10, { limits: { fileSize: 25 * 1024 * 1024 } }),
+    FilesInterceptor("images", 10, { limits: uploadLimits(MB(25)) }),
   )
   scanInvoice(@UploadedFiles() files: Express.Multer.File[], @CurrentUser() user: { id: string }) {
     if (!files || files.length === 0) {

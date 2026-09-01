@@ -112,3 +112,8 @@ local-assets/
 #     Written by a probe run, never part of the suite; without this a `git add -A`
 #     from any session commits another session's throwaway probes.
 apps/mobile/.tmpjest/
+
+# ─── Design-hook cache (written by the impeccable PostToolUse hook on any edit) ─
+#     Per-machine tool state, not source. Same reason as .tmpjest above: it lands
+#     in whichever workspace was last edited and gets swept up by `git add -A`.
+**/.impeccable/

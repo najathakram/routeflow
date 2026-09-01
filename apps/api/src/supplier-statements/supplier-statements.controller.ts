@@ -21,6 +21,7 @@ import { RequireAddon } from "../billing/require-addon.decorator";
 import { SupplierStatementsService } from "./supplier-statements.service";
 import { StatementApplyService } from "./statement-apply.service";
 import { ApplyStatementBodyDto } from "./dto/statement.dto";
+import { MB, uploadLimits } from "../common/upload-limits";
 
 // AddonGuard passes handlers without @RequireAddon metadata — only the AI scan
 // endpoint is addon-gated; listing/reviewing/applying existing scans is not.
@@ -52,7 +53,7 @@ export class SupplierStatementsController {
   @UseInterceptors(
     // Up to 10 pages, 25MB per file, under the field name `files` (multer
     // matches the field name exactly — clients MUST use "files").
-    FilesInterceptor("files", 10, { limits: { fileSize: 25 * 1024 * 1024 } }),
+    FilesInterceptor("files", 10, { limits: uploadLimits(MB(25)) }),
   )
   scanStatement(
     @UploadedFiles() files: Express.Multer.File[],

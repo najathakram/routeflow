@@ -27,6 +27,7 @@ import { UserRole } from "@prisma/client";
 import { UpdateEmailConfigDto } from "./dto/update-email-config.dto";
 import { UpdateGoogleOAuthConfigDto } from "./dto/update-google-oauth-config.dto";
 import { UpdateBrandingDto } from "./dto/update-branding.dto";
+import { MB, uploadLimits } from "../common/upload-limits";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 @ApiTags("tenants")
@@ -156,7 +157,7 @@ export class TenantsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
-  @UseInterceptors(FileInterceptor("logo", { limits: { fileSize: 5 * 1024 * 1024 } }))
+  @UseInterceptors(FileInterceptor("logo", { limits: uploadLimits(MB(5)) }))
   @ApiConsumes("multipart/form-data")
   @ApiBody({
     schema: { type: "object", properties: { logo: { type: "string", format: "binary" } } },

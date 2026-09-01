@@ -36,6 +36,7 @@ import { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { PriceAdjustmentDto } from "./dto/price-adjustment.dto";
 import { UpdateInvoiceTermsDto } from "./dto/update-invoice-terms.dto";
 import { UpdateShipmentDto } from "../orders/dto/update-shipment.dto";
+import { MB, uploadLimits } from "../common/upload-limits";
 
 @Controller("invoices")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -95,7 +96,7 @@ export class InvoicesController {
 
   @Post("payments/:paymentId/image")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
-  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @UseInterceptors(FileInterceptor("file", { limits: uploadLimits(MB(10)) }))
   uploadPaymentImage(
     @Param("paymentId") paymentId: string,
     @UploadedFile() file: Express.Multer.File,

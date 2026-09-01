@@ -38,6 +38,7 @@ import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { AddonGuard } from "../billing/addon.guard";
 import { RequireAddon } from "../billing/require-addon.decorator";
+import { MB, uploadLimits } from "../common/upload-limits";
 
 @ApiTags("bookkeeping")
 @ApiBearerAuth()
@@ -165,7 +166,7 @@ export class BookkeepingController {
   }
 
   @Post("expenses/:id/receipt")
-  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @UseInterceptors(FileInterceptor("file", { limits: uploadLimits(MB(10)) }))
   uploadReceipt(@Param("id") id: string, @UploadedFile() file: Express.Multer.File) {
     if (!file) throw new HttpException("No file uploaded", HttpStatus.BAD_REQUEST);
     return this.bookkeepingService.uploadExpenseReceipt(

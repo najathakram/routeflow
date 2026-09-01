@@ -28,6 +28,7 @@ import { ImportProductsDto } from "./dto/import-products.dto";
 import { BulkAssignParentDto } from "./dto/bulk-assign-parent.dto";
 import { BulkDeleteProductsDto } from "./dto/bulk-delete-products.dto";
 import { BulkSetMsrpDto } from "./dto/bulk-set-msrp.dto";
+import { MB, uploadLimits } from "../common/upload-limits";
 
 @Controller("products")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -137,7 +138,7 @@ export class ProductsController {
   @UseInterceptors(
     FilesInterceptor("files", 10, {
       storage: memoryStorage(),
-      limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB per file
+      limits: uploadLimits(MB(10)), // 10 MB per file
       fileFilter: (_req, file, cb) => {
         // RF-076/RF-157: Strict MIME allowlist — only safe raster image types accepted.
         // SVG is explicitly blocked (can embed JS). Any other type is also rejected.
