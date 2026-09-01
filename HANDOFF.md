@@ -45,7 +45,7 @@ batch with an e2e (no web unit runner). (2) **B99's repair flight is owed post-d
 >    CANCELLED post-hoc so the money is never stranded, but nothing forces the reconciliation on
 >    those paths. `deleteRun`'s only guard is an existing deliveryMutation — which a
 >    payment-only completion never creates.
-> 3. Then the audited schedule: F06 → F07 → F11 → F22+F24 → F16 on track A; F10, F09, F15, F13,
+> 3. Then the audited schedule: ~~F06~~ (✅ SHIPPED + fully discharged 2026-09-01: #573 master `e6d1ab34`, T1 flips #576, B62 discharge #577 off e2e run 33478558164 — all six rows done; residuals filed as B206/B207/B208, next free B209; ⚠️ that run also showed F05's OWN spec 23 REG-B167 red ×3 — flagged on #518, F05 owns it) → **F07 (NEXT on track A)** → F11 → F22+F24 → F16; F10, F09, F15, F13,
 >    F14, F12, F17 (staged, artifacts committed), F19 → F20, F21 after F16, F25 → F26, F08,
 >    Wave C, then F31.
 >
@@ -65,7 +65,7 @@ batch with an e2e (no web unit runner). (2) **B99's repair flight is owed post-d
 > | ------------------------- | ----------------------------------------------------- | ------------------------ |
 > | main                      | `master` @ `e41a1e28`                                 | clean, green, deployed   |
 > | rf-F05                    | `fix/F05-driver-at-door-money-settlement`             | **IN FLIGHT — PR #569**  |
-> | rf-F06                    | `fix/F06-update-order-items-authorization-line-build` | staged, batch unstarted  |
+> | rf-F06                    | `fix/F06-update-order-items-authorization-line-build` | MERGED (#573) — prunable |
 > | rf-F03                    | `fix/F03-payment-truth`                               | MERGED (#564) — prunable |
 > | rf-F17                    | `fix/F17-import-robustness`                           | MERGED (#566) — prunable |
 > | rf-F30, rf-F04            | merged branches                                       | prunable                 |
@@ -74,7 +74,7 @@ batch with an e2e (no web unit runner). (2) **B99's repair flight is owed post-d
 > Register artifact `310ae33a…` is CURRENT. The user-guide artifact `cae40575…` is
 > shared-not-owned — guide changes must be flagged to the owner.
 
-**Written:** 2026-09-01 · **Visibility:** ⚠️ **PUBLIC by owner directive until the campaign completes** (do NOT flip private mid-campaign; the final flip is the owner's if the session dies) · **Campaign:** `W-serial (D6: merge as ready, no windows) · F00+F01+F02(9)+F04(3)+F30(12)+F03(9)+F17(4) SHIPPED LIVE · F05(5) shipping now · 33/193 at F05's merge · next: F06 track A, F10 behind F05 in the routes lane`. Owner delegations ACTIVE (.claude/campaign/DECISIONS.md D1–D6 + memory): Fable review replaces owner approval except system-harm/client-data risk; merge-as-ready any hour; repair-as-we-go per batch; repo stays public. ⚠️ Register debt SETTLED — keep it settled: every batch updates the register in its own close-out.
+**Written:** 2026-09-01 · **Visibility:** ⚠️ **PUBLIC by owner directive until the campaign completes** (do NOT flip private mid-campaign; the final flip is the owner's if the session dies) · **Campaign:** `W-serial (D6: merge as ready, no windows) · F00+F01+F02(9)+F04(3)+F30(12)+F03(9)+F17(4) SHIPPED LIVE · F05(5)+F06(6) SHIPPED LIVE · 39/193 at F06's discharge · next: F07 track A (⚠️ F06 filed B208 in F07's file region: honour STORED MANUAL overrides on the buyer merge, never client ones), F10 behind F05 in the routes lane`. Owner delegations ACTIVE (.claude/campaign/DECISIONS.md D1–D6 + memory): Fable review replaces owner approval except system-harm/client-data risk; merge-as-ready any hour; repair-as-we-go per batch; repo stays public. ⚠️ Register debt SETTLED — keep it settled: every batch updates the register in its own close-out.
 
 > **F05 ✅ SHIPPED (this PR):** driver at-door money truth + run settlement — **B49 (Critical), B83, B148, B152, B167**. No migration (F01's `settlementNote`/`settlementVariance` columns were already live and dead). **G7 delivered:** `RUN_LINE_ITEMS_SELECT` is now the single run-read lineItems select, carrying `subtotal`/`boxes`/`pieces`/`unitsPerBox` — **F10/F11/F12/F22 consume it; extend, never re-inline.** ⚠️ **B148 was the reachability blocker:** mobile always sent `deliveries[].productId`, the DTO never declared it, and the global `forbidNonWhitelisted` pipe 400'd _every_ stop completion — none of the money fixes were reachable until it landed. ⚠️ **The register missed the real settlement bypass:** RF-016 auto-complete inside `completeStop`/`completeWithPayment` flips a run COMPLETED in its own tx, so gating `updateRunStatus` alone would never have fired on the common path — all three paths now carry the predicate. B83 books over-collection as an `AdvancePayment` (`RUN:<runId>:STOP:<stopId>` reference — load-bearing, matched by prefix). Proof: 3339 api + 1383 mobile jest green, 26 review findings fixed across 2 rounds, mutation probe 6/6 caught + restore-verified, red gate properly red; B167 rides its T2 leg (e2e spec 23, project entry wired — `playwright test --list` shows 134 tests in 23 files). **Handed to F11:** the CANCEL path and `deleteRun` remain ungated for a cash-carrying run.
 
