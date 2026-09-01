@@ -544,6 +544,9 @@ describe("RoutesService", () => {
     it("should allow drivers to set IN_PROGRESS", async () => {
       prisma.routeRun.findUnique.mockResolvedValue(MOCK_RUN);
       prisma.routeRun.update.mockResolvedValue({ ...MOCK_RUN, status: "IN_PROGRESS" });
+      // B72: updateRunStatus now verifies driver ownership via the driver
+      // table — MOCK_RUN.driverId is "drv-1".
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
 
       await service.updateRunStatus("run-1", { status: "IN_PROGRESS" as any }, driverPayload);
       expect(prisma.routeRun.update).toHaveBeenCalled();
@@ -551,6 +554,7 @@ describe("RoutesService", () => {
 
     it("should forbid drivers from setting CANCELLED", async () => {
       prisma.routeRun.findUnique.mockResolvedValue(MOCK_RUN);
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
 
       await expect(
         service.updateRunStatus("run-1", { status: "CANCELLED" as any }, driverPayload),
@@ -1282,11 +1286,16 @@ describe("RoutesService", () => {
     it("appends a photo key to the stop and returns a presigned url", async () => {
       prisma.routeRunStop.findFirst.mockResolvedValue({ ...STOP });
 
-      const result = await service.attachPodArtifact("run-1", "stop-1", {
-        kind: "photo",
-        dataUrl: PHOTO_DATA_URL,
-        artifactId: "abcd1234",
-      });
+      const result = await service.attachPodArtifact(
+        "run-1",
+        "stop-1",
+        {
+          kind: "photo",
+          dataUrl: PHOTO_DATA_URL,
+          artifactId: "abcd1234",
+        },
+        operatorPayload,
+      );
 
       const key = "tenants/test-tenant/pod/stop-1/photo-abcd1234.jpg";
       expect(storage.upload).toHaveBeenCalledWith(key, expect.any(Buffer), "image/jpeg");
@@ -1300,11 +1309,16 @@ describe("RoutesService", () => {
     it("sets the signature key on a signature attach", async () => {
       prisma.routeRunStop.findFirst.mockResolvedValue({ ...STOP });
 
-      await service.attachPodArtifact("run-1", "stop-1", {
-        kind: "signature",
-        dataUrl: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
-        artifactId: "sig00001",
-      });
+      await service.attachPodArtifact(
+        "run-1",
+        "stop-1",
+        {
+          kind: "signature",
+          dataUrl: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+          artifactId: "sig00001",
+        },
+        operatorPayload,
+      );
 
       expect(prisma.routeRunStop.update).toHaveBeenCalledWith({
         where: { id: "stop-1" },
@@ -1316,11 +1330,16 @@ describe("RoutesService", () => {
       const existingKey = "tenants/test-tenant/pod/stop-1/photo-abcd1234.jpg";
       prisma.routeRunStop.findFirst.mockResolvedValue({ ...STOP, podPhotoUrls: [existingKey] });
 
-      const result = await service.attachPodArtifact("run-1", "stop-1", {
-        kind: "photo",
-        dataUrl: PHOTO_DATA_URL,
-        artifactId: "abcd1234",
-      });
+      const result = await service.attachPodArtifact(
+        "run-1",
+        "stop-1",
+        {
+          kind: "photo",
+          dataUrl: PHOTO_DATA_URL,
+          artifactId: "abcd1234",
+        },
+        operatorPayload,
+      );
 
       expect(storage.upload).not.toHaveBeenCalled();
       expect(prisma.routeRunStop.update).not.toHaveBeenCalled();
@@ -1331,16 +1350,26 @@ describe("RoutesService", () => {
       prisma.routeRunStop.findFirst.mockResolvedValue({ ...STOP });
 
       await expect(
-        service.attachPodArtifact("run-1", "stop-1", {
-          kind: "photo",
-          dataUrl: "file:///device-local.jpg",
-        }),
+        service.attachPodArtifact(
+          "run-1",
+          "stop-1",
+          {
+            kind: "photo",
+            dataUrl: "file:///device-local.jpg",
+          },
+          operatorPayload,
+        ),
       ).rejects.toThrow(BadRequestException);
       await expect(
-        service.attachPodArtifact("run-1", "stop-1", {
-          kind: "photo",
-          dataUrl: "data:text/html,<script>alert(1)</script>",
-        }),
+        service.attachPodArtifact(
+          "run-1",
+          "stop-1",
+          {
+            kind: "photo",
+            dataUrl: "data:text/html,<script>alert(1)</script>",
+          },
+          operatorPayload,
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -1348,7 +1377,12 @@ describe("RoutesService", () => {
       prisma.routeRunStop.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.attachPodArtifact("run-1", "stop-x", { kind: "photo", dataUrl: PHOTO_DATA_URL }),
+        service.attachPodArtifact(
+          "run-1",
+          "stop-x",
+          { kind: "photo", dataUrl: PHOTO_DATA_URL },
+          operatorPayload,
+        ),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -1357,9 +1391,43 @@ describe("RoutesService", () => {
       (compressImage as jest.Mock).mockRejectedValueOnce(new Error("unsupported image"));
 
       await expect(
-        service.attachPodArtifact("run-1", "stop-1", { kind: "photo", dataUrl: PHOTO_DATA_URL }),
+        service.attachPodArtifact(
+          "run-1",
+          "stop-1",
+          { kind: "photo", dataUrl: PHOTO_DATA_URL },
+          operatorPayload,
+        ),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.routeRunStop.update).not.toHaveBeenCalled();
+    });
+
+    // REG-B121 (pin): a photo can still be attached to a stop that is already
+    // COMPLETED — R7's immutability rule is signature-only. Reopen remains the
+    // sanctioned path to re-capture a signature; photos stay appendable.
+    it("REG-B121 (pin): photos stay appendable on a COMPLETED stop", async () => {
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        ...STOP,
+        status: "COMPLETED",
+        signatureUrl: "tenants/test-tenant/pod/stop-1/signature-old-1.jpg",
+      });
+
+      const result = await service.attachPodArtifact(
+        "run-1",
+        "stop-1",
+        {
+          kind: "photo",
+          dataUrl: PHOTO_DATA_URL,
+          artifactId: "new-photo-1",
+        },
+        operatorPayload,
+      );
+
+      const key = "tenants/test-tenant/pod/stop-1/photo-new-photo-1.jpg";
+      expect(prisma.routeRunStop.update).toHaveBeenCalledWith({
+        where: { id: "stop-1" },
+        data: { podPhotoUrls: { push: key } },
+      });
+      expect(result).toEqual({ key, url: `signed:${key}` });
     });
 
     it("getStopPod presigns stored keys, passes data URLs through, and counts legacy strings", async () => {
@@ -1376,7 +1444,7 @@ describe("RoutesService", () => {
         signatureUrl: "native-captured",
       });
 
-      const pod = await service.getStopPod("run-1", "stop-1");
+      const pod = await service.getStopPod("run-1", "stop-1", operatorPayload);
 
       expect(pod.photos).toEqual([
         { url: "signed:tenants/test-tenant/pod/stop-1/photo-a.jpg" },
@@ -1393,7 +1461,7 @@ describe("RoutesService", () => {
         signatureUrl: "tenants/test-tenant/pod/stop-1/signature-x.png",
       });
 
-      const pod = await service.getStopPod("run-1", "stop-1");
+      const pod = await service.getStopPod("run-1", "stop-1", operatorPayload);
 
       expect(pod.signatureUrl).toBe("signed:tenants/test-tenant/pod/stop-1/signature-x.png");
       expect(pod.signatureCaptured).toBe(true);

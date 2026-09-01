@@ -127,3 +127,78 @@ take, because this batch owns them by charter:
 Reuse, do not reinvent: `RoutesService.getRunCashCollections(runId, startedAt?, client?)` already
 returns `{ cashTotal, checkTotal, count }` over CONFIRMED CASH/CHECK payments plus RUN-referenced
 advances, and the COMPLETED backstop's message is the wording to match.
+
+---
+
+## Handed to F11 by F10 (2026-09-01) — order un-pinning on cancel
+
+F10 closed B72's driver-side resurrection hole. What shipped in
+`forbiddenRunTransition` (`dto/update-run-status.dto.ts`) is a **deny-list**:
+`CANCELLED → COMPLETED` and `COMPLETED → SCHEDULED` are refused for everyone, and inside
+`updateRunStatus`'s DRIVER branch a cancelled run is refused outright
+("This run was cancelled — ask your operator to restart it"), so a stale driver device cannot
+replay "start run" on a called-off run.
+
+**CANCELLED is deliberately NOT terminal**, and F11 must not make it so. The first draft of
+F10 did make it terminal; review caught that this strands the run and its orders permanently.
+Verified on `master@df1ef9a3`:
+
+- `deleteRun` (`routes.service.ts:1320`) refuses any run with a recorded `deliveryMutation`
+  ("This run has recorded deliveries; cancel it instead of deleting").
+- Nothing in the CANCELLED branch clears `Order.routeRunId` / `routeRunStopId`, and the
+  dispatch sweep requires `routeRunStopId: null`, so those orders cannot be re-collected onto
+  a new run.
+- The only other escape is **destructive**: `deleteRoute` (`:538`) refuses only
+  `IN_PROGRESS`/`COMPLETED` runs, so a CANCELLED run passes; it then unpins the orders
+  (`:565`), detaches delivery mutations and deletes the run stops — destroying the POD photos,
+  signatures and timestamps of stops that really were delivered. Its own R3 comment states the
+  false premise out loud: "scheduled/cancelled runs, **which recorded nothing**". Filed as
+  **B209**; F11 or a later routes batch owns that fix. F10 recorded it and deliberately did
+  not fix it.
+
+So today an operator un-cancel is the only non-destructive recovery, which is why F10 left it
+legal for operators.
+
+**Requirement for F11:** the CANCEL-path side-effect reset should **unpin the linked orders**
+(clear `routeRunId`/`routeRunStopId` for orders with nothing delivered on that stop) so the
+dispatch sweep can re-collect them onto a new run. That gives a cancelled run a second,
+forward recovery path that does not depend on un-cancelling the original run — and only once
+that exists would making CANCELLED terminal be safe, if a later batch still wants it.
+
+### Reversal completeness — the enumeration F10 had to do (reuse it, don't redo it)
+
+F10's B55 fix removed reopenStop's stock write. The Fable final pass then found a SECOND
+survivor the register never named: `OrderItem.deliveredQty`. The lesson for F11 is the method,
+not the field — **a reversal must enumerate every field the forward operation wrote**, not just
+the one the bug report named. Here is that enumeration, current as of F10 (`master@df1ef9a3`),
+so F11's CANCEL path can start from it:
+
+| Forward write (completeStop / completeWithPayment) | Reversed by reopenStop? |
+| --- | --- |
+| `routeRunStop.update` — status, completedAt, driverNote, podPhotoUrls, signatureUrl, safeDropEnabled, ageVerified, identityVerified, identityType, identityVerifiedAt | YES — full reset, plus the `podHistory` archive (B120) |
+| `deliveryMutation.create` (per delivered line) | YES — `deleteMany` on the stop |
+| `order.updateMany` → status DELIVERED | YES — back to CONFIRMED |
+| `routeRun.update` → COMPLETED + completedAt (RF-016 auto-complete) | YES — back to IN_PROGRESS, completedAt null, settlement reset |
+| `orderItem.update` → **`deliveredQty`** (completeWithPayment only, written whether or not money changed hands) | **WAS NOT — fixed in F10.** `reconcileOrderDraftInvoice(basis:"delivered")` bills `Number(li.deliveredQty ?? 0)`, so leaving it billed the undone delivery |
+| `recordDeliveryPaymentInTx` → InvoicePayment / invoice status / AdvancePayment | **NOT reversed BY DESIGN** — F10's B54 guard *refuses* the reopen while confirmed money stands, rather than unwinding money. Refusal and reversal are different strategies; be explicit about which one each write gets |
+
+⚠️ **Coupling F11 must know about:** it is precisely the **no-confirmed-money** case that B54
+permits, and that same case is what reached the `deliveredQty` over-billing. A fix can open the
+path to a latent bug — B54's guard is what made the B55-adjacent hole reachable. Expect the same
+shape when CANCEL starts resetting side effects.
+
+### Routes/invoicing caveat for the CANCEL/settlement work
+
+The actionable set is `{completeStop, completeWithPayment}`. **`completeWithPayment` is only
+conditionally covered**: it ensures an invoice exists solely when `dto.payment.amount > 0`, and
+`payment` is `@IsOptional()` — so whether a delivery gets invoiced currently depends on whether
+the driver happened to collect money at the door.
+
+- **Extract a helper; do NOT route through `changeStatus`.** `changeStatus` opens its own
+  transactions, re-runs role gates and the transition matrix, and fires notifications; nesting it
+  inside `completeStop`'s open transaction re-runs guards against half-applied state.
+- ⚠️ **Do not copy F07's ConflictException retry loop into an open transaction.** That loop is
+  only safe because each attempt is a **fresh** transaction. Inside an already-open tx a failed
+  statement can abort the whole transaction, so the helper cannot inherit that shape.
+
+(Also recorded in the bug register under B210, so this survives the fix card.)
