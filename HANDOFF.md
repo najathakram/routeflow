@@ -33,8 +33,26 @@ batch with an e2e (no web unit runner). (2) **B99's repair flight is owed post-d
 > `deliveries[].productId`, the DTO never declared it, and `forbidNonWhitelisted` 400'd _every_
 > stop completion.
 >
-> **State — 28 of 193 terminal after F17; F05 adds 5 (4 immediately, B167 on deploy).**
-> Complete: F00+F01 enablement, F02 (9), F04 (3), F30 (12), F03 (9), F17 (4), **F05 (5)**.
+> **State (verified against the ledger at this commit, 2026-09-01): 47 of 193 closed — 45 `done`
+> + 2 `already-fixed` LIVE (24.4%), plus B167 held at `proven-pending-deploy`. 145 queued across
+> 22 batches, 11 Criticals still open** (B46 B48 B52 B53 B54 B55 B56 B58 B59 B128 B129).
+> Complete: F00+F01 enablement, F02 (9), F03 (9), F04 (3), F05 (5), **F06 (6)**, F17 (4), F30 (12).
+>
+> ⚠️ **B167 is NOT discharged — its post-deploy e2e is RED and the cause is the spec, not the
+> product.** Run 33478558164: `23-run-settlement-note.spec.ts` fails strict mode because
+> `getByRole("heading", {name: "Settlement"})` matched 3 elements — the spec's own fixture route
+> was named `E2E B167 Settlement <suffix>`, so a substring name match selects the fixture's own
+> `<h1>`, once per fixture a failed run leaked. **Fixed in this PR** with `exact: true` plus a
+> comment saying why it is load-bearing, AND the fixture route renamed to `E2E B167 Run <suffix>`
+> so no leaked fixture can ever match again (belt and braces — the rename came from closed #575).
+> B167 stays `proven-pending-deploy` until a post-deploy run is actually green — do not discharge
+> it on the strength of the fix alone.
+>
+> **This is the third instance of one pattern: a spec broken by data it or a sibling spec
+> created** (OP-09c/OP-11b poisoned by spec 21's undeletable B24 fixtures; two specs shipped with
+> no `playwright.config.ts` project entry; now this). When writing a T2 spec: never select on a
+> loose name your own fixtures can match, never index into a list fixtures can enter, and add the
+> `projects[]` entry in the same PR.
 >
 > ## Next up
 >

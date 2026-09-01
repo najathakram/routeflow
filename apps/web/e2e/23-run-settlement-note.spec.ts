@@ -72,7 +72,11 @@ test.describe("Run settlement visibility (F05 / B167)", () => {
     const api = apiBase(page.url());
 
     const suffix = Date.now();
-    const routeName = `E2E B167 Settlement ${suffix}`;
+    // Deliberately does NOT contain "Settlement": this name renders as an <h1>
+    // in both the shell banner and #main-content, and any substring-matching
+    // heading assertion on the Settlement card would collide with it (it did —
+    // see the exact:true note below).
+    const routeName = `E2E B167 Run ${suffix}`;
     // Two distinct unique tokens so the two halves of R9 cannot satisfy each
     // other: a page that rendered ONLY the legacy notes, or ONLY the new
     // settlement note, fails on the other assertion instead of passing on a
@@ -163,7 +167,16 @@ test.describe("Run settlement visibility (F05 / B167)", () => {
       page.locator("#main-content").getByRole("heading", { name: routeName }),
     ).toBeVisible({ timeout: 20_000 });
 
-    const settlementHeading = page.getByRole("heading", { name: "Settlement" });
+    // ⚠️ exact:true is load-bearing. Playwright's `name` match is substring-based,
+    // and this spec's fixture route was originally called "E2E B167 Settlement
+    // <suffix>", so a loose match also selected that h1 — plus one more for every
+    // fixture a failed run leaked, which is how this resolved to 3 elements and
+    // failed strict mode post-deploy. The fixture is renamed to keep "Settlement"
+    // out of it (belt) and this stays exact (braces). Same class as OP-09c/OP-11b:
+    // a spec must not be broken by the fixtures it creates — including ones leaked
+    // by earlier failed runs, which the rename alone would not cover. The Card
+    // title is literally "Settlement".
+    const settlementHeading = page.getByRole("heading", { name: "Settlement", exact: true });
     await expect(settlementHeading).toBeVisible({ timeout: 15_000 });
     // Card renders its `title` as an <h3> sibling of the content that follows it
     // in the same wrapper div (packages/ui/src/web/Card.tsx) — the direct parent
