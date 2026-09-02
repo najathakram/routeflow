@@ -28,7 +28,8 @@
 // keep this list in sync with it, not the other way round):
 //   node scripts/campaign/bugs.mjs import                     # seed the catalogue from the register HTML (owner-machine only)
 //   node scripts/campaign/bugs.mjs file "<title>" --location "<where>" --severity high|medium|low|critical [--symptom "..."] [--batch F##] [--tier T1|T2|T3] [--files "a.ts b.ts"]
-//   node scripts/campaign/bugs.mjs next [--json]               # the next batch an agent may take
+//   node scripts/campaign/bugs.mjs next [--json] [--no-claims]  # the next batch an agent may take (the head of wave 1)
+//   node scripts/campaign/bugs.mjs waves [--cap N] [--hub-threshold N] [--json] [--no-claims]  # the parallel schedule
 //   node scripts/campaign/bugs.mjs list [--open] [--sensitive] [--batch F09]
 //   node scripts/campaign/bugs.mjs stats
 //   node scripts/campaign/bugs.mjs expand                      # create/refresh one record per catalogue row
@@ -339,54 +340,267 @@ cmds.file = (args) => {
   }
 };
 
-// The dispatcher's selector. Returns the next BATCH an agent may take, because a
-// batch — not a single bug — is what the board card, the pipeline folder and the
-// PR are all scoped to.
-cmds.next = (args) => {
+// ── selection: what is workable, what blocks it, and in what order ────────
+// A batch is workable when it holds rows nobody is on. `in-flight` is the local
+// signal (written by `claim` below) and a live team.mjs claim comment is the
+// authoritative one; the local signal exists so the exclusion survives a lost
+// GitHub read, which is the difference between "two agents got the same batch"
+// and "the dispatcher waited".
+const WORKABLE = new Set(["queued", "regressed"]);
+// The standing agent cap (feedback_cap_background_agents_at_four) — a wave that
+// proposes more parallel batches than the fleet can run is not a plan.
+const AGENT_CAP = 4;
+
+const boardJson = () =>
+  existsSync(BOARD()) ? JSON.parse(readFileSync(BOARD(), "utf8")) : { batches: {} };
+
+// Mirrors scripts/team/team.mjs's claim protocol — marker, comment grammar and
+// lease. team.mjs is a CLI, not a module, so there is nothing to import; if the
+// protocol changes there, it must change here in the same commit. A failure to
+// read (offline, no gh, no auth) NEVER pretends the batch is free: it degrades
+// to the local `in-flight` signal and says so.
+const TEAM_MARKER = "<!--rf:agent-->";
+function liveClaim(issue) {
+  if (!issue) return null;
+  let bodies;
+  try {
+    const out = execSync(
+      `gh api "repos/{owner}/{repo}/issues/${issue}/comments?per_page=100" --jq ".[].body"`,
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
+    );
+    // `--jq .[].body` flattens every comment to lines, so a protocol line is
+    // still line-anchored. Keep ALL lines: the protocol scan wants the anchored
+    // ones, the informal scan below wants the prose.
+    bodies = out.split("\n");
+  } catch (e) {
+    return { unknown: true, why: firstLine(e) };
+  }
+  const isProtocol = (l) => /^\s*(claim|release):\s*id=/.test(l);
+  const released = new Set();
+  for (const b of bodies.filter(isProtocol)) {
+    const m = /release:\s*id=(\S+)/.exec(b);
+    if (m) released.add(m[1]);
+  }
+  const now = new Date();
+  const live = bodies
+    .filter(isProtocol)
+    .map((b) => /claim:\s*id=(\S+)\s+lease-until=(\S+)/.exec(b))
+    .filter(Boolean)
+    .map((m) => ({ id: m[1], leaseUntil: new Date(m[2]) }))
+    .filter((c) => !released.has(c.id) && c.leaseUntil > now);
+  if (live.length) return live[0];
+  // An INFORMAL claim — a session that wrote "Claimed for planning …" in prose
+  // instead of taking a lease — is not a lease and must not be treated as one,
+  // but it is exactly how the F11 collision happened (a live session held
+  // fix/F11-run-cancel-skip while `next` proposed F11). Surface it; the human
+  // or the lead decides. Never guess a lock from prose.
+  const informal = bodies.find((b) => !isProtocol(b) && /\bclaim(ed|ing)\b/i.test(b));
+  return informal ? { informal: true, why: informal.slice(0, 140) } : null;
+}
+
+// Every batch that holds workable rows, with everything the selector needs to
+// rank it and everything the operator needs to see why it was skipped.
+function batchIndex() {
   const catalogue = readCatalogue();
   const state = readState();
-  const board = existsSync(BOARD()) ? JSON.parse(readFileSync(BOARD(), "utf8")) : { batches: {} };
+  const board = boardJson();
   const byId = new Map(catalogue.map((r) => [r.id, r]));
-
   const batches = new Map();
+
   for (const [id, row] of state) {
-    if (row.state !== "queued") continue;
-    const b = batches.get(row.batch) ?? {
-      batch: row.batch,
-      bugs: [],
-      sensitive: [],
-      issue: board.batches?.[row.batch] ?? null,
-    };
+    if (!row.batch) continue;
+    if (!batches.has(row.batch))
+      batches.set(row.batch, {
+        batch: row.batch,
+        bugs: [],
+        sensitive: [],
+        inFlight: [],
+        issue: board.batches?.[row.batch] ?? null,
+      });
+    const b = batches.get(row.batch);
+    if (row.state === "in-flight") b.inFlight.push(id);
+    if (!WORKABLE.has(row.state)) continue;
     const bug = byId.get(id) ?? { id, title: "(not in catalogue)", location: "", severity: "none" };
     b.bugs.push(bug);
     if (bug.sensitive ?? classify(bug).sensitive) b.sensitive.push(bug);
-    batches.set(row.batch, b);
+  }
+  for (const [k, b] of batches) if (!b.bugs.length && !b.inFlight.length) batches.delete(k);
+  return { batches, state };
+}
+
+const worstRank = (b) => Math.min(...b.bugs.map((x) => SEVERITY_RANK[x.severity] ?? 4), 4);
+const worstSeverity = (b) =>
+  Object.keys(SEVERITY_RANK).find((k) => SEVERITY_RANK[k] === worstRank(b)) ?? "none";
+
+// Deterministic: worst severity first, then the bigger batch, then the name.
+// Never a Map/readdir order — two agents ranking the same ledger must agree.
+const rankBatches = (list) =>
+  [...list].sort(
+    (a, b) =>
+      worstRank(a) - worstRank(b) ||
+      b.bugs.length - a.bugs.length ||
+      String(a.batch).localeCompare(String(b.batch)),
+  );
+
+// Batch-level hard conflicts between OPEN bugs: two batches that share a
+// non-hub file must never run in parallel. Hub files stay a review signal, not
+// a conflict — see buildGraph's warning.
+function batchConflicts(hubThreshold) {
+  const g = buildGraph(hubThreshold);
+  const open = (id) => WORKABLE.has(g.state.get(id)?.state);
+  const conflicts = new Map();
+  const link = (a, b, files) => {
+    if (!conflicts.has(a)) conflicts.set(a, new Map());
+    const m = conflicts.get(a);
+    if (!m.has(b)) m.set(b, new Set());
+    files.forEach((f) => m.get(b).add(f));
+  };
+  for (const id of g.bugs) {
+    if (!open(id)) continue;
+    for (const [other, e] of g.edges.get(id)) {
+      if (!open(other) || !e.hard.length) continue;
+      const a = g.batchOf.get(id);
+      const b = g.batchOf.get(other);
+      if (!a || !b || a === b) continue;
+      link(a, b, e.hard);
+      link(b, a, e.hard);
+    }
+  }
+  return conflicts;
+}
+
+// Greedy colouring, capped at the agent limit. Greedy is the right tool here:
+// the graph is tiny, the answer must be stable between runs and explainable to
+// a human, and an optimal colouring would still be re-computed the moment a
+// batch is claimed. Order is the ranking above, so the worst severity gets
+// wave 1 and nothing in a wave shares a non-hub file with anything else in it.
+function computeWaves(ranked, conflicts, cap = AGENT_CAP) {
+  const waveOf = new Map();
+  const sizes = [];
+  for (const b of ranked) {
+    const neighbours = [...(conflicts.get(b.batch)?.keys() ?? [])];
+    let w = 0;
+    while (
+      (sizes[w] ?? 0) >= cap ||
+      neighbours.some((o) => waveOf.get(o) === w) // a hard conflict already in this wave
+    )
+      w++;
+    waveOf.set(b.batch, w);
+    sizes[w] = (sizes[w] ?? 0) + 1;
+  }
+  const waves = [];
+  for (const b of ranked) {
+    const w = waveOf.get(b.batch);
+    (waves[w] ??= []).push(b);
+  }
+  return waves.map((w) => w ?? []);
+}
+
+// The one selector both `next` and `waves` run on, so they can never disagree
+// about which batch is next — the review found `next` proposing F11 while
+// `deps` reported F11 hard-conflicting with three other open batches.
+function selectBatches(args) {
+  const hubThresholdRaw = flag(args, "hub-threshold", HUB_DEFAULT);
+  const hubThreshold = Number(hubThresholdRaw);
+  if (!Number.isFinite(hubThreshold) || hubThreshold < 1)
+    fail(`--hub-threshold must be a positive integer (got "${hubThresholdRaw}")`);
+  const capRaw = flag(args, "cap", AGENT_CAP);
+  const cap = Number(capRaw);
+  if (!Number.isInteger(cap) || cap < 1) fail(`--cap must be a positive integer (got "${capRaw}")`);
+
+  const { batches } = batchIndex();
+  const skipped = [];
+  const parked = [];
+  const candidates = [];
+
+  for (const b of rankBatches(batches.values())) {
+    if (b.sensitive.length) {
+      parked.push(b);
+      continue;
+    }
+    if (!b.bugs.length) {
+      skipped.push({ ...b, why: `no workable rows (${b.inFlight.length} in-flight)` });
+      continue;
+    }
+    if (b.inFlight.length) {
+      skipped.push({
+        ...b,
+        why: `${b.inFlight.length} row(s) in-flight: ${b.inFlight.join(", ")}`,
+      });
+      continue;
+    }
+    candidates.push(b);
   }
 
-  const worst = (b) => Math.min(...b.bugs.map((x) => SEVERITY_RANK[x.severity] ?? 4));
-  const ranked = [...batches.values()].sort(
-    (a, b) => worst(a) - worst(b) || String(a.batch ?? "").localeCompare(String(b.batch ?? "")),
-  );
-  const eligible = ranked.filter((b) => b.sensitive.length === 0);
-  const parked = ranked.filter((b) => b.sensitive.length > 0);
+  // The claim read is per candidate and network-bound, so it runs LAST and only
+  // over batches that survived every free check.
+  if (!args.includes("--no-claims")) {
+    const still = [];
+    for (const b of candidates) {
+      const c = liveClaim(b.issue);
+      if (c?.unknown) {
+        // Unreadable is not free: keep the batch, but say the check did not run.
+        b.claimCheck = `claim check unavailable (${c.why}) — relying on in-flight rows only`;
+        still.push(b);
+      } else if (c?.informal) {
+        b.claimCheck = `issue #${b.issue} carries an informal claim (no team.mjs lease) — VERIFY before taking it: "${c.why}"`;
+        still.push(b);
+      } else if (c) {
+        skipped.push({ ...b, why: `claimed by ${c.id} until ${c.leaseUntil.toISOString()}` });
+      } else {
+        still.push(b);
+      }
+    }
+    candidates.length = 0;
+    candidates.push(...still);
+  }
+
+  const waves = computeWaves(candidates, batchConflicts(hubThreshold), cap);
+  return { waves, parked, skipped, cap, hubThreshold };
+}
+
+const claimHint = (b) => `node scripts/team/team.mjs claim ${b.issue ?? "<issue#>"}`;
+
+// The dispatcher's selector. Returns the next BATCH an agent may take, because a
+// batch — not a single bug — is what the board card, the pipeline folder and the
+// PR are all scoped to. It returns the head of WAVE 1, not the head of a
+// severity sort: the top of a severity sort routinely hard-conflicts with the
+// batch someone else is already in.
+cmds.next = (args) => {
+  const { waves, parked, skipped } = selectBatches(args);
+  const wave1 = waves[0] ?? [];
 
   if (args.includes("--json")) {
-    console.log(JSON.stringify({ eligible, parked }, null, 2));
+    console.log(JSON.stringify({ eligible: wave1, waves, parked, skipped }, null, 2));
     return;
   }
 
-  if (!eligible.length) {
-    console.log("No batch is agent-safe right now — every queued batch trips the carve-out.");
+  if (!wave1.length) {
+    console.log(
+      "No batch is available right now — every batch with workable rows is parked by the " +
+        "carve-out, claimed, or in-flight.",
+    );
   } else {
-    const top = eligible[0];
-    const worstSev = top.bugs
-      .map((b) => b.severity)
-      .sort((a, b) => (SEVERITY_RANK[a] ?? 4) - (SEVERITY_RANK[b] ?? 4))[0];
+    const top = wave1[0];
     console.log(`next agent-safe batch: ${top.batch}${top.issue ? ` (issue #${top.issue})` : ""}`);
-    console.log(`  ${top.bugs.length} queued bug(s), worst severity ${worstSev}`);
+    console.log(`  ${top.bugs.length} workable bug(s), worst severity ${worstSeverity(top)}`);
     for (const b of top.bugs)
       console.log(`    ${b.id.padEnd(5)} ${String(b.severity).padEnd(8)} ${b.title.slice(0, 76)}`);
-    console.log(`\n  claim it:  node scripts/team/team.mjs claim ${top.issue ?? "<issue#>"}`);
+    if (top.claimCheck) console.log(`  ⚠ ${top.claimCheck}`);
+    if (wave1.length > 1)
+      console.log(
+        `  safe to run alongside it (same wave, no shared non-hub file): ` +
+          wave1
+            .slice(1)
+            .map((b) => b.batch)
+            .join(" "),
+      );
+    console.log(`\n  claim it:  ${claimHint(top)}`);
+  }
+
+  if (skipped.length) {
+    console.log(`\nskipped (${skipped.length}):`);
+    for (const b of skipped) console.log(`    ${String(b.batch).padEnd(4)}  ${b.why}`);
   }
 
   if (parked.length) {
@@ -400,6 +614,41 @@ cmds.next = (args) => {
       );
     }
   }
+};
+
+// The schedule `deps` stopped one step short of. `deps` reports which batches
+// conflict; this answers the question that was actually being asked — what can
+// four agents run RIGHT NOW, and what has to wait for them.
+cmds.waves = (args) => {
+  const { waves, parked, skipped, cap, hubThreshold } = selectBatches(args);
+  if (args.includes("--json")) {
+    console.log(JSON.stringify({ waves, parked, skipped, cap, hubThreshold }, null, 2));
+    return;
+  }
+  console.log(
+    `Waves — greedy colouring of the batch hard-conflict graph (hub threshold ${hubThreshold}), ` +
+      `capped at ${cap} concurrent batches, worst severity first.\n`,
+  );
+  if (!waves.length) console.log("  nothing available to schedule.");
+  waves.forEach((w, i) => {
+    console.log(`wave ${i + 1}`);
+    for (const b of w) {
+      console.log(
+        `    ${b.batch.padEnd(4)} ${String(b.bugs.length).padStart(2)} bug(s)  ` +
+          `worst ${worstSeverity(b).padEnd(8)} ${b.issue ? `#${b.issue}` : "  —  "}  ${claimHint(b)}`,
+      );
+      if (b.claimCheck) console.log(`         ⚠ ${b.claimCheck}`);
+    }
+  });
+  if (skipped.length) {
+    console.log(`\nnot scheduled (${skipped.length}):`);
+    for (const b of skipped) console.log(`    ${String(b.batch).padEnd(4)}  ${b.why}`);
+  }
+  if (parked.length)
+    console.log(
+      `\nparked by the carve-out (plan only, never fixed unattended): ` +
+        parked.map((b) => b.batch).join(" "),
+    );
 };
 
 cmds.list = (args) => {
@@ -1524,6 +1773,74 @@ cmds["self-test"] = () => {
     uniqueHistoryKey(once, "k1"),
     "k1#2",
   );
+
+  // Wave colouring: pure, so it is asserted directly rather than through a
+  // network-bound `next`. Two batches sharing a non-hub file must NEVER be
+  // scheduled together, and no wave may exceed the standing agent cap.
+  {
+    const mk = (batch, sev) => ({
+      batch,
+      bugs: [{ id: "B1", severity: sev, title: "x" }],
+      sensitive: [],
+      inFlight: [],
+      issue: null,
+    });
+    const ranked = rankBatches([mk("F02", "low"), mk("F01", "critical"), mk("F03", "high")]);
+    check(
+      "waves: ranked worst-severity-first, deterministic",
+      ranked.map((b) => b.batch),
+      ["F01", "F03", "F02"],
+    );
+    const conflicts = new Map([
+      ["F01", new Map([["F03", new Set(["apps/api/src/a.ts"])]])],
+      ["F03", new Map([["F01", new Set(["apps/api/src/a.ts"])]])],
+    ]);
+    const waves = computeWaves(ranked, conflicts, 4);
+    check(
+      "waves: a hard conflict is pushed out of the wave, not into it",
+      waves.map((w) => w.map((b) => b.batch)),
+      [["F01", "F02"], ["F03"]],
+    );
+    const five = ["F01", "F02", "F03", "F04", "F05"].map((b) => mk(b, "high"));
+    check(
+      "waves: never schedules more than the agent cap at once",
+      computeWaves(rankBatches(five), new Map(), 4).map((w) => w.length),
+      [4, 1],
+    );
+  }
+
+  // in-flight is the local, offline-safe half of the claim exclusion: a row
+  // someone is on must not be offered to a second agent.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file([
+        "in-flight fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+      ]);
+      const before = batchIndex().batches.get("F01");
+      check("selection: a queued row is workable", before.bugs.length, 1);
+      upsertLedgerRow("F01", { ...readShard("F01").rows[0], state: "in-flight" });
+      const after = batchIndex().batches.get("F01");
+      check("selection: an in-flight row is not workable", after.bugs.length, 0);
+      check(
+        "selection: in-flight ids are named, so `next` can say WHY it skipped",
+        after.inFlight,
+        ["B1"],
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
 
   // The commit scanner: a `(F##)` subject must fan out to every id in that
   // shard (the house convention names the batch, not the bug), and a bare
