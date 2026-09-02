@@ -415,7 +415,12 @@ const boardJson = () =>
 // to the local `in-flight` signal and says so.
 const TEAM_MARKER = "<!--rf:agent-->";
 function liveClaim(issue) {
-  if (!issue) return null;
+  // `null` here used to be the SAME return value as "checked, and free" —
+  // indistinguishable at the call site from an actual clean check. A batch
+  // with no board.json issue at all silently passed as free and was then
+  // proposed with an uncompletable `claim <issue#>` instruction. Route it
+  // through the same "unknown" branch a failed network read already uses.
+  if (!issue) return { unknown: true, why: "no board issue for this batch" };
   let bodies;
   try {
     const out = execSync(
@@ -593,8 +598,14 @@ function selectBatches(args) {
     for (const b of candidates) {
       const c = liveClaim(b.issue);
       if (c?.unknown) {
-        // Unreadable is not free: keep the batch, but say the check did not run.
-        b.claimCheck = `claim check unavailable (${c.why}) — relying on in-flight rows only`;
+        // Unreadable is not free: keep the batch, but say the check did not
+        // run. A missing board.json issue is a distinct, sharper case than a
+        // transient read failure — the check will NEVER run for this batch
+        // until one exists, not just this once.
+        b.claimCheck = b.issue
+          ? `claim check unavailable (${c.why}) — relying on in-flight rows only`
+          : `no board card for ${b.batch} — no lease could be checked; add its issue number to ` +
+            `.claude/campaign/board.json once one exists, or rely on in-flight rows only`;
         still.push(b);
       } else if (c?.informal) {
         b.claimCheck = `issue #${b.issue} carries an informal claim (no team.mjs lease) — VERIFY before taking it: "${c.why}"`;
@@ -2331,6 +2342,52 @@ cmds["self-test"] = () => {
         "next --json: cap/hubThreshold match the defaults waves --json exposes",
         parsed.cap,
         AGENT_CAP,
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // liveClaim: a batch with NO board.json issue at all must be treated as
+  // "unknown", never silently as "checked, and free" — the two used to
+  // share the same `null` return, so such a batch was proposed with an
+  // uncompletable `claim <issue#>` instruction. No network involved: `!issue`
+  // returns synchronously before any gh call.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file([
+        "no-issue fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T1",
+      ]);
+      // No board.json at all — b.issue is undefined for every batch.
+      const { waves, skipped } = selectBatches([]);
+      const top = waves[0]?.[0];
+      check(
+        "liveClaim: a batch with no board issue is still offered, not silently skipped",
+        top?.batch,
+        "F01",
+      );
+      check(
+        "liveClaim: the claimCheck message names the missing board card, not a generic failure",
+        top?.claimCheck?.includes("no board card for F01"),
+        true,
+      );
+      check(
+        "liveClaim: it is never mistaken for a live claim (skipped list stays empty)",
+        skipped.length,
+        0,
       );
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
