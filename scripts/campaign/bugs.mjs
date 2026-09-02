@@ -27,7 +27,7 @@
 // USAGE — every implemented command (`cmds.*` below is the source of truth;
 // keep this list in sync with it, not the other way round):
 //   node scripts/campaign/bugs.mjs import                     # seed the catalogue from the register HTML (owner-machine only)
-//   node scripts/campaign/bugs.mjs file "<title>" --location "<where>" --severity high|medium|low|critical [--symptom "..."] [--batch F##] [--tier T1|T2|T3]
+//   node scripts/campaign/bugs.mjs file "<title>" --location "<where>" --severity high|medium|low|critical [--symptom "..."] [--batch F##] [--tier T1|T2|T3] [--files "a.ts b.ts"]
 //   node scripts/campaign/bugs.mjs next [--json]               # the next batch an agent may take
 //   node scripts/campaign/bugs.mjs list [--open] [--sensitive] [--batch F09]
 //   node scripts/campaign/bugs.mjs stats
@@ -249,10 +249,11 @@ cmds.file = (args) => {
   const title = args[0];
   if (!title || title.startsWith("--"))
     fail(
-      'usage: file "<title>" --location "<where>" --severity critical|high|medium|low [--symptom "..."] [--batch F##]',
+      'usage: file "<title>" --location "<where>" --severity critical|high|medium|low [--symptom "..."] [--batch F##] [--tier T1|T2|T3] [--files "a.ts b.ts"]',
     );
   const location = flag(args, "location");
   const severity = flag(args, "severity", "medium");
+  const filesFlag = flag(args, "files");
   if (!location) fail("--location is required: an agent cannot route a bug it cannot place");
   if (!(severity in SEVERITY_RANK))
     fail(`--severity must be one of ${Object.keys(SEVERITY_RANK).join("|")}`);
@@ -287,14 +288,15 @@ cmds.file = (args) => {
   else console.log("  agent-safe: yes");
   if (!bug.batch) console.log("  no batch yet — run @tech-lead to batch it, or pass --batch F##.");
 
-  // Filing a bug and leaving it without a record is exactly the drift this
-  // registry exists to prevent, so create it in the same breath. expand is
-  // idempotent and never touches an existing narrative.
-  cmds.expand();
-  console.log(`  record   : ${recordPath(bug.id)}`);
-
   // A bug with no ledger row is invisible to campaign-check and to `next`, so
   // filing must create it. Doing this by hand is how B211 first landed.
+  //
+  // MUST run BEFORE expand(): expand derives the record's front matter (and
+  // its body header line) from frontFor(bug, st), and `st` is this ledger
+  // row. Calling expand first used to bake in "uncampaigned"/no-tier
+  // permanently into the body until the next unrelated sync happened to
+  // touch this bug — the ledger said "queued" from the first moment, the
+  // record disagreed with its own ledger row from the first moment too.
   if (bug.batch) {
     const tier = flag(args, "tier", "T1");
     const { what, row } = upsertLedgerRow(bug.batch, {
@@ -316,6 +318,24 @@ cmds.file = (args) => {
     console.log(
       "  triage   : an unbatched bug is invisible to next/status/deps — run `triage` to list every bug in this state.",
     );
+  }
+
+  // Filing a bug and leaving it without a record is exactly the drift this
+  // registry exists to prevent, so create it in the same breath. expand is
+  // idempotent and never touches an existing narrative.
+  cmds.expand();
+  console.log(`  record   : ${recordPath(bug.id)}`);
+
+  // A filed bug's front matter otherwise never carries `files` (only `enrich`
+  // writes it, and only for register imports) — with no files, `deps` sees
+  // zero edges for it and the dependency graph can only ever get less
+  // complete as bugs get filed rather than imported.
+  if (filesFlag) {
+    const rec = readRecord(bug.id);
+    if (rec) {
+      writeRecord(bug.id, { ...rec.front, files: filesFlag }, rec.body);
+      console.log(`  files    : ${filesFlag}`);
+    }
   }
 };
 
@@ -345,7 +365,7 @@ cmds.next = (args) => {
 
   const worst = (b) => Math.min(...b.bugs.map((x) => SEVERITY_RANK[x.severity] ?? 4));
   const ranked = [...batches.values()].sort(
-    (a, b) => worst(a) - worst(b) || a.batch.localeCompare(b.batch),
+    (a, b) => worst(a) - worst(b) || String(a.batch ?? "").localeCompare(String(b.batch ?? "")),
   );
   const eligible = ranked.filter((b) => b.sensitive.length === 0);
   const parked = ranked.filter((b) => b.sensitive.length > 0);
@@ -442,10 +462,20 @@ const SECTIONS = [
 const UNANALYSED = "_Not yet analysed._";
 
 function parseRecord(text) {
-  const m = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(text);
-  if (!m) return { front: {}, body: text };
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(text);
+  if (!m) {
+    // A file that opens with the delimiter but doesn't match at all (was: any
+    // CRLF-terminated record, since the old regex was LF-only) used to be
+    // returned whole as the body, and a subsequent write baked a SECOND
+    // front-matter block on top of the first rather than reporting anything.
+    if (/^---\r?\n/.test(text))
+      fail(
+        "record opens with '---' but does not parse as front matter + body — inspect it by hand",
+      );
+    return { front: {}, body: text };
+  }
   const front = {};
-  for (const line of m[1].split("\n")) {
+  for (const line of m[1].split(/\r?\n/)) {
     const kv = /^([A-Za-z][\w]*):\s*(.*)$/.exec(line);
     if (kv) front[kv[1]] = kv[2] === "" ? null : kv[2];
   }
@@ -788,9 +818,13 @@ cmds.brief = (args) => {
   const target = /^B/.test(typed) ? resolveId(typed) : typed;
 
   const board = existsSync(BOARD()) ? JSON.parse(readFileSync(BOARD(), "utf8")) : { batches: {} };
+  // A B-id with no ledger row used to slip past the length guard below (`ids`
+  // is a length-1 array by construction for a B-target) and print `# null`.
+  const batch = /^B/.test(target) ? findShardOf(target) : target;
+  if (/^B/.test(target) && !batch)
+    fail(`${target} is in no ledger shard — file it with a --batch first`);
   const ids = /^B/.test(target) ? [target] : readShard(target).rows.map((r) => r.id);
   if (!ids.length) fail(`no ledger rows for ${target}`);
-  const batch = /^B/.test(target) ? findShardOf(target) : target;
 
   const state = readState();
   const out = [];
@@ -1071,6 +1105,18 @@ cmds["self-test"] = () => {
     closed: null,
   });
 
+  // A CRLF-terminated record must parse the same as an LF one, not get its
+  // whole front-matter block silently swallowed into the body.
+  const crlf = "---\r\nid: B9\r\ntitle: x\r\n---\r\n\r\n# B9\r\n\r\n## History\r\n";
+  check(
+    "parseRecord: CRLF front matter parses (not swallowed into body)",
+    parseRecord(crlf).front,
+    {
+      id: "B9",
+      title: "x",
+    },
+  );
+
   // note() and enrich() text must survive $-patterns verbatim, verified by
   // reading the file back after calling the REAL commands (against a
   // throwaway BUGS_ROOT/BUGS_REGISTER) — never a hand copy of their regex.
@@ -1177,6 +1223,50 @@ cmds["self-test"] = () => {
       else process.env.BUGS_ROOT = prevRoot;
       if (prevRegister === undefined) delete process.env.BUGS_REGISTER;
       else process.env.BUGS_REGISTER = prevRegister;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // cmds.render must escape severity/id into HTML, and inline() must not
+  // mangle a snake_case identifier inside a code span. Exercise the REAL
+  // command against a throwaway BUGS_ROOT/BUGS_RENDER_OUT, never the real
+  // 211-bug dashboard.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const renderOut = join(tmp, "render.html");
+    const prevRoot = process.env.BUGS_ROOT;
+    const prevRenderOut = process.env.BUGS_RENDER_OUT;
+    process.env.BUGS_ROOT = tmp;
+    process.env.BUGS_RENDER_OUT = renderOut;
+    try {
+      cmds.file([
+        "Render fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+      ]);
+      cmds.note([
+        "B1",
+        "see `order_items_tenant_id` and **bold text** here",
+        "--section",
+        "Summary",
+      ]);
+      cmds.render([]);
+      const html = readFileSync(renderOut, "utf8");
+      check(
+        "render: inline() does not mangle snake_case inside a code span",
+        html.includes("<code>order_items_tenant_id</code>"),
+        true,
+      );
+      check("render: ** emphasis still renders", html.includes("<strong>bold text</strong>"), true);
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      if (prevRenderOut === undefined) delete process.env.BUGS_RENDER_OUT;
+      else process.env.BUGS_RENDER_OUT = prevRenderOut;
       rmSync(tmp, { recursive: true, force: true });
     }
   }
@@ -1524,7 +1614,13 @@ function buildGraph(hubThreshold) {
 }
 
 cmds.deps = (args) => {
-  const hubThreshold = Number(flag(args, "hub-threshold", HUB_DEFAULT));
+  const hubThresholdRaw = flag(args, "hub-threshold", HUB_DEFAULT);
+  const hubThreshold = Number(hubThresholdRaw);
+  // A bad or missing value used to become NaN, silently inverting the answer:
+  // `n >= NaN` is always false, so the hub set went empty and every shared
+  // file became a hard conflict instead.
+  if (!Number.isFinite(hubThreshold) || hubThreshold < 1)
+    fail(`--hub-threshold must be a positive integer (got "${hubThresholdRaw}")`);
   const g = buildGraph(hubThreshold);
   const bugFlag = flag(args, "bug");
   const one = bugFlag ? resolveId(bugFlag.toUpperCase()) : "";
@@ -1626,7 +1722,11 @@ cmds.deps = (args) => {
 // routeflow-bug-register.html. `enrich` still parses the original's markup as
 // the historical import source; overwriting it would destroy that and break
 // re-import. Both live in gitignored local-assets/.
-const RENDER_OUT = "local-assets/docs/routeflow-bug-registry.html";
+// Overridable via BUGS_RENDER_OUT so the self-test can exercise the real
+// cmds.render without clobbering the real 211-bug dashboard with a 1-bug
+// fixture render.
+const RENDER_OUT = () =>
+  process.env.BUGS_RENDER_OUT || "local-assets/docs/routeflow-bug-registry.html";
 
 const esc = (s) =>
   String(s ?? "")
@@ -1661,12 +1761,25 @@ function mdToHtml(md) {
   return out.join("\n");
 }
 
-const inline = (s) =>
-  esc(s)
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
+// Code spans are pulled out to placeholders BEFORE the emphasis rule runs, and
+// restored last -- the emphasis regex used to run over the whole string AFTER
+// code-span replacement, so it fired INSIDE <code> too: records are full of
+// snake_case DB columns/paths, and a code span like order_items_tenant_id
+// rendered with the middle word wrapped in <em> inside the code tag.
+const CODE_MARK = "CODE";
+const inline = (s) => {
+  const codeSpans = [];
+  const withPlaceholders = esc(s).replace(/`([^`]+)`/g, (_m, code) => {
+    codeSpans.push(code);
+    return `${CODE_MARK}${codeSpans.length - 1}${CODE_MARK}`;
+  });
+  const codeMarkRx = new RegExp(`${CODE_MARK}(\\d+)${CODE_MARK}`, "g");
+  return withPlaceholders
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/&lt;!--.*?--&gt;/g, "")
-    .replace(/_([^_]{2,}?)_/g, "<em>$1</em>");
+    .replace(/_([^_]{2,}?)_/g, "<em>$1</em>")
+    .replace(codeMarkRx, (_m, i) => `<code>${codeSpans[Number(i)]}</code>`);
+};
 
 cmds.render = (args) => {
   const state = readState();
@@ -1692,12 +1805,12 @@ cmds.render = (args) => {
     .map(
       (
         r,
-      ) => `<tr class="r" data-s="${sev(r)}" data-state="${isDone(r) ? "done" : "open"}" data-b="${esc(r.st?.batch ?? "")}">
-<td><a href="#${r.b.id.toLowerCase()}">${r.b.id}</a></td>
+      ) => `<tr class="r" data-s="${esc(sev(r))}" data-state="${isDone(r) ? "done" : "open"}" data-b="${esc(r.st?.batch ?? "")}">
+<td><a href="#${esc(r.b.id.toLowerCase())}">${esc(r.b.id)}</a></td>
 <td>${esc(r.rec.front.title)}</td>
 <td class="dim">${esc(r.rec.front.location ?? "")}</td>
 <td>${esc(r.st?.batch ?? "—")}</td>
-<td><span class="chip ${sev(r)}">${sev(r)}</span></td>
+<td><span class="chip ${esc(sev(r))}">${esc(sev(r))}</span></td>
 <td><span class="chip ${isDone(r) ? "done" : "open"}">${esc(stateOf(r))}</span></td></tr>`,
     )
     .join("\n");
@@ -1706,9 +1819,9 @@ cmds.render = (args) => {
     .map(
       (
         r,
-      ) => `<article class="bug" id="${r.b.id.toLowerCase()}" data-s="${sev(r)}" data-state="${isDone(r) ? "done" : "open"}">
-<h3><span class="bid">${r.b.id}</span> ${esc(r.rec.front.title)}
-<span class="chips"><span class="chip ${sev(r)}">${sev(r)}</span><span class="chip ${isDone(r) ? "done" : "open"}">${esc(stateOf(r))}</span>${r.rec.front.sensitive === "true" ? '<span class="chip carve">carve-out</span>' : ""}</span></h3>
+      ) => `<article class="bug" id="${esc(r.b.id.toLowerCase())}" data-s="${esc(sev(r))}" data-state="${isDone(r) ? "done" : "open"}">
+<h3><span class="bid">${esc(r.b.id)}</span> ${esc(r.rec.front.title)}
+<span class="chips"><span class="chip ${esc(sev(r))}">${esc(sev(r))}</span><span class="chip ${isDone(r) ? "done" : "open"}">${esc(stateOf(r))}</span>${r.rec.front.sensitive === "true" ? '<span class="chip carve">carve-out</span>' : ""}</span></h3>
 <p class="area">${esc(r.rec.front.location ?? "")} · batch ${esc(r.st?.batch ?? "—")} · tier ${esc(r.st?.tier ?? "—")}${r.st?.pr ? ` · PR #${r.st.pr}` : ""}</p>
 ${mdToHtml(r.rec.body)}
 </article>`,
@@ -1788,12 +1901,12 @@ function apply(){
 </script></body></html>`;
 
   mkdirSync("local-assets/docs", { recursive: true });
-  writeFileSync(RENDER_OUT, html);
+  writeFileSync(RENDER_OUT(), html);
   console.log(
-    `rendered ${rows.length} bug(s) → ${RENDER_OUT} (${(html.length / 1024).toFixed(0)} KB)`,
+    `rendered ${rows.length} bug(s) -> ${RENDER_OUT()} (${(html.length / 1024).toFixed(0)} KB)`,
   );
   console.log(`  ${open} open · ${rows.length - open} closed · ${analysed} analysed`);
-  if (args.includes("--open")) console.log(`  open it: start ${RENDER_OUT}`);
+  if (args.includes("--open")) console.log(`  open it: start ${RENDER_OUT()}`);
 };
 
 const [, , cmd, ...rest] = process.argv;
