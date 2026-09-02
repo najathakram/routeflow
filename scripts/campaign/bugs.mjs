@@ -1061,6 +1061,176 @@ cmds.deps = (args) => {
     console.log(`\nOUTLIERS worth re-batching:\n  ${outliers.map((o) => `${o.id}(${o.batch})`).join(" ")}`);
 };
 
+// ── render: the one-page view, DERIVED ────────────────────────────────────
+// The register HTML used to be the source of truth, which is why it could only
+// be republished by the owner and why no agent could write a bug. Now it is a
+// projection of the records, regenerated on demand — so it can never drift, and
+// losing it costs one command.
+//
+// ⚠️ Writes to routeflow-bug-registry.html, NOT the original
+// routeflow-bug-register.html. `enrich` still parses the original's markup as
+// the historical import source; overwriting it would destroy that and break
+// re-import. Both live in gitignored local-assets/.
+const RENDER_OUT = "local-assets/docs/routeflow-bug-registry.html";
+
+const esc = (s) =>
+  String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+// Minimal markdown → HTML for the record bodies. Deliberately small: the records
+// only ever use headings, bold, code, list items and blockquotes.
+function mdToHtml(md) {
+  const out = [];
+  let inList = false;
+  for (const raw of md.split("\n")) {
+    const line = raw.replace(/\s+$/, "");
+    if (/^## /.test(line)) {
+      if (inList) (out.push("</ul>"), (inList = false));
+      out.push(`<h4>${esc(line.slice(3))}</h4>`);
+      continue;
+    }
+    if (/^# /.test(line)) continue; // the record's own title; the card already shows it
+    if (/^- /.test(line)) {
+      if (!inList) (out.push("<ul>"), (inList = true));
+      out.push(`<li>${inline(line.slice(2))}</li>`);
+      continue;
+    }
+    if (inList) (out.push("</ul>"), (inList = false));
+    if (/^> /.test(line)) out.push(`<blockquote>${inline(line.slice(2))}</blockquote>`);
+    else if (line.trim()) out.push(`<p>${inline(line)}</p>`);
+  }
+  if (inList) out.push("</ul>");
+  return out.join("\n");
+}
+
+const inline = (s) =>
+  esc(s)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/&lt;!--.*?--&gt;/g, "")
+    .replace(/_([^_]{2,}?)_/g, "<em>$1</em>");
+
+cmds.render = (args) => {
+  const state = readState();
+  const rows = readCatalogue()
+    .map((b) => ({ b, rec: readRecord(b.id), st: state.get(b.id) }))
+    .filter((r) => r.rec);
+  if (!rows.length) fail("no records to render — run `expand` first");
+
+  const sev = (r) => r.rec.front.severity ?? "none";
+  rows.sort((x, y) => (SEVERITY_RANK[sev(x)] ?? 4) - (SEVERITY_RANK[sev(y)] ?? 4) || Number(x.b.id.slice(1)) - Number(y.b.id.slice(1)));
+
+  const stateOf = (r) => r.st?.state ?? "unbatched";
+  const isDone = (r) => ["done", "already-fixed"].includes(stateOf(r));
+  const counts = rows.reduce((a, r) => ((a[sev(r)] = (a[sev(r)] || 0) + 1), a), {});
+  const open = rows.filter((r) => !isDone(r)).length;
+  const analysed = rows.filter((r) => !r.rec.body.includes(UNANALYSED)).length;
+
+  const summary = rows
+    .map(
+      (r) => `<tr class="r" data-s="${sev(r)}" data-state="${isDone(r) ? "done" : "open"}" data-b="${esc(r.st?.batch ?? "")}">
+<td><a href="#${r.b.id.toLowerCase()}">${r.b.id}</a></td>
+<td>${esc(r.rec.front.title)}</td>
+<td class="dim">${esc(r.rec.front.location ?? "")}</td>
+<td>${esc(r.st?.batch ?? "—")}</td>
+<td><span class="chip ${sev(r)}">${sev(r)}</span></td>
+<td><span class="chip ${isDone(r) ? "done" : "open"}">${esc(stateOf(r))}</span></td></tr>`,
+    )
+    .join("\n");
+
+  const details = rows
+    .map(
+      (r) => `<article class="bug" id="${r.b.id.toLowerCase()}" data-s="${sev(r)}" data-state="${isDone(r) ? "done" : "open"}">
+<h3><span class="bid">${r.b.id}</span> ${esc(r.rec.front.title)}
+<span class="chips"><span class="chip ${sev(r)}">${sev(r)}</span><span class="chip ${isDone(r) ? "done" : "open"}">${esc(stateOf(r))}</span>${r.rec.front.sensitive === "true" ? '<span class="chip carve">carve-out</span>' : ""}</span></h3>
+<p class="area">${esc(r.rec.front.location ?? "")} · batch ${esc(r.st?.batch ?? "—")} · tier ${esc(r.st?.tier ?? "—")}${r.st?.pr ? ` · PR #${r.st.pr}` : ""}</p>
+${mdToHtml(r.rec.body)}
+</article>`,
+    )
+    .join("\n");
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RouteFlow bug registry</title>
+<style>
+:root{color-scheme:light dark;--bg:#fbfbfd;--fg:#14161a;--dim:#5d6470;--line:#e3e6ec;--card:#fff;--accent:#2b5cd9}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1115;--fg:#e6e8ec;--dim:#98a0ae;--line:#242832;--card:#161922;--accent:#7aa2f7}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.55 ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:32px 20px 80px}
+h1{font-size:22px;margin:0 0 4px}.sub{color:var(--dim);margin:0 0 20px}
+.stats{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px}
+.stat b{font-size:17px}.stat span{color:var(--dim);font-size:12px;display:block}
+.controls{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;position:sticky;top:0;background:var(--bg);padding:10px 0;z-index:5;border-bottom:1px solid var(--line)}
+input,select{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:7px;padding:7px 10px;font:inherit}
+input{flex:1;min-width:220px}
+table{width:100%;border-collapse:collapse;margin-bottom:36px}
+th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+td a{color:var(--accent);text-decoration:none;font-weight:600}
+.dim{color:var(--dim)}
+.chip{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;font-weight:600;border:1px solid var(--line)}
+.chip.critical{background:#f8d7da;color:#842029}.chip.high{background:#ffe0c2;color:#8a4b08}
+.chip.medium{background:#fff3cd;color:#7a5d00}.chip.low{background:#e2e3e5;color:#41464b}
+.chip.done{background:#d1e7dd;color:#0f5132}.chip.open{background:#e7eaf0;color:#3b4252}
+.chip.carve{background:#e0d4f7;color:#4b2d80}
+@media(prefers-color-scheme:dark){.chip{border-color:transparent;filter:saturate(.8) brightness(.92)}}
+.bug{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:16px 20px;margin-bottom:14px}
+.bug h3{margin:0 0 3px;font-size:15px;display:flex;gap:9px;align-items:baseline;flex-wrap:wrap}
+.bid{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--accent)}
+.chips{display:inline-flex;gap:5px}.area{color:var(--dim);margin:0 0 12px;font-size:12.5px}
+.bug h4{margin:16px 0 5px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+.bug p{margin:0 0 8px}.bug ul{margin:0 0 10px;padding-left:20px}
+blockquote{margin:8px 0;padding:7px 12px;border-left:3px solid var(--accent);background:color-mix(in srgb,var(--accent) 7%,transparent);border-radius:0 6px 6px 0}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;background:color-mix(in srgb,var(--fg) 8%,transparent);padding:1px 5px;border-radius:4px;word-break:break-word}
+.hide{display:none!important}
+</style></head><body><div class="wrap">
+<h1>RouteFlow bug registry</h1>
+<p class="sub">Generated from <code>.claude/campaign/bugs/</code> — a derived view. Edit the records, not this file.</p>
+<div class="stats">
+<div class="stat"><b>${rows.length}</b><span>bugs</span></div>
+<div class="stat"><b>${open}</b><span>open</span></div>
+<div class="stat"><b>${rows.length - open}</b><span>closed</span></div>
+<div class="stat"><b>${analysed}</b><span>analysed</span></div>
+${["critical", "high", "medium", "low"].map((s) => `<div class="stat"><b>${counts[s] ?? 0}</b><span>${s}</span></div>`).join("")}
+</div>
+<div class="controls">
+<input id="q" placeholder="Search id, title, location, evidence…" autocomplete="off">
+<select id="sev"><option value="">all severities</option>${["critical", "high", "medium", "low"].map((s) => `<option>${s}</option>`).join("")}</select>
+<select id="st"><option value="">all states</option><option value="open">open</option><option value="done">closed</option></select>
+</div>
+<table><thead><tr><th>ID</th><th>Title</th><th>Location</th><th>Batch</th><th>Severity</th><th>State</th></tr></thead>
+<tbody id="tb">${summary}</tbody></table>
+<h2 style="font-size:17px;margin:0 0 12px">Details</h2>
+${details}
+</div>
+<script>
+const q=document.getElementById('q'),sv=document.getElementById('sev'),st=document.getElementById('st');
+const rows=[...document.querySelectorAll('tr.r')],bugs=[...document.querySelectorAll('article.bug')];
+function apply(){
+  const t=q.value.toLowerCase(),s=sv.value,x=st.value;
+  for(const r of rows){
+    const ok=(!s||r.dataset.s===s)&&(!x||r.dataset.state===x)&&(!t||r.textContent.toLowerCase().includes(t));
+    r.classList.toggle('hide',!ok);
+  }
+  for(const b of bugs){
+    const ok=(!s||b.dataset.s===s)&&(!x||b.dataset.state===x)&&(!t||b.textContent.toLowerCase().includes(t));
+    b.classList.toggle('hide',!ok);
+  }
+}
+[q,sv,st].forEach(e=>e.addEventListener('input',apply));
+</script></body></html>`;
+
+  mkdirSync("local-assets/docs", { recursive: true });
+  writeFileSync(RENDER_OUT, html);
+  console.log(`rendered ${rows.length} bug(s) → ${RENDER_OUT} (${(html.length / 1024).toFixed(0)} KB)`);
+  console.log(`  ${open} open · ${rows.length - open} closed · ${analysed} analysed`);
+  if (args.includes("--open")) console.log(`  open it: start ${RENDER_OUT}`);
+};
+
 const [, , cmd, ...rest] = process.argv;
 if (!cmd || !cmds[cmd])
   fail(`unknown command '${cmd ?? ""}' — try: ${Object.keys(cmds).join(", ")}`);

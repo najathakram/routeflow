@@ -122,6 +122,34 @@ Guards you cannot talk your way past:
 `sync` also runs as **Gate 4 of `.claude/hooks/stop.mjs`** every turn, so a landed fix records its
 own commits. Commit the changed `bugs/B###.md` files alongside the fix.
 
+## Keeping the registry honest
+
+```bash
+npm run bugs -- enrich      # re-import the register HTML detail + file sets into every record
+npm run bugs -- deps        # the conflict graph: batch cohesion, cross-batch conflicts, outliers
+npm run bugs -- deps --bug B129
+npm run bugs -- render      # regenerate the one-page HTML view from the records
+npm run bugs -- self-test   # also runs as step 8 of npm run verify
+```
+
+`deps` answers the question batching is supposed to answer: **which bugs must land together, and
+which batches can never run in parallel.** Two bugs conflict when they touch the same file.
+
+⚠️ **Hub files are the whole difficulty.** `orders.service.ts` is touched by 36 bugs,
+`invoices.service.ts` by 30, `schema.prisma` by 27. A naive shares-a-file rule reported that no
+batch was EVER parallel-safe, which is useless — two bugs in a 5,000-line service almost always
+touch different methods. Only a shared **non-hub** file counts as a hard conflict.
+
+⚠️ **The graph is bounded by its file data, and cannot see method-level collisions inside a
+god-file.** It missed the B34/B146 collision the F11 analysis proved by hand, and only found it
+once the analysis file sets were merged into front matter. So: run `deps` first to find gross
+structure and outliers, then analyse — and **write the analysis` files` back into front matter**,
+because that is what sharpens the graph for everyone after you.
+
+`render` writes `local-assets/docs/routeflow-bug-registry.html`, a DERIVED view. ⚠️ It is a
+different file from `routeflow-bug-register.html`, which `enrich` still parses as the historical
+import source — never overwrite that one.
+
 ## House rules that outrank anything here
 
 - **Never name a live client** in a record — slug, business name, product, invoice or order number,
