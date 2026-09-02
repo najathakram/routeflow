@@ -427,42 +427,46 @@ const AGENT_CAP = 4;
 const boardJson = () =>
   existsSync(BOARD()) ? JSON.parse(readFileSync(BOARD(), "utf8")) : { batches: {} };
 
-// Mirrors scripts/team/team.mjs's claim protocol — marker, comment grammar and
-// lease. team.mjs is a CLI, not a module, so there is nothing to import; if the
-// protocol changes there, it must change here in the same commit. A failure to
-// read (offline, no gh, no auth) NEVER pretends the batch is free: it degrades
-// to the local `in-flight` signal and says so.
+// ⚠️ THIS IS scripts/team/team.mjs's CLAIM GRAMMAR, RE-STATED. team.mjs is a
+// CLI, not a module, so there is nothing to import — the two readings of the
+// same GitHub comments MUST CHANGE TOGETHER, IN ONE COMMIT. See the matching
+// warning at team.mjs's `isAgent`/`parseClaim`/`liveClaims`.
+//
+// The three rules, and why each one is load-bearing (all three were broken here
+// and the divergence went the dangerous way — this file freed leases team.mjs
+// still held, and honoured leases team.mjs did not):
+//   1. MARKER FIRST. Only a comment whose body starts with `<!--rf:agent-->` is
+//      protocol. team.mjs filters on it before parsing anything; this file did
+//      not, so ONE unmarked `claim:` comment from anybody shut the dispatcher
+//      down for every batch on the board.
+//   2. NO LEADING WHITESPACE. team.mjs anchors `^claim:` / `^release:` with /m;
+//      this file allowed `^\s*`, so an INDENTED `release:` line inside a marked
+//      comment freed a lease team.mjs still enforces — `next` would hand out a
+//      batch `team.mjs claim` refuses with "held by …".
+//   3. PER COMMENT, NOT PER LINE. `--jq .[].body` flattens every comment into
+//      one stream of lines, which destroys rule 1 (a line has no marker) and
+//      lets a release in one person's comment cancel a claim in another's.
+//      Fetch structured objects and keep the comment boundary.
+// A failure to read (offline, no gh, no auth) NEVER pretends the batch is free:
+// it degrades to the local `in-flight` signal and says so.
 const TEAM_MARKER = "<!--rf:agent-->";
-function liveClaim(issue) {
-  // `null` here used to be the SAME return value as "checked, and free" —
-  // indistinguishable at the call site from an actual clean check. A batch
-  // with no board.json issue at all silently passed as free and was then
-  // proposed with an uncompletable `claim <issue#>` instruction. Route it
-  // through the same "unknown" branch a failed network read already uses.
-  if (!issue) return { unknown: true, why: "no board issue for this batch" };
-  let bodies;
-  try {
-    const out = execSync(
-      `gh api "repos/{owner}/{repo}/issues/${issue}/comments?per_page=100" --jq ".[].body"`,
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
-    );
-    // `--jq .[].body` flattens every comment to lines, so a protocol line is
-    // still line-anchored. Keep ALL lines: the protocol scan wants the anchored
-    // ones, the informal scan below wants the prose.
-    bodies = out.split("\n");
-  } catch (e) {
-    return { unknown: true, why: firstLine(e) };
-  }
-  const isProtocol = (l) => /^\s*(claim|release):\s*id=/.test(l);
+// Byte-for-byte team.mjs:103 and team.mjs:113.
+const TEAM_CLAIM_RE = /^claim:\s*id=(\S+)\s+lease-until=(\S+)/m;
+const TEAM_RELEASE_RE = /^release:\s*id=(\S+)/m;
+
+// Pure, so the self-test can drive the exact comment payloads that broke this
+// with no network at all.
+function readClaims(comments) {
+  const bodies = comments.map((c) => String(c?.body ?? ""));
+  const agent = bodies.filter((b) => b.startsWith(TEAM_MARKER));
   const released = new Set();
-  for (const b of bodies.filter(isProtocol)) {
-    const m = /release:\s*id=(\S+)/.exec(b);
+  for (const b of agent) {
+    const m = TEAM_RELEASE_RE.exec(b);
     if (m) released.add(m[1]);
   }
   const now = new Date();
-  const live = bodies
-    .filter(isProtocol)
-    .map((b) => /claim:\s*id=(\S+)\s+lease-until=(\S+)/.exec(b))
+  const live = agent
+    .map((b) => TEAM_CLAIM_RE.exec(b))
     .filter(Boolean)
     .map((m) => ({ id: m[1], leaseUntil: new Date(m[2]) }))
     .filter((c) => !released.has(c.id) && c.leaseUntil > now);
@@ -471,9 +475,35 @@ function liveClaim(issue) {
   // instead of taking a lease — is not a lease and must not be treated as one,
   // but it is exactly how the F11 collision happened (a live session held
   // fix/F11-run-cancel-skip while `next` proposed F11). Surface it; the human
-  // or the lead decides. Never guess a lock from prose.
-  const informal = bodies.find((b) => !isProtocol(b) && /\bclaim(ed|ing)\b/i.test(b));
-  return informal ? { informal: true, why: informal.slice(0, 140) } : null;
+  // or the lead decides. Never guess a lock from prose. Scanned over ALL
+  // comments, marked or not: prose is prose whoever wrote it.
+  const informal = bodies.find(
+    (b) => !TEAM_CLAIM_RE.test(b) && !TEAM_RELEASE_RE.test(b) && /\bclaim(ed|ing)\b/i.test(b),
+  );
+  return informal
+    ? { informal: true, why: informal.replace(/\s+/g, " ").trim().slice(0, 140) }
+    : null;
+}
+
+function liveClaim(issue) {
+  // `null` here used to be the SAME return value as "checked, and free" —
+  // indistinguishable at the call site from an actual clean check. A batch
+  // with no board.json issue at all silently passed as free and was then
+  // proposed with an uncompletable `claim <issue#>` instruction. Route it
+  // through the same "unknown" branch a failed network read already uses.
+  if (!issue) return { unknown: true, why: "no board issue for this batch" };
+  let comments;
+  try {
+    const out = execSync(
+      `gh api "repos/{owner}/{repo}/issues/${issue}/comments?per_page=100" --jq "[.[]|{body}]"`,
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
+    );
+    comments = JSON.parse(out || "[]");
+    if (!Array.isArray(comments)) throw new Error("gh returned a non-array comment payload");
+  } catch (e) {
+    return { unknown: true, why: firstLine(e) };
+  }
+  return readClaims(comments);
 }
 
 // Every batch that holds workable rows, with everything the selector needs to
@@ -2648,6 +2678,67 @@ cmds["self-test"] = () => {
       else process.env.BUGS_ROOT = prevRoot;
       rmSync(tmp, { recursive: true, force: true });
     }
+  }
+
+  // ── liveClaim vs team.mjs: the same comments, the same verdict ───────────
+  // This file re-implements team.mjs's claim grammar, and every point of
+  // divergence went the DANGEROUS way. The three cases below are the ones the
+  // verify pass constructed and drove against both readers; each asserts the
+  // verdict team.mjs reaches, computed from the same fixture comments with no
+  // network. `readClaims` is pure precisely so this can exist.
+  {
+    const LEASE = "2099-01-01T00:00:00.000Z";
+    const marked = (body) => ({ body: `${TEAM_MARKER}\n${body}` });
+    const unmarked = (body) => ({ body });
+    const CLAIM = `claim: id=rf-F11 lease-until=${LEASE}`;
+
+    // (5a) An UNMARKED protocol-looking comment. team.mjs filters it out before
+    // parsing, so the issue is FREE — but one such comment used to read as a
+    // live lease here and shut the whole dispatcher down for every batch.
+    check(
+      "liveClaim: an unmarked `claim:` comment is not a lease (team.mjs ignores it)",
+      readClaims([unmarked(CLAIM)]),
+      null,
+    );
+
+    // (5b-2a) A REAL marked lease, plus an UNMARKED release. team.mjs never
+    // sees the release, so the lease still stands; this file used to free it and
+    // hand out a batch `team.mjs claim` would refuse with "held by rf-F11".
+    check(
+      "liveClaim: an unmarked `release:` does NOT free a marked lease",
+      readClaims([marked(CLAIM), unmarked("release: id=rf-F11")])?.id,
+      "rf-F11",
+    );
+
+    // (5b-2b) The same lease, released by a marked comment whose release line is
+    // INDENTED. team.mjs anchors `^release:` with /m and no `\s*`, so it does
+    // not match; this file's `^\s*` did.
+    check(
+      "liveClaim: an INDENTED `release:` does NOT free a marked lease",
+      readClaims([marked(CLAIM), marked("  release: id=rf-F11")])?.id,
+      "rf-F11",
+    );
+
+    // The positive controls, so the three above cannot pass by refusing to read
+    // anything at all.
+    check(
+      "liveClaim: a marked lease with no release IS live",
+      readClaims([marked(CLAIM)])?.id,
+      "rf-F11",
+    );
+    check(
+      "liveClaim: a marked, unindented release DOES free it",
+      readClaims([marked(CLAIM), marked("release: id=rf-F11")]),
+      null,
+    );
+    check(
+      "liveClaim: an expired lease is not live",
+      readClaims([marked("claim: id=rf-F11 lease-until=2000-01-01T00:00:00.000Z")]),
+      null,
+    );
+    // Prose is still surfaced for a human to judge — never treated as a lock.
+    const informal = readClaims([unmarked("Claimed for planning, do not take F11")]);
+    check("liveClaim: prose is reported as informal, not as a lease", informal?.informal, true);
   }
 
   // ── wave occupancy ──────────────────────────────────────────────────────
