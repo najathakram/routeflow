@@ -30,15 +30,28 @@
 //   node scripts/campaign/bugs.mjs next          # the next batch an agent may take
 //   node scripts/campaign/bugs.mjs list [--open] [--sensitive] [--batch F09]
 //   node scripts/campaign/bugs.mjs stats
-import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  readdirSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+} from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
-const ROOT = ".claude/campaign";
-const CATALOGUE = join(ROOT, "bugs.jsonl");
-const STATUS_DIR = join(ROOT, "status");
+// Overridable via BUGS_ROOT so the self-test can point the REAL commands at a
+// throwaway directory instead of re-implementing their logic against a fixture
+// (see cmds["self-test"]). Read lazily (never cached in a top-level const) so a
+// self-test that sets process.env.BUGS_ROOT mid-run is honoured immediately.
+const rootDir = () => process.env.BUGS_ROOT || ".claude/campaign";
+const CATALOGUE = () => join(rootDir(), "bugs.jsonl");
+const STATUS_DIR = () => join(rootDir(), "status");
 const REGISTER = "local-assets/docs/routeflow-bug-register.html";
-const BOARD = join(ROOT, "board.json");
+const BOARD = () => join(rootDir(), "board.json");
 
 const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3, none: 4 };
 
@@ -63,8 +76,8 @@ function classify(bug) {
 
 // ── io ────────────────────────────────────────────────────────────────────
 const readCatalogue = () =>
-  existsSync(CATALOGUE)
-    ? readFileSync(CATALOGUE, "utf8")
+  existsSync(CATALOGUE())
+    ? readFileSync(CATALOGUE(), "utf8")
         .split(/\r?\n/)
         .filter(Boolean)
         .map((l) => JSON.parse(l))
@@ -72,16 +85,16 @@ const readCatalogue = () =>
 
 function writeCatalogue(rows) {
   rows.sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
-  mkdirSync(ROOT, { recursive: true });
-  writeFileSync(CATALOGUE, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  mkdirSync(rootDir(), { recursive: true });
+  writeFileSync(CATALOGUE(), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
 }
 
 // Latest state per bug ID, read from the shards campaign-check already guards.
 function readState() {
   const state = new Map();
-  if (!existsSync(STATUS_DIR)) return state;
-  for (const f of readdirSync(STATUS_DIR).filter((n) => n.endsWith(".jsonl"))) {
-    for (const line of readFileSync(join(STATUS_DIR, f), "utf8").split(/\r?\n/).filter(Boolean)) {
+  if (!existsSync(STATUS_DIR())) return state;
+  for (const f of readdirSync(STATUS_DIR()).filter((n) => n.endsWith(".jsonl"))) {
+    for (const line of readFileSync(join(STATUS_DIR(), f), "utf8").split(/\r?\n/).filter(Boolean)) {
       const o = JSON.parse(line);
       state.set(o.id, o);
     }
@@ -210,8 +223,13 @@ cmds.file = (args) => {
   if (bug.batch) {
     const tier = flag(args, "tier", "T1");
     const what = upsertLedgerRow(bug.batch, {
-      id: bug.id, batch: bug.batch, tier, state: "queued",
-      pr: null, proof: null, evidence: null,
+      id: bug.id,
+      batch: bug.batch,
+      tier,
+      state: "queued",
+      pr: null,
+      proof: null,
+      evidence: null,
     });
     console.log(`  ledger   : ${bug.batch}.jsonl row ${what} (tier ${tier}, queued)`);
   } else {
@@ -225,7 +243,7 @@ cmds.file = (args) => {
 cmds.next = (args) => {
   const catalogue = readCatalogue();
   const state = readState();
-  const board = existsSync(BOARD) ? JSON.parse(readFileSync(BOARD, "utf8")) : { batches: {} };
+  const board = existsSync(BOARD()) ? JSON.parse(readFileSync(BOARD(), "utf8")) : { batches: {} };
   const byId = new Map(catalogue.map((r) => [r.id, r]));
 
   const batches = new Map();
@@ -329,8 +347,8 @@ cmds.stats = () => {
 // The narrative sections are written by the analysis pass; the front matter and
 // the History log are DERIVED and refreshed by `sync`, so the record cannot
 // drift from the proof ledger the way the board did.
-const RECORD_DIR = join(ROOT, "bugs");
-const recordPath = (id) => join(RECORD_DIR, `${id}.md`);
+const RECORD_DIR = () => join(rootDir(), "bugs");
+const recordPath = (id) => join(RECORD_DIR(), `${id}.md`);
 const SECTIONS = [
   "Summary",
   "What this feature is for",
@@ -363,7 +381,7 @@ const readRecord = (id) =>
   existsSync(recordPath(id)) ? parseRecord(readFileSync(recordPath(id), "utf8")) : null;
 
 function writeRecord(id, front, body) {
-  mkdirSync(RECORD_DIR, { recursive: true });
+  mkdirSync(RECORD_DIR(), { recursive: true });
   writeFileSync(recordPath(id), renderFront(front) + body);
 }
 
@@ -412,6 +430,13 @@ cmds.expand = () => {
         `**Location** \`${bug.location}\` · **Severity** ${bug.severity}` +
         `${front.batch ? ` · **Batch** ${front.batch}` : ""} · **State** ${front.state}\n\n` +
         SECTIONS.map((s) => `## ${s}\n\n${UNANALYSED}\n`).join("\n") +
+        // A filed bug's own description is the only substantive text about it
+        // until analysis lands — carry it into the body, the same section name
+        // `enrich` uses for register imports, so it is never stranded in the
+        // catalogue alone (a documented `index` run used to destroy it).
+        (bug.source === "filed" && bug.symptom
+          ? `\n## Reported evidence\n\n${bug.symptom}\n`
+          : "") +
         `\n## History\n`;
       body = appendHistory(body, `filed`, "filed", `imported from the register (${bug.register})`);
       if (st) body = appendHistory(body, `batch-${st.batch}`, "batched", `assigned to ${st.batch}`);
@@ -429,7 +454,7 @@ cmds.expand = () => {
       refreshed++;
     }
   }
-  console.log(`records: ${created} created, ${refreshed} refreshed, in ${RECORD_DIR}/`);
+  console.log(`records: ${created} created, ${refreshed} refreshed, in ${RECORD_DIR()}/`);
 };
 
 // The automatic half. Derives history events from the two sources that already
@@ -522,23 +547,35 @@ cmds.note = (args) => {
 
 // bugs.jsonl is a DERIVED index over the records — regenerate, never hand-edit.
 cmds.index = () => {
-  if (!existsSync(RECORD_DIR)) fail("no records yet — run `expand`");
-  const rows = readdirSync(RECORD_DIR)
+  if (!existsSync(RECORD_DIR())) fail("no records yet — run `expand`");
+  // Preserve every catalogue field this command does not derive from the record
+  // front matter (symptom, filedAt, register, source, …) by reading the EXISTING
+  // row and spreading the derived keys on top of it, never the other way round.
+  // A prior `index` rebuilt a fixed 9-key shape from scratch and silently
+  // destroyed the filed symptom, filedAt, and 61 register PR links.
+  const priorById = new Map(readCatalogue().map((r) => [r.id, r]));
+  const rows = readdirSync(RECORD_DIR())
     .filter((f) => f.endsWith(".md"))
-    .map((f) => parseRecord(readFileSync(join(RECORD_DIR, f), "utf8")).front)
+    .map((f) => parseRecord(readFileSync(join(RECORD_DIR(), f), "utf8")).front)
     .map((fm) => ({
+      ...(priorById.get(fm.id) ?? {}),
       id: fm.id,
       title: fm.title,
       location: fm.location,
       severity: fm.severity,
       batch: fm.batch,
-      register: fm.closed ? "fixed" : "open",
-      source: "record",
+      // `register` is NOT recomputed here — it means what the register said at
+      // import time (or "open" for a bug that never had a prior row at all),
+      // and `closed` is a ledger-derived front-matter field, not a register verdict.
+      register: priorById.get(fm.id)?.register ?? "open",
       sensitive: fm.sensitive === "true",
       sensitiveFor: fm.sensitiveFor ? fm.sensitiveFor.split(",") : [],
     }));
   writeCatalogue(rows);
-  console.log(`index: rebuilt bugs.jsonl from ${rows.length} record(s).`);
+  const preserved = rows.filter((r) => priorById.has(r.id)).length;
+  console.log(
+    `index: rebuilt bugs.jsonl from ${rows.length} record(s) (${preserved} row(s) carried forward prior catalogue fields).`,
+  );
 };
 
 // ── ledger writes ─────────────────────────────────────────────────────────
@@ -547,7 +584,7 @@ cmds.index = () => {
 // bug is the first thing anyone tries (it cost a full redo during the F07/F10
 // discharge). Every ledger write in this file goes through upsertLedgerRow, so
 // that mistake is unrepresentable rather than merely documented.
-const shardPath = (batch) => join(STATUS_DIR, `${batch}.jsonl`);
+const shardPath = (batch) => join(STATUS_DIR(), `${batch}.jsonl`);
 
 function readShard(batch) {
   const p = shardPath(batch);
@@ -569,13 +606,13 @@ function upsertLedgerRow(batch, row) {
   else rows[i] = { ...rows[i], ...row };
   const ids = rows.map((r) => r.id);
   if (new Set(ids).size !== ids.length) fail(`refusing to write ${batch}: duplicate id in shard`);
-  mkdirSync(STATUS_DIR, { recursive: true });
+  mkdirSync(STATUS_DIR(), { recursive: true });
   writeFileSync(shardPath(batch), rows.map((r) => JSON.stringify(r)).join(eol) + eol);
   return i === -1 ? "added" : "updated";
 }
 
 const findShardOf = (id) => {
-  for (const f of readdirSync(STATUS_DIR).filter((n) => n.endsWith(".jsonl"))) {
+  for (const f of readdirSync(STATUS_DIR()).filter((n) => n.endsWith(".jsonl"))) {
     const batch = f.replace(/\.jsonl$/, "");
     if (readShard(batch).rows.some((r) => r.id === id)) return batch;
   }
@@ -591,10 +628,8 @@ cmds.brief = (args) => {
   const target = (args[0] ?? "").toUpperCase();
   if (!/^(F\d{2}|B\d+)$/.test(target)) fail("usage: brief <F##|B###>");
 
-  const board = existsSync(BOARD) ? JSON.parse(readFileSync(BOARD, "utf8")) : { batches: {} };
-  const ids = /^B/.test(target)
-    ? [target]
-    : readShard(target).rows.map((r) => r.id);
+  const board = existsSync(BOARD()) ? JSON.parse(readFileSync(BOARD(), "utf8")) : { batches: {} };
+  const ids = /^B/.test(target) ? [target] : readShard(target).rows.map((r) => r.id);
   if (!ids.length) fail(`no ledger rows for ${target}`);
   const batch = /^B/.test(target) ? findShardOf(target) : target;
 
@@ -612,18 +647,24 @@ cmds.brief = (args) => {
   out.push(
     `\n${rows.length} bug(s) · ${rows.filter((r) => r.st?.state === "queued").length} queued · ` +
       `${analysed.length}/${rows.length} analysed` +
-      (rows.some((r) => r.rec?.front.sensitive === "true") ? " · ⚠ CONTAINS CARVE-OUT BUGS — plan only, do not fix unattended" : ""),
+      (rows.some((r) => r.rec?.front.sensitive === "true")
+        ? " · ⚠ CONTAINS CARVE-OUT BUGS — plan only, do not fix unattended"
+        : ""),
   );
 
   if (discovery && existsSync(discovery)) {
-    out.push(`\n## Batch plan\n\nRead this FIRST — it carries the ordering, the file conflicts and the risks:\n\n    ${discovery}`);
+    out.push(
+      `\n## Batch plan\n\nRead this FIRST — it carries the ordering, the file conflicts and the risks:\n\n    ${discovery}`,
+    );
     const txt = readFileSync(discovery, "utf8");
     const verdict = /## Verdict\n\n([\s\S]*?)(?=\n## )/.exec(txt);
     if (verdict) out.push(`\n${verdict[1].trim()}`);
     const order = /## Ordering\n\n([\s\S]*?)(?=\n## )/.exec(txt);
     if (order) out.push(`\n## Ordering\n\n${order[1].trim()}`);
   } else {
-    out.push(`\n## Batch plan\n\n⚠ none yet — run the analysis pass before fixing (see the bug-registry skill).`);
+    out.push(
+      `\n## Batch plan\n\n⚠ none yet — run the analysis pass before fixing (see the bug-registry skill).`,
+    );
   }
 
   out.push(`\n## Bugs`);
@@ -665,7 +706,9 @@ cmds.prove = (args) => {
   if (!/^B\d+$/.test(id) || !pr || !proof)
     fail('usage: prove <B###> --pr <number> --proof "REG-B### <what the passing test asserts>"');
   if (!new RegExp(`REG-${id}(?![0-9])`).test(proof))
-    fail(`--proof must cite the exact token REG-${id} — campaign-check matches that token and nothing else`);
+    fail(
+      `--proof must cite the exact token REG-${id} — campaign-check matches that token and nothing else`,
+    );
 
   const batch = findShardOf(id);
   if (!batch) fail(`${id} is in no ledger shard — file it with a --batch first`);
@@ -678,22 +721,35 @@ cmds.prove = (args) => {
   const what = upsertLedgerRow(batch, { ...row, state, pr: Number(pr), proof });
   const rec = readRecord(id);
   if (rec)
-    writeRecord(id, { ...rec.front, state, proof: `REG-${id}` }, appendHistory(rec.body, `state-${state}`, state, `PR #${pr}`));
+    writeRecord(
+      id,
+      { ...rec.front, state, proof: `REG-${id}` },
+      appendHistory(rec.body, `state-${state}`, state, `PR #${pr}`),
+    );
   console.log(`${id}: ${batch} row ${what} → ${state} (PR #${pr})`);
-  console.log(`  discharge to done only after a green deploy: npm run bugs -- discharge ${batch} --evidence "..."`);
+  console.log(
+    `  discharge to done only after a green deploy: npm run bugs -- discharge ${batch} --evidence "..."`,
+  );
 };
 
 cmds.discharge = (args) => {
   const batch = (args[0] ?? "").toUpperCase();
   const evidence = flag(args, "evidence");
   if (!/^F\d{2}$/.test(batch) || !evidence)
-    fail('usage: discharge <F##> --evidence "<post-deploy proof: deploy id + the CI run that exercised it>"');
+    fail(
+      'usage: discharge <F##> --evidence "<post-deploy proof: deploy id + the CI run that exercised it>"',
+    );
   if (evidence.length < 40)
-    fail("--evidence must actually cite the deploy and the run that proved it — this is the claim campaign-check cannot check for you");
+    fail(
+      "--evidence must actually cite the deploy and the run that proved it — this is the claim campaign-check cannot check for you",
+    );
 
   const { rows } = readShard(batch);
   const ready = rows.filter((r) => r.state === "proven" || r.state === "proven-pending-deploy");
-  if (!ready.length) fail(`${batch} has no proven row to discharge (states: ${[...new Set(rows.map((r) => r.state))].join(", ")})`);
+  if (!ready.length)
+    fail(
+      `${batch} has no proven row to discharge (states: ${[...new Set(rows.map((r) => r.state))].join(", ")})`,
+    );
 
   for (const row of ready) {
     upsertLedgerRow(batch, { ...row, state: "done", dischargeEvidence: evidence });
@@ -705,14 +761,16 @@ cmds.discharge = (args) => {
         appendHistory(rec.body, "state-done", "done", evidence.slice(0, 200)),
       );
   }
-  console.log(`${batch}: discharged ${ready.length} row(s) → done — ${ready.map((r) => r.id).join(", ")}`);
+  console.log(
+    `${batch}: discharged ${ready.length} row(s) → done — ${ready.map((r) => r.id).join(", ")}`,
+  );
   console.log(`  verify: node scripts/campaign-check.mjs`);
 };
 
 cmds.status = (args) => {
   const only = (args[0] ?? "").toUpperCase();
-  const board = existsSync(BOARD) ? JSON.parse(readFileSync(BOARD, "utf8")) : { batches: {} };
-  const batches = readdirSync(STATUS_DIR)
+  const board = existsSync(BOARD()) ? JSON.parse(readFileSync(BOARD(), "utf8")) : { batches: {} };
+  const batches = readdirSync(STATUS_DIR())
     .filter((f) => f.endsWith(".jsonl"))
     .map((f) => f.replace(/\.jsonl$/, ""))
     .filter((b) => !only || b === only)
@@ -729,7 +787,9 @@ cmds.status = (args) => {
     const done = (by.done || 0) + (by["already-fixed"] || 0);
     console.log(
       `${b.padEnd(4)} ${String(done + "/" + rows.length).padStart(6)} done · ${String(analysed).padStart(2)} analysed · ` +
-        `${board.batches?.[b] ? "#" + board.batches[b] : "  —  "}  ${Object.entries(by).map(([k, v]) => `${k}:${v}`).join(" ")}`,
+        `${board.batches?.[b] ? "#" + board.batches[b] : "  —  "}  ${Object.entries(by)
+          .map(([k, v]) => `${k}:${v}`)
+          .join(" ")}`,
     );
   }
 };
@@ -744,7 +804,9 @@ cmds["self-test"] = () => {
   const check = (name, got, want) => {
     const ok = JSON.stringify(got) === JSON.stringify(want);
     if (!ok) failures++;
-    console.log(`${ok ? "  ok  " : "  FAIL"} ${name}${ok ? "" : `\n        got  ${JSON.stringify(got)}\n        want ${JSON.stringify(want)}`}`);
+    console.log(
+      `${ok ? "  ok  " : "  FAIL"} ${name}${ok ? "" : `\n        got  ${JSON.stringify(got)}\n        want ${JSON.stringify(want)}`}`,
+    );
   };
 
   // front matter must round-trip, and an empty field must NOT gain a trailing
@@ -763,7 +825,11 @@ cmds["self-test"] = () => {
   const body = "## Summary\n\nOLD\n\n## Root cause\n\nx\n";
   const text = "Driver loses $100; also $& and $` and $'.";
   const rx = new RegExp(`(## Summary\\n\\n)([\\s\\S]*?)(?=\\n## |$)`);
-  check("note: $-patterns survive verbatim", rx.test(body) && body.replace(rx, (_m, h) => `${h}${text}\n`).includes(text), true);
+  check(
+    "note: $-patterns survive verbatim",
+    rx.test(body) && body.replace(rx, (_m, h) => `${h}${text}\n`).includes(text),
+    true,
+  );
 
   // history must dedupe on its marker, or Gate 4 grows the file every turn.
   const once = appendHistory("## History\n", "k1", "e", "d");
@@ -772,7 +838,7 @@ cmds["self-test"] = () => {
   // the ledger must hold exactly one row per id, repo-wide.
   const seen = new Map();
   let dupes = 0;
-  for (const f of readdirSync(STATUS_DIR).filter((n) => n.endsWith(".jsonl")))
+  for (const f of readdirSync(STATUS_DIR()).filter((n) => n.endsWith(".jsonl")))
     for (const r of readShard(f.replace(/\.jsonl$/, "")).rows) {
       if (seen.has(r.id)) dupes++;
       seen.set(r.id, true);
@@ -780,19 +846,22 @@ cmds["self-test"] = () => {
   check("ledger: one row per bug id across all shards", dupes, 0);
 
   // every catalogue row should have a record, or `brief` renders holes.
-  const missing = readCatalogue().filter((b) => !existsSync(recordPath(b.id))).map((b) => b.id);
+  const missing = readCatalogue()
+    .filter((b) => !existsSync(recordPath(b.id)))
+    .map((b) => b.id);
   check("every catalogue row has a record", missing, []);
 
   // Every history entry must be exactly ONE line. A detail containing a newline
   // used to split the entry and leave loose prose floating in the section
   // (B32/B34/B129/B146 all carried one), which reads as a corrupted record.
   const strays = [];
-  for (const f of readdirSync(RECORD_DIR).filter((n) => n.endsWith(".md"))) {
-    const t = readFileSync(join(RECORD_DIR, f), "utf8");
+  for (const f of readdirSync(RECORD_DIR()).filter((n) => n.endsWith(".md"))) {
+    const t = readFileSync(join(RECORD_DIR(), f), "utf8");
     const i = t.indexOf("## History");
     if (i < 0) continue;
     for (const l of t.slice(i).split("\n"))
-      if (l.trim() && !l.startsWith("- ") && !l.startsWith("#")) strays.push(`${f}: ${l.slice(0, 40)}`);
+      if (l.trim() && !l.startsWith("- ") && !l.startsWith("#"))
+        strays.push(`${f}: ${l.slice(0, 40)}`);
   }
   check("history: every entry is a single line", strays, []);
 
@@ -800,10 +869,51 @@ cmds["self-test"] = () => {
   // caller text was expanded into the body by a string replacement — enrich hit
   // this on B109, whose evidence says "$235.00 vs PERCENT's $181.05", so `$1`
   // became the captured heading. Cheaper to diagnose than the stray-line check.
-  const multiHistory = readdirSync(RECORD_DIR)
+  const multiHistory = readdirSync(RECORD_DIR())
     .filter((n) => n.endsWith(".md"))
-    .filter((n) => (readFileSync(join(RECORD_DIR, n), "utf8").match(/^## History$/gm) || []).length !== 1);
+    .filter(
+      (n) =>
+        (readFileSync(join(RECORD_DIR(), n), "utf8").match(/^## History$/gm) || []).length !== 1,
+    );
   check("exactly one '## History' heading per record", multiHistory, []);
+
+  // A filed bug's symptom must survive file → index round trip. Run this
+  // against the REAL cmds.file/cmds.index against a throwaway BUGS_ROOT, never
+  // a re-implementation — `index` used to rebuild the catalogue from a fixed
+  // 9-key shape and silently destroy every filed symptom.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file([
+        "Self-test filed bug",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--symptom",
+        "SELF_TEST_SYMPTOM_MARKER survives the round trip",
+      ]);
+      cmds.index();
+      const row = readCatalogue().find((r) => r.title === "Self-test filed bug");
+      const rec = row ? readRecord(row.id) : null;
+      check(
+        "filed symptom survives file -> index round trip (catalogue row)",
+        row?.symptom,
+        "SELF_TEST_SYMPTOM_MARKER survives the round trip",
+      );
+      check(
+        "filed symptom survives file -> index round trip (record body)",
+        !!rec && rec.body.includes("SELF_TEST_SYMPTOM_MARKER survives the round trip"),
+        true,
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
 
   console.log(failures ? `\nself-test: ${failures} FAILURE(S)` : "\nself-test: all checks passed");
   if (failures) process.exit(1);
@@ -827,13 +937,18 @@ cmds.move = (args) => {
 
   const row = readShard(from).rows.find((r) => r.id === id);
   if (row.state !== "queued")
-    fail(`${id} is ${row.state}, not queued — moving a bug that already carries a proof would orphan it from its batch's evidence`);
+    fail(
+      `${id} is ${row.state}, not queued — moving a bug that already carries a proof would orphan it from its batch's evidence`,
+    );
 
   // Drop from the old shard first: two rows for one id is the duplicate
   // campaign-check rejects, so never let both exist even momentarily.
   const old = readShard(from);
   const kept = old.rows.filter((r) => r.id !== id);
-  writeFileSync(shardPath(from), kept.map((r) => JSON.stringify(r)).join(old.eol) + (kept.length ? old.eol : ""));
+  writeFileSync(
+    shardPath(from),
+    kept.map((r) => JSON.stringify(r)).join(old.eol) + (kept.length ? old.eol : ""),
+  );
   upsertLedgerRow(to, { ...row, batch: to });
 
   const rows = readCatalogue();
@@ -855,7 +970,9 @@ cmds.move = (args) => {
   }
 
   console.log(`${id}: ${from} → ${to}${why ? ` (${why})` : ""}`);
-  console.log(`  ${from} now holds ${kept.length} row(s); verify with: node scripts/campaign-check.mjs`);
+  console.log(
+    `  ${from} now holds ${kept.length} row(s); verify with: node scripts/campaign-check.mjs`,
+  );
 };
 
 // ── enrich: pull the register's DETAIL into every record ──────────────────
@@ -911,7 +1028,10 @@ cmds.enrich = () => {
       continue;
     }
 
-    const parts = ["_Imported verbatim from the bug register — this is the ORIGINAL report, not analysis._", ""];
+    const parts = [
+      "_Imported verbatim from the bug register — this is the ORIGINAL report, not analysis._",
+      "",
+    ];
     if (d.meant) parts.push(`**Meant to do.** ${d.meant}`, "");
     if (d.actual) parts.push(`**Actually does.** ${d.actual}`, "");
     if (d.gap) parts.push(`**The gap.** ${d.gap}`, "");
@@ -926,9 +1046,17 @@ cmds.enrich = () => {
       );
     if (d.verifier) parts.push(`**Verifier's note.** ${d.verifier}`, "");
     if (d.provenance) parts.push(`_${d.provenance}_`, "");
-    if (d.files.length) parts.push(`**Files implicated (${d.files.length}):**`, ...d.files.map((f) => `- \`${f}\``), "");
+    if (d.files.length)
+      parts.push(
+        `**Files implicated (${d.files.length}):**`,
+        ...d.files.map((f) => `- \`${f}\``),
+        "",
+      );
 
-    const section = `## Reported evidence\n\n${parts.join("\n").replace(/\n{3,}/g, "\n\n").trim()}\n`;
+    const section = `## Reported evidence\n\n${parts
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim()}\n`;
     const body = rec.body.includes("## Reported evidence")
       ? rec.body.replace(/## Reported evidence\n[\s\S]*?(?=\n## History)/, () => section)
       : rec.body.replace(/(\n## History)/, (_m, h) => `\n${section}${h}`);
@@ -937,7 +1065,9 @@ cmds.enrich = () => {
     enriched++;
     files += d.files.length;
   }
-  console.log(`enriched ${enriched} record(s) with the register detail; ${files} file references captured.`);
+  console.log(
+    `enriched ${enriched} record(s) with the register detail; ${files} file references captured.`,
+  );
   if (noDetail) console.log(`  ${noDetail} record(s) had no detail block in the register.`);
 };
 
@@ -998,7 +1128,10 @@ cmds.deps = (args) => {
     console.log(`${one} — ${g.files.get(one).size} file(s), batch ${g.batchOf.get(one)}`);
     const conflicts = [...g.edges.get(one)].sort((x, y) => y[1].hard.length - x[1].hard.length);
     const hard = conflicts.filter(([, e]) => e.hard.length);
-    if (!hard.length) console.log("  no HARD conflict with any other bug — only god-file overlap, safe to fix alone.");
+    if (!hard.length)
+      console.log(
+        "  no HARD conflict with any other bug — only god-file overlap, safe to fix alone.",
+      );
     for (const [other, e] of hard)
       console.log(
         `    ${other.padEnd(5)} ${g.batchOf.get(other) === g.batchOf.get(one) ? "same batch" : "BATCH " + String(g.batchOf.get(other)).padEnd(4)} ` +
@@ -1009,7 +1142,9 @@ cmds.deps = (args) => {
     return;
   }
 
-  console.log(`Hub files (touched by >= ${hubThreshold} bugs, treated as shared surface not conflict):`);
+  console.log(
+    `Hub files (touched by >= ${hubThreshold} bugs, treated as shared surface not conflict):`,
+  );
   for (const f of [...g.hubs].sort((a, b) => g.freq.get(b) - g.freq.get(a)))
     console.log(`  ${String(g.freq.get(f)).padStart(3)}  ${f}`);
 
@@ -1021,11 +1156,15 @@ cmds.deps = (args) => {
     batches.get(b).push(id);
   }
 
-  console.log("\nBATCH COHESION — a bug sharing no NON-hub file with its batch-mates is an outlier\n");
+  console.log(
+    "\nBATCH COHESION — a bug sharing no NON-hub file with its batch-mates is an outlier\n",
+  );
   const outliers = [];
   for (const b of [...batches.keys()].sort()) {
     const ids = batches.get(b);
-    const inner = ids.filter((id) => ids.some((o) => o !== id && (g.edges.get(id).get(o)?.hard.length ?? 0) > 0));
+    const inner = ids.filter((id) =>
+      ids.some((o) => o !== id && (g.edges.get(id).get(o)?.hard.length ?? 0) > 0),
+    );
     const out = ids.filter((id) => !inner.includes(id));
     outliers.push(...out.map((id) => ({ id, batch: b })));
     console.log(
@@ -1034,7 +1173,9 @@ cmds.deps = (args) => {
     );
   }
 
-  console.log("\nCROSS-BATCH HARD CONFLICTS — these share a non-hub file and MUST NOT run in parallel\n");
+  console.log(
+    "\nCROSS-BATCH HARD CONFLICTS — these share a non-hub file and MUST NOT run in parallel\n",
+  );
   const pairs = new Map();
   for (const id of g.bugs) {
     if (openOnly && !isOpen(id)) continue;
@@ -1051,14 +1192,20 @@ cmds.deps = (args) => {
   }
   const ranked = [...pairs].sort((x, y) => y[1].size - x[1].size);
   for (const [key, fs2] of ranked)
-    console.log(`  ${key.padEnd(15)} ${String(fs2.size).padStart(2)}: ${[...fs2].slice(0, 2).join(", ")}${fs2.size > 2 ? " …" : ""}`);
+    console.log(
+      `  ${key.padEnd(15)} ${String(fs2.size).padStart(2)}: ${[...fs2].slice(0, 2).join(", ")}${fs2.size > 2 ? " …" : ""}`,
+    );
   if (!ranked.length) console.log("  none.");
 
   const conflicted = new Set(ranked.flatMap(([k]) => k.split(" <-> ")));
   const free = [...batches.keys()].filter((b) => !conflicted.has(b)).sort();
-  console.log(`\nPARALLEL-SAFE BATCHES (no hard conflict with any other open batch):\n  ${free.length ? free.join(" ") : "none"}`);
+  console.log(
+    `\nPARALLEL-SAFE BATCHES (no hard conflict with any other open batch):\n  ${free.length ? free.join(" ") : "none"}`,
+  );
   if (outliers.length)
-    console.log(`\nOUTLIERS worth re-batching:\n  ${outliers.map((o) => `${o.id}(${o.batch})`).join(" ")}`);
+    console.log(
+      `\nOUTLIERS worth re-batching:\n  ${outliers.map((o) => `${o.id}(${o.batch})`).join(" ")}`,
+    );
 };
 
 // ── render: the one-page view, DERIVED ────────────────────────────────────
@@ -1121,7 +1268,11 @@ cmds.render = (args) => {
   if (!rows.length) fail("no records to render — run `expand` first");
 
   const sev = (r) => r.rec.front.severity ?? "none";
-  rows.sort((x, y) => (SEVERITY_RANK[sev(x)] ?? 4) - (SEVERITY_RANK[sev(y)] ?? 4) || Number(x.b.id.slice(1)) - Number(y.b.id.slice(1)));
+  rows.sort(
+    (x, y) =>
+      (SEVERITY_RANK[sev(x)] ?? 4) - (SEVERITY_RANK[sev(y)] ?? 4) ||
+      Number(x.b.id.slice(1)) - Number(y.b.id.slice(1)),
+  );
 
   const stateOf = (r) => r.st?.state ?? "unbatched";
   const isDone = (r) => ["done", "already-fixed"].includes(stateOf(r));
@@ -1131,7 +1282,9 @@ cmds.render = (args) => {
 
   const summary = rows
     .map(
-      (r) => `<tr class="r" data-s="${sev(r)}" data-state="${isDone(r) ? "done" : "open"}" data-b="${esc(r.st?.batch ?? "")}">
+      (
+        r,
+      ) => `<tr class="r" data-s="${sev(r)}" data-state="${isDone(r) ? "done" : "open"}" data-b="${esc(r.st?.batch ?? "")}">
 <td><a href="#${r.b.id.toLowerCase()}">${r.b.id}</a></td>
 <td>${esc(r.rec.front.title)}</td>
 <td class="dim">${esc(r.rec.front.location ?? "")}</td>
@@ -1143,7 +1296,9 @@ cmds.render = (args) => {
 
   const details = rows
     .map(
-      (r) => `<article class="bug" id="${r.b.id.toLowerCase()}" data-s="${sev(r)}" data-state="${isDone(r) ? "done" : "open"}">
+      (
+        r,
+      ) => `<article class="bug" id="${r.b.id.toLowerCase()}" data-s="${sev(r)}" data-state="${isDone(r) ? "done" : "open"}">
 <h3><span class="bid">${r.b.id}</span> ${esc(r.rec.front.title)}
 <span class="chips"><span class="chip ${sev(r)}">${sev(r)}</span><span class="chip ${isDone(r) ? "done" : "open"}">${esc(stateOf(r))}</span>${r.rec.front.sensitive === "true" ? '<span class="chip carve">carve-out</span>' : ""}</span></h3>
 <p class="area">${esc(r.rec.front.location ?? "")} · batch ${esc(r.st?.batch ?? "—")} · tier ${esc(r.st?.tier ?? "—")}${r.st?.pr ? ` · PR #${r.st.pr}` : ""}</p>
@@ -1226,7 +1381,9 @@ function apply(){
 
   mkdirSync("local-assets/docs", { recursive: true });
   writeFileSync(RENDER_OUT, html);
-  console.log(`rendered ${rows.length} bug(s) → ${RENDER_OUT} (${(html.length / 1024).toFixed(0)} KB)`);
+  console.log(
+    `rendered ${rows.length} bug(s) → ${RENDER_OUT} (${(html.length / 1024).toFixed(0)} KB)`,
+  );
   console.log(`  ${open} open · ${rows.length - open} closed · ${analysed} analysed`);
   if (args.includes("--open")) console.log(`  open it: start ${RENDER_OUT}`);
 };
