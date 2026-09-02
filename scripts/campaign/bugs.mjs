@@ -1033,6 +1033,10 @@ function commitMentions(state, args) {
     return {
       mentions,
       head,
+      // These two notes mean "a commit range was NEVER scanned" — the one
+      // case a quiet hook must not go silent on. `unscanned` lets cmds.sync
+      // route them to stderr unconditionally, regardless of --quiet.
+      unscanned: true,
       note: prev
         ? `anchor ${prev.slice(0, 8)} is unknown to git — re-anchored at ${head.slice(0, 8)}, no scan`
         : `first run — anchored at ${head.slice(0, 8)}; commit history is not re-derived (use --rescan to force)`,
@@ -1117,8 +1121,16 @@ cmds.sync = (args) => {
   const quiet = args.includes("--quiet");
   const events = [];
 
-  const { mentions, head, note } = commitMentions(state, args);
-  if (note && !quiet) console.log(`sync: ${note}`);
+  const { mentions, head, note, unscanned } = commitMentions(state, args);
+  if (note) {
+    if (unscanned)
+      // Gate 4 (the ONLY place this ever runs unattended) invokes `sync
+      // --quiet` — a lost or unknown anchor used to drop the whole
+      // unscanned range with ZERO output there. Route it to stderr
+      // unconditionally so a quiet caller still sees it.
+      process.stderr.write(`sync: ${note}\n`);
+    else if (!quiet) console.log(`sync: ${note}`);
+  }
 
   for (const bug of catalogue) {
     const rec = readRecord(bug.id);
@@ -1884,7 +1896,12 @@ const runCli = (argv, root) => {
   try {
     return {
       code: 0,
-      out: execSync(`node ${cmd}`, {
+      // `2>&1`: execSync's return value on a SUCCESSFUL exit is stdout only —
+      // stderr is silently discarded even though it is piped — but some
+      // writers (the sync anchor's --quiet-unconditional notes) deliberately
+      // write to stderr on a clean exit, and a caller here needs to see it.
+      // On failure both streams are already merged below (e.stdout+e.stderr).
+      out: execSync(`node ${cmd} 2>&1`, {
         encoding: "utf8",
         env: { ...process.env, BUGS_ROOT: root },
         stdio: ["ignore", "pipe", "pipe"],
@@ -2413,6 +2430,43 @@ cmds["self-test"] = () => {
       );
     } finally {
       process.chdir(prevCwd);
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // --quiet must not swallow the two "an unscanned range" notes — Gate 4 is
+  // the ONLY place sync ever runs unattended, and it always passes --quiet,
+  // so a lost/unknown anchor used to drop the whole range with ZERO output
+  // there, looking perfectly healthy.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      // First run: no anchor exists yet — the "not re-derived" note.
+      const first = runCli(["sync", "--quiet"], tmp);
+      check(
+        "sync --quiet: the first-run 'not re-derived' note still reaches stderr",
+        /not re-derived/.test(first.out),
+        true,
+      );
+
+      // An anchor git has never seen (rebased away, a foreign clone) — the
+      // "re-anchored, no scan" note.
+      mkdirSync(tmp, { recursive: true });
+      writeFileSync(
+        join(tmp, "sync-state.json"),
+        JSON.stringify({ lastSha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" }),
+      );
+      const unknownAnchor = runCli(["sync", "--quiet"], tmp);
+      check(
+        "sync --quiet: the 're-anchored, no scan' note still reaches stderr",
+        /no scan/.test(unknownAnchor.out),
+        true,
+      );
+    } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
       else process.env.BUGS_ROOT = prevRoot;
       rmSync(tmp, { recursive: true, force: true });
