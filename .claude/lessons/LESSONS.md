@@ -232,6 +232,26 @@
   proves nothing about the change; rerun first.**
 - **Guard:** none — judgment.
 
+### L-042 · 2026-09-02 · tooling
+
+- **Symptom:** five defects shipped from one script in a single session — a generator that fought
+  prettier and re-dirtied 210 files on every turn, two code-map edits that printed "updated" while
+  changing nothing, and twice, caller text mangled mid-write (a bug whose evidence reads
+  `bills $235.00 vs PERCENT's $181.05` got `## History` written into the middle of five records).
+- **Root cause:** every one was a write path that reported success without checking what it wrote.
+  Two mechanisms. `String.prototype.replace` with a **string** replacement expands `$1` / `$&` /
+  `` $` `` **out of the caller's text**, not the author's — so any authored prose containing a
+  dollar amount rewrites itself. And an anchored `replace` whose pattern does not match returns the
+  subject unchanged, so the script writes a byte-identical file and reports a successful edit.
+- **Lesson:** **A script that edits files must assert its own effect. Never insert authored text
+  through a string replacement — use a function replacement, which performs no expansion. After any
+  anchored edit, compare before and after and fail loudly when they are equal: "wrote the file" is
+  not "changed the file".**
+- **Guard:** `npm run bugs -- self-test`, step 8 of `npm run verify` — asserts `$`-safety in
+  `note()`, no trailing space on an empty front-matter field, exactly one `## History` per record,
+  single-line history entries, ledger id-uniqueness across shards, and record coverage. It caught
+  the fifth defect, which was the fourth one reintroduced in a new function.
+
 ## testing
 
 ### L-036 · 2026-09-01 · testing · #TBD
