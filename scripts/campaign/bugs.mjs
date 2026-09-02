@@ -50,7 +50,9 @@ import { execSync } from "node:child_process";
 const rootDir = () => process.env.BUGS_ROOT || ".claude/campaign";
 const CATALOGUE = () => join(rootDir(), "bugs.jsonl");
 const STATUS_DIR = () => join(rootDir(), "status");
-const REGISTER = "local-assets/docs/routeflow-bug-register.html";
+// Overridable via BUGS_REGISTER for the same reason as rootDir(): the self-test
+// exercises the real cmds.enrich against a fixture instead of a hand copy of it.
+const REGISTER = () => process.env.BUGS_REGISTER || "local-assets/docs/routeflow-bug-register.html";
 const BOARD = () => join(rootDir(), "board.json");
 
 const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3, none: 4 };
@@ -129,9 +131,11 @@ const cmds = {};
 // One-time seed. Idempotent: never overwrites a row that already exists, so a
 // hand-edited symptom survives a re-import.
 cmds.import = () => {
-  if (!existsSync(REGISTER))
-    fail(`register not found at ${REGISTER} (gitignored — this runs on the owner's machine only)`);
-  const html = readFileSync(REGISTER, "utf8");
+  if (!existsSync(REGISTER()))
+    fail(
+      `register not found at ${REGISTER()} (gitignored — this runs on the owner's machine only)`,
+    );
+  const html = readFileSync(REGISTER(), "utf8");
   const rows = [
     ...html.matchAll(
       /<tr><td><a href="#b\d+">(B\d+)<\/a><\/td><td>(.*?)<\/td><td>(.*?)<\/td><td>(.*?)<\/td><td>(.*?)<\/td><\/tr>/g,
@@ -395,6 +399,22 @@ function appendHistory(body, key, event, detail) {
     : `${body}\n## History\n\n${line}\n`;
 }
 
+// The single helper for replacing one named "## Section" block's content.
+// `cmds.note` and the self-test both call this — never two copies of the
+// regex, which is exactly how a regression in the shipped writer went
+// uncaught (the self-test asserted against its own hand-built copy).
+// Bounded by the next heading OF ANY KIND (or end of string), never a specific
+// heading name — an anchor bound to one fixed next-heading deletes every
+// section in between when a different heading actually comes next.
+function replaceSection(body, sectionName, text) {
+  const rx = new RegExp(`(## ${sectionName}\\n\\n)([\\s\\S]*?)(?=\\n## |$)`);
+  if (!rx.test(body)) return null;
+  // Function replacement, never a string one: a string replacement expands
+  // $1 / $& / $` / $' inside the CALLER's text, and analysis prose in a
+  // delivery product says "$100" constantly (proved: it shredded B32).
+  return body.replace(rx, (_m, heading) => `${heading}${text}\n`);
+}
+
 const frontFor = (bug, st) => ({
   id: bug.id,
   title: bug.title,
@@ -530,12 +550,8 @@ cmds.note = (args) => {
   if (section) {
     const match = SECTIONS.find((s) => s.toLowerCase() === section.toLowerCase());
     if (!match) fail(`--section must be one of: ${SECTIONS.join(" | ")}`);
-    const rx = new RegExp(`(## ${match}\\n\\n)([\\s\\S]*?)(?=\\n## |$)`);
-    if (!rx.test(rec.body)) fail(`section "${match}" not found in ${id}`);
-    // Function replacement, never a string one: a string replacement expands
-    // $1 / $& / $` / $' inside the CALLER's text, and analysis prose in a
-    // delivery product says "$100" constantly (proved: it shredded B32).
-    const body = rec.body.replace(rx, (_m, heading) => `${heading}${text}\n`);
+    const body = replaceSection(rec.body, match, text);
+    if (body === null) fail(`section "${match}" not found in ${id}`);
     writeRecord(id, rec.front, body);
     console.log(`${id}: wrote "${match}".`);
   } else {
@@ -821,15 +837,82 @@ cmds["self-test"] = () => {
     closed: null,
   });
 
-  // note() text must survive $-patterns verbatim.
-  const body = "## Summary\n\nOLD\n\n## Root cause\n\nx\n";
-  const text = "Driver loses $100; also $& and $` and $'.";
-  const rx = new RegExp(`(## Summary\\n\\n)([\\s\\S]*?)(?=\\n## |$)`);
-  check(
-    "note: $-patterns survive verbatim",
-    rx.test(body) && body.replace(rx, (_m, h) => `${h}${text}\n`).includes(text),
-    true,
-  );
+  // note() and enrich() text must survive $-patterns verbatim, verified by
+  // reading the file back after calling the REAL commands (against a
+  // throwaway BUGS_ROOT/BUGS_REGISTER) — never a hand copy of their regex.
+  // A copy is exactly what let a regression in the shipped writer go uncaught.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    const prevRegister = process.env.BUGS_REGISTER;
+    process.env.BUGS_ROOT = tmp;
+    const registerPath = join(tmp, "register.html");
+    process.env.BUGS_REGISTER = registerPath;
+    try {
+      // -- cmds.note --
+      const noteBody = "## Summary\n\nOLD\n\n## Root cause\n\nx\n";
+      writeRecord("B900", { id: "B900", title: "note fixture" }, noteBody);
+      const dollarText = "Driver loses $100; also $& and $` and $'.";
+      cmds.note(["B900", dollarText, "--section", "Summary"]);
+      const afterNote = readRecord("B900").body;
+      check(
+        "note: $-patterns survive verbatim (real cmds.note)",
+        afterNote.includes(dollarText),
+        true,
+      );
+      check(
+        "note: an unrelated section is left alone",
+        afterNote.includes("## Root cause\n\nx"),
+        true,
+      );
+
+      // -- cmds.enrich --
+      writeCatalogue([
+        {
+          id: "B901",
+          title: "enrich fixture",
+          location: "apps/api/src/self-test.ts",
+          severity: "low",
+          register: "open",
+          batch: null,
+          source: "filed",
+          filedAt: null,
+          sensitive: false,
+          sensitiveFor: [],
+        },
+      ]);
+      writeRecord(
+        "B901",
+        { id: "B901", title: "enrich fixture" },
+        "\n# B901 · enrich fixture\n\n## History\n",
+      );
+      const html =
+        '<span class="bug-id">B901</span>' +
+        "<dt>Meant to do</dt><dd>Ship correct totals</dd>" +
+        "<dt>Actually does</dt><dd>Off by $100 due to a $&amp; glitch</dd>" +
+        '<div class="evidence">apps/api/src/self-test.ts:1 — $1 broke it</div>' +
+        '<span class="bug-id">ZZZ</span>';
+      writeFileSync(registerPath, html);
+      cmds.enrich();
+      const afterEnrich = readRecord("B901").body;
+      check(
+        "enrich: register HTML with $-patterns survives verbatim (real cmds.enrich)",
+        afterEnrich.includes("Off by $100 due to a $& glitch"),
+        true,
+      );
+      check(
+        "enrich: writes a '## Reported evidence' section",
+        afterEnrich.includes("## Reported evidence"),
+        true,
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      if (prevRegister === undefined) delete process.env.BUGS_REGISTER;
+      else process.env.BUGS_REGISTER = prevRegister;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
 
   // history must dedupe on its marker, or Gate 4 grows the file every turn.
   const once = appendHistory("## History\n", "k1", "e", "d");
@@ -1012,9 +1095,11 @@ function registerDetail(html, id) {
 }
 
 cmds.enrich = () => {
-  if (!existsSync(REGISTER))
-    fail(`register not found at ${REGISTER} (gitignored — this runs on the owner's machine only)`);
-  const html = readFileSync(REGISTER, "utf8");
+  if (!existsSync(REGISTER()))
+    fail(
+      `register not found at ${REGISTER()} (gitignored — this runs on the owner's machine only)`,
+    );
+  const html = readFileSync(REGISTER(), "utf8");
   let enriched = 0;
   let noDetail = 0;
   let files = 0;
