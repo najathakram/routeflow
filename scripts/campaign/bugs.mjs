@@ -24,12 +24,29 @@
 // destructive migrations. `classify()` below is that rule, expressed once, so
 // the dispatcher cannot forget it and nobody can quietly widen it in passing.
 //
-// USAGE
-//   node scripts/campaign/bugs.mjs import        # seed the catalogue from the register HTML
-//   node scripts/campaign/bugs.mjs file "<title>" --location "<where>" --severity high
-//   node scripts/campaign/bugs.mjs next          # the next batch an agent may take
+// USAGE — every implemented command (`cmds.*` below is the source of truth;
+// keep this list in sync with it, not the other way round):
+//   node scripts/campaign/bugs.mjs import                     # seed the catalogue from the register HTML (owner-machine only)
+//   node scripts/campaign/bugs.mjs file "<title>" --location "<where>" --severity high|medium|low|critical [--symptom "..."] [--batch F##] [--tier T1|T2|T3]
+//   node scripts/campaign/bugs.mjs next [--json]               # the next batch an agent may take
 //   node scripts/campaign/bugs.mjs list [--open] [--sensitive] [--batch F09]
 //   node scripts/campaign/bugs.mjs stats
+//   node scripts/campaign/bugs.mjs expand                      # create/refresh one record per catalogue row
+//   node scripts/campaign/bugs.mjs sync [--quiet]               # derive History from the ledger + git log (idempotent; Gate 4 runs this every turn)
+//   node scripts/campaign/bugs.mjs show <B###>
+//   node scripts/campaign/bugs.mjs note <B###> "<text>" [--section "Root cause"]
+//   node scripts/campaign/bugs.mjs index                        # rebuild bugs.jsonl from the records (regenerate, never hand-edit)
+//   node scripts/campaign/bugs.mjs brief <F##|B###>             # everything an agent needs to start a batch, in one output
+//   node scripts/campaign/bugs.mjs prove <B###> --pr <n> --proof "REG-B### ..." [--pending-deploy]
+//   node scripts/campaign/bugs.mjs discharge <F##> --evidence "<post-deploy proof>"
+//   node scripts/campaign/bugs.mjs tier <B###> <T1|T2|T3> --why "<reason>"
+//   node scripts/campaign/bugs.mjs status [F##]                 # per-batch done/analysed counts
+//   node scripts/campaign/bugs.mjs triage                       # catalogue bugs with no ledger row at all
+//   node scripts/campaign/bugs.mjs move <B###> --to <F##> [--why "<reason>"]
+//   node scripts/campaign/bugs.mjs enrich                       # pull the register's detail blocks + files into every record (owner-machine only)
+//   node scripts/campaign/bugs.mjs deps [--bug B###] [--hub-threshold N] [--all]
+//   node scripts/campaign/bugs.mjs render [--open]              # regenerate the derived HTML view
+//   node scripts/campaign/bugs.mjs self-test                    # also runs as a step of `npm run verify`
 import {
   readFileSync,
   writeFileSync,
