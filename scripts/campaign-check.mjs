@@ -35,6 +35,14 @@
 //                               `evidence` field; no test search (the plan: "an
 //                               already-fixed claim with no test is a confirmed
 //                               bug with a missing spec").
+//   regressed                 — a closed bug that came back (written only by
+//                               `bugs.mjs reopen`, which clears the old proof).
+//                               Same contract as already-fixed: a non-empty
+//                               `evidence` field citing the failing REG token or
+//                               the run that showed it. No test search — the
+//                               claim is about production, not about this run.
+//                               It is workable again, so `next`/`waves` re-offer
+//                               its batch.
 //   deferred                 — struck from this batch, re-pointed to a follow-on.
 //                               Removed from the merged set; never checked here.
 //
@@ -97,7 +105,13 @@ const CLAIM_STATES = new Set([
   "done",
   "already-fixed",
   "refuted",
+  "regressed",
 ]);
+// States discharged by their `evidence` field alone — they never consult a run
+// artifact, and must not force one to exist. `regressed` is here for the same
+// reason `already-fixed` is: it asserts something about production that no test
+// in THIS run can show, so the assertion has to carry its own citation.
+const EVIDENCE_ONLY_STATES = new Set(["already-fixed", "refuted", "regressed"]);
 const VALID_STATES = new Set([...CLAIM_STATES, "queued", "in-flight", "deferred"]);
 const VALID_TIERS = new Set(["T1", "T2", "T3"]);
 
@@ -318,8 +332,7 @@ function manualIdsFor(buildPlanPath) {
 // never consult a run artifact — so they must not force one to exist. Everything
 // else that claims (proven, done, and any anomalous tier/state combo) still does,
 // so a mis-tiered row can never silently skip the artifact requirement.
-const consultsArtifacts = (r) =>
-  CLAIM_STATES.has(r.state) && r.state !== "already-fixed" && r.state !== "refuted";
+const consultsArtifacts = (r) => CLAIM_STATES.has(r.state) && !EVIDENCE_ONLY_STATES.has(r.state);
 const t1Needed = rows.some((r) => r.tier === "T1" && consultsArtifacts(r));
 const t2NeedsPostDeploy = rows.some((r) => r.tier === "T2" && r.state === "done");
 const t3Needed = rows.some((r) => r.tier === "T3" && consultsArtifacts(r));
@@ -404,7 +417,7 @@ for (const row of rows) {
   const { id, tier, state, evidence } = row;
   if (!CLAIM_STATES.has(state)) continue; // queued/in-flight/deferred: nothing to verify yet
 
-  if (state === "already-fixed" || state === "refuted") {
+  if (EVIDENCE_ONLY_STATES.has(state)) {
     if (!evidence || !String(evidence).trim()) {
       fail(`${id} (${row._shard}): state "${state}" requires a non-empty "evidence" field`);
     } else {

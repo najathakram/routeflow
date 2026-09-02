@@ -40,6 +40,9 @@
 //   node scripts/campaign/bugs.mjs brief <F##|B###>             # everything an agent needs to start a batch, in one output
 //   node scripts/campaign/bugs.mjs prove <B###> --pr <n> --proof "REG-B### ..." [--pending-deploy]
 //   node scripts/campaign/bugs.mjs discharge <F##> --evidence "<post-deploy proof>" [--evidence-B### "<per-row proof>"]   # per-row evidence is REQUIRED for every T2 row
+//   node scripts/campaign/bugs.mjs reopen <B###> --why "<failing REG-B### token or the run that showed the regression>"
+//   node scripts/campaign/bugs.mjs claim <F##>                  # flip that batch's workable rows to in-flight (next/waves skip it)
+//   node scripts/campaign/bugs.mjs release <F##>                # give them back
 //   node scripts/campaign/bugs.mjs tier <B###> <T1|T2|T3> --why "<reason>"
 //   node scripts/campaign/bugs.mjs status [F##]                 # per-batch done/analysed counts
 //   node scripts/campaign/bugs.mjs triage                       # catalogue bugs with no ledger row at all
@@ -1465,6 +1468,138 @@ cmds.discharge = (args) => {
   console.log(`  verify: node scripts/campaign-check.mjs`);
 };
 
+// ── reopen: the state the ledger had no way to express ────────────────────
+// Before this, a bug that regressed after `done` could only be re-filed under a
+// FRESH id — which severs it from the analysis, the proof and the history that
+// made it closable in the first place. `prove` and `discharge` only ever
+// advanced, and `move` refuses any non-queued row. `regressed` is a CLAIM
+// state: campaign-check holds it to its evidence exactly like `already-fixed`,
+// because "it came back" is an assertion about production, not a mood.
+cmds.reopen = (args) => {
+  const typed = (args[0] ?? "").toUpperCase();
+  const why = flag(args, "why");
+  if (!/^B\d+$/.test(typed) || !why)
+    fail(
+      'usage: reopen <B###> --why "<the failing REG-B### token, or the run/report that showed it>"',
+    );
+  const id = resolveId(typed);
+  const batch = findShardOf(id);
+  if (!batch) fail(`${id} is in no ledger shard — nothing to reopen`);
+  const row = readShard(batch).rows.find((r) => r.id === id);
+  if (WORKABLE.has(row.state))
+    fail(`${id} is already ${row.state} — it is open work, there is nothing to reopen`);
+
+  // A regression claim with no artifact behind it is a rumour, and this command
+  // ERASES a proof — so it costs a citation, the same way `prove` costs a token.
+  const citesToken = new RegExp(`REG-${id}(?![0-9])`).test(why);
+  const citesRun = /#\d+|https?:\/\/|\brun \d+|\bdeploy\b/i.test(why);
+  if (why.length < 40 || !(citesToken || citesRun))
+    fail(
+      `--why must cite the failing REG-${id} token or the run/deploy/report that showed the ` +
+        `regression — reopening clears ${id}'s proof (PR #${row.pr ?? "—"}), which is not recoverable from here`,
+    );
+
+  const patch = {
+    state: "regressed",
+    pr: null,
+    proof: null,
+    evidence: why,
+    dischargeEvidence: null,
+  };
+  const { row: after } = upsertLedgerRow(batch, { ...row, ...patch });
+  for (const [k, v] of Object.entries(patch))
+    if (after?.[k] !== v)
+      fail(
+        `ledger write for ${id} did not land as intended (${k}) — re-read row is ${JSON.stringify(after)}`,
+      );
+
+  const rec = readRecord(id);
+  if (rec)
+    writeRecord(
+      id,
+      { ...rec.front, state: "regressed", proof: null, closed: null },
+      appendEvent(rec.body, `regressed-${today()}`, "regressed", why),
+    );
+  console.log(`${id}: ${batch} row → regressed (was ${row.state}, PR #${row.pr ?? "—"} cleared)`);
+  console.log(`  it is workable again — \`next\`/\`waves\` will offer ${batch} once more.`);
+};
+
+// ── claim / release: the offline half of the dispatcher's exclusion ────────
+// `in-flight` was already a valid ledger state that NOTHING ever wrote, so the
+// only signal that a batch was taken lived in a GitHub comment — unreadable
+// offline, and a network hiccup away from handing one batch to two agents.
+// team.mjs's lease stays authoritative for the BOARD; this is the ledger's own
+// record of the same fact, and `next`/`waves` honour it with no network at all.
+const claimId = () => {
+  if (process.env.RF_CLAIM_ID) return process.env.RF_CLAIM_ID;
+  try {
+    return git("git rev-parse --show-toplevel").trim().split(/[/\\]/).pop();
+  } catch {
+    return "unknown";
+  }
+};
+
+cmds.claim = (args) => {
+  const batch = normBatch(args[0]);
+  const { rows } = readShard(batch);
+  const take = rows.filter((r) => WORKABLE.has(r.state));
+  if (!take.length)
+    fail(
+      `${batch} has no workable row to claim (states: ${[...new Set(rows.map((r) => r.state))].join(", ")})`,
+    );
+  const held = rows.filter((r) => r.state === "in-flight");
+  if (held.length)
+    fail(
+      `${batch} already has ${held.length} in-flight row(s) (${held.map((r) => r.id).join(", ")}) — ` +
+        `release it first, or take another batch`,
+    );
+
+  const who = claimId();
+  for (const row of take) {
+    const { row: after } = upsertLedgerRow(batch, {
+      ...row,
+      state: "in-flight",
+      claimedFrom: row.state,
+      claimedBy: who,
+    });
+    if (after?.state !== "in-flight" || after?.claimedFrom !== row.state)
+      fail(
+        `ledger write for ${row.id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
+      );
+    // Front matter only, no History line: a claim is transient bookkeeping, and
+    // a record's history is for what happened TO THE BUG.
+    const rec = readRecord(row.id);
+    if (rec) writeRecord(row.id, { ...rec.front, state: "in-flight" }, rec.body);
+  }
+  console.log(`${batch}: ${take.length} row(s) → in-flight, held by ${who}`);
+  console.log(`  \`next\`/\`waves\` will skip ${batch} until: npm run bugs -- release ${batch}`);
+};
+
+cmds.release = (args) => {
+  const batch = normBatch(args[0]);
+  const { rows } = readShard(batch);
+  const held = rows.filter((r) => r.state === "in-flight");
+  if (!held.length) fail(`${batch} holds no in-flight row`);
+  for (const row of held) {
+    // Restore what the row WAS: releasing a regressed batch must not quietly
+    // launder it into a plain queued one.
+    const back = WORKABLE.has(row.claimedFrom) ? row.claimedFrom : "queued";
+    const { row: after } = upsertLedgerRow(batch, {
+      ...row,
+      state: back,
+      claimedFrom: null,
+      claimedBy: null,
+    });
+    if (after?.state !== back)
+      fail(
+        `ledger write for ${row.id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
+      );
+    const rec = readRecord(row.id);
+    if (rec) writeRecord(row.id, { ...rec.front, state: back }, rec.body);
+  }
+  console.log(`${batch}: released ${held.length} row(s) — ${held.map((r) => r.id).join(", ")}`);
+};
+
 // A record's own analysis routinely concludes a different tier than the
 // ledger row it lives under (B32 designed 9 T1 jest cases while its ledger
 // row still said T3, so that conclusion had no path into the gate). `tier`
@@ -2090,6 +2225,76 @@ cmds["self-test"] = () => {
         "discharge: the T1 row carries the batch string as `evidence`, never as dischargeEvidence",
         [byId.get("B2")?.evidence, byId.get("B2")?.dischargeEvidence],
         [BATCH_EV, undefined],
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // reopen / claim / release: the ledger transitions that did not exist. A
+  // regressed bug used to require a fresh id, severing it from its own history.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file([
+        "reopen fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+      ]);
+      cmds.prove(["B1", "--pr", "700", "--proof", "REG-B1 jest: the guard holds"]);
+      cmds.discharge([
+        "F01",
+        "--evidence",
+        "Railway deploy 1234abcd SUCCESS; Actions run 999 green against it",
+      ]);
+      check("reopen fixture reaches done first", readShard("F01").rows[0].state, "done");
+
+      const thin = runCli(["reopen", "B1", "--why", "it broke again"], tmp);
+      check("reopen: refuses a regression claim that cites nothing", thin.code !== 0, true);
+      check("reopen: the refusal wrote nothing", readShard("F01").rows[0].state, "done");
+
+      cmds.reopen([
+        "B1",
+        "--why",
+        "REG-B1 failed in Actions run 33557237968 against deploy 1234abcd",
+      ]);
+      const row = readShard("F01").rows[0];
+      check(
+        "reopen: state regressed, proof and PR cleared, evidence kept",
+        [row.state, row.pr, row.proof, Boolean(row.evidence)],
+        ["regressed", null, null, true],
+      );
+      check(
+        "reopen: the record carries the regression event",
+        readRecord("B1").body.includes("**regressed**"),
+        true,
+      );
+      check(
+        "reopen: a regressed row is workable again",
+        batchIndex().batches.get("F01").bugs.length,
+        1,
+      );
+
+      cmds.claim(["F01"]);
+      check("claim: workable rows go in-flight", readShard("F01").rows[0].state, "in-flight");
+      check(
+        "claim: the record's front matter follows the ledger",
+        readRecord("B1").front.state,
+        "in-flight",
+      );
+      cmds.release(["F01"]);
+      check(
+        "release: restores the pre-claim state, never launders regressed into queued",
+        readShard("F01").rows[0].state,
+        "regressed",
       );
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
