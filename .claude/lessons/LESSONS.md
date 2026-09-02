@@ -301,8 +301,7 @@
   reopen, re-prove, already-fixed) makes the record lie with full confidence.**
 - **Guard:** `bugs self-test` drives the real `cmds.sync` through done → queued → done and asserts
   two `done` lines, and reopens then syncs and asserts the front-matter proof stays clear
-  (19bcecdc, e6d71ae6). The `frontFor` source-field derivation (`st?.proof`) lands in the next
-  commit with the B126/B127 case as its check.
+  (19bcecdc, e6d71ae6). The `frontFor` source-field derivation (`st?.proof`) landed in the commit after 7332c32f, with B126/B127 (already-fixed, no ledger proof) as its check.
 
 ## testing
 

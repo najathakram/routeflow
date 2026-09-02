@@ -27,7 +27,7 @@
 // USAGE — every implemented command (`cmds.*` below is the source of truth;
 // keep this list in sync with it, not the other way round):
 //   node scripts/campaign/bugs.mjs import                     # seed the catalogue from the register HTML (owner-machine only)
-//   node scripts/campaign/bugs.mjs file "<title>" --location "<where>" --severity high|medium|low|critical [--symptom "..."] [--batch F##] [--tier T1|T2|T3] [--files "a.ts b.ts"]
+//   node scripts/campaign/bugs.mjs file "<title>" --location "<where>" --severity high|medium|low|critical [--symptom "..."] [--batch F## --tier T1|T2|T3] [--files "a.ts b.ts"]   (--tier is required whenever --batch is given)
 //   node scripts/campaign/bugs.mjs next [--json] [--no-claims]  # the next batch an agent may take (the head of wave 1)
 //   node scripts/campaign/bugs.mjs waves [--cap N] [--hub-threshold N] [--json] [--no-claims]  # the parallel schedule
 //   node scripts/campaign/bugs.mjs list [--open] [--sensitive] [--batch F09]
@@ -253,7 +253,7 @@ cmds.file = (args) => {
   const title = args[0];
   if (!title || title.startsWith("--"))
     fail(
-      'usage: file "<title>" --location "<where>" --severity critical|high|medium|low [--symptom "..."] [--batch F##] [--tier T1|T2|T3] [--files "a.ts b.ts"]',
+      'usage: file "<title>" --location "<where>" --severity critical|high|medium|low [--symptom "..."] [--batch F## --tier T1|T2|T3] [--files "a.ts b.ts"]',
     );
   const location = flag(args, "location");
   const severity = flag(args, "severity", "medium");
@@ -302,7 +302,12 @@ cmds.file = (args) => {
   // touch this bug — the ledger said "queued" from the first moment, the
   // record disagreed with its own ledger row from the first moment too.
   if (bug.batch) {
-    const tier = flag(args, "tier", "T1");
+    const tier = (flag(args, "tier") ?? "").toUpperCase();
+    if (!/^T[123]$/.test(tier))
+      fail(
+        "--tier T1|T2|T3 is required with --batch — a ledger tier is a ruling, not a default. " +
+          "File without --batch (it lands in `triage`) and set the tier after analysis with `tier`.",
+      );
     const { what, row } = upsertLedgerRow(bug.batch, {
       id: bug.id,
       batch: bug.batch,
@@ -820,7 +825,7 @@ const frontFor = (bug, st) => ({
   // ledger's proof, and a state-only rule (`!== "queued"`) would have let the
   // very next `sync` resurrect the token it had just erased — the record would
   // claim a proof its own ledger row does not have.
-  proof: st?.state && !WORKABLE.has(st.state) && st.state !== "in-flight" ? `REG-${bug.id}` : null,
+  proof: st?.proof ? `REG-${bug.id}` : null,
   sensitive: bug.sensitive ?? classify(bug).sensitive,
   sensitiveFor: (bug.sensitiveFor ?? classify(bug).reasons).join(",") || null,
   closed: st && ["done", "already-fixed"].includes(st.state) ? "yes" : null,
@@ -1930,6 +1935,8 @@ cmds["self-test"] = () => {
         "low",
         "--batch",
         "F01",
+        "--tier",
+        "T1",
       ]);
       cmds.note([
         "B1",
@@ -2013,6 +2020,8 @@ cmds["self-test"] = () => {
         "low",
         "--batch",
         "F01",
+        "--tier",
+        "T1",
       ]);
       const before = batchIndex().batches.get("F01");
       check("selection: a queued row is workable", before.bugs.length, 1);
@@ -2303,6 +2312,8 @@ cmds["self-test"] = () => {
         "low",
         "--batch",
         "F01",
+        "--tier",
+        "T1",
       ]);
       const rec = readRecord("B1");
       writeRecord("B1", { ...rec.front, contestedBy: "B999" }, rec.body);
@@ -2335,6 +2346,8 @@ cmds["self-test"] = () => {
         "low",
         "--batch",
         "F01",
+        "--tier",
+        "T1",
       ]);
       cmds.prove(["B1", "--pr", "700", "--proof", "REG-B1 jest: the guard holds"]);
       cmds.discharge([
