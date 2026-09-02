@@ -32,6 +32,7 @@
 //   node scripts/campaign/bugs.mjs stats
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { execSync } from "node:child_process";
 
 const ROOT = ".claude/campaign";
 const CATALOGUE = join(ROOT, "bugs.jsonl");
@@ -297,6 +298,225 @@ cmds.stats = () => {
   console.log(`severity  : ${JSON.stringify(bySeverity)}`);
   console.log(`state     : ${JSON.stringify(byState)}`);
   console.log(`carve-out : ${sensitive} sensitive / ${catalogue.length - sensitive} agent-safe`);
+};
+
+// ── the per-bug record ────────────────────────────────────────────────────
+// One markdown file per bug, at `.claude/campaign/bugs/B###.md`. This is the
+// Jira-card equivalent and it is deliberately a FILE, not a row:
+//   * an agent tackling B129 reads ~1 KB, not a 200-row catalogue or a 614 KB
+//     HTML — the single biggest token lever in the whole loop;
+//   * `git log -p` on one file IS that bug's audit trail, for free;
+//   * a human can open, read and edit exactly one bug.
+// The narrative sections are written by the analysis pass; the front matter and
+// the History log are DERIVED and refreshed by `sync`, so the record cannot
+// drift from the proof ledger the way the board did.
+const RECORD_DIR = join(ROOT, "bugs");
+const recordPath = (id) => join(RECORD_DIR, `${id}.md`);
+const SECTIONS = [
+  "Summary",
+  "What this feature is for",
+  "Root cause",
+  "User impact",
+  "Fix approach and UX",
+  "Test plan",
+];
+const UNANALYSED = "_Not yet analysed._";
+
+function parseRecord(text) {
+  const m = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(text);
+  if (!m) return { front: {}, body: text };
+  const front = {};
+  for (const line of m[1].split("\n")) {
+    const kv = /^([A-Za-z][\w]*):\s*(.*)$/.exec(line);
+    if (kv) front[kv[1]] = kv[2] === "" ? null : kv[2];
+  }
+  return { front, body: m[2] };
+}
+
+const renderFront = (front) =>
+  "---\n" +
+  Object.entries(front)
+    .map(([k, v]) => `${k}: ${v ?? ""}`)
+    .join("\n") +
+  "\n---\n";
+
+const readRecord = (id) =>
+  existsSync(recordPath(id)) ? parseRecord(readFileSync(recordPath(id), "utf8")) : null;
+
+function writeRecord(id, front, body) {
+  mkdirSync(RECORD_DIR, { recursive: true });
+  writeFileSync(recordPath(id), renderFront(front) + body);
+}
+
+// History is append-only and deduped on `key` — so sync is idempotent and can
+// run from a hook on every turn without growing the file.
+function appendHistory(body, key, event, detail) {
+  if (body.includes(`<!--${key}-->`)) return body;
+  const line = `- ${new Date().toISOString().slice(0, 10)} · **${event}** · ${detail} <!--${key}-->`;
+  return body.includes("## History")
+    ? `${body.replace(/\s*$/, "")}\n${line}\n`
+    : `${body}\n## History\n\n${line}\n`;
+}
+
+const frontFor = (bug, st) => ({
+  id: bug.id,
+  title: bug.title,
+  location: bug.location,
+  severity: bug.severity,
+  batch: st?.batch ?? bug.batch ?? null,
+  tier: st?.tier ?? null,
+  state: st?.state ?? "uncampaigned",
+  proof: st?.state && st.state !== "queued" ? `REG-${bug.id}` : null,
+  sensitive: bug.sensitive ?? classify(bug).sensitive,
+  sensitiveFor: (bug.sensitiveFor ?? classify(bug).reasons).join(",") || null,
+  closed: st && ["done", "already-fixed"].includes(st.state) ? "yes" : null,
+});
+
+// Create records that do not exist yet; refresh derived front matter on ones
+// that do. NEVER touches a narrative section — analysis is expensive and a
+// refresh must not be able to destroy it.
+cmds.expand = () => {
+  const catalogue = readCatalogue();
+  if (!catalogue.length) fail("catalogue is empty — run `import` first");
+  const state = readState();
+  let created = 0;
+  let refreshed = 0;
+
+  for (const bug of catalogue) {
+    const st = state.get(bug.id);
+    const front = frontFor(bug, st);
+    const existing = readRecord(bug.id);
+
+    if (!existing) {
+      let body =
+        `\n# ${bug.id} · ${bug.title}\n\n` +
+        `**Location** \`${bug.location}\` · **Severity** ${bug.severity}` +
+        `${front.batch ? ` · **Batch** ${front.batch}` : ""} · **State** ${front.state}\n\n` +
+        SECTIONS.map((s) => `## ${s}\n\n${UNANALYSED}\n`).join("\n") +
+        `\n## History\n`;
+      body = appendHistory(body, `filed`, "filed", `imported from the register (${bug.register})`);
+      if (st) body = appendHistory(body, `batch-${st.batch}`, "batched", `assigned to ${st.batch}`);
+      if (st && st.state !== "queued")
+        body = appendHistory(
+          body,
+          `state-${st.state}`,
+          st.state,
+          st.pr ? `PR #${st.pr}` : "recorded in the proof ledger",
+        );
+      writeRecord(bug.id, front, body);
+      created++;
+    } else {
+      writeRecord(bug.id, { ...existing.front, ...front }, existing.body);
+      refreshed++;
+    }
+  }
+  console.log(`records: ${created} created, ${refreshed} refreshed, in ${RECORD_DIR}/`);
+};
+
+// The automatic half. Derives history events from the two sources that already
+// move on their own — the proof ledger and git — and appends any the record has
+// not recorded yet. Idempotent, so it is safe to run from a hook every turn.
+cmds.sync = (args) => {
+  const catalogue = readCatalogue();
+  const state = readState();
+  const quiet = args.includes("--quiet");
+  const events = [];
+
+  // One git pass for every bug, not one per bug: 210 `git log --grep` calls
+  // would dominate the runtime of a hook that fires on every turn.
+  const log = execSync("git log --format=%H%x09%s --max-count=400", { encoding: "utf8" });
+  const mentions = new Map();
+  for (const line of log.split("\n").filter(Boolean)) {
+    const [sha, subject] = line.split("\t");
+    for (const id of new Set(subject.match(/\bB\d{1,3}\b/g) ?? [])) {
+      if (!mentions.has(id)) mentions.set(id, []);
+      mentions.get(id).push({ sha: sha.slice(0, 8), subject });
+    }
+  }
+
+  for (const bug of catalogue) {
+    const rec = readRecord(bug.id);
+    if (!rec) continue;
+    const st = state.get(bug.id);
+    let body = rec.body;
+    const before = body;
+
+    if (st && st.state !== rec.front.state) {
+      body = appendHistory(
+        body,
+        `state-${st.state}`,
+        st.state,
+        st.pr ? `PR #${st.pr}` : "recorded in the proof ledger",
+      );
+      events.push(`${bug.id} ${rec.front.state} → ${st.state}`);
+    }
+    for (const c of mentions.get(bug.id) ?? []) {
+      body = appendHistory(body, `commit-${c.sha}`, "commit", `\`${c.sha}\` ${c.subject}`);
+      if (body !== before && !events.includes(`${bug.id} commit ${c.sha}`))
+        events.push(`${bug.id} commit ${c.sha}`);
+    }
+
+    if (body !== before) writeRecord(bug.id, { ...rec.front, ...frontFor(bug, st) }, body);
+    else if (st && st.state !== rec.front.state)
+      writeRecord(bug.id, { ...rec.front, ...frontFor(bug, st) }, body);
+  }
+
+  if (!quiet || events.length) console.log(`sync: recorded ${events.length} new event(s).`);
+  for (const e of events.slice(0, 20)) console.log(`  ${e}`);
+};
+
+cmds.show = (args) => {
+  const id = (args[0] ?? "").toUpperCase();
+  if (!/^B\d+$/.test(id)) fail("usage: show <B###>");
+  if (!existsSync(recordPath(id))) fail(`no record for ${id} — run \`expand\``);
+  process.stdout.write(readFileSync(recordPath(id), "utf8"));
+};
+
+// How an analysis agent writes its findings back. `--section` replaces one
+// narrative section; without it the text lands as a history note.
+cmds.note = (args) => {
+  const id = (args[0] ?? "").toUpperCase();
+  const text = args[1];
+  if (!/^B\d+$/.test(id) || !text || text.startsWith("--"))
+    fail('usage: note <B###> "<text>" [--section "Root cause"]');
+  const rec = readRecord(id);
+  if (!rec) fail(`no record for ${id} — run \`expand\``);
+  const section = flag(args, "section");
+
+  if (section) {
+    const match = SECTIONS.find((s) => s.toLowerCase() === section.toLowerCase());
+    if (!match) fail(`--section must be one of: ${SECTIONS.join(" | ")}`);
+    const rx = new RegExp(`(## ${match}\\n\\n)([\\s\\S]*?)(?=\\n## |$)`);
+    if (!rx.test(rec.body)) fail(`section "${match}" not found in ${id}`);
+    const body = rec.body.replace(rx, `$1${text}\n`);
+    writeRecord(id, rec.front, body);
+    console.log(`${id}: wrote "${match}".`);
+  } else {
+    const key = `note-${Date.now()}`;
+    writeRecord(id, rec.front, appendHistory(rec.body, key, "note", text));
+    console.log(`${id}: history note added.`);
+  }
+};
+
+// bugs.jsonl is a DERIVED index over the records — regenerate, never hand-edit.
+cmds.index = () => {
+  if (!existsSync(RECORD_DIR)) fail("no records yet — run `expand`");
+  const rows = readdirSync(RECORD_DIR)
+    .filter((f) => f.endsWith(".md"))
+    .map((f) => parseRecord(readFileSync(join(RECORD_DIR, f), "utf8")).front)
+    .map((fm) => ({
+      id: fm.id,
+      title: fm.title,
+      location: fm.location,
+      severity: fm.severity,
+      batch: fm.batch,
+      register: fm.closed ? "fixed" : "open",
+      source: "record",
+      sensitive: fm.sensitive === "true",
+      sensitiveFor: fm.sensitiveFor ? fm.sensitiveFor.split(",") : [],
+    }));
+  writeCatalogue(rows);
+  console.log(`index: rebuilt bugs.jsonl from ${rows.length} record(s).`);
 };
 
 const [, , cmd, ...rest] = process.argv;

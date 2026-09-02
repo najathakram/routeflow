@@ -173,4 +173,26 @@ if (hasLessons && !changed.some(isLesson)) {
   }
 }
 
+// ── Gate 4: bug-registry sync (reports, never blocks) ─────────────────────
+// The registry at `.claude/campaign/bugs/B###.md` must not depend on anyone
+// REMEMBERING to update it — that is exactly how the board drifted three stale
+// cards and the ledger kept thirteen `proven` rows past their deploy. So this
+// does not gate the turn; it runs the derivation. `sync` reads the two sources
+// that move on their own (the proof ledger and git log) and appends only events
+// a record does not already carry, deduped on a marker, so it is idempotent and
+// safe to run every turn.
+//
+// Deliberately non-blocking and fully swallowed: a bookkeeping refresh must
+// never be able to fail a turn or mask Gates 1-3 above it.
+if (existsSync(".claude/campaign/bugs")) {
+  const r = sh("node scripts/campaign/bugs.mjs sync --quiet");
+  const recorded = /recorded (\d+) new event/.exec(r.out || "");
+  if (r.code === 0 && recorded && Number(recorded[1]) > 0) {
+    process.stderr.write(
+      `Bug registry: recorded ${recorded[1]} new event(s) into .claude/campaign/bugs/ — ` +
+        `commit them alongside your change.\n`,
+    );
+  }
+}
+
 process.exit(0);
