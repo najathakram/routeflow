@@ -111,7 +111,29 @@ const fail = (m) => {
 
 function flag(args, name, fallback = null) {
   const i = args.indexOf(`--${name}`);
-  return i === -1 ? fallback : args[i + 1];
+  if (i === -1) return fallback;
+  const v = args[i + 1];
+  // A missing or flag-shaped value means the CALLER's next `--flag` silently
+  // became this flag's value (e.g. `prove B1 --pr --proof "..."` would have
+  // set pr to the literal string "--proof"). Fail loudly instead.
+  if (v === undefined || v.startsWith("--"))
+    fail(`--${name} requires a value${v === undefined ? "" : ` (got "${v}")`}`);
+  return v;
+}
+
+// Batches are always uppercase F##. Every command that takes one must agree —
+// `file` used to be the one command that didn't, so `file --batch f11` wrote a
+// ledger row whose own `batch` field (f11) disagreed with the shard it landed
+// in (F11.jsonl), and would duplicate the shard outright on a case-sensitive
+// filesystem (Linux CI).
+function normBatch(raw, { optional = false } = {}) {
+  if (raw === null || raw === undefined || raw === "") {
+    if (optional) return null;
+    fail("a batch is required and must look like F##");
+  }
+  const b = String(raw).toUpperCase();
+  if (!/^F\d{2}$/.test(b)) fail(`batch must look like F## (got "${raw}")`);
+  return b;
 }
 
 const stripTags = (s) =>
@@ -196,7 +218,7 @@ cmds.file = (args) => {
     severity,
     symptom: flag(args, "symptom"),
     register: "open",
-    batch: flag(args, "batch"),
+    batch: normBatch(flag(args, "batch"), { optional: true }),
     source: "filed",
     filedAt: new Date().toISOString(),
   };
@@ -222,11 +244,11 @@ cmds.file = (args) => {
   cmds.expand();
   console.log(`  record   : ${recordPath(bug.id)}`);
 
-  // A bug with no ledger row is invisible to campaign-check and to , so
+  // A bug with no ledger row is invisible to campaign-check and to `next`, so
   // filing must create it. Doing this by hand is how B211 first landed.
   if (bug.batch) {
     const tier = flag(args, "tier", "T1");
-    const what = upsertLedgerRow(bug.batch, {
+    const { what, row } = upsertLedgerRow(bug.batch, {
       id: bug.id,
       batch: bug.batch,
       tier,
@@ -235,6 +257,10 @@ cmds.file = (args) => {
       proof: null,
       evidence: null,
     });
+    if (row?.batch !== bug.batch || row?.tier !== tier || row?.state !== "queued")
+      fail(
+        `ledger write for ${bug.id} did not land as intended — re-read row is ${JSON.stringify(row)}`,
+      );
     console.log(`  ledger   : ${bug.batch}.jsonl row ${what} (tier ${tier}, queued)`);
   } else {
     console.log("  ledger   : none — pass --batch F## so campaign-check and `next` can see it.");
@@ -615,19 +641,35 @@ function readShard(batch) {
   };
 }
 
+// Returns { what: "added"|"updated", row: <the RE-READ row> } so a caller can
+// assert its write actually landed instead of trusting the in-memory object it
+// built — proved necessary: `prove --pr not-a-number` wrote `"pr":null` to the
+// shard while the in-memory `row` it printed from still said `pr: NaN`.
 function upsertLedgerRow(batch, row) {
   const { rows, eol } = readShard(batch);
   const i = rows.findIndex((r) => r.id === row.id);
-  if (i === -1) rows.push(row);
-  else rows[i] = { ...rows[i], ...row };
+  if (i === -1) {
+    // Widen the duplicate guard to ALL shards, not just this one — the
+    // same-shard check below cannot catch a row for this id already living in
+    // a DIFFERENT shard, which is precisely the duplicate campaign-check
+    // rejects and the invariant the surrounding comments already claim holds.
+    const elsewhere = findShardOf(row.id);
+    if (elsewhere && elsewhere !== batch)
+      fail(`refusing to write ${batch}: ${row.id} already has a row in ${elsewhere}.jsonl`);
+    rows.push(row);
+  } else {
+    rows[i] = { ...rows[i], ...row };
+  }
   const ids = rows.map((r) => r.id);
   if (new Set(ids).size !== ids.length) fail(`refusing to write ${batch}: duplicate id in shard`);
   mkdirSync(STATUS_DIR(), { recursive: true });
   writeFileSync(shardPath(batch), rows.map((r) => JSON.stringify(r)).join(eol) + eol);
-  return i === -1 ? "added" : "updated";
+  const after = readShard(batch).rows.find((r) => r.id === row.id);
+  return { what: i === -1 ? "added" : "updated", row: after };
 }
 
 const findShardOf = (id) => {
+  if (!existsSync(STATUS_DIR())) return null;
   for (const f of readdirSync(STATUS_DIR()).filter((n) => n.endsWith(".jsonl"))) {
     const batch = f.replace(/\.jsonl$/, "");
     if (readShard(batch).rows.some((r) => r.id === id)) return batch;
@@ -717,10 +759,15 @@ cmds.brief = (args) => {
 // trusted, so neither command will invent the other's evidence.
 cmds.prove = (args) => {
   const id = (args[0] ?? "").toUpperCase();
-  const pr = flag(args, "pr");
+  const prRaw = flag(args, "pr");
   const proof = flag(args, "proof");
-  if (!/^B\d+$/.test(id) || !pr || !proof)
+  if (!/^B\d+$/.test(id) || !prRaw || !proof)
     fail('usage: prove <B###> --pr <number> --proof "REG-B### <what the passing test asserts>"');
+  // Validate BEFORE writing — `Number("not-a-number")` is NaN, and
+  // `JSON.stringify({pr:NaN})` silently emits `"pr":null` while the command
+  // still printed that the PR was recorded.
+  const pr = Number(prRaw);
+  if (!Number.isInteger(pr) || pr <= 0) fail(`--pr must be a positive integer (got "${prRaw}")`);
   if (!new RegExp(`REG-${id}(?![0-9])`).test(proof))
     fail(
       `--proof must cite the exact token REG-${id} — campaign-check matches that token and nothing else`,
@@ -734,13 +781,29 @@ cmds.prove = (args) => {
   if (pending && row.tier !== "T2")
     fail("--pending-deploy is for T2 rows only (their proof cannot run pre-merge)");
 
-  const what = upsertLedgerRow(batch, { ...row, state, pr: Number(pr), proof });
+  const reproving =
+    ["proven", "proven-pending-deploy"].includes(row.state) &&
+    (row.pr !== pr || row.proof !== proof);
+  if (reproving)
+    console.warn(
+      `${id}: WARNING — overwriting an existing proof (was PR #${row.pr} · "${row.proof}") with PR #${pr}. The old proof is not otherwise kept.`,
+    );
+
+  const { what, row: after } = upsertLedgerRow(batch, { ...row, state, pr, proof });
+  if (after?.state !== state || after?.pr !== pr || after?.proof !== proof)
+    fail(
+      `ledger write for ${id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
+    );
+
   const rec = readRecord(id);
   if (rec)
     writeRecord(
       id,
       { ...rec.front, state, proof: `REG-${id}` },
-      appendHistory(rec.body, `state-${state}`, state, `PR #${pr}`),
+      // Key the History marker on the PR number too — a bare `state-${state}`
+      // key deduped a SECOND prove into a no-op History write, so `show`/the
+      // record kept displaying the FIRST proof forever after the ledger moved on.
+      appendHistory(rec.body, `state-${state}-${pr}`, state, `PR #${pr}`),
     );
   console.log(`${id}: ${batch} row ${what} → ${state} (PR #${pr})`);
   console.log(
@@ -749,12 +812,12 @@ cmds.prove = (args) => {
 };
 
 cmds.discharge = (args) => {
-  const batch = (args[0] ?? "").toUpperCase();
   const evidence = flag(args, "evidence");
-  if (!/^F\d{2}$/.test(batch) || !evidence)
+  if (!evidence)
     fail(
       'usage: discharge <F##> --evidence "<post-deploy proof: deploy id + the CI run that exercised it>"',
     );
+  const batch = normBatch(args[0]);
   if (evidence.length < 40)
     fail(
       "--evidence must actually cite the deploy and the run that proved it — this is the claim campaign-check cannot check for you",
@@ -768,7 +831,15 @@ cmds.discharge = (args) => {
     );
 
   for (const row of ready) {
-    upsertLedgerRow(batch, { ...row, state: "done", dischargeEvidence: evidence });
+    const { row: after } = upsertLedgerRow(batch, {
+      ...row,
+      state: "done",
+      dischargeEvidence: evidence,
+    });
+    if (after?.state !== "done" || after?.dischargeEvidence !== evidence)
+      fail(
+        `ledger write for ${row.id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
+      );
     const rec = readRecord(row.id);
     if (rec)
       writeRecord(
@@ -784,7 +855,7 @@ cmds.discharge = (args) => {
 };
 
 cmds.status = (args) => {
-  const only = (args[0] ?? "").toUpperCase();
+  const only = normBatch(args[0], { optional: true });
   const board = existsSync(BOARD()) ? JSON.parse(readFileSync(BOARD(), "utf8")) : { batches: {} };
   const batches = readdirSync(STATUS_DIR())
     .filter((f) => f.endsWith(".jsonl"))
@@ -1009,10 +1080,9 @@ cmds["self-test"] = () => {
 // leave the ledger holding two rows for one id.
 cmds.move = (args) => {
   const id = (args[0] ?? "").toUpperCase();
-  const to = (flag(args, "to") ?? "").toUpperCase();
   const why = flag(args, "why");
-  if (!/^B\d+$/.test(id) || !/^F\d{2}$/.test(to))
-    fail('usage: move <B###> --to <F##> [--why "<reason>"]');
+  if (!/^B\d+$/.test(id)) fail('usage: move <B###> --to <F##> [--why "<reason>"]');
+  const to = normBatch(flag(args, "to"));
 
   const from = findShardOf(id);
   if (!from) fail(`${id} is in no ledger shard — nothing to move`);
@@ -1032,7 +1102,11 @@ cmds.move = (args) => {
     shardPath(from),
     kept.map((r) => JSON.stringify(r)).join(old.eol) + (kept.length ? old.eol : ""),
   );
-  upsertLedgerRow(to, { ...row, batch: to });
+  const { row: after } = upsertLedgerRow(to, { ...row, batch: to });
+  if (after?.batch !== to)
+    fail(
+      `ledger write for ${id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
+    );
 
   const rows = readCatalogue();
   const cat = rows.find((r) => r.id === id);
