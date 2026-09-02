@@ -296,6 +296,9 @@ cmds.file = (args) => {
     console.log(`  ledger   : ${bug.batch}.jsonl row ${what} (tier ${tier}, queued)`);
   } else {
     console.log("  ledger   : none — pass --batch F## so campaign-check and `next` can see it.");
+    console.log(
+      "  triage   : an unbatched bug is invisible to next/status/deps — run `triage` to list every bug in this state.",
+    );
   }
 };
 
@@ -936,6 +939,39 @@ cmds.discharge = (args) => {
   console.log(`  verify: node scripts/campaign-check.mjs`);
 };
 
+// A record's own analysis routinely concludes a different tier than the
+// ledger row it lives under (B32 designed 9 T1 jest cases while its ledger
+// row still said T3, so that conclusion had no path into the gate). `tier`
+// is that path — a first-class reconciliation, not a hand edit of the shard.
+cmds.tier = (args) => {
+  const typed = (args[0] ?? "").toUpperCase();
+  const tier = (args[1] ?? "").toUpperCase();
+  const why = flag(args, "why");
+  if (!/^B\d+$/.test(typed) || !["T1", "T2", "T3"].includes(tier) || !why)
+    fail('usage: tier <B###> <T1|T2|T3> --why "<reason the analysis changed>"');
+  const id = resolveId(typed);
+
+  const batch = findShardOf(id);
+  if (!batch) fail(`${id} is in no ledger shard — file it with a --batch first`);
+  const row = readShard(batch).rows.find((r) => r.id === id);
+  if (row.tier === tier) fail(`${id} is already tier ${tier}`);
+
+  const { row: after } = upsertLedgerRow(batch, { ...row, tier });
+  if (after?.tier !== tier)
+    fail(
+      `ledger write for ${id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
+    );
+
+  const rec = readRecord(id);
+  if (rec)
+    writeRecord(
+      id,
+      { ...rec.front, tier },
+      appendHistory(rec.body, `tier-${tier}`, "re-tiered", `${row.tier} → ${tier} — ${why}`),
+    );
+  console.log(`${id}: ${batch} row updated → tier ${tier} (was ${row.tier})`);
+};
+
 cmds.status = (args) => {
   const only = normBatch(args[0], { optional: true });
   const board = existsSync(BOARD()) ? JSON.parse(readFileSync(BOARD(), "utf8")) : { batches: {} };
@@ -961,6 +997,34 @@ cmds.status = (args) => {
           .join(" ")}`,
     );
   }
+};
+
+// readState() only ever reads status/*.jsonl, so a catalogue bug with no
+// ledger row is invisible to `next`, `status`, `deps` and campaign-check —
+// today that's exactly the most recently hunted bugs (B202-B210 at the time
+// this command was added). `triage` is the one place that set is visible.
+cmds.triage = () => {
+  const catalogue = readCatalogue();
+  const state = readState();
+  const untriaged = catalogue.filter((b) => !state.has(b.id));
+  if (!untriaged.length) {
+    console.log("triage: every catalogue bug has a ledger row.");
+    return;
+  }
+  untriaged.sort((a, b) => (SEVERITY_RANK[a.severity] ?? 4) - (SEVERITY_RANK[b.severity] ?? 4));
+  console.log(
+    `triage: ${untriaged.length} catalogue bug(s) have no ledger row — invisible to ` +
+      `\`next\`/\`status\`/\`deps\`/campaign-check:`,
+  );
+  for (const b of untriaged)
+    console.log(`  ${b.id.padEnd(5)} ${String(b.severity).padEnd(8)} ${b.title.slice(0, 70)}`);
+  console.log(
+    `\n  give one a ledger row: node scripts/campaign/bugs.mjs file "<title>" --location "..." ` +
+      `--severity <s> --batch F## (creates a NEW id)`,
+  );
+  console.log(
+    `  or, once it has a row in some shard, re-home it: node scripts/campaign/bugs.mjs move <B###> --to F##`,
+  );
 };
 
 // ── self-test ─────────────────────────────────────────────────────────────
