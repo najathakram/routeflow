@@ -152,8 +152,20 @@ Guards you cannot talk your way past:
   partial is written. `campaign-check` accepts that string _instead of_ a Playwright artifact (a
   verify runner never has one), so one batch-wide sentence would otherwise discharge every T2 row
   in the batch past the strongest control the campaign has. Two rows given identical text are
-  refused too. The batch-wide `--evidence` stays right for T1/T3 and lands in `evidence`.
+  refused too (normalized — trim, collapse whitespace, lowercase — so a trailing space cannot
+  defeat this). The batch-wide `--evidence` stays right for T1/T3 and lands in `evidence`.
 - `--pending-deploy` is T2-only.
+- **A T3 row needs `--build-plan <path/to/build-plan.md>` on `prove`, or the prove is refused.**
+  `campaign-check` discharges a T3 row only from a `REG-B###` row in its batch's OWN
+  `build-plan.md` "## Manual verification" section, read from the ledger's `buildPlan` field — with
+  nothing writing that field, a T3 prove used to land a claim the gate could never verify and no
+  command could repair. `prove` now resolves the path against the repo root, asserts the file
+  exists and its Manual verification section carries the exact token, and persists it:
+
+  ```bash
+  npm run bugs -- prove B211 --pr 601 --proof "REG-B211 manual verification row" \
+    --build-plan .claude/pipeline/2026-09-02-f11-run-cancel-skip/build-plan.md
+  ```
 
 ### When a closed bug comes back
 
