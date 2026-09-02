@@ -494,7 +494,10 @@ cmds.note = (args) => {
     if (!match) fail(`--section must be one of: ${SECTIONS.join(" | ")}`);
     const rx = new RegExp(`(## ${match}\\n\\n)([\\s\\S]*?)(?=\\n## |$)`);
     if (!rx.test(rec.body)) fail(`section "${match}" not found in ${id}`);
-    const body = rec.body.replace(rx, `$1${text}\n`);
+    // Function replacement, never a string one: a string replacement expands
+    // $1 / $& / $` / $' inside the CALLER's text, and analysis prose in a
+    // delivery product says "$100" constantly (proved: it shredded B32).
+    const body = rec.body.replace(rx, (_m, heading) => `${heading}${text}\n`);
     writeRecord(id, rec.front, body);
     console.log(`${id}: wrote "${match}".`);
   } else {
