@@ -97,8 +97,30 @@ follows it ships the regression and writes a green test for it.
 `waves` greedy-colours the batch hard-conflict graph (`deps`' non-hub sharing rule) and caps each
 wave at **4** — the standing agent cap. `next` returns the head of wave 1, not the head of a
 severity sort, because the worst batch routinely shares a file with the batch someone is already in.
-Both print **why** a batch was skipped: a live `team.mjs` lease, rows already `in-flight`, or the
-carve-out. A prose "claimed for planning" comment is surfaced as a warning, never treated as a lock.
+
+⚠️ **A batch already being worked is not removed from the schedule — it OCCUPIES wave 1.** Claiming
+a batch used to delete the conflicts it carried, so `next` would offer the batch that edits the same
+files to a second agent. A busy batch (rows `in-flight`, or a live `team.mjs` lease) now holds a
+slot of the cap and keeps its hard conflicts, which is why wave 1 can be shorter than the cap, or
+empty, while work is clearly available. It is never offered as a pick.
+
+Both commands say **why** a batch is not on offer: a live lease, rows already `in-flight`, the
+carve-out, or `blocked by in-flight F## — shares <file>`. A prose "claimed for planning" comment is
+surfaced as a warning, never treated as a lock. A batch with no `board.json` issue is reported as
+**unchecked**, not as free — no lease could be read for it at all.
+
+`next --json` and `waves --json` carry the same self-describing payload, so a dispatcher never has
+to infer the schedule it was given:
+
+| field                  | meaning                                                           |
+| ---------------------- | ----------------------------------------------------------------- |
+| `next` / `alongside`   | the head of wave 1, and the rest of wave 1 (`next --json` only)   |
+| `eligible`             | all of wave 1 (`next --json` only)                                |
+| `waves`                | the full colouring, wave 1 first                                  |
+| `busy`                 | batches already being worked — they occupy wave 1, never returned |
+| `blocked`              | candidates a busy batch pushed past wave 1, with the shared files |
+| `skipped` / `parked`   | not scheduled, with the reason / held by the carve-out            |
+| `cap` / `hubThreshold` | the parameters that produced this schedule                        |
 
 Work is claimed per **batch**, never per bug — the board card, the pipeline folder and the PR are
 all batch-scoped.
