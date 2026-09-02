@@ -1765,15 +1765,18 @@ function mdToHtml(md) {
 // restored last -- the emphasis regex used to run over the whole string AFTER
 // code-span replacement, so it fired INSIDE <code> too: records are full of
 // snake_case DB columns/paths, and a code span like order_items_tenant_id
-// rendered with the middle word wrapped in <em> inside the code tag.
-const CODE_MARK = "CODE";
+// rendered with the middle word wrapped in <em> inside the code tag. The
+// marker below is plain ASCII on purpose -- an escape-sequence-based marker
+// silently became a real non-printable byte the last time this was written,
+// which is exactly the failure this comment now warns against.
+const CODE_MARK = "ZZZBUGSCODESPANZZZ";
 const inline = (s) => {
   const codeSpans = [];
   const withPlaceholders = esc(s).replace(/`([^`]+)`/g, (_m, code) => {
     codeSpans.push(code);
-    return `${CODE_MARK}${codeSpans.length - 1}${CODE_MARK}`;
+    return CODE_MARK + (codeSpans.length - 1) + CODE_MARK;
   });
-  const codeMarkRx = new RegExp(`${CODE_MARK}(\\d+)${CODE_MARK}`, "g");
+  const codeMarkRx = new RegExp(CODE_MARK + "(\\d+)" + CODE_MARK, "g");
   return withPlaceholders
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/&lt;!--.*?--&gt;/g, "")
