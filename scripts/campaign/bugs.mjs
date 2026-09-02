@@ -505,7 +505,12 @@ function readClaims(comments) {
     : null;
 }
 
-function liveClaim(issue) {
+// Deliberately a `let` binding rather than a function declaration: it is the
+// single network-bound call in the selector, and the self-test substitutes it
+// to drive `selectBatches`/`next` against a fixture lease. `gh` cannot be
+// shimmed onto PATH instead — execFileSync spawns a real executable and win32
+// refuses a .cmd without a shell.
+let liveClaim = (issue) => {
   // `null` here used to be the SAME return value as "checked, and free" —
   // indistinguishable at the call site from an actual clean check. A batch
   // with no board.json issue at all silently passed as free and was then
@@ -524,7 +529,7 @@ function liveClaim(issue) {
     return { unknown: true, why: firstLine(e) };
   }
   return readClaims(comments);
-}
+};
 
 // Every batch that holds workable rows, with everything the selector needs to
 // rank it and everything the operator needs to see why it was skipped.
@@ -659,11 +664,17 @@ function selectBatches(args) {
   const parked = [];
   const candidates = [];
 
+  // Batches parked by the carve-out that still need their LEASE checked. The
+  // carve-out is a LABEL on a batch, never a reason to drop it out of the
+  // scheduling problem: parking used to `continue` before the busy tests ran,
+  // so a parked batch that was in flight — or held under a live team.mjs lease
+  // — never got `busy: true`. It then occupied no slot of the agent cap and
+  // every hard conflict it carried was dropped from the colouring, and `next`
+  // offered a batch editing the same non-hub file to a second agent.
+  const parkedPendingClaim = [];
   for (const b of rankBatches(batches.values())) {
-    if (b.sensitive.length) {
-      parked.push(b);
-      continue;
-    }
+    const parkedByCarveOut = b.sensitive.length > 0;
+    if (parkedByCarveOut) parked.push(b);
     // `busy` marks a skip that means "someone is working this", as opposed to
     // "there is nothing here". It is set explicitly rather than re-derived by
     // regex from the prose below, because the prose is for humans and a
@@ -684,14 +695,21 @@ function selectBatches(args) {
       });
       continue;
     }
-    candidates.push(b);
+    // A parked batch is never a candidate — but it IS still checked for a
+    // lease below, because a lease is what makes it busy.
+    (parkedByCarveOut ? parkedPendingClaim : candidates).push(b);
   }
 
   // The claim read is per candidate and network-bound, so it runs LAST and only
   // over batches that survived every free check.
   if (!args.includes("--no-claims")) {
     const still = [];
-    for (const b of candidates) {
+    const parkedSet = new Set(parkedPendingClaim);
+    for (const b of [...candidates, ...parkedPendingClaim]) {
+      // A parked batch that survives the check goes nowhere: it stays parked.
+      // A parked batch that is LEASED goes into `skipped` as busy, which is the
+      // whole point — it must keep its slot and its conflicts.
+      const keep = parkedSet.has(b) ? () => {} : (x) => still.push(x);
       const c = liveClaim(b.issue);
       if (c?.unknown) {
         // Unreadable is not free: keep the batch, but say the check did not
@@ -702,10 +720,10 @@ function selectBatches(args) {
           ? `claim check unavailable (${c.why}) — relying on in-flight rows only`
           : `no board card for ${b.batch} — no lease could be checked; add its issue number to ` +
             `.claude/campaign/board.json once one exists, or rely on in-flight rows only`;
-        still.push(b);
+        keep(b);
       } else if (c?.informal) {
         b.claimCheck = `issue #${b.issue} carries an informal claim (no team.mjs lease) — VERIFY before taking it: "${c.why}"`;
-        still.push(b);
+        keep(b);
       } else if (c) {
         skipped.push({
           ...b,
@@ -713,7 +731,7 @@ function selectBatches(args) {
           why: `claimed by ${c.id} until ${c.leaseUntil.toISOString()}`,
         });
       } else {
-        still.push(b);
+        keep(b);
       }
     }
     candidates.length = 0;
@@ -2965,6 +2983,150 @@ cmds["self-test"] = () => {
         true,
       );
     } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // ── the carve-out must not bypass occupancy ─────────────────────────────
+  // The sensitive test used to run FIRST in selectBatches' loop and `continue`,
+  // so a parked batch never reached the busy determination. A carve-out batch
+  // that was in flight — or held under a live team.mjs lease — therefore
+  // occupied no slot of the agent cap and had every hard conflict it carried
+  // dropped from the colouring, and `next` handed the batch editing the SAME
+  // non-hub file to a second agent. Parking is a LABEL now, not an exit.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    const SHARED = "apps/api/src/shared/totals.ts";
+    const realLiveClaim = liveClaim;
+    try {
+      // F08's title trips the money carve-out; F09's does not. Both edit the
+      // same non-hub file, so they hard-conflict.
+      for (const [title, batch] of [
+        ["carve-out fixture: invoice rounding", "F08"],
+        ["adjacent fixture: same file, agent-safe", "F09"],
+      ])
+        cmds.file([
+          title,
+          "--location",
+          SHARED,
+          "--severity",
+          "high",
+          "--batch",
+          batch,
+          "--tier",
+          "T1",
+          "--files",
+          SHARED,
+        ]);
+      writeFileSync(BOARD(), JSON.stringify({ batches: { F08: 601, F09: 602 } }));
+      check(
+        "carve-out occupancy fixture: F08 is parked and F09 is not",
+        selectBatches(["--no-claims"]).parked.map((b) => b.batch),
+        ["F08"],
+      );
+      check(
+        "carve-out occupancy fixture: the two batches hard-conflict",
+        [...(batchConflicts(HUB_DEFAULT).get("F08")?.keys() ?? [])],
+        ["F09"],
+      );
+
+      // (i) the LOCAL path. The bypass needs F08 to be BOTH parked and in
+      // flight, which is the ordinary state of a batch someone is part-way
+      // through: claim it, then file another carve-out bug into it. Pre-fix,
+      // the sensitive test hit `continue` before the in-flight test ever ran,
+      // so busy came back EMPTY and `next` offered F09 outright.
+      cmds.claim(["F08"]);
+      cmds.file([
+        "carve-out fixture: invoice rounding, second finding",
+        "--location",
+        SHARED,
+        "--severity",
+        "high",
+        "--batch",
+        "F08",
+        "--tier",
+        "T1",
+        "--files",
+        SHARED,
+      ]);
+      {
+        const { waves, skipped, blocked, busy, parked } = selectBatches(["--no-claims"]);
+        check(
+          "carve-out occupancy: a parked batch that is in flight is BOTH parked and busy",
+          [busy, parked.map((b) => b.batch), skipped.map((s) => s.batch)],
+          [["F08"], ["F08"], ["F08"]],
+        );
+        check(
+          "carve-out occupancy: F09 is NOT in wave 1 while the parked batch is in flight",
+          waves[0]?.map((b) => b.batch) ?? [],
+          [],
+        );
+        check(
+          "carve-out occupancy: F09 is scheduled behind it, not dropped",
+          waves[1]?.map((b) => b.batch) ?? [],
+          ["F09"],
+        );
+        check(
+          "carve-out occupancy: the reason names the parked batch holding it back",
+          blocked.map((b) => [b.batch, b.blockedBy, b.files]),
+          [["F09", ["F08"], [SHARED]]],
+        );
+        const shown = capture(() => cmds.next(["--no-claims"]));
+        check(
+          "carve-out occupancy: `next` does not offer F09 while F08 is in flight",
+          /next agent-safe batch: F09/.test(shown),
+          false,
+        );
+      }
+
+      // (ii) the AUTHORITATIVE path: no local in-flight row at all, F08 held
+      // only by a live team.mjs lease on its board card. Same conclusion.
+      cmds.release(["F08"]);
+      liveClaim = (issue) =>
+        issue === 601
+          ? { id: "rf-F08-owner", leaseUntil: new Date("2099-01-01T00:00:00.000Z") }
+          : null;
+      {
+        const { waves, blocked, busy, parked } = selectBatches([]);
+        check(
+          "carve-out lease: a LEASED parked batch is busy, and still parked",
+          [busy, parked.map((b) => b.batch)],
+          [["F08"], ["F08"]],
+        );
+        check(
+          "carve-out lease: F09 is NOT in wave 1 while the lease is live",
+          waves[0]?.map((b) => b.batch) ?? [],
+          [],
+        );
+        check(
+          "carve-out lease: F09 keeps the conflict it inherited from the parked batch",
+          blocked.map((b) => [b.batch, b.blockedBy]),
+          [["F09", ["F08"]]],
+        );
+        const shown = capture(() => cmds.next([]));
+        check(
+          "carve-out lease: `next` does not offer F09 under a live lease on F08",
+          /next agent-safe batch: F09/.test(shown),
+          false,
+        );
+      }
+      // A parked batch that is NOT busy must still never be offered, and must
+      // not invent a blocker for its neighbour.
+      liveClaim = () => null;
+      {
+        const { waves, busy } = selectBatches([]);
+        check(
+          "carve-out: an idle parked batch occupies nothing and blocks nothing",
+          [busy, waves[0]?.map((b) => b.batch) ?? []],
+          [[], ["F09"]],
+        );
+      }
+    } finally {
+      liveClaim = realLiveClaim;
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
       else process.env.BUGS_ROOT = prevRoot;
       rmSync(tmp, { recursive: true, force: true });
