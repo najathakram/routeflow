@@ -38,7 +38,7 @@
 //   node scripts/campaign/bugs.mjs index                        # rebuild bugs.jsonl from the records (regenerate, never hand-edit)
 //   node scripts/campaign/bugs.mjs brief <F##|B###>             # everything an agent needs to start a batch, in one output
 //   node scripts/campaign/bugs.mjs prove <B###> --pr <n> --proof "REG-B### ..." [--pending-deploy]
-//   node scripts/campaign/bugs.mjs discharge <F##> --evidence "<post-deploy proof>"
+//   node scripts/campaign/bugs.mjs discharge <F##> --evidence "<post-deploy proof>" [--evidence-B### "<per-row proof>"]   # per-row evidence is REQUIRED for every T2 row
 //   node scripts/campaign/bugs.mjs tier <B###> <T1|T2|T3> --why "<reason>"
 //   node scripts/campaign/bugs.mjs status [F##]                 # per-batch done/analysed counts
 //   node scripts/campaign/bugs.mjs triage                       # catalogue bugs with no ledger row at all
@@ -1050,7 +1050,8 @@ cmds.brief = (args) => {
   out.push(`\n## When you finish`);
   out.push(
     `    npm run bugs -- prove <B###> --pr <n> --proof "REG-B### <what the passing test asserts>"\n` +
-      `    npm run bugs -- discharge ${batch} --evidence "<post-deploy proof>"   # only AFTER a green deploy`,
+      `    npm run bugs -- discharge ${batch} --evidence "<post-deploy proof>"   # only AFTER a green deploy\n` +
+      `      … plus --evidence-B### "<the run that exercised THAT row>" for every T2 row, or the discharge is refused`,
   );
   process.stdout.write(out.join("\n") + "\n");
 };
@@ -1119,17 +1120,34 @@ cmds.prove = (args) => {
   );
 };
 
+// ⚠️ THE T2 EVIDENCE RULE. campaign-check accepts a non-empty
+// `dischargeEvidence` INSTEAD of a Playwright artifact for a T2 `done` row (a
+// verify runner never has one — Playwright runs post-deploy). That makes the
+// field the softest spot in the whole gate, and this command used to stamp ONE
+// batch-wide sentence onto every proven row in the batch: a single 40-character
+// string could discharge an arbitrary number of T2 rows past the strongest
+// control the campaign has. So:
+//   * T2 rows require their OWN `--evidence-B### "…"`, or the discharge is
+//     refused outright — nothing partial is written;
+//   * the batch-wide `--evidence` is fine for T1/T3 and is written to
+//     `evidence` (matching the convention B96/B101 already carry), never to the
+//     field only T2 is read from.
+// Rows discharged before this rule (B24/B130/B154 share one string) are
+// grandfathered; campaign-check warns about them rather than turning master red.
 cmds.discharge = (args) => {
   const evidence = flag(args, "evidence");
   if (!evidence)
     fail(
-      'usage: discharge <F##> --evidence "<post-deploy proof: deploy id + the CI run that exercised it>"',
+      'usage: discharge <F##> --evidence "<post-deploy proof: deploy id + the CI run that exercised it>"' +
+        '\n       [--evidence-B### "<that row\'s own post-deploy proof>"]   # REQUIRED for every T2 row',
     );
   const batch = normBatch(args[0]);
-  if (evidence.length < 40)
+  const thin = (what, text) =>
+    text.length < 40 &&
     fail(
-      "--evidence must actually cite the deploy and the run that proved it — this is the claim campaign-check cannot check for you",
+      `${what} must actually cite the deploy and the run that proved it — this is the claim campaign-check cannot check for you`,
     );
+  thin("--evidence", evidence);
 
   const { rows } = readShard(batch);
   const ready = rows.filter((r) => r.state === "proven" || r.state === "proven-pending-deploy");
@@ -1138,27 +1156,63 @@ cmds.discharge = (args) => {
       `${batch} has no proven row to discharge (states: ${[...new Set(rows.map((r) => r.state))].join(", ")})`,
     );
 
-  for (const row of ready) {
-    const { row: after } = upsertLedgerRow(batch, {
-      ...row,
-      state: "done",
-      dischargeEvidence: evidence,
-    });
-    if (after?.state !== "done" || after?.dischargeEvidence !== evidence)
+  // --evidence-B### <text>, collected before ANY write so a missing one refuses
+  // the whole discharge rather than leaving half the batch done.
+  const perRow = new Map();
+  for (let i = 0; i < args.length; i++) {
+    const m = /^--evidence-(B\d+)$/i.exec(args[i]);
+    if (!m) continue;
+    const id = resolveId(m[1].toUpperCase());
+    const text = args[i + 1];
+    if (text === undefined || text.startsWith("--")) fail(`${args[i]} requires a value`);
+    if (!ready.some((r) => r.id === id))
+      fail(`${args[i]}: ${id} is not a proven row in ${batch} — nothing to discharge for it`);
+    thin(args[i], text);
+    perRow.set(id, text);
+  }
+
+  const missing = ready.filter((r) => r.tier === "T2" && !perRow.has(r.id));
+  if (missing.length)
+    fail(
+      `T2 row(s) ${missing.map((r) => r.id).join(", ")} need their OWN evidence — ` +
+        `pass --evidence-${missing[0].id} "<the run that exercised THIS bug against the deployed build>". ` +
+        `campaign-check accepts dischargeEvidence in place of a Playwright artifact, so one batch-wide ` +
+        `string would discharge every T2 row in the batch past the only control that reads it.`,
+    );
+  const seen = new Map();
+  for (const [id, text] of perRow) {
+    if (seen.has(text))
       fail(
-        `ledger write for ${row.id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
+        `${id} and ${seen.get(text)} were given byte-identical evidence — cite each row's own run`,
       );
+    seen.set(text, id);
+  }
+
+  for (const row of ready) {
+    const own = perRow.get(row.id);
+    // T2 is the only tier campaign-check reads dischargeEvidence for; every
+    // other tier records the batch string as plain `evidence`.
+    const patch = own
+      ? { state: "done", dischargeEvidence: own, evidence: own }
+      : { state: "done", evidence };
+    const { row: after } = upsertLedgerRow(batch, { ...row, ...patch });
+    for (const [k, v] of Object.entries(patch))
+      if (after?.[k] !== v)
+        fail(
+          `ledger write for ${row.id} did not land as intended (${k}) — re-read row is ${JSON.stringify(after)}`,
+        );
     const rec = readRecord(row.id);
     if (rec)
       writeRecord(
         row.id,
         { ...rec.front, state: "done", closed: "yes" },
-        appendHistory(rec.body, "state-done", "done", evidence.slice(0, 200)),
+        appendEvent(rec.body, `state-done-${today()}`, "done", (own ?? evidence).slice(0, 200)),
       );
   }
   console.log(
     `${batch}: discharged ${ready.length} row(s) → done — ${ready.map((r) => r.id).join(", ")}`,
   );
+  if (perRow.size) console.log(`  per-row evidence recorded for: ${[...perRow.keys()].join(", ")}`);
   console.log(`  verify: node scripts/campaign-check.mjs`);
 };
 
@@ -1255,6 +1309,25 @@ cmds.triage = () => {
 // silent no-op edits, and $-expansion in note() — all the same family: a write
 // path that reports success without checking what it wrote. These assert the
 // round-trips rather than trusting them.
+// Runs the REAL CLI in a child process. The only way to exercise a REFUSAL:
+// `fail` exits the process, so an in-process call would take the self-test with
+// it — and "it refused" is exactly the assertion a guard needs.
+const runCli = (argv, root) => {
+  const cmd = [process.argv[1], ...argv].map((a) => JSON.stringify(a)).join(" ");
+  try {
+    return {
+      code: 0,
+      out: execSync(`node ${cmd}`, {
+        encoding: "utf8",
+        env: { ...process.env, BUGS_ROOT: root },
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    };
+  } catch (e) {
+    return { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+  }
+};
+
 cmds["self-test"] = () => {
   let failures = 0;
   const check = (name, got, want) => {
@@ -1645,6 +1718,68 @@ cmds["self-test"] = () => {
         (readFileSync(join(RECORD_DIR(), n), "utf8").match(/^## History$/gm) || []).length !== 1,
     );
   check("exactly one '## History' heading per record", multiHistory, []);
+
+  // The T2 evidence rule. A refusal path cannot be exercised in-process
+  // (`fail` exits), so the refusal runs the REAL CLI in a child process and
+  // asserts BOTH the non-zero exit and that nothing was written.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    const BATCH_EV = "Railway deploy 1234abcd SUCCESS; Actions run 999 E2E green against it";
+    const ROW_EV = "Actions run 999 job 42: spec 28 REG-B1 passed against deploy 1234abcd";
+    try {
+      cmds.file([
+        "T2 discharge fixture",
+        "--location",
+        "apps/web/e2e/self-test.spec.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T2",
+      ]);
+      cmds.file([
+        "T1 discharge fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T1",
+      ]);
+      cmds.prove(["B1", "--pr", "601", "--proof", "REG-B1 e2e: the deployed build shows the fix"]);
+      cmds.prove(["B2", "--pr", "601", "--proof", "REG-B2 jest: the total rounds to cents"]);
+
+      const refused = runCli(["discharge", "F01", "--evidence", BATCH_EV], tmp);
+      check("discharge: refuses a T2 row given only batch-wide evidence", refused.code !== 0, true);
+      check(
+        "discharge: refuses BEFORE writing anything (no partial discharge)",
+        readShard("F01").rows.map((r) => r.state),
+        ["proven", "proven"],
+      );
+
+      cmds.discharge(["F01", "--evidence", BATCH_EV, "--evidence-B1", ROW_EV]);
+      const byId = new Map(readShard("F01").rows.map((r) => [r.id, r]));
+      check(
+        "discharge: the T2 row carries its OWN dischargeEvidence",
+        byId.get("B1")?.dischargeEvidence,
+        ROW_EV,
+      );
+      check(
+        "discharge: the T1 row carries the batch string as `evidence`, never as dischargeEvidence",
+        [byId.get("B2")?.evidence, byId.get("B2")?.dischargeEvidence],
+        [BATCH_EV, undefined],
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
 
   // A filed bug's symptom must survive file → index round trip. Run this
   // against the REAL cmds.file/cmds.index against a throwaway BUGS_ROOT, never

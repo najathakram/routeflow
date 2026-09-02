@@ -354,6 +354,14 @@ if (t2NeedsPostDeploy) {
     // may instead carry `dischargeEvidence` — written at discharge time, naming
     // the run against the deployed build. Accepted LOUDLY per row below (the
     // per-row loop checks it); rows without it still fail here.
+    //
+    // ⚠️ THIS IS THE SOFTEST SPOT IN THE GATE: a sentence stands in for the
+    // strongest control the campaign has. `bugs.mjs discharge` therefore
+    // REFUSES to write a T2 row without its own `--evidence-B### "…"`, so one
+    // batch-wide string can no longer discharge N T2 rows. Rows written before
+    // that rule (B24/B130/B154 share one string) are grandfathered — they are
+    // WARNED about below, not failed, because turning master red retroactively
+    // would not make any of them more true.
     const missing = rows.filter(
       (r) =>
         r.tier === "T2" &&
@@ -368,12 +376,22 @@ if (t2NeedsPostDeploy) {
           `or record the discharge run in the row's dischargeEvidence field`,
       );
     } else {
+      const shared = new Map();
       for (const r of rows.filter((r) => r.tier === "T2" && r.state === "done")) {
         console.log(
           `T2 discharge acknowledgment: ${r.id} accepted on recorded evidence (no local ` +
             `playwright artifact) — ${String(r.dischargeEvidence).slice(0, 120)}`,
         );
+        const k = String(r.dischargeEvidence).trim();
+        shared.set(k, [...(shared.get(k) ?? []), r.id]);
       }
+      for (const [, ids] of shared)
+        if (ids.length > 1)
+          console.warn(
+            `⚠ T2 rows ${ids.join(", ")} share one byte-identical dischargeEvidence — that string ` +
+              `stands in for a Playwright result, so it must name the run that exercised EACH row. ` +
+              `Grandfathered (written before the rule); \`bugs.mjs discharge\` now refuses it.`,
+          );
     }
   } else if (web === "PARSE_ERROR") {
     fail(`${webE2eJsonPath} exists but failed to parse — re-run the e2e pass`);
