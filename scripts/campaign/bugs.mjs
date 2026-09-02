@@ -499,6 +499,12 @@ function writeRecord(id, front, body) {
 
 // History is append-only and deduped on `key` — so sync is idempotent and can
 // run from a hook on every turn without growing the file.
+//
+// ⚠️ Dedupe-on-key is correct ONLY for events whose key already identifies the
+// occurrence (a commit sha). For a STATE event it silently swallows a repeat:
+// a bug that goes done → queued → done carries `<!--state-done-->` from the
+// first pass, so the second `done` is a no-op — and sync reported it as
+// recorded anyway. Use `appendEvent` for anything that can legitimately recur.
 function appendHistory(body, key, event, detail) {
   if (body.includes(`<!--${key}-->`)) return body;
   const line = `- ${new Date().toISOString().slice(0, 10)} · **${event}** · ${String(detail).replace(/\s+/g, " ").trim()} <!--${key}-->`;
@@ -506,6 +512,33 @@ function appendHistory(body, key, event, detail) {
     ? `${body.replace(/\s*$/, "")}\n${line}\n`
     : `${body}\n## History\n\n${line}\n`;
 }
+
+// The occurrence discriminator. `base` identifies the KIND of event (plus its
+// natural discriminator — a PR number, a date, a from→to pair); this appends
+// `#2`, `#3`, … when that base has already been logged, so a revisited state
+// always produces a new line instead of vanishing.
+function uniqueHistoryKey(body, base) {
+  if (!body.includes(`<!--${base}-->`)) return base;
+  let n = 2;
+  while (body.includes(`<!--${base}#${n}-->`)) n++;
+  return `${base}#${n}`;
+}
+
+// Append an event that MAY legitimately recur, and assert it landed. Callers
+// of this are all guarded by a real comparison (the ledger state differs from
+// the record's, `move` refuses from===to, `tier` refuses a no-op), so a
+// no-change return here is a defect, never a benign dedupe — fail loudly
+// rather than report an event the record does not carry (L-051).
+function appendEvent(body, base, event, detail) {
+  const next = appendHistory(body, uniqueHistoryKey(body, base), event, detail);
+  if (next === body)
+    fail(
+      `history append for "${base}" produced no change — refusing to report an event the record does not carry`,
+    );
+  return next;
+}
+
+const today = () => new Date().toISOString().slice(0, 10);
 
 // The single helper for replacing one named "## Section" block's content.
 // `cmds.note` and the self-test both call this — never two copies of the
@@ -644,18 +677,32 @@ cmds.sync = (args) => {
     const before = body;
 
     if (st && st.state !== rec.front.state) {
-      body = appendHistory(
+      // Discriminated by the PR when there is one and the date otherwise, then
+      // by occurrence — a bug that RETURNS to a state it has held before must
+      // log a second line. done → queued → done is a regression and a refix,
+      // which is the single most important thing a history can record, and the
+      // bare `state-<state>` key swallowed it while sync reported it recorded.
+      body = appendEvent(
         body,
-        `state-${st.state}`,
+        `state-${st.state}-${st.pr ?? today()}`,
         st.state,
         st.pr ? `PR #${st.pr}` : "recorded in the proof ledger",
       );
       events.push(`${bug.id} ${rec.front.state} → ${st.state}`);
     }
     for (const c of mentions.get(normId(bug.id) ?? bug.id) ?? []) {
-      body = appendHistory(body, `commit-${c.sha}`, "commit", `\`${c.sha}\` ${c.subject}`);
-      if (body !== before && !events.includes(`${bug.id} commit ${c.sha}`))
-        events.push(`${bug.id} commit ${c.sha}`);
+      // Compare THIS append's return, not the whole-iteration `before`: `before`
+      // is captured once per bug, so as soon as anything in the iteration
+      // changed the body every later append reported as new whether it landed
+      // or not (the same defect as the state event above, one line down).
+      const withCommit = appendHistory(
+        body,
+        `commit-${c.sha}`,
+        "commit",
+        `\`${c.sha}\` ${c.subject}`,
+      );
+      if (withCommit !== body) events.push(`${bug.id} commit ${c.sha}`);
+      body = withCommit;
     }
 
     const front = frontFor(bug, st);
@@ -932,15 +979,20 @@ cmds.prove = (args) => {
     );
 
   const rec = readRecord(id);
-  if (rec)
+  if (rec) {
+    // Key the History marker on the PR number too — a bare `state-${state}`
+    // key deduped a SECOND prove into a no-op History write, so `show`/the
+    // record kept displaying the FIRST proof forever after the ledger moved on.
+    // `appendEvent` adds the occurrence discriminator on top, so re-proving the
+    // same PR after a `reopen` logs a second line rather than vanishing; the
+    // guard below is what keeps a byte-identical re-run from duplicating one.
+    const changed = row.state !== state || row.pr !== pr || row.proof !== proof;
     writeRecord(
       id,
       { ...rec.front, state, proof: `REG-${id}` },
-      // Key the History marker on the PR number too — a bare `state-${state}`
-      // key deduped a SECOND prove into a no-op History write, so `show`/the
-      // record kept displaying the FIRST proof forever after the ledger moved on.
-      appendHistory(rec.body, `state-${state}-${pr}`, state, `PR #${pr}`),
+      changed ? appendEvent(rec.body, `state-${state}-${pr}`, state, `PR #${pr}`) : rec.body,
     );
+  }
   console.log(`${id}: ${batch} row ${what} → ${state} (PR #${pr})`);
   console.log(
     `  discharge to done only after a green deploy: npm run bugs -- discharge ${batch} --evidence "..."`,
@@ -1018,7 +1070,7 @@ cmds.tier = (args) => {
     writeRecord(
       id,
       { ...rec.front, tier },
-      appendHistory(rec.body, `tier-${tier}`, "re-tiered", `${row.tier} → ${tier} — ${why}`),
+      appendEvent(rec.body, `tier-${tier}`, "re-tiered", `${row.tier} → ${tier} — ${why}`),
     );
   console.log(`${id}: ${batch} row updated → tier ${tier} (was ${row.tier})`);
 };
@@ -1274,6 +1326,70 @@ cmds["self-test"] = () => {
   // history must dedupe on its marker, or Gate 4 grows the file every turn.
   const once = appendHistory("## History\n", "k1", "e", "d");
   check("appendHistory: idempotent on the same key", appendHistory(once, "k1", "e", "d"), once);
+  check(
+    "uniqueHistoryKey: discriminates a repeat of the same base",
+    uniqueHistoryKey(once, "k1"),
+    "k1#2",
+  );
+
+  // A bug that revisits a state (regressed then refixed) must log EVERY visit.
+  // Exercised through the REAL cmds.sync against a throwaway BUGS_ROOT — the
+  // defect was that sync PRINTED the second transition while the marker dedupe
+  // silently dropped it, so only a read-back of the record can catch it.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      writeCatalogue([
+        {
+          id: "B950",
+          title: "sync revisit fixture",
+          location: "apps/api/src/self-test.ts",
+          severity: "low",
+          register: "open",
+          batch: "F01",
+          source: "filed",
+          filedAt: null,
+          sensitive: false,
+          sensitiveFor: [],
+        },
+      ]);
+      cmds.expand();
+      const setState = (state) =>
+        upsertLedgerRow("F01", {
+          id: "B950",
+          batch: "F01",
+          tier: "T1",
+          state,
+          pr: null,
+          proof: null,
+          evidence: null,
+        });
+      for (const s of ["done", "queued", "done"]) {
+        setState(s);
+        cmds.sync(["--quiet"]);
+      }
+      const body = readRecord("B950").body;
+      check(
+        "sync: done -> queued -> done logs TWO done lines (revisited state is not swallowed)",
+        (body.match(/\*\*done\*\*/g) || []).length,
+        2,
+      );
+      check(
+        "sync: the intervening queued transition is logged too",
+        (body.match(/\*\*queued\*\*/g) || []).length,
+        1,
+      );
+      const settled = readRecord("B950").body;
+      cmds.sync(["--quiet"]);
+      check("sync: a no-change re-run appends nothing", readRecord("B950").body, settled);
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
 
   // replaceSection must be bounded by the NEXT heading of any kind, not one
   // fixed heading name — an anchor bound to "## History" specifically deleted
@@ -1435,7 +1551,7 @@ cmds.move = (args) => {
 
   const rec = readRecord(id);
   if (rec) {
-    const body = appendHistory(
+    const body = appendEvent(
       rec.body,
       `move-${from}-${to}`,
       "re-batched",
