@@ -96,10 +96,19 @@ function readState() {
   const state = new Map();
   if (!existsSync(STATUS_DIR())) return state;
   for (const f of readdirSync(STATUS_DIR()).filter((n) => n.endsWith(".jsonl"))) {
-    for (const line of readFileSync(join(STATUS_DIR(), f), "utf8").split(/\r?\n/).filter(Boolean)) {
-      const o = JSON.parse(line);
+    const lines = readFileSync(join(STATUS_DIR(), f), "utf8").split(/\r?\n/).filter(Boolean);
+    lines.forEach((line, i) => {
+      // A crash here used to take down the ENTIRE command with no indication
+      // of which shard or line was at fault — and via Gate 4, went completely
+      // silent (the hook swallows a non-zero exit and prints nothing).
+      let o;
+      try {
+        o = JSON.parse(line);
+      } catch (e) {
+        fail(`malformed JSON in ${f}:${i + 1} — ${e.message}\n  line: ${line.slice(0, 200)}`);
+      }
       state.set(o.id, o);
-    }
+    });
   }
   return state;
 }
@@ -694,11 +703,20 @@ function readShard(batch) {
   const p = shardPath(batch);
   if (!existsSync(p)) return { rows: [], eol: "\n" };
   const raw = readFileSync(p, "utf8");
+  const lines = raw.split(/\r?\n/).filter(Boolean);
   return {
-    rows: raw
-      .split(/\r?\n/)
-      .filter(Boolean)
-      .map((l) => JSON.parse(l)),
+    // Same failure mode as readState's per-line parse: a crash here used to
+    // take down every ledger-reading command with no indication of which
+    // shard/line was at fault.
+    rows: lines.map((l, i) => {
+      try {
+        return JSON.parse(l);
+      } catch (e) {
+        return fail(
+          `malformed JSON in ${batch}.jsonl:${i + 1} — ${e.message}\n  line: ${l.slice(0, 200)}`,
+        );
+      }
+    }),
     eol: raw.includes("\r\n") ? "\r\n" : "\n",
   };
 }

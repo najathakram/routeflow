@@ -184,7 +184,7 @@ if (hasLessons && !changed.some(isLesson)) {
 //
 // Deliberately non-blocking and fully swallowed: a bookkeeping refresh must
 // never be able to fail a turn or mask Gates 1-3 above it.
-if (existsSync(".claude/campaign/bugs")) {
+if (existsSync(".claude/campaign/bugs") && existsSync("scripts/campaign/bugs.mjs")) {
   const r = sh("node scripts/campaign/bugs.mjs sync --quiet");
   const recorded = /recorded (\d+) new event/.exec(r.out || "");
   if (r.code === 0 && recorded && Number(recorded[1]) > 0) {
@@ -192,6 +192,12 @@ if (existsSync(".claude/campaign/bugs")) {
       `Bug registry: recorded ${recorded[1]} new event(s) into .claude/campaign/bugs/ — ` +
         `commit them alongside your change.\n`,
     );
+  } else if (r.code !== 0) {
+    // Still never blocks — but a crash (e.g. a malformed status shard) used to
+    // go completely silent: the hook swallowed the non-zero exit and printed
+    // nothing, so the registry could go dark indefinitely with zero signal.
+    const firstLine = (r.out || "").trim().split(/\r?\n/)[0] || "(no output)";
+    process.stderr.write(`Bug registry: sync failed (non-blocking) — ${firstLine}\n`);
   }
 }
 
