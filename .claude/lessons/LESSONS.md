@@ -283,6 +283,27 @@
   single-line history entries, ledger id-uniqueness across shards, and record coverage. It caught
   the fifth defect, which was the fourth one reintroduced in a new function.
 
+### L-053 · 2026-09-02 · tooling
+
+- **Symptom:** after `reopen` cleared a bug's ledger proof, the very next `sync` wrote the
+  `REG-B###` token straight back into the record; two `already-fixed` rows (B126/B127) asserted a
+  proof their ledger never held; and `sync` printed "recorded N event(s)" for a state revisit it had
+  silently dropped — the record claimed a proof it did not have, and the console claimed an event
+  that did not land.
+- **Root cause:** deriving from a **proxy** instead of the source. `frontFor` computed `proof` from
+  the row's _state_ ("not queued ⇒ has a proof") rather than from the row's own `proof` field;
+  `sync` judged "did this event land?" from a once-per-bug body snapshot rather than from the
+  return value of the append it had just made. Both proxies were correlated with the truth on the
+  day they were written and diverged the first time a state was revisited.
+- **Lesson:** **A derived field is derived from the field it represents, never from something
+  correlated with it — `proof` comes from `row.proof`, "event recorded" comes from the append's
+  own return. When a derivation reads a proxy, the first path that breaks the correlation (here:
+  reopen, re-prove, already-fixed) makes the record lie with full confidence.**
+- **Guard:** `bugs self-test` drives the real `cmds.sync` through done → queued → done and asserts
+  two `done` lines, and reopens then syncs and asserts the front-matter proof stays clear
+  (19bcecdc, e6d71ae6). The `frontFor` source-field derivation (`st?.proof`) lands in the next
+  commit with the B126/B127 case as its check.
+
 ## testing
 
 ### L-050 · 2026-09-02 · testing · #598
