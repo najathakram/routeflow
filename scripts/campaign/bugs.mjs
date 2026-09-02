@@ -76,7 +76,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { execSync, spawn } from "node:child_process";
+import { execFileSync, execSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { normalizeEvidence } from "./normalize-evidence.mjs";
@@ -447,6 +447,24 @@ const AGENT_CAP = 4;
 const boardJson = () =>
   existsSync(BOARD()) ? JSON.parse(readFileSync(BOARD(), "utf8")) : { batches: {} };
 
+// A board card's issue number is fed to `gh` and printed back to the operator
+// as a `team.mjs claim <n>` instruction, so it is validated at the boundary
+// where it enters: anything that is not a plain positive integer is not an
+// issue number, and falls into the existing "no board card" branch — which is
+// the honest report — rather than into a request or a command line. A crafted
+// value used to reach a SHELL (the gh call went through execSync, which spawns
+// cmd.exe on win32, and a `501" & echo … & rem ` board value executed), and a
+// non-scalar printed as `(issue #[object Object])` with a claim instruction
+// nobody could run.
+const boardIssue = (raw) => {
+  // The typeof guard is not decoration: String(["501"]) is "501", so a
+  // one-element array would otherwise pass the digits test. Only a number or a
+  // string can be an issue number.
+  if (typeof raw !== "number" && typeof raw !== "string") return null;
+  const t = String(raw).trim();
+  return /^[1-9]\d*$/.test(t) ? Number(t) : null;
+};
+
 // ⚠️ THIS IS scripts/team/team.mjs's CLAIM GRAMMAR, RE-STATED. team.mjs is a
 // CLI, not a module, so there is nothing to import — the two readings of the
 // same GitHub comments MUST CHANGE TOGETHER, IN ONE COMMIT. See the matching
@@ -519,8 +537,12 @@ let liveClaim = (issue) => {
   if (!issue) return { unknown: true, why: "no board issue for this batch" };
   let comments;
   try {
-    const out = execSync(
-      `gh api "repos/{owner}/{repo}/issues/${issue}/comments?per_page=100" --jq "[.[]|{body}]"`,
+    // execFileSync, never execSync: no shell is involved at any point, so the
+    // argument vector cannot be re-parsed as a command line whatever the board
+    // says. team.mjs has always called gh this way; this file had not.
+    const out = execFileSync(
+      "gh",
+      ["api", `repos/{owner}/{repo}/issues/${issue}/comments?per_page=100`, "--jq", "[.[]|{body}]"],
       { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
     );
     comments = JSON.parse(out || "[]");
@@ -548,7 +570,7 @@ function batchIndex() {
         bugs: [],
         sensitive: [],
         inFlight: [],
-        issue: board.batches?.[row.batch] ?? null,
+        issue: boardIssue(board.batches?.[row.batch]),
       });
     const b = batches.get(row.batch);
     if (row.state === "in-flight") b.inFlight.push(id);
@@ -2981,6 +3003,86 @@ cmds["self-test"] = () => {
         "occupancy: `deps` still lists the F01 <-> F02 pair after the claim",
         dep.includes("F01 <-> F02"),
         true,
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // ── a hostile board.json reaches neither a shell nor the operator ───────
+  // board.json is a checked-in file, but it is DATA: its issue values were
+  // interpolated straight into an execSync template string (cmd.exe on win32),
+  // so a crafted value executed a command whose output came back as the "JSON"
+  // this file then failed to parse. Non-scalars were just as bad in the other
+  // direction — `next` printed `(issue #[object Object])` above a claim
+  // instruction nobody could run.
+  {
+    const HOSTILE = '501" & echo INJECTED-BY-BOARD-JSON & rem ';
+    check(
+      "board.json: a shell-metacharacter issue value is not an issue number",
+      boardIssue(HOSTILE),
+      null,
+    );
+    check(
+      "board.json: a non-scalar is not an issue number (no [object Object])",
+      [boardIssue({ issue: 501 }), boardIssue(["501"]), boardIssue(null), boardIssue(0)],
+      [null, null, null, null],
+    );
+    check(
+      "board.json: a plain positive integer still reads, whitespace and all",
+      [boardIssue(501), boardIssue("501"), boardIssue(" 501 ")],
+      [501, 501, 501],
+    );
+    check(
+      "board.json: a leading-zero or signed value is refused rather than coerced",
+      [boardIssue("0501"), boardIssue("-501"), boardIssue("501x"), boardIssue("#501")],
+      [null, null, null, null],
+    );
+
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file([
+        "hostile board fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T1",
+      ]);
+      writeFileSync(BOARD(), JSON.stringify({ batches: { F01: HOSTILE } }));
+      // The REAL CLI in a REAL child process: if the value reached a shell at
+      // all, the injected `echo` would run before gh could fail.
+      const shown = runCli(["next"], tmp);
+      check("hostile board: `next` still exits 0", shown.code, 0);
+      check(
+        "hostile board: nothing was executed — the injected marker never appears",
+        /INJECTED-BY-BOARD-JSON/.test(shown.out),
+        false,
+      );
+      check(
+        "hostile board: it is reported as a missing board card, the honest branch",
+        /no board card for F01/.test(shown.out),
+        true,
+      );
+      check(
+        "hostile board: the claim instruction is a placeholder, not the hostile value",
+        /claim it:\s+node scripts\/team\/team\.mjs claim <issue#>/.test(shown.out),
+        true,
+      );
+
+      writeFileSync(BOARD(), JSON.stringify({ batches: { F01: { issue: 501 } } }));
+      const objish = runCli(["next"], tmp);
+      check(
+        "hostile board: a non-scalar never prints as '(issue #[object Object])'",
+        /\[object Object\]/.test(objish.out),
+        false,
       );
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
