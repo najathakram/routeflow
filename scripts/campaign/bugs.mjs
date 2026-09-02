@@ -71,10 +71,13 @@ import {
   rmSync,
   utimesSync,
   statSync,
+  openSync,
+  closeSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { execSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { normalizeEvidence } from "./normalize-evidence.mjs";
 
@@ -1470,17 +1473,59 @@ const shardPath = (batch) => join(STATUS_DIR(), `${batch}.jsonl`);
 //     read the row outside it computes its patch from a stale snapshot;
 //   * re-entrant per process, so a command may hold the lock across a loop of
 //     `upsertLedgerRow` calls that each take it again (`discharge`, `claim`);
-//   * a lock older than LOCK_STALE_MS is broken with a note on stderr — a
-//     writer killed mid-write must not wedge the campaign forever;
+//   * a lock is broken on its owner being DEAD, never on its AGE. Each lockdir
+//     carries `owner.json` = {pid, token, at}; a waiter breaks the lock only
+//     when `process.kill(pid, 0)` reports ESRCH (which works on win32 too), or
+//     — a loud last resort, for a lock whose owner cannot be read at all —
+//     when it is older than LOCK_ABANDON_MS. Age is NOT liveness: breaking a
+//     live holder's lock put two writers inside the critical section, and the
+//     stolen-from writer then wrote its stale snapshot back over two proven,
+//     evidence-backed rows with every process exiting 0;
+//   * release is identity-checked against that token. A process whose lock was
+//     broken must NOT delete the lock its successor now holds — doing so
+//     admitted a THIRD writer to the same shard;
 //   * multi-shard holds (only `move`) are taken in sorted order, so two
 //     processes moving rows in opposite directions cannot deadlock;
 //   * `fail()` calls `process.exit`, which does NOT run `finally`, so held
-//     locks are also dropped from an `exit` handler.
-const LOCK_SPIN_MS = 2000;
+//     locks are also dropped from an `exit` handler — and SIGINT/SIGTERM/SIGHUP
+//     are routed through `process.exit` so that handler runs for them too
+//     (Node's default action for those signals skips it entirely).
+// The spin has to outlast a legitimate critical section, so it is now far
+// longer than any single write: a waiter that gives up while a LIVE holder is
+// still writing is the same lost work by another route.
+const LOCK_SPIN_MS = 10000;
 const LOCK_STEP_MS = 20;
-const LOCK_STALE_MS = 5000;
+// Last resort ONLY, for a lockdir carrying no readable owner.json (a crash
+// between the mkdir and the owner write, or a lock left by an older build).
+// Deliberately far larger than any real critical section — this threshold must
+// never be the thing that breaks a lock a live process is holding.
+const LOCK_ABANDON_MS = 120000;
 const lockPath = (batch) => `${shardPath(batch)}.lock`;
-const heldLocks = new Set();
+const ownerPath = (p) => join(p, "owner.json");
+const shardOfLockPath = (p) => basename(p).replace(/\.lock$/, "");
+// lock path -> the token THIS process wrote into that lockdir's owner.json.
+const heldLocks = new Map();
+
+const readLockOwner = (p) => {
+  try {
+    const o = JSON.parse(readFileSync(ownerPath(p), "utf8"));
+    return o && typeof o === "object" ? o : null;
+  } catch {
+    return null; // missing, half-written, or not ours to read — unknowable
+  }
+};
+
+// true = alive, false = definitely gone (ESRCH), null = cannot tell.
+// EPERM means the pid exists and belongs to someone else — alive, not free.
+const pidAlive = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "ESRCH" ? false : true;
+  }
+};
 // Synchronous sleep — this whole file is synchronous by design (it is a CLI a
 // hook shells out to), so a promise-based wait would need every caller to be
 // async. `Atomics.wait` on the main thread is permitted in Node.
@@ -1492,14 +1537,30 @@ function installLockExitHook() {
   if (exitHookInstalled) return;
   exitHookInstalled = true;
   process.on("exit", () => {
-    for (const p of heldLocks) {
+    for (const [p, token] of [...heldLocks]) {
       try {
-        rmSync(p, { recursive: true, force: true });
+        releaseShardLock(p, token);
       } catch {
         /* nothing useful to do while exiting */
       }
     }
   });
+  // Node's DEFAULT action for these three signals terminates the process
+  // WITHOUT running `exit` listeners, so a Ctrl-C (or an orchestrator's
+  // SIGTERM) mid-write left the lockdir behind and wedged the next writer.
+  // Routing them through process.exit runs the hook above with the
+  // conventional 128+signal status.
+  for (const [sig, code] of [
+    ["SIGINT", 130],
+    ["SIGTERM", 143],
+    ["SIGHUP", 129],
+  ]) {
+    try {
+      process.on(sig, () => process.exit(code));
+    } catch {
+      /* not every signal is listenable on every platform */
+    }
+  }
 }
 
 function acquireShardLock(batch) {
@@ -1510,21 +1571,36 @@ function acquireShardLock(batch) {
     try {
       mkdirSync(p); // NOT recursive: recursive:true succeeds on an existing dir
       installLockExitHook();
-      heldLocks.add(p);
+      // The owner stamp is what makes both the break and the release
+      // identity-checked. Written immediately after the mkdir wins the race;
+      // a waiter that reads the lockdir in that sub-millisecond window sees no
+      // owner, cannot conclude anything, and simply spins again.
+      const token = randomUUID();
+      writeFileSync(ownerPath(p), JSON.stringify({ pid: process.pid, token, at: Date.now() }));
+      heldLocks.set(p, token);
       return p;
     } catch (e) {
       if (e.code !== "EEXIST") throw e;
     }
+    const owner = readLockOwner(p);
+    const alive = owner ? pidAlive(owner.pid) : null;
     let age = null;
     try {
       age = Date.now() - statSync(p).mtimeMs;
     } catch {
       age = null; // it vanished between the mkdir and the stat — just retry
     }
-    if (age !== null && age > LOCK_STALE_MS) {
+    let breakWhy = null;
+    if (alive === false)
+      breakWhy = `its owner (pid ${owner.pid}) is gone — a writer was killed mid-write`;
+    else if (alive === null && age !== null && age > LOCK_ABANDON_MS)
+      breakWhy =
+        `LAST RESORT: it is ${Math.round(age / 1000)}s old and carries no readable owner.json, ` +
+        `so its holder cannot be verified either way`;
+    if (breakWhy) {
       console.error(
-        `bugs: breaking a stale lock on ${batch}.jsonl (held ${Math.round(age / 1000)}s) — ` +
-          `a writer was probably killed mid-write; re-read the shard if anything looks wrong`,
+        `bugs: breaking the lock on ${batch}.jsonl — ${breakWhy}; ` +
+          `re-read the shard if anything looks wrong`,
       );
       try {
         rmSync(p, { recursive: true, force: true });
@@ -1534,19 +1610,32 @@ function acquireShardLock(batch) {
     }
     if (Date.now() >= deadline)
       fail(
-        `could not lock ${shardPath(batch)} within ${LOCK_SPIN_MS}ms — another bugs.mjs process ` +
-          `is writing ${batch}.jsonl. Retry; if nothing is running, remove ${p}`,
+        `could not lock ${shardPath(batch)} within ${LOCK_SPIN_MS}ms — ${batch}.jsonl is held by ` +
+          `${owner?.pid ? `pid ${owner.pid}, which still answers` : "another bugs.mjs process"}. ` +
+          `Retry; if nothing is running, remove ${p}`,
       );
     sleepSync(LOCK_STEP_MS);
   }
 }
 
-function releaseShardLock(p) {
+// Identity-checked. `token` defaults to whatever this process recorded for `p`;
+// if the lockdir now names a DIFFERENT owner, our lock was broken while we were
+// inside the critical section and the directory belongs to our successor —
+// deleting it would admit a third writer, so leave it and say so out loud.
+function releaseShardLock(p, token = heldLocks.get(p)) {
   heldLocks.delete(p);
+  if (!existsSync(p)) return; // already gone — nothing to undo
+  const owner = readLockOwner(p);
+  if (!owner || !token || owner.token !== token) {
+    console.error(
+      `bugs: our lock on ${shardOfLockPath(p)} was broken by another process; verify the shard`,
+    );
+    return;
+  }
   try {
     rmSync(p, { recursive: true, force: true });
   } catch {
-    /* already gone (a stale-break by another process) — nothing to undo */
+    /* already gone (someone broke it between the read and the rm) */
   }
 }
 
@@ -1613,7 +1702,13 @@ function upsertLedgerRowLocked(batch, row, opts = {}) {
   // read and the write below, and two freshly spawned node processes usually
   // do not — so the concurrency self-test widens the window deliberately
   // rather than hoping for it. Never set outside that test.
-  const stallMs = Number(process.env.BUGS_TEST_STALL_MS || 0);
+  // Gated on BUGS_SELF_TEST so a stray env var cannot slow — or, at a value
+  // above the old age-based stale threshold, actively corrupt — a production
+  // write, and capped so the seam can never wedge a run either.
+  const stallMs =
+    process.env.BUGS_SELF_TEST === "1"
+      ? Math.min(Number(process.env.BUGS_TEST_STALL_MS) || 0, 30000)
+      : 0;
   if (stallMs > 0) sleepSync(stallMs);
   const i = rows.findIndex((r) => r.id === row.id);
   if (i === -1) {
@@ -2290,7 +2385,9 @@ const runCli = (argv, root) => {
       // On failure both streams are already merged below (e.stdout+e.stderr).
       out: execSync(`node ${cmd} 2>&1`, {
         encoding: "utf8",
-        env: { ...process.env, BUGS_ROOT: root },
+        // BUGS_SELF_TEST is what un-gates the stall seam in
+        // upsertLedgerRowLocked; production runs never carry it.
+        env: { ...process.env, BUGS_ROOT: root, BUGS_SELF_TEST: "1" },
         stdio: ["ignore", "pipe", "pipe"],
       }),
     };
@@ -3870,6 +3967,12 @@ cmds["self-test"] = () => {
       for (const [title, loc] of [
         ["concurrent writer A", "apps/api/src/conc-a.ts"],
         ["concurrent writer B", "apps/api/src/conc-b.ts"],
+        ["slow holder", "apps/api/src/conc-slow.ts"],
+        ["slow waiter", "apps/api/src/conc-wait.ts"],
+        ["killed mid-write", "apps/api/src/conc-killed.ts"],
+        ["lock stolen mid-write", "apps/api/src/conc-stolen.ts"],
+        ["signal handler probe", "apps/api/src/conc-signal.ts"],
+        ["interrupted mid-write", "apps/api/src/conc-sigint.ts"],
       ])
         cmds.file([
           title,
@@ -3883,48 +3986,74 @@ cmds["self-test"] = () => {
           "T1",
         ]);
       check(
-        "lock fixture: two queued rows share one shard",
-        readShard("F01").rows.map((r) => [r.id, r.state]),
-        [
-          ["B1", "queued"],
-          ["B2", "queued"],
-        ],
+        "lock fixture: the rows this suite races over share one shard",
+        readShard("F01").rows.map((r) => r.id),
+        ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8"],
       );
 
+      // The spec is passed as a FILE, never as a shell argument: execSync goes
+      // through cmd.exe on win32, which does not understand the backslash
+      // escaping JSON needs inside a quoted argument.
+      const specPath = join(tmp, "race-spec.json");
       const orchestrator = join(tmp, "concurrent-prove.mjs");
       writeFileSync(
         orchestrator,
         [
           'import { spawn } from "node:child_process";',
-          "const [script, root, stall] = process.argv.slice(2);",
-          "const run = (args) =>",
+          'import { readFileSync } from "node:fs";',
+          "const [script, root, spec] = process.argv.slice(2);",
+          'const jobs = JSON.parse(readFileSync(spec, "utf8"));',
+          "const run = (job) =>",
           "  new Promise((res) => {",
-          "    const p = spawn(process.execPath, [script, ...args], {",
-          "      env: { ...process.env, BUGS_ROOT: root, BUGS_TEST_STALL_MS: stall },",
-          '      stdio: ["ignore", "pipe", "pipe"],',
-          "    });",
-          '    let out = "";',
-          '    p.stdout.on("data", (d) => (out += d));',
-          '    p.stderr.on("data", (d) => (out += d));',
-          '    p.on("close", (code) => res({ code, out }));',
+          "    const start = () => {",
+          "      const p = spawn(process.execPath, [script, ...job.args], {",
+          "        env: {",
+          "          ...process.env,",
+          "          BUGS_ROOT: root,",
+          '          BUGS_SELF_TEST: "1",',
+          "          BUGS_TEST_STALL_MS: String(job.stall),",
+          "        },",
+          '        stdio: ["ignore", "pipe", "pipe"],',
+          "      });",
+          '      let out = "";',
+          '      p.stdout.on("data", (d) => (out += d));',
+          '      p.stderr.on("data", (d) => (out += d));',
+          '      p.on("close", (code) => res({ code, out }));',
+          "    };",
+          "    if (job.delay) setTimeout(start, job.delay);",
+          "    else start();",
           "  });",
-          "const results = await Promise.all([",
-          '  run(["prove", "B1", "--pr", "701", "--proof", "REG-B1 jest: writer A asserts its own row"]),',
-          '  run(["prove", "B2", "--pr", "702", "--proof", "REG-B2 jest: writer B asserts its own row"]),',
-          "]);",
+          "const results = await Promise.all(jobs.map(run));",
           "console.log(JSON.stringify(results));",
         ].join("\n"),
       );
-      const argv = [orchestrator, SCRIPT_PATH, tmp, "300"].map((a) => JSON.stringify(a)).join(" ");
-      let raced = { code: 0, out: "" };
-      try {
-        raced = {
-          code: 0,
-          out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
-        };
-      } catch (e) {
-        raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
-      }
+      const race = (jobs) => {
+        writeFileSync(specPath, JSON.stringify(jobs));
+        const argv = [orchestrator, SCRIPT_PATH, tmp, specPath]
+          .map((a) => JSON.stringify(a))
+          .join(" ");
+        try {
+          return {
+            code: 0,
+            out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+          };
+        } catch (e) {
+          return { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+        }
+      };
+      const proveArgs = (id, pr) => [
+        "prove",
+        id,
+        "--pr",
+        String(pr),
+        "--proof",
+        `REG-${id} jest: writer ${id} asserts its own row`,
+      ];
+
+      const raced = race([
+        { args: proveArgs("B1", 701), stall: 300 },
+        { args: proveArgs("B2", 702), stall: 300 },
+      ]);
       check("concurrent prove: the orchestrator exited 0", raced.code, 0);
       const children = JSON.parse(raced.out.trim().split("\n").pop());
       check(
@@ -3940,30 +4069,204 @@ cmds["self-test"] = () => {
         [after.get("B1")?.state, after.get("B1")?.pr, after.get("B2")?.state, after.get("B2")?.pr],
         ["proven", 701, "proven", 702],
       );
+      const lockDir = lockPath("F01");
       check(
         "concurrent prove: the lock directory is released, not left behind",
-        existsSync(`${shardPath("F01")}.lock`),
+        existsSync(lockDir),
         false,
       );
 
-      // A writer killed mid-write leaves the lockdir behind. It must expire,
-      // loudly, instead of wedging the campaign until someone reads this file.
-      const stuck = `${shardPath("F01")}.lock`;
-      mkdirSync(stuck);
-      const old = new Date(Date.now() - LOCK_STALE_MS * 4);
-      utimesSync(stuck, old, old);
-      const broke = runCli(["tier", "B1", "T2", "--why", "stale-lock fixture"], tmp);
-      check("stale lock: the waiting writer still succeeds", broke.code, 0);
+      // (a) A LIVE holder whose critical section outlasts the OLD age-based
+      // staleness threshold (5s) must NOT be robbed. Age is not liveness: the
+      // waiter used to rm the lockdir at 5s, take it, and let the original
+      // holder write its pre-theft snapshot back over the thief's committed
+      // row — two writers inside one critical section, both exiting 0. The
+      // holder stalls 6s (past that old threshold); the waiter starts 800ms in
+      // with no stall of its own, so it MUST sit through the whole hold.
+      const slow = race([
+        { args: proveArgs("B3", 703), stall: 6000 },
+        { args: proveArgs("B4", 704), stall: 0, delay: 800 },
+      ]);
+      check("live holder: the orchestrator exited 0", slow.code, 0);
+      const slowKids = JSON.parse(slow.out.trim().split("\n").pop());
       check(
-        "stale lock: breaking one is reported, never silent",
-        /breaking a stale lock on F01\.jsonl/.test(broke.out),
+        "live holder: BOTH child processes exited 0",
+        slowKids.map((c) => c.code),
+        [0, 0],
+      );
+      check(
+        "live holder: a lock held past the OLD 5s threshold is NOT broken",
+        /breaking the lock on F01\.jsonl/.test(slow.out),
+        false,
+      );
+      const afterSlow = new Map(readShard("F01").rows.map((r) => [r.id, r]));
+      check(
+        "live holder: the waiter waited — BOTH rows landed, neither reverted",
+        [
+          afterSlow.get("B3")?.state,
+          afterSlow.get("B3")?.pr,
+          afterSlow.get("B4")?.state,
+          afterSlow.get("B4")?.pr,
+        ],
+        ["proven", 703, "proven", 704],
+      );
+
+      // Wait for a real child to be INSIDE its critical section. `owner.json`
+      // is written immediately after the mkdir that wins the lock, so its
+      // existence — not the lockdir's — is what proves the hold is established.
+      const awaitHold = () => {
+        for (let i = 0; i < 400 && !existsSync(ownerPath(lockDir)); i++) sleepSync(25);
+        return existsSync(ownerPath(lockDir));
+      };
+      const awaitExit = (child, ms = 15000) => {
+        for (let i = 0; i * 25 < ms && pidAlive(child.pid) !== false; i++) sleepSync(25);
+        return pidAlive(child.pid) === false;
+      };
+      const holder = (id, stall, stdio) =>
+        spawn(process.execPath, [SCRIPT_PATH, ...proveArgs(id, 700 + Number(id.slice(1)))], {
+          env: { ...process.env, BUGS_ROOT: tmp, BUGS_SELF_TEST: "1", BUGS_TEST_STALL_MS: stall },
+          stdio,
+        });
+
+      // (b) A holder killed OUTRIGHT leaves its lockdir behind, and the very
+      // next waiter must break it within ONE invocation — on the owner pid
+      // being gone, which `process.kill(pid, 0)` answers on win32 too. Before
+      // the fix the waiter's 2s deadline expired long before the 5s age
+      // threshold it was waiting for, so it exited 1 blaming "another bugs.mjs
+      // process is writing F01.jsonl" when nothing was running at all.
+      const victim = holder("B5", "20000", "ignore");
+      const heldByVictim = awaitHold();
+      victim.kill("SIGKILL");
+      awaitExit(victim, 3000);
+      const rescued = runCli(["tier", "B5", "T2", "--why", "dead-holder fixture"], tmp);
+      check("dead holder: it really held the lock when it was killed", heldByVictim, true);
+      check("dead holder: the NEXT waiter succeeds in one invocation", rescued.code, 0);
+      check(
+        "dead holder: breaking a dead owner's lock is reported, never silent",
+        /breaking the lock on F01\.jsonl — its owner \(pid \d+\) is gone/.test(rescued.out),
         true,
       );
       check(
-        "stale lock: the write it was blocking actually landed",
+        "dead holder: the write it was blocking actually landed",
+        readShard("F01").rows.find((r) => r.id === "B5")?.tier,
+        "T2",
+      );
+
+      // (c) The other half of the theft, from the RELEASE side: a process whose
+      // lock was broken used to rm the lock PATH unconditionally on the way
+      // out, deleting the lock its SUCCESSOR now held and admitting a third
+      // writer. Hand-write a different owner token into the lockdir while a
+      // real `prove` is inside its critical section: it must leave the
+      // directory alone and say so.
+      check("stolen lock: the fixture starts with no lock held", existsSync(lockDir), false);
+      const errFile = join(tmp, "stolen.err");
+      const errFd = openSync(errFile, "w");
+      const stolen = holder("B6", "3000", ["ignore", "ignore", errFd]);
+      const heldByStolen = awaitHold();
+      writeFileSync(
+        ownerPath(lockDir),
+        JSON.stringify({ pid: process.pid, token: "a-successor-token", at: Date.now() }),
+      );
+      awaitExit(stolen);
+      closeSync(errFd);
+      const stolenErr = readFileSync(errFile, "utf8");
+      check("stolen lock: the victim really held the lock when it was stolen", heldByStolen, true);
+      check(
+        "stolen lock: the successor's lockdir SURVIVES the stolen-from writer's exit",
+        existsSync(lockDir),
+        true,
+      );
+      check(
+        "stolen lock: the stolen-from writer says so on stderr",
+        /our lock on F01\.jsonl was broken by another process; verify the shard/.test(stolenErr),
+        true,
+      );
+      rmSync(lockDir, { recursive: true, force: true });
+
+      // (d) Ctrl-C mid-write. Node's DEFAULT action for SIGINT/SIGTERM/SIGHUP
+      // terminates the process WITHOUT running `exit` listeners, so an
+      // interrupted writer left its lockdir behind. The handlers are asserted
+      // on both platforms by driving the REAL CLI in a child that reports its
+      // own listener counts; the real-signal assertion is POSIX-only, because
+      // on win32 `child.kill("SIGINT")` is a TerminateProcess — case (b), not a
+      // deliverable signal.
+      const probe = join(tmp, "signal-probe.mjs");
+      writeFileSync(
+        probe,
+        [
+          'import { pathToFileURL } from "node:url";',
+          "const [script, root] = process.argv.slice(2);",
+          "process.env.BUGS_ROOT = root;",
+          'process.argv = [process.execPath, script, "tier", "B7", "T2", "--why", "signal probe"];',
+          "await import(pathToFileURL(script).href);",
+          'console.log(JSON.stringify(["SIGINT", "SIGTERM", "SIGHUP"].map((s) => process.listenerCount(s))));',
+        ].join("\n"),
+      );
+      let probeOut = "";
+      try {
+        probeOut = execSync(
+          `node ${[probe, SCRIPT_PATH, tmp].map((a) => JSON.stringify(a)).join(" ")}`,
+          { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      } catch (e) {
+        probeOut = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+      }
+      check(
+        "signals: a writer that took the lock installs SIGINT/SIGTERM/SIGHUP handlers",
+        JSON.parse(probeOut.trim().split("\n").pop()),
+        [1, 1, 1],
+      );
+      if (process.platform !== "win32") {
+        const interrupted = holder("B8", "3000", "ignore");
+        const heldByInterrupted = awaitHold();
+        interrupted.kill("SIGINT");
+        awaitExit(interrupted);
+        check("SIGINT: it really held the lock when it was interrupted", heldByInterrupted, true);
+        check("SIGINT: an interrupted writer leaves NO lock directory", existsSync(lockDir), false);
+      }
+
+      // A lockdir carrying no readable owner.json cannot be judged on liveness
+      // at all — that is the ONLY case the age rule still decides, and only as
+      // a loud last resort far past any real critical section.
+      mkdirSync(lockDir);
+      const old = new Date(Date.now() - LOCK_ABANDON_MS * 2);
+      utimesSync(lockDir, old, old);
+      const broke = runCli(["tier", "B1", "T2", "--why", "abandoned-lock fixture"], tmp);
+      check("abandoned lock: the waiting writer still succeeds", broke.code, 0);
+      check(
+        "abandoned lock: breaking one is reported as a LAST RESORT, never silent",
+        /LAST RESORT: it is \d+s old and carries no readable owner\.json/.test(broke.out),
+        true,
+      );
+      check(
+        "abandoned lock: the write it was blocking actually landed",
         readShard("F01").rows.find((r) => r.id === "B1")?.tier,
         "T2",
       );
+
+      // (e) The seam itself. Unguarded, ONE env var made both blockers above
+      // trivially reachable from a normal run: set above the old 5s threshold
+      // it did not merely slow a write down, it MANUFACTURED the theft.
+      const timeCli = (id, env) => {
+        const t0 = Date.now();
+        try {
+          execSync(
+            `node ${[SCRIPT_PATH, "tier", id, "T3", "--why", "stall seam timing"].map((a) => JSON.stringify(a)).join(" ")}`,
+            {
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "pipe"],
+              env: { ...process.env, BUGS_ROOT: tmp, ...env },
+            },
+          );
+        } catch {
+          /* the elapsed time IS the assertion */
+        }
+        return Date.now() - t0;
+      };
+      const ungated = timeCli("B1", { BUGS_TEST_STALL_MS: "2500", BUGS_SELF_TEST: "" });
+      const gated = timeCli("B2", { BUGS_TEST_STALL_MS: "2500", BUGS_SELF_TEST: "1" });
+      check("stall seam: a production run ignores BUGS_TEST_STALL_MS", ungated < 2000, true);
+      check("stall seam: BUGS_SELF_TEST=1 still un-gates it for this suite", gated >= 2500, true);
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
       else process.env.BUGS_ROOT = prevRoot;
