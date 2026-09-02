@@ -1016,8 +1016,8 @@ function commitMentions(state, args) {
     head = git("git rev-parse HEAD").trim();
   } catch (e) {
     // No git (a tarball, a broken PATH) is not a reason to lose the ledger half
-    // of the sync — say so and carry on.
-    return { mentions, note: `git unavailable, commit scan skipped — ${firstLine(e)}` };
+    // of the sync — say so and carry on. Nothing to anchor either.
+    return { mentions, head: null, note: `git unavailable, commit scan skipped — ${firstLine(e)}` };
   }
 
   const prev = readSyncState().lastSha;
@@ -1025,9 +1025,14 @@ function commitMentions(state, args) {
   // abort the scan — fall back to the bounded window.
   const anchored = prev && !rescan && isCommit(prev) ? prev : null;
   if (!anchored && !rescan) {
+    // Nothing is scanned in THIS branch — there is no per-record loop for the
+    // anchor to race against, so it is safe (and necessary: a first run must
+    // not silently re-derive the same unbounded window forever) to persist
+    // it right here, synchronously.
     writeSyncState(head);
     return {
       mentions,
+      head,
       note: prev
         ? `anchor ${prev.slice(0, 8)} is unknown to git — re-anchored at ${head.slice(0, 8)}, no scan`
         : `first run — anchored at ${head.slice(0, 8)}; commit history is not re-derived (use --rescan to force)`,
@@ -1039,13 +1044,22 @@ function commitMentions(state, args) {
   try {
     log = git(`git log --format=%H%x09%s ${spec}`);
   } catch (e) {
-    return { mentions, note: `commit scan failed (${spec}) — ${firstLine(e)}` };
+    // The scan itself failed — nothing was derived for this range, so the
+    // anchor must not move either, or the range is silently skipped forever.
+    return { mentions, head: null, note: `commit scan failed (${spec}) — ${firstLine(e)}` };
   }
 
   const { mentions: scanned, commits } = parseMentions(log, state);
-  writeSyncState(head);
+  // The anchor is RETURNED, not persisted here. A mid-run failure in the
+  // per-record loop that consumes `mentions` (cmds.sync, below) must not have
+  // already moved past events that loop never got to write — the anchor used
+  // to advance right here, before a single record was touched, so a bug that
+  // crashed the loop lost every event destined for a bug processed AFTER it,
+  // permanently (the next run's anchor already sat past them). Only
+  // `cmds.sync`, once every record has actually been written, persists it.
   return {
     mentions: scanned,
+    head,
     note: commits
       ? `scanned ${commits} commit(s) since ${(anchored ?? "the window").slice(0, 8)}`
       : null,
@@ -1103,7 +1117,7 @@ cmds.sync = (args) => {
   const quiet = args.includes("--quiet");
   const events = [];
 
-  const { mentions, note } = commitMentions(state, args);
+  const { mentions, head, note } = commitMentions(state, args);
   if (note && !quiet) console.log(`sync: ${note}`);
 
   for (const bug of catalogue) {
@@ -1148,6 +1162,15 @@ cmds.sync = (args) => {
     else if (st && st.state !== rec.front.state)
       writeRecord(bug.id, { ...rec.front, ...front }, body);
   }
+
+  // Persist the scan anchor LAST, only after every record above has actually
+  // been written — a crash partway through the loop must leave the anchor at
+  // its PRE-scan position, so the next run re-scans (and this time records)
+  // the same range instead of silently skipping it forever. `head` is null
+  // when commitMentions already persisted it itself (the first-run/re-anchor
+  // branch, which scans nothing so there is nothing to race) or when the
+  // scan itself failed outright.
+  if (head) writeSyncState(head);
 
   if (!quiet || events.length) console.log(`sync: recorded ${events.length} new event(s).`);
   for (const e of events.slice(0, 20)) console.log(`  ${e}`);
@@ -1851,8 +1874,13 @@ cmds.triage = () => {
 // Runs the REAL CLI in a child process. The only way to exercise a REFUSAL:
 // `fail` exits the process, so an in-process call would take the self-test with
 // it — and "it refused" is exactly the assertion a guard needs.
+// Resolved from this file's own location (not process.argv[1], which is
+// whatever relative/absolute form this process happened to be invoked with)
+// so a self-test that temporarily process.chdir()s elsewhere — to drive a
+// throwaway fixture git repo — still spawns the right script.
+const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const runCli = (argv, root) => {
-  const cmd = [process.argv[1], ...argv].map((a) => JSON.stringify(a)).join(" ");
+  const cmd = [SCRIPT_PATH, ...argv].map((a) => JSON.stringify(a)).join(" ");
   try {
     return {
       code: 0,
@@ -2278,6 +2306,115 @@ cmds["self-test"] = () => {
     } finally {
       if (prevAnchor === undefined) delete process.env.BUGS_SYNC_STATE;
       else process.env.BUGS_SYNC_STATE = prevAnchor;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // The anchor must not advance until every record in this run has actually
+  // been written. A mid-run crash (a corrupted record dying partway through
+  // the per-bug loop) must leave the anchor at its PRE-scan position, so the
+  // next run re-scans — and this time records — the same range instead of
+  // silently skipping it forever. Drives a THROWAWAY git repo (never the
+  // real one) so this can create real commits without side effects.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const campaignRoot = join(tmp, "campaign-fixture");
+    const prevCwd = process.cwd();
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = campaignRoot;
+    try {
+      execSync("git init -q", { cwd: tmp });
+      execSync('git config user.email "self-test@routeflow.local"', { cwd: tmp });
+      execSync('git config user.name "Self Test"', { cwd: tmp });
+      writeFileSync(join(tmp, "seed.txt"), "seed\n");
+      execSync("git add seed.txt", { cwd: tmp });
+      execSync('git commit -q -m "initial"', { cwd: tmp });
+
+      writeCatalogue([
+        {
+          id: "B1",
+          title: "anchor fixture — the one that gets corrupted",
+          location: "apps/api/src/self-test.ts",
+          severity: "low",
+          register: "open",
+          batch: "F01",
+          source: "filed",
+          filedAt: null,
+          sensitive: false,
+          sensitiveFor: [],
+        },
+        {
+          id: "B2",
+          title: "anchor fixture — carries the commit event",
+          location: "apps/api/src/self-test.ts",
+          severity: "low",
+          register: "open",
+          batch: "F01",
+          source: "filed",
+          filedAt: null,
+          sensitive: false,
+          sensitiveFor: [],
+        },
+      ]);
+      cmds.expand();
+
+      // commitMentions' own `git` calls use the PROCESS cwd — chdir for the
+      // duration of the sync calls below, restored in `finally`.
+      process.chdir(tmp);
+
+      // First sync: no anchor exists yet, so the "first run" branch fires
+      // and persists synchronously — nothing is scanned, so there is no loop
+      // for it to race against.
+      cmds.sync(["--quiet"]);
+      const anchor0 = readSyncState().lastSha;
+      check("anchor-after-success: the first run anchors at HEAD", typeof anchor0, "string");
+
+      // A new commit lands mentioning B2 — the event that must survive a
+      // crash later in the SAME sync run.
+      writeFileSync(join(tmp, "seed.txt"), "seed 2\n");
+      execSync("git add seed.txt", { cwd: tmp });
+      execSync('git commit -q -m "fix(routes): B2 gamma event that must not be lost"', {
+        cwd: tmp,
+      });
+
+      // Corrupt B1's record so the per-bug loop dies while processing it —
+      // B1 sorts before B2, so B2's event is never reached this run.
+      writeFileSync(recordPath("B1"), "---\nnot valid front matter at all\n");
+
+      const dying = runCli(["sync", "--quiet"], campaignRoot);
+      check(
+        "anchor-after-success: a corrupted record makes sync die non-zero",
+        dying.code !== 0,
+        true,
+      );
+      check(
+        "anchor-after-success: the anchor did NOT advance past the crash",
+        readSyncState().lastSha,
+        anchor0,
+      );
+
+      // Repair B1 and re-run — the anchor is unchanged, so the SAME range is
+      // scanned again and B2's event is recovered, not lost.
+      writeRecord(
+        "B1",
+        { id: "B1", title: "anchor fixture — the one that gets corrupted" },
+        "\n## History\n",
+      );
+      cmds.sync(["--quiet"]);
+      check(
+        "anchor-after-success: the next run recovers the event the crash did not lose",
+        readRecord("B2").body.includes("gamma event"),
+        true,
+      );
+      check(
+        "anchor-after-success: the anchor now advances, past the fully-completed run",
+        readSyncState().lastSha !== anchor0,
+        true,
+      );
+    } finally {
+      process.chdir(prevCwd);
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
       rmSync(tmp, { recursive: true, force: true });
     }
   }
