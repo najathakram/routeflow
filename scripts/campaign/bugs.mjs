@@ -1389,8 +1389,13 @@ cmds.brief = (args) => {
 
   const rows = ids.map((id) => ({ id, st: state.get(id), rec: readRecord(id) }));
   const analysed = rows.filter((r) => r.rec && !r.rec.body.includes(UNANALYSED));
+  // WORKABLE (queued + regressed), not just queued — a batch holding only
+  // regressed rows used to read "0 queued", hiding real open work behind a
+  // number that looked like none was left.
+  const workable = rows.filter((r) => WORKABLE.has(r.st?.state));
+  const regressed = rows.filter((r) => r.st?.state === "regressed");
   out.push(
-    `\n${rows.length} bug(s) · ${rows.filter((r) => r.st?.state === "queued").length} queued · ` +
+    `\n${rows.length} bug(s) · ${workable.length} workable (${regressed.length} regressed) · ` +
       `${analysed.length}/${rows.length} analysed` +
       (rows.some((r) => r.rec?.front.sensitive === "true")
         ? " · ⚠ CONTAINS CARVE-OUT BUGS — plan only, do not fix unattended"
@@ -1402,6 +1407,12 @@ cmds.brief = (args) => {
       `\n⚠️ **${contested.length} record(s) in this batch are CONTESTED or SUPERSEDED** ` +
         `(${contested.map((r) => r.id).join(", ")}) — their fix approach is disputed by another ` +
         `record. Each is flagged again in its own block below; do not build from one alone.`,
+    );
+  if (regressed.length)
+    out.push(
+      `\n⚠️ **${regressed.length} record(s) in this batch REGRESSED** ` +
+        `(${regressed.map((r) => r.id).join(", ")}) — closed once, proof came back false. Each ` +
+        `carries its reopen citation in its own block below; read it before re-fixing.`,
     );
 
   if (discovery && existsSync(discovery)) {
@@ -1442,6 +1453,11 @@ cmds.brief = (args) => {
       out.push(
         `\n> ⚠️ **SUPERSEDED BY ${f.supersededBy}** — work that record instead; this one is kept for its history.`,
       );
+    // A regressed row's `evidence` is the citation `reopen --why` demanded —
+    // the failing REG-B### token or the run/deploy/report that showed the
+    // regression. Print it here, not just buried in the History log, so a
+    // builder re-fixing it starts from what actually broke.
+    if (st?.state === "regressed" && st.evidence) out.push(`\n> ⚠️ **REGRESSED** — ${st.evidence}`);
     if (!rec) {
       out.push(`_no record — run \`bugs expand\`_`);
       continue;
@@ -3002,6 +3018,56 @@ cmds["self-test"] = () => {
       check(
         "brief: flags it again inside that bug's own block, above the fix approach",
         out.indexOf("CONTESTED BY B999") > out.indexOf("### B1"),
+        true,
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // `brief` must surface a regressed row: the header counts WORKABLE rows
+  // (queued + regressed), not just queued — a batch holding only a
+  // regressed row used to read "0 queued", hiding open work — and the
+  // reopen citation must reach the per-bug block, not stay buried in History.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file([
+        "regressed fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T1",
+      ]);
+      cmds.prove(["B1", "--pr", "800", "--proof", "REG-B1 jest: the guard holds"]);
+      cmds.discharge([
+        "F01",
+        "--evidence",
+        "Railway deploy 1234abcd SUCCESS; Actions run 999 green against it",
+      ]);
+      cmds.reopen([
+        "B1",
+        "--why",
+        "REG-B1 failed in Actions run 33557237968 against deploy 1234abcd",
+      ]);
+      const out = capture(() => cmds.brief(["F01"]));
+      check(
+        "brief: the header counts workable rows, not just queued (0 queued would hide this)",
+        out.includes("1 workable (1 regressed)"),
+        true,
+      );
+      check("brief: a batch-level REGRESSED banner is shown", out.includes("REGRESSED"), true);
+      check(
+        "brief: the reopen citation reaches the bug's own block",
+        out.includes("Actions run 33557237968"),
         true,
       );
     } finally {
