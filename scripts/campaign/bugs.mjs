@@ -455,6 +455,23 @@ const frontFor = (bug, st) => ({
   closed: st && ["done", "already-fixed"].includes(st.state) ? "yes" : null,
 });
 
+// The single machine-generated summary line under the H1 title. Rendered from
+// front matter so it can be REGENERATED on every refresh instead of drifting
+// forever — a record's body used to bake this in once at creation and never
+// touch it again, so B32 still read "Batch F11" and B211 still read "State
+// uncampaigned" long after their ledger rows moved on.
+const renderHeaderLine = (front) =>
+  `**Location** \`${front.location}\` · **Severity** ${front.severity}` +
+  `${front.batch ? ` · **Batch** ${front.batch}` : ""} · **State** ${front.state}`;
+
+// Delimited and machine-generated: find the line by its fixed "**Location**"
+// prefix (never by matching the surrounding title, which can contain anything)
+// and rewrite it wholesale. A record with no such line yet is left alone.
+function refreshHeaderLine(body, front) {
+  if (!/^\*\*Location\*\*.*$/m.test(body)) return body;
+  return body.replace(/^\*\*Location\*\*.*$/m, () => renderHeaderLine(front));
+}
+
 // Create records that do not exist yet; refresh derived front matter on ones
 // that do. NEVER touches a narrative section — analysis is expensive and a
 // refresh must not be able to destroy it.
@@ -473,8 +490,7 @@ cmds.expand = () => {
     if (!existing) {
       let body =
         `\n# ${bug.id} · ${bug.title}\n\n` +
-        `**Location** \`${bug.location}\` · **Severity** ${bug.severity}` +
-        `${front.batch ? ` · **Batch** ${front.batch}` : ""} · **State** ${front.state}\n\n` +
+        `${renderHeaderLine(front)}\n\n` +
         SECTIONS.map((s) => `## ${s}\n\n${UNANALYSED}\n`).join("\n") +
         // A filed bug's own description is the only substantive text about it
         // until analysis lands — carry it into the body, the same section name
@@ -496,7 +512,7 @@ cmds.expand = () => {
       writeRecord(bug.id, front, body);
       created++;
     } else {
-      writeRecord(bug.id, { ...existing.front, ...front }, existing.body);
+      writeRecord(bug.id, { ...existing.front, ...front }, refreshHeaderLine(existing.body, front));
       refreshed++;
     }
   }
@@ -546,9 +562,16 @@ cmds.sync = (args) => {
         events.push(`${bug.id} commit ${c.sha}`);
     }
 
-    if (body !== before) writeRecord(bug.id, { ...rec.front, ...frontFor(bug, st) }, body);
+    const front = frontFor(bug, st);
+    // Regenerate the header line every sync, not only on the events above —
+    // it is the ONLY place a ledger state change was ever reflected in the
+    // body text, and it used to be written once at record creation and never
+    // refreshed again.
+    body = refreshHeaderLine(body, front);
+
+    if (body !== before) writeRecord(bug.id, { ...rec.front, ...front }, body);
     else if (st && st.state !== rec.front.state)
-      writeRecord(bug.id, { ...rec.front, ...frontFor(bug, st) }, body);
+      writeRecord(bug.id, { ...rec.front, ...front }, body);
   }
 
   if (!quiet || events.length) console.log(`sync: recorded ${events.length} new event(s).`);
@@ -1050,6 +1073,19 @@ cmds["self-test"] = () => {
     .filter((b) => !existsSync(recordPath(b.id)))
     .map((b) => b.id);
   check("every catalogue row has a record", missing, []);
+
+  // The body's baked-in header line must match its own front matter — it used
+  // to be written once at creation and never refreshed, so a re-batch or a
+  // state change never touched it (B32 still said "Batch F11", B211 still
+  // said "State uncampaigned" long after the ledger moved on).
+  const headerDrift = [];
+  for (const f of readdirSync(RECORD_DIR()).filter((n) => n.endsWith(".md"))) {
+    const { front, body: b } = parseRecord(readFileSync(join(RECORD_DIR(), f), "utf8"));
+    const m = /^\*\*Location\*\*.*$/m.exec(b);
+    if (!m) continue; // no header line yet (shouldn't happen for an expanded record)
+    if (m[0] !== renderHeaderLine(front)) headerDrift.push(f);
+  }
+  check("record header line matches its own front matter", headerDrift, []);
 
   // Every history entry must be exactly ONE line. A detail containing a newline
   // used to split the entry and leave loose prose floating in the section
