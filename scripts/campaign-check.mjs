@@ -84,6 +84,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { normalizeEvidence } from "./campaign/normalize-evidence.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -399,7 +400,10 @@ function checkT2ProofHits(row, hits) {
       `T2 discharge acknowledgment: ${id} accepted on recorded evidence (no matching test in ` +
         `the playwright e2e report) — ${evidence.slice(0, 120)}`,
     );
-    const key = evidence;
+    // Normalized with the SAME helper bugs.mjs's discharge uses for its own
+    // identical-evidence refusal — a trailing space or a case difference
+    // must not let one side accept text the other side would flag.
+    const key = normalizeEvidence(evidence);
     t2FallbackEvidence.set(key, [...(t2FallbackEvidence.get(key) ?? []), id]);
     return;
   }

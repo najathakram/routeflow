@@ -64,6 +64,7 @@ import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { normalizeEvidence } from "./normalize-evidence.mjs";
 
 // The repo root, independent of cwd — resolved from this file's own location
 // (scripts/campaign/bugs.mjs) rather than process.cwd(), so a --build-plan
@@ -1556,13 +1557,18 @@ cmds.discharge = (args) => {
         `campaign-check accepts dischargeEvidence in place of a Playwright artifact, so one batch-wide ` +
         `string would discharge every T2 row in the batch past the only control that reads it.`,
     );
+  // Normalized (trim, collapse whitespace, lowercase) with the SAME helper
+  // campaign-check.mjs uses for its own byte-identical-evidence warning — a
+  // trailing space or a case difference must not let this guard admit what
+  // the gate would still flag.
   const seen = new Map();
   for (const [id, text] of perRow) {
-    if (seen.has(text))
+    const key = normalizeEvidence(text);
+    if (seen.has(key))
       fail(
-        `${id} and ${seen.get(text)} were given byte-identical evidence — cite each row's own run`,
+        `${id} and ${seen.get(key)} were given byte-identical evidence — cite each row's own run`,
       );
-    seen.set(text, id);
+    seen.set(key, id);
   }
 
   for (const row of ready) {
@@ -2472,6 +2478,72 @@ cmds["self-test"] = () => {
         "discharge: the T1 row carries the batch string as `evidence`, never as dischargeEvidence",
         [byId.get("B2")?.evidence, byId.get("B2")?.dischargeEvidence],
         [BATCH_EV, undefined],
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // discharge's identical-evidence guard must be normalized (trim, collapse
+  // whitespace, lowercase) the SAME way campaign-check.mjs's own warning is —
+  // a trailing space or a case difference must not let this guard admit two
+  // rows' evidence as distinct when the gate would still see them as one.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file([
+        "T2 normalisation fixture A",
+        "--location",
+        "apps/web/e2e/self-test.spec.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T2",
+      ]);
+      cmds.file([
+        "T2 normalisation fixture B",
+        "--location",
+        "apps/web/e2e/self-test.spec.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T2",
+      ]);
+      cmds.prove(["B1", "--pr", "610", "--proof", "REG-B1 e2e: fixture A"]);
+      cmds.prove(["B2", "--pr", "610", "--proof", "REG-B2 e2e: fixture B"]);
+
+      const evA = "Actions run 999 job 42: spec 28 REG-B1 passed against deploy 1234abcd";
+      const evB = `  ${evA.toUpperCase()}  `; // same text: differs only by case + surrounding space
+      const attempt = runCli(
+        [
+          "discharge",
+          "F01",
+          "--evidence",
+          "Railway deploy 1234abcd SUCCESS; Actions run 999 E2E green against it",
+          "--evidence-B1",
+          evA,
+          "--evidence-B2",
+          evB,
+        ],
+        tmp,
+      );
+      check(
+        "discharge: refuses two rows given evidence differing only by case/whitespace",
+        attempt.code !== 0,
+        true,
+      );
+      check(
+        "discharge: the refusal wrote nothing",
+        readShard("F01").rows.map((r) => r.state),
+        ["proven", "proven"],
       );
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
