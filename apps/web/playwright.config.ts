@@ -420,10 +420,11 @@ export default defineConfig({
     // ⚠️ QUARANTINED 2026-09-02 — both F14 project entries are commented out, NOT deleted.
     // Post-deploy run 33612887226 (master 24421170) went red: all three spec-32 tests failed AND
     // they took `AP-06` (07-auth-password.spec.ts:141, "re-auth sheet unlock resumes the session")
-    // down with them — a test that was green on the previous deploy. Cause: neither project
-    // declares `dependencies`, so Playwright puts both in phase 1 alongside `auth-password`, and
-    // all three share the SAME `admin` operator. Spec 32 revokes that user's sessions while
-    // auth-password is mid-flow, so its refresh 401s and the re-auth dialog never closes.
+    // down with them — a test that was green on the previous deploy.
+    // Cause (corrected 2026-09-02): `auth-password` is PHASE 2 (`dependencies: ["setup"]`); these two are
+    // phase 1. Spec 32 revokes `rows[0]` of /auth/sessions, which lists by createdAt DESC — so whenever
+    // `setup` logs in after spec 32's own login, rows[0] IS operator.json's session, and every phase-2
+    // project 401s on its first refresh. A phase-1 WRITE against a phase-2 READ on one shared user.
     // Scoping spec 32's CLEANUP (done in #598) was necessary but not sufficient — tests 1 and 3
     // revoke during the phase too.
     // The fix is a DEDICATED e2e user for these specs, not an ordering tweak: putting them in
