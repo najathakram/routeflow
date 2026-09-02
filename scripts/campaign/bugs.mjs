@@ -796,6 +796,15 @@ cmds["self-test"] = () => {
   }
   check("history: every entry is a single line", strays, []);
 
+  // Exactly one History heading per record. A second one means a $-pattern in
+  // caller text was expanded into the body by a string replacement — enrich hit
+  // this on B109, whose evidence says "$235.00 vs PERCENT's $181.05", so `$1`
+  // became the captured heading. Cheaper to diagnose than the stray-line check.
+  const multiHistory = readdirSync(RECORD_DIR)
+    .filter((n) => n.endsWith(".md"))
+    .filter((n) => (readFileSync(join(RECORD_DIR, n), "utf8").match(/^## History$/gm) || []).length !== 1);
+  check("exactly one '## History' heading per record", multiHistory, []);
+
   console.log(failures ? `\nself-test: ${failures} FAILURE(S)` : "\nself-test: all checks passed");
   if (failures) process.exit(1);
 };
@@ -847,6 +856,209 @@ cmds.move = (args) => {
 
   console.log(`${id}: ${from} → ${to}${why ? ` (${why})` : ""}`);
   console.log(`  ${from} now holds ${kept.length} row(s); verify with: node scripts/campaign-check.mjs`);
+};
+
+// ── enrich: pull the register's DETAIL into every record ──────────────────
+// `import` only ever read the register's summary TABLE — id, title, area,
+// severity, status — so 207 of 211 records carried a one-line title and nothing
+// else. The register's detail blocks hold what an agent actually needs (what the
+// feature was meant to do, what it does instead, the gap, file:line evidence, a
+// suggested fix and the verifier's note) AND, in 209 of 210 cases, the file
+// paths that make a dependency graph computable at all. Leaving that in a
+// gitignored HTML file was the same mistake the catalogue was built to fix.
+//
+// Writes ONLY the front-matter `files` list and a `## Reported evidence`
+// section. The six analysis sections stay reserved for the analysis pass, so
+// "analysed" keeps meaning "a model reasoned about this", not "we have prose".
+const FILE_RX =
+  /(?:apps|packages|scripts)\/[A-Za-z0-9_.\/()\[\]@-]*\.(?:tsx|jsx|mjs|cjs|prisma|ts|js)/g;
+
+function registerDetail(html, id) {
+  const i = html.indexOf(`<span class="bug-id">${id}</span>`);
+  if (i < 0) return null;
+  const j = html.indexOf('<span class="bug-id">', i + 10);
+  const block = html.slice(i, j > 0 ? j : html.length);
+  const pick = (rx) => {
+    const m = rx.exec(block);
+    return m ? stripTags(m[1]) : null;
+  };
+  return {
+    meant: pick(/<dt>Meant to do<\/dt>\s*<dd>([\s\S]*?)<\/dd>/),
+    actual: pick(/<dt>Actually does<\/dt>\s*<dd>([\s\S]*?)<\/dd>/),
+    gap: pick(/<dt[^>]*>The gap<\/dt>\s*<dd>([\s\S]*?)<\/dd>/),
+    evidence: pick(/<div class="evidence">([\s\S]*?)<\/div>/),
+    suggested: pick(/<strong>Suggested fix:<\/strong>([\s\S]*?)<\/p>/),
+    verifier: pick(/<strong>Verifier's note:<\/strong>([\s\S]*?)<\/p>/),
+    provenance: pick(/<p class="verinote">([\s\S]*?)<\/p>/),
+    files: [...new Set(block.match(FILE_RX) || [])].sort(),
+  };
+}
+
+cmds.enrich = () => {
+  if (!existsSync(REGISTER))
+    fail(`register not found at ${REGISTER} (gitignored — this runs on the owner's machine only)`);
+  const html = readFileSync(REGISTER, "utf8");
+  let enriched = 0;
+  let noDetail = 0;
+  let files = 0;
+
+  for (const bug of readCatalogue()) {
+    const rec = readRecord(bug.id);
+    if (!rec) continue;
+    const d = registerDetail(html, bug.id);
+    if (!d || (!d.actual && !d.evidence)) {
+      noDetail++;
+      continue;
+    }
+
+    const parts = ["_Imported verbatim from the bug register — this is the ORIGINAL report, not analysis._", ""];
+    if (d.meant) parts.push(`**Meant to do.** ${d.meant}`, "");
+    if (d.actual) parts.push(`**Actually does.** ${d.actual}`, "");
+    if (d.gap) parts.push(`**The gap.** ${d.gap}`, "");
+    if (d.evidence) parts.push(`**Evidence.** ${d.evidence}`, "");
+    if (d.suggested)
+      parts.push(
+        `**Suggested fix (register).** ${d.suggested}`,
+        "",
+        "> ⚠️ Treat this as a hypothesis, not a plan. On F11 the adversarial pass refuted the",
+        "> suggested fix for every one of the four bugs while confirming every diagnosis.",
+        "",
+      );
+    if (d.verifier) parts.push(`**Verifier's note.** ${d.verifier}`, "");
+    if (d.provenance) parts.push(`_${d.provenance}_`, "");
+    if (d.files.length) parts.push(`**Files implicated (${d.files.length}):**`, ...d.files.map((f) => `- \`${f}\``), "");
+
+    const section = `## Reported evidence\n\n${parts.join("\n").replace(/\n{3,}/g, "\n\n").trim()}\n`;
+    const body = rec.body.includes("## Reported evidence")
+      ? rec.body.replace(/## Reported evidence\n[\s\S]*?(?=\n## History)/, () => section)
+      : rec.body.replace(/(\n## History)/, (_m, h) => `\n${section}${h}`);
+
+    writeRecord(bug.id, { ...rec.front, files: d.files.join(" ") || null }, body);
+    enriched++;
+    files += d.files.length;
+  }
+  console.log(`enriched ${enriched} record(s) with the register detail; ${files} file references captured.`);
+  if (noDetail) console.log(`  ${noDetail} record(s) had no detail block in the register.`);
+};
+
+// ── deps: the dependency graph, computed not maintained ───────────────────
+// Two bugs conflict when they touch the same file: they must land in one batch
+// or be serialised, never worked in parallel. That is set intersection over the
+// `files` list enrich captured, so waves can be COMPUTED rather than argued
+// about. Every hand-maintained index here has drifted (the board by three cards,
+// the ledger by thirteen rows); a derived graph cannot.
+//
+// ⚠️ HUB FILES ARE THE WHOLE DIFFICULTY. A naive "shares a file ⇒ conflicts"
+// rule reported that NO batch was ever parallel-safe, which is useless. The
+// cause: six god-files dominate the repo — orders.service.ts is touched by 39
+// bugs, invoices.service.ts by 31, routes.service.ts by 29, schema.prisma by 27.
+// Two bugs in a 5,000-line service almost always touch different methods, so a
+// hub overlap is a REVIEW signal, not a conflict. Only a shared NON-hub file is
+// treated as hard. The threshold is data, not a constant, and `--hub-threshold`
+// exposes it because the right cut-off is a judgement the repo may change.
+const HUB_DEFAULT = 10;
+
+const fileSet = (id) => {
+  const raw = readRecord(id)?.front?.files;
+  return new Set(raw ? raw.split(" ").filter(Boolean) : []);
+};
+
+function buildGraph(hubThreshold) {
+  const state = readState();
+  const bugs = [...state.keys()].filter((id) => existsSync(recordPath(id)));
+  const files = new Map(bugs.map((id) => [id, fileSet(id)]));
+
+  const freq = new Map();
+  for (const set of files.values()) for (const f of set) freq.set(f, (freq.get(f) || 0) + 1);
+  const hubs = new Set([...freq].filter(([, n]) => n >= hubThreshold).map(([f]) => f));
+
+  const batchOf = new Map(bugs.map((id) => [id, state.get(id).batch]));
+  const edges = new Map(bugs.map((id) => [id, new Map()]));
+  for (let a = 0; a < bugs.length; a++)
+    for (let b = a + 1; b < bugs.length; b++) {
+      const shared = [...files.get(bugs[a])].filter((f) => files.get(bugs[b]).has(f));
+      if (!shared.length) continue;
+      const hard = shared.filter((f) => !hubs.has(f));
+      const edge = { shared, hard };
+      edges.get(bugs[a]).set(bugs[b], edge);
+      edges.get(bugs[b]).set(bugs[a], edge);
+    }
+  return { bugs, files, batchOf, edges, state, hubs, freq };
+}
+
+cmds.deps = (args) => {
+  const hubThreshold = Number(flag(args, "hub-threshold", HUB_DEFAULT));
+  const g = buildGraph(hubThreshold);
+  const one = (flag(args, "bug") ?? "").toUpperCase();
+  const openOnly = !args.includes("--all");
+  const isOpen = (id) => g.state.get(id)?.state === "queued";
+
+  if (one) {
+    if (!g.edges.has(one)) fail(`${one} has no record or no ledger row`);
+    console.log(`${one} — ${g.files.get(one).size} file(s), batch ${g.batchOf.get(one)}`);
+    const conflicts = [...g.edges.get(one)].sort((x, y) => y[1].hard.length - x[1].hard.length);
+    const hard = conflicts.filter(([, e]) => e.hard.length);
+    if (!hard.length) console.log("  no HARD conflict with any other bug — only god-file overlap, safe to fix alone.");
+    for (const [other, e] of hard)
+      console.log(
+        `    ${other.padEnd(5)} ${g.batchOf.get(other) === g.batchOf.get(one) ? "same batch" : "BATCH " + String(g.batchOf.get(other)).padEnd(4)} ` +
+          `${e.hard.length} shared: ${e.hard.slice(0, 2).join(", ")}${e.hard.length > 2 ? " …" : ""}`,
+      );
+    const soft = conflicts.filter(([, e]) => !e.hard.length).length;
+    if (soft) console.log(`  (+ ${soft} bug(s) sharing only god-files — review, not conflict)`);
+    return;
+  }
+
+  console.log(`Hub files (touched by >= ${hubThreshold} bugs, treated as shared surface not conflict):`);
+  for (const f of [...g.hubs].sort((a, b) => g.freq.get(b) - g.freq.get(a)))
+    console.log(`  ${String(g.freq.get(f)).padStart(3)}  ${f}`);
+
+  const batches = new Map();
+  for (const id of g.bugs) {
+    if (openOnly && !isOpen(id)) continue;
+    const b = g.batchOf.get(id);
+    if (!batches.has(b)) batches.set(b, []);
+    batches.get(b).push(id);
+  }
+
+  console.log("\nBATCH COHESION — a bug sharing no NON-hub file with its batch-mates is an outlier\n");
+  const outliers = [];
+  for (const b of [...batches.keys()].sort()) {
+    const ids = batches.get(b);
+    const inner = ids.filter((id) => ids.some((o) => o !== id && (g.edges.get(id).get(o)?.hard.length ?? 0) > 0));
+    const out = ids.filter((id) => !inner.includes(id));
+    outliers.push(...out.map((id) => ({ id, batch: b })));
+    console.log(
+      `${b.padEnd(4)} ${String(inner.length + "/" + ids.length).padStart(6)} cohesive` +
+        (out.length ? `   outliers: ${out.join(", ")}` : ""),
+    );
+  }
+
+  console.log("\nCROSS-BATCH HARD CONFLICTS — these share a non-hub file and MUST NOT run in parallel\n");
+  const pairs = new Map();
+  for (const id of g.bugs) {
+    if (openOnly && !isOpen(id)) continue;
+    for (const [other, e] of g.edges.get(id)) {
+      if (openOnly && !isOpen(other)) continue;
+      if (!e.hard.length) continue;
+      const a = g.batchOf.get(id);
+      const b = g.batchOf.get(other);
+      if (a === b || !a || !b) continue;
+      const key = [a, b].sort().join(" <-> ");
+      if (!pairs.has(key)) pairs.set(key, new Set());
+      e.hard.forEach((f) => pairs.get(key).add(f));
+    }
+  }
+  const ranked = [...pairs].sort((x, y) => y[1].size - x[1].size);
+  for (const [key, fs2] of ranked)
+    console.log(`  ${key.padEnd(15)} ${String(fs2.size).padStart(2)}: ${[...fs2].slice(0, 2).join(", ")}${fs2.size > 2 ? " …" : ""}`);
+  if (!ranked.length) console.log("  none.");
+
+  const conflicted = new Set(ranked.flatMap(([k]) => k.split(" <-> ")));
+  const free = [...batches.keys()].filter((b) => !conflicted.has(b)).sort();
+  console.log(`\nPARALLEL-SAFE BATCHES (no hard conflict with any other open batch):\n  ${free.length ? free.join(" ") : "none"}`);
+  if (outliers.length)
+    console.log(`\nOUTLIERS worth re-batching:\n  ${outliers.map((o) => `${o.id}(${o.batch})`).join(" ")}`);
 };
 
 const [, , cmd, ...rest] = process.argv;
