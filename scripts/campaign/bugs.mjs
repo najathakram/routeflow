@@ -413,6 +413,13 @@ cmds.file = (args) => {
 // GitHub read, which is the difference between "two agents got the same batch"
 // and "the dispatcher waited".
 const WORKABLE = new Set(["queued", "regressed"]);
+// CONFLICT-RELEVANT is a strictly wider question than WORKABLE, and conflating
+// the two deleted the constraints that matter most. A row someone is fixing
+// RIGHT NOW is the most conflict-relevant row in the repo — it is being edited —
+// yet `in-flight` is not workable, so the conflict graph dropped it and
+// `deps` stopped reporting the F11<->F12 pair the moment F11 was claimed.
+// Anything a writer is holding open counts here; only proven/done rows fall out.
+const CONFLICTING = new Set([...WORKABLE, "in-flight"]);
 // The standing agent cap (feedback_cap_background_agents_at_four) — a wave that
 // proposes more parallel batches than the fleet can run is not a plan.
 const AGENT_CAP = 4;
@@ -518,7 +525,7 @@ const rankBatches = (list) =>
 // a conflict — see buildGraph's warning.
 function batchConflicts(hubThreshold) {
   const g = buildGraph(hubThreshold);
-  const open = (id) => WORKABLE.has(g.state.get(id)?.state);
+  const open = (id) => CONFLICTING.has(g.state.get(id)?.state);
   const conflicts = new Map();
   const link = (a, b, files) => {
     if (!conflicts.has(a)) conflicts.set(a, new Map());
@@ -545,11 +552,29 @@ function batchConflicts(hubThreshold) {
 // a human, and an optimal colouring would still be re-computed the moment a
 // batch is claimed. Order is the ranking above, so the worst severity gets
 // wave 1 and nothing in a wave shares a non-hub file with anything else in it.
-function computeWaves(ranked, conflicts, cap = AGENT_CAP) {
+//
+// `busy` is the batches that are ALREADY being worked — in-flight locally, or
+// held under a live team.mjs lease. They are pre-coloured into wave 1 rather
+// than deleted, because deleting them deleted the constraints they carried:
+// claiming F11 used to make F11<->F12 vanish, and `next` then offered F12 to a
+// second agent editing the same two web files. They occupy a slot of the agent
+// cap (four agents means four, whatever they are already on) and are never
+// returned as a pick — the wave assembly below walks `ranked` only.
+function computeWaves(ranked, conflicts, cap = AGENT_CAP, busy = []) {
   const waveOf = new Map();
   const sizes = [];
+  const busySet = new Set(busy);
+  for (const b of busySet) {
+    waveOf.set(b, 0);
+    sizes[0] = (sizes[0] ?? 0) + 1;
+  }
   for (const b of ranked) {
     const neighbours = [...(conflicts.get(b.batch)?.keys() ?? [])];
+    // Recorded so the operator is told WHY a batch is not on offer. A candidate
+    // that hard-conflicts with a busy batch is always pushed past wave 1, since
+    // every busy batch sits in wave 1 — so this list is exactly the reason.
+    const heldUp = neighbours.filter((o) => busySet.has(o));
+    b.blockedBy = heldUp.length ? heldUp : null;
     let w = 0;
     while (
       (sizes[w] ?? 0) >= cap ||
@@ -589,13 +614,22 @@ function selectBatches(args) {
       parked.push(b);
       continue;
     }
+    // `busy` marks a skip that means "someone is working this", as opposed to
+    // "there is nothing here". It is set explicitly rather than re-derived by
+    // regex from the prose below, because the prose is for humans and a
+    // scheduling invariant must not depend on its wording.
     if (!b.bugs.length) {
-      skipped.push({ ...b, why: `no workable rows (${b.inFlight.length} in-flight)` });
+      skipped.push({
+        ...b,
+        busy: b.inFlight.length > 0,
+        why: `no workable rows (${b.inFlight.length} in-flight)`,
+      });
       continue;
     }
     if (b.inFlight.length) {
       skipped.push({
         ...b,
+        busy: true,
         why: `${b.inFlight.length} row(s) in-flight: ${b.inFlight.join(", ")}`,
       });
       continue;
@@ -623,7 +657,11 @@ function selectBatches(args) {
         b.claimCheck = `issue #${b.issue} carries an informal claim (no team.mjs lease) — VERIFY before taking it: "${c.why}"`;
         still.push(b);
       } else if (c) {
-        skipped.push({ ...b, why: `claimed by ${c.id} until ${c.leaseUntil.toISOString()}` });
+        skipped.push({
+          ...b,
+          busy: true,
+          why: `claimed by ${c.id} until ${c.leaseUntil.toISOString()}`,
+        });
       } else {
         still.push(b);
       }
@@ -632,8 +670,29 @@ function selectBatches(args) {
     candidates.push(...still);
   }
 
-  const waves = computeWaves(candidates, batchConflicts(hubThreshold), cap);
-  return { waves, parked, skipped, cap, hubThreshold };
+  // The batches that are already being worked are NOT deleted from the problem:
+  // they occupy wave 1 and keep their hard conflicts, so a candidate that shares
+  // a non-hub file with one of them is pushed past wave 1 instead of being
+  // handed to a second agent.
+  const conflicts = batchConflicts(hubThreshold);
+  const busy = skipped.filter((s) => s.busy).map((s) => s.batch);
+  const waves = computeWaves(candidates, conflicts, cap, busy);
+  const blocked = candidates
+    .filter((b) => b.blockedBy?.length)
+    .map((b) => {
+      const files = [
+        ...new Set(b.blockedBy.flatMap((o) => [...(conflicts.get(b.batch)?.get(o) ?? [])])),
+      ];
+      return {
+        batch: b.batch,
+        blockedBy: b.blockedBy,
+        files,
+        why:
+          `blocked by in-flight ${b.blockedBy.join(", ")} — shares ` +
+          `${files.slice(0, 2).join(", ")}${files.length > 2 ? ` (+${files.length - 2} more)` : ""}`,
+      };
+    });
+  return { waves, parked, skipped, blocked, busy, cap, hubThreshold };
 }
 
 const claimHint = (b) => `node scripts/team/team.mjs claim ${b.issue ?? "<issue#>"}`;
@@ -644,7 +703,7 @@ const claimHint = (b) => `node scripts/team/team.mjs claim ${b.issue ?? "<issue#
 // severity sort: the top of a severity sort routinely hard-conflicts with the
 // batch someone else is already in.
 cmds.next = (args) => {
-  const { waves, parked, skipped, cap, hubThreshold } = selectBatches(args);
+  const { waves, parked, skipped, blocked, busy, cap, hubThreshold } = selectBatches(args);
   const wave1 = waves[0] ?? [];
 
   if (args.includes("--json")) {
@@ -663,6 +722,11 @@ cmds.next = (args) => {
           waves,
           parked,
           skipped,
+          // Candidates a batch already being worked pushed past wave 1, and the
+          // batches doing the pushing. Without these a consumer sees a shorter
+          // wave 1 and no reason for it.
+          blocked,
+          busy,
           cap,
           hubThreshold,
         },
@@ -676,7 +740,8 @@ cmds.next = (args) => {
   if (!wave1.length) {
     console.log(
       "No batch is available right now — every batch with workable rows is parked by the " +
-        "carve-out, claimed, or in-flight.",
+        `carve-out, claimed, in-flight, or held out of wave 1 by one of the ${busy.length} ` +
+        `batch(es) already being worked (agent cap ${cap}).`,
     );
   } else {
     const top = wave1[0];
@@ -696,9 +761,14 @@ cmds.next = (args) => {
     console.log(`\n  claim it:  ${claimHint(top)}`);
   }
 
-  if (skipped.length) {
-    console.log(`\nskipped (${skipped.length}):`);
+  // `blocked` belongs in THIS list: `next` only ever offers wave 1, so a batch a
+  // busy neighbour pushed to a later wave is skipped as far as this command is
+  // concerned — and saying nothing about it is what let `next` propose F11 while
+  // a live lease on F12 was editing the same two web files.
+  if (skipped.length || blocked.length) {
+    console.log(`\nskipped (${skipped.length + blocked.length}):`);
     for (const b of skipped) console.log(`    ${String(b.batch).padEnd(4)}  ${b.why}`);
+    for (const b of blocked) console.log(`    ${String(b.batch).padEnd(4)}  ${b.why}`);
   }
 
   if (parked.length) {
@@ -718,15 +788,26 @@ cmds.next = (args) => {
 // conflict; this answers the question that was actually being asked — what can
 // four agents run RIGHT NOW, and what has to wait for them.
 cmds.waves = (args) => {
-  const { waves, parked, skipped, cap, hubThreshold } = selectBatches(args);
+  const { waves, parked, skipped, blocked, busy, cap, hubThreshold } = selectBatches(args);
+  const blockedBy = new Map(blocked.map((b) => [b.batch, b]));
   if (args.includes("--json")) {
-    console.log(JSON.stringify({ waves, parked, skipped, cap, hubThreshold }, null, 2));
+    console.log(
+      JSON.stringify({ waves, parked, skipped, blocked, busy, cap, hubThreshold }, null, 2),
+    );
     return;
   }
   console.log(
     `Waves — greedy colouring of the batch hard-conflict graph (hub threshold ${hubThreshold}), ` +
       `capped at ${cap} concurrent batches, worst severity first.\n`,
   );
+  // Batches already being worked are not listed as picks, but they hold a slot
+  // of the cap and their hard conflicts still push candidates into later waves.
+  // Saying so is the difference between a short wave 1 and an unexplained one.
+  if (busy.length)
+    console.log(
+      `  wave 1 already holds ${busy.length} batch(es) being worked (${busy.join(" ")}) — ` +
+        `they occupy the cap and keep their conflicts.\n`,
+    );
   if (!waves.length) console.log("  nothing available to schedule.");
   waves.forEach((w, i) => {
     console.log(`wave ${i + 1}`);
@@ -736,6 +817,10 @@ cmds.waves = (args) => {
           `worst ${worstSeverity(b).padEnd(8)} ${b.issue ? `#${b.issue}` : "  —  "}  ${claimHint(b)}`,
       );
       if (b.claimCheck) console.log(`         ⚠ ${b.claimCheck}`);
+      // A later wave is a CONSEQUENCE, not an explanation. Name the batch
+      // already being worked that holds this one back.
+      const held = blockedBy.get(b.batch);
+      if (held) console.log(`         ⚠ ${held.why}`);
     }
   });
   if (skipped.length) {
@@ -2490,10 +2575,12 @@ cmds["self-test"] = () => {
       const out = capture(() => cmds.next(["--json", "--no-claims"]));
       const parsed = JSON.parse(out);
       check(
-        "next --json: shape carries next/alongside/eligible/waves/parked/skipped/cap/hubThreshold",
+        "next --json: shape names the head, the schedule, and why anything was held back",
         Object.keys(parsed).sort(),
         [
           "alongside",
+          "blocked",
+          "busy",
           "cap",
           "eligible",
           "hubThreshold",
@@ -2555,6 +2642,89 @@ cmds["self-test"] = () => {
         "liveClaim: it is never mistaken for a live claim (skipped list stays empty)",
         skipped.length,
         0,
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // ── wave occupancy ──────────────────────────────────────────────────────
+  // Claiming a batch used to DELETE the constraints it carried. `computeWaves`
+  // coloured only the candidate list, from which every in-flight/claimed batch
+  // had already been removed, and the conflict graph treated an in-flight row
+  // as closed — so after claiming F11, `deps` no longer reported F11<->F12 and
+  // `next` cheerfully offered F12 to a second agent editing the same files.
+  // The busy batch is now a pre-coloured occupant of wave 1: it holds a slot of
+  // the cap, keeps its conflicts, and is never returned as a pick.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    const SHARED = "apps/web/app/(dashboard)/occupancy/page.tsx";
+    try {
+      for (const [title, batch] of [
+        ["occupancy fixture A", "F01"],
+        ["occupancy fixture B", "F02"],
+      ])
+        cmds.file([
+          title,
+          "--location",
+          SHARED,
+          "--severity",
+          "high",
+          "--batch",
+          batch,
+          "--tier",
+          "T1",
+          "--files",
+          SHARED,
+        ]);
+      check(
+        "occupancy fixture: the two batches hard-conflict before anything is claimed",
+        [...(batchConflicts(HUB_DEFAULT).get("F01")?.keys() ?? [])],
+        ["F02"],
+      );
+
+      cmds.claim(["F01"]);
+      const { waves, skipped, blocked, busy } = selectBatches(["--no-claims"]);
+      check(
+        "occupancy: the claimed batch is reported busy, not merely skipped",
+        [busy, skipped.map((s) => s.batch)],
+        [["F01"], ["F01"]],
+      );
+      // THE assertion. Before the fix this was ["F02"] — the conflict F01
+      // carried vanished with F01, and wave 1 offered F02 straight away.
+      check(
+        "occupancy: the conflicting batch is NOT in wave 1 while F01 is in flight",
+        waves[0]?.map((b) => b.batch) ?? [],
+        [],
+      );
+      check(
+        "occupancy: it is scheduled for wave 2 instead of dropped",
+        waves[1]?.map((b) => b.batch) ?? [],
+        ["F02"],
+      );
+      check(
+        "occupancy: the reason names the batch holding it back",
+        blocked.map((b) => [b.batch, b.blockedBy, b.files]),
+        [["F02", ["F01"], [SHARED]]],
+      );
+      const shown = capture(() => cmds.next(["--no-claims"]));
+      check(
+        "occupancy: `next` says 'blocked by in-flight F01' rather than staying silent",
+        /F02\s+blocked by in-flight F01/.test(shown),
+        true,
+      );
+      // The same defect from the reporting side: `deps` filtered to `queued`
+      // only, so the pair disappeared from the conflict report at exactly the
+      // moment someone needed to see it.
+      const dep = capture(() => cmds.deps([]));
+      check(
+        "occupancy: `deps` still lists the F01 <-> F02 pair after the claim",
+        dep.includes("F01 <-> F02"),
+        true,
       );
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
@@ -4136,7 +4306,11 @@ cmds.deps = (args) => {
   const bugFlag = flag(args, "bug");
   const one = bugFlag ? resolveId(bugFlag.toUpperCase()) : "";
   const openOnly = !args.includes("--all");
-  const isOpen = (id) => g.state.get(id)?.state === "queued";
+  // `=== "queued"` dropped the two states that matter most to a conflict
+  // report: a REGRESSED row is open work, and an IN-FLIGHT row is being edited
+  // right now. Claiming F11 used to delete the F11<->F12 pair from this output
+  // at the exact moment someone needed to see it.
+  const isOpen = (id) => CONFLICTING.has(g.state.get(id)?.state);
 
   if (one) {
     if (!g.edges.has(one)) fail(`${one} has no record or no ledger row`);
