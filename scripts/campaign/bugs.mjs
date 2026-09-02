@@ -198,6 +198,12 @@ cmds.file = (args) => {
     );
   else console.log("  agent-safe: yes");
   if (!bug.batch) console.log("  no batch yet — run @tech-lead to batch it, or pass --batch F##.");
+
+  // Filing a bug and leaving it without a record is exactly the drift this
+  // registry exists to prevent, so create it in the same breath. expand is
+  // idempotent and never touches an existing narrative.
+  cmds.expand();
+  console.log(`  record   : ${recordPath(bug.id)}`);
 };
 
 // The dispatcher's selector. Returns the next BATCH an agent may take, because a
@@ -336,7 +342,7 @@ function parseRecord(text) {
 const renderFront = (front) =>
   "---\n" +
   Object.entries(front)
-    .map(([k, v]) => `${k}: ${v ?? ""}`)
+    .map(([k, v]) => (v === null || v === undefined || v === "" ? `${k}:` : `${k}: ${v}`))
     .join("\n") +
   "\n---\n";
 
