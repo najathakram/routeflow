@@ -28,10 +28,10 @@ it.
 The owner describes a bug in plain English. Do not interrogate them — file first, analyse second.
 
 ```bash
-npm run bugs -- file "<one-line title>" --location "<file path or Area · surface>" --severity critical|high|medium|low
+npm run bugs -- file "<one-line title>" --location "<file path or Area · surface>" --severity critical|high|medium|low --batch F## --tier T1
 ```
 
-That allocates the next id (**max + 1, never filling a gap** — a gap is an id reserved by an
+Pass `--batch` whenever you know it: without a batch there is no ledger row, so `campaign-check` and `next` cannot see the bug at all. That allocates the next id (**max + 1, never filling a gap** — a gap is an id reserved by an
 unmerged branch), writes the catalogue row, creates `.claude/campaign/bugs/B###.md`, and prints
 whether the bug trips the carve-out. Then run the analysis pass below.
 
@@ -77,10 +77,17 @@ from the analysis pass, not from unattended fixing.
 ## Picking up work
 
 ```bash
-npm run bugs -- next          # the next agent-safe BATCH, with its bugs and the claim command
-npm run bugs -- show B129     # one bug's full record — read this, not the register HTML
+npm run bugs -- status              # every batch: done/total, how many analysed, board issue
+npm run bugs -- next                # the next agent-SAFE batch (carve-out applied)
+npm run bugs -- brief F11           # ⭐ everything needed to start: plan, ordering, per-bug fix + test plan
+npm run bugs -- show B129           # one bug in full
 npm run bugs -- list --open --batch F11
 ```
+
+**`brief` is the one an agent should run.** It assembles the batch plan (ordering, file conflicts,
+risks), then each bug with its Summary, Fix approach and Test plan, and ends with the exact commands
+to close out. Reading it is the difference between fixing the right bug and fixing it the right way —
+every F11 card, for instance, carries a fix the adversarial pass REFUTED, and `brief` leads with that.
 
 Work is claimed per **batch**, never per bug — the board card, the pipeline folder and the PR are
 all batch-scoped. `node scripts/team/team.mjs claim <issue#>` is a real compare-and-swap;
@@ -88,16 +95,32 @@ all batch-scoped. `node scripts/team/team.mjs claim <issue#>` is a real compare-
 
 ## Closing out
 
-Do not hand-write closure. The registry derives it:
+Two transitions, and they are deliberately separate — `proven` means merged with a passing test,
+`done` means live after a green deploy. Collapsing them is the fiction `campaign-check` exists to
+prevent, so neither command will invent the other's evidence.
 
-- The batch pipeline writes `state` + `proof` into `status/F##.jsonl`.
-- `npm run bugs -- sync` reads that plus `git log` and appends the history events — and it already
-  runs as **Gate 4 of `.claude/hooks/stop.mjs`** on every turn, so a landed fix records itself.
-- Commit the changed `bugs/B###.md` files alongside the fix. Gate 4 tells you when there are any.
+```bash
+# after the PR merges, per bug
+npm run bugs -- prove B129 --pr 601 --proof "REG-B129 jest: cancelling a run leaves its orders sweepable"
 
-A bug is closed when its ledger row reaches `done` **after a green deploy**, not when the PR merges.
-`proven` means merged with a passing test; `done` means live. Discharging `proven` → `done` without
-a deploy is the exact fiction `campaign-check` exists to prevent.
+# after a GREEN DEPLOY, per batch
+npm run bugs -- discharge F11 --evidence "Railway deploy <id> SUCCESS; Actions run <id> E2E green against it"
+```
+
+Both write the ledger **replace-in-place** and update the record's front matter and History.
+Never hand-edit `status/F##.jsonl`: a second row for the same id is a duplicate the gate rejects,
+and that is the first mistake everyone makes.
+
+Guards you cannot talk your way past:
+
+- `--proof` must cite the exact `REG-B###` token (a prefix will not do — `REG-B12` must not be
+  satisfiable by `REG-B120`).
+- `--evidence` must actually name the deploy and the run. This is the one claim `campaign-check`
+  cannot verify for you, so it is the one place a lie would survive.
+- `--pending-deploy` is T2-only.
+
+`sync` also runs as **Gate 4 of `.claude/hooks/stop.mjs`** every turn, so a landed fix records its
+own commits. Commit the changed `bugs/B###.md` files alongside the fix.
 
 ## House rules that outrank anything here
 

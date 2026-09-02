@@ -204,6 +204,19 @@ cmds.file = (args) => {
   // idempotent and never touches an existing narrative.
   cmds.expand();
   console.log(`  record   : ${recordPath(bug.id)}`);
+
+  // A bug with no ledger row is invisible to campaign-check and to , so
+  // filing must create it. Doing this by hand is how B211 first landed.
+  if (bug.batch) {
+    const tier = flag(args, "tier", "T1");
+    const what = upsertLedgerRow(bug.batch, {
+      id: bug.id, batch: bug.batch, tier, state: "queued",
+      pr: null, proof: null, evidence: null,
+    });
+    console.log(`  ledger   : ${bug.batch}.jsonl row ${what} (tier ${tier}, queued)`);
+  } else {
+    console.log("  ledger   : none — pass --batch F## so campaign-check and `next` can see it.");
+  }
 };
 
 // The dispatcher's selector. Returns the next BATCH an agent may take, because a
@@ -526,6 +539,252 @@ cmds.index = () => {
     }));
   writeCatalogue(rows);
   console.log(`index: rebuilt bugs.jsonl from ${rows.length} record(s).`);
+};
+
+// ── ledger writes ─────────────────────────────────────────────────────────
+// The proof ledger is REPLACE-IN-PLACE, one row per bug id across all shards —
+// campaign-check rejects a duplicate id, and appending a second row for the same
+// bug is the first thing anyone tries (it cost a full redo during the F07/F10
+// discharge). Every ledger write in this file goes through upsertLedgerRow, so
+// that mistake is unrepresentable rather than merely documented.
+const shardPath = (batch) => join(STATUS_DIR, `${batch}.jsonl`);
+
+function readShard(batch) {
+  const p = shardPath(batch);
+  if (!existsSync(p)) return { rows: [], eol: "\n" };
+  const raw = readFileSync(p, "utf8");
+  return {
+    rows: raw
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((l) => JSON.parse(l)),
+    eol: raw.includes("\r\n") ? "\r\n" : "\n",
+  };
+}
+
+function upsertLedgerRow(batch, row) {
+  const { rows, eol } = readShard(batch);
+  const i = rows.findIndex((r) => r.id === row.id);
+  if (i === -1) rows.push(row);
+  else rows[i] = { ...rows[i], ...row };
+  const ids = rows.map((r) => r.id);
+  if (new Set(ids).size !== ids.length) fail(`refusing to write ${batch}: duplicate id in shard`);
+  mkdirSync(STATUS_DIR, { recursive: true });
+  writeFileSync(shardPath(batch), rows.map((r) => JSON.stringify(r)).join(eol) + eol);
+  return i === -1 ? "added" : "updated";
+}
+
+const findShardOf = (id) => {
+  for (const f of readdirSync(STATUS_DIR).filter((n) => n.endsWith(".jsonl"))) {
+    const batch = f.replace(/\.jsonl$/, "");
+    if (readShard(batch).rows.some((r) => r.id === id)) return batch;
+  }
+  return null;
+};
+
+// ── brief: everything an agent needs to start, in one output ───────────────
+// The point of the registry is that an agent picking up work reads ONE thing.
+// Before this, starting a batch meant assembling the board card, the ledger,
+// four record files and the pipeline discovery by hand — which is how an agent
+// ends up fixing the right bug the wrong way.
+cmds.brief = (args) => {
+  const target = (args[0] ?? "").toUpperCase();
+  if (!/^(F\d{2}|B\d+)$/.test(target)) fail("usage: brief <F##|B###>");
+
+  const board = existsSync(BOARD) ? JSON.parse(readFileSync(BOARD, "utf8")) : { batches: {} };
+  const ids = /^B/.test(target)
+    ? [target]
+    : readShard(target).rows.map((r) => r.id);
+  if (!ids.length) fail(`no ledger rows for ${target}`);
+  const batch = /^B/.test(target) ? findShardOf(target) : target;
+
+  const state = readState();
+  const out = [];
+  out.push(`# ${batch}${board.batches?.[batch] ? ` · board issue #${board.batches[batch]}` : ""}`);
+
+  const pipelineDir = existsSync(".claude/pipeline")
+    ? readdirSync(".claude/pipeline").find((d) => d.toUpperCase().includes(`-${batch}-`))
+    : null;
+  const discovery = pipelineDir ? join(".claude/pipeline", pipelineDir, "discovery.md") : null;
+
+  const rows = ids.map((id) => ({ id, st: state.get(id), rec: readRecord(id) }));
+  const analysed = rows.filter((r) => r.rec && !r.rec.body.includes(UNANALYSED));
+  out.push(
+    `\n${rows.length} bug(s) · ${rows.filter((r) => r.st?.state === "queued").length} queued · ` +
+      `${analysed.length}/${rows.length} analysed` +
+      (rows.some((r) => r.rec?.front.sensitive === "true") ? " · ⚠ CONTAINS CARVE-OUT BUGS — plan only, do not fix unattended" : ""),
+  );
+
+  if (discovery && existsSync(discovery)) {
+    out.push(`\n## Batch plan\n\nRead this FIRST — it carries the ordering, the file conflicts and the risks:\n\n    ${discovery}`);
+    const txt = readFileSync(discovery, "utf8");
+    const verdict = /## Verdict\n\n([\s\S]*?)(?=\n## )/.exec(txt);
+    if (verdict) out.push(`\n${verdict[1].trim()}`);
+    const order = /## Ordering\n\n([\s\S]*?)(?=\n## )/.exec(txt);
+    if (order) out.push(`\n## Ordering\n\n${order[1].trim()}`);
+  } else {
+    out.push(`\n## Batch plan\n\n⚠ none yet — run the analysis pass before fixing (see the bug-registry skill).`);
+  }
+
+  out.push(`\n## Bugs`);
+  for (const { id, st, rec } of rows) {
+    const f = rec?.front ?? {};
+    out.push(
+      `\n### ${id} · ${f.severity ?? "?"} · ${st?.state ?? "—"} · tier ${st?.tier ?? f.tier ?? "?"}` +
+        `${f.sensitive === "true" ? ` · ⚠ carve-out (${f.sensitiveFor})` : ""}`,
+    );
+    out.push(`${f.title ?? ""}`);
+    out.push(`\`${f.location ?? ""}\``);
+    if (!rec) {
+      out.push(`_no record — run \`bugs expand\`_`);
+      continue;
+    }
+    for (const s of ["Summary", "Fix approach and UX", "Test plan"]) {
+      const m = new RegExp(`## ${s}\\n\\n([\\s\\S]*?)(?=\\n## |$)`).exec(rec.body);
+      if (m) out.push(`\n**${s}**\n\n${m[1].trim()}`);
+    }
+    out.push(`\nFull record: \`.claude/campaign/bugs/${id}.md\``);
+  }
+
+  out.push(`\n## When you finish`);
+  out.push(
+    `    npm run bugs -- prove <B###> --pr <n> --proof "REG-B### <what the passing test asserts>"\n` +
+      `    npm run bugs -- discharge ${batch} --evidence "<post-deploy proof>"   # only AFTER a green deploy`,
+  );
+  process.stdout.write(out.join("\n") + "\n");
+};
+
+// ── prove / discharge: the two ledger transitions ──────────────────────────
+// proven = merged with a passing REG-B### test. done = live after a green
+// deploy. Keeping them separate is the whole reason campaign-check can be
+// trusted, so neither command will invent the other's evidence.
+cmds.prove = (args) => {
+  const id = (args[0] ?? "").toUpperCase();
+  const pr = flag(args, "pr");
+  const proof = flag(args, "proof");
+  if (!/^B\d+$/.test(id) || !pr || !proof)
+    fail('usage: prove <B###> --pr <number> --proof "REG-B### <what the passing test asserts>"');
+  if (!new RegExp(`REG-${id}(?![0-9])`).test(proof))
+    fail(`--proof must cite the exact token REG-${id} — campaign-check matches that token and nothing else`);
+
+  const batch = findShardOf(id);
+  if (!batch) fail(`${id} is in no ledger shard — file it with a --batch first`);
+  const row = readShard(batch).rows.find((r) => r.id === id);
+  const pending = args.includes("--pending-deploy");
+  const state = pending ? "proven-pending-deploy" : "proven";
+  if (pending && row.tier !== "T2")
+    fail("--pending-deploy is for T2 rows only (their proof cannot run pre-merge)");
+
+  const what = upsertLedgerRow(batch, { ...row, state, pr: Number(pr), proof });
+  const rec = readRecord(id);
+  if (rec)
+    writeRecord(id, { ...rec.front, state, proof: `REG-${id}` }, appendHistory(rec.body, `state-${state}`, state, `PR #${pr}`));
+  console.log(`${id}: ${batch} row ${what} → ${state} (PR #${pr})`);
+  console.log(`  discharge to done only after a green deploy: npm run bugs -- discharge ${batch} --evidence "..."`);
+};
+
+cmds.discharge = (args) => {
+  const batch = (args[0] ?? "").toUpperCase();
+  const evidence = flag(args, "evidence");
+  if (!/^F\d{2}$/.test(batch) || !evidence)
+    fail('usage: discharge <F##> --evidence "<post-deploy proof: deploy id + the CI run that exercised it>"');
+  if (evidence.length < 40)
+    fail("--evidence must actually cite the deploy and the run that proved it — this is the claim campaign-check cannot check for you");
+
+  const { rows } = readShard(batch);
+  const ready = rows.filter((r) => r.state === "proven" || r.state === "proven-pending-deploy");
+  if (!ready.length) fail(`${batch} has no proven row to discharge (states: ${[...new Set(rows.map((r) => r.state))].join(", ")})`);
+
+  for (const row of ready) {
+    upsertLedgerRow(batch, { ...row, state: "done", dischargeEvidence: evidence });
+    const rec = readRecord(row.id);
+    if (rec)
+      writeRecord(
+        row.id,
+        { ...rec.front, state: "done", closed: "yes" },
+        appendHistory(rec.body, "state-done", "done", evidence.slice(0, 200)),
+      );
+  }
+  console.log(`${batch}: discharged ${ready.length} row(s) → done — ${ready.map((r) => r.id).join(", ")}`);
+  console.log(`  verify: node scripts/campaign-check.mjs`);
+};
+
+cmds.status = (args) => {
+  const only = (args[0] ?? "").toUpperCase();
+  const board = existsSync(BOARD) ? JSON.parse(readFileSync(BOARD, "utf8")) : { batches: {} };
+  const batches = readdirSync(STATUS_DIR)
+    .filter((f) => f.endsWith(".jsonl"))
+    .map((f) => f.replace(/\.jsonl$/, ""))
+    .filter((b) => !only || b === only)
+    .sort();
+  for (const b of batches) {
+    const { rows } = readShard(b);
+    if (!rows.length) continue;
+    const by = {};
+    for (const r of rows) by[r.state] = (by[r.state] || 0) + 1;
+    const analysed = rows.filter((r) => {
+      const rec = readRecord(r.id);
+      return rec && !rec.body.includes(UNANALYSED);
+    }).length;
+    const done = (by.done || 0) + (by["already-fixed"] || 0);
+    console.log(
+      `${b.padEnd(4)} ${String(done + "/" + rows.length).padStart(6)} done · ${String(analysed).padStart(2)} analysed · ` +
+        `${board.batches?.[b] ? "#" + board.batches[b] : "  —  "}  ${Object.entries(by).map(([k, v]) => `${k}:${v}`).join(" ")}`,
+    );
+  }
+};
+
+// ── self-test ─────────────────────────────────────────────────────────────
+// Three defects shipped from this file in one session — trailing-space churn,
+// silent no-op edits, and $-expansion in note() — all the same family: a write
+// path that reports success without checking what it wrote. These assert the
+// round-trips rather than trusting them.
+cmds["self-test"] = () => {
+  let failures = 0;
+  const check = (name, got, want) => {
+    const ok = JSON.stringify(got) === JSON.stringify(want);
+    if (!ok) failures++;
+    console.log(`${ok ? "  ok  " : "  FAIL"} ${name}${ok ? "" : `\n        got  ${JSON.stringify(got)}\n        want ${JSON.stringify(want)}`}`);
+  };
+
+  // front matter must round-trip, and an empty field must NOT gain a trailing
+  // space — prettier strips it, so a space makes every refresh dirty the tree.
+  const front = { id: "B1", title: "x", batch: null, closed: null };
+  const rendered = renderFront(front);
+  check("renderFront: no trailing space on empty field", /: $/m.test(rendered), false);
+  check("renderFront/parseRecord round-trip", parseRecord(rendered + "body").front, {
+    id: "B1",
+    title: "x",
+    batch: null,
+    closed: null,
+  });
+
+  // note() text must survive $-patterns verbatim.
+  const body = "## Summary\n\nOLD\n\n## Root cause\n\nx\n";
+  const text = "Driver loses $100; also $& and $` and $'.";
+  const rx = new RegExp(`(## Summary\\n\\n)([\\s\\S]*?)(?=\\n## |$)`);
+  check("note: $-patterns survive verbatim", rx.test(body) && body.replace(rx, (_m, h) => `${h}${text}\n`).includes(text), true);
+
+  // history must dedupe on its marker, or Gate 4 grows the file every turn.
+  const once = appendHistory("## History\n", "k1", "e", "d");
+  check("appendHistory: idempotent on the same key", appendHistory(once, "k1", "e", "d"), once);
+
+  // the ledger must hold exactly one row per id, repo-wide.
+  const seen = new Map();
+  let dupes = 0;
+  for (const f of readdirSync(STATUS_DIR).filter((n) => n.endsWith(".jsonl")))
+    for (const r of readShard(f.replace(/\.jsonl$/, "")).rows) {
+      if (seen.has(r.id)) dupes++;
+      seen.set(r.id, true);
+    }
+  check("ledger: one row per bug id across all shards", dupes, 0);
+
+  // every catalogue row should have a record, or `brief` renders holes.
+  const missing = readCatalogue().filter((b) => !existsSync(recordPath(b.id))).map((b) => b.id);
+  check("every catalogue row has a record", missing, []);
+
+  console.log(failures ? `\nself-test: ${failures} FAILURE(S)` : "\nself-test: all checks passed");
+  if (failures) process.exit(1);
 };
 
 const [, , cmd, ...rest] = process.argv;

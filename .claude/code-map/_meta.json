@@ -1,11 +1,6 @@
 {
-<<<<<<< HEAD
   "mappedSha": "39632d272cf4d77fb87c936ee891c30a26b99c00",
-  "generatedAt": "2026-09-02T05:35:02.090Z",
-=======
-  "mappedSha": "3bb98d053cf206bf9c162182a4127185983eb68f",
-  "generatedAt": "2026-09-02T02:54:11.546Z",
->>>>>>> 35e0b75a (feat(campaign): analyse F11, and fix the $-expansion bug in the writer)
+  "generatedAt": "2026-09-02T05:35:39.838Z",
   "areas": [
     "api",
     "web",
