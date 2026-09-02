@@ -136,6 +136,29 @@ function normBatch(raw, { optional = false } = {}) {
   return b;
 }
 
+// "B04" and "B4" are the same bug — compare NORMALISED forms rather than
+// migrating the nine zero-padded ids (B01-B09) that predate this convention.
+// Returns null for anything that isn't a B-id shape at all.
+const normId = (raw) => {
+  const m = /^B0*(\d+)$/i.exec(String(raw ?? "").trim());
+  return m ? `B${m[1]}` : null;
+};
+
+// Resolve a user-typed id to whatever form the registry actually stores on
+// disk (e.g. "B04", not "B4") by comparing normalised forms against the
+// catalogue — WITHOUT migrating any file. Falls back to the uppercased input
+// verbatim when nothing matches, so an unknown id still fails with the
+// caller's own "no record"/"no ledger row" message instead of a new one here.
+function resolveId(raw) {
+  const typed = String(raw ?? "")
+    .toUpperCase()
+    .trim();
+  const key = normId(typed);
+  if (!key) return typed;
+  const hit = readCatalogue().find((r) => normId(r.id) === key);
+  return hit ? hit.id : typed;
+}
+
 const stripTags = (s) =>
   s
     .replace(/<[^>]+>/g, "")
@@ -500,7 +523,17 @@ cmds.expand = () => {
           ? `\n## Reported evidence\n\n${bug.symptom}\n`
           : "") +
         `\n## History\n`;
-      body = appendHistory(body, `filed`, "filed", `imported from the register (${bug.register})`);
+      // Provenance must say what actually happened — a bug created via
+      // `bugs.mjs file` was never "imported from the register", and that false
+      // line was baked into every filed bug's History (B211 onward).
+      body = appendHistory(
+        body,
+        `filed`,
+        "filed",
+        bug.source === "filed"
+          ? "filed directly via `bugs.mjs file`"
+          : `imported from the register (${bug.register})`,
+      );
       if (st) body = appendHistory(body, `batch-${st.batch}`, "batched", `assigned to ${st.batch}`);
       if (st && st.state !== "queued")
         body = appendHistory(
@@ -531,10 +564,14 @@ cmds.sync = (args) => {
   // One git pass for every bug, not one per bug: 210 `git log --grep` calls
   // would dominate the runtime of a hook that fires on every turn.
   const log = execSync("git log --format=%H%x09%s --max-count=400", { encoding: "utf8" });
+  // Keyed on the NORMALISED id — a commit subject saying "B4" must still match
+  // the catalogue's "B04" (nine ids predate zero-padding removal), or those
+  // nine bugs are permanently invisible to automatic commit tracking.
   const mentions = new Map();
   for (const line of log.split("\n").filter(Boolean)) {
     const [sha, subject] = line.split("\t");
-    for (const id of new Set(subject.match(/\bB\d{1,3}\b/g) ?? [])) {
+    for (const raw of new Set(subject.match(/\bB\d{1,3}\b/g) ?? [])) {
+      const id = normId(raw) ?? raw;
       if (!mentions.has(id)) mentions.set(id, []);
       mentions.get(id).push({ sha: sha.slice(0, 8), subject });
     }
@@ -556,7 +593,7 @@ cmds.sync = (args) => {
       );
       events.push(`${bug.id} ${rec.front.state} → ${st.state}`);
     }
-    for (const c of mentions.get(bug.id) ?? []) {
+    for (const c of mentions.get(normId(bug.id) ?? bug.id) ?? []) {
       body = appendHistory(body, `commit-${c.sha}`, "commit", `\`${c.sha}\` ${c.subject}`);
       if (body !== before && !events.includes(`${bug.id} commit ${c.sha}`))
         events.push(`${bug.id} commit ${c.sha}`);
@@ -579,8 +616,9 @@ cmds.sync = (args) => {
 };
 
 cmds.show = (args) => {
-  const id = (args[0] ?? "").toUpperCase();
-  if (!/^B\d+$/.test(id)) fail("usage: show <B###>");
+  const typed = (args[0] ?? "").toUpperCase();
+  if (!/^B\d+$/.test(typed)) fail("usage: show <B###>");
+  const id = resolveId(typed);
   if (!existsSync(recordPath(id))) fail(`no record for ${id} — run \`expand\``);
   process.stdout.write(readFileSync(recordPath(id), "utf8"));
 };
@@ -588,10 +626,11 @@ cmds.show = (args) => {
 // How an analysis agent writes its findings back. `--section` replaces one
 // narrative section; without it the text lands as a history note.
 cmds.note = (args) => {
-  const id = (args[0] ?? "").toUpperCase();
+  const typed = (args[0] ?? "").toUpperCase();
   const text = args[1];
-  if (!/^B\d+$/.test(id) || !text || text.startsWith("--"))
+  if (!/^B\d+$/.test(typed) || !text || text.startsWith("--"))
     fail('usage: note <B###> "<text>" [--section "Root cause"]');
+  const id = resolveId(typed);
   const rec = readRecord(id);
   if (!rec) fail(`no record for ${id} — run \`expand\``);
   const section = flag(args, "section");
@@ -706,8 +745,9 @@ const findShardOf = (id) => {
 // four record files and the pipeline discovery by hand — which is how an agent
 // ends up fixing the right bug the wrong way.
 cmds.brief = (args) => {
-  const target = (args[0] ?? "").toUpperCase();
-  if (!/^(F\d{2}|B\d+)$/.test(target)) fail("usage: brief <F##|B###>");
+  const typed = (args[0] ?? "").toUpperCase();
+  if (!/^(F\d{2}|B\d+)$/.test(typed)) fail("usage: brief <F##|B###>");
+  const target = /^B/.test(typed) ? resolveId(typed) : typed;
 
   const board = existsSync(BOARD()) ? JSON.parse(readFileSync(BOARD(), "utf8")) : { batches: {} };
   const ids = /^B/.test(target) ? [target] : readShard(target).rows.map((r) => r.id);
@@ -781,11 +821,12 @@ cmds.brief = (args) => {
 // deploy. Keeping them separate is the whole reason campaign-check can be
 // trusted, so neither command will invent the other's evidence.
 cmds.prove = (args) => {
-  const id = (args[0] ?? "").toUpperCase();
+  const typed = (args[0] ?? "").toUpperCase();
   const prRaw = flag(args, "pr");
   const proof = flag(args, "proof");
-  if (!/^B\d+$/.test(id) || !prRaw || !proof)
+  if (!/^B\d+$/.test(typed) || !prRaw || !proof)
     fail('usage: prove <B###> --pr <number> --proof "REG-B### <what the passing test asserts>"');
+  const id = resolveId(typed);
   // Validate BEFORE writing — `Number("not-a-number")` is NaN, and
   // `JSON.stringify({pr:NaN})` silently emits `"pr":null` while the command
   // still printed that the PR was recorded.
@@ -1058,6 +1099,11 @@ cmds["self-test"] = () => {
     );
   }
 
+  // "B04" and "B4" must compare equal — the nine zero-padded ids predate this
+  // convention and are never migrated on disk, only normalised at comparison.
+  check("normId: B04 and B4 are the same bug", normId("B04") === normId("B4"), true);
+  check("normId: case-insensitive", normId("b4") === normId("B4"), true);
+
   // the ledger must hold exactly one row per id, repo-wide.
   const seen = new Map();
   let dupes = 0;
@@ -1161,9 +1207,10 @@ cmds["self-test"] = () => {
 // record front matter and the catalogue — four places, each an opportunity to
 // leave the ledger holding two rows for one id.
 cmds.move = (args) => {
-  const id = (args[0] ?? "").toUpperCase();
+  const typed = (args[0] ?? "").toUpperCase();
   const why = flag(args, "why");
-  if (!/^B\d+$/.test(id)) fail('usage: move <B###> --to <F##> [--why "<reason>"]');
+  if (!/^B\d+$/.test(typed)) fail('usage: move <B###> --to <F##> [--why "<reason>"]');
+  const id = resolveId(typed);
   const to = normBatch(flag(args, "to"));
 
   const from = findShardOf(id);
@@ -1380,7 +1427,8 @@ function buildGraph(hubThreshold) {
 cmds.deps = (args) => {
   const hubThreshold = Number(flag(args, "hub-threshold", HUB_DEFAULT));
   const g = buildGraph(hubThreshold);
-  const one = (flag(args, "bug") ?? "").toUpperCase();
+  const bugFlag = flag(args, "bug");
+  const one = bugFlag ? resolveId(bugFlag.toUpperCase()) : "";
   const openOnly = !args.includes("--all");
   const isOpen = (id) => g.state.get(id)?.state === "queued";
 
