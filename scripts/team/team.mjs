@@ -88,8 +88,15 @@ function currentBranch() {
 
 // ── comment helpers ────────────────────────────────────────────────────────
 
+// `--paginate --slurp` returns an ARRAY OF PAGES, so flatten it. Without
+// --paginate gh returns page 1 only — the OLDEST 100 comments — while a claim
+// is by construction the NEWEST comment, so on a busy issue every lease became
+// invisible and `claim` handed out a batch someone already held. The identical
+// change landed in scripts/campaign/bugs.mjs's liveClaim in the same commit;
+// see the shared-grammar warning below. (`--slurp` cannot be combined with
+// `--jq` — gh rejects the pair — so no projection is possible here.)
 function comments(n) {
-  return api(`issues/${n}/comments?per_page=100`) ?? [];
+  return (api(`issues/${n}/comments?per_page=100`, ["--paginate", "--slurp"]) ?? []).flat();
 }
 
 function post(n, body) {

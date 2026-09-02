@@ -495,19 +495,31 @@ const TEAM_RELEASE_RE = /^release:\s*id=(\S+)/m;
 // Pure, so the self-test can drive the exact comment payloads that broke this
 // with no network at all.
 function readClaims(comments) {
-  const bodies = comments.map((c) => String(c?.body ?? ""));
-  const agent = bodies.filter((b) => b.startsWith(TEAM_MARKER));
+  const all = (Array.isArray(comments) ? comments : []).map((c) => ({
+    commentId: c?.id,
+    body: String(c?.body ?? ""),
+  }));
+  const agent = all.filter((c) => c.body.startsWith(TEAM_MARKER));
   const released = new Set();
-  for (const b of agent) {
-    const m = TEAM_RELEASE_RE.exec(b);
+  for (const c of agent) {
+    const m = TEAM_RELEASE_RE.exec(c.body);
     if (m) released.add(m[1]);
   }
   const now = new Date();
   const live = agent
-    .map((b) => TEAM_CLAIM_RE.exec(b))
+    .map((c) => {
+      const m = TEAM_CLAIM_RE.exec(c.body);
+      return m ? { id: m[1], leaseUntil: new Date(m[2]), commentId: c.commentId } : null;
+    })
     .filter(Boolean)
-    .map((m) => ({ id: m[1], leaseUntil: new Date(m[2]) }))
-    .filter((c) => !released.has(c.id) && c.leaseUntil > now);
+    .filter((c) => !released.has(c.id) && c.leaseUntil > now)
+    // Rule 4 of the shared grammar: LOWEST LIVE COMMENT ID WINS. Issue comment
+    // ids are server-assigned and totally ordered, which is the only reason
+    // team.mjs's claim is a real compare-and-swap — see team.mjs:11-13 and its
+    // matching `.sort` in liveClaims. This file used to take whatever the API
+    // returned first, so with two live claims on one issue the two readers
+    // named DIFFERENT holders.
+    .sort((a, b) => a.commentId - b.commentId);
   if (live.length) return live[0];
   // An INFORMAL claim — a session that wrote "Claimed for planning …" in prose
   // instead of taking a lease — is not a lease and must not be treated as one,
@@ -515,13 +527,31 @@ function readClaims(comments) {
   // fix/F11-run-cancel-skip while `next` proposed F11). Surface it; the human
   // or the lead decides. Never guess a lock from prose. Scanned over ALL
   // comments, marked or not: prose is prose whoever wrote it.
-  const informal = bodies.find(
-    (b) => !TEAM_CLAIM_RE.test(b) && !TEAM_RELEASE_RE.test(b) && /\bclaim(ed|ing)\b/i.test(b),
+  const informal = all.find(
+    (c) =>
+      !TEAM_CLAIM_RE.test(c.body) &&
+      !TEAM_RELEASE_RE.test(c.body) &&
+      /\bclaim(ed|ing)\b/i.test(c.body),
   );
   return informal
-    ? { informal: true, why: informal.replace(/\s+/g, " ").trim().slice(0, 140) }
+    ? { informal: true, why: informal.body.replace(/\s+/g, " ").trim().slice(0, 140) }
     : null;
 }
+
+// gh returns ONE page unless asked otherwise, and `--paginate --slurp` returns
+// an ARRAY OF PAGES — so flatten. Both readers of this protocol use this exact
+// expression. (`--slurp` cannot be combined with `--jq`: gh rejects the pair
+// outright, so the projection happens here in JS instead.)
+const flattenCommentPages = (pages) => (Array.isArray(pages) ? pages : []).flat();
+
+// Named so the self-test can assert the argv itself: "does this reader ask for
+// every page" is the question, and a source grep is not an answer.
+const ghCommentsArgs = (issue) => [
+  "api",
+  "--paginate",
+  "--slurp",
+  `repos/{owner}/{repo}/issues/${issue}/comments?per_page=100`,
+];
 
 // Deliberately a `let` binding rather than a function declaration: it is the
 // single network-bound call in the selector, and the self-test substitutes it
@@ -540,13 +570,18 @@ let liveClaim = (issue) => {
     // execFileSync, never execSync: no shell is involved at any point, so the
     // argument vector cannot be re-parsed as a command line whatever the board
     // says. team.mjs has always called gh this way; this file had not.
-    const out = execFileSync(
-      "gh",
-      ["api", `repos/{owner}/{repo}/issues/${issue}/comments?per_page=100`, "--jq", "[.[]|{body}]"],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
-    );
-    comments = JSON.parse(out || "[]");
-    if (!Array.isArray(comments)) throw new Error("gh returned a non-array comment payload");
+    const out = execFileSync("gh", ghCommentsArgs(issue), {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15000,
+    });
+    const pages = JSON.parse(out || "[]");
+    if (!Array.isArray(pages)) throw new Error("gh returned a non-array comment payload");
+    // WITHOUT --paginate gh returns page 1 — the OLDEST 100 comments — while a
+    // claim is by construction the NEWEST comment. A lease posted as comment
+    // #101 was invisible here and in team.mjs alike: the batch was not busy, so
+    // it occupied no capacity and every conflict it carried was dropped.
+    comments = flattenCommentPages(pages);
   } catch (e) {
     return { unknown: true, why: firstLine(e) };
   }
@@ -2926,6 +2961,83 @@ cmds["self-test"] = () => {
     // Prose is still surfaced for a human to judge — never treated as a lock.
     const informal = readClaims([unmarked("Claimed for planning, do not take F11")]);
     check("liveClaim: prose is reported as informal, not as a lease", informal?.informal, true);
+
+    // PAGINATION. gh returns one page unless asked otherwise, and page 1 is the
+    // OLDEST 100 comments — while a claim is by construction the NEWEST. A
+    // lease posted as comment #101 was therefore invisible to BOTH readers, so
+    // the batch was not busy, occupied no capacity, and every hard conflict it
+    // carried was dropped. Fixture pages, no network.
+    const page1 = Array.from({ length: 100 }, (_, i) => ({
+      id: 1000 + i,
+      body: `${TEAM_MARKER}\nnote: routine chatter ${i}`,
+    }));
+    const page2 = [
+      { id: 1100, body: `${TEAM_MARKER}\nclaim: id=rf-LONGLIVED lease-until=${LEASE}` },
+    ];
+    check(
+      "pagination: page 1 alone — the pre-fix read — cannot see the lease at all",
+      readClaims(page1),
+      null,
+    );
+    check("pagination: the gh argv actually asks for every page", ghCommentsArgs(501), [
+      "api",
+      "--paginate",
+      "--slurp",
+      "repos/{owner}/{repo}/issues/501/comments?per_page=100",
+    ]);
+    check(
+      "pagination: --paginate --slurp hands back an array of PAGES, flattened here",
+      flattenCommentPages([page1, page2]).length,
+      101,
+    );
+    check(
+      "pagination: the lease posted as comment #101 IS live once the pages are joined",
+      readClaims(flattenCommentPages([page1, page2]))?.id,
+      "rf-LONGLIVED",
+    );
+    check(
+      "pagination: flattening tolerates an already-flat payload and an empty one",
+      [
+        flattenCommentPages(page2).length,
+        flattenCommentPages([]).length,
+        flattenCommentPages(null).length,
+      ],
+      [1, 0, 0],
+    );
+
+    // LOWEST LIVE COMMENT ID WINS — team.mjs's documented compare-and-swap.
+    // Fed in API order with the HIGHER id first, this file used to name the
+    // wrong holder while team.mjs named the right one.
+    const two = [
+      { id: 2222, body: `${TEAM_MARKER}\nclaim: id=rf-HIGH lease-until=${LEASE}` },
+      { id: 1111, body: `${TEAM_MARKER}\nclaim: id=rf-LOW lease-until=${LEASE}` },
+    ];
+    check(
+      "two live claims: the LOWEST comment id wins, whatever the API order",
+      readClaims(two)?.id,
+      "rf-LOW",
+    );
+    check(
+      "two live claims: reversing the input does not change the winner",
+      readClaims([...two].reverse())?.id,
+      "rf-LOW",
+    );
+
+    // The shared grammar is only shared if BOTH files still say it. There is
+    // nothing to import — team.mjs is a CLI — so the guard is that the two
+    // sources carry the same three load-bearing fragments.
+    const teamSrc = readFileSync(join(dirname(SCRIPT_PATH), "..", "team", "team.mjs"), "utf8");
+    const selfSrc = readFileSync(SCRIPT_PATH, "utf8");
+    for (const [what, fragment] of [
+      ["paginate the comment list", '"--paginate", "--slurp"'],
+      ["ask for full pages", "per_page=100"],
+      ["take the lowest live comment id", ".sort((a, b) => a.commentId - b.commentId)"],
+    ])
+      check(
+        `shared grammar: BOTH readers still ${what}`,
+        [teamSrc.includes(fragment), selfSrc.includes(fragment)],
+        [true, true],
+      );
   }
 
   // ── wave occupancy ──────────────────────────────────────────────────────
