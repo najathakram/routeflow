@@ -38,7 +38,7 @@
 //   node scripts/campaign/bugs.mjs note <B###> "<text>" [--section "Root cause"]
 //   node scripts/campaign/bugs.mjs index                        # rebuild bugs.jsonl from the records (regenerate, never hand-edit)
 //   node scripts/campaign/bugs.mjs brief <F##|B###>             # everything an agent needs to start a batch, in one output
-//   node scripts/campaign/bugs.mjs prove <B###> --pr <n> --proof "REG-B### ..." [--pending-deploy]
+//   node scripts/campaign/bugs.mjs prove <B###> --pr <n> --proof "REG-B### ..." [--pending-deploy] [--build-plan <path>]  (--build-plan is REQUIRED for a T3 row)
 //   node scripts/campaign/bugs.mjs discharge <F##> --evidence "<post-deploy proof>" [--evidence-B### "<per-row proof>"]   # per-row evidence is REQUIRED for every T2 row
 //   node scripts/campaign/bugs.mjs reopen <B###> --why "<failing REG-B### token or the run that showed the regression>"
 //   node scripts/campaign/bugs.mjs claim <F##>                  # flip that batch's workable rows to in-flight (next/waves skip it)
@@ -60,9 +60,16 @@ import {
   mkdtempSync,
   rmSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+// The repo root, independent of cwd — resolved from this file's own location
+// (scripts/campaign/bugs.mjs) rather than process.cwd(), so a --build-plan
+// path resolves the same way whether this runs via `npm run bugs --` or a
+// direct `node scripts/campaign/bugs.mjs` from some other directory.
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 // Overridable via BUGS_ROOT so the self-test can point the REAL commands at a
 // throwaway directory instead of re-implementing their logic against a fixture
@@ -1342,12 +1349,29 @@ cmds.brief = (args) => {
 // proven = merged with a passing REG-B### test. done = live after a green
 // deploy. Keeping them separate is the whole reason campaign-check can be
 // trusted, so neither command will invent the other's evidence.
+
+// Mirrors campaign-check.mjs's manualVerificationIds() section-scoped rule —
+// kept as a literal duplicate (campaign-check.mjs is a standalone script, not
+// a module there is anything to import from) so a T3 `prove` refuses a claim
+// campaign-check would reject anyway, at write time instead of at the next
+// `npm run verify`. Keep this in sync with campaign-check.mjs's regex/section
+// extraction if either changes.
+function hasManualVerificationToken(text, id) {
+  const m = text.match(/## Manual verification\s*\n([\s\S]*?)(?:\n## |\n$|$)/);
+  if (!m) return false;
+  return new RegExp(`REG-${id}(?![0-9])`).test(m[1]);
+}
+
 cmds.prove = (args) => {
   const typed = (args[0] ?? "").toUpperCase();
   const prRaw = flag(args, "pr");
   const proof = flag(args, "proof");
+  const buildPlanRaw = flag(args, "build-plan");
   if (!/^B\d+$/.test(typed) || !prRaw || !proof)
-    fail('usage: prove <B###> --pr <number> --proof "REG-B### <what the passing test asserts>"');
+    fail(
+      'usage: prove <B###> --pr <number> --proof "REG-B### <what the passing test asserts>" ' +
+        "[--build-plan <path/to/build-plan.md>]   # required for a T3 row",
+    );
   const id = resolveId(typed);
   // Validate BEFORE writing — `Number("not-a-number")` is NaN, and
   // `JSON.stringify({pr:NaN})` silently emits `"pr":null` while the command
@@ -1367,6 +1391,32 @@ cmds.prove = (args) => {
   if (pending && row.tier !== "T2")
     fail("--pending-deploy is for T2 rows only (their proof cannot run pre-merge)");
 
+  // campaign-check REQUIRES a `buildPlan` field on every T3 row before it can
+  // discharge one (its proof is a manual-verification ROW in the batch's own
+  // build-plan.md, never a test artifact) — and nothing wrote that field, so
+  // a T3 prove used to land a claim campaign-check could never verify and no
+  // command could repair. Refuse it here instead.
+  let buildPlan = row.buildPlan ?? null;
+  if (row.tier === "T3") {
+    if (!buildPlanRaw)
+      fail(
+        `${id} is tier T3 — --build-plan <path/to/build-plan.md> is required, or campaign-check ` +
+          `has no way to find its manual-verification row and this prove can never be discharged`,
+      );
+    const resolved = resolve(REPO_ROOT, buildPlanRaw);
+    if (!existsSync(resolved))
+      fail(`--build-plan ${buildPlanRaw} does not exist (resolved to ${resolved})`);
+    const text = readFileSync(resolved, "utf8");
+    if (!hasManualVerificationToken(text, id))
+      fail(
+        `--build-plan ${buildPlanRaw} has no REG-${id} row in its "## Manual verification" ` +
+          `section — campaign-check will look there and find nothing`,
+      );
+    buildPlan = buildPlanRaw;
+  } else if (buildPlanRaw) {
+    buildPlan = buildPlanRaw;
+  }
+
   const reproving =
     ["proven", "proven-pending-deploy"].includes(row.state) &&
     (row.pr !== pr || row.proof !== proof);
@@ -1375,8 +1425,13 @@ cmds.prove = (args) => {
       `${id}: WARNING — overwriting an existing proof (was PR #${row.pr} · "${row.proof}") with PR #${pr}. The old proof is not otherwise kept.`,
     );
 
-  const { what, row: after } = upsertLedgerRow(batch, { ...row, state, pr, proof });
-  if (after?.state !== state || after?.pr !== pr || after?.proof !== proof)
+  const { what, row: after } = upsertLedgerRow(batch, { ...row, state, pr, proof, buildPlan });
+  if (
+    after?.state !== state ||
+    after?.pr !== pr ||
+    after?.proof !== proof ||
+    (row.tier === "T3" && after?.buildPlan !== buildPlan)
+  )
     fail(
       `ledger write for ${id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
     );
@@ -2289,6 +2344,77 @@ cmds["self-test"] = () => {
         [byId.get("B2")?.evidence, byId.get("B2")?.dischargeEvidence],
         [BATCH_EV, undefined],
       );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // T3 rows: `prove` must require and validate a `--build-plan` naming a real
+  // file whose "## Manual verification" section carries this exact REG-B###
+  // token — without it campaign-check can never discharge the row (no writer
+  // exists for the `buildPlan` field it needs) and `npm run verify` goes red
+  // repo-wide the first time such a row is proven.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file([
+        "T3 build-plan fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T3",
+      ]);
+
+      const noPlan = runCli(
+        ["prove", "B1", "--pr", "701", "--proof", "REG-B1 manual verification row"],
+        tmp,
+      );
+      check("prove: refuses a T3 row with no --build-plan", noPlan.code !== 0, true);
+      check("prove: the refusal wrote nothing", readShard("F01").rows[0].state, "queued");
+
+      // An absolute path so this proves the --build-plan RESOLUTION itself
+      // (path.resolve treats an absolute rightmost arg as the anchor, same as
+      // campaign-check.mjs's own `path.resolve(REPO_ROOT, row.buildPlan)`) —
+      // not just the file-not-found case, independent of this fixture's
+      // throwaway BUGS_ROOT.
+      const planPath = join(tmp, "build-plan.md");
+      writeFileSync(planPath, "## Manual verification\n\n| REG-B999 | ok |\n");
+      const wrongToken = runCli(
+        [
+          "prove",
+          "B1",
+          "--pr",
+          "701",
+          "--proof",
+          "REG-B1 manual verification row",
+          "--build-plan",
+          planPath,
+        ],
+        tmp,
+      );
+      check("prove: refuses a build-plan with no REG-B1 row in it", wrongToken.code !== 0, true);
+
+      writeFileSync(planPath, "## Manual verification\n\n| REG-B1 | verified by hand |\n");
+      cmds.prove([
+        "B1",
+        "--pr",
+        "701",
+        "--proof",
+        "REG-B1 manual verification row",
+        "--build-plan",
+        planPath,
+      ]);
+      const row = readShard("F01").rows[0];
+      check("prove: a valid T3 build-plan lands the row as proven", row.state, "proven");
+      check("prove: the ledger row persists the buildPlan path", row.buildPlan, planPath);
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
       else process.env.BUGS_ROOT = prevRoot;
