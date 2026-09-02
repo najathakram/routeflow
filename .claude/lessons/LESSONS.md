@@ -11,6 +11,36 @@
 
 ## process
 
+### L-041 · 2026-09-01 · process
+
+- **Symptom:** 13 rows sat in `proven` — merged, deployed, post-deploy run already green — while
+  every scoreboard counted them outstanding. Then the run cited as their proof turned out to have
+  executed **nothing**.
+- **Root cause:** two failures stacked. The proof fires off the deploy signal and lands after the
+  session that merged the fix has ended, so the flip to `done` belongs to nobody. And the run
+  everyone pointed at (a superseded deployment) reported conclusion **success with every real step
+  `skipped`** — a green job that ran zero tests.
+- **Lesson:** **When the evidence authorizing a state change arrives asynchronously, assign the
+  flip — and when you read that evidence, read the STEP conclusions, never the job's.** A job is
+  green when it is skipped, and a suite is green when a test is skipped; neither says your proof ran.
+- **Guard:** `gh run view <id> --json jobs` — assert the specific step is `success`, not
+  `skipped`; for one test, grep the log for its `✓`. Step COUNT is not execution.
+
+### L-040 · 2026-09-01 · process
+
+- **Symptom:** three ledgers for one campaign, three answers — machine ledger 61 rows shipped,
+  hand-maintained HTML register 7 of those still open (one a Critical), prose summary 48.
+- **Root cause:** only the machine ledger is written by tooling and read by a gate. The mirror is
+  updated by hand at batch close-out — one batch did it, the next did not, and nothing compares
+  the two.
+- **Lesson:** **A status mirror that no gate checks is not a second source, it is a slower copy —
+  derive every count from the machine ledger instead of quoting a summary.** The drift has a
+  direction: it runs toward MORE open work, and nobody audits a number saying there is more left
+  to do, so the error survives every review.
+- **Guard:** none — `campaign-check` reads the ledger, the mirror has no equivalent. Count from
+  `.claude/campaign/status/*.jsonl` (last state per row id) before repeating any figure. Same
+  family as [[L-034]].
+
 ### L-035 · 2026-09-01 · process · #TBD
 
 - **Symptom:** B120's POD archive was designed onto a generic `AuditLog` row; review found
@@ -53,14 +83,6 @@
 - **Guard:** none — judgment. A gate demanding a repo file while you work in a worktree is the cue
   to check which tree that path actually lands in.
 
-### L-006 · 2026-08-23 · process · #412
-
-- **Symptom:** every session paid ~38K tokens just to read the code map's `_meta.json`.
-- **Root cause:** its `notes` field accumulated history (~90K chars) because nothing bounded it.
-- **Lesson:** **Any always-read field or file needs a hard cap and an overflow home — latest in
-  the hot path, history in a changelog.**
-- **Guard:** code-map CHANGELOG convention; this register's own caps.
-
 ### L-004 · 2026-08-24 · process
 
 - **Symptom:** autonomous sessions stalled retrying merges and visibility flips.
@@ -74,25 +96,6 @@
   denial explicitly permits — that is redirection, not circumvention.
 - **Guard:** none — judgment.
 
-### L-005 · 2026-08-20 · process
-
-- **Symptom:** the whole working session died mid-batch and needed manual repair.
-- **Root cause:** 14 concurrent background agents (~500 MB each) saturated the 14-core/32 GB
-  box — resource starvation, not an app fault.
-- **Lesson:** **Cap background agents at 4 and run bigger batches in waves; have every agent
-  append results incrementally so a hard kill loses nothing.**
-- **Guard:** standing hard rule (memory), workflow concurrency defaults.
-
-### L-001 · 2026-07-30 · process
-
-- **Symptom:** a batch started on the previous batch's already-merged branch; the eventual PR
-  base was misleading.
-- **Root cause:** the pre-push hook blocks branch deletion, so merged branches linger checked
-  out between sessions.
-- **Lesson:** **Cut a fresh branch off master before any batch/pipeline run — check with
-  `git rev-list --left-right --count master...HEAD` first.**
-- **Guard:** none — judgment (pipeline step 0).
-
 ### L-008 · 2026-07 · process
 
 - **Symptom:** production login broke after a commit titled as API-only security work.
@@ -102,6 +105,22 @@
 - **Guard:** none — judgment.
 
 ## tooling
+
+### L-039 · 2026-09-01 · tooling
+
+- **Symptom:** a green PR went red after a routine rebase, on a check unrelated to its contents —
+  and its author could not fix it: the failing number is a policy threshold only the owner may set.
+- **Root cause:** the gate shipped while the repo sat **71 bytes** under the cap it enforces.
+  Correct gate, zero margin — so the next branch to append to the capped file inherits a failure it
+  did not cause, and appending is exactly what the rules REQUIRE after a fix.
+- **Lesson:** **Land a gate only with headroom, and only when its threshold is a number you are
+  authorized to set.** At zero margin a gate is a tripwire for the next unrelated PR, not a guard;
+  if the threshold is an owner's call, land the ruling with it or the gate blocks the project on a
+  decision nobody scheduled.
+- **Guard:** `validate-lessons` prints `binding:` and the remaining headroom every run — treat
+  `~0 more` as unlanded work. Second-order cost: the run died at the gate, so everything its
+  success path owned went undone and the repo was left **public** — a private flip that lives
+  after a green CI is not a `finally`.
 
 ### L-034 · 2026-09-01 · tooling · #TBD
 
@@ -169,16 +188,6 @@
   **runtime** transitive, so state the exception in the PR or the next reader reverts it as a
   violation.
 
-### L-009 · 2026-08-29 · tooling · #501
-
-- **Symptom:** `npm run verify` printed a full jest pass after a 19-package dependency bump —
-  without executing anything.
-- **Root cause:** turbo replays cached task logs verbatim (summaries included), and its global
-  hash missed lockfile-graph changes until #501.
-- **Lesson:** **A test summary inside turbo output is not evidence tests ran — only the
-  `Cached: N` line is; gate dependency-affecting changes with `--force` or direct `npx jest`.**
-- **Guard:** `globalDependencies` in turbo.json (#501).
-
 ### L-010 · 2026-08-29 · tooling
 
 - **Symptom:** one workspace's tests "failed" under verify while the same code passed everywhere
@@ -188,15 +197,6 @@
 - **Lesson:** **A bare non-zero task exit with no test report is environmental — re-run that
   workspace directly before debugging; CI on clean runners is the authoritative gate.**
 - **Guard:** none — judgment (triage: direct `npx jest`, then filtered turbo).
-
-### L-012 · 2026-08-29 · tooling · #490 #494
-
-- **Symptom:** removing a transitive pin as "redundant" would have broken every fresh install.
-- **Root cause:** root `package.json` `overrides` leave no trace in the lockfile (npm ci cannot
-  validate them), and peer graphs make some pins load-bearing in non-obvious ways.
-- **Lesson:** **Pin in a workspace devDependency, never root `overrides` — and before removing
-  any pin, re-resolve from manifests alone and prove it redundant.**
-- **Guard:** `validate-lock` pre-install CI job (#490).
 
 ### L-011 · 2026-08-25 · tooling
 
@@ -376,15 +376,3 @@
   restriction at all until the callers are split.**
 - **Guard:** three-key model recorded in memory `project_maps_key_architecture_2026-09-01`;
   `docs/plans/maps-key-split-note.md` is STALE and must not be followed verbatim.
-
-### L-023 · 2026-07 · security
-
-- **Symptom:** production login failed with "Invalid credentials" on correct passwords after a
-  security pass.
-- **Root cause:** the tenant-slug cookie was made `httpOnly`; the login page reads it via
-  `document.cookie` to send `X-Tenant-Slug`, so tenant resolution fell back to a reserved host
-  slug → null tenant → no user match.
-- **Lesson:** **Before hardening any cookie/header/token, grep every consumer — a best practice
-  applied against the architecture is an outage; prod-gated flags demand prod-mode
-  verification.**
-- **Guard:** non-httpOnly requirement documented at the cookie's writers/readers.

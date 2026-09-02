@@ -34,6 +34,54 @@
   signal — and verify the end state directly (`gh repo view --json visibility`).**
 - **Guard:** deploy-flow rule in CLAUDE.md; empty-id guard before any poll loop.
 
+### L-001 · 2026-07-30 · process
+
+- **Symptom:** a batch started on the previous batch's already-merged branch; the eventual PR
+  base was misleading.
+- **Root cause:** the pre-push hook blocks branch deletion, so merged branches linger checked
+  out between sessions.
+- **Lesson:** **Cut a fresh branch off master before any batch/pipeline run — check with
+  `git rev-list --left-right --count master...HEAD` first.**
+- **Guard:** none — judgment (pipeline step 0).
+
+### L-005 · 2026-08-20 · process
+
+- **Symptom:** the whole working session died mid-batch and needed manual repair.
+- **Root cause:** 14 concurrent background agents (~500 MB each) saturated the 14-core/32 GB
+  box — resource starvation, not an app fault.
+- **Lesson:** **Cap background agents at 4 and run bigger batches in waves; have every agent
+  append results incrementally so a hard kill loses nothing.**
+- **Guard:** standing hard rule (memory), workflow concurrency defaults.
+
+### L-006 · 2026-08-23 · process · #412
+
+- **Symptom:** every session paid ~38K tokens just to read the code map's `_meta.json`.
+- **Root cause:** its `notes` field accumulated history (~90K chars) because nothing bounded it.
+- **Lesson:** **Any always-read field or file needs a hard cap and an overflow home — latest in
+  the hot path, history in a changelog.**
+- **Guard:** code-map CHANGELOG convention; this register's own caps.
+
+## tooling
+
+### L-009 · 2026-08-29 · tooling · #501
+
+- **Symptom:** `npm run verify` printed a full jest pass after a 19-package dependency bump —
+  without executing anything.
+- **Root cause:** turbo replays cached task logs verbatim (summaries included), and its global
+  hash missed lockfile-graph changes until #501.
+- **Lesson:** **A test summary inside turbo output is not evidence tests ran — only the
+  `Cached: N` line is; gate dependency-affecting changes with `--force` or direct `npx jest`.**
+- **Guard:** `globalDependencies` in turbo.json (#501).
+
+### L-012 · 2026-08-29 · tooling · #490 #494
+
+- **Symptom:** removing a transitive pin as "redundant" would have broken every fresh install.
+- **Root cause:** root `package.json` `overrides` leave no trace in the lockfile (npm ci cannot
+  validate them), and peer graphs make some pins load-bearing in non-obvious ways.
+- **Lesson:** **Pin in a workspace devDependency, never root `overrides` — and before removing
+  any pin, re-resolve from manifests alone and prove it redundant.**
+- **Guard:** `validate-lock` pre-install CI job (#490).
+
 ## testing
 
 ### L-014 · 2026-08-31 · testing · #562
@@ -108,3 +156,17 @@
   `discount: 0` — `discount` is reserved for explicit operator discounts; never derive one from
   the other.**
 - **Guard:** invoices spec "does NOT double-count a price override".
+
+## security
+
+### L-023 · 2026-07 · security
+
+- **Symptom:** production login failed with "Invalid credentials" on correct passwords after a
+  security pass.
+- **Root cause:** the tenant-slug cookie was made `httpOnly`; the login page reads it via
+  `document.cookie` to send `X-Tenant-Slug`, so tenant resolution fell back to a reserved host
+  slug → null tenant → no user match.
+- **Lesson:** **Before hardening any cookie/header/token, grep every consumer — a best practice
+  applied against the architecture is an outage; prod-gated flags demand prod-mode
+  verification.**
+- **Guard:** non-httpOnly requirement documented at the cookie's writers/readers.

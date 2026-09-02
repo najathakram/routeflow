@@ -177,14 +177,21 @@
 > `post-deploy-check` 9/9 green:** #580 → #582 → #584 (B167 discharged) → #581 → #579 → #571
 > (lessons register + Gate 3 now LIVE) → #574 (16 dep bumps) → #585 (three fleet lessons).
 >
-> **Ledger now: 193 rows — 46 `done`, 2 `already-fixed`, 145 `queued`, NOTHING mid-flight**
-> (48 of 193 = 24.9% terminal) — counted off the shards, not carried forward from an earlier
+> **Ledger now: 193 rows — 59 `done`, 2 `already-fixed`, 132 `queued`, NOTHING mid-flight**
+> (61 of 193 = 31.6% terminal) — counted off the shards, not carried forward from an earlier
 > banner. Shipped and fully discharged: F00, F01, F02 (9), F03 (9), F04 (3), **F05 (5)**,
-> F06 (6), F17 (4), F30 (12). **11 Criticals still open** (B46 B48 B52 B53 B54 B55 B56 B58 B59
-> B128 B129).
+> F06 (6), **F07 (7)**, **F10 (6)**, F17 (4), F30 (12). **8 Criticals still open** (B46 B48 B52
+> B53 B58 B59 B128 B129) — B54/B55/B56 cleared with F10 and F07.
 >
-> **In flight now:** F07 (track A, board #520) and F10 (routes lane, board #523), each in its own
-> worktree, each merging strictly after the other per D6.
+> **In flight now:** nothing mid-flight. F07 (#588) and F10 (#591) are merged, deployed and
+> **fully discharged** — all 13 rows `done`. Their worktrees are gone; `rf-F09`/`rf-F11`/
+> `rf-F13`/`rf-F14` hold planning output only (zero commits ahead of master).
+>
+> ⚠️ **Discharge trap recorded:** F07's OWN post-deploy run (33551932237, sha `7dcf390c`) reports
+> conclusion **success with every real step `skipped`** — "Skip superseded deployments" fired, so
+> Playwright never ran for it. A job's green says nothing until you check the STEP conclusions.
+> Both batches discharge on run **33557237968** (sha `80bced16`, which contains `7dcf390c`):
+> 116 passed / 22 skipped / 0 failed, freshness gate satisfied, `REG-B10` seen ✓ at test 138.
 >
 > 🔴 **Waiting on the owner — nothing else unblocks these:**
 >
