@@ -813,7 +813,29 @@ function writeRecord(id, front, body) {
 // recorded anyway. Use `appendEvent` for anything that can legitimately recur.
 function appendHistory(body, key, event, detail) {
   if (body.includes(`<!--${key}-->`)) return body;
-  const line = `- ${new Date().toISOString().slice(0, 10)} · **${event}** · ${String(detail).replace(/\s+/g, " ").trim()} <!--${key}-->`;
+  // Strip HTML comment delimiters from arbitrary caller text — most often a
+  // raw commit subject. Left in, a literal `<!--...-->` lands in the body
+  // and pre-occupies a dedupe marker, silently swallowing a later GENUINE
+  // event that happens to share that marker; a subject carrying a bare
+  // `-->` corrupts the marker beside it too. Done AFTER whitespace is
+  // collapsed, so a marker split across a line break is still caught.
+  const cleanDetail = String(detail)
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/<!--|-->/g, "");
+  const core = `**${event}** · ${cleanDetail}`;
+  // A hand-stripped marker leaves the visible line behind with no trailing
+  // `<!--...-->` at all. If that line — by its stable event+detail text, not
+  // the DATE prefix, since a healing --rescan can run on a different day
+  // than the original write — is already present without a marker, this is
+  // a heal, not a new occurrence: appending would duplicate the visible line.
+  const hasMarkerlessLine = body
+    .split("\n")
+    .some(
+      (l) => l.trim().startsWith("- ") && l.includes(core) && !/<!--[^>]*-->\s*$/.test(l.trim()),
+    );
+  if (hasMarkerlessLine) return body;
+  const line = `- ${new Date().toISOString().slice(0, 10)} · ${core} <!--${key}-->`;
   return body.includes("## History")
     ? `${body.replace(/\s*$/, "")}\n${line}\n`
     : `${body}\n## History\n\n${line}\n`;
@@ -1065,7 +1087,10 @@ function commitMentions(state, args) {
     mentions: scanned,
     head,
     note: commits
-      ? `scanned ${commits} commit(s) since ${(anchored ?? "the window").slice(0, 8)}`
+      ? // Only a REAL sha gets truncated to 8 chars — the literal fallback
+        // "the window" is not a sha, and `.slice(0, 8)`'d it into the
+        // unreadable "the wind".
+        `scanned ${commits} commit(s) since ${anchored ? anchored.slice(0, 8) : "the window"}`
       : null,
   };
 }
@@ -1089,7 +1114,12 @@ function parseMentions(log, state) {
 
   let commits = 0;
   for (const line of log.split("\n").filter(Boolean)) {
-    const [sha, subject = ""] = line.split("\t");
+    // Split on the FIRST tab only — a subject containing its own tab
+    // character used to truncate the scanned subject there, losing every id
+    // that came after it.
+    const tabAt = line.indexOf("\t");
+    const sha = tabAt === -1 ? line : line.slice(0, tabAt);
+    const subject = tabAt === -1 ? "" : line.slice(tabAt + 1);
     commits++;
     const short = sha.slice(0, 8);
     // Bug ids first: when a commit names both, the bug-id detail is the one
@@ -2298,6 +2328,92 @@ cmds["self-test"] = () => {
       ["cccccccc"],
     );
     check("commit scan: a commit naming nothing produces no event", m.has("B99"), false);
+  }
+
+  // A subject carrying its OWN tab character must not truncate the scan —
+  // `git log --format=%H%x09%s` is split on the FIRST tab only, not every
+  // tab, or every id after the embedded tab becomes invisible.
+  {
+    const fixtureState = new Map([["B120", { id: "B120", batch: "F10" }]]);
+    const tabbedLog = "dddddddddddd\tfix(routes): tabbed\tB120 theta\n";
+    const { mentions: tabbed } = parseMentions(tabbedLog, fixtureState);
+    check(
+      "commit scan: a subject containing its own tab is not truncated at it",
+      (tabbed.get("B120") ?? []).map((h) => h.sha),
+      ["dddddddd"],
+    );
+  }
+
+  // A commit subject carrying a literal HTML comment must not pre-occupy (or
+  // corrupt) a History dedupe marker — appendHistory strips `<!--`/`-->` from
+  // caller text before it ever becomes part of the body.
+  {
+    const poisoned = appendHistory(
+      "\n## History\n",
+      "commit-deadbee1",
+      "commit",
+      "poison <!--commit-deadbee1--> here",
+    );
+    check(
+      "appendHistory: strips comment delimiters from caller text (marker injection)",
+      poisoned.includes("<!--commit-deadbee1-->") &&
+        (poisoned.match(/<!--commit-deadbee1-->/g) ?? []).length === 1,
+      true,
+    );
+    // A later, GENUINE event for that same sha must still be able to land —
+    // proof the poisoned text did not pre-occupy the marker a second time.
+    const genuine = appendHistory(
+      poisoned,
+      "commit-deadbee1",
+      "commit",
+      "the real deadbee1 commit",
+    );
+    check(
+      "appendHistory: a poisoned subject does not swallow the genuine marker",
+      genuine === poisoned,
+      true, // same key, so this IS the dedupe firing correctly — not a false negative
+    );
+  }
+
+  // --rescan after a hand-stripped marker (the visible line survives, only
+  // its <!--marker--> comment is gone) must heal — recognise the identical
+  // marker-less line and skip it — rather than append a visible duplicate.
+  {
+    const original = appendHistory(
+      "\n## History\n",
+      "commit-5ca25cbb",
+      "commit",
+      "`5ca25cbb` a fix",
+    );
+    const handStripped = original.replace(" <!--commit-5ca25cbb-->", "");
+    const rescanned = appendHistory(handStripped, "commit-5ca25cbb", "commit", "`5ca25cbb` a fix");
+    check(
+      "appendHistory: a hand-stripped marker heals instead of doubling the visible line",
+      (rescanned.match(/a fix/g) ?? []).length,
+      1,
+    );
+  }
+
+  // `commitMentions`'s "no scan" note truncates a REAL sha to 8 chars but
+  // must NOT truncate its literal fallback "the window" into "the wind".
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevAnchor = process.env.BUGS_SYNC_STATE;
+    process.env.BUGS_SYNC_STATE = join(tmp, "sync-state.json");
+    try {
+      // --rescan forces the bounded-window branch (anchored = null)
+      // regardless of any prior anchor state.
+      const { note } = commitMentions(new Map(), ["--rescan"]);
+      check(
+        'commit scan: the literal fallback reads "the window", never "the wind"',
+        note?.includes("the window"),
+        true,
+      );
+    } finally {
+      if (prevAnchor === undefined) delete process.env.BUGS_SYNC_STATE;
+      else process.env.BUGS_SYNC_STATE = prevAnchor;
+      rmSync(tmp, { recursive: true, force: true });
+    }
   }
 
   // The anchor: a first run must anchor without re-deriving history, and the
