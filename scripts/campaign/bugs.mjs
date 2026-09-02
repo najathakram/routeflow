@@ -1210,7 +1210,13 @@ function readShard(batch) {
 // assert its write actually landed instead of trusting the in-memory object it
 // built — proved necessary: `prove --pr not-a-number` wrote `"pr":null` to the
 // shard while the in-memory `row` it printed from still said `pr: NaN`.
-function upsertLedgerRow(batch, row) {
+//
+// `opts.allowExistingIn` names ONE shard where this id is allowed to already
+// have a row without tripping the cross-shard duplicate guard — used only by
+// `move`, which writes the destination shard additively WHILE the row still
+// lives in the source shard (so the drop can happen only after this write is
+// verified to have landed). Nothing else should ever pass it.
+function upsertLedgerRow(batch, row, opts = {}) {
   const { rows, eol } = readShard(batch);
   const i = rows.findIndex((r) => r.id === row.id);
   if (i === -1) {
@@ -1219,7 +1225,7 @@ function upsertLedgerRow(batch, row) {
     // a DIFFERENT shard, which is precisely the duplicate campaign-check
     // rejects and the invariant the surrounding comments already claim holds.
     const elsewhere = findShardOf(row.id);
-    if (elsewhere && elsewhere !== batch)
+    if (elsewhere && elsewhere !== batch && elsewhere !== opts.allowExistingIn)
       fail(`refusing to write ${batch}: ${row.id} already has a row in ${elsewhere}.jsonl`);
     rows.push(row);
   } else {
@@ -2542,6 +2548,58 @@ cmds["self-test"] = () => {
     }
   }
 
+  // move: a legitimate move must still land (positive path), and a refused
+  // move (a genuine duplicate elsewhere) must NEVER have dropped the
+  // authoritative row first — the ordering bug this guards against destroyed
+  // the source row before the refusal was even reported.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file([
+        "move fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T1",
+      ]);
+      cmds.move(["B1", "--to", "F02", "--why", "self-test positive path"]);
+      check("move: the row lands in the destination shard", readShard("F02").rows[0]?.id, "B1");
+      check("move: the source shard is empty", readShard("F01").rows.length, 0);
+      check("move: the catalogue follows", readCatalogue().find((r) => r.id === "B1").batch, "F02");
+      check(
+        "move: the record carries the re-batched event",
+        readRecord("B1").body.includes("**re-batched**"),
+        true,
+      );
+
+      // Plant a duplicate in a THIRD shard (neither source nor target) — a
+      // check that only asks `findShardOf(id) === from` would still pass,
+      // since `from` (F02) is a real hit too; the fix must scan every shard.
+      const dup = { ...readShard("F02").rows[0], batch: "F13" };
+      writeFileSync(shardPath("F13"), JSON.stringify(dup) + "\n");
+
+      const attempt = runCli(["move", "B1", "--to", "F20"], tmp);
+      check("move: refuses when a duplicate exists in another shard", attempt.code !== 0, true);
+      check(
+        "move: the source row survives the refusal (no destructive write happened)",
+        readShard("F02").rows.map((r) => r.id),
+        ["B1"],
+      );
+      check("move: nothing was written to the target", readShard("F20").rows.length, 0);
+      check("move: the interloper duplicate is untouched", readShard("F13").rows.length, 1);
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
   // A filed bug's symptom must survive file → index round trip. Run this
   // against the REAL cmds.file/cmds.index against a throwaway BUGS_ROOT, never
   // a re-implementation — `index` used to rebuild the catalogue from a fixed
@@ -2606,19 +2664,44 @@ cmds.move = (args) => {
       `${id} is ${row.state}, not queued — moving a bug that already carries a proof would orphan it from its batch's evidence`,
     );
 
-  // Drop from the old shard first: two rows for one id is the duplicate
-  // campaign-check rejects, so never let both exist even momentarily.
+  // Every check runs BEFORE any write. `findShardOf` alone only reports the
+  // FIRST shard holding an id (readdir order), so a genuine duplicate landed
+  // in some OTHER shard hides behind `from` whenever `from` happens to sort
+  // first — this must still catch it, or a refused move turns one duplicate
+  // into two instead of leaving the authoritative row untouched.
+  const holders = readdirSync(STATUS_DIR())
+    .filter((n) => n.endsWith(".jsonl"))
+    .map((n) => n.replace(/\.jsonl$/, ""))
+    .filter((b) => readShard(b).rows.some((r) => r.id === id));
+  if (holders.length !== 1 || holders[0] !== from)
+    fail(
+      `refusing to move ${id}: it has a row in ${holders.join(", ")}, not only ${from} — this is ` +
+        `the duplicate campaign-check rejects; repair the shards by hand before moving`,
+    );
+
+  // Write the TARGET first, additive. A refusal past this point (a duplicate
+  // that slipped in between the check above and here) must never have
+  // touched the source — `upsertLedgerRow`'s cross-shard guard would
+  // otherwise reject this legitimate in-flight duplicate (the row still
+  // lives in `from` until the drop below), so it is told explicitly that
+  // `id` is allowed to exist in `from` for the length of this one call.
+  const { row: landed } = upsertLedgerRow(to, { ...row, batch: to }, { allowExistingIn: from });
+  if (landed?.batch !== to)
+    fail(
+      `ledger write for ${id} did not land in ${to} as intended — re-read row is ${JSON.stringify(landed)}`,
+    );
+
+  // Only NOW drop it from the source — the target write already landed and
+  // was verified, so anything going wrong past this point leaves a loud,
+  // campaign-check-visible duplicate rather than a vanished authoritative row.
   const old = readShard(from);
   const kept = old.rows.filter((r) => r.id !== id);
   writeFileSync(
     shardPath(from),
     kept.map((r) => JSON.stringify(r)).join(old.eol) + (kept.length ? old.eol : ""),
   );
-  const { row: after } = upsertLedgerRow(to, { ...row, batch: to });
-  if (after?.batch !== to)
-    fail(
-      `ledger write for ${id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
-    );
+  if (readShard(from).rows.some((r) => r.id === id))
+    fail(`${id} is still present in ${shardPath(from)} after the drop — inspect it by hand`);
 
   const rows = readCatalogue();
   const cat = rows.find((r) => r.id === id);
