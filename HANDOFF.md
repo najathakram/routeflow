@@ -177,8 +177,10 @@
 > `post-deploy-check` 9/9 green:** #580 → #582 → #584 (B167 discharged) → #581 → #579 → #571
 > (lessons register + Gate 3 now LIVE) → #574 (16 dep bumps) → #585 (three fleet lessons).
 >
-> **Ledger now: 193 rows — 59 `done`, 2 `already-fixed`, 132 `queued`, NOTHING mid-flight**
-> (61 of 193 = 31.6% terminal) — counted off the shards, not carried forward from an earlier
+> **Ledger now: 193 rows — 64 `done`, 2 `already-fixed`, 2 `proven-pending-deploy`, 125 `queued`**
+> (66 of 193 = 34.2% terminal; F14 shipped #598/#599 — B52 Critical cross-tenant read closed, so
+> **7 open Criticals** remain. ⚠️ F14's two e2e projects are QUARANTINED — see B138/B155.)
+> (was 61 of 193 = 31.6% terminal) — counted off the shards, not carried forward from an earlier
 > banner. Shipped and fully discharged: F00, F01, F02 (9), F03 (9), F04 (3), **F05 (5)**,
 > F06 (6), **F07 (7)**, **F10 (6)**, F17 (4), F30 (12). **8 Criticals still open** (B46 B48 B52
 > B53 B58 B59 B128 B129) — B54/B55/B56 cleared with F10 and F07.
