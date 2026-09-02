@@ -234,6 +234,21 @@
 
 ## testing
 
+### L-050 · 2026-09-02 · testing · #598
+
+- **Symptom:** two new e2e specs went red post-deploy AND dragged an unrelated, previously-green
+  test (`AP-06`, re-auth resumes the session) down with them.
+- **Root cause:** neither new project declared `dependencies`, so the runner placed both in the
+  FIRST phase — alongside every other dependency-free project — and all of them authenticate as
+  the same shared operator. One spec revokes that user's sessions by design, so a sibling test's
+  token refresh 401'd mid-flow. Scoping the spec's own CLEANUP was necessary and not sufficient:
+  the body of the test revokes during the phase too.
+- **Lesson:** **A spec that mutates shared auth state needs its own user, not a scheduling tweak.**
+  Reordering only moves the collision — here phase 2 holds ~20 projects reusing the same stored
+  session. Ask which fixtures a new suite MUTATES, and who else in its phase reads them.
+- **Guard:** none yet — the two project entries are commented out (not deleted) with the diagnosis
+  inline, so re-enabling is a seed change plus uncommenting. A skip is not a discharge ([[L-041]]).
+
 ### L-036 · 2026-09-01 · testing · #TBD
 
 - **Symptom:** a transition deny-list whose every (from,to) pair was verified correct — by unit
