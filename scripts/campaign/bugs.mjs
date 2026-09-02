@@ -371,7 +371,7 @@ function writeRecord(id, front, body) {
 // run from a hook on every turn without growing the file.
 function appendHistory(body, key, event, detail) {
   if (body.includes(`<!--${key}-->`)) return body;
-  const line = `- ${new Date().toISOString().slice(0, 10)} · **${event}** · ${detail} <!--${key}-->`;
+  const line = `- ${new Date().toISOString().slice(0, 10)} · **${event}** · ${String(detail).replace(/\s+/g, " ").trim()} <!--${key}-->`;
   return body.includes("## History")
     ? `${body.replace(/\s*$/, "")}\n${line}\n`
     : `${body}\n## History\n\n${line}\n`;
@@ -783,8 +783,70 @@ cmds["self-test"] = () => {
   const missing = readCatalogue().filter((b) => !existsSync(recordPath(b.id))).map((b) => b.id);
   check("every catalogue row has a record", missing, []);
 
+  // Every history entry must be exactly ONE line. A detail containing a newline
+  // used to split the entry and leave loose prose floating in the section
+  // (B32/B34/B129/B146 all carried one), which reads as a corrupted record.
+  const strays = [];
+  for (const f of readdirSync(RECORD_DIR).filter((n) => n.endsWith(".md"))) {
+    const t = readFileSync(join(RECORD_DIR, f), "utf8");
+    const i = t.indexOf("## History");
+    if (i < 0) continue;
+    for (const l of t.slice(i).split("\n"))
+      if (l.trim() && !l.startsWith("- ") && !l.startsWith("#")) strays.push(`${f}: ${l.slice(0, 40)}`);
+  }
+  check("history: every entry is a single line", strays, []);
+
   console.log(failures ? `\nself-test: ${failures} FAILURE(S)` : "\nself-test: all checks passed");
   if (failures) process.exit(1);
+};
+
+// Re-batching is a first-class registry operation, not a hand edit. The analysis
+// pass routinely concludes a bug is in the wrong batch (F11's synthesis said
+// exactly that about B32), and doing it by hand means editing two shards, the
+// record front matter and the catalogue — four places, each an opportunity to
+// leave the ledger holding two rows for one id.
+cmds.move = (args) => {
+  const id = (args[0] ?? "").toUpperCase();
+  const to = (flag(args, "to") ?? "").toUpperCase();
+  const why = flag(args, "why");
+  if (!/^B\d+$/.test(id) || !/^F\d{2}$/.test(to))
+    fail('usage: move <B###> --to <F##> [--why "<reason>"]');
+
+  const from = findShardOf(id);
+  if (!from) fail(`${id} is in no ledger shard — nothing to move`);
+  if (from === to) fail(`${id} is already in ${to}`);
+
+  const row = readShard(from).rows.find((r) => r.id === id);
+  if (row.state !== "queued")
+    fail(`${id} is ${row.state}, not queued — moving a bug that already carries a proof would orphan it from its batch's evidence`);
+
+  // Drop from the old shard first: two rows for one id is the duplicate
+  // campaign-check rejects, so never let both exist even momentarily.
+  const old = readShard(from);
+  const kept = old.rows.filter((r) => r.id !== id);
+  writeFileSync(shardPath(from), kept.map((r) => JSON.stringify(r)).join(old.eol) + (kept.length ? old.eol : ""));
+  upsertLedgerRow(to, { ...row, batch: to });
+
+  const rows = readCatalogue();
+  const cat = rows.find((r) => r.id === id);
+  if (cat) {
+    cat.batch = to;
+    writeCatalogue(rows);
+  }
+
+  const rec = readRecord(id);
+  if (rec) {
+    const body = appendHistory(
+      rec.body,
+      `move-${from}-${to}`,
+      "re-batched",
+      `${from} → ${to}${why ? ` — ${why}` : ""}`,
+    );
+    writeRecord(id, { ...rec.front, batch: to }, body);
+  }
+
+  console.log(`${id}: ${from} → ${to}${why ? ` (${why})` : ""}`);
+  console.log(`  ${from} now holds ${kept.length} row(s); verify with: node scripts/campaign-check.mjs`);
 };
 
 const [, , cmd, ...rest] = process.argv;
