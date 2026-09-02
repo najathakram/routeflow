@@ -270,8 +270,20 @@ cmds.file = (args) => {
     fail(`--severity must be one of ${Object.keys(SEVERITY_RANK).join("|")}`);
 
   const rows = readCatalogue();
-  // Never infer a free id from a gap — reserved is not abandoned. Always max+1.
-  const maxId = rows.reduce((m, r) => Math.max(m, Number(r.id.slice(1))), 0);
+  // Never infer a free id from a gap — reserved is not abandoned. Always
+  // max+1, over the UNION of the catalogue's ids AND every ledger shard's:
+  // two sessions filing against the same catalogue snapshot used to allocate
+  // the SAME id (only the catalogue side of the union was considered), and
+  // whichever session's catalogue write landed second clobbered the first's
+  // row outright.
+  const shardMaxId = Math.max(
+    0,
+    ...[...readState().keys()].map((id) => Number(String(id).slice(1)) || 0),
+  );
+  const maxId = Math.max(
+    shardMaxId,
+    rows.reduce((m, r) => Math.max(m, Number(r.id.slice(1))), 0),
+  );
   const bug = {
     id: `B${maxId + 1}`,
     title,
@@ -286,30 +298,18 @@ cmds.file = (args) => {
   const c = classify(bug);
   bug.sensitive = c.sensitive;
   bug.sensitiveFor = c.reasons;
-  rows.push(bug);
-  writeCatalogue(rows);
-
-  console.log(`filed ${bug.id} — ${title}`);
-  console.log(`  location : ${location}`);
-  console.log(`  severity : ${severity}`);
-  if (c.sensitive)
-    console.log(
-      `  carve-out: touches ${c.reasons.join(", ")} — an agent may PLAN this but must not fix it unattended.`,
-    );
-  else console.log("  agent-safe: yes");
-  if (!bug.batch) console.log("  no batch yet — run @tech-lead to batch it, or pass --batch F##.");
 
   // A bug with no ledger row is invisible to campaign-check and to `next`, so
-  // filing must create it. Doing this by hand is how B211 first landed.
-  //
-  // MUST run BEFORE expand(): expand derives the record's front matter (and
-  // its body header line) from frontFor(bug, st), and `st` is this ledger
-  // row. Calling expand first used to bake in "uncampaigned"/no-tier
-  // permanently into the body until the next unrelated sync happened to
-  // touch this bug — the ledger said "queued" from the first moment, the
-  // record disagreed with its own ledger row from the first moment too.
+  // filing must create it. This write can fail() and exit — it now runs
+  // BEFORE the catalogue is touched at all, so a refused write never leaves a
+  // catalogue row describing a bug whose ledger row does not exist, or (the
+  // concurrent case: two sessions filing at once) belongs to a DIFFERENT
+  // session's title/batch because that session's catalogue write landed
+  // first and got silently clobbered.
+  let tier = null;
+  let ledgerWhat = null;
   if (bug.batch) {
-    const tier = (flag(args, "tier") ?? "").toUpperCase();
+    tier = (flag(args, "tier") ?? "").toUpperCase();
     if (!/^T[123]$/.test(tier))
       fail(
         "--tier T1|T2|T3 is required with --batch — a ledger tier is a ruling, not a default. " +
@@ -328,30 +328,64 @@ cmds.file = (args) => {
       fail(
         `ledger write for ${bug.id} did not land as intended — re-read row is ${JSON.stringify(row)}`,
       );
-    console.log(`  ledger   : ${bug.batch}.jsonl row ${what} (tier ${tier}, queued)`);
-  } else {
-    console.log("  ledger   : none — pass --batch F## so campaign-check and `next` can see it.");
-    console.log(
-      "  triage   : an unbatched bug is invisible to next/status/deps — run `triage` to list every bug in this state.",
-    );
+    ledgerWhat = what;
   }
 
-  // Filing a bug and leaving it without a record is exactly the drift this
-  // registry exists to prevent, so create it in the same breath. expand is
-  // idempotent and never touches an existing narrative.
-  cmds.expand();
-  console.log(`  record   : ${recordPath(bug.id)}`);
+  // Only NOW touch the catalogue. Anything below that still throws (expand()
+  // deriving a record, the --files rewrite) restores the pre-write catalogue
+  // rather than leave a dangling row with no record behind it.
+  const before = readCatalogue();
+  rows.push(bug);
+  writeCatalogue(rows);
+  try {
+    console.log(`filed ${bug.id} — ${title}`);
+    console.log(`  location : ${location}`);
+    console.log(`  severity : ${severity}`);
+    if (c.sensitive)
+      console.log(
+        `  carve-out: touches ${c.reasons.join(", ")} — an agent may PLAN this but must not fix it unattended.`,
+      );
+    else console.log("  agent-safe: yes");
+    if (!bug.batch)
+      console.log("  no batch yet — run @tech-lead to batch it, or pass --batch F##.");
 
-  // A filed bug's front matter otherwise never carries `files` (only `enrich`
-  // writes it, and only for register imports) — with no files, `deps` sees
-  // zero edges for it and the dependency graph can only ever get less
-  // complete as bugs get filed rather than imported.
-  if (filesFlag) {
-    const rec = readRecord(bug.id);
-    if (rec) {
-      writeRecord(bug.id, { ...rec.front, files: filesFlag }, rec.body);
-      console.log(`  files    : ${filesFlag}`);
+    if (bug.batch)
+      console.log(`  ledger   : ${bug.batch}.jsonl row ${ledgerWhat} (tier ${tier}, queued)`);
+    else {
+      console.log("  ledger   : none — pass --batch F## so campaign-check and `next` can see it.");
+      console.log(
+        "  triage   : an unbatched bug is invisible to next/status/deps — run `triage` to list every bug in this state.",
+      );
     }
+
+    // Filing a bug and leaving it without a record is exactly the drift this
+    // registry exists to prevent, so create it in the same breath. expand is
+    // idempotent and never touches an existing narrative.
+    //
+    // MUST run AFTER the ledger write above: expand derives the record's
+    // front matter (and its body header line) from frontFor(bug, st), and
+    // `st` is this ledger row. Calling expand first used to bake in
+    // "uncampaigned"/no-tier permanently into the body until the next
+    // unrelated sync happened to touch this bug.
+    cmds.expand();
+    console.log(`  record   : ${recordPath(bug.id)}`);
+
+    // A filed bug's front matter otherwise never carries `files` (only
+    // `enrich` writes it, and only for register imports) — with no files,
+    // `deps` sees zero edges for it and the dependency graph can only ever
+    // get less complete as bugs get filed rather than imported.
+    if (filesFlag) {
+      const rec = readRecord(bug.id);
+      if (rec) {
+        writeRecord(bug.id, { ...rec.front, files: filesFlag }, rec.body);
+        console.log(`  files    : ${filesFlag}`);
+      }
+    }
+  } catch (e) {
+    writeCatalogue(before);
+    fail(
+      `file: ${bug.id} failed after the catalogue write (${e.message}) — catalogue restored to its pre-write state`,
+    );
   }
 };
 
@@ -2101,6 +2135,76 @@ cmds["self-test"] = () => {
     }
   }
 
+  // file: id allocation must consider ledger shards too, not just the
+  // catalogue — a stale catalogue snapshot (the two-sessions-filing-at-once
+  // case) used to hand out an id a shard already held, silently colliding.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file(["first fixture", "--location", "apps/api/src/self-test.ts", "--severity", "low"]);
+      // Simulate an id already reserved in a shard with NO catalogue row at
+      // all — exactly the shape of a concurrent session's ledger write that
+      // landed while this session's catalogue snapshot was already stale.
+      upsertLedgerRow("F09", {
+        id: "B2",
+        batch: "F09",
+        tier: "T1",
+        state: "queued",
+        pr: null,
+        proof: null,
+        evidence: null,
+      });
+      cmds.file(["second fixture", "--location", "apps/api/src/self-test.ts", "--severity", "low"]);
+      check(
+        "file: id allocation is the union of catalogue AND ledger shard ids",
+        readCatalogue().find((r) => r.title === "second fixture")?.id,
+        "B3",
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // file: a genuine failure AFTER the catalogue write (not a validation
+  // fail()) must restore the catalogue to its pre-write state, not leave a
+  // dangling row with no record and no way back.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      const beforeRows = readCatalogue();
+      check("file: starts from an empty catalogue", beforeRows.length, 0);
+      // Force expand()'s writeRecord to throw a real exception: pre-create
+      // the record PATH the next filed bug (B1) will land at, as a directory
+      // rather than a file, so writeFileSync fails with EISDIR.
+      mkdirSync(join(tmp, "bugs"), { recursive: true });
+      mkdirSync(join(tmp, "bugs", "B1.md"));
+      const attempt = runCli(
+        ["file", "restore fixture", "--location", "apps/api/src/self-test.ts", "--severity", "low"],
+        tmp,
+      );
+      check(
+        "file: a genuine post-catalogue-write failure exits non-zero",
+        attempt.code !== 0,
+        true,
+      );
+      check(
+        "file: the catalogue is restored to its pre-write state on that failure",
+        readCatalogue(),
+        beforeRows,
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
   // The commit scanner: a `(F##)` subject must fan out to every id in that
   // shard (the house convention names the batch, not the bug), and a bare
   // B-token must still match a zero-padded id.
@@ -2249,6 +2353,25 @@ cmds["self-test"] = () => {
       seen.set(r.id, true);
     }
   check("ledger: one row per bug id across all shards", dupes, 0);
+
+  // The catalogue must never describe a different bug than its own ledger
+  // row or record — `file` used to write the catalogue BEFORE the ledger
+  // upsert that could fail(), so a refused concurrent write could leave a
+  // catalogue row naming one session's title/batch while the ledger row (and
+  // the record) belonged to another.
+  {
+    const state = readState();
+    const drift = [];
+    for (const b of readCatalogue()) {
+      const st = state.get(b.id);
+      if (st && st.batch !== b.batch)
+        drift.push(`${b.id}: catalogue batch "${b.batch}" != ledger batch "${st.batch}"`);
+      const rec = readRecord(b.id);
+      if (rec && rec.front.title !== b.title)
+        drift.push(`${b.id}: catalogue title "${b.title}" != record title "${rec.front.title}"`);
+    }
+    check("catalogue/ledger/record agree on batch and title for every row", drift, []);
+  }
 
   // every catalogue row should have a record, or `brief` renders holes.
   const missing = readCatalogue()
