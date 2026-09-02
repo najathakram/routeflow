@@ -1,10 +1,10 @@
 {
-  "nextId": 43,
-  "activeCount": 26,
+  "nextId": 52,
+  "activeCount": 28,
   "archivedCount": 16,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-02T05:44:09.199Z",
+  "updatedAt": "2026-09-02T14:43:31.433Z",
   "schemaVersion": 1,
   "note": "Bookkeeping only — never accumulate prose here (see L-006). updatedAt bump = acknowledged lesson-free fix."
 }

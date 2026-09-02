@@ -1643,6 +1643,9 @@ function SessionsCard() {
       toast({ title: "Session revoked", variant: "success" });
     } catch {
       toast({ title: "Failed to revoke session", variant: "error" });
+      // B155: the row we showed may already be gone server-side — re-sync instead
+      // of leaving a phantom the user cannot act on.
+      await loadSessions();
     } finally {
       setRevoking(null);
     }
@@ -1651,17 +1654,19 @@ function SessionsCard() {
   const handleRevokeAll = async () => {
     setRevokingAll(true);
     setConfirmRevokeAll(false);
-    try {
-      await Promise.all(
-        sessions.map((s) => apiClient.delete(`/auth/sessions/${s.id}`).catch(() => null)),
-      );
+    const results = await Promise.allSettled(
+      sessions.map((s) => apiClient.delete(`/auth/sessions/${s.id}`)),
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed === 0) {
       setSessions([]);
       toast({ title: "All sessions revoked", variant: "success" });
-    } catch {
-      toast({ title: "Failed to revoke all sessions", variant: "error" });
-    } finally {
-      setRevokingAll(false);
+    } else {
+      // B155: never claim success for a call that failed.
+      toast({ title: "Some sessions could not be revoked", variant: "error" });
+      await loadSessions();
     }
+    setRevokingAll(false);
   };
 
   return (
@@ -1719,7 +1724,11 @@ function SessionsCard() {
         {!loading && sessions.length > 0 && (
           <ul className="divide-y divide-surface-border">
             {sessions.map((session) => (
-              <li key={session.id} className="flex items-start justify-between gap-3 py-3">
+              <li
+                key={session.id}
+                data-session-id={session.id}
+                className="flex items-start justify-between gap-3 py-3"
+              >
                 <div className="flex items-start gap-3">
                   <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-raised text-navy/70">
                     <DeviceIconInline ua={session.userAgent} />

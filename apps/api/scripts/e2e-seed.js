@@ -3,8 +3,9 @@
  *
  * Idempotent seed for Playwright E2E tests.
  * Creates the `e2e-routeflow` tenant with:
- *   • Operator:  admin / Admin@123
- *   • Customer:  harbor_cafe / Customer1!
+ *   • Operator:     admin / Admin@123
+ *   • Customer:     harbor_cafe / Customer1!
+ *   • Tenant admin: e2e_admin / TenantAdmin1!
  *
  * Safe to run multiple times — skips creation if data already exists. On an
  * existing tenant it also sweeps stale parked SaleDrafts the web e2e suite
@@ -32,6 +33,8 @@ const OPERATOR_USERNAME = "admin";
 const OPERATOR_PASSWORD = "Admin@123";
 const CUSTOMER_USERNAME = "harbor_cafe";
 const CUSTOMER_PASSWORD = "Customer1!";
+const TENANT_ADMIN_USERNAME = "e2e_admin";
+const TENANT_ADMIN_PASSWORD = "TenantAdmin1!";
 // Feature addons the web e2e suite depends on. developer_mode no longer
 // unlocks the GA delivery features in client UI (owner decision 2026-08-28) —
 // the web e2e suite exercises /routes and /deliveries, which now need the
@@ -113,6 +116,30 @@ async function main() {
       console.log(`  ✓ Created missing customer: ${CUSTOMER_USERNAME}`);
     } else {
       console.log(`  ✓ Customer "${CUSTOMER_USERNAME}" exists`);
+    }
+
+    // ── TENANT_ADMIN (B138 e2e precondition) ────────────────────────────────────
+    // platform-admin impersonate() requires an ACTIVE TENANT_ADMIN; without one the
+    // e2e tenant cannot be impersonated and spec 31 skips.
+    const ta = await prisma.user.findFirst({
+      where: { tenantId: existing.id, username: TENANT_ADMIN_USERNAME },
+    });
+    if (!ta) {
+      const hash = await bcrypt.hash(TENANT_ADMIN_PASSWORD, 10);
+      await prisma.user.create({
+        data: {
+          email: "e2e_admin@e2e-routeflow.test",
+          username: TENANT_ADMIN_USERNAME,
+          password: hash,
+          role: "TENANT_ADMIN",
+          status: "ACTIVE",
+          forcePasswordChange: false,
+          tenantId: existing.id,
+        },
+      });
+      console.log(`  ✓ Created missing tenant admin: ${TENANT_ADMIN_USERNAME}`);
+    } else {
+      console.log(`  ✓ Tenant admin "${TENANT_ADMIN_USERNAME}" exists`);
     }
 
     // ── Feature addons (developer_mode + recurring_routes + order_delivery) ─────
@@ -204,6 +231,20 @@ async function main() {
     },
   });
   console.log(`  ✓ Customer created: ${CUSTOMER_USERNAME} / ${CUSTOMER_PASSWORD}`);
+
+  // ── Tenant admin user (B138 e2e precondition) ────────────────────────────────
+  await prisma.user.create({
+    data: {
+      email: "e2e_admin@e2e-routeflow.test",
+      username: TENANT_ADMIN_USERNAME,
+      password: await bcrypt.hash(TENANT_ADMIN_PASSWORD, 10),
+      role: "TENANT_ADMIN",
+      status: "ACTIVE",
+      forcePasswordChange: false,
+      tenantId: tenant.id,
+    },
+  });
+  console.log(`  ✓ Tenant admin created: ${TENANT_ADMIN_USERNAME} / ${TENANT_ADMIN_PASSWORD}`);
 
   // ── Feature addons (developer_mode + recurring_routes + order_delivery) ───────
   await ensureAddon(tenant.id, DEVELOPER_MODE_ADDON);

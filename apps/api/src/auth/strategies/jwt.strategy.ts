@@ -30,6 +30,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       forcePasswordChange: payload.forcePasswordChange,
       tenantId: payload.tenantId ?? null,
       tenantSlug: payload.tenantSlug ?? null,
+      // B165 / B138: present only on platform-admin impersonation tokens
+      // (platform-admin.service.ts mints it). NOT an authorization input —
+      // RolesGuard ignores it; AuditInterceptor stamps it and AuthController.logout
+      // reads it. Absent stays absent (never a fabricated value).
+      impersonatedBy: payload.impersonatedBy ?? undefined,
       // Capability claim minted at login — RolesGuard's dual-role branch reads it
       // (operators/tenant-admins with canActAsDriver also satisfy DRIVER). A driver-permit
       // change still needs re-login to take effect.

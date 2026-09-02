@@ -231,7 +231,14 @@ describe("RF-078 — GET /uploads/* response headers", () => {
       // Bypass auth (signed URL OR JWT) for this unit test — we're testing
       // response headers, not the auth path itself.
       .overrideGuard(UploadsAccessGuard)
-      .useValue({ canActivate: () => true })
+      .useValue({
+        canActivate: (ctx: any) => {
+          // Signed-URL path: B52's JWT-path default-deny (unknown/flat keys → 403)
+          // must not fire here — this suite tests response headers, not auth.
+          ctx.switchToHttp().getRequest().signedUrlAuthorized = true;
+          return true;
+        },
+      })
       .compile();
 
     app = module.createNestApplication();
@@ -294,7 +301,16 @@ describe("RF-078 — PDF is inline, non-allowlisted MIME still forces attachment
       ],
     })
       .overrideGuard(UploadsAccessGuard)
-      .useValue({ canActivate: () => true })
+      .useValue({
+        canActivate: (ctx: any) => {
+          // Signed-URL path: B52's JWT-path default-deny (unknown/flat keys → 403)
+          // must not fire here — this suite tests response headers, not auth.
+          // The default-deny itself is covered by REG-B52 in
+          // uploads-tenant-scope.security.spec.ts.
+          ctx.switchToHttp().getRequest().signedUrlAuthorized = true;
+          return true;
+        },
+      })
       .compile();
 
     app = module.createNestApplication();

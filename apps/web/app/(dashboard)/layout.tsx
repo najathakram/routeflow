@@ -52,10 +52,9 @@ import { cn, Avatar, ToastProvider } from "@routeflow/ui/web";
 import { TenantLogo } from "@/components/TenantLogo";
 import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
 import { useAuth } from "@/lib/auth-context";
-import { clearTenantCookie } from "@/lib/tenant-cookie";
 import {
   getImpersonation,
-  clearImpersonation,
+  exitImpersonation,
   subscribeImpersonation,
   type ImpersonationState,
 } from "@/lib/impersonation";
@@ -661,6 +660,19 @@ function Header({
   // on routesAccess (not delivery access).
   const { enabled: routesAccess } = useRoutesAccess();
 
+  // B138: mirror ImpersonationBanner's read so the avatar menu never offers
+  // "Sign out" while impersonation state exists (expired included — an expired
+  // impersonation plus a /auth/logout POST races api-client's auto-exit).
+  const [imp, setImp] = React.useState<ImpersonationState | null>(null);
+  React.useEffect(() => {
+    const read = () => setImp(getImpersonation());
+    read();
+    return subscribeImpersonation(read);
+  }, []);
+  React.useEffect(() => {
+    setImp(getImpersonation());
+  }, [pathname]);
+
   // Show a back button only on sub-pages (e.g. /routes/123, /customers/456)
   const isSubPage = pathname.split("/").filter(Boolean).length > 1;
 
@@ -944,13 +956,23 @@ function Header({
               ))}
 
               <DropdownMenu.Separator className="my-1 border-t border-surface-border" />
-              <DropdownMenu.Item
-                className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-danger outline-none hover:bg-danger-bg"
-                onSelect={() => void logout()}
-              >
-                <LogOut className="h-4 w-4" />
-                {t("menu.signOut")}
-              </DropdownMenu.Item>
+              {imp ? (
+                <DropdownMenu.Item
+                  className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-danger outline-none hover:bg-danger-bg"
+                  onSelect={() => exitImpersonation()}
+                >
+                  <LogOut className="h-4 w-4" />
+                  {t(imp.expired ? "menu.returnToAdmin" : "menu.exitImpersonation")}
+                </DropdownMenu.Item>
+              ) : (
+                <DropdownMenu.Item
+                  className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-danger outline-none hover:bg-danger-bg"
+                  onSelect={() => void logout()}
+                >
+                  <LogOut className="h-4 w-4" />
+                  {t("menu.signOut")}
+                </DropdownMenu.Item>
+              )}
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
@@ -976,18 +998,6 @@ function ImpersonationBanner() {
 
   if (!imp) return null;
 
-  const exit = () => {
-    clearTenantCookie();
-    clearImpersonation();
-    // No helper currently reads the super-admin's own (operator) token's
-    // tenantSlug independent of the impersonation token, so there is nothing
-    // to re-pin the cookie from here — the super-admin's own session carries
-    // no tenant. Hard-load (not router.push) so every provider — AuthProvider,
-    // TenantProvider, the nav — remounts cleanly on the operator session
-    // instead of carrying over impersonated state via a soft nav.
-    window.location.href = "/admin/tenants";
-  };
-
   return (
     <div className="flex items-center justify-between bg-red-600 px-4 py-2 text-sm text-white">
       <span>
@@ -1003,7 +1013,7 @@ function ImpersonationBanner() {
         )}
       </span>
       <button
-        onClick={exit}
+        onClick={exitImpersonation}
         className="rounded bg-white/20 px-3 py-1 text-xs font-semibold hover:bg-white/30 transition-colors"
       >
         {imp.expired ? "Return to admin" : "Exit impersonation"}

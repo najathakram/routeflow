@@ -232,7 +232,7 @@
   proves nothing about the change; rerun first.**
 - **Guard:** none — judgment.
 
-### L-042 · 2026-09-02 · tooling
+### L-051 · 2026-09-02 · tooling
 
 - **Symptom:** five defects shipped from one script in a single session — a generator that fought
   prettier and re-dirtied 210 files on every turn, two code-map edits that printed "updated" while
@@ -253,6 +253,21 @@
   the fifth defect, which was the fourth one reintroduced in a new function.
 
 ## testing
+
+### L-050 · 2026-09-02 · testing · #598
+
+- **Symptom:** two new e2e specs went red post-deploy AND dragged an unrelated, previously-green
+  test (`AP-06`, re-auth resumes the session) down with them.
+- **Root cause:** neither new project declared `dependencies`, so the runner placed both in the
+  FIRST phase — alongside every other dependency-free project — and all of them authenticate as
+  the same shared operator. One spec revokes that user's sessions by design, so a sibling test's
+  token refresh 401'd mid-flow. Scoping the spec's own CLEANUP was necessary and not sufficient:
+  the body of the test revokes during the phase too.
+- **Lesson:** **A spec that mutates shared auth state needs its own user, not a scheduling tweak.**
+  Reordering only moves the collision — here phase 2 holds ~20 projects reusing the same stored
+  session. Ask which fixtures a new suite MUTATES, and who else in its phase reads them.
+- **Guard:** none yet — the two project entries are commented out (not deleted) with the diagnosis
+  inline, so re-enabling is a seed change plus uncommenting. A skip is not a discharge ([[L-041]]).
 
 ### L-036 · 2026-09-01 · testing · #TBD
 
@@ -381,6 +396,22 @@
 - **Guard:** single-helper pattern (`lineInventoryDelta`); class flagged for review.
 
 ## security
+
+### L-044 · 2026-09-02 · security
+
+- **Symptom:** four fixes in one batch were "protected" by things that had never once done
+  anything — a log-only APP_GUARD that read `req.user` before any route guard populated it (never
+  fired), and a green unit test asserting a DRIVER _may_ write a price override (it asserted the
+  bug).
+- **Root cause:** a guard that always returns `true` and a test that always passes are
+  indistinguishable from working ones; nobody had asked what would turn either red.
+- **Lesson:** **Green is a claim, not evidence. Before inverting a requirement, grep the suites
+  for a test that asserts the OLD behaviour (it passes on the bug — invert it, don't route around
+  it); before trusting a side-effect-only guard or interceptor, name the input that makes it act
+  and prove that input exists at that point in the pipeline (APP_GUARDs run before route guards,
+  so `req.user` is never set there).**
+- **Guard:** `REG-B132` (the inverted test) and `REG-B165` (`impersonation.guard.spec.ts` header
+  case with `req.user` undefined); mutation probes in the F14 PR body.
 
 ### L-033 · 2026-09-01 · security
 

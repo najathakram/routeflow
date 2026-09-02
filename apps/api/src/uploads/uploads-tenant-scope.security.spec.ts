@@ -25,11 +25,18 @@ import * as path from "path";
 import * as fs from "fs";
 import { Writable } from "stream";
 
-import { INestApplication, NotFoundException } from "@nestjs/common";
+import { INestApplication, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const request = require("supertest");
+// B52 (T5): `import * as fs from "fs"` yields a non-configurable ESM namespace
+// under this Jest/Node combo (`jest.spyOn(fs, "existsSync")` throws "Cannot
+// redefine property"). `require("fs")` returns the plain, spy-able CJS module
+// object — and the controller's own `fs.existsSync` calls observe the spy
+// through the live binding, verified against the real module below.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const fsModule = require("fs") as typeof fs;
 
 import { UploadsController } from "./uploads.controller";
 import { UploadsAccessGuard } from "./uploads-access.guard";
@@ -69,6 +76,12 @@ describe("UploadsController — JWT-path tenant scoping", () => {
     pay1: { tenantId: "t1", invoice: { tenantId: "t1" } },
     payNull: { tenantId: null, invoice: { tenantId: "t1" } },
   };
+  // B52: supplier-statement scans are keyed `supplier-statements/<scanId>/<n>.<ext>`.
+  // `ssNull` mirrors a legacy row whose tenantId was never injected (the column is nullable).
+  const scans: Record<string, { tenantId: string | null } | undefined> = {
+    ss1: { tenantId: "t1" },
+    ssNull: { tenantId: null },
+  };
 
   const prismaMock = {
     product: { findUnique: jest.fn(({ where: { id } }) => Promise.resolve(owners[id] ?? null)) },
@@ -87,6 +100,9 @@ describe("UploadsController — JWT-path tenant scoping", () => {
         const paymentGroupId = OR.find((clause: any) => "paymentGroupId" in clause)?.paymentGroupId;
         return Promise.resolve(paymentOwners[id] ?? paymentOwners[paymentGroupId] ?? null);
       }),
+    },
+    supplierStatementScan: {
+      findUnique: jest.fn(({ where: { id } }) => Promise.resolve(scans[id] ?? null)),
     },
   };
 
@@ -113,6 +129,11 @@ describe("UploadsController — JWT-path tenant scoping", () => {
     write("payments/payNull/receipt.txt");
     write("expenses/eNull/receipt.txt");
     write("expenses/eOrphan/receipt.txt");
+    write("supplier-statements/ss1/1.txt");
+    write("supplier-statements/missing/1.txt");
+    write("supplier-statements/ssNull/1.txt");
+    write("legacy-prefix/x/file.txt");
+    write("flat.txt");
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [UploadsController],
@@ -323,5 +344,123 @@ describe("UploadsController — JWT-path tenant scoping", () => {
 
   it("B12: a null-tenantId expense with no parent bill still fails closed (403)", async () => {
     expect((await get("expenses/eOrphan/receipt.txt", "t1")).status).toBe(403);
+  });
+
+  describe("B52 — supplier-statements owner gate + JWT-path default-deny", () => {
+    let existsSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      existsSpy = jest.spyOn(fsModule, "existsSync");
+    });
+
+    afterEach(() => {
+      existsSpy.mockRestore();
+    });
+
+    it("REG-B52 a JWT caller in another tenant cannot read a supplier-statement scan (403 + the owner lookup ran)", async () => {
+      prismaMock.supplierStatementScan.findUnique.mockClear();
+
+      const res = await get("supplier-statements/ss1/1.txt", "t2");
+
+      expect(res.status).toBe(403);
+      expect(res.body.message).toBe("Cross-tenant file access denied");
+      expect(prismaMock.supplierStatementScan.findUnique).toHaveBeenCalledWith({
+        where: { id: "ss1" },
+        select: { tenantId: true },
+      });
+    });
+
+    it("REG-B52 the owning tenant reads its supplier-statement scan (200) through the owner lookup", async () => {
+      prismaMock.supplierStatementScan.findUnique.mockClear();
+
+      const res = await get("supplier-statements/ss1/1.txt", "t1");
+
+      expect(res.status).toBe(200);
+      expect(res.text).toBe("net,sales\n1,2\n");
+      expect(prismaMock.supplierStatementScan.findUnique).toHaveBeenCalledWith({
+        where: { id: "ss1" },
+        select: { tenantId: true },
+      });
+    });
+
+    it("REG-B52 a missing or NULL-tenant scan row fails closed (403, never 404)", async () => {
+      expect((await get("supplier-statements/missing/1.txt", "t1")).status).toBe(403);
+      expect((await get("supplier-statements/ssNull/1.txt", "t1")).status).toBe(403);
+    });
+
+    // T4 — exemption pin: GREEN on both sides of the fix by design (before it, nothing
+    // is gated at all). It keeps the REG-B52 token because it is the only coverage of
+    // R2's `caller?.role !== "SUPER_ADMIN"` clause, and campaign-check reads
+    // traceability from the title.
+    it("REG-B52 SUPER_ADMIN reads any prefix, mapped or not (exemption pin)", async () => {
+      expect((await get("supplier-statements/ss1/1.txt", undefined, "SUPER_ADMIN")).status).toBe(
+        200,
+      );
+      expect((await get("legacy-prefix/x/file.txt", undefined, "SUPER_ADMIN")).status).toBe(200);
+    });
+
+    it("REG-B52 unmapped prefixes and flat keys are denied on the JWT path BEFORE the filesystem check; signed URLs stay exempt", async () => {
+      existsSpy.mockClear();
+      expect((await get("legacy-prefix/x/file.txt", "t1")).status).toBe(403);
+      expect(existsSpy).not.toHaveBeenCalled();
+
+      expect((await get("flat.txt", "t1")).status).toBe(403);
+      // Not written to disk — a 404 here would prove the deny ran AFTER the fs check.
+      expect((await get("legacy-prefix/nope/absent.txt", "t1")).status).toBe(403);
+      expect((await get("legacy-prefix/x/file.txt", "t1", undefined, true)).status).toBe(200);
+
+      // Positive control: the spy DOES observe the real path (proves the "not
+      // called" assertion above is meaningful, not an artifact of a dead spy).
+      existsSpy.mockClear();
+      expect((await get("supplier-statements/ss1/1.txt", "t1")).status).toBe(200);
+      expect(existsSpy).toHaveBeenCalledTimes(1);
+    });
+
+    // No REG-B token by design: this guards the operator-visible SIGNAL the
+    // fail-closed deny depends on (the 403 body deliberately discloses nothing,
+    // so a legitimate read that starts 403ing is otherwise invisible), not the
+    // cross-tenant leak itself — it therefore stays outside the red-gate filter.
+    it("B52 deny observability: every deny branch logs its reason, the key and the caller", async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+      try {
+        expect((await get("legacy-prefix/x/file.txt", "t1")).status).toBe(403);
+        expect((await get("supplier-statements/ssNull/1.txt", "t1")).status).toBe(403);
+        expect((await get("tenants/t2/doc.txt", "t1")).status).toBe(403);
+
+        const lines = warnSpy.mock.calls
+          .map((call) => String(call[0]))
+          .filter((line) => line.startsWith("Upload access denied"));
+
+        expect(lines).toHaveLength(3);
+        expect(lines[0]).toContain("unmapped prefix");
+        expect(lines[0]).toContain('key="legacy-prefix/x/file.txt"');
+        expect(lines[1]).toContain("owner row has no tenantId for supplier-statements");
+        expect(lines[2]).toContain("tenant-prefix mismatch");
+        expect(
+          lines.every((line) => line.includes("tenant=t1") && line.includes("role=OPERATOR")),
+        ).toBe(true);
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it.each([
+      "expenses/e1/receipt.txt",
+      "statement-pdfs/c1/2026-01.pdf",
+      "customers/c1/documents/doc.txt",
+      "invoice-pdfs/inv1.pdf",
+      "payments/pay1/receipt.txt",
+      "products/p1/img.txt",
+      "supplier-statements/ss1/1.txt",
+      "tenants/t1/doc.txt",
+      "invoice-scans/scan1/scan.txt",
+      "regulated-filings/t1/cat/2026-01.csv",
+      "tobacco-reports/t1/2026-01.csv",
+    ])(
+      "pin (B52): every live storage prefix is readable by its owner (coverage table) — %s",
+      async (key) => {
+        expect((await get(key, "t1")).status).toBe(200);
+      },
+    );
   });
 });

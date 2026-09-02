@@ -20,6 +20,13 @@ export class BuyerJwtStrategy extends PassportStrategy(Strategy, "buyer-jwt") {
     if (!payload?.sub || payload.type !== "BUYER") {
       throw new UnauthorizedException("Invalid buyer token");
     }
-    return { sub: payload.sub, email: payload.email, type: "BUYER" as const };
+    return {
+      sub: payload.sub,
+      email: payload.email,
+      type: "BUYER" as const,
+      // B165: buyer-admin.service.ts mints this on buyer impersonation tokens; propagate
+      // for logging/UI only (no buyer logout change in this batch — spec §4.4).
+      impersonatedBy: payload.impersonatedBy ?? undefined,
+    };
   }
 }

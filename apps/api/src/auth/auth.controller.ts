@@ -104,9 +104,20 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: "Logout and revoke all refresh tokens" })
-  async logout(@CurrentUser() user: { id: string }, @Res({ passthrough: true }) res: Response) {
+  async logout(
+    @CurrentUser() user: { id: string; impersonatedBy?: string },
+    @Res({ passthrough: true }) res: Response,
+  ) {
     // SEC-4 / F11-002: drop the httpOnly refresh cookie alongside server-side revocation.
     this.clearRefreshCookie(res);
+    // B138: an impersonation token's `sub` IS the tenant's TENANT_ADMIN
+    // (platform-admin.service.ts impersonate()), so revoking "the caller's" refresh
+    // tokens would sign that admin out of every device. An impersonation has no
+    // refresh token of its own — there is nothing to revoke. The claim reaches
+    // req.user through JwtStrategy (B165); RolesGuard never reads it.
+    if (user.impersonatedBy) {
+      return { message: "Impersonation session ended" };
+    }
     return this.authService.logout(user.id);
   }
 

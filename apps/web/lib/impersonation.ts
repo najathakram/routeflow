@@ -1,3 +1,5 @@
+import { clearTenantCookie } from "./tenant-cookie";
+
 /**
  * Super-admin impersonation state — THE single reader/writer for the
  * impersonation localStorage keys (token, tenant slug, acting username).
@@ -53,6 +55,24 @@ export function clearImpersonation(): void {
   localStorage.removeItem(SLUG_KEY);
   localStorage.removeItem(USERNAME_KEY);
   window.dispatchEvent(new Event(CHANGE_EVENT));
+}
+
+/**
+ * End an impersonation from the UI. Used by BOTH the red banner and the avatar
+ * menu's "Exit impersonation" item (B138) — one copy, never two.
+ *
+ * Never POSTs /auth/logout: an impersonation token's `sub` is the tenant's
+ * TENANT_ADMIN, so a server logout would revoke that admin's sessions on every
+ * device. The super-admin's own session carries no tenant, so there is nothing
+ * to re-pin the cookie from. Hard-load (not router.push) so every provider —
+ * AuthProvider, TenantProvider, the nav — remounts cleanly on the operator
+ * session instead of carrying impersonated state over a soft nav.
+ */
+export function exitImpersonation(): void {
+  if (typeof window === "undefined") return;
+  clearTenantCookie();
+  clearImpersonation();
+  window.location.href = "/admin/tenants";
 }
 
 /**
