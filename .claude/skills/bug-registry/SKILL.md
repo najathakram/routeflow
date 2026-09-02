@@ -226,6 +226,28 @@ because that is what sharpens the graph for everyone after you.
 different file from `routeflow-bug-register.html`, which `enrich` still parses as the historical
 import source — never overwrite that one.
 
+### Two agents, one shard
+
+`status/F##.jsonl` is shared mutable state, and the campaign routinely runs several sub-agents on
+one batch. Every ledger write therefore takes an exclusive lock on the shard — a `<shard>.lock`
+DIRECTORY created with `mkdir`, which is the one filesystem primitive that is atomic and fails
+loudly on both NTFS and POSIX. It is held across the **read** as well as the write, because the
+failure it prevents is a lost update, not a torn file: two `prove`s of different rows in one shard
+each read the whole shard, each write their own copy back, and the second silently reverted the
+first — a proven, evidence-backed row back to `queued`, with `self-test` and `campaign-check` both
+green.
+
+What that means for you:
+
+- **Nothing to do in the normal case.** Every command takes and releases the lock itself.
+- **`bugs: could not lock … within 2000ms`** means another `bugs.mjs` really is writing that shard.
+  Retry. Only if nothing is running should you remove the named `.lock` directory by hand.
+- A lock left behind by a killed writer expires after 5s and is broken automatically, with
+  `bugs: breaking a stale lock on F##.jsonl …` on stderr. That line is worth reading — it means a
+  writer died mid-write, so re-read the shard before trusting it.
+- **Still never hand-edit a shard.** The lock protects `bugs.mjs` from `bugs.mjs`; it cannot
+  protect the ledger from an editor.
+
 ## House rules that outrank anything here
 
 - **Never name a live client** in a record — slug, business name, product, invoice or order number,

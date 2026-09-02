@@ -16,6 +16,16 @@
 // a bug *is* (title, location, severity, symptom); `status/F##.jsonl` still owns
 // what a bug *is doing* (queued/proven/done + its proof). `next` joins them.
 //
+// CONCURRENCY — THE SHARD LOCK
+// The campaign runs several sub-agents at once, routinely on ONE batch, so two
+// processes read-modify-write the same `status/F##.jsonl` within milliseconds of
+// each other. Every write path here asserts its OWN row landed and nothing looks
+// at the rest of the file, so the second writer's copy silently erased the
+// first's — a proven, evidence-backed row reverted to `queued` with both gates
+// green. Every shard read-modify-write therefore runs inside a `<shard>.lock`
+// directory (see `withShardLock` below): the READ is inside the lock too, or the
+// patch a caller computed is already stale by the time it writes.
+//
 // THE CARVE-OUT
 // Owner decision (2026-09-02): agents may auto-take normal bugs unattended, but
 // anything touching money math, tenant scoping, or migrations is planned and
@@ -59,6 +69,8 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  utimesSync,
+  statSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -1331,6 +1343,115 @@ cmds.index = () => {
 // that mistake is unrepresentable rather than merely documented.
 const shardPath = (batch) => join(STATUS_DIR(), `${batch}.jsonl`);
 
+// ── the shard lock ────────────────────────────────────────────────────────
+// `mkdir` is the filesystem primitive that is atomic and fails loudly on BOTH
+// NTFS and POSIX (an O_EXCL file is too; a directory survives a crash more
+// legibly and a human can remove it with one command). A lockfile library is
+// deliberately not introduced for this — the repo's dependency rules are
+// narrow and this is 40 lines.
+//
+// Rules, all of them load-bearing:
+//   * the READ belongs inside the lock, not just the write — a caller that
+//     read the row outside it computes its patch from a stale snapshot;
+//   * re-entrant per process, so a command may hold the lock across a loop of
+//     `upsertLedgerRow` calls that each take it again (`discharge`, `claim`);
+//   * a lock older than LOCK_STALE_MS is broken with a note on stderr — a
+//     writer killed mid-write must not wedge the campaign forever;
+//   * multi-shard holds (only `move`) are taken in sorted order, so two
+//     processes moving rows in opposite directions cannot deadlock;
+//   * `fail()` calls `process.exit`, which does NOT run `finally`, so held
+//     locks are also dropped from an `exit` handler.
+const LOCK_SPIN_MS = 2000;
+const LOCK_STEP_MS = 20;
+const LOCK_STALE_MS = 5000;
+const lockPath = (batch) => `${shardPath(batch)}.lock`;
+const heldLocks = new Set();
+// Synchronous sleep — this whole file is synchronous by design (it is a CLI a
+// hook shells out to), so a promise-based wait would need every caller to be
+// async. `Atomics.wait` on the main thread is permitted in Node.
+const sleepSync = (ms) => {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+};
+let exitHookInstalled = false;
+function installLockExitHook() {
+  if (exitHookInstalled) return;
+  exitHookInstalled = true;
+  process.on("exit", () => {
+    for (const p of heldLocks) {
+      try {
+        rmSync(p, { recursive: true, force: true });
+      } catch {
+        /* nothing useful to do while exiting */
+      }
+    }
+  });
+}
+
+function acquireShardLock(batch) {
+  const p = lockPath(batch);
+  mkdirSync(STATUS_DIR(), { recursive: true });
+  const deadline = Date.now() + LOCK_SPIN_MS;
+  for (;;) {
+    try {
+      mkdirSync(p); // NOT recursive: recursive:true succeeds on an existing dir
+      installLockExitHook();
+      heldLocks.add(p);
+      return p;
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+    }
+    let age = null;
+    try {
+      age = Date.now() - statSync(p).mtimeMs;
+    } catch {
+      age = null; // it vanished between the mkdir and the stat — just retry
+    }
+    if (age !== null && age > LOCK_STALE_MS) {
+      console.error(
+        `bugs: breaking a stale lock on ${batch}.jsonl (held ${Math.round(age / 1000)}s) — ` +
+          `a writer was probably killed mid-write; re-read the shard if anything looks wrong`,
+      );
+      try {
+        rmSync(p, { recursive: true, force: true });
+      } catch {
+        /* another process won the race to break it — retry below */
+      }
+    }
+    if (Date.now() >= deadline)
+      fail(
+        `could not lock ${shardPath(batch)} within ${LOCK_SPIN_MS}ms — another bugs.mjs process ` +
+          `is writing ${batch}.jsonl. Retry; if nothing is running, remove ${p}`,
+      );
+    sleepSync(LOCK_STEP_MS);
+  }
+}
+
+function releaseShardLock(p) {
+  heldLocks.delete(p);
+  try {
+    rmSync(p, { recursive: true, force: true });
+  } catch {
+    /* already gone (a stale-break by another process) — nothing to undo */
+  }
+}
+
+// Runs `fn` with an exclusive hold on `batch`'s shard. Re-entrant: if this
+// process already holds it, `fn` runs directly and the outer hold owns release.
+function withShardLock(batch, fn) {
+  if (heldLocks.has(lockPath(batch))) return fn();
+  const p = acquireShardLock(batch);
+  try {
+    return fn();
+  } finally {
+    releaseShardLock(p);
+  }
+}
+
+// Sorted, so two processes taking the same pair in opposite orders cannot
+// deadlock. Only `move` needs it.
+const withShardLocks = (batches, fn) =>
+  [...new Set(batches)].sort().reduceRight((next, b) => () => withShardLock(b, next), fn)();
+
 function readShard(batch) {
   const p = shardPath(batch);
   if (!existsSync(p)) return { rows: [], eol: "\n" };
@@ -1363,8 +1484,22 @@ function readShard(batch) {
 // `move`, which writes the destination shard additively WHILE the row still
 // lives in the source shard (so the drop can happen only after this write is
 // verified to have landed). Nothing else should ever pass it.
+//
+// The whole body runs under `withShardLock` — the re-read at the top is what
+// makes the lock worth having, so a row written by another process between a
+// caller's read and this call survives instead of being clobbered.
 function upsertLedgerRow(batch, row, opts = {}) {
+  return withShardLock(batch, () => upsertLedgerRowLocked(batch, row, opts));
+}
+
+function upsertLedgerRowLocked(batch, row, opts = {}) {
   const { rows, eol } = readShard(batch);
+  // TEST SEAM. A lost update needs the two writers to interleave between this
+  // read and the write below, and two freshly spawned node processes usually
+  // do not — so the concurrency self-test widens the window deliberately
+  // rather than hoping for it. Never set outside that test.
+  const stallMs = Number(process.env.BUGS_TEST_STALL_MS || 0);
+  if (stallMs > 0) sleepSync(stallMs);
   const i = rows.findIndex((r) => r.id === row.id);
   if (i === -1) {
     // Widen the duplicate guard to ALL shards, not just this one — the
@@ -1575,76 +1710,84 @@ cmds.prove = (args) => {
 
   const batch = findShardOf(id);
   if (!batch) fail(`${id} is in no ledger shard — file it with a --batch first`);
-  const row = readShard(batch).rows.find((r) => r.id === id);
-  const pending = args.includes("--pending-deploy");
-  const state = pending ? "proven-pending-deploy" : "proven";
-  if (pending && row.tier !== "T2")
-    fail("--pending-deploy is for T2 rows only (their proof cannot run pre-merge)");
 
-  // campaign-check REQUIRES a `buildPlan` field on every T3 row before it can
-  // discharge one (its proof is a manual-verification ROW in the batch's own
-  // build-plan.md, never a test artifact) — and nothing wrote that field, so
-  // a T3 prove used to land a claim campaign-check could never verify and no
-  // command could repair. Refuse it here instead.
-  let buildPlan = row.buildPlan ?? null;
-  if (row.tier === "T3") {
-    if (!buildPlanRaw)
-      fail(
-        `${id} is tier T3 — --build-plan <path/to/build-plan.md> is required, or campaign-check ` +
-          `has no way to find its manual-verification row and this prove can never be discharged`,
+  // The row read, the tier/build-plan ruling that depends on it, and the write
+  // are ONE critical section: reading the row outside the lock is how a
+  // concurrent prove of a sibling row used to be erased by this one's
+  // `{ ...row }` spread of a stale shard.
+  withShardLock(batch, () => {
+    const row = readShard(batch).rows.find((r) => r.id === id);
+    if (!row) fail(`${id} vanished from ${batch}.jsonl while this prove waited for the lock`);
+    const pending = args.includes("--pending-deploy");
+    const state = pending ? "proven-pending-deploy" : "proven";
+    if (pending && row.tier !== "T2")
+      fail("--pending-deploy is for T2 rows only (their proof cannot run pre-merge)");
+
+    // campaign-check REQUIRES a `buildPlan` field on every T3 row before it can
+    // discharge one (its proof is a manual-verification ROW in the batch's own
+    // build-plan.md, never a test artifact) — and nothing wrote that field, so
+    // a T3 prove used to land a claim campaign-check could never verify and no
+    // command could repair. Refuse it here instead.
+    let buildPlan = row.buildPlan ?? null;
+    if (row.tier === "T3") {
+      if (!buildPlanRaw)
+        fail(
+          `${id} is tier T3 — --build-plan <path/to/build-plan.md> is required, or campaign-check ` +
+            `has no way to find its manual-verification row and this prove can never be discharged`,
+        );
+      const resolved = resolve(REPO_ROOT, buildPlanRaw);
+      if (!existsSync(resolved))
+        fail(`--build-plan ${buildPlanRaw} does not exist (resolved to ${resolved})`);
+      const text = readFileSync(resolved, "utf8");
+      if (!hasManualVerificationToken(text, id))
+        fail(
+          `--build-plan ${buildPlanRaw} has no REG-${id} row in its "## Manual verification" ` +
+            `section — campaign-check will look there and find nothing`,
+        );
+      buildPlan = buildPlanRaw;
+    } else if (buildPlanRaw) {
+      buildPlan = buildPlanRaw;
+    }
+
+    const reproving =
+      ["proven", "proven-pending-deploy"].includes(row.state) &&
+      (row.pr !== pr || row.proof !== proof);
+    if (reproving)
+      console.warn(
+        `${id}: WARNING — overwriting an existing proof (was PR #${row.pr} · "${row.proof}") with PR #${pr}. The old proof is not otherwise kept.`,
       );
-    const resolved = resolve(REPO_ROOT, buildPlanRaw);
-    if (!existsSync(resolved))
-      fail(`--build-plan ${buildPlanRaw} does not exist (resolved to ${resolved})`);
-    const text = readFileSync(resolved, "utf8");
-    if (!hasManualVerificationToken(text, id))
+
+    const { what, row: after } = upsertLedgerRow(batch, { ...row, state, pr, proof, buildPlan });
+    if (
+      after?.state !== state ||
+      after?.pr !== pr ||
+      after?.proof !== proof ||
+      (row.tier === "T3" && after?.buildPlan !== buildPlan)
+    )
       fail(
-        `--build-plan ${buildPlanRaw} has no REG-${id} row in its "## Manual verification" ` +
-          `section — campaign-check will look there and find nothing`,
+        `ledger write for ${id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
       );
-    buildPlan = buildPlanRaw;
-  } else if (buildPlanRaw) {
-    buildPlan = buildPlanRaw;
-  }
 
-  const reproving =
-    ["proven", "proven-pending-deploy"].includes(row.state) &&
-    (row.pr !== pr || row.proof !== proof);
-  if (reproving)
-    console.warn(
-      `${id}: WARNING — overwriting an existing proof (was PR #${row.pr} · "${row.proof}") with PR #${pr}. The old proof is not otherwise kept.`,
+    const rec = readRecord(id);
+    if (rec) {
+      // Key the History marker on the PR number too — a bare `state-${state}`
+      // key deduped a SECOND prove into a no-op History write, so `show`/the
+      // record kept displaying the FIRST proof forever after the ledger moved on.
+      // `appendEvent` adds the occurrence discriminator on top, so re-proving the
+      // same PR after a `reopen` logs a second line rather than vanishing; the
+      // guard below is what keeps a byte-identical re-run from duplicating one.
+      const changed = row.state !== state || row.pr !== pr || row.proof !== proof;
+      writeRecord(
+        id,
+        { ...rec.front, state, proof: `REG-${id}` },
+        changed ? appendEvent(rec.body, `state-${state}-${pr}`, state, `PR #${pr}`) : rec.body,
+      );
+    }
+    console.log(`${id}: ${batch} row ${what} → ${state} (PR #${pr})`);
+    console.log(
+      `  discharge to done only after a green deploy: npm run bugs -- discharge ${batch} --evidence "..."`,
     );
-
-  const { what, row: after } = upsertLedgerRow(batch, { ...row, state, pr, proof, buildPlan });
-  if (
-    after?.state !== state ||
-    after?.pr !== pr ||
-    after?.proof !== proof ||
-    (row.tier === "T3" && after?.buildPlan !== buildPlan)
-  )
-    fail(
-      `ledger write for ${id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
-    );
-
-  const rec = readRecord(id);
-  if (rec) {
-    // Key the History marker on the PR number too — a bare `state-${state}`
-    // key deduped a SECOND prove into a no-op History write, so `show`/the
-    // record kept displaying the FIRST proof forever after the ledger moved on.
-    // `appendEvent` adds the occurrence discriminator on top, so re-proving the
-    // same PR after a `reopen` logs a second line rather than vanishing; the
-    // guard below is what keeps a byte-identical re-run from duplicating one.
-    const changed = row.state !== state || row.pr !== pr || row.proof !== proof;
-    writeRecord(
-      id,
-      { ...rec.front, state, proof: `REG-${id}` },
-      changed ? appendEvent(rec.body, `state-${state}-${pr}`, state, `PR #${pr}`) : rec.body,
-    );
-  }
-  console.log(`${id}: ${batch} row ${what} → ${state} (PR #${pr})`);
-  console.log(
-    `  discharge to done only after a green deploy: npm run bugs -- discharge ${batch} --evidence "..."`,
-  );
+  });
 };
 
 // ⚠️ THE T2 EVIDENCE RULE. campaign-check accepts a non-empty
@@ -1676,76 +1819,82 @@ cmds.discharge = (args) => {
     );
   thin("--evidence", evidence);
 
-  const { rows } = readShard(batch);
-  const ready = rows.filter((r) => r.state === "proven" || r.state === "proven-pending-deploy");
-  if (!ready.length)
-    fail(
-      `${batch} has no proven row to discharge (states: ${[...new Set(rows.map((r) => r.state))].join(", ")})`,
-    );
-
-  // --evidence-B### <text>, collected before ANY write so a missing one refuses
-  // the whole discharge rather than leaving half the batch done.
-  const perRow = new Map();
-  for (let i = 0; i < args.length; i++) {
-    const m = /^--evidence-(B\d+)$/i.exec(args[i]);
-    if (!m) continue;
-    const id = resolveId(m[1].toUpperCase());
-    const text = args[i + 1];
-    if (text === undefined || text.startsWith("--")) fail(`${args[i]} requires a value`);
-    if (!ready.some((r) => r.id === id))
-      fail(`${args[i]}: ${id} is not a proven row in ${batch} — nothing to discharge for it`);
-    thin(args[i], text);
-    perRow.set(id, text);
-  }
-
-  const missing = ready.filter((r) => r.tier === "T2" && !perRow.has(r.id));
-  if (missing.length)
-    fail(
-      `T2 row(s) ${missing.map((r) => r.id).join(", ")} need their OWN evidence — ` +
-        `pass --evidence-${missing[0].id} "<the run that exercised THIS bug against the deployed build>". ` +
-        `campaign-check accepts dischargeEvidence in place of a Playwright artifact, so one batch-wide ` +
-        `string would discharge every T2 row in the batch past the only control that reads it.`,
-    );
-  // Normalized (trim, collapse whitespace, lowercase) with the SAME helper
-  // campaign-check.mjs uses for its own byte-identical-evidence warning — a
-  // trailing space or a case difference must not let this guard admit what
-  // the gate would still flag.
-  const seen = new Map();
-  for (const [id, text] of perRow) {
-    const key = normalizeEvidence(text);
-    if (seen.has(key))
+  // The proven-row read, the per-row evidence checks and every write are ONE
+  // critical section — a concurrent `prove` landing between the read and the
+  // loop below would otherwise be spread back over by the stale `{ ...row }`.
+  withShardLock(batch, () => {
+    const { rows } = readShard(batch);
+    const ready = rows.filter((r) => r.state === "proven" || r.state === "proven-pending-deploy");
+    if (!ready.length)
       fail(
-        `${id} and ${seen.get(key)} were given byte-identical evidence — cite each row's own run`,
+        `${batch} has no proven row to discharge (states: ${[...new Set(rows.map((r) => r.state))].join(", ")})`,
       );
-    seen.set(key, id);
-  }
 
-  for (const row of ready) {
-    const own = perRow.get(row.id);
-    // T2 is the only tier campaign-check reads dischargeEvidence for; every
-    // other tier records the batch string as plain `evidence`.
-    const patch = own
-      ? { state: "done", dischargeEvidence: own, evidence: own }
-      : { state: "done", evidence };
-    const { row: after } = upsertLedgerRow(batch, { ...row, ...patch });
-    for (const [k, v] of Object.entries(patch))
-      if (after?.[k] !== v)
-        fail(
-          `ledger write for ${row.id} did not land as intended (${k}) — re-read row is ${JSON.stringify(after)}`,
-        );
-    const rec = readRecord(row.id);
-    if (rec)
-      writeRecord(
-        row.id,
-        { ...rec.front, state: "done", closed: "yes" },
-        appendEvent(rec.body, `state-done-${today()}`, "done", (own ?? evidence).slice(0, 200)),
+    // --evidence-B### <text>, collected before ANY write so a missing one refuses
+    // the whole discharge rather than leaving half the batch done.
+    const perRow = new Map();
+    for (let i = 0; i < args.length; i++) {
+      const m = /^--evidence-(B\d+)$/i.exec(args[i]);
+      if (!m) continue;
+      const id = resolveId(m[1].toUpperCase());
+      const text = args[i + 1];
+      if (text === undefined || text.startsWith("--")) fail(`${args[i]} requires a value`);
+      if (!ready.some((r) => r.id === id))
+        fail(`${args[i]}: ${id} is not a proven row in ${batch} — nothing to discharge for it`);
+      thin(args[i], text);
+      perRow.set(id, text);
+    }
+
+    const missing = ready.filter((r) => r.tier === "T2" && !perRow.has(r.id));
+    if (missing.length)
+      fail(
+        `T2 row(s) ${missing.map((r) => r.id).join(", ")} need their OWN evidence — ` +
+          `pass --evidence-${missing[0].id} "<the run that exercised THIS bug against the deployed build>". ` +
+          `campaign-check accepts dischargeEvidence in place of a Playwright artifact, so one batch-wide ` +
+          `string would discharge every T2 row in the batch past the only control that reads it.`,
       );
-  }
-  console.log(
-    `${batch}: discharged ${ready.length} row(s) → done — ${ready.map((r) => r.id).join(", ")}`,
-  );
-  if (perRow.size) console.log(`  per-row evidence recorded for: ${[...perRow.keys()].join(", ")}`);
-  console.log(`  verify: node scripts/campaign-check.mjs`);
+    // Normalized (trim, collapse whitespace, lowercase) with the SAME helper
+    // campaign-check.mjs uses for its own byte-identical-evidence warning — a
+    // trailing space or a case difference must not let this guard admit what
+    // the gate would still flag.
+    const seen = new Map();
+    for (const [id, text] of perRow) {
+      const key = normalizeEvidence(text);
+      if (seen.has(key))
+        fail(
+          `${id} and ${seen.get(key)} were given byte-identical evidence — cite each row's own run`,
+        );
+      seen.set(key, id);
+    }
+
+    for (const row of ready) {
+      const own = perRow.get(row.id);
+      // T2 is the only tier campaign-check reads dischargeEvidence for; every
+      // other tier records the batch string as plain `evidence`.
+      const patch = own
+        ? { state: "done", dischargeEvidence: own, evidence: own }
+        : { state: "done", evidence };
+      const { row: after } = upsertLedgerRow(batch, { ...row, ...patch });
+      for (const [k, v] of Object.entries(patch))
+        if (after?.[k] !== v)
+          fail(
+            `ledger write for ${row.id} did not land as intended (${k}) — re-read row is ${JSON.stringify(after)}`,
+          );
+      const rec = readRecord(row.id);
+      if (rec)
+        writeRecord(
+          row.id,
+          { ...rec.front, state: "done", closed: "yes" },
+          appendEvent(rec.body, `state-done-${today()}`, "done", (own ?? evidence).slice(0, 200)),
+        );
+    }
+    console.log(
+      `${batch}: discharged ${ready.length} row(s) → done — ${ready.map((r) => r.id).join(", ")}`,
+    );
+    if (perRow.size)
+      console.log(`  per-row evidence recorded for: ${[...perRow.keys()].join(", ")}`);
+    console.log(`  verify: node scripts/campaign-check.mjs`);
+  });
 };
 
 // ── reopen: the state the ledger had no way to express ────────────────────
@@ -1765,43 +1914,48 @@ cmds.reopen = (args) => {
   const id = resolveId(typed);
   const batch = findShardOf(id);
   if (!batch) fail(`${id} is in no ledger shard — nothing to reopen`);
-  const row = readShard(batch).rows.find((r) => r.id === id);
-  if (WORKABLE.has(row.state))
-    fail(`${id} is already ${row.state} — it is open work, there is nothing to reopen`);
+  // Read the row, judge it, and erase its proof inside ONE hold — a proof is
+  // exactly the thing a concurrent writer must not restore underneath us.
+  withShardLock(batch, () => {
+    const row = readShard(batch).rows.find((r) => r.id === id);
+    if (!row) fail(`${id} vanished from ${batch}.jsonl while this reopen waited for the lock`);
+    if (WORKABLE.has(row.state))
+      fail(`${id} is already ${row.state} — it is open work, there is nothing to reopen`);
 
-  // A regression claim with no artifact behind it is a rumour, and this command
-  // ERASES a proof — so it costs a citation, the same way `prove` costs a token.
-  const citesToken = new RegExp(`REG-${id}(?![0-9])`).test(why);
-  const citesRun = /#\d+|https?:\/\/|\brun \d+|\bdeploy\b/i.test(why);
-  if (why.length < 40 || !(citesToken || citesRun))
-    fail(
-      `--why must cite the failing REG-${id} token or the run/deploy/report that showed the ` +
-        `regression — reopening clears ${id}'s proof (PR #${row.pr ?? "—"}), which is not recoverable from here`,
-    );
-
-  const patch = {
-    state: "regressed",
-    pr: null,
-    proof: null,
-    evidence: why,
-    dischargeEvidence: null,
-  };
-  const { row: after } = upsertLedgerRow(batch, { ...row, ...patch });
-  for (const [k, v] of Object.entries(patch))
-    if (after?.[k] !== v)
+    // A regression claim with no artifact behind it is a rumour, and this command
+    // ERASES a proof — so it costs a citation, the same way `prove` costs a token.
+    const citesToken = new RegExp(`REG-${id}(?![0-9])`).test(why);
+    const citesRun = /#\d+|https?:\/\/|\brun \d+|\bdeploy\b/i.test(why);
+    if (why.length < 40 || !(citesToken || citesRun))
       fail(
-        `ledger write for ${id} did not land as intended (${k}) — re-read row is ${JSON.stringify(after)}`,
+        `--why must cite the failing REG-${id} token or the run/deploy/report that showed the ` +
+          `regression — reopening clears ${id}'s proof (PR #${row.pr ?? "—"}), which is not recoverable from here`,
       );
 
-  const rec = readRecord(id);
-  if (rec)
-    writeRecord(
-      id,
-      { ...rec.front, state: "regressed", proof: null, closed: null },
-      appendEvent(rec.body, `regressed-${today()}`, "regressed", why),
-    );
-  console.log(`${id}: ${batch} row → regressed (was ${row.state}, PR #${row.pr ?? "—"} cleared)`);
-  console.log(`  it is workable again — \`next\`/\`waves\` will offer ${batch} once more.`);
+    const patch = {
+      state: "regressed",
+      pr: null,
+      proof: null,
+      evidence: why,
+      dischargeEvidence: null,
+    };
+    const { row: after } = upsertLedgerRow(batch, { ...row, ...patch });
+    for (const [k, v] of Object.entries(patch))
+      if (after?.[k] !== v)
+        fail(
+          `ledger write for ${id} did not land as intended (${k}) — re-read row is ${JSON.stringify(after)}`,
+        );
+
+    const rec = readRecord(id);
+    if (rec)
+      writeRecord(
+        id,
+        { ...rec.front, state: "regressed", proof: null, closed: null },
+        appendEvent(rec.body, `regressed-${today()}`, "regressed", why),
+      );
+    console.log(`${id}: ${batch} row → regressed (was ${row.state}, PR #${row.pr ?? "—"} cleared)`);
+    console.log(`  it is workable again — \`next\`/\`waves\` will offer ${batch} once more.`);
+  });
 };
 
 // ── claim / release: the offline half of the dispatcher's exclusion ────────
@@ -1821,63 +1975,71 @@ const claimId = () => {
 
 cmds.claim = (args) => {
   const batch = normBatch(args[0]);
-  const { rows } = readShard(batch);
-  const take = rows.filter((r) => WORKABLE.has(r.state));
-  if (!take.length)
-    fail(
-      `${batch} has no workable row to claim (states: ${[...new Set(rows.map((r) => r.state))].join(", ")})`,
-    );
-  const held = rows.filter((r) => r.state === "in-flight");
-  if (held.length)
-    fail(
-      `${batch} already has ${held.length} in-flight row(s) (${held.map((r) => r.id).join(", ")}) — ` +
-        `release it first, or take another batch`,
-    );
-
-  const who = claimId();
-  for (const row of take) {
-    const { row: after } = upsertLedgerRow(batch, {
-      ...row,
-      state: "in-flight",
-      claimedFrom: row.state,
-      claimedBy: who,
-    });
-    if (after?.state !== "in-flight" || after?.claimedFrom !== row.state)
+  // One hold over the read AND the loop, so two agents racing to claim the
+  // same batch cannot both see it free and both write in-flight rows.
+  withShardLock(batch, () => {
+    const { rows } = readShard(batch);
+    const take = rows.filter((r) => WORKABLE.has(r.state));
+    if (!take.length)
       fail(
-        `ledger write for ${row.id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
+        `${batch} has no workable row to claim (states: ${[...new Set(rows.map((r) => r.state))].join(", ")})`,
       );
-    // Front matter only, no History line: a claim is transient bookkeeping, and
-    // a record's history is for what happened TO THE BUG.
-    const rec = readRecord(row.id);
-    if (rec) writeRecord(row.id, { ...rec.front, state: "in-flight" }, rec.body);
-  }
-  console.log(`${batch}: ${take.length} row(s) → in-flight, held by ${who}`);
-  console.log(`  \`next\`/\`waves\` will skip ${batch} until: npm run bugs -- release ${batch}`);
+    const held = rows.filter((r) => r.state === "in-flight");
+    if (held.length)
+      fail(
+        `${batch} already has ${held.length} in-flight row(s) (${held.map((r) => r.id).join(", ")}) — ` +
+          `release it first, or take another batch`,
+      );
+
+    const who = claimId();
+    for (const row of take) {
+      const { row: after } = upsertLedgerRow(batch, {
+        ...row,
+        state: "in-flight",
+        claimedFrom: row.state,
+        claimedBy: who,
+      });
+      if (after?.state !== "in-flight" || after?.claimedFrom !== row.state)
+        fail(
+          `ledger write for ${row.id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
+        );
+      // Front matter only, no History line: a claim is transient bookkeeping, and
+      // a record's history is for what happened TO THE BUG.
+      const rec = readRecord(row.id);
+      if (rec) writeRecord(row.id, { ...rec.front, state: "in-flight" }, rec.body);
+    }
+    console.log(`${batch}: ${take.length} row(s) → in-flight, held by ${who}`);
+    console.log(`  \`next\`/\`waves\` will skip ${batch} until: npm run bugs -- release ${batch}`);
+  });
 };
 
 cmds.release = (args) => {
   const batch = normBatch(args[0]);
-  const { rows } = readShard(batch);
-  const held = rows.filter((r) => r.state === "in-flight");
-  if (!held.length) fail(`${batch} holds no in-flight row`);
-  for (const row of held) {
-    // Restore what the row WAS: releasing a regressed batch must not quietly
-    // launder it into a plain queued one.
-    const back = WORKABLE.has(row.claimedFrom) ? row.claimedFrom : "queued";
-    const { row: after } = upsertLedgerRow(batch, {
-      ...row,
-      state: back,
-      claimedFrom: null,
-      claimedBy: null,
-    });
-    if (after?.state !== back)
-      fail(
-        `ledger write for ${row.id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
-      );
-    const rec = readRecord(row.id);
-    if (rec) writeRecord(row.id, { ...rec.front, state: back }, rec.body);
-  }
-  console.log(`${batch}: released ${held.length} row(s) — ${held.map((r) => r.id).join(", ")}`);
+  // One hold over the read AND the loop: a release that read a stale shard
+  // would hand back rows a concurrent claim had just taken.
+  withShardLock(batch, () => {
+    const { rows } = readShard(batch);
+    const held = rows.filter((r) => r.state === "in-flight");
+    if (!held.length) fail(`${batch} holds no in-flight row`);
+    for (const row of held) {
+      // Restore what the row WAS: releasing a regressed batch must not quietly
+      // launder it into a plain queued one.
+      const back = WORKABLE.has(row.claimedFrom) ? row.claimedFrom : "queued";
+      const { row: after } = upsertLedgerRow(batch, {
+        ...row,
+        state: back,
+        claimedFrom: null,
+        claimedBy: null,
+      });
+      if (after?.state !== back)
+        fail(
+          `ledger write for ${row.id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
+        );
+      const rec = readRecord(row.id);
+      if (rec) writeRecord(row.id, { ...rec.front, state: back }, rec.body);
+    }
+    console.log(`${batch}: released ${held.length} row(s) — ${held.map((r) => r.id).join(", ")}`);
+  });
 };
 
 // A record's own analysis routinely concludes a different tier than the
@@ -1894,38 +2056,43 @@ cmds.tier = (args) => {
 
   const batch = findShardOf(id);
   if (!batch) fail(`${id} is in no ledger shard — file it with a --batch first`);
-  const row = readShard(batch).rows.find((r) => r.id === id);
-  // A ruling that CONFIRMS the standing tier is a real conclusion — B211's
-  // analysis ruled T1 over a defaulted T1 and had to be filed as a plain note
-  // because this refused a no-op. Record it; just don't pretend it moved.
-  if (row.tier === tier) {
+  // The standing-tier comparison and the write are one critical section — an
+  // early `return` below leaves the callback, and the lock, cleanly.
+  withShardLock(batch, () => {
+    const row = readShard(batch).rows.find((r) => r.id === id);
+    if (!row) fail(`${id} vanished from ${batch}.jsonl while this re-tier waited for the lock`);
+    // A ruling that CONFIRMS the standing tier is a real conclusion — B211's
+    // analysis ruled T1 over a defaulted T1 and had to be filed as a plain note
+    // because this refused a no-op. Record it; just don't pretend it moved.
+    if (row.tier === tier) {
+      const rec = readRecord(id);
+      if (rec)
+        writeRecord(
+          id,
+          rec.front,
+          appendEvent(rec.body, `tier-confirmed-${tier}`, "tier confirmed", `${tier} — ${why}`),
+        );
+      console.log(
+        `${id}: already tier ${tier} — recorded the ruling that confirms it (ledger unchanged).`,
+      );
+      return;
+    }
+
+    const { row: after } = upsertLedgerRow(batch, { ...row, tier });
+    if (after?.tier !== tier)
+      fail(
+        `ledger write for ${id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
+      );
+
     const rec = readRecord(id);
     if (rec)
       writeRecord(
         id,
-        rec.front,
-        appendEvent(rec.body, `tier-confirmed-${tier}`, "tier confirmed", `${tier} — ${why}`),
+        { ...rec.front, tier },
+        appendEvent(rec.body, `tier-${tier}`, "re-tiered", `${row.tier} → ${tier} — ${why}`),
       );
-    console.log(
-      `${id}: already tier ${tier} — recorded the ruling that confirms it (ledger unchanged).`,
-    );
-    return;
-  }
-
-  const { row: after } = upsertLedgerRow(batch, { ...row, tier });
-  if (after?.tier !== tier)
-    fail(
-      `ledger write for ${id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
-    );
-
-  const rec = readRecord(id);
-  if (rec)
-    writeRecord(
-      id,
-      { ...rec.front, tier },
-      appendEvent(rec.body, `tier-${tier}`, "re-tiered", `${row.tier} → ${tier} — ${why}`),
-    );
-  console.log(`${id}: ${batch} row updated → tier ${tier} (was ${row.tier})`);
+    console.log(`${id}: ${batch} row updated → tier ${tier} (was ${row.tier})`);
+  });
 };
 
 cmds.status = (args) => {
@@ -3422,6 +3589,127 @@ cmds["self-test"] = () => {
     }
   }
 
+  // ── the shard lock ──────────────────────────────────────────────────────
+  // THE regression this exists for: two sub-agents proving DIFFERENT rows of
+  // one F##.jsonl at the same time. Both read the shard, both write their own
+  // copy back, and the second erases the first — a proven, evidence-backed row
+  // silently reverted to `queued` with both gates still green, because every
+  // write path asserts its OWN row landed and none looks at the rest of the file.
+  //
+  // Driven through the REAL CLI in two REAL child processes (an in-process
+  // simulation would share this process's re-entrant hold and prove nothing),
+  // overlapped deterministically by BUGS_TEST_STALL_MS rather than by luck.
+  // `Promise.all` lives in a small orchestrator script because this self-test
+  // is synchronous.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      for (const [title, loc] of [
+        ["concurrent writer A", "apps/api/src/conc-a.ts"],
+        ["concurrent writer B", "apps/api/src/conc-b.ts"],
+      ])
+        cmds.file([
+          title,
+          "--location",
+          loc,
+          "--severity",
+          "low",
+          "--batch",
+          "F01",
+          "--tier",
+          "T1",
+        ]);
+      check(
+        "lock fixture: two queued rows share one shard",
+        readShard("F01").rows.map((r) => [r.id, r.state]),
+        [
+          ["B1", "queued"],
+          ["B2", "queued"],
+        ],
+      );
+
+      const orchestrator = join(tmp, "concurrent-prove.mjs");
+      writeFileSync(
+        orchestrator,
+        [
+          'import { spawn } from "node:child_process";',
+          "const [script, root, stall] = process.argv.slice(2);",
+          "const run = (args) =>",
+          "  new Promise((res) => {",
+          "    const p = spawn(process.execPath, [script, ...args], {",
+          "      env: { ...process.env, BUGS_ROOT: root, BUGS_TEST_STALL_MS: stall },",
+          '      stdio: ["ignore", "pipe", "pipe"],',
+          "    });",
+          '    let out = "";',
+          '    p.stdout.on("data", (d) => (out += d));',
+          '    p.stderr.on("data", (d) => (out += d));',
+          '    p.on("close", (code) => res({ code, out }));',
+          "  });",
+          "const results = await Promise.all([",
+          '  run(["prove", "B1", "--pr", "701", "--proof", "REG-B1 jest: writer A asserts its own row"]),',
+          '  run(["prove", "B2", "--pr", "702", "--proof", "REG-B2 jest: writer B asserts its own row"]),',
+          "]);",
+          "console.log(JSON.stringify(results));",
+        ].join("\n"),
+      );
+      const argv = [orchestrator, SCRIPT_PATH, tmp, "300"].map((a) => JSON.stringify(a)).join(" ");
+      let raced = { code: 0, out: "" };
+      try {
+        raced = {
+          code: 0,
+          out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+        };
+      } catch (e) {
+        raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+      }
+      check("concurrent prove: the orchestrator exited 0", raced.code, 0);
+      const children = JSON.parse(raced.out.trim().split("\n").pop());
+      check(
+        "concurrent prove: BOTH child processes exited 0",
+        children.map((c) => c.code),
+        [0, 0],
+      );
+      // The assertion the lock exists for. Without it the later writer's
+      // `{ ...row }` spread of its stale read puts the other row back to queued.
+      const after = new Map(readShard("F01").rows.map((r) => [r.id, r]));
+      check(
+        "concurrent prove: BOTH rows landed — neither write erased the other",
+        [after.get("B1")?.state, after.get("B1")?.pr, after.get("B2")?.state, after.get("B2")?.pr],
+        ["proven", 701, "proven", 702],
+      );
+      check(
+        "concurrent prove: the lock directory is released, not left behind",
+        existsSync(`${shardPath("F01")}.lock`),
+        false,
+      );
+
+      // A writer killed mid-write leaves the lockdir behind. It must expire,
+      // loudly, instead of wedging the campaign until someone reads this file.
+      const stuck = `${shardPath("F01")}.lock`;
+      mkdirSync(stuck);
+      const old = new Date(Date.now() - LOCK_STALE_MS * 4);
+      utimesSync(stuck, old, old);
+      const broke = runCli(["tier", "B1", "T2", "--why", "stale-lock fixture"], tmp);
+      check("stale lock: the waiting writer still succeeds", broke.code, 0);
+      check(
+        "stale lock: breaking one is reported, never silent",
+        /breaking a stale lock on F01\.jsonl/.test(broke.out),
+        true,
+      );
+      check(
+        "stale lock: the write it was blocking actually landed",
+        readShard("F01").rows.find((r) => r.id === "B1")?.tier,
+        "T2",
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
   // A filed bug's symptom must survive file → index round trip. Run this
   // against the REAL cmds.file/cmds.index against a throwaway BUGS_ROOT, never
   // a re-implementation — `index` used to rebuild the catalogue from a fixed
@@ -3597,73 +3885,80 @@ cmds.move = (args) => {
   if (!from) fail(`${id} is in no ledger shard — nothing to move`);
   if (from === to) fail(`${id} is already in ${to}`);
 
-  const row = readShard(from).rows.find((r) => r.id === id);
-  if (row.state !== "queued")
-    fail(
-      `${id} is ${row.state}, not queued — moving a bug that already carries a proof would orphan it from its batch's evidence`,
+  // BOTH shards are held for the whole transfer — the duplicate check, the
+  // additive write to `to` and the drop from `from` are one atomic unit, or a
+  // concurrent writer can observe (or create) the transient duplicate. Taken in
+  // sorted order by `withShardLocks`, so two opposite moves cannot deadlock.
+  withShardLocks([from, to], () => {
+    const row = readShard(from).rows.find((r) => r.id === id);
+    if (!row) fail(`${id} vanished from ${from}.jsonl while this move waited for the lock`);
+    if (row.state !== "queued")
+      fail(
+        `${id} is ${row.state}, not queued — moving a bug that already carries a proof would orphan it from its batch's evidence`,
+      );
+
+    // Every check runs BEFORE any write. `findShardOf` alone only reports the
+    // FIRST shard holding an id (readdir order), so a genuine duplicate landed
+    // in some OTHER shard hides behind `from` whenever `from` happens to sort
+    // first — this must still catch it, or a refused move turns one duplicate
+    // into two instead of leaving the authoritative row untouched.
+    const holders = readdirSync(STATUS_DIR())
+      .filter((n) => n.endsWith(".jsonl"))
+      .map((n) => n.replace(/\.jsonl$/, ""))
+      .filter((b) => readShard(b).rows.some((r) => r.id === id));
+    if (holders.length !== 1 || holders[0] !== from)
+      fail(
+        `refusing to move ${id}: it has a row in ${holders.join(", ")}, not only ${from} — this is ` +
+          `the duplicate campaign-check rejects; repair the shards by hand before moving`,
+      );
+
+    // Write the TARGET first, additive. A refusal past this point (a duplicate
+    // that slipped in between the check above and here) must never have
+    // touched the source — `upsertLedgerRow`'s cross-shard guard would
+    // otherwise reject this legitimate in-flight duplicate (the row still
+    // lives in `from` until the drop below), so it is told explicitly that
+    // `id` is allowed to exist in `from` for the length of this one call.
+    const { row: landed } = upsertLedgerRow(to, { ...row, batch: to }, { allowExistingIn: from });
+    if (landed?.batch !== to)
+      fail(
+        `ledger write for ${id} did not land in ${to} as intended — re-read row is ${JSON.stringify(landed)}`,
+      );
+
+    // Only NOW drop it from the source — the target write already landed and
+    // was verified, so anything going wrong past this point leaves a loud,
+    // campaign-check-visible duplicate rather than a vanished authoritative row.
+    const old = readShard(from);
+    const kept = old.rows.filter((r) => r.id !== id);
+    writeFileSync(
+      shardPath(from),
+      kept.map((r) => JSON.stringify(r)).join(old.eol) + (kept.length ? old.eol : ""),
     );
+    if (readShard(from).rows.some((r) => r.id === id))
+      fail(`${id} is still present in ${shardPath(from)} after the drop — inspect it by hand`);
 
-  // Every check runs BEFORE any write. `findShardOf` alone only reports the
-  // FIRST shard holding an id (readdir order), so a genuine duplicate landed
-  // in some OTHER shard hides behind `from` whenever `from` happens to sort
-  // first — this must still catch it, or a refused move turns one duplicate
-  // into two instead of leaving the authoritative row untouched.
-  const holders = readdirSync(STATUS_DIR())
-    .filter((n) => n.endsWith(".jsonl"))
-    .map((n) => n.replace(/\.jsonl$/, ""))
-    .filter((b) => readShard(b).rows.some((r) => r.id === id));
-  if (holders.length !== 1 || holders[0] !== from)
-    fail(
-      `refusing to move ${id}: it has a row in ${holders.join(", ")}, not only ${from} — this is ` +
-        `the duplicate campaign-check rejects; repair the shards by hand before moving`,
+    const rows = readCatalogue();
+    const cat = rows.find((r) => r.id === id);
+    if (cat) {
+      cat.batch = to;
+      writeCatalogue(rows);
+    }
+
+    const rec = readRecord(id);
+    if (rec) {
+      const body = appendEvent(
+        rec.body,
+        `move-${from}-${to}`,
+        "re-batched",
+        `${from} → ${to}${why ? ` — ${why}` : ""}`,
+      );
+      writeRecord(id, { ...rec.front, batch: to }, body);
+    }
+
+    console.log(`${id}: ${from} → ${to}${why ? ` (${why})` : ""}`);
+    console.log(
+      `  ${from} now holds ${kept.length} row(s); verify with: node scripts/campaign-check.mjs`,
     );
-
-  // Write the TARGET first, additive. A refusal past this point (a duplicate
-  // that slipped in between the check above and here) must never have
-  // touched the source — `upsertLedgerRow`'s cross-shard guard would
-  // otherwise reject this legitimate in-flight duplicate (the row still
-  // lives in `from` until the drop below), so it is told explicitly that
-  // `id` is allowed to exist in `from` for the length of this one call.
-  const { row: landed } = upsertLedgerRow(to, { ...row, batch: to }, { allowExistingIn: from });
-  if (landed?.batch !== to)
-    fail(
-      `ledger write for ${id} did not land in ${to} as intended — re-read row is ${JSON.stringify(landed)}`,
-    );
-
-  // Only NOW drop it from the source — the target write already landed and
-  // was verified, so anything going wrong past this point leaves a loud,
-  // campaign-check-visible duplicate rather than a vanished authoritative row.
-  const old = readShard(from);
-  const kept = old.rows.filter((r) => r.id !== id);
-  writeFileSync(
-    shardPath(from),
-    kept.map((r) => JSON.stringify(r)).join(old.eol) + (kept.length ? old.eol : ""),
-  );
-  if (readShard(from).rows.some((r) => r.id === id))
-    fail(`${id} is still present in ${shardPath(from)} after the drop — inspect it by hand`);
-
-  const rows = readCatalogue();
-  const cat = rows.find((r) => r.id === id);
-  if (cat) {
-    cat.batch = to;
-    writeCatalogue(rows);
-  }
-
-  const rec = readRecord(id);
-  if (rec) {
-    const body = appendEvent(
-      rec.body,
-      `move-${from}-${to}`,
-      "re-batched",
-      `${from} → ${to}${why ? ` — ${why}` : ""}`,
-    );
-    writeRecord(id, { ...rec.front, batch: to }, body);
-  }
-
-  console.log(`${id}: ${from} → ${to}${why ? ` (${why})` : ""}`);
-  console.log(
-    `  ${from} now holds ${kept.length} row(s); verify with: node scripts/campaign-check.mjs`,
-  );
+  });
 };
 
 // ── enrich: pull the register's DETAIL into every record ──────────────────
