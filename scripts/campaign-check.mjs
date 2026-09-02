@@ -43,8 +43,11 @@
 //                               claim is about production, not about this run.
 //                               It is workable again, so `next`/`waves` re-offer
 //                               its batch.
-//   deferred                 — struck from this batch, re-pointed to a follow-on.
-//                               Removed from the merged set; never checked here.
+//
+// `deferred` is NOT a valid state (ruled out 2026-09-02): it is
+// unrepresentable under the one-row-per-id ledger — a deferred predecessor
+// plus a fresh queued row for the same work is exactly the duplicate this
+// gate rejects. `bugs.mjs move` is the re-pointing operation instead.
 //
 // Token discipline: a bare `B###` collides with four pre-existing spec titles
 // (`B10`/`B11`/`B12`/`B13`, a superseded numbering round — see the campaign plan).
@@ -117,7 +120,7 @@ const CLAIM_STATES = new Set([
 // reason `already-fixed` is: it asserts something about production that no test
 // in THIS run can show, so the assertion has to carry its own citation.
 const EVIDENCE_ONLY_STATES = new Set(["already-fixed", "refuted", "regressed"]);
-const VALID_STATES = new Set([...CLAIM_STATES, "queued", "in-flight", "deferred"]);
+const VALID_STATES = new Set([...CLAIM_STATES, "queued", "in-flight"]);
 const VALID_TIERS = new Set(["T1", "T2", "T3"]);
 
 const REG_TOKEN_RE = /REG-B(\d{2,3})(?![0-9])/g;
@@ -437,7 +440,7 @@ if (t2NeedsPostDeploy) {
 
 for (const row of rows) {
   const { id, tier, state, evidence } = row;
-  if (!CLAIM_STATES.has(state)) continue; // queued/in-flight/deferred: nothing to verify yet
+  if (!CLAIM_STATES.has(state)) continue; // queued/in-flight: nothing to verify yet
 
   if (EVIDENCE_ONLY_STATES.has(state)) {
     if (!evidence || !String(evidence).trim()) {

@@ -2946,6 +2946,20 @@ cmds["self-test"] = () => {
         failingHit.code !== 0,
         true,
       );
+
+      // `deferred` is unrepresentable under one-row-per-id and was ruled out
+      // (2026-09-02) — campaign-check must reject it as an invalid state, not
+      // silently pass it through as "nothing to verify yet".
+      writeFileSync(
+        join(statusTmp, "F01.jsonl"),
+        JSON.stringify({ ...row, state: "deferred" }) + "\n",
+      );
+      const deferredRow = runCampaignCheck();
+      check(
+        "campaign-check: rejects a row carrying the removed 'deferred' state",
+        deferredRow.code !== 0,
+        true,
+      );
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
