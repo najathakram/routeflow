@@ -408,7 +408,7 @@ cmds.list = (args) => {
   if (args.includes("--open"))
     rows = rows.filter((r) => (state.get(r.id)?.state ?? "queued") === "queued");
   if (args.includes("--sensitive")) rows = rows.filter((r) => r.sensitive ?? classify(r).sensitive);
-  const batch = flag(args, "batch");
+  const batch = normBatch(flag(args, "batch"), { optional: true });
   if (batch) rows = rows.filter((r) => r.batch === batch);
   rows.sort((a, b) => (SEVERITY_RANK[a.severity] ?? 4) - (SEVERITY_RANK[b.severity] ?? 4));
   for (const r of rows) {
