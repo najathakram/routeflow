@@ -417,6 +417,20 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ⚠️ QUARANTINED 2026-09-02 — both F14 project entries are commented out, NOT deleted.
+    // Post-deploy run 33612887226 (master 24421170) went red: all three spec-32 tests failed AND
+    // they took `AP-06` (07-auth-password.spec.ts:141, "re-auth sheet unlock resumes the session")
+    // down with them — a test that was green on the previous deploy. Cause: neither project
+    // declares `dependencies`, so Playwright puts both in phase 1 alongside `auth-password`, and
+    // all three share the SAME `admin` operator. Spec 32 revokes that user's sessions while
+    // auth-password is mid-flow, so its refresh 401s and the re-auth dialog never closes.
+    // Scoping spec 32's CLEANUP (done in #598) was necessary but not sufficient — tests 1 and 3
+    // revoke during the phase too.
+    // The fix is a DEDICATED e2e user for these specs, not an ordering tweak: putting them in
+    // phase 2 only moves the collision onto the ~20 `storageState: operator.json` projects.
+    // The specs and their seed support stay on master so that work is a seed change plus
+    // re-enabling these two blocks. B138/B155 remain `proven-pending-deploy` — they were never
+    // discharged, so nothing proven is lost by this quarantine (L-041: a skip is not a discharge).
     // ── Impersonation sign-out (F14, spec 31) ──────────────────────────────────
     // REG-B138: while impersonating, the avatar menu offers "Exit impersonation"
     // and never "Sign out"; exiting POSTs no /auth/logout and the impersonated
@@ -426,11 +440,11 @@ export default defineConfig({
     // PLAYWRIGHT_SA_* are set and e2e-seed.js has seeded `e2e_admin` on the target.
     // Targets e2e-routeflow BY SLUG, never `tenants?limit=1`.
     // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
-    {
-      name: "impersonation-signout",
-      testMatch: /31-impersonation-signout\.spec\.ts/,
-      use: { ...devices["Desktop Chrome"] },
-    },
+    // {
+    // name: "impersonation-signout",
+    // testMatch: /31-impersonation-signout\.spec\.ts/,
+    // use: { ...devices["Desktop Chrome"] },
+    // },
 
     // ── Active Sessions identity (F14, spec 32) ────────────────────────────────
     // REG-B155: a session row captured BEFORE a refresh-token rotation is still
@@ -440,10 +454,10 @@ export default defineConfig({
     // on purpose — the spec revokes its OWN fresh login and must never consume the
     // shared operator.json refresh token.
     // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
-    {
-      name: "active-sessions",
-      testMatch: /32-active-sessions\.spec\.ts/,
-      use: { ...devices["Desktop Chrome"] },
-    },
+    // {
+    // name: "active-sessions",
+    // testMatch: /32-active-sessions\.spec\.ts/,
+    // use: { ...devices["Desktop Chrome"] },
+    // },
   ],
 });
