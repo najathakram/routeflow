@@ -289,124 +289,141 @@ cmds.file = (args) => {
   if (!(severity in SEVERITY_RANK))
     fail(`--severity must be one of ${Object.keys(SEVERITY_RANK).join("|")}`);
 
-  const rows = readCatalogue();
-  // Never infer a free id from a gap — reserved is not abandoned. Always
-  // max+1, over the UNION of the catalogue's ids AND every ledger shard's:
-  // two sessions filing against the same catalogue snapshot used to allocate
-  // the SAME id (only the catalogue side of the union was considered), and
-  // whichever session's catalogue write landed second clobbered the first's
-  // row outright.
-  const shardMaxId = Math.max(
-    0,
-    ...[...readState().keys()].map((id) => Number(String(id).slice(1)) || 0),
-  );
-  const maxId = Math.max(
-    shardMaxId,
-    rows.reduce((m, r) => Math.max(m, Number(r.id.slice(1))), 0),
-  );
-  const bug = {
-    id: `B${maxId + 1}`,
-    title,
-    location,
-    severity,
-    symptom: flag(args, "symptom"),
-    register: "open",
-    batch: normBatch(flag(args, "batch"), { optional: true }),
-    source: "filed",
-    filedAt: new Date().toISOString(),
-  };
-  const c = classify(bug);
-  bug.sensitive = c.sensitive;
-  bug.sensitiveFor = c.reasons;
-
-  // A bug with no ledger row is invisible to campaign-check and to `next`, so
-  // filing must create it. This write can fail() and exit — it now runs
-  // BEFORE the catalogue is touched at all, so a refused write never leaves a
-  // catalogue row describing a bug whose ledger row does not exist, or (the
-  // concurrent case: two sessions filing at once) belongs to a DIFFERENT
-  // session's title/batch because that session's catalogue write landed
-  // first and got silently clobbered.
-  let tier = null;
-  let ledgerWhat = null;
-  if (bug.batch) {
-    tier = (flag(args, "tier") ?? "").toUpperCase();
-    if (!/^T[123]$/.test(tier))
-      fail(
-        "--tier T1|T2|T3 is required with --batch — a ledger tier is a ruling, not a default. " +
-          "File without --batch (it lands in `triage`) and set the tier after analysis with `tier`.",
-      );
-    const { what, row } = upsertLedgerRow(bug.batch, {
-      id: bug.id,
-      batch: bug.batch,
-      tier,
-      state: "queued",
-      pr: null,
-      proof: null,
-      evidence: null,
-    });
-    if (row?.batch !== bug.batch || row?.tier !== tier || row?.state !== "queued")
-      fail(
-        `ledger write for ${bug.id} did not land as intended — re-read row is ${JSON.stringify(row)}`,
-      );
-    ledgerWhat = what;
-  }
-
-  // Only NOW touch the catalogue. Anything below that still throws (expand()
-  // deriving a record, the --files rewrite) restores the pre-write catalogue
-  // rather than leave a dangling row with no record behind it.
-  const before = readCatalogue();
-  rows.push(bug);
-  writeCatalogue(rows);
-  try {
-    console.log(`filed ${bug.id} — ${title}`);
-    console.log(`  location : ${location}`);
-    console.log(`  severity : ${severity}`);
-    if (c.sensitive)
-      console.log(
-        `  carve-out: touches ${c.reasons.join(", ")} — an agent may PLAN this but must not fix it unattended.`,
-      );
-    else console.log("  agent-safe: yes");
-    if (!bug.batch)
-      console.log("  no batch yet — run @tech-lead to batch it, or pass --batch F##.");
-
-    if (bug.batch)
-      console.log(`  ledger   : ${bug.batch}.jsonl row ${ledgerWhat} (tier ${tier}, queued)`);
-    else {
-      console.log("  ledger   : none — pass --batch F## so campaign-check and `next` can see it.");
-      console.log(
-        "  triage   : an unbatched bug is invisible to next/status/deps — run `triage` to list every bug in this state.",
-      );
-    }
-
-    // Filing a bug and leaving it without a record is exactly the drift this
-    // registry exists to prevent, so create it in the same breath. expand is
-    // idempotent and never touches an existing narrative.
-    //
-    // MUST run AFTER the ledger write above: expand derives the record's
-    // front matter (and its body header line) from frontFor(bug, st), and
-    // `st` is this ledger row. Calling expand first used to bake in
-    // "uncampaigned"/no-tier permanently into the body until the next
-    // unrelated sync happened to touch this bug.
-    cmds.expand();
-    console.log(`  record   : ${recordPath(bug.id)}`);
-
-    // A filed bug's front matter otherwise never carries `files` (only
-    // `enrich` writes it, and only for register imports) — with no files,
-    // `deps` sees zero edges for it and the dependency graph can only ever
-    // get less complete as bugs get filed rather than imported.
-    if (filesFlag) {
-      const rec = readRecord(bug.id);
-      if (rec) {
-        writeRecord(bug.id, { ...rec.front, files: filesFlag }, rec.body);
-        console.log(`  files    : ${filesFlag}`);
-      }
-    }
-  } catch (e) {
-    writeCatalogue(before);
-    fail(
-      `file: ${bug.id} failed after the catalogue write (${e.message}) — catalogue restored to its pre-write state`,
+  // The id allocation below and the catalogue write at the bottom are ONE
+  // critical section. Split, two sessions filing at the same moment read the
+  // same snapshot, allocate the SAME id, and the second one's ledger write
+  // takes the update branch over the first one's row — both exit 0 printing
+  // the same `filed B##`, and one entire bug (catalogue row, ledger row and
+  // record) is gone with nothing to detect it.
+  withCatalogueLock(() => {
+    const rows = readCatalogue();
+    // Never infer a free id from a gap — reserved is not abandoned. Always
+    // max+1, over the UNION of the catalogue's ids AND every ledger shard's:
+    // two sessions filing against the same catalogue snapshot used to allocate
+    // the SAME id (only the catalogue side of the union was considered), and
+    // whichever session's catalogue write landed second clobbered the first's
+    // row outright.
+    const shardMaxId = Math.max(
+      0,
+      ...[...readState().keys()].map((id) => Number(String(id).slice(1)) || 0),
     );
-  }
+    const maxId = Math.max(
+      shardMaxId,
+      rows.reduce((m, r) => Math.max(m, Number(r.id.slice(1))), 0),
+    );
+    const bug = {
+      id: `B${maxId + 1}`,
+      title,
+      location,
+      severity,
+      symptom: flag(args, "symptom"),
+      register: "open",
+      batch: normBatch(flag(args, "batch"), { optional: true }),
+      source: "filed",
+      filedAt: new Date().toISOString(),
+    };
+    const c = classify(bug);
+    bug.sensitive = c.sensitive;
+    bug.sensitiveFor = c.reasons;
+
+    // A bug with no ledger row is invisible to campaign-check and to `next`, so
+    // filing must create it. This write can fail() and exit — it now runs
+    // BEFORE the catalogue is touched at all, so a refused write never leaves a
+    // catalogue row describing a bug whose ledger row does not exist, or (the
+    // concurrent case: two sessions filing at once) belongs to a DIFFERENT
+    // session's title/batch because that session's catalogue write landed
+    // first and got silently clobbered.
+    let tier = null;
+    let ledgerWhat = null;
+    if (bug.batch) {
+      tier = (flag(args, "tier") ?? "").toUpperCase();
+      if (!/^T[123]$/.test(tier))
+        fail(
+          "--tier T1|T2|T3 is required with --batch — a ledger tier is a ruling, not a default. " +
+            "File without --batch (it lands in `triage`) and set the tier after analysis with `tier`.",
+        );
+      // mustBeNew: this id was allocated moments ago as a FRESH one. If a row
+      // for it already exists, another writer took it — refuse loudly instead of
+      // quietly merging this bug into that one.
+      const { what, row } = upsertLedgerRow(
+        bug.batch,
+        {
+          id: bug.id,
+          batch: bug.batch,
+          tier,
+          state: "queued",
+          pr: null,
+          proof: null,
+          evidence: null,
+        },
+        { mustBeNew: true },
+      );
+      if (row?.batch !== bug.batch || row?.tier !== tier || row?.state !== "queued")
+        fail(
+          `ledger write for ${bug.id} did not land as intended — re-read row is ${JSON.stringify(row)}`,
+        );
+      ledgerWhat = what;
+    }
+
+    // Only NOW touch the catalogue. Anything below that still throws (expand()
+    // deriving a record, the --files rewrite) restores the pre-write catalogue
+    // rather than leave a dangling row with no record behind it.
+    const before = readCatalogue();
+    rows.push(bug);
+    writeCatalogue(rows);
+    try {
+      console.log(`filed ${bug.id} — ${title}`);
+      console.log(`  location : ${location}`);
+      console.log(`  severity : ${severity}`);
+      if (c.sensitive)
+        console.log(
+          `  carve-out: touches ${c.reasons.join(", ")} — an agent may PLAN this but must not fix it unattended.`,
+        );
+      else console.log("  agent-safe: yes");
+      if (!bug.batch)
+        console.log("  no batch yet — run @tech-lead to batch it, or pass --batch F##.");
+
+      if (bug.batch)
+        console.log(`  ledger   : ${bug.batch}.jsonl row ${ledgerWhat} (tier ${tier}, queued)`);
+      else {
+        console.log(
+          "  ledger   : none — pass --batch F## so campaign-check and `next` can see it.",
+        );
+        console.log(
+          "  triage   : an unbatched bug is invisible to next/status/deps — run `triage` to list every bug in this state.",
+        );
+      }
+
+      // Filing a bug and leaving it without a record is exactly the drift this
+      // registry exists to prevent, so create it in the same breath. expand is
+      // idempotent and never touches an existing narrative.
+      //
+      // MUST run AFTER the ledger write above: expand derives the record's
+      // front matter (and its body header line) from frontFor(bug, st), and
+      // `st` is this ledger row. Calling expand first used to bake in
+      // "uncampaigned"/no-tier permanently into the body until the next
+      // unrelated sync happened to touch this bug.
+      cmds.expand();
+      console.log(`  record   : ${recordPath(bug.id)}`);
+
+      // A filed bug's front matter otherwise never carries `files` (only
+      // `enrich` writes it, and only for register imports) — with no files,
+      // `deps` sees zero edges for it and the dependency graph can only ever
+      // get less complete as bugs get filed rather than imported.
+      if (filesFlag) {
+        const rec = readRecord(bug.id);
+        if (rec) {
+          writeRecord(bug.id, { ...rec.front, files: filesFlag }, rec.body);
+          console.log(`  files    : ${filesFlag}`);
+        }
+      }
+    } catch (e) {
+      writeCatalogue(before);
+      fail(
+        `file: ${bug.id} failed after the catalogue write (${e.message}) — catalogue restored to its pre-write state`,
+      );
+    }
+  });
 };
 
 // ── selection: what is workable, what blocks it, and in what order ────────
@@ -1539,7 +1556,7 @@ function installLockExitHook() {
   process.on("exit", () => {
     for (const [p, token] of [...heldLocks]) {
       try {
-        releaseShardLock(p, token);
+        releaseLock(p, token);
       } catch {
         /* nothing useful to do while exiting */
       }
@@ -1563,9 +1580,13 @@ function installLockExitHook() {
   }
 }
 
-function acquireShardLock(batch) {
-  const p = lockPath(batch);
-  mkdirSync(STATUS_DIR(), { recursive: true });
+// The one lock primitive. `p` is the lock DIRECTORY, `name` the thing it
+// guards as a human says it ("F01.jsonl", "bugs.jsonl"), `guarded` the file
+// itself for the give-up message. The shard lock and the catalogue lock are the
+// SAME mechanism deliberately: a second, hand-rolled copy for the catalogue is
+// exactly how the two of them would drift apart.
+function acquireLock(p, name, guarded) {
+  mkdirSync(dirname(p), { recursive: true });
   const deadline = Date.now() + LOCK_SPIN_MS;
   for (;;) {
     try {
@@ -1599,8 +1620,8 @@ function acquireShardLock(batch) {
         `so its holder cannot be verified either way`;
     if (breakWhy) {
       console.error(
-        `bugs: breaking the lock on ${batch}.jsonl — ${breakWhy}; ` +
-          `re-read the shard if anything looks wrong`,
+        `bugs: breaking the lock on ${name} — ${breakWhy}; ` +
+          `re-read the file if anything looks wrong`,
       );
       try {
         rmSync(p, { recursive: true, force: true });
@@ -1610,7 +1631,7 @@ function acquireShardLock(batch) {
     }
     if (Date.now() >= deadline)
       fail(
-        `could not lock ${shardPath(batch)} within ${LOCK_SPIN_MS}ms — ${batch}.jsonl is held by ` +
+        `could not lock ${guarded} within ${LOCK_SPIN_MS}ms — ${name} is held by ` +
           `${owner?.pid ? `pid ${owner.pid}, which still answers` : "another bugs.mjs process"}. ` +
           `Retry; if nothing is running, remove ${p}`,
       );
@@ -1622,7 +1643,7 @@ function acquireShardLock(batch) {
 // if the lockdir now names a DIFFERENT owner, our lock was broken while we were
 // inside the critical section and the directory belongs to our successor —
 // deleting it would admit a third writer, so leave it and say so out loud.
-function releaseShardLock(p, token = heldLocks.get(p)) {
+function releaseLock(p, token = heldLocks.get(p)) {
   heldLocks.delete(p);
   if (!existsSync(p)) return; // already gone — nothing to undo
   const owner = readLockOwner(p);
@@ -1639,16 +1660,36 @@ function releaseShardLock(p, token = heldLocks.get(p)) {
   }
 }
 
-// Runs `fn` with an exclusive hold on `batch`'s shard. Re-entrant: if this
-// process already holds it, `fn` runs directly and the outer hold owns release.
-function withShardLock(batch, fn) {
-  if (heldLocks.has(lockPath(batch))) return fn();
-  const p = acquireShardLock(batch);
+// Re-entrant: if this process already holds `p`, `fn` runs directly and the
+// OUTER hold owns the release.
+function withLock(p, name, guarded, fn) {
+  if (heldLocks.has(p)) return fn();
+  acquireLock(p, name, guarded);
   try {
     return fn();
   } finally {
-    releaseShardLock(p);
+    releaseLock(p);
   }
+}
+
+// Runs `fn` with an exclusive hold on `batch`'s shard.
+function withShardLock(batch, fn) {
+  return withLock(lockPath(batch), `${batch}.jsonl`, shardPath(batch), fn);
+}
+
+// The catalogue needs the same protection as a shard and did not have it: `file`
+// allocated an id from the catalogue ∪ the shards and wrote the catalogue with
+// no lock at all, so two simultaneous `file --batch F01` calls both allocated
+// B2, both exited 0 printing `filed B2`, and one whole bug — catalogue row,
+// ledger row and record — vanished with no warning and both gates green.
+// Held from the id allocation through the catalogue write, so allocation and
+// commit are ONE critical section rather than two racing reads.
+//
+// Lock ORDER, and it is one-way: `file` takes the catalogue lock and then a
+// shard lock inside it. Nothing takes them the other way round, so there is no
+// cycle to deadlock on — keep it that way.
+function withCatalogueLock(fn) {
+  return withLock(`${CATALOGUE()}.lock`, "bugs.jsonl", CATALOGUE(), fn);
 }
 
 // Sorted, so two processes taking the same pair in opposite orders cannot
@@ -1711,6 +1752,15 @@ function upsertLedgerRowLocked(batch, row, opts = {}) {
       : 0;
   if (stallMs > 0) sleepSync(stallMs);
   const i = rows.findIndex((r) => r.id === row.id);
+  // `mustBeNew` makes an id COLLISION unrepresentable rather than merely
+  // unlikely: `file` allocates a fresh id and must never silently take the
+  // update branch, which is how one session's freshly filed bug was overwritten
+  // by another session that had allocated the same id from the same snapshot.
+  if (i !== -1 && opts.mustBeNew)
+    fail(
+      `refusing to write ${batch}: ${row.id} already has a row in ${batch}.jsonl — this id was ` +
+        `taken by another process between this one's read and its write`,
+    );
   if (i === -1) {
     // Widen the duplicate guard to ALL shards, not just this one — the
     // same-shard check below cannot catch a row for this id already living in
@@ -4267,6 +4317,107 @@ cmds["self-test"] = () => {
       const gated = timeCli("B2", { BUGS_TEST_STALL_MS: "2500", BUGS_SELF_TEST: "1" });
       check("stall seam: a production run ignores BUGS_TEST_STALL_MS", ungated < 2000, true);
       check("stall seam: BUGS_SELF_TEST=1 still un-gates it for this suite", gated >= 2500, true);
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // ── the catalogue lock ──────────────────────────────────────────────────
+  // Two simultaneous `file --batch F01` calls used to read the same catalogue
+  // snapshot, allocate the SAME id, both exit 0 printing `filed B2`, and lose
+  // one bug entirely — catalogue row, ledger row and record — leaving a state
+  // so self-consistent that neither gate could see anything was missing.
+  // Driven through the REAL CLI in two REAL child processes, overlapped
+  // deterministically by the (self-test-gated) stall seam inside the ledger
+  // write, which sits exactly in the allocate→commit window.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      const orchestrator = join(tmp, "concurrent-file.mjs");
+      writeFileSync(
+        orchestrator,
+        [
+          'import { spawn } from "node:child_process";',
+          "const [script, root, stall] = process.argv.slice(2);",
+          "const run = (title) =>",
+          "  new Promise((res) => {",
+          "    const p = spawn(",
+          "      process.execPath,",
+          "      [",
+          "        script,",
+          '        "file",',
+          "        title,",
+          '        "--location",',
+          "        `apps/api/src/${title}.ts`,",
+          '        "--severity",',
+          '        "low",',
+          '        "--batch",',
+          '        "F01",',
+          '        "--tier",',
+          '        "T1",',
+          "      ],",
+          "      {",
+          "        env: {",
+          "          ...process.env,",
+          "          BUGS_ROOT: root,",
+          '          BUGS_SELF_TEST: "1",',
+          "          BUGS_TEST_STALL_MS: stall,",
+          "        },",
+          '        stdio: ["ignore", "pipe", "pipe"],',
+          "      },",
+          "    );",
+          '    let out = "";',
+          '    p.stdout.on("data", (d) => (out += d));',
+          '    p.stderr.on("data", (d) => (out += d));',
+          '    p.on("close", (code) => res({ code, out }));',
+          "  });",
+          'const results = await Promise.all([run("sessionone"), run("sessiontwo")]);',
+          "console.log(JSON.stringify(results));",
+        ].join("\n"),
+      );
+      const argv = [orchestrator, SCRIPT_PATH, tmp, "500"].map((a) => JSON.stringify(a)).join(" ");
+      let raced = { code: 0, out: "" };
+      try {
+        raced = {
+          code: 0,
+          out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+        };
+      } catch (e) {
+        raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+      }
+      check("concurrent file: the orchestrator exited 0", raced.code, 0);
+      const kids = JSON.parse(raced.out.trim().split("\n").pop());
+      check(
+        "concurrent file: BOTH child processes exited 0",
+        kids.map((c) => c.code),
+        [0, 0],
+      );
+      const filed = kids
+        .map((c) => /filed (B\d+)/.exec(c.out)?.[1] ?? null)
+        .sort((a, b) => String(a).localeCompare(String(b)));
+      check("concurrent file: the two sessions were given DISTINCT ids", filed, ["B1", "B2"]);
+      const cat = readCatalogue();
+      check(
+        "concurrent file: BOTH bugs are in the catalogue — neither was overwritten",
+        cat.map((r) => r.title).sort(),
+        ["sessionone", "sessiontwo"],
+      );
+      check(
+        "concurrent file: the ledger carries one row per filed id",
+        readShard("F01")
+          .rows.map((r) => r.id)
+          .sort(),
+        ["B1", "B2"],
+      );
+      check(
+        "concurrent file: BOTH records exist on disk",
+        cat.map((r) => existsSync(recordPath(r.id))),
+        [true, true],
+      );
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
       else process.env.BUGS_ROOT = prevRoot;
