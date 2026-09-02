@@ -1164,15 +1164,17 @@ cmds.sync = (args) => {
     }
 
     const front = frontFor(bug, st);
-    // Regenerate the header line every sync, not only on the events above —
-    // it is the ONLY place a ledger state change was ever reflected in the
-    // body text, and it used to be written once at record creation and never
-    // refreshed again.
-    body = refreshHeaderLine(body, front);
-
-    if (body !== before) writeRecord(bug.id, { ...rec.front, ...front }, body);
-    else if (st && st.state !== rec.front.state)
-      writeRecord(bug.id, { ...rec.front, ...front }, body);
+    const nextFront = { ...rec.front, ...front };
+    // Write whenever the DERIVED front matter differs from what the record
+    // currently carries — not only when the body text changed. `tier` (and
+    // any other ledger-only field with no representation in the header line
+    // or History) never touches `body` at all, so gating the write on
+    // `body !== before` alone meant a tier move (or any such field) reached
+    // the ledger but never the record — this file's own docstring claims the
+    // record cannot drift from the ledger, and that was false for exactly
+    // this case. writeRecord regenerates the header line itself regardless.
+    if (body !== before || JSON.stringify(nextFront) !== JSON.stringify(rec.front))
+      writeRecord(bug.id, nextFront, body);
   }
 
   // Persist the scan anchor LAST, only after every record above has actually
@@ -2525,6 +2527,41 @@ cmds["self-test"] = () => {
       const settled = readRecord("B950").body;
       cmds.sync(["--quiet"]);
       check("sync: a no-change re-run appends nothing", readRecord("B950").body, settled);
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // A ledger-only front-matter field with no representation in the header
+  // line or History (tier) must still reach the record — sync used to gate
+  // its write on `body !== before` alone, so a tier move landed in the
+  // ledger and never in the record at all.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file([
+        "tier drift fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T1",
+      ]);
+      check("tier drift fixture: starts at T1", readRecord("B1").front.tier, "T1");
+      upsertLedgerRow("F01", { ...readShard("F01").rows[0], tier: "T3" });
+      cmds.sync(["--quiet"]);
+      check(
+        "sync: a tier-only ledger change reaches the record (front-matter drift, not body drift)",
+        readRecord("B1").front.tier,
+        "T3",
+      );
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
       else process.env.BUGS_ROOT = prevRoot;
