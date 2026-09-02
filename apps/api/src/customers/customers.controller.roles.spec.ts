@@ -24,4 +24,18 @@ describe("CustomersController @Roles coverage", () => {
       });
     }
   });
+
+  // T7 (REG-B132): upsertCustomerPrice admitted UserRole.DRIVER while its DELETE
+  // sibling never did — the POST route let a driver null out a negotiated MSRP
+  // override. The DELETE decorator (untouched by this batch) is the reference.
+  it("REG-B132 upsertCustomerPrice declares the same roles as deleteCustomerPrice and admits no DRIVER", () => {
+    const proto = CustomersController.prototype as Record<string, any>;
+    expect(typeof proto.upsertCustomerPrice).toBe("function");
+    expect(typeof proto.deleteCustomerPrice).toBe("function");
+    const post = reflector.get<UserRole[]>(ROLES_KEY, proto.upsertCustomerPrice);
+    const del = reflector.get<UserRole[]>(ROLES_KEY, proto.deleteCustomerPrice);
+    expect(Array.isArray(post) && post.length > 0).toBe(true);
+    expect(post).not.toContain(UserRole.DRIVER);
+    expect([...post].sort()).toEqual([...del].sort());
+  });
 });

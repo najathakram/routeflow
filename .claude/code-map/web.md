@@ -193,9 +193,7 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   on the subscription so a soft impersonation swap updates the chip/branding — each applies only a
   NON-NULL read; a null read must never clear an established session), `(dashboard)/layout.tsx`
   `ImpersonationBanner` (live-subscribed + pathname
-  re-check, expired variant, always-available Exit — Exit clears cookie + impersonation then
-  **hard-loads** `window.location.href = "/admin/tenants"` so every provider remounts on the
-  operator session [a `router.push` restored nothing]; the banner renders
+  re-check, expired variant; the banner renders
   `acting as {imp.username ?? "Tenant Admin"}`), platform-admin tenants list + [id]
   Impersonate actions (**both** now do the same three things — `setImpersonation` with the
   `res.data.impersonatedUser?.username` third arg, `setTenantCookie(slug)`, then a hard
@@ -206,6 +204,23 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   `migrateLegacyOpToken`, which was never called and was deleted 2026-08-27]; cost: realtime
   sockets read OP_KEYS directly and stay silent during impersonation). Buyer impersonation flow is
   separate and untouched.
+  **`exitImpersonation()` is now THE single exit (B138, F14 2026-09-02)** — the banner's inline
+  `exit()` and any future caller's copy of the same three steps (clear cookie → clear
+  impersonation → hard-load `/admin/tenants`) collapse into this one exported function; the banner
+  and the header avatar menu (below) both call it directly. Deliberately never POSTs
+  `/auth/logout`: see `AuthController.logout`'s impersonation branch in api.md — an impersonation
+  token's `sub` is the tenant's real TENANT_ADMIN, so a server logout there would revoke that
+  admin's sessions on every device. **Header avatar-menu sign-out slot rule (B138):**
+  `(dashboard)/layout.tsx`'s `Header` component now mirrors the banner's own
+  `getImpersonation()`/`subscribeImpersonation` read (plus a pathname-keyed re-check) into local
+  state, and the dropdown's LAST item is conditional on it: impersonating (expired included) →
+  `t("menu.exitImpersonation"|"menu.returnToAdmin")` → `exitImpersonation()`; otherwise →
+  `t("menu.signOut")` → `logout()` as before. Before this fix the avatar menu ALWAYS offered
+  "Sign out", which called the normal staff `logout()` — under impersonation that is exactly the
+  admin-lockout bug B138 fixes server-side, so the client control had to be closed too or the
+  server fix alone would not have been reachable-safe. New i18n keys `menu.exitImpersonation`/
+  `menu.returnToAdmin` (en+es) in `lib/i18n/messages.ts`. No Playwright unit proof pre-merge (D1)
+  — proven post-deploy by e2e spec 31 below.
 - **`lib/payment-methods.ts`** (new 2026-08-21) — **THE single source for payment-method lists in web.**
   `SELECTABLE_PAYMENT_METHODS` (`CASH,CHECK,ZELLE,ACH,CREDIT_CARD,OTHER` — pickers) vs
   `ALL_PAYMENT_METHODS` (+`CREDIT_NOTE`,`ADVANCE` — display/filters ONLY; the server rejects
@@ -594,6 +609,18 @@ card's result badge, because `importPayments`now reports rows it skipped as re-u
   `depositCollectAtOrder`). Buyer portal `buyer/portal/[seller]/invoices/[id]/page.tsx`
   renders a deposit banner ("Deposit due <date>: $X · Remainder due <dueDate>") from payload
   fields via the file's narrow-cast idiom when `depositPercent != null`.
+- **`settings/page.tsx SessionsCard` — honest revoke + a stable row key (B155, F14 2026-09-02):**
+  each session `<li>` now carries `data-session-id={session.id}` (the api-side fix rotates the
+  refresh row IN PLACE — same `id` across rotations — so a row captured before a rotation is still
+  the SAME row after one; this attribute is what an e2e spec can key on to prove that). Single
+  revoke: on failure it now also re-fetches (`loadSessions()`) instead of just toasting an error,
+  so a row that actually died server-side (e.g. it had already rotated out) doesn't sit as a
+  phantom the user can't act on. Revoke-all: was `Promise.all(...).catch(() => null)` per call —
+  ANY failure was swallowed into the same "All sessions revoked" success toast, which could be a
+  lie. Now `Promise.allSettled`, counts rejections, and only claims success when `failed === 0`;
+  any failure toasts "Some sessions could not be revoked" and re-syncs the list rather than
+  clearing it client-side. No Playwright unit proof pre-merge (D1) — proven post-deploy by e2e
+  spec 32 below.
 - **Regulated management → Settings (Phase C, was B2 on /compliance):** section create/edit/toggle + a per-section **subcategory manager** now live in a **TENANT_ADMIN-gated "Regulated" tab** — `settings/page.tsx` (`<TabTrigger value="regulated">` + `<Tabs.Content>`, both gated on `useAuth().user?.role==="TENANT_ADMIN"`, deep-linkable `?tab=regulated`) rendering `settings/_components/RegulatedSettingsTab.tsx` (section list reusing `components/CategoryFormModal.tsx` [create/edit] + `components/AssignProductsModal.tsx` [bulk product assign] + `useToggleTrackedCategory`; inline `SubcategoryManager` per section = add/rename/toggle via `useCreate/Update/ToggleSubcategory`, 409-dup message surfaced). `CategoryFormModal`/`AssignProductsModal` unchanged (self-contained, `isOpen`/`onClose`/`category`). `compliance/page.tsx` no longer creates/edits (that moved here).
 - **Settings → Notifications (P6-6, no migration):** real event×channel matrix + templates replace the old dummy checkbox tab — `settings/page.tsx` `<Tabs.Content value="notifications">` (`max-w-4xl`) now mounts `settings/_components/NotificationsSettingsTab.tsx` (RegulatedSettingsTab extraction pattern; `useAuth`→`isAdmin` gate) instead of the deleted local `NotificationsTab`; the real device push-status card + "Send test" button (`useNotificationsStatus`/`useSendTestNotification`) is retained inside the new component, only the fake hardcoded checkbox list was removed. Sections: (1) matrix `Card` — rows=`NotificationEvent`, cols=`MessageChannel`, per cell a `MiniSwitch` (`role="switch"`, MerchFlagToggle idiom) → `useToggleRule` (optimistic), locked G12 cells (`INVOICE_SENT`×WA/SMS) show `Lock`+tooltip instead of a switch, WA cells also show a `waApprovalStatus` badge (display-only, P6-3 owns transitions), MSGS meter line in the header; (2) per-event template editor modal — body `Textarea`, live `extractTemplateVars` chip row re-parsed per keystroke, debounced (400ms) `usePreviewTemplate` panel, WA channel gets a "Meta template name" input + approval badge, `isActive` `MiniSwitch`, Save → `useUpdateTemplate`; (3) quiet-hours `Card` — `MiniSwitch` + two `<input type=time>` → `useUpdateMessagingSettings`. New hooks module `lib/api/messaging.ts` (mirrors `margin.ts`): types `MessageChannel`/`WaApprovalStatus`/`MessageTemplateInfo`/`MatrixCell`/`MatrixEvent`/`MessagingSettings`/`MsgsMeter`/`MessagingConfig`; `useMessagingConfig` (`["messaging-config"]`, `GET /messaging/config`, lazily seeds server-side on first read), `useToggleRule` (`PATCH /messaging/rules/:id`, optimistic `onMutate` cell flip + rollback + settled invalidate), `useUpdateTemplate`/`usePreviewTemplate`/`useUpdateMessagingSettings`, `extractTemplateVars(body)` (client-side mirror of the API's `{{var}}` regex parser, pure).
 - **Stripe Connect buyer payments, WP1 (2026-08-21):** `lib/api/stripe-connect.ts` (new) — `StripeConnectStatus` type mirroring `GET /settings/stripe-connect` (`configured/connected/stripeAccountId/chargesEnabled/detailsSubmitted/livemode/connectedAt`), `useStripeConnectStatus`, `useStartStripeConnect` (`POST .../link` → `{url}`, `onSuccess` navigates `window.location.href`), `useDisconnectStripe` (`DELETE`, invalidates the status key). `settings/_components/StripeConnectCard.tsx` (new) — the tenant "Payments" card, five states (not configured / configured-not-connected / connected+chargesEnabled=Active / connected+!chargesEnabled=Finishing-setup / livemode===false=Test-mode chip), masked account id (`maskAccount`), Disconnect via the shared `components/ConfirmDialog.tsx`, and a `?stripe=connected|error` return banner read with `useSearchParams` (safe without its own Suspense wrapper because `settings/page.tsx` already wraps `SettingsPageInner` in one). Status badges pass `label=` — `Badge` renders its own children and DISCARDS a spread `children`, so `<Badge>Active</Badge>` would be an empty pill. **Mounted on the settings hub branch** (`settings/page.tsx`, no-`?tab=` path, below `<SettingsHub />`) rather than behind a tab, because the Connect OAuth callback returns the operator to bare `/settings?stripe=...` and only the card renders that banner. Sibling work packages ship in the same batch and have their own bullets below (WP2 operator review queue, WP3/WP4 buyer panel + wiring); the API side and the WP5 specs are in api.md, batch plan `.claude/pipeline/plans/2026-08-21-stripe-connect-web.md`.
@@ -749,6 +776,11 @@ BY-07 already establish — never cleaned up, harmless test-tenant fixtures), th
 mutation is client-side localStorage (cleared at the end). Helpers: `helpers/api.ts` (`apiBase`,
 `operatorAccessToken` — the direct-API conventions 06 established).
 `apps/api/scripts/e2e-seed.js` sweeps any pre-cleanup draft residue from the operator's dock.
+**Tenant admin seeded (B138, F14 2026-09-02):** `e2e-seed.js` now also creates/verifies an ACTIVE
+`TENANT_ADMIN` user `e2e_admin`/`TenantAdmin1!` on `e2e-routeflow` (both the fresh-tenant and
+existing-tenant branches) — `platform-admin.service.ts impersonate()` requires one, and without
+it spec 31 below self-skips with a named reason rather than running. `helpers/constants.ts
+CREDENTIALS.tenantAdmin` carries the pair.
 **Seeding contract (2026-08-26, `setup/global.setup.ts`):** SKIP_E2E_SEED=true → skip;
 `E2E_SEED_DATABASE_URL`/`DATABASE_URL` set → seed and **throw on failure** (aborts the run — no
 more "Continuing despite seed error", which let the CI suite rot red for a week unnoticed); no URL
@@ -775,6 +807,8 @@ more "Continuing despite seed error", which let the CI suite rot red for a week 
 | `22-payment-truth.spec.ts`             | `payment-truth`        | F03 (shipped #564; REG-B11 discharged post-deploy in #568). REG-B11's T2 leg: a DRAFT (unconfirmed) InvoicePayment must stay VISIBLE on the invoice payment-history row with a 'Draft - unconfirmed' badge while being excluded from every money SUM. **Its `payment-truth` project entry was added separately (commit e46cab10) because the authoring package could not reach `playwright.config.ts`** — the spec existed for a while with no entry, i.e. it would never have run. Third occurrence of that trap; see the #08 note above.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 | `24-order-edit-pricing.spec.ts` | `order-edit-pricing` | F06 (2026-09-01). REG-B62's T2 leg: the operator order-edit page auto-enters edit mode on a DRAFT the instant the ORDER resolves, while `useCustomer`/`useCustomerPrices` are still in flight and `customerTier` falls back to `?? 1` — so a line added in that window bakes the LIST price, and the substitute path (which always SENDS `unitPrice`) persists it. Spec holds `/customers/:id` with `page.route` to make the race deterministic, asserts the add + substitute controls stay disabled behind `pricingReady` until it resolves, then that the added line prices at the seeded tier. Self-provisioning fixtures (its own tier-2 customer + DRAFT order, unique suffix) — never selects "the first row" (see the 02-operator poisoning note). Its `projects[]` entry ships in the SAME PR as the spec. |
+| `31-impersonation-signout.spec.ts` | `impersonation-signout` | F14 (2026-09-02). REG-B138's T2 leg: logs in as super-admin, impersonates the `e2e_admin` TENANT_ADMIN seeded on `e2e-routeflow`, opens the avatar menu (asserts NO "Sign out" item, only "Exit impersonation"), clicks it, and proves the tenant admin's server-side session count is UNCHANGED and no `/auth/logout` request was ever made — the impersonated admin's own sign-in survives the super-admin walking away. No `storageState` (manages both sessions itself). Own `playwright.config.ts` project entry — without one it never runs (see 08's precedent). Skips (not a discharge, L-041) until `PLAYWRIGHT_SA_*` are set and `e2e-seed.js` has seeded `e2e_admin` on the target. |
+| `32-active-sessions.spec.ts` | `active-sessions` | F14 (2026-09-02). REG-B155's T2 leg: logs in fresh, captures its Active Sessions row's `data-session-id`, forces a refresh-token rotation, reloads the sessions list, and asserts the SAME `data-session-id` is still present with its ORIGINAL sign-in time (proves the api-side in-place rotation, not a new row); revokes it and confirms the rotated token then 401s (the revoke bites the live session, not a stale row); a second test forces a revoke to fail and asserts the list re-syncs instead of leaving a phantom row; a third adds a second login so "Sign out all" renders, forces EVERY revoke to 403 and asserts the honest branch — toast "Some sessions could not be revoked", rows still listed, one re-fetch — instead of the old swallow that emptied the list and claimed success. No `storageState` on purpose — revokes its OWN fresh login, never the shared `operator.json` refresh token. Own `playwright.config.ts` project entry. |
 
 `06-critical-paths.spec.ts` is the key regression guard for the money-math fix: verifies all
 displayed amounts are `$X.XX`, API money fields have ≤2 dp, and invoice `total = subtotal + tax`.

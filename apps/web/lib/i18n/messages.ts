@@ -47,6 +47,8 @@ const en = {
   "menu.profile": "Profile & Settings",
   "menu.language": "Language / Idioma",
   "menu.signOut": "Sign out",
+  "menu.exitImpersonation": "Exit impersonation",
+  "menu.returnToAdmin": "Return to admin",
 
   // Command palette (unified/overlays.html)
   "palette.placeholder": "Search pages, customers, orders, invoices…",
@@ -95,6 +97,8 @@ const es: Messages = {
   "menu.profile": "Perfil y ajustes",
   "menu.language": "Idioma / Language",
   "menu.signOut": "Cerrar sesión",
+  "menu.exitImpersonation": "Salir de la suplantación",
+  "menu.returnToAdmin": "Volver al panel de administración",
 
   "palette.placeholder": "Busca páginas, clientes, pedidos, facturas…",
   "palette.jumpTo": "Ir a",

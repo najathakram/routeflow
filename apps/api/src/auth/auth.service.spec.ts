@@ -429,4 +429,104 @@ describe("AuthService", () => {
       );
     });
   });
+
+  // ─── refresh — in-place rotation (B155) / T19 / R13 ────────────────────────
+
+  describe("refresh — in-place rotation (B155)", () => {
+    const T0 = new Date("2026-01-01T00:00:00.000Z");
+    const stored = {
+      id: "rt-1",
+      userId: "user-1",
+      tokenHash: "h-old",
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: T0,
+      lastUsedAt: T0,
+      userAgent: null,
+      ipAddress: null,
+      deviceName: null,
+    };
+    const sha256 = (value: string) =>
+      require("crypto").createHash("sha256").update(value).digest("hex");
+    // The rotated token jwtService.sign() mints in this suite is "mock-token";
+    // "incoming-token" is the token the caller presents.
+    const newHash = () => sha256("mock-token");
+
+    function prime() {
+      jwtService.verify.mockReturnValue({ sub: "user-1", type: "staff" });
+      prisma.refreshToken.findUnique.mockResolvedValue(stored as any);
+      prisma.user.findUnique.mockResolvedValue({ ...MOCK_USER, tenantId: "tenant-1" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({ slug: "test-tenant" } as any);
+    }
+
+    it("REG-B155 rotates the stored row IN PLACE (same id, compare-and-swap on the old hash) and never deletes or upserts", async () => {
+      prime();
+      prisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+
+      const result = await service.refresh("incoming-token");
+
+      expect(result).toHaveProperty("accessToken");
+      expect(prisma.refreshToken.updateMany).toHaveBeenCalledTimes(1);
+      const call = prisma.refreshToken.updateMany.mock.calls[0]![0] as any;
+      expect(call.where).toEqual({ id: "rt-1", tokenHash: "h-old" });
+      expect(call.data.tokenHash).toBe(newHash());
+      expect(call.data.expiresAt).toBeInstanceOf(Date);
+      expect(call.data.lastUsedAt).toBeInstanceOf(Date);
+      // Per key, not `not.arrayContaining([...])` — that matcher negates the
+      // CONJUNCTION, so it only fails when every listed key is present.
+      for (const identityColumn of ["id", "createdAt", "userId", "tenantId"]) {
+        expect(call.data).not.toHaveProperty(identityColumn);
+      }
+      // No deviceInfo supplied → device columns untouched (undefined, never null).
+      expect(call.data.userAgent).toBeUndefined();
+      expect(call.data.ipAddress).toBeUndefined();
+      expect(call.data.deviceName).toBeUndefined();
+      expect(prisma.refreshToken.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.refreshToken.upsert).not.toHaveBeenCalled();
+    });
+
+    it("pin (B155): losing the concurrent-rotation race (count 0) falls back to creating a fresh row — both refreshes succeed", async () => {
+      prime();
+      prisma.refreshToken.updateMany.mockResolvedValue({ count: 0 });
+      prisma.refreshToken.upsert.mockResolvedValue({} as any);
+
+      const result = await service.refresh("incoming-token");
+
+      expect(result).toHaveProperty("refreshToken");
+      expect(prisma.refreshToken.upsert).toHaveBeenCalledTimes(1);
+      expect((prisma.refreshToken.upsert.mock.calls[0]![0] as any).where).toEqual({
+        tokenHash: newHash(),
+      });
+    });
+
+    it("pin (B155): an inactive user's presented token is still consumed before the 401", async () => {
+      prime();
+      prisma.user.findUnique.mockResolvedValue({ ...MOCK_USER, status: "SUSPENDED" } as any);
+
+      await expect(service.refresh("incoming-token")).rejects.toThrow(UnauthorizedException);
+      // The PRESENTED token's hash — not `expect.any(String)`, which would also
+      // pass if the rotated hash (or any other) were deleted instead.
+      expect(prisma.refreshToken.deleteMany).toHaveBeenCalledWith({
+        where: { tokenHash: sha256("incoming-token") },
+      });
+      expect(prisma.refreshToken.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("REG-B155 every rotation mints a UNIQUE refresh token (jti) — two sessions rotating in the same second cannot collide on the unique tokenHash", async () => {
+      prime();
+      prisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.refresh("incoming-token");
+      await service.refresh("incoming-token");
+
+      // Each refresh signs twice: [0]/[2] the access token, [1]/[3] the rotated
+      // refresh token. Without a nonce the rotated payload is only {sub, type} and
+      // jsonwebtoken's iat/exp at one-second resolution — byte-identical tokens, one
+      // `tokenHash`, and a P2002 on the compare-and-swap (RefreshToken.tokenHash is @unique).
+      const first = jwtService.sign.mock.calls[1]![0] as any;
+      const second = jwtService.sign.mock.calls[3]![0] as any;
+      expect(first).toMatchObject({ sub: "user-1", type: "staff" });
+      expect(typeof first.jti).toBe("string");
+      expect(first.jti).not.toEqual(second.jti);
+    });
+  });
 });

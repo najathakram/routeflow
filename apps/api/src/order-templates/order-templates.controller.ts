@@ -40,14 +40,14 @@ export class OrderTemplatesController {
 
   @Post()
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
   create(@Body() dto: CreateOrderTemplateDto, @CurrentUser() user: JwtPayload) {
     return this.service.createForUser(dto, user);
   }
 
   @Patch(":id")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
   update(
     @Param("id") id: string,
     @Body() dto: UpdateOrderTemplateDto,
@@ -65,14 +65,18 @@ export class OrderTemplatesController {
 
   @Post(":id/items")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
-  addItem(@Param("id") templateId: string, @Body() dto: AddTemplateItemDto) {
-    return this.service.addItem(templateId, dto);
+  @Roles(UserRole.OPERATOR)
+  addItem(
+    @Param("id") templateId: string,
+    @Body() dto: AddTemplateItemDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.service.addItemForUser(templateId, dto, user);
   }
 
   @Delete(":id/items/:itemId")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
   removeItem(
     @Param("id") templateId: string,
     @Param("itemId") itemId: string,

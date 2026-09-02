@@ -238,6 +238,14 @@ export class OrderTemplatesService {
   // had no role guard and no ownership check, letting any CUSTOMER edit/generate
   // from ANOTHER customer's template. findOneForUser() throws for a non-owner.
 
+  // B133: every mutation on the controller goes through an ownership wrapper. For
+  // OPERATOR this is a pass-through today (the ownership branch is CUSTOMER-only);
+  // its value is uniformity — a future CUSTOMER grant on addItem cannot ship unguarded.
+  async addItemForUser(templateId: string, dto: AddTemplateItemDto, user: JwtPayload) {
+    await this.findOneForUser(templateId, user);
+    return this.addItem(templateId, dto);
+  }
+
   async removeItemForUser(templateId: string, itemId: string, user: JwtPayload) {
     await this.findOneForUser(templateId, user);
     return this.removeItem(templateId, itemId);

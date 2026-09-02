@@ -362,6 +362,22 @@
 
 ## security
 
+### L-044 · 2026-09-02 · security
+
+- **Symptom:** four fixes in one batch were "protected" by things that had never once done
+  anything — a log-only APP_GUARD that read `req.user` before any route guard populated it (never
+  fired), and a green unit test asserting a DRIVER _may_ write a price override (it asserted the
+  bug).
+- **Root cause:** a guard that always returns `true` and a test that always passes are
+  indistinguishable from working ones; nobody had asked what would turn either red.
+- **Lesson:** **Green is a claim, not evidence. Before inverting a requirement, grep the suites
+  for a test that asserts the OLD behaviour (it passes on the bug — invert it, don't route around
+  it); before trusting a side-effect-only guard or interceptor, name the input that makes it act
+  and prove that input exists at that point in the pipeline (APP_GUARDs run before route guards,
+  so `req.user` is never set there).**
+- **Guard:** `REG-B132` (the inverted test) and `REG-B165` (`impersonation.guard.spec.ts` header
+  case with `req.user` undefined); mutation probes in the F14 PR body.
+
 ### L-033 · 2026-09-01 · security
 
 - **Symptom:** the version bump that "fixed" a High-severity DoS advisory left the vulnerability
