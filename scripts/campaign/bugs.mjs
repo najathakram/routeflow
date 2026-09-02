@@ -2600,8 +2600,8 @@ cmds.enrich = () => {
 //
 // ⚠️ HUB FILES ARE THE WHOLE DIFFICULTY. A naive "shares a file ⇒ conflicts"
 // rule reported that NO batch was ever parallel-safe, which is useless. The
-// cause: six god-files dominate the repo — orders.service.ts is touched by 39
-// bugs, invoices.service.ts by 31, routes.service.ts by 29, schema.prisma by 27.
+// cause: six god-files dominate the repo — measured today, orders.service.ts is
+// touched by 36 bugs, invoices.service.ts 30, routes.service.ts 29, schema.prisma 28.
 // Two bugs in a 5,000-line service almost always touch different methods, so a
 // hub overlap is a REVIEW signal, not a conflict. Only a shared NON-hub file is
 // treated as hard. The threshold is data, not a constant, and `--hub-threshold`

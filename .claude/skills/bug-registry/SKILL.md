@@ -13,11 +13,11 @@ description: >
 Three stores, each owning exactly one thing. They are not redundant, and nothing should be copied
 between them by hand — everything downstream of the record is derived.
 
-| Store                             | Owns                                              | Written by                |
-| --------------------------------- | ------------------------------------------------- | ------------------------- |
-| `.claude/campaign/bugs/B###.md`   | What the bug **is** — analysis + append-only history | this skill, analysis agents |
-| `.claude/campaign/status/F##.jsonl` | What the bug **is doing** — state + proof          | the batch pipeline        |
-| GitHub Issues (one card per batch) | What is **in flight** — lanes derived from PR/CI    | `scripts/team/team.mjs`   |
+| Store                               | Owns                                                 | Written by                                                                                  |
+| ----------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `.claude/campaign/bugs/B###.md`     | What the bug **is** — analysis + append-only history | this skill, analysis agents                                                                 |
+| `.claude/campaign/status/F##.jsonl` | What the bug **is doing** — state + proof            | `bugs.mjs` only (`file`, `prove`, `discharge`, `reopen`, `claim`/`release`, `tier`, `move`) |
+| GitHub Issues (one card per batch)  | What is **in flight** — lanes derived from PR/CI     | `scripts/team/team.mjs`                                                                     |
 
 `local-assets/docs/routeflow-bug-register.html` is a **rendered view**, not a source. It is
 gitignored and only the owner can republish it. Never treat it as authoritative and never block on
@@ -71,27 +71,57 @@ it; do not re-implement the judgement anywhere else.
   it fully, then stop and hand the owner a ready plan. Do not write the fix unattended.
 
 The classifier is deliberately over-broad: a false "sensitive" costs one glance, a false "safe"
-costs a production money bug. It currently parks 17 of 21 queued batches, so most throughput comes
-from the analysis pass, not from unattended fixing.
+costs a production money bug. It currently parks **16 of the 19** batches that hold workable rows,
+so most throughput comes from the analysis pass, not from unattended fixing.
 
 ## Picking up work
 
 ```bash
 npm run bugs -- status              # every batch: done/total, how many analysed, board issue
-npm run bugs -- next                # the next agent-SAFE batch (carve-out applied)
+npm run bugs -- waves               # ⭐ the parallel schedule: what 4 agents can run RIGHT NOW
+npm run bugs -- next                # the head of wave 1 (carve-out, claims and in-flight applied)
 npm run bugs -- brief F11           # ⭐ everything needed to start: plan, ordering, per-bug fix + test plan
 npm run bugs -- show B129           # one bug in full
 npm run bugs -- list --open --batch F11
+npm run bugs -- triage              # catalogue bugs with NO ledger row — invisible to everything above
 ```
 
 **`brief` is the one an agent should run.** It assembles the batch plan (ordering, file conflicts,
 risks), then each bug with its Summary, Fix approach and Test plan, and ends with the exact commands
 to close out. Reading it is the difference between fixing the right bug and fixing it the right way —
 every F11 card, for instance, carries a fix the adversarial pass REFUTED, and `brief` leads with that.
+It also leads with any record marked `contestedBy:` / `supersededBy:` in its front matter: **never
+build from a contested record alone** — its plan is disputed by another record, and a builder who
+follows it ships the regression and writes a green test for it.
+
+`waves` greedy-colours the batch hard-conflict graph (`deps`' non-hub sharing rule) and caps each
+wave at **4** — the standing agent cap. `next` returns the head of wave 1, not the head of a
+severity sort, because the worst batch routinely shares a file with the batch someone is already in.
+Both print **why** a batch was skipped: a live `team.mjs` lease, rows already `in-flight`, or the
+carve-out. A prose "claimed for planning" comment is surfaced as a warning, never treated as a lock.
 
 Work is claimed per **batch**, never per bug — the board card, the pipeline folder and the PR are
-all batch-scoped. `node scripts/team/team.mjs claim <issue#>` is a real compare-and-swap;
-**exit code 3 means another agent holds it — stop.**
+all batch-scoped.
+
+```bash
+node scripts/team/team.mjs claim <issue#>   # the authoritative lease (compare-and-swap)
+npm run bugs -- claim F11                   # the ledger's own record: rows → in-flight
+npm run bugs -- release F11                 # give them back (restores queued OR regressed)
+```
+
+**`team.mjs claim` exit code 3 means another agent holds it — stop.** Run `bugs claim` too: the
+lease lives on GitHub and is unreadable offline, while `in-flight` rows are local and are what
+`next`/`waves` honour when the network is not there.
+
+## Re-routing and re-tiering
+
+```bash
+npm run bugs -- move B32 --to F13 --why "shares no non-hub file with F11"   # re-batch, all shards at once
+npm run bugs -- tier B32 T1 --why "the analysis designed 9 jest cases"      # reconcile the ledger with the analysis
+```
+
+Both are first-class commands precisely because doing them by hand means editing two shards, the
+record front matter and the catalogue — four chances to leave the ledger holding two rows for one id.
 
 ## Closing out
 
@@ -104,7 +134,8 @@ prevent, so neither command will invent the other's evidence.
 npm run bugs -- prove B129 --pr 601 --proof "REG-B129 jest: cancelling a run leaves its orders sweepable"
 
 # after a GREEN DEPLOY, per batch
-npm run bugs -- discharge F11 --evidence "Railway deploy <id> SUCCESS; Actions run <id> E2E green against it"
+npm run bugs -- discharge F11 --evidence "Railway deploy <id> SUCCESS; Actions run <id> E2E green against it" \
+  --evidence-B129 "Actions run <id> job <id>: spec 28 REG-B129 passed against that deploy"
 ```
 
 Both write the ledger **replace-in-place** and update the record's front matter and History.
@@ -117,10 +148,41 @@ Guards you cannot talk your way past:
   satisfiable by `REG-B120`).
 - `--evidence` must actually name the deploy and the run. This is the one claim `campaign-check`
   cannot verify for you, so it is the one place a lie would survive.
+- **Every T2 row needs its OWN `--evidence-B### "…"`, or the discharge is refused** — nothing
+  partial is written. `campaign-check` accepts that string _instead of_ a Playwright artifact (a
+  verify runner never has one), so one batch-wide sentence would otherwise discharge every T2 row
+  in the batch past the strongest control the campaign has. Two rows given identical text are
+  refused too. The batch-wide `--evidence` stays right for T1/T3 and lands in `evidence`.
 - `--pending-deploy` is T2-only.
 
-`sync` also runs as **Gate 4 of `.claude/hooks/stop.mjs`** every turn, so a landed fix records its
-own commits. Commit the changed `bugs/B###.md` files alongside the fix.
+### When a closed bug comes back
+
+```bash
+npm run bugs -- reopen B129 --why "REG-B129 failed in Actions run <id> against deploy <id>"
+```
+
+`regressed` is a real ledger state — the bug keeps its id, its record and its whole history instead
+of being re-filed under a fresh number. It clears the PR and proof (so it is workable again and
+`next`/`waves` re-offer its batch) and therefore **costs a citation**: the failing `REG-B###` token,
+or the run/deploy/report that showed it. `campaign-check` holds `regressed` to that evidence exactly
+as it holds `already-fixed`.
+
+### What is actually automatic
+
+Be precise about this, because the answer shapes how much you can skip:
+
+- **Automatic:** the record follows the LEDGER. `prove` / `discharge` / `reopen` / `tier` / `move`
+  write it, and `sync` derives front matter and History from it.
+- **NOT automatic:** commit archaeology. Of 101 `fix:` commits here, 4 name a B-id and 12 name a
+  batch; 85 name neither. The scanner is a weak, best-effort signal (a bare `B###` token, plus
+  `(F##)` fanned out to that shard, anchored at the last-synced sha so nothing scrolls out of a
+  window). **What makes tracking automatic is that `prove`/`discharge` are the non-negotiable last
+  step of a fix** — not that a commit message happened to mention a number.
+
+`sync` runs as **Gate 4 of `.claude/hooks/stop.mjs`**, which reports and never blocks. ⚠️ That hook
+only exists on branches carrying it — until PR #597 merges, a session on another branch gets no
+Gate 4 at all, so run `npm run bugs -- sync` yourself there. Commit the changed `bugs/B###.md`
+files alongside the fix.
 
 ## Keeping the registry honest
 
@@ -129,14 +191,16 @@ npm run bugs -- enrich      # re-import the register HTML detail + file sets int
 npm run bugs -- deps        # the conflict graph: batch cohesion, cross-batch conflicts, outliers
 npm run bugs -- deps --bug B129
 npm run bugs -- render      # regenerate the one-page HTML view from the records
-npm run bugs -- self-test   # also runs as step 8 of npm run verify
+npm run bugs -- self-test   # runs inside npm run verify (today step 6 of 7 — the ordinal moves;
+                            # package.json's verify script is the only place worth reading it from)
 ```
 
 `deps` answers the question batching is supposed to answer: **which bugs must land together, and
 which batches can never run in parallel.** Two bugs conflict when they touch the same file.
 
 ⚠️ **Hub files are the whole difficulty.** `orders.service.ts` is touched by 36 bugs,
-`invoices.service.ts` by 30, `schema.prisma` by 27. A naive shares-a-file rule reported that no
+`invoices.service.ts` by 30, `routes.service.ts` by 29, `schema.prisma` by 28. A naive
+shares-a-file rule reported that no
 batch was EVER parallel-safe, which is useless — two bugs in a 5,000-line service almost always
 touch different methods. Only a shared **non-hub** file counts as a hard conflict.
 
