@@ -23,6 +23,7 @@ export const CREDENTIALS = {
   },
   operator: { username: "admin", password: "Admin@123" },
   customer: { username: "harbor_cafe", password: "Customer1!" },
+  tenantAdmin: { username: "e2e_admin", password: "TenantAdmin1!" },
 } as const;
 
 /** True when super-admin credentials are provided via env (super-admin specs skip otherwise). */

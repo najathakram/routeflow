@@ -56,7 +56,9 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   ThrottlerExceptionFilter (429 + Retry-After), Swagger dev-only, graceful shutdown.
 - **`src/app.module.ts`** — ConfigModule, PrismaModule, CommonModule, TenantModule, AuthModule,
   feature modules, BullModule (Redis queue), ScheduleModule (cron), ThrottlerModule (100/60s,
-  Redis-backed). Global guards: `ThrottlerGuard`, `TenantStatusGuard`, `ImpersonationGuard`.
+  Redis-backed). Global guards: `ThrottlerGuard`, `TenantStatusGuard`, `ImpersonationGuard`
+  (as an APP_GUARD it runs before every route guard, incl. `JwtAuthGuard` — `req.user` is never
+  set here; B165, F14 2026-09-02, see `audit/`).
   Middleware: tenant resolution (extract tenant from JWT → AsyncLocalStorage context).
 - **`src/prisma/prisma.service.ts`** — extends PrismaClient (PrismaPg adapter + Pool). Key:
   `getTenantId()` (reads TenantContextService), `tenantTransaction(fn)` (sets session var
@@ -305,11 +307,50 @@ homeAddress` (the driver-home origin), and orders inherit `fulfillPath` from the
 - **controller** `auth` — `@Post login|refresh|logout|change-password|set-password|verify-email|request-password-reset|reset-password`, `@Get/@Delete sessions`. Google OAuth: `@Get google`, `@Post google/exchange` (single-use code handoff), `@Get google/:tenantSlug/callback`.
 - **service** — `login`, `refresh`, `logout`, `changePassword`, `setPassword` (first password for Google-only accounts; only when `password IS NULL` read fresh from DB — never a JWT claim; revokes all sessions + reissues via shared `mintSessionForUser`), `listSessions`, `requestPasswordReset(email, surface)` (surface `web|mobile` → config `urls.web|mobileWeb` base, default mobile), `resetPassword`, `verifyEmail`; Google `getGoogleAuthUrl`, `exchangeGoogleCode`, `linkGoogleAccount`.
 - `hasPassword` (= `!!user.password`) rides the JWT payload + login/refresh `user` responses (rendering hint); authoritative read = `GET /users/me` (`users.service.findById`). Refresh-token default TTL **30d** (`configuration.ts jwt.refreshExpiresIn`, idle cutoff — rotation slides it).
+- **`refresh()` rotates the session row IN PLACE (B155, F14 2026-09-02)** — the old rotation
+  `deleteMany`'d the presented row and `storeRefreshToken`'d a brand-new one (new `id` + new
+  `createdAt` every ~15 min), so the web Active Sessions list showed a session's LAST rotation as
+  "Signed in just now" no matter how old the session really was, and revoking a row by an id the
+  client had cached 403'd the moment that row rotated out from under it. Now a compare-and-swap
+  `updateMany({where: {id: stored.id, tokenHash: stored.tokenHash}, data: {tokenHash, expiresAt,
+lastUsedAt, userAgent?, ipAddress?, deviceName?}})` — the update itself IS the invalidation of
+  the old token hash; `id`/`createdAt`/`userId`/`tenantId` are never written, so the session's
+  identity and true sign-in time survive every rotation. Device columns pass `undefined` (not
+  `null`) when `deviceInfo` is absent, so Prisma leaves them untouched rather than clearing them.
+  **Race fallback preserved byte-for-byte**: `count === 0` (another concurrent refresh already won
+  the CAS) falls back to the OLD delete-then-upsert path via `storeRefreshToken`, so both racing
+  refreshes still succeed — only the winner rotates in place. **Inactive-user ordering preserved**:
+  the presented token is still consumed (`deleteMany({tokenHash})`) before the 401, now inside the
+  `!user || status !== ACTIVE || deletedAt` branch instead of unconditionally up front, or a
+  suspended user's row would survive forever in `listSessions`. Web mirror:
+  `settings/page.tsx SessionsCard` below. Spec: `auth/auth.service.spec.ts describe("refresh —
+in-place rotation (B155)")`.
 - **F5-003 refresh realm claim**: refresh tokens now carry `type:"staff"` (all staff sign sites: `auth.service` login/refresh/`mintSessionForUser` + `google-oauth.service.issueUserTokenPair`) / `type:"buyer"` (`buyer-auth.service.issueBuyerTokenPair` + `google-oauth.service.issueBuyerTokenPair`). Each refresh handler rejects a present-but-wrong `type` **before** the per-table hash lookup; a legacy no-`type` token is still allowed (grace). Specs: `auth/auth.service.spec` + `buyer/buyer-auth.service.spec` (realm-discriminator blocks).
 - **SEC-4 / F11-002 refresh cookie**: staff `login`/`refresh` ALSO set an httpOnly, Secure, SameSite=Lax `rf_refresh` cookie (`Path=/api/v1/auth`); `refresh` reads the cookie first, falls back to the body token (mobile unaffected); `logout` clears it. Additive — body token unchanged. No cookie-parser: cookie read by hand from `req.headers.cookie` in `auth.controller`. `RefreshDto.refreshToken` is now optional (cookie-only refresh). Spec: `auth/auth.controller.cookie.spec`. Buyer flow unchanged.
+- **`logout` no-op under impersonation (B138, F14 2026-09-02)** — an impersonation token's `sub`
+  IS the tenant's TENANT_ADMIN (`platform-admin.service.ts impersonate()`), so the pre-fix
+  `authService.logout(user.id)` revoked THAT ADMIN's real refresh tokens on every device the
+  moment a super-admin exited an impersonation session — a super-admin action locking out a
+  paying customer's own sign-in. `logout` now branches on `user.impersonatedBy` (reaches
+  `req.user` via the strategy propagation above): impersonated → clear the cookie only, return
+  `{message: "Impersonation session ended"}`, never call `authService.logout`; otherwise unchanged.
+  An impersonation session was never issued its own refresh token, so there is nothing to revoke.
+  Web mirror: `lib/impersonation.ts exitImpersonation()` below never POSTs `/auth/logout` at all —
+  this handler exists for defense-in-depth / any other impersonated caller. Spec:
+  `auth/auth.controller.cookie.spec.ts` `describe("AuthController.logout under impersonation")`.
 - Buyer mirror (`buyer/buyer-auth.*`): `BuyerAccount.passwordSet` flag (false on Google auto-create) gates `POST /buyer/auth/set-password`; buyer forgot/reset flow (`request-password-reset`/`reset-password`, `BuyerPasswordResetToken` model, links to `${urls.web}/buyer/reset-password`); registration email verification (`verify-email`/`resend-verification`, `BuyerEmailVerificationToken` model — see the buyer/ section entry) feeding `requestSeller`'s auto-connect gate; `GET /buyer/auth/profile` = authoritative `hasPassword`/`googleLinked`/`emailVerified`. Specs: `auth/set-password.spec`, `buyer/buyer-set-password.spec`, `buyer/buyer-password-reset.spec`, `buyer/buyer-email-verification.spec`, `auth/google-oauth.buyer-autocreate.spec`.
 - **F12-005 OAuth device-state**: `GET /auth/google?device_state=` threads a device nonce into the OAuth `state` blob (`google-oauth.service` `OAuthState`/`GoogleProfile.deviceState`); mobile deep-link callback echoes it back as `&state=` so the app can reject unsolicited `routeflow://` deep links. Optional/additive server-side.
 - **`strategies/jwt.strategy.ts` propagates the driver capability claim (2026-08-28)**: `validate()` now copies `canActAsDriver` from the JWT payload into `req.user` (default false). Before this it was dropped, so `RolesGuard`'s dual-role branch (OPERATOR/TENANT_ADMIN with `canActAsDriver` satisfying `@Roles(DRIVER)`) could never fire — the capability was client-gated only. Flag is minted at login, so a driver-permit change still needs re-login. **`isAdmin` is deliberately NOT propagated** (and must not be added casually): it is not a role-hierarchy input but the gate on `PATCH /users/:id/admin` (`users.controller.ts` — `user.isAdmin || role === TENANT_ADMIN`), which today only TENANT_ADMINs pass because the claim never reaches `req.user`. Surfacing it would let any admin-flagged OPERATOR assign admin rights — a live authorization change needing its own owner decision (and a matching web gate, which derives from role only).
+- **`impersonatedBy` propagated to `req.user` (B165/B138, F14 2026-09-02)** — `jwt.strategy.ts
+validate()` and `buyer/strategies/buyer-jwt.strategy.ts validate()` both now copy
+  `payload.impersonatedBy ?? undefined` onto the returned user object. Before this the claim was
+  minted onto impersonation tokens (`platform-admin.service.ts impersonate()` /
+  `buyer-admin.service.ts`) but dropped at the strategy boundary, so every downstream reader that
+  wanted "who is REALLY typing" (the audit trail, `AuthController.logout`) saw nothing — see the
+  `audit/` and this file's `logout` entries below. `isAdmin` is deliberately still NOT propagated
+  (2026-08-28 reasoning above still holds — it is an authorization input, `impersonatedBy` is not;
+  `RolesGuard` never reads either). Buyer side: propagated for logging/UI only in this batch, no
+  buyer-logout change (spec §4.4). Specs: `auth/strategies/jwt.strategy.spec.ts` (new).
 - side effects: User/PasswordResetToken/RefreshToken (+Buyer mirrors) writes; reset + password-set notification emails; JWT signing.
 
 ### `platform-google-auth/`
@@ -615,6 +656,16 @@ Decimal?` is the **snapshot taken at line creation**, resolved server-side by
   `POST /customers/:id/prices` also admits DRIVER while `DELETE /:id/prices/:priceId` is
   deliberately OPERATOR-only — without the gate a driver could erase a negotiated override by
   posting `{pricingTier: null}`. Specs: `customers.service.spec.ts` "upsertCustomerPrice".
+  **B132 (F14 2026-09-02) — that gate covered only the IMPLICIT delete branch; a DRIVER could
+  still POST a non-null `pricingTier`/`msrp` and write a real override, because `POST
+:id/prices`'s `@Roles` decorator admitted DRIVER outright.** `customers.controller.ts` now
+  declares `@Roles(OPERATOR)` on `upsertCustomerPrice`, matching `deleteCustomerPrice`'s roles
+  exactly. Defense in depth: the role check inside `customers.service.ts upsertCustomerPrice` is
+  now HOISTED to the top of the method (was only reached via the implicit-delete branch) and runs
+  BEFORE any DTO validation or Prisma read — a non-operator caller must not learn whether an
+  override exists, let alone change one. `user` is no longer optional on the method signature.
+  Specs: `customers.controller.roles.spec.ts` (role-decorator parity), `customers.service.spec.ts`
+  (inverted the old test that asserted a DRIVER MAY clear a tier — it had been pinning the bug).
 - **Order→invoice shipping fee (2026-07-18):** from-order creation no longer hardcodes `shippingFee: 0` — `createSplitInvoices` seeds the REMAINING order fee (order fee − Σ existing non-void invoice fees) onto exactly ONE sibling (largest subtotal, same recipient as the tax remainder; never prorated ⇒ Σ sibling totals == order total; runs for tax-exempt too); partial-from-order gives the first partial the whole remainder. `reconcileOrderDraftInvoice` treats the ORDER as fee source of truth (draftFee = order fee − other-invoice fees, overwrites the draft). `rebuildSiblingDrafts` stability rule: keep per-sibling placement when Σ(sibling fees)==order fee, else re-seed onto largest sibling. `recomputeOrderFromInvoices` back-syncs `Order.shippingFee = Σ non-void invoice fees` into the order (+ fee-inclusive total) — this is what lets invoice-side fee edits survive order-driven reconciles. Specs: invoices.service.spec shipping-fee describe blocks.
 - **Regulated invoice split (Phase 4 W4)** — `createInvoiceFromOrder`/`createInvoiceFromOrderWithTenant` now **return `Invoice[]`** (contract change; callers `createSale` sends every sibling + returns primary, web hook `useCreateInvoiceFromOrder` typed `Invoice[]`). New `groupOrderLinesForInvoicing` partitions lines by resolved category (`OrderItem.trackedCategoryId ?? product.trackedCategoryId`) → a **standard group** (uncategorised + non-`SEPARATE_INVOICE` treatments, which fold in + `logger.warn`) first, then one group per `SEPARATE_INVOICE` category (name-sorted). New `createSplitInvoices` does the money: per-group subtotal, regular tax allocated proportionally with the **largest group absorbing the rounding remainder** (Σ group regular tax == single-invoice tax exactly), category tax per group; numbering **base / -R1 / -R2** (one sequence number, derived suffixes), shared `invoiceGroupId` only when >1 group; bumps `invoicedQty` once/line. **Single-group orders are byte-identical to pre-W4.** `buildInvoiceItemData` snapshots `trackedCategoryId`+`categoryTaxAmount` onto the line (categoryTax prorated telescoping like subtotal). Order snapshot in `orders.service.create` (`OrderItem.trackedCategoryId` + `Order.hasRegulated`). **RF-4 (WIRED — interim rate>0 guard REMOVED):** category tax is now folded into totals everywhere. Shared helper **`foldCategoryTax(itemsData, isTaxExempt)`** = Σ per-line `categoryTaxAmount`, but returns 0 AND zeroes each line snapshot when `isTaxExempt` (exemption covers everything — $0 of BOTH taxes; ledger records $0). Applied at EVERY invoice-tax site: `createSplitInvoices` (per group), manual `create()`/`update()`/`duplicate()` (compute from the product's section), `reconcileOrderDraftInvoice` single-draft, `rebuildSiblingDrafts` (per draft), `createPartialFromOrder`. **Split invariant:** each order line lands in exactly one group so Σ group categoryTax == order categoryTax; combined with proportional regular tax ⇒ **Σ(sibling total) == order total** (subtotal + regular + category). `recomputeOrderFromInvoices` back-sync aggregates billed `categoryTaxAmount` per line → order line + order total. **DEFERRED:** `completeStop` route-delivery split, credit-note sibling reversal, products DTO `trackedCategoryId` wiring, PER_VOLUME volume-per-piece source (uses pieces).
 
@@ -643,6 +694,26 @@ Decimal?` is the **snapshot taken at line creation**, resolved server-side by
 
 - **controller** `order-templates` — get/patch/delete, items add/remove, `:id/generate`.
 - **service** — `findAll`, `findOne`, `update`, `delete`, `addItem`, `removeItem`, `generateOrder` (draft Order from template). side effects: OrderTemplate(+Item)/Order writes. **Tax on `generateOrder` reads the TENANT's `settings.taxRate` per-request via `SystemConfigService` + `common/tax-rate.ts` `taxRateFractionFrom` — it used to be a constructor-cached `env TAX_RATE ?? 0.1`, i.e. a flat 10% regardless of tenant settings. `OrderTemplatesModule` therefore imports `SystemConfigModule` (without it the app fails to boot on the new constructor arg).**
+- **DRIVER removed from every mutation (B133, F14 2026-09-02)** — `create`/`update`/`removeItem`
+  admitted `@Roles(OPERATOR, CUSTOMER, DRIVER)` and `addItem` admitted
+  `@Roles(OPERATOR, DRIVER)`; the driver screens that motivated the original grant (commit
+  `028f86b0`) were deleted long ago, leaving driver-written template content (create/update/
+  addItem/removeItem) writable by any driver token and then materialized into a BILLED order by
+  the template's daily-cron `generateOrder` (06:00), which was already `[OPERATOR, CUSTOMER]` and
+  never itself admitted DRIVER. DRIVER dropped from all four; the matrix is now `[OPERATOR,
+CUSTOMER]` for create/update/removeItem (unchanged for generateOrder) and **`[OPERATOR]`** for
+  `addItem` (CUSTOMER was never admitted there even before this fix). `findAll`/`findOne` carry no `@Roles` at all — a DRIVER
+  can still LIST/READ templates; recorded as an intentional residual, not fixed here (out of
+  scope — see `pin (B133)` in the roles spec). **`addItem` now delegates to a new ownership
+  wrapper `addItemForUser(templateId, dto, user)`** (`service.addItem` itself is unchanged and
+  now private in effect — the controller never calls it directly), which calls the existing
+  `findOneForUser` ownership check (F2-003 — throws for a CUSTOMER who doesn't own the template)
+  before delegating to `addItem`. For OPERATOR this is a pass-through today (no ownership branch
+  fires), but it closes the door on a future CUSTOMER grant on `addItem` shipping unguarded —
+  uniformity with its siblings `removeItemForUser`/`generateOrderForUser`, which already had this
+  shape. Specs: `order-templates.controller.roles.spec.ts` (new — role-decorator matrix + the
+  controller delegates to `addItemForUser` not `addItem`), `order-templates.service.spec.ts`
+  (`addItemForUser` ownership cases).
 
 ### `drafts/` (Minimize & resume, pos-cost-roles-spec §2)
 
@@ -652,6 +723,18 @@ Decimal?` is the **snapshot taken at line creation**, resolved server-side by
 ### `inventory/`
 
 - **controller** `inventory` — overview, movements (+purchase/adjustment), stock-count/commit, **valuation**, **`@Patch products/:id/cost-basis`**, **`@Post cost-basis/bulk`**, **`@Post recompute-costs`**, **`@Post variant-assign`** (PR-D, generic→variants), suppliers CRUD, purchase-orders CRUD + send/receive/close (list = `ListPurchaseOrdersDto`), forecasting.
+- **DRIVER dropped from the four writes that still carried it (B168, F14 2026-09-02)** —
+  `recordPurchase`/`recordAdjustment`/`createPO`/`receivePO` each had a handler-level
+  `@Roles(OPERATOR, DRIVER)` that OVERRODE the class-level `@Roles(OPERATOR)` (`RolesGuard`
+  resolves `getAllAndOverride(handler, class)` — a handler decorator always wins, never merges).
+  Those four decorators are simply DELETED (not replaced), so the handlers now inherit the
+  class-level OPERATOR-only gate. `commitStockCount`/`sendPO`/`closePO` already carried no
+  handler-level override and needed no change — all seven inventory writes now resolve to exactly
+  `[OPERATOR]`. The four inventory **reads** (`getStockOverview`, `listMovements`, `listPOs`,
+  `getPO`) deliberately keep `DRIVER` — out of scope, pinned in the spec. Spec:
+  `inventory.controller.roles.spec.ts` (new — asserts `getAllAndOverride` resolution per handler,
+  not just the decorator's own metadata, since a containment check on the handler alone would
+  pass even if DRIVER also sat on the class).
 - ⚠️ **`recordSale` HAS NO CALLER on master and has not had one since `c5f579c2` (2026-07-16) dropped the `/orders/:id/complete` route** — it was wired only 2026-07-04→07-16. Consequences, all live: **zero `StockMovement type:"SALE"` rows exist**, so `bookkeeping.getProfitAndLoss` reports `cogs = 0` (gross profit = revenue) and five analytics/forecasting readers read an empty source (those readers were re-sourced to invoiced sales, cherry-picked from `claude/priceless-matsumoto-abc131` @ `eaa46ecc`). It is also the only writer that draws `StockLot.remainingQty` DOWN, so lots only ever grow while `orders.service.ts` decrements `Product.currentStock` directly — which used to inflate valuation for the 98% of products labelled FIFO — since fixed by valuing everything at the weighted average (see `getValuation` below). The system is AVCO on every write, and now on every read. Treat the entries below as describing code that exists, not code that runs.
 - **service** — `getStockOverview`, `listMovements`, `recordPurchase`, `recordAdjustment`, `commitStockCount`, **`recordSale(productId,qty,ref,userId,tx)` — the sale-costing path, currently UNCALLED (see above)** (per-method unitCost: AVCO=avg, FIFO/LIFO=lot blend w/ avg fallback, STANDARD=standardCost, **LAST_COST=most recent PURCHASE StockMovement unitCost (typed; `orderBy [createdAt desc, id desc]`), avg fallback, not lot-consuming — MUST use the PURCHASE movement not the latest StockLot, since adjustments/stock-counts create avg-cost lots that would poison last-cost**; writes SALE movement WITH unitCost + snapshots, decrements stock, consumes lots, returns `{unitCost, stockAfter}`; never throws on negative stock). `CostingMethod` enum incl. **LAST_COST** (additive migration `20260706040000_add_costing_last_cost`; selectable per-product; tenant-default→product propagation = follow-on, QUESTIONS.md #10), PO CRUD + receive (Decimal AVCO), `getForecasting` (signed SALE sums), **`setCostBasis`/`bulkSetCostBasis`** (COST_BASIS movement qty 0 + product.averageCost; **also writes `standardCost` when the product is STANDARD** so the stock table clears its "no cost" state; optional applyToLots), **`recomputeCosts({productIds?,dryRun?})`** (replays movement history → rebuilds averageCost + backfills avgCostAfter/stockAfter snapshots; reports noHistory + stockDrift; **STANDARD products keep averageCost FROZEN — `replayProduct` mirrors `recordPurchase`'s no-average rule, so recompute/backdated-repair never fabricates a bogus correction**), **`getValuation`** + `getStockOverview`. **VALUATION is weighted-average for EVERY method (2026-08-09): the shared `effectiveValue` helper returns `averageCost` (STANDARD → `standardCost ?? averageCost`) and no longer reads stock lots — `openLotSums` is deleted. Lot-based FIFO/LIFO valuation was only sound while lots were drawn down, and `recordSale` has had no caller since c5f579c2, so lots only grew while stock fell and the read reported the cost of everything ever received (prod: +$12,463.06 over 54 products, 5 valued at zero stock). Every write already maintains `averageCost` via `nextAverageCost` regardless of label, so this makes the read match the write. `costingMethod` now defaults to AVCO (migration `20260809000000_costing_default_avco` sets only the column DEFAULT; existing rows keep their label, which no longer affects any number).** `commitStockCount` is **idempotent** — a re-posted `sessionId` (lost response / 502 retry) short-circuits on the existing `STOCK_COUNT-{sessionId}` movements (returns `{alreadyCommitted:true}`) instead of double-applying ADD deltas + duplicating lots. Cost/qty DTOs carry `@Max` bounds matching the Decimal(10,4)/(10,3) columns (overflow → 400, not a Prisma 500). Backdated purchase/adjustment auto-replays the product in-tx.
 - **PR-C durable stock-count sessions (2026-08-20, MIGRATION `20260820000000_add_stock_count_sessions` — purely additive: 2 enums + 2 tables + indexes/FKs, no ALTER of an existing table):** new `StockCountSession` (OPEN|REVIEW|COMMITTED|DISCARDED, `startedById`, `committedById`, `movementReference`, `amendsSessionId`) + `StockCountLine` (`@@unique([sessionId, productId])`, `countedQty`/`boxes`/`pieces`, `expectedQty`, `unitCostOverride` 4dp, `countedById`, `mode` REPLACE|ADD). **Before this a count lived ONLY in the client (localStorage on web, component state on mobile) — `lib/api/stock-count.ts` literally said "there is no server-side session model"** — so it could not resume on another device and left no history. Routes: `POST|GET /inventory/stock-counts`, `GET|POST /stock-counts/:id` (+`/commit`, `/discard`), `PUT /stock-counts/:id/lines`, `DELETE /stock-counts/:id/lines/:productId`. **The pre-existing one-shot `POST /inventory/stock-count/commit` is UNCHANGED and still works.**
@@ -1090,6 +1173,31 @@ buyerPaymentRequestId }` so the PI resolves the request); `checkout.session.comp
 ### `audit/`
 
 - **module** — global, no controller. `AuditService.log(userId, action, resource, resourceId, before?, after?, changes?)` → AuditLog writes. Injected by other modules.
+- **`impersonatedBy` stamped onto every audit row (B165, F14 2026-09-02)** — `AuditLog.impersonatedBy`
+  (migration `20260908000000_campaign_schema_foundation`, F01) has been live in the schema since
+  F01 but nothing wrote it until now: `CreateAuditLogDto` gained `impersonatedBy?: string | null`,
+  `AuditService.log`'s `create({data:{…}})` writes `dto.impersonatedBy ?? null` (unchanged
+  try/catch — an audit write still must never fail the request), and `AuditInterceptor` (which
+  runs AFTER route guards, so `req.user` is the VERIFIED `JwtStrategy` output) passes
+  `user?.impersonatedBy ?? null` into the `log()` call. Net effect: a write made while impersonating
+  now names the acting super-admin in the durable trail instead of only the tenant-admin `userId`
+  it always recorded — the entire point of impersonation being auditable. R17 deploy precondition:
+  the F01 column must be confirmed live in prod (`prisma migrate status`) BEFORE this deploys, or
+  `AuditService`'s swallowing try/catch has silently been dropping EVERY audit write already.
+  Specs: `audit/audit.interceptor.security.spec.ts` (impersonated + plain-user cases),
+  `audit/audit.service.spec.ts` (new).
+- **`ImpersonationGuard` now actually observes the claim (B165, F14 2026-09-02)** — see
+  `auth/guards/impersonation.guard.ts` below (listed here too since its whole job is feeding this
+  module). It is registered as an `APP_GUARD` (`app.module.ts`), and Nest runs global guards
+  BEFORE route-level guards while `JwtAuthGuard` is route-level only — so `request.user` was
+  ALWAYS undefined at this guard, and its original `if (!user?.impersonatedBy) return true`
+  silently no-op'd on every single request since it shipped: the log line it exists to write had
+  never once fired. It now decodes the bearer token's payload segment BY HAND (no signature
+  verification — acceptable for a log-only side effect, since `JwtAuthGuard` still verifies the
+  token downstream; same approach `TenantStatusGuard` uses) when `request.user` carries no claim,
+  and prefers `request.user` when a future guard-ordering change populates it first. Logs
+  non-GET/HEAD/OPTIONS methods only, path with the query string stripped. Spec:
+  `auth/guards/impersonation.guard.spec.ts` (new).
 
 ### `buyer/` (multi-tenant customer identity)
 
@@ -1159,6 +1267,29 @@ Ten defects found 2026-08-17, re-verified and fixed 2026-08-20. **B5 was already
 - **B12 (SECURITY, uploads):** `uploads.controller.ts serveFile()` tenant-checked ONLY the `tenants/`, `regulated-filings/` and `tobacco-reports/` key prefixes. The other EIGHT storage prefixes — `products/`, `customers/`, `payments/`, `expenses/`, `invoice-scans/`, `invoice-pdfs/`, `statement-pdfs/` — streamed to ANY authenticated caller in ANY tenant who knew the key (`UploadsAccessGuard` only requires a signed URL OR any valid JWT of any role/tenant; it performs no ownership check, leaving everything to that one regex). Those eight embed only the OWNING ROW's id, never a tenantId, so extending the regex could not fix them — resolved instead with per-prefix owner lookups on the UNSCOPED `PrismaService`, **failing closed** (missing/deleted row ⇒ 403). SUPER_ADMIN and signed URLs stay exempt (a signature is a per-key capability). ⚠️ **The pre-existing spec ASSERTED the leak** — a passing test titled "does not tenant-gate non-scoped prefixes (products/)" expecting 200 — so it was INVERTED, not deleted. ⚠️ `UploadsController` now takes `(ConfigService, PrismaService)`; `PrismaModule` is `@Global()` so the app wires itself, but every `Test.createTestingModule({ controllers: [UploadsController] })` must provide a `PrismaService` stub or Nest fails to resolve index [1] (`uploads-signed-url.security.spec.ts` and `uploads-xss.security.spec.ts` both broke this way and now pass `{ provide: PrismaService, useValue: {} }` — their flat keys never hit the owner lookups).
   - ⚠️ **Null-`tenantId` rows are real in prod** (verified by read-only count 2026-08-20: 3 `InvoicePayment`, 1 `Expense`; Product/Customer/Invoice/InvoiceScan were all clean). A bare `owner.tenantId !== caller.tenantId` therefore 403s those files for their LEGITIMATE owner. Resolve the tenant THROUGH THE PARENT when the row's own is null (payment → its invoice, expense → its vendor bill) — the same lesson as the nested-created invoice-line trap. Do NOT loosen the guard, and do NOT backfill live client rows just to dodge it. **IMPLEMENTED**: the `payments` lookup nested-selects `invoice: { select: { tenantId: true } }`; `expenses` cannot (there is NO Prisma relation between `Expense` and `VendorBill` — `vendorBillId` is a bare `String? @unique` scalar) so it does a second `vendorBill.findUnique` only when the row's own `tenantId` is null. Both still deny when neither resolves.
   - ⚠️ **Both tenant gates read the RAW key, but the file is read from `path.join(dir, key)` — which normalizes `..`.** A dot-segment therefore authorized one key and served a different one: `products/<attacker's-own-id>/../../tenants/<victim>/logo.png` passes the owner lookup on a row the caller legitimately owns, then resolves onto the victim's file _inside_ the upload root, so the traversal check at the bottom passes too (`x/../products/<id>/img.jpg` skips both gates the same way, and the trick defeated the older `tenants/` regex as well). Express does not normalize dot segments and DOES percent-decode wildcard params, so `%2e%2e` arrives as `..`. Fixed by rejecting any key with a `.`/`..` segment (split on `[/\\]` — backslash is a separator on Windows) **before** any auth decision. ⚠️ supertest CANNOT reproduce this: the WHATWG URL parser collapses `..` and `%2e%2e` client-side, so the traversal specs drive `controller.serveFile()` directly with the decoded segment array Express would hand it, using a real `Writable` for `res` so an unguarded run resolves instead of throwing incidentally.
+- **B52 (SECURITY, uploads, F14 2026-09-02) — the eighth prefix B12 left uncovered.** B12's
+  seven-prefix sweep (2026-08-20) missed `supplier-statements/<scanId>/<n>.<ext>` entirely — no
+  regex hit, no owner lookup, so it streamed to any authenticated caller like the original leak.
+  `OWNER_LOOKUPS["supplier-statements"]` now resolves the scan row's `tenantId` (nullable column;
+  missing/NULL fails closed, 403 not 404). Also closed the **general case B12 never addressed**:
+  every prefix B12/B52 together cover is an ALLOWLIST, but anything outside it — a future prefix,
+  a typo, a flat key with no prefix — fell through to the filesystem read unguarded. A new
+  default-deny block runs immediately after the owner-lookup branch, still inside the JWT-path
+  (non-signed-URL) arm: `if (!tenantMatch && !ownerLookup && caller?.role !== "SUPER_ADMIN") throw
+ForbiddenException`, BEFORE `fs.existsSync` so 403-vs-404 never discloses key existence.
+  SUPER_ADMIN and the signed-URL path (a per-key capability, checked earlier) stay exempt.
+  ⚠️ **All three JWT-path denials go through `private denyFileAccess(reason, key, caller)`**, which
+  `logger.warn`s which branch fired (tenant-prefix mismatch · no owner row · owner row has no
+  tenantId · owner tenant mismatch · unmapped prefix · flat key), the JSON-escaped clipped key and
+  the caller (`user`/`tenant`/`role`) BEFORE throwing the unchanged opaque 403. The response body
+  must keep disclosing nothing, so that log line is the ONLY signal for a legitimate read that
+  starts 403ing (a legacy directory under an unmapped prefix, a scan row with `tenantId IS NULL`) —
+  nothing else records it (`SentryExceptionFilter` captures only `status >= 500`). Specs:
+  `uploads-tenant-scope.security.spec.ts` `describe("B52 — …")` (owner-gate + default-deny, incl.
+  an `existsSync` spy proving the deny fires before any filesystem check, and a
+  `Logger.prototype.warn` spy proving each branch logs); collateral fix in
+  `uploads-xss.security.spec.ts` (its guard stub now sets `signedUrlAuthorized = true` so the new
+  default-deny doesn't 403 its flat-key header-only fixtures).
 - **B13 (SECURITY, orders):** `create()`'s DISCOUNTED branch had no role gate, and the RF-198 price-race re-check is CUSTOMER-only — so a DRIVER could bill any below-list `unitPrice` through a hand-crafted `POST /orders` (no mobile screen sends it; this was an API-surface hole). Now gated on `isStaffCaller` (OPERATOR/TENANT_ADMIN), matching the posture `updateOrderItems` already enforced: **non-staff never set prices.**
 - **B7 (MONEY, invoices):** the price-adjustment recompute omitted `categoryTaxAmount`, silently UNDER-billing regulated/excise tax, and the shortfall propagated to the linked order via `recomputeOrderFromInvoices`. Every other recompute site in the file folds it in via `foldCategoryTax`; the adjustment path now does too.
 - **B11 (MONEY, inventory):** `receivePurchaseOrder` overwrote `Product.averageCost` with no `costingMethod` guard, destroying a STANDARD product's operator-set cost. Now guarded exactly like `recordPurchase` and the vendor-bill receive path — note **this same bug class had already been found and fixed for the bill path (G7) and simply missed here.**

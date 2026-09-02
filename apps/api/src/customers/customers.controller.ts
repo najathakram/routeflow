@@ -238,7 +238,7 @@ export class CustomersController {
   }
 
   @Post(":id/prices")
-  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  @Roles(UserRole.OPERATOR)
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.pricing_tiers")
   upsertCustomerPrice(

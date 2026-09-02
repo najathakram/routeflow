@@ -54,14 +54,13 @@ export class InventoryController {
     return this.inventoryService.listMovements(query);
   }
 
+  // B168: writes inherit the class-level OPERATOR gate; DRIVER reads below are deliberate.
   @Post("movements/purchase")
-  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   recordPurchase(@Body() dto: RecordPurchaseDto, @CurrentUser() user: { id: string }) {
     return this.inventoryService.recordPurchase(dto, user.id);
   }
 
   @Post("movements/adjustment")
-  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   recordAdjustment(@Body() dto: RecordAdjustmentDto, @CurrentUser() user: { id: string }) {
     return this.inventoryService.recordAdjustment(dto, user.id);
   }
@@ -169,7 +168,6 @@ export class InventoryController {
 
   // ── Purchase Orders ──
   @Post("purchase-orders")
-  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   createPO(@Body() dto: any, @CurrentUser() user: { id: string }) {
     return this.inventoryService.createPurchaseOrder(dto, user.id);
   }
@@ -192,7 +190,6 @@ export class InventoryController {
   }
 
   @Post("purchase-orders/:id/receive")
-  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   receivePO(@Param("id") id: string, @Body() dto: any, @CurrentUser() user: { id: string }) {
     return this.inventoryService.receivePurchaseOrder(id, dto, user.id);
   }

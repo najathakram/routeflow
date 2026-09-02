@@ -241,11 +241,11 @@ export class AuthService {
       throw new UnauthorizedException("Refresh token revoked or expired");
     }
 
-    // Rotate — delete old, issue new pair (deleteMany avoids P2025 on race)
-    await this.prisma.refreshToken.deleteMany({ where: { tokenHash } });
-
     const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
     if (!user || user.status !== "ACTIVE" || user.deletedAt) {
+      // B155: the old delete-then-check ordering consumed the token here too —
+      // keep that, or a suspended user's row survives in listSessions.
+      await this.prisma.refreshToken.deleteMany({ where: { tokenHash } });
       throw new UnauthorizedException("Account unavailable");
     }
 
@@ -281,18 +281,52 @@ export class AuthService {
     });
 
     const refreshToken = this.jwtService.sign(
-      { sub: user.id, type: "staff" }, // F5-003: realm discriminator (rotated token)
+      // F5-003: realm discriminator (rotated token).
+      // B155: `jti` is what makes each rotated token UNIQUE. Without it the payload is
+      // only {sub, type} plus jsonwebtoken's iat/exp at one-second resolution, so two
+      // sessions of the SAME user rotating inside one second mint byte-identical tokens
+      // and therefore the same sha256 `tokenHash` — a `@unique` column. The old code
+      // wrote it through `upsert`, whose update branch silently absorbed the duplicate
+      // (merging the two sessions); the compare-and-swap below would instead raise P2002
+      // and 500 the refresh, which every client treats as a dead session.
+      { sub: user.id, type: "staff", jti: crypto.randomUUID() },
       { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
     );
 
-    // Preserve device info from old token if not provided
-    const effectiveDeviceInfo: DeviceInfo = deviceInfo ?? {
-      userAgent: stored.userAgent ?? undefined,
-      ipAddress: stored.ipAddress ?? undefined,
-      deviceName: stored.deviceName ?? undefined,
-    };
+    // B155: rotate IN PLACE. The old code deleted the row and upserted a NEW one
+    // (a new id + createdAt every ~15 min), so Active Sessions showed the last
+    // rotation as "Signed in" and Revoke-by-listed-id 403'd after any rotation.
+    // Compare-and-swap on { id, oldHash }: the update IS the invalidation of the
+    // old token. `id`/`createdAt`/`userId` are never written.
+    const now = new Date();
+    const newTokenHash = this.hashToken(refreshToken);
+    const newExpiresAt = new Date(this.jwtService.decode(refreshToken).exp * 1000);
+    const { count } = await this.prisma.refreshToken.updateMany({
+      where: { id: stored.id, tokenHash: stored.tokenHash },
+      data: {
+        tokenHash: newTokenHash,
+        expiresAt: newExpiresAt,
+        lastUsedAt: now,
+        // Only overwrite device columns when the caller supplied them (mirrors the
+        // old upsert's `update` branch); `undefined` leaves a column untouched.
+        userAgent: deviceInfo?.userAgent,
+        ipAddress: deviceInfo?.ipAddress,
+        deviceName: deviceInfo?.deviceName,
+      },
+    });
 
-    await this.storeRefreshToken(user.id, refreshToken, effectiveDeviceInfo);
+    if (count === 0) {
+      // Lost a concurrent-rotation race: another refresh of the same token already
+      // swapped the hash. Preserve the old tolerance (the deleteMany comment's
+      // "avoids P2025 on race") — give the loser a fresh row so BOTH refreshes
+      // succeed exactly as before.
+      const effectiveDeviceInfo: DeviceInfo = deviceInfo ?? {
+        userAgent: stored.userAgent ?? undefined,
+        ipAddress: stored.ipAddress ?? undefined,
+        deviceName: stored.deviceName ?? undefined,
+      };
+      await this.storeRefreshToken(user.id, refreshToken, effectiveDeviceInfo);
+    }
 
     return {
       accessToken,

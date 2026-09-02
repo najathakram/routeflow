@@ -416,5 +416,34 @@ export default defineConfig({
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
+
+    // ── Impersonation sign-out (F14, spec 31) ──────────────────────────────────
+    // REG-B138: while impersonating, the avatar menu offers "Exit impersonation"
+    // and never "Sign out"; exiting POSTs no /auth/logout and the impersonated
+    // TENANT_ADMIN's session count is unchanged (server-side, read through a token
+    // the UI never touches). No storageState — the spec manages the super-admin
+    // and tenant-admin sessions itself. Skips (NOT a discharge — L-041) until
+    // PLAYWRIGHT_SA_* are set and e2e-seed.js has seeded `e2e_admin` on the target.
+    // Targets e2e-routeflow BY SLUG, never `tenants?limit=1`.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "impersonation-signout",
+      testMatch: /31-impersonation-signout\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+
+    // ── Active Sessions identity (F14, spec 32) ────────────────────────────────
+    // REG-B155: a session row captured BEFORE a refresh-token rotation is still
+    // listed (same id, same createdAt) and can be revoked; the revoke bites (the
+    // rotated token then 401s); a failed revoke re-syncs the list, and a sign-out-all
+    // whose revokes all fail reports the failure instead of faking success. NO storageState
+    // on purpose — the spec revokes its OWN fresh login and must never consume the
+    // shared operator.json refresh token.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "active-sessions",
+      testMatch: /32-active-sessions\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
   ],
 });

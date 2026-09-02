@@ -227,4 +227,68 @@ describe("OrderTemplatesService — template ownership (F2-003)", () => {
     expect(result).toEqual({ success: true });
     expect(prisma.customer.findFirst).not.toHaveBeenCalled();
   });
+
+  // T11 (REG-B133): addItem() (unlike removeItemForUser/generateOrderForUser)
+  // took no user at all, so ANY authenticated customer could add items to
+  // ANY tenant's template. addItemForUser must apply the same ownership check
+  // as its siblings above. addItemForUser does not exist at 39632d27 — the
+  // bare call throws synchronously before a chained .catch() can attach, so
+  // the call is deferred inside a resolved-promise chain to keep the failure
+  // an assertion (toBeInstanceOf) instead of an unhandled exception.
+  //
+  // Each of the three tests below opens with an explicit existence assertion so
+  // the pre-fix red NAMES the missing wrapper instead of surfacing as an opaque
+  // "expected ForbiddenException, received TypeError". Once R6 lands the line is
+  // a no-op and the ownership assertions below it carry the proof.
+  it("REG-B133 a CUSTOMER who does not own the template cannot add items to it", async () => {
+    expect(typeof (service as any).addItemForUser).toBe("function");
+    prisma.customer.findFirst.mockResolvedValue({ id: "c-attacker" });
+    prisma.product.findUnique.mockResolvedValue({ id: "p1" });
+
+    const err = await Promise.resolve()
+      .then(() =>
+        (service as any).addItemForUser(
+          "t1",
+          { productId: "p1", qty: 1 },
+          asCustomer("u-attacker"),
+        ),
+      )
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect(prisma.orderTemplateItem.create).not.toHaveBeenCalled();
+  });
+
+  it("REG-B133 a CUSTOMER JWT with no customer record cannot add items (cross-tenant token)", async () => {
+    expect(typeof (service as any).addItemForUser).toBe("function");
+    prisma.customer.findFirst.mockResolvedValue(null);
+
+    const err = await Promise.resolve()
+      .then(() =>
+        (service as any).addItemForUser("t1", { productId: "p1", qty: 1 }, asCustomer("u-foreign")),
+      )
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect(prisma.orderTemplateItem.create).not.toHaveBeenCalled();
+  });
+
+  it("pin (B133): the owning customer and an operator add items; the operator path skips the ownership read", async () => {
+    expect(typeof (service as any).addItemForUser).toBe("function");
+    prisma.product.findUnique.mockResolvedValue({ id: "p1" });
+    prisma.orderTemplateItem.create.mockResolvedValue({ id: "i2" });
+
+    prisma.customer.findFirst.mockResolvedValue({ id: "c-owner" });
+    await (service as any).addItemForUser("t1", { productId: "p1", qty: 1 }, asCustomer("u-owner"));
+    expect(prisma.orderTemplateItem.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ templateId: "t1", productId: "p1", qty: 1 }),
+      }),
+    );
+
+    prisma.customer.findFirst.mockClear();
+    await (service as any).addItemForUser("t1", { productId: "p1", qty: 1 }, asOperator);
+    expect(prisma.customer.findFirst).not.toHaveBeenCalled();
+    expect(prisma.orderTemplateItem.create).toHaveBeenCalledTimes(2);
+  });
 });

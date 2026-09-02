@@ -1077,7 +1077,16 @@ export class CustomersService {
    * row cleared of BOTH fields has nothing left to say and is deleted instead
    * of left behind empty (frees the customerId_productId unique slot).
    */
-  async upsertCustomerPrice(customerId: string, dto: UpsertCustomerPriceDto, user?: JwtPayload) {
+  async upsertCustomerPrice(customerId: string, dto: UpsertCustomerPriceDto, user: JwtPayload) {
+    // B132: authorization before semantics and before ANY read — a non-operator must
+    // not learn whether an override exists. The role set is the DELETE sibling's
+    // effective set under RolesGuard's ROLE_SATISFIES (TENANT_ADMIN ⊇ OPERATOR).
+    const role = user?.role as UserRole | undefined;
+    const operatorLevel =
+      role === UserRole.OPERATOR || role === UserRole.TENANT_ADMIN || role === UserRole.SUPER_ADMIN;
+    if (!operatorLevel) {
+      throw new ForbiddenException("Only operators can change a price override");
+    }
     if (dto.pricingTier === undefined && dto.msrp === undefined) {
       throw new BadRequestException("Provide a pricing tier, an MSRP override, or both");
     }
@@ -1102,19 +1111,7 @@ export class CustomersService {
 
     if (nextPricingTier == null && nextMsrp == null) {
       if (existing) {
-        // Clearing both fields removes the row — that is a DELETE, and the
-        // dedicated DELETE /:id/prices/:priceId route is OPERATOR-only while
-        // this POST also admits DRIVER. Hold the implicit delete to the same
-        // bar, or a driver could erase a negotiated override by posting
-        // {pricingTier: null}.
-        const role = user?.role as UserRole | undefined;
-        const operatorLevel =
-          role === UserRole.OPERATOR ||
-          role === UserRole.TENANT_ADMIN ||
-          role === UserRole.SUPER_ADMIN;
-        if (!operatorLevel) {
-          throw new ForbiddenException("Only operators can remove a price override");
-        }
+        // Clearing both fields removes the row (role already gated above — B132).
         await this.prisma.forTenant().customerPrice.delete({ where: { id: existing.id } });
       }
       return null;

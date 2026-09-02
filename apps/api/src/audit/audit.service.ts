@@ -9,6 +9,8 @@ export interface CreateAuditLogDto {
   entityId?: string | null;
   ip?: string | null;
   meta?: Record<string, unknown>;
+  /** Platform-admin id when the write happened under impersonation (AuditLog.impersonatedBy, F01). */
+  impersonatedBy?: string | null;
 }
 
 @Injectable()
@@ -25,6 +27,7 @@ export class AuditService {
           entityType: dto.entityType,
           entityId: dto.entityId ?? null,
           ip: dto.ip ?? null,
+          impersonatedBy: dto.impersonatedBy ?? null,
           meta: (dto.meta as any) ?? undefined,
         },
       });

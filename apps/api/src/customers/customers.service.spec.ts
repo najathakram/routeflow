@@ -53,6 +53,7 @@ describe("CustomersService", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   let meter: { read: jest.Mock };
   let catalog: { getPublishedVersion: jest.Mock };
+  let entitlements: { hasFlag: jest.Mock };
   let configGet: jest.Mock;
   let ledger: { reverseInvoiceEntries: jest.Mock };
   const originalFetch = global.fetch;
@@ -85,6 +86,12 @@ describe("CustomersService", () => {
       }),
     };
     catalog = { getPublishedVersion: jest.fn().mockResolvedValue(null) };
+    // flag.msrp defaults OFF — msrp-free upserts never consult the flag. Hoisted
+    // (rather than inlined in the provider) so a test that DOES carry `msrp` can
+    // flip the flag ON and let assertMsrpAllowed return quietly; the stub catalog
+    // has no upgradeTargetForFlag, so a flag-OFF msrp path would crash there and
+    // mask the behaviour the test is actually about.
+    entitlements = { hasFlag: jest.fn().mockResolvedValue(false) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -109,11 +116,7 @@ describe("CustomersService", () => {
         },
         { provide: MeterService, useValue: meter },
         { provide: PlanCatalogService, useValue: catalog },
-        // flag.msrp defaults OFF — msrp-free upserts never consult the flag.
-        {
-          provide: EntitlementsService,
-          useValue: { hasFlag: jest.fn().mockResolvedValue(false) },
-        },
+        { provide: EntitlementsService, useValue: entitlements },
         { provide: RegulatedLedgerService, useValue: ledger },
       ],
     }).compile();
@@ -1221,21 +1224,71 @@ describe("CustomersService", () => {
       expect(prisma.customerPrice.delete).not.toHaveBeenCalled();
     });
 
-    it("a DRIVER may still null the tier on a row that keeps its MSRP (no delete involved)", async () => {
+    // T8 (REG-B132): this test used to be titled "a DRIVER may still null the
+    // tier on a row that keeps its MSRP (no delete involved)" and asserted the
+    // BUG — that a DRIVER's write reached upsert() as long as an implicit
+    // delete wasn't triggered. The gate must be hoisted above every read, not
+    // conditioned on which fields happen to clear the row.
+    it("REG-B132 a DRIVER cannot null the tier even on a row that keeps its MSRP — refused before any read", async () => {
+      prisma.customerPrice.findUnique.mockResolvedValue({ id: "cp-1", pricingTier: 3, msrp: 5 });
+
+      const err = await service
+        .upsertCustomerPrice("cust-1", { productId: "p1", pricingTier: null }, driverPayload)
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(String(err.message)).toMatch(/^Only operators/);
+      expect(prisma.customerPrice.findUnique).not.toHaveBeenCalled();
+      expect(prisma.customerPrice.upsert).not.toHaveBeenCalled();
+      expect(prisma.customerPrice.delete).not.toHaveBeenCalled();
+    });
+
+    it("REG-B132 a DRIVER posting a tier is refused before the MSRP entitlement or any DB read", async () => {
+      // flag.msrp ON so that, pre-fix, assertMsrpAllowed returns quietly and the
+      // DRIVER's write runs all the way through to upsert(). With the flag OFF
+      // the plan-gate branch reaches catalog.upgradeTargetForFlag — absent from
+      // the stub — and the test would fail on a TypeError, unable to tell "the
+      // driver wrote" from "the code crashed". Post-fix the hoisted role gate
+      // short-circuits above this call and msrpSpy is never reached.
+      entitlements.hasFlag.mockResolvedValue(true);
+      const msrpSpy = jest.spyOn(service as any, "assertMsrpAllowed");
+      prisma.customerPrice.findUnique.mockResolvedValue({ id: "cp-1", pricingTier: 3, msrp: 5 });
+
+      const err = await service
+        .upsertCustomerPrice("cust-1", { productId: "p1", pricingTier: 4, msrp: 7 }, driverPayload)
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(String(err.message)).toMatch(/^Only operators/);
+      expect(msrpSpy).not.toHaveBeenCalled();
+      expect(prisma.customerPrice.findUnique).not.toHaveBeenCalled();
+      expect(prisma.customerPrice.upsert).not.toHaveBeenCalled();
+    });
+
+    it("REG-B132 an undefined user is refused (no caller identity → no override change)", async () => {
+      const err = await service
+        .upsertCustomerPrice("cust-1", { productId: "p1", pricingTier: 4 }, undefined as any)
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(prisma.customerPrice.upsert).not.toHaveBeenCalled();
+    });
+
+    it("pin (B132): OPERATOR and TENANT_ADMIN still upsert (partial update preserved)", async () => {
       prisma.customerPrice.findUnique.mockResolvedValue({ id: "cp-1", pricingTier: 3, msrp: 5 });
       prisma.customerPrice.upsert.mockResolvedValue({ id: "cp-1" });
-
       await service.upsertCustomerPrice(
         "cust-1",
-        { productId: "p1", pricingTier: null },
-        driverPayload,
+        { productId: "p1", pricingTier: 4 },
+        operatorPayload,
       );
-
-      expect(prisma.customerPrice.delete).not.toHaveBeenCalled();
-      expect(prisma.customerPrice.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          update: expect.objectContaining({ pricingTier: null, msrp: 5 }),
-        }),
+      await service.upsertCustomerPrice(
+        "cust-1",
+        { productId: "p1", pricingTier: 4 },
+        { ...operatorPayload, role: "TENANT_ADMIN" as const },
+      );
+      expect(prisma.customerPrice.upsert).toHaveBeenCalledTimes(2);
+      expect(prisma.customerPrice.upsert).toHaveBeenLastCalledWith(
+        expect.objectContaining({ update: expect.objectContaining({ pricingTier: 4, msrp: 5 }) }),
       );
     });
   });
