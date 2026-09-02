@@ -791,9 +791,16 @@ const renderFront = (front) =>
 const readRecord = (id) =>
   existsSync(recordPath(id)) ? parseRecord(readFileSync(recordPath(id), "utf8")) : null;
 
+// Every writer refreshes the body's baked-in header line itself, from the
+// SAME front matter it is writing — a caller cannot forget it. Before this,
+// only `sync` ever called refreshHeaderLine, so `reopen`/`prove`/`discharge`/
+// `claim`/`release`/`tier` left the visible "**Location** ... **State** ..."
+// line stale until the next Gate-4 sync happened to touch the same bug —
+// `show`/`brief` render the body, so an agent reading between the write and
+// that sync saw a superseded state.
 function writeRecord(id, front, body) {
   mkdirSync(RECORD_DIR(), { recursive: true });
-  writeFileSync(recordPath(id), renderFront(front) + body);
+  writeFileSync(recordPath(id), renderFront(front) + refreshHeaderLine(body, front));
 }
 
 // History is append-only and deduped on `key` — so sync is idempotent and can
@@ -940,7 +947,9 @@ cmds.expand = () => {
       writeRecord(bug.id, front, body);
       created++;
     } else {
-      writeRecord(bug.id, { ...existing.front, ...front }, refreshHeaderLine(existing.body, front));
+      // writeRecord refreshes the header line itself now — no need to do it
+      // here first.
+      writeRecord(bug.id, { ...existing.front, ...front }, existing.body);
       refreshed++;
     }
   }
@@ -2702,6 +2711,12 @@ cmds["self-test"] = () => {
       check(
         "reopen: the record carries the regression event",
         readRecord("B1").body.includes("**regressed**"),
+        true,
+      );
+      check(
+        "reopen: writeRecord refreshes the header line itself — no stale " +
+          "'State done' surviving until the next sync",
+        readRecord("B1").body.includes("**State** regressed"),
         true,
       );
       check(
