@@ -83,6 +83,10 @@ const STATUS_DIR = () => join(rootDir(), "status");
 // exercises the real cmds.enrich against a fixture instead of a hand copy of it.
 const REGISTER = () => process.env.BUGS_REGISTER || "local-assets/docs/routeflow-bug-register.html";
 const BOARD = () => join(rootDir(), "board.json");
+// Overridable via BUGS_PIPELINE_DIR for the same reason as REGISTER(): the
+// self-test exercises the real cmds.brief against a fixture discovery.md
+// instead of the real .claude/pipeline directory.
+const PIPELINE_DIR = () => process.env.BUGS_PIPELINE_DIR || ".claude/pipeline";
 
 const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3, none: 4 };
 
@@ -617,11 +621,32 @@ const claimHint = (b) => `node scripts/team/team.mjs claim ${b.issue ?? "<issue#
 // severity sort: the top of a severity sort routinely hard-conflicts with the
 // batch someone else is already in.
 cmds.next = (args) => {
-  const { waves, parked, skipped } = selectBatches(args);
+  const { waves, parked, skipped, cap, hubThreshold } = selectBatches(args);
   const wave1 = waves[0] ?? [];
 
   if (args.includes("--json")) {
-    console.log(JSON.stringify({ eligible: wave1, waves, parked, skipped }, null, 2));
+    // `next` is the ONE place that names a head at all — the text path
+    // treats wave1[0] as "the next batch" and the rest as "safe to run
+    // alongside it", but --json used to hand back only `eligible` (the
+    // WHOLE wave, un-headed) with no `cap`/`hubThreshold` a consumer could
+    // use to tell what schedule produced it. Now self-describing, matching
+    // `waves --json`'s shape plus the named head.
+    console.log(
+      JSON.stringify(
+        {
+          next: wave1[0] ?? null,
+          alongside: wave1.slice(1),
+          eligible: wave1,
+          waves,
+          parked,
+          skipped,
+          cap,
+          hubThreshold,
+        },
+        null,
+        2,
+      ),
+    );
     return;
   }
 
@@ -1382,10 +1407,10 @@ cmds.brief = (args) => {
   const out = [];
   out.push(`# ${batch}${board.batches?.[batch] ? ` · board issue #${board.batches[batch]}` : ""}`);
 
-  const pipelineDir = existsSync(".claude/pipeline")
-    ? readdirSync(".claude/pipeline").find((d) => d.toUpperCase().includes(`-${batch}-`))
+  const pipelineDir = existsSync(PIPELINE_DIR())
+    ? readdirSync(PIPELINE_DIR()).find((d) => d.toUpperCase().includes(`-${batch}-`))
     : null;
-  const discovery = pipelineDir ? join(".claude/pipeline", pipelineDir, "discovery.md") : null;
+  const discovery = pipelineDir ? join(PIPELINE_DIR(), pipelineDir, "discovery.md") : null;
 
   const rows = ids.map((id) => ({ id, st: state.get(id), rec: readRecord(id) }));
   const analysed = rows.filter((r) => r.rec && !r.rec.body.includes(UNANALYSED));
@@ -1415,6 +1440,7 @@ cmds.brief = (args) => {
         `carries its reopen citation in its own block below; read it before re-fixing.`,
     );
 
+  let orderSequence = null;
   if (discovery && existsSync(discovery)) {
     out.push(
       `\n## Batch plan\n\nRead this FIRST — it carries the ordering, the file conflicts and the risks:\n\n    ${discovery}`,
@@ -1424,10 +1450,30 @@ cmds.brief = (args) => {
     if (verdict) out.push(`\n${verdict[1].trim()}`);
     const order = /## Ordering\n\n([\s\S]*?)(?=\n## )/.exec(txt);
     if (order) out.push(`\n## Ordering\n\n${order[1].trim()}`);
+    // The Ordering section's own backtick sequence (e.g.
+    // `B129 + B211 -> B146 -> B34`) is a deliberate build sequence — "+"
+    // groups land in one PR, "->" means strictly after. Parsed here so the
+    // "## Bugs" blocks below can be printed in THAT order, not ledger
+    // (id-ascending) order, which has no relationship to it.
+    const orderingLine = /## Ordering\n\n`([^`]+)`/.exec(txt);
+    if (orderingLine)
+      orderSequence = orderingLine[1]
+        .split("->")
+        .flatMap((g) => g.split("+"))
+        .map((s) => s.trim().toUpperCase())
+        .filter((s) => /^B\d+$/.test(s));
   } else {
     out.push(
       `\n## Batch plan\n\n⚠ none yet — run the analysis pass before fixing (see the bug-registry skill).`,
     );
+  }
+
+  // Ids the sequence doesn't mention (or when there is no sequence at all)
+  // keep their relative ledger order — Array#sort is stable, so this only
+  // ever REORDERS what the sequence actually names.
+  if (orderSequence) {
+    const pos = new Map(orderSequence.map((id, i) => [id, i]));
+    rows.sort((a, b) => (pos.get(a.id) ?? Infinity) - (pos.get(b.id) ?? Infinity));
   }
 
   out.push(`\n## Bugs`);
@@ -2239,6 +2285,105 @@ cmds["self-test"] = () => {
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
       else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // `next --json` must be self-describing: a named head (not the whole wave
+  // left for the caller to infer "index 0 is the head" from), plus the
+  // cap/hubThreshold that produced the schedule — `waves --json` already
+  // carries the latter, `next --json` did not.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file([
+        "next --json fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T1",
+      ]);
+      const out = capture(() => cmds.next(["--json", "--no-claims"]));
+      const parsed = JSON.parse(out);
+      check(
+        "next --json: shape carries next/alongside/eligible/waves/parked/skipped/cap/hubThreshold",
+        Object.keys(parsed).sort(),
+        [
+          "alongside",
+          "cap",
+          "eligible",
+          "hubThreshold",
+          "next",
+          "parked",
+          "skipped",
+          "waves",
+        ].sort(),
+      );
+      check("next --json: `next` names the head of wave 1", parsed.next?.batch, "F01");
+      check("next --json: `alongside` is wave 1 minus the head", parsed.alongside, []);
+      check(
+        "next --json: cap/hubThreshold match the defaults waves --json exposes",
+        parsed.cap,
+        AGENT_CAP,
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // brief must order its "## Bugs" blocks by discovery.md's own Ordering
+  // line when one exists, not by ledger (id-ascending) order — the whole
+  // point of the sequence is to tell a builder what to do FIRST.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const pipelineTmp = join(tmp, "pipeline");
+    const prevRoot = process.env.BUGS_ROOT;
+    const prevPipeline = process.env.BUGS_PIPELINE_DIR;
+    process.env.BUGS_ROOT = tmp;
+    process.env.BUGS_PIPELINE_DIR = pipelineTmp;
+    try {
+      // Filed in id order B1, B2, B3 — the Ordering below reverses that.
+      for (const title of [
+        "ordering fixture first",
+        "ordering fixture second",
+        "ordering fixture third",
+      ])
+        cmds.file([
+          title,
+          "--location",
+          "apps/api/src/self-test.ts",
+          "--severity",
+          "low",
+          "--batch",
+          "F01",
+          "--tier",
+          "T1",
+        ]);
+      mkdirSync(join(pipelineTmp, "2026-01-01-F01-ordering-fixture"), { recursive: true });
+      writeFileSync(
+        join(pipelineTmp, "2026-01-01-F01-ordering-fixture", "discovery.md"),
+        "## Verdict\n\nok\n\n## Ordering\n\n`B3 -> B2 + B1`\n\n## File conflicts\n\nnone\n",
+      );
+      const out = capture(() => cmds.brief(["F01"]));
+      const positions = ["B1", "B2", "B3"].map((id) => out.indexOf(`### ${id} ·`));
+      check(
+        "brief: '## Bugs' blocks follow discovery.md's Ordering, not ledger id order",
+        positions[2] < positions[1] && positions[1] < positions[0],
+        true,
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      if (prevPipeline === undefined) delete process.env.BUGS_PIPELINE_DIR;
+      else process.env.BUGS_PIPELINE_DIR = prevPipeline;
       rmSync(tmp, { recursive: true, force: true });
     }
   }
