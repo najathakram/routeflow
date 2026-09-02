@@ -957,15 +957,48 @@ cmds["self-test"] = () => {
         { id: "B901", title: "enrich fixture" },
         "\n# B901 · enrich fixture\n\n## History\n",
       );
+      // B902 has NO "## History" heading at all — both the "already has the
+      // section" and "insert before History" branches used to fall through as
+      // a silent no-op here.
+      writeCatalogue([
+        ...readCatalogue(),
+        {
+          id: "B902",
+          title: "enrich fixture no history",
+          location: "apps/api/src/self-test.ts",
+          severity: "low",
+          register: "open",
+          batch: null,
+          source: "filed",
+          filedAt: null,
+          sensitive: false,
+          sensitiveFor: [],
+        },
+      ]);
+      writeRecord(
+        "B902",
+        { id: "B902", title: "enrich fixture no history" },
+        "\n# B902 · no history\n",
+      );
       const html =
         '<span class="bug-id">B901</span>' +
         "<dt>Meant to do</dt><dd>Ship correct totals</dd>" +
         "<dt>Actually does</dt><dd>Off by $100 due to a $&amp; glitch</dd>" +
         '<div class="evidence">apps/api/src/self-test.ts:1 — $1 broke it</div>' +
+        '<span class="bug-id">B902</span>' +
+        "<dt>Meant to do</dt><dd>Ship correct totals</dd>" +
+        "<dt>Actually does</dt><dd>Also broken, no History heading</dd>" +
         '<span class="bug-id">ZZZ</span>';
       writeFileSync(registerPath, html);
       cmds.enrich();
       const afterEnrich = readRecord("B901").body;
+      const afterEnrichNoHistory = readRecord("B902").body;
+      check(
+        "enrich: a record with no '## History' heading gets the section appended, not skipped",
+        afterEnrichNoHistory.includes("## Reported evidence") &&
+          afterEnrichNoHistory.includes("Also broken, no History heading"),
+        true,
+      );
       check(
         "enrich: register HTML with $-patterns survives verbatim (real cmds.enrich)",
         afterEnrich.includes("Off by $100 due to a $& glitch"),
@@ -988,6 +1021,19 @@ cmds["self-test"] = () => {
   // history must dedupe on its marker, or Gate 4 grows the file every turn.
   const once = appendHistory("## History\n", "k1", "e", "d");
   check("appendHistory: idempotent on the same key", appendHistory(once, "k1", "e", "d"), once);
+
+  // replaceSection must be bounded by the NEXT heading of any kind, not one
+  // fixed heading name — an anchor bound to "## History" specifically deleted
+  // every section in between when a different heading came first.
+  {
+    const withGap = "\n## Reported evidence\n\nOLD\n\n## Summary\n\nKEEP ME\n\n## History\n\n- e\n";
+    const replaced = replaceSection(withGap, "Reported evidence", "NEW");
+    check(
+      "replaceSection: bounded by the next heading, not a fixed one",
+      replaced?.includes("KEEP ME") && replaced?.includes("NEW") && !replaced?.includes("OLD"),
+      true,
+    );
+  }
 
   // the ledger must hold exactly one row per id, repo-wide.
   const seen = new Map();
@@ -1212,13 +1258,33 @@ cmds.enrich = () => {
         "",
       );
 
-    const section = `## Reported evidence\n\n${parts
+    const contentCore = parts
       .join("\n")
       .replace(/\n{3,}/g, "\n\n")
-      .trim()}\n`;
-    const body = rec.body.includes("## Reported evidence")
-      ? rec.body.replace(/## Reported evidence\n[\s\S]*?(?=\n## History)/, () => section)
-      : rec.body.replace(/(\n## History)/, (_m, h) => `\n${section}${h}`);
+      .trim();
+
+    const before = rec.body;
+    let body;
+    if (before.includes("## Reported evidence")) {
+      // Bounded by the next heading OF ANY KIND, not a specific one — an
+      // anchor bound to "## History" specifically deleted every section in
+      // between when a different heading came first (proved: it deleted the
+      // analysed Summary out from under a record that had one).
+      body = replaceSection(before, "Reported evidence", contentCore);
+    } else if (before.includes("\n## History")) {
+      body = before.replace(
+        /(\n## History)/,
+        (_m, h) => `\n## Reported evidence\n\n${contentCore}\n${h}`,
+      );
+    } else {
+      // No History heading to anchor on at all — append rather than silently
+      // no-op (both branches used to fall through unchanged here).
+      body = `${before.replace(/\s*$/, "")}\n\n## Reported evidence\n\n${contentCore}\n`;
+    }
+    if (body === null || !body.includes(contentCore))
+      fail(
+        `enrich: "## Reported evidence" for ${bug.id} did not take effect — write path produced no change`,
+      );
 
     writeRecord(bug.id, { ...rec.front, files: d.files.join(" ") || null }, body);
     enriched++;
