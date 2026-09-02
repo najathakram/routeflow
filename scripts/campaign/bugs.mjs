@@ -816,7 +816,11 @@ const frontFor = (bug, st) => ({
   batch: st?.batch ?? bug.batch ?? null,
   tier: st?.tier ?? null,
   state: st?.state ?? "uncampaigned",
-  proof: st?.state && st.state !== "queued" ? `REG-${bug.id}` : null,
+  // Only a state that actually carries a proof shows one. `reopen` CLEARS the
+  // ledger's proof, and a state-only rule (`!== "queued"`) would have let the
+  // very next `sync` resurrect the token it had just erased — the record would
+  // claim a proof its own ledger row does not have.
+  proof: st?.state && !WORKABLE.has(st.state) && st.state !== "in-flight" ? `REG-${bug.id}` : null,
   sensitive: bug.sensitive ?? classify(bug).sensitive,
   sensitiveFor: (bug.sensitiveFor ?? classify(bug).reasons).join(",") || null,
   closed: st && ["done", "already-fixed"].includes(st.state) ? "yes" : null,
@@ -1636,7 +1640,22 @@ cmds.tier = (args) => {
   const batch = findShardOf(id);
   if (!batch) fail(`${id} is in no ledger shard — file it with a --batch first`);
   const row = readShard(batch).rows.find((r) => r.id === id);
-  if (row.tier === tier) fail(`${id} is already tier ${tier}`);
+  // A ruling that CONFIRMS the standing tier is a real conclusion — B211's
+  // analysis ruled T1 over a defaulted T1 and had to be filed as a plain note
+  // because this refused a no-op. Record it; just don't pretend it moved.
+  if (row.tier === tier) {
+    const rec = readRecord(id);
+    if (rec)
+      writeRecord(
+        id,
+        rec.front,
+        appendEvent(rec.body, `tier-confirmed-${tier}`, "tier confirmed", `${tier} — ${why}`),
+      );
+    console.log(
+      `${id}: already tier ${tier} — recorded the ruling that confirms it (ledger unchanged).`,
+    );
+    return;
+  }
 
   const { row: after } = upsertLedgerRow(batch, { ...row, tier });
   if (after?.tier !== tier)
@@ -2349,6 +2368,19 @@ cmds["self-test"] = () => {
         "reopen: a regressed row is workable again",
         batchIndex().batches.get("F01").bugs.length,
         1,
+      );
+      cmds.sync(["--quiet"]);
+      check(
+        "reopen: the next sync does NOT resurrect the proof reopen erased",
+        readRecord("B1").front.proof,
+        null,
+      );
+
+      cmds.tier(["B1", "T1", "--why", "the analysis ruled T1 over a defaulted T1"]);
+      check(
+        "tier: a ruling that CONFIRMS the standing tier is recorded, not refused",
+        readRecord("B1").body.includes("**tier confirmed**"),
+        true,
       );
 
       cmds.claim(["F01"]);
