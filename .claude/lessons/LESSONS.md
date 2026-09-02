@@ -106,6 +106,37 @@
 
 ## tooling
 
+### L-052 · 2026-09-02 · tooling
+
+- **Symptom:** two separate source edits in the same session produced a file that still passed
+  `node -c` (syntax-valid) but was actually broken. One: `.replace(/**([^*]+)**/g, ...)` — the
+  asterisks lost their escaping in transit, so the unescaped `/**...**/` was parsed as a BLOCK
+  COMMENT, not a regex literal, leaving a bare `.replace(g, ...)` behind that would throw
+  `ReferenceError: g is not defined` the first time the patched function actually ran. Two: an
+  editing pass meant to write a short escape sequence as visible source text instead wrote real
+  non-printable control characters into the file, which then made `grep` refuse to read it and
+  report "binary file matches".
+- **Root cause:** a Unicode escape sequence typed directly into a tool call's text parameter can
+  get decoded into the real character it names before the tool ever receives the string — there
+  is no reliable way to hand a tool the literal escape text that way, only the character itself.
+  Separately, routing a regex-bearing replacement through an intermediate script's own string or
+  template-literal layer is a SECOND round of escaping stacked on the target file's real source:
+  an unrecognized escape inside a JS template literal silently drops the backslash (confirmed
+  directly against node — a digit-class escape inside a template literal evaluates to the bare
+  letter, not the escape). Neither failure shows up in the generator itself, only in the file it
+  produced, and `node -c` proves the RESULT parses; it does not execute it, so a comment silently
+  swallowing a regex is invisible to it.
+- **Lesson:** **Never type a literal escape sequence into a tool call expecting it to survive as
+  visible source text, and never round-trip a regex- or backslash-heavy edit through an
+  intermediate script's own string/template-literal layer — write the replacement directly with
+  the editing tool, and after any generated change to a regex or escape-heavy line, EXECUTE the
+  specific function it touches, not just syntax-check it.** `node -c` is necessary, never
+  sufficient.
+- **Guard:** the registry self-test now calls the real `cmds.render` against a fixture containing
+  a code span and a bold marker (not a hand copy of the markdown renderer) — this exact class of
+  defect fails that check before commit. A file `grep` reports as "binary" is a signal to inspect
+  with `od -c`, never a tool quirk to wave off.
+
 ### L-039 · 2026-09-01 · tooling
 
 - **Symptom:** a green PR went red after a routine rebase, on a check unrelated to its contents —
