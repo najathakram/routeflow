@@ -303,6 +303,28 @@
   two `done` lines, and reopens then syncs and asserts the front-matter proof stays clear
   (19bcecdc, e6d71ae6). The `frontFor` source-field derivation (`st?.proof`) landed in the commit after 7332c32f, with B126/B127 (already-fixed, no ledger proof) as its check.
 
+### L-054 · 2026-09-02 · tooling · #597
+
+- **Symptom:** three write paths in `bugs.mjs` could leave a WORSE state on a refusal or a crash
+  than doing nothing at all: `move` dropped the source shard's row before the guarded destination
+  write, so a rejected move (a duplicate elsewhere) destroyed the authoritative row while reporting
+  that nothing was written; `file` wrote the catalogue row before the ledger write that can `fail()`,
+  so a refused concurrent write left a catalogue row naming a different session's bug/batch; the
+  commit-scan anchor was persisted before the per-record loop that consumes it, so a mid-run crash
+  (a corrupted record) permanently lost every event for a bug processed after the crash point while
+  `sync` looked perfectly healthy on the next run.
+- **Root cause:** each ordered the write that IS the durable record of intent — the destination
+  shard row, the catalogue row, the scan anchor — BEFORE the step that could still fail or crash,
+  instead of after it. A failure then landed on the wrong side of an already-committed change.
+- **Lesson:** **Order a sequence of writes so a failure anywhere in it leaves the SAFEST reachable
+  state: perform the additive/idempotent write first, verify it landed, and only then perform the
+  step that destroys the old state or advances past events not yet durably written — never the
+  reverse. "Did this fully complete?" gates the point of no return, not just the closing report.**
+- **Guard:** `bugs self-test` plants a genuine failure for each path — a cross-shard duplicate for
+  `move`, a directory-shaped record path forcing a real `EISDIR` for `file`, a corrupted record
+  mid-loop for `sync` — and asserts the PRE-failure state (source row, catalogue, anchor) survives
+  untouched, not just that the command exits non-zero.
+
 ## testing
 
 ### L-050 · 2026-09-02 · testing · #598
