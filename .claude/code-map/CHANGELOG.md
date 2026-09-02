@@ -8,6 +8,51 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-02** — (branch `feat/bug-registry`, PR #597; mechanical fix pass against the 7-lens
+  review of the bug registry — 10 commits, `scripts/campaign/bugs.mjs` and `.claude/hooks/stop.mjs`
+  only) — **THE REGISTER'S WRITE-VERIFIES-NOTHING FAMILY (L-051) CLOSED AT SIX MORE SITES.**
+  `index` used to rebuild `bugs.jsonl` from a fixed 9-key shape and permanently destroy every
+  filed `symptom`/`filedAt` plus 61 register PR links; it now spreads derived keys ON TOP of the
+  existing row instead of replacing it, and never recomputes `register` from the ledger-derived
+  `closed` field. `expand` now writes a filed bug's `--symptom` into a `## Reported evidence`
+  section (same name `enrich` uses) so a filed record isn't six empty `_Not yet analysed._`
+  sections with the description stranded in the catalogue alone. Extracted `replaceSection()` as
+  the ONE section-replace helper `cmds.note` calls — the self-test used to assert against a hand
+  copy of that regex, so a regression in the shipped writer couldn't fail it; it now calls the
+  real `cmds.note`/`cmds.enrich`/`cmds.render`/`cmds.file`/`cmds.index` against a throwaway
+  `BUGS_ROOT`/`BUGS_REGISTER`/`BUGS_RENDER_OUT` (all three now env-overridable). `enrich`'s
+  section-replace terminator was bound to the literal `## History` heading, so it deleted every
+  section in between when a different heading came first — now bounded by the next heading of any
+  kind, verified by content, and appends when a record has no History heading at all instead of
+  silently no-op'ing. **Ledger writes:** `prove` validates `--pr` as a positive integer BEFORE
+  writing (`Number("x")` is NaN → silently wrote `"pr":null` while printing success); `flag()`
+  rejects a value that starts with `--`; `upsertLedgerRow` now returns the RE-READ row and every
+  caller (`file`/`prove`/`discharge`/`move`/new `tier`) asserts it before printing success, and its
+  duplicate guard scans ALL shards, not just the target; a re-prove now warns and keys its History
+  line on the PR number so it always logs. Added `normBatch()` (uppercase + `/^F\d{2}$/`) used by
+  every batch-taking command including `file`, which was the one command that skipped it. Added
+  `normId()`/`resolveId()` — "B04" and "B4" compare equal without migrating the nine zero-padded
+  records — routed through `show`/`note`/`prove`/`move`/`brief`/`deps --bug` and `sync`'s
+  commit-mention map. The body's `**Location** … **State**` header line was written ONCE at
+  creation and never refreshed (B32 still said "Batch F11", B211 still said "State uncampaigned"
+  long after the ledger moved on) — now regenerated from front matter on every `expand`/`sync`;
+  ran `expand` once, corrected 9 already-drifted records. `readState`/`readShard` fail loudly
+  naming the shard+line on malformed JSON instead of crashing opaquely; Gate 4 also checks the
+  script exists and prints one stderr line (still never blocks) when `sync` fails. New commands:
+  `tier <B###> <T1|T2|T3> --why` reconciles a ledger row's tier with what analysis concluded;
+  `triage` lists the 17 catalogue bugs with no ledger row at all (invisible to
+  next/status/deps/campaign-check). Also fixed: CRLF-terminated records silently lost their front
+  matter (LF-only delimiter regex); `inline()` mangled snake_case identifiers inside code spans AND
+  had a LATENT RUNTIME BUG the old self-test never exercised — unescaped `/**...**/` parsed as a
+  block comment, leaving a bare `.replace(g, ...)` that threw `ReferenceError` the first time
+  `render` actually ran; `render` now escapes severity/id before HTML interpolation; `file` now
+  creates the ledger row BEFORE `expand()` (a fresh record used to bake in "uncampaigned" until an
+  unrelated sync); `file --files` seeds `deps`' file set immediately. USAGE header now lists all 21
+  commands (was 5). Full findings + skip rationale for out-of-scope items (SKILL.md, package.json,
+  the sync event-report reliability issues explicitly owned by another worker, the carve-out
+  classifier widening, the discharge evidence-pattern policy call) in the PR. Lesson **L-052**
+  (escaping/round-trip pitfalls patching source via an intermediate script).
+
 - **2026-09-02** — (branch `feat/bug-registry`, PR #597; tooling + ledger/docs only, no app code) — **IN-REPO BUG REGISTRY.** `.claude/campaign/bugs/B###.md` (211 per-bug records: derived front matter incl. a `files` list, six analysis sections, a `## Reported evidence` block imported from the register HTML, append-only History) + `scripts/campaign/bugs.mjs` (`file` `brief` `prove` `discharge` `move` `enrich` `deps` `render` `next` `status` `show` `note` `sync` `self-test` …). All ledger writes go through replace-in-place `upsertLedgerRow`. `sync` derives history from the proof ledger + git log and runs as **Gate 4 of `stop.mjs`** (reports, never blocks) — ⚠️ the hook exists on this branch only until #597 merges. `classify()` is the owner carve-out (money / tenancy / migration → planned, never auto-fixed; parks 16 of 19 queued batches). `deps` computes the conflict graph — ⚠️ hub files (orders.service.ts ×36, invoices.service.ts ×30, schema.prisma ×27) must be excluded or nothing is ever parallel-safe, and the graph cannot see method-level collisions inside a god-file (missed B34/B146 until the analysis file sets were merged in). F11 analysed by a 21-agent pass: every diagnosis held, every suggested fix was refuted on fix-correctness; B32 → F20; B211 (new Critical) filed. `bugs self-test` is a verify step because five write-path defects shipped from this file in one session (L-051). Seven-lens review (Opus/Sonnet) found 7 blockers / 23 majors — fix pass pending; see the review record in the PR.
 
 - **2026-09-02** — (master `afce1a60`; #598 F14 + #599 quarantine + #600 discharge) — **F14 AUTHORIZATION / TENANCY MATRIX SHIPPED (B52 B132 B133 B138 B155 B165 B168).** **B52 (Critical)** — supplier-statement scans were readable CROSS-TENANT: the prefix had no `OWNER_LOOKUPS` entry so the owner check never ran. `uploads.controller.ts` now maps it AND the JWT path **defaults to deny before `path.join`/`fs.existsSync`**, so an unmapped prefix or flat key is refused rather than streamed and 403-vs-404 no longer leaks key existence; signed URLs and SUPER_ADMIN stay exempt. **B132/B133/B168** — DRIVER grants that outlived their screens removed from price overrides, order-template mutations and the four inventory WRITES (reads keep DRIVER, pinned); `addItem` now routes through a new `addItemForUser` ownership wrapper. **B165** — both JWT strategies propagate `impersonatedBy`, `AuditLog` is stamped with it, and `ImpersonationGuard` decodes the bearer payload directly because APP_GUARD ordering leaves `req.user` undefined where it runs. **B138** — impersonated logout clears the cookie and revokes NOTHING (an impersonation token's `sub` IS the tenant admin). **B155** — `refresh()` rotates the row IN PLACE via compare-and-swap on the old hash with a `count === 0` create fallback, so session identity and `createdAt` survive rotation. Proof: **210 suites / 3540 tests** (62 new), all 12 mutation targets probed. ⚠️ **The one that got past every Opus lens was caught by Fable's final pass:** spec 32's cleanup swept EVERY live session of the shared `admin` operator including `operator.json`'s. ⚠️ **And the post-deploy run still went red (33612887226)** — both new e2e projects are dependency-free, so phase 1 held them beside `auth-password` on that same shared user and spec 32's revokes took `AP-06` down; #599 **quarantined both project entries** (commented, not deleted) and run 33615066210 came back green with 11 steps EXECUTED. **Re-enabling needs a dedicated e2e user, never an ordering tweak.** Lessons **L-044** (green is a claim, not evidence — invert the test that asserts the old behaviour) and **L-050** (a spec that mutates shared auth state needs its own user). Ledger 61 → **66/193 terminal (34.2%)**, open Criticals 8 → **7**; B138/B155 remain `proven-pending-deploy`, NOT discharged.
