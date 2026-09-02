@@ -32,7 +32,7 @@
 //   node scripts/campaign/bugs.mjs list [--open] [--sensitive] [--batch F09]
 //   node scripts/campaign/bugs.mjs stats
 //   node scripts/campaign/bugs.mjs expand                      # create/refresh one record per catalogue row
-//   node scripts/campaign/bugs.mjs sync [--quiet]               # derive History from the ledger + git log (idempotent; Gate 4 runs this every turn)
+//   node scripts/campaign/bugs.mjs sync [--quiet] [--rescan]    # derive History from the ledger + an ANCHORED git scan (idempotent; Gate 4 runs this every turn)
 //   node scripts/campaign/bugs.mjs show <B###>
 //   node scripts/campaign/bugs.mjs note <B###> "<text>" [--section "Root cause"]
 //   node scripts/campaign/bugs.mjs index                        # rebuild bugs.jsonl from the records (regenerate, never hand-edit)
@@ -56,7 +56,7 @@ import {
   mkdtempSync,
   rmSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
@@ -644,6 +644,144 @@ cmds.expand = () => {
   console.log(`records: ${created} created, ${refreshed} refreshed, in ${RECORD_DIR()}/`);
 };
 
+// ── the commit scanner: a deliberately WEAK signal ────────────────────────
+// ⚠️ Automatic tracking is NOT delivered by commit archaeology, and this file
+// should never be read as claiming it is. Measured on this repo: of 101 `fix:`
+// commits, 4 name a B-id, 12 name a batch, and 85 name neither. What makes
+// tracking automatic is that `prove` / `discharge` are the non-negotiable LAST
+// STEP of a fix — the ledger moves, and `sync` derives the record from it. The
+// scanner only catches commits that happen to describe themselves, so:
+//   * it matches a bare `B###` token (normalised, so "B4" finds "B04"), which
+//     also matches unrelated tokens — a weak signal, recorded as one;
+//   * it matches the house convention `fix(area): … (F10)` and fans that event
+//     out to every id in F10's shard, because the batch is what commits name;
+//   * it is ANCHORED, not windowed. `--max-count=400` was a rolling window: an
+//     event that scrolled past 400 commits before a sync ran was unrecoverable.
+//     The last-synced sha is persisted instead, so nothing can scroll away.
+//
+// The anchor file is machine-local and gitignored (`.campaign/`), NOT tracked:
+// HEAD moves on every commit, and Gate 4 runs `sync` every turn, so a tracked
+// anchor would leave the tree permanently dirty and conflict across the eight
+// live worktrees. A fresh clone therefore has no anchor — and the FIRST run
+// only anchors, it does not re-derive history, because the records committed in
+// git already carry theirs. `--rescan` forces the bounded first-run window.
+//
+// Branch scope is intentional: `git log` walks this worktree's HEAD, which is
+// the branch whose records are being written.
+const SYNC_STATE = () =>
+  process.env.BUGS_SYNC_STATE ||
+  (process.env.BUGS_ROOT ? join(rootDir(), "sync-state.json") : ".campaign/bugs-sync-state.json");
+const FIRST_RUN_WINDOW = 400;
+
+const git = (cmd) => execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+
+function readSyncState() {
+  const p = SYNC_STATE();
+  if (!existsSync(p)) return {};
+  try {
+    return JSON.parse(readFileSync(p, "utf8"));
+  } catch (e) {
+    return fail(`malformed sync anchor at ${p} — ${e.message} (delete it to re-anchor)`);
+  }
+}
+
+// Reads back and asserts, like every other write path here (L-051): an anchor
+// that silently fails to advance re-scans the same range forever.
+function writeSyncState(lastSha) {
+  const p = SYNC_STATE();
+  mkdirSync(dirname(p), { recursive: true });
+  writeFileSync(p, JSON.stringify({ lastSha, at: new Date().toISOString() }, null, 2) + "\n");
+  if (readSyncState().lastSha !== lastSha) fail(`sync anchor write did not land at ${p}`);
+}
+
+// One git pass for every bug, not one per bug: 210 `git log --grep` calls would
+// dominate the runtime of a hook that fires on every turn.
+function commitMentions(state, args) {
+  const mentions = new Map();
+  const rescan = args.includes("--rescan");
+  let head;
+  try {
+    head = git("git rev-parse HEAD").trim();
+  } catch (e) {
+    // No git (a tarball, a broken PATH) is not a reason to lose the ledger half
+    // of the sync — say so and carry on.
+    return { mentions, note: `git unavailable, commit scan skipped — ${firstLine(e)}` };
+  }
+
+  const prev = readSyncState().lastSha;
+  // A sha that git no longer knows (rebased away, a different clone) must not
+  // abort the scan — fall back to the bounded window.
+  const anchored = prev && !rescan && isCommit(prev) ? prev : null;
+  if (!anchored && !rescan) {
+    writeSyncState(head);
+    return {
+      mentions,
+      note: prev
+        ? `anchor ${prev.slice(0, 8)} is unknown to git — re-anchored at ${head.slice(0, 8)}, no scan`
+        : `first run — anchored at ${head.slice(0, 8)}; commit history is not re-derived (use --rescan to force)`,
+    };
+  }
+  const spec = anchored ? `${anchored}..HEAD` : `--max-count=${FIRST_RUN_WINDOW} HEAD`;
+
+  let log;
+  try {
+    log = git(`git log --format=%H%x09%s ${spec}`);
+  } catch (e) {
+    return { mentions, note: `commit scan failed (${spec}) — ${firstLine(e)}` };
+  }
+
+  const { mentions: scanned, commits } = parseMentions(log, state);
+  writeSyncState(head);
+  return {
+    mentions: scanned,
+    note: commits
+      ? `scanned ${commits} commit(s) since ${(anchored ?? "the window").slice(0, 8)}`
+      : null,
+  };
+}
+
+// Pure, so the self-test can drive the fan-out from a fixture log instead of
+// whatever this worktree's history happens to contain.
+function parseMentions(log, state) {
+  const mentions = new Map();
+  const idsInShard = new Map();
+  for (const [id, row] of state) {
+    if (!row.batch) continue;
+    if (!idsInShard.has(row.batch)) idsInShard.set(row.batch, []);
+    idsInShard.get(row.batch).push(id);
+  }
+
+  const add = (id, hit) => {
+    const key = normId(id) ?? id;
+    if (!mentions.has(key)) mentions.set(key, []);
+    mentions.get(key).push(hit);
+  };
+
+  let commits = 0;
+  for (const line of log.split("\n").filter(Boolean)) {
+    const [sha, subject = ""] = line.split("\t");
+    commits++;
+    const short = sha.slice(0, 8);
+    // Bug ids first: when a commit names both, the bug-id detail is the one
+    // that lands (both share the `commit-<sha>` marker, first write wins).
+    for (const raw of new Set(subject.match(/\bB\d{1,3}\b/g) ?? []))
+      add(raw, { sha: short, detail: `\`${short}\` ${subject}` });
+    for (const m of new Set([...subject.matchAll(/\(F(\d{2})\)/g)].map((x) => `F${x[1]}`)))
+      for (const id of idsInShard.get(m) ?? [])
+        add(id, { sha: short, detail: `\`${short}\` ${subject} — matched via batch ${m}` });
+  }
+  return { mentions, commits };
+}
+
+const firstLine = (e) => String(e.message ?? e).split("\n")[0];
+const isCommit = (sha) => {
+  try {
+    return git(`git cat-file -t ${sha}`).trim() === "commit";
+  } catch {
+    return false;
+  }
+};
+
 // The automatic half. Derives history events from the two sources that already
 // move on their own — the proof ledger and git — and appends any the record has
 // not recorded yet. Idempotent, so it is safe to run from a hook every turn.
@@ -653,21 +791,8 @@ cmds.sync = (args) => {
   const quiet = args.includes("--quiet");
   const events = [];
 
-  // One git pass for every bug, not one per bug: 210 `git log --grep` calls
-  // would dominate the runtime of a hook that fires on every turn.
-  const log = execSync("git log --format=%H%x09%s --max-count=400", { encoding: "utf8" });
-  // Keyed on the NORMALISED id — a commit subject saying "B4" must still match
-  // the catalogue's "B04" (nine ids predate zero-padding removal), or those
-  // nine bugs are permanently invisible to automatic commit tracking.
-  const mentions = new Map();
-  for (const line of log.split("\n").filter(Boolean)) {
-    const [sha, subject] = line.split("\t");
-    for (const raw of new Set(subject.match(/\bB\d{1,3}\b/g) ?? [])) {
-      const id = normId(raw) ?? raw;
-      if (!mentions.has(id)) mentions.set(id, []);
-      mentions.get(id).push({ sha: sha.slice(0, 8), subject });
-    }
-  }
+  const { mentions, note } = commitMentions(state, args);
+  if (note && !quiet) console.log(`sync: ${note}`);
 
   for (const bug of catalogue) {
     const rec = readRecord(bug.id);
@@ -695,12 +820,7 @@ cmds.sync = (args) => {
       // is captured once per bug, so as soon as anything in the iteration
       // changed the body every later append reported as new whether it landed
       // or not (the same defect as the state event above, one line down).
-      const withCommit = appendHistory(
-        body,
-        `commit-${c.sha}`,
-        "commit",
-        `\`${c.sha}\` ${c.subject}`,
-      );
+      const withCommit = appendHistory(body, `commit-${c.sha}`, "commit", c.detail);
       if (withCommit !== body) events.push(`${bug.id} commit ${c.sha}`);
       body = withCommit;
     }
@@ -1331,6 +1451,68 @@ cmds["self-test"] = () => {
     uniqueHistoryKey(once, "k1"),
     "k1#2",
   );
+
+  // The commit scanner: a `(F##)` subject must fan out to every id in that
+  // shard (the house convention names the batch, not the bug), and a bare
+  // B-token must still match a zero-padded id.
+  {
+    const fixtureState = new Map([
+      ["B04", { id: "B04", batch: "F20" }],
+      ["B41", { id: "B41", batch: "F10" }],
+      ["B42", { id: "B42", batch: "F10" }],
+    ]);
+    const log =
+      "aaaaaaaaaaaa\tfix(routes): guard reopenStop and the stop/run transitions (F10) (#591)\n" +
+      "bbbbbbbbbbbb\tfix(api): unrelated work, names nothing\n" +
+      "cccccccccccc\tfix: deep-dive backlog B4 only\n";
+    const { mentions: m, commits } = parseMentions(log, fixtureState);
+    check("commit scan: counts every commit in the range", commits, 3);
+    check(
+      "commit scan: a (F##) subject fans out to every id in that shard",
+      [...(m.get("B41") ?? []), ...(m.get("B42") ?? [])].map((h) => h.sha),
+      ["aaaaaaaa", "aaaaaaaa"],
+    );
+    check(
+      "commit scan: the fan-out detail says it matched via the batch, not the id",
+      (m.get("B41") ?? [])[0]?.detail.includes("matched via batch F10"),
+      true,
+    );
+    check(
+      "commit scan: a bare B4 token still matches the zero-padded B04",
+      (m.get("B4") ?? []).map((h) => h.sha),
+      ["cccccccc"],
+    );
+    check("commit scan: a commit naming nothing produces no event", m.has("B99"), false);
+  }
+
+  // The anchor: a first run must anchor without re-deriving history, and the
+  // run after it must scan only what landed since — never a rolling window an
+  // event can scroll out of.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevAnchor = process.env.BUGS_SYNC_STATE;
+    process.env.BUGS_SYNC_STATE = join(tmp, "sync-state.json");
+    try {
+      const first = commitMentions(new Map(), []);
+      check(
+        "commit scan: the first run anchors and does not re-derive history",
+        first.mentions.size === 0 && /first run — anchored at [0-9a-f]{8}/.test(first.note ?? ""),
+        true,
+      );
+      const head = git("git rev-parse HEAD").trim();
+      check("commit scan: the anchor is persisted at HEAD", readSyncState().lastSha, head);
+      const second = commitMentions(new Map(), []);
+      check(
+        "commit scan: the next run scans only since the anchor (nothing new here)",
+        second.mentions.size === 0 && second.note === null,
+        true,
+      );
+    } finally {
+      if (prevAnchor === undefined) delete process.env.BUGS_SYNC_STATE;
+      else process.env.BUGS_SYNC_STATE = prevAnchor;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
 
   // A bug that revisits a state (regressed then refixed) must log EVERY visit.
   // Exercised through the REAL cmds.sync against a throwaway BUGS_ROOT — the
