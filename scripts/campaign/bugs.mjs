@@ -1263,6 +1263,13 @@ cmds.brief = (args) => {
         ? " · ⚠ CONTAINS CARVE-OUT BUGS — plan only, do not fix unattended"
         : ""),
   );
+  const contested = rows.filter((r) => r.rec?.front.contestedBy || r.rec?.front.supersededBy);
+  if (contested.length)
+    out.push(
+      `\n⚠️ **${contested.length} record(s) in this batch are CONTESTED or SUPERSEDED** ` +
+        `(${contested.map((r) => r.id).join(", ")}) — their fix approach is disputed by another ` +
+        `record. Each is flagged again in its own block below; do not build from one alone.`,
+    );
 
   if (discovery && existsSync(discovery)) {
     out.push(
@@ -1288,6 +1295,20 @@ cmds.brief = (args) => {
     );
     out.push(`${f.title ?? ""}`);
     out.push(`\`${f.location ?? ""}\``);
+    // ⚠️ LOUD, and above the analysis: a record whose conclusions another
+    // record disputes is the one way this registry can hand a builder a
+    // confident, well-cited plan that is WRONG. B34 prescribed an order-unpin
+    // that its own batch's discovery refutes; anyone reading B34 alone ships
+    // the regression and writes a green test for it.
+    if (f.contestedBy)
+      out.push(
+        `\n> ⚠️ **CONTESTED BY ${f.contestedBy}** — that record disputes this one's conclusions. ` +
+          `Read it BEFORE writing any code for ${id}, and do not follow this fix approach until they agree.`,
+      );
+    if (f.supersededBy)
+      out.push(
+        `\n> ⚠️ **SUPERSEDED BY ${f.supersededBy}** — work that record instead; this one is kept for its history.`,
+      );
     if (!rec) {
       out.push(`_no record — run \`bugs expand\`_`);
       continue;
@@ -1710,6 +1731,20 @@ const runCli = (argv, root) => {
   } catch (e) {
     return { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
   }
+};
+
+// `brief` writes to stdout rather than returning a string (it is a report, not
+// a value), so asserting what it SAYS means capturing what it wrote.
+const capture = (fn) => {
+  const orig = process.stdout.write.bind(process.stdout);
+  let buf = "";
+  process.stdout.write = (chunk) => ((buf += chunk), true);
+  try {
+    fn();
+  } finally {
+    process.stdout.write = orig;
+  }
+  return buf;
 };
 
 cmds["self-test"] = () => {
@@ -2225,6 +2260,39 @@ cmds["self-test"] = () => {
         "discharge: the T1 row carries the batch string as `evidence`, never as dischargeEvidence",
         [byId.get("B2")?.evidence, byId.get("B2")?.dischargeEvidence],
         [BATCH_EV, undefined],
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // `brief` must lead with a contested/superseded record, not bury it: a
+  // builder reading a confident, well-cited plan that another record refutes
+  // ships the regression AND writes a green test for it.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file([
+        "contested fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+      ]);
+      const rec = readRecord("B1");
+      writeRecord("B1", { ...rec.front, contestedBy: "B999" }, rec.body);
+      const out = capture(() => cmds.brief(["F01"]));
+      check("brief: names a contested record in the batch header", out.includes("CONTESTED"), true);
+      check(
+        "brief: flags it again inside that bug's own block, above the fix approach",
+        out.indexOf("CONTESTED BY B999") > out.indexOf("### B1"),
+        true,
       );
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
