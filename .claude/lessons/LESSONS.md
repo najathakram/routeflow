@@ -515,3 +515,39 @@
   restriction at all until the callers are split.**
 - **Guard:** three-key model recorded in memory `project_maps_key_architecture_2026-09-01`;
   `docs/plans/maps-key-split-note.md` is STALE and must not be followed verbatim.
+
+### L-055 · 2026-09-02 · tooling · #597
+
+- **Symptom:** two sub-agents proving different bugs of the same batch left one of the two proofs
+  gone — an already-proven, evidence-backed ledger row silently back to `queued` — with the
+  self-test AND the campaign gate both green afterwards.
+- **Root cause:** the shard writer was an unlocked read-modify-write, and every caller "verified"
+  its write by re-reading its OWN row, which is exactly the row that survives. A lost update is
+  invisible to a read-back-assert: the assert passes because the writer clobbered somebody else.
+  Serialising only the write would not have helped either — the stale data enters at the READ.
+- **Lesson:** **A read-back-assert proves your write landed; it can never see the write yours
+  erased. Whenever more than one process may write one file, hold an exclusive lock across the
+  READ as well as the write, and make the losing case a deterministic test — a race that only
+  sometimes reproduces is a race nobody fixes.**
+- **Guard:** `withShardLock` (an atomic `mkdir` lockdir, re-entrant, stale-broken at 5s, released
+  from an `exit` handler because `fail()` calls `process.exit`); a `BUGS_TEST_STALL_MS` seam widens
+  the window so the self-test's two real child processes always interleave; mutation-probed.
+
+### L-056 · 2026-09-02 · process · #597
+
+- **Symptom:** claiming a batch made the dispatcher offer the one batch that edits the same files
+  to a second agent, and `deps` stopped reporting the conflicting pair at the moment it mattered.
+  Separately, the dispatcher's copy of another script's GitHub claim grammar freed leases that
+  script still held, and honoured "leases" it did not.
+- **Root cause:** two forms of the same mistake. The scheduler removed in-flight work from the
+  candidate list and then built the conflict graph from what was left, so taking a batch DELETED
+  the edges it contributed. And a protocol re-implemented by eye drifted on three details at once
+  (a marker filter, a `^` anchor, a per-comment boundary) — every drift toward the permissive read.
+- **Lesson:** **Excluding an entity from a constraint problem deletes its constraints: model
+  in-progress work as an OCCUPANT that holds capacity and keeps its edges, never as a deletion.
+  And a protocol re-stated in a second file diverges toward whatever is permissive — extract the
+  reading as a pure function, test it against the other side's exact payloads, and make both files
+  say they change together.**
+- **Guard:** busy batches are pre-coloured into wave 1 and `CONFLICTING` includes `in-flight`;
+  `readClaims` is pure and asserted against the three constructed comment sets that broke it;
+  `bugs.mjs` and `scripts/team/team.mjs` each carry the paired-change warning.
