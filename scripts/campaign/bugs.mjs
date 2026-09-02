@@ -2761,6 +2761,109 @@ cmds["self-test"] = () => {
     }
   }
 
+  // campaign-check's T2 gate: a partial (or merely unrelated) Playwright
+  // artifact must not turn an already-discharged T2 row red just because
+  // that ONE file has nothing to say about it — it must fall back to the
+  // row's own dischargeEvidence exactly as if no artifact existed at all.
+  // Drives the REAL campaign-check.mjs as a child process against a
+  // throwaway status dir (CAMPAIGN_CHECK_STATUS_DIR) and runs dir, never a
+  // re-implementation of its gate logic.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const statusTmp = join(tmp, "status");
+    const runsTmp = join(tmp, "runs");
+    mkdirSync(statusTmp, { recursive: true });
+    mkdirSync(runsTmp, { recursive: true });
+    const row = {
+      id: "B900",
+      batch: "F01",
+      tier: "T2",
+      state: "done",
+      pr: 900,
+      proof: "REG-B900 e2e",
+      evidence: null,
+    };
+    const runCampaignCheck = () => {
+      try {
+        return {
+          code: 0,
+          out: execSync(`node scripts/campaign-check.mjs --runs-dir ${JSON.stringify(runsTmp)}`, {
+            encoding: "utf8",
+            env: { ...process.env, CAMPAIGN_CHECK_STATUS_DIR: statusTmp },
+            stdio: ["ignore", "pipe", "pipe"],
+          }),
+        };
+      } catch (e) {
+        return { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+      }
+    };
+
+    try {
+      writeFileSync(join(statusTmp, "F01.jsonl"), JSON.stringify(row) + "\n");
+      const noEvidence = runCampaignCheck();
+      check(
+        "campaign-check: a T2 done row with no artifact and no dischargeEvidence fails",
+        noEvidence.code !== 0,
+        true,
+      );
+
+      const withEvidence = {
+        ...row,
+        dischargeEvidence: "Railway deploy 1234abcd SUCCESS; Actions run 999 job 1 REG-B900 passed",
+      };
+      writeFileSync(join(statusTmp, "F01.jsonl"), JSON.stringify(withEvidence) + "\n");
+      const noArtifact = runCampaignCheck();
+      check(
+        "campaign-check: dischargeEvidence alone passes when no artifact exists at all",
+        noArtifact.code,
+        0,
+      );
+
+      // The regression this guards against: an artifact exists, but it does
+      // not mention B900 at all (it covers some OTHER id). Before the fix
+      // this turned B900 red even though its own dischargeEvidence was right
+      // there.
+      writeFileSync(
+        join(runsTmp, "web-e2e.json"),
+        JSON.stringify({
+          suites: [
+            {
+              specs: [
+                { title: "REG-B901 unrelated", tests: [{ results: [{ status: "passed" }] }] },
+              ],
+            },
+          ],
+        }),
+      );
+      const partialArtifact = runCampaignCheck();
+      check(
+        "campaign-check: an artifact silent on this id still falls back to dischargeEvidence",
+        partialArtifact.code,
+        0,
+      );
+
+      // The artifact IS authoritative for ids it actually covers — a REAL
+      // hit still wins over dischargeEvidence, and a FAILING hit still fails
+      // even with dischargeEvidence present.
+      writeFileSync(
+        join(runsTmp, "web-e2e.json"),
+        JSON.stringify({
+          suites: [
+            { specs: [{ title: "REG-B900 e2e", tests: [{ results: [{ status: "failed" }] }] }] },
+          ],
+        }),
+      );
+      const failingHit = runCampaignCheck();
+      check(
+        "campaign-check: a REAL failing hit for this id still fails it, dischargeEvidence or not",
+        failingHit.code !== 0,
+        true,
+      );
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
   console.log(failures ? `\nself-test: ${failures} FAILURE(S)` : "\nself-test: all checks passed");
   if (failures) process.exit(1);
 };

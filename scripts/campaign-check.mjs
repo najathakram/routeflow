@@ -97,7 +97,11 @@ function flag(name) {
 const onlyBatch = flag("batch"); // e.g. "F02" — undefined means "scan every shard"
 const explicitPipelineDir = flag("pipeline-dir");
 const runsDir = path.resolve(REPO_ROOT, flag("runs-dir") || ".campaign/runs");
-const statusDir = path.join(REPO_ROOT, ".claude", "campaign", "status");
+// Overridable via CAMPAIGN_CHECK_STATUS_DIR (mirrors bugs.mjs's BUGS_ROOT
+// seam) so a self-test can drive this REAL command against a throwaway
+// fixture ledger instead of the repo's own .claude/campaign/status.
+const statusDir =
+  process.env.CAMPAIGN_CHECK_STATUS_DIR || path.join(REPO_ROOT, ".claude", "campaign", "status");
 
 const CLAIM_STATES = new Set([
   "proven",
@@ -358,57 +362,71 @@ if (t1Needed) {
   }
 }
 
-let e2eIndex = null;
+// Rows that fell back to dischargeEvidence (artifact absent OR artifact
+// present but silent on this id) — collected here so the byte-identical
+// shared-evidence warning applies uniformly to both paths, not just the
+// artifact-absent one.
+const t2FallbackEvidence = new Map(); // trimmed dischargeEvidence -> [ids]
+
+// Treat the artifact as authoritative ONLY for the ids it actually mentions.
+// A T2 "done" row with no hit in it falls back to its own dischargeEvidence —
+// exactly like a row would if no artifact existed at all — and only fails
+// when NEITHER exists. Without this, a partial local Playwright run (any
+// web-e2e.json at all, even one covering a single id) turned every OTHER
+// already-discharged T2 row red, because their absence from that one file was
+// read as "no proof" instead of "this file doesn't speak to it".
+function checkT2ProofHits(row, hits) {
+  const { id } = row;
+  if (hits.length === 0) {
+    const evidence = row.dischargeEvidence && String(row.dischargeEvidence).trim();
+    if (!evidence) {
+      fail(
+        `${id}: no test titled with REG-${id} found in the playwright e2e report, and no ` +
+          `dischargeEvidence recorded — either run the e2e pass against the deployed build ` +
+          `(JSON to ${webE2eJsonPath}) or record the discharge run in the row's dischargeEvidence field`,
+      );
+      return;
+    }
+    // ⚠️ THIS IS THE SOFTEST SPOT IN THE GATE: a sentence stands in for the
+    // strongest control the campaign has. `bugs.mjs discharge` REFUSES to
+    // write a T2 row without its own `--evidence-B### "…"`, so one batch-wide
+    // string can no longer discharge N T2 rows. Rows written before that rule
+    // (B24/B130/B154 share one string) are grandfathered — WARNED about
+    // below, not failed, because turning master red retroactively would not
+    // make any of them more true.
+    passes.push(`${id}: accepted on recorded dischargeEvidence (no matching playwright e2e hit)`);
+    console.log(
+      `T2 discharge acknowledgment: ${id} accepted on recorded evidence (no matching test in ` +
+        `the playwright e2e report) — ${evidence.slice(0, 120)}`,
+    );
+    const key = evidence;
+    t2FallbackEvidence.set(key, [...(t2FallbackEvidence.get(key) ?? []), id]);
+    return;
+  }
+  const passing = hits.filter((h) => h.status === "passed");
+  if (passing.length > 0) {
+    passes.push(`${id}: ${passing.length} passing REG-${id} test(s) in playwright e2e`);
+    return;
+  }
+  const statuses = [...new Set(hits.map((h) => h.status))].join(", ");
+  fail(
+    `${id}: REG-${id} test found in playwright e2e but not passing (status: ${statuses}) — ` +
+      `a skipped or todo test does not discharge the obligation`,
+  );
+}
+
+// e2eIndex stays an EMPTY Map (not null) when no artifact exists at all, so
+// every T2 "done" row falls through to checkT2ProofHits' dischargeEvidence
+// fallback uniformly — the artifact-absent case is just "zero hits for
+// everyone", not a separately-coded path. It is set to null only on a parse
+// error, where nothing per-row should be attempted (already failed above).
+let e2eIndex = new Map();
 if (t2NeedsPostDeploy) {
   const web = getWebE2eJson();
-  if (web === null) {
-    // No playwright artifact on this machine. A CI verify runner NEVER has one
-    // (playwright runs post-deploy, not in the verify job), so a T2 "done" row
-    // may instead carry `dischargeEvidence` — written at discharge time, naming
-    // the run against the deployed build. Accepted LOUDLY per row below (the
-    // per-row loop checks it); rows without it still fail here.
-    //
-    // ⚠️ THIS IS THE SOFTEST SPOT IN THE GATE: a sentence stands in for the
-    // strongest control the campaign has. `bugs.mjs discharge` therefore
-    // REFUSES to write a T2 row without its own `--evidence-B### "…"`, so one
-    // batch-wide string can no longer discharge N T2 rows. Rows written before
-    // that rule (B24/B130/B154 share one string) are grandfathered — they are
-    // WARNED about below, not failed, because turning master red retroactively
-    // would not make any of them more true.
-    const missing = rows.filter(
-      (r) =>
-        r.tier === "T2" &&
-        r.state === "done" &&
-        !(r.dischargeEvidence && String(r.dischargeEvidence).trim()),
-    );
-    if (missing.length) {
-      fail(
-        `T2 "done" without a playwright artifact AND without dischargeEvidence: ` +
-          missing.map((r) => r.id).join(", ") +
-          ` — either run the e2e pass against the deployed build (JSON to ${webE2eJsonPath}) ` +
-          `or record the discharge run in the row's dischargeEvidence field`,
-      );
-    } else {
-      const shared = new Map();
-      for (const r of rows.filter((r) => r.tier === "T2" && r.state === "done")) {
-        console.log(
-          `T2 discharge acknowledgment: ${r.id} accepted on recorded evidence (no local ` +
-            `playwright artifact) — ${String(r.dischargeEvidence).slice(0, 120)}`,
-        );
-        const k = String(r.dischargeEvidence).trim();
-        shared.set(k, [...(shared.get(k) ?? []), r.id]);
-      }
-      for (const [, ids] of shared)
-        if (ids.length > 1)
-          console.warn(
-            `⚠ T2 rows ${ids.join(", ")} share one byte-identical dischargeEvidence — that string ` +
-              `stands in for a Playwright result, so it must name the run that exercised EACH row. ` +
-              `Grandfathered (written before the rule); \`bugs.mjs discharge\` now refuses it.`,
-          );
-    }
-  } else if (web === "PARSE_ERROR") {
+  if (web === "PARSE_ERROR") {
     fail(`${webE2eJsonPath} exists but failed to parse — re-run the e2e pass`);
-  } else {
+    e2eIndex = null;
+  } else if (web !== null) {
     e2eIndex = indexAssertions(playwrightAssertions(web), "web-e2e");
   }
 }
@@ -443,9 +461,9 @@ for (const row of rows) {
 
   if (tier === "T2") {
     // state is "done" here (proven-pending-deploy handled above)
-    if (e2eIndex === null) continue; // already failed above
+    if (e2eIndex === null) continue; // parse error already failed above
     const hits = e2eIndex.get(id) || [];
-    checkProofHits(id, hits, "playwright e2e");
+    checkT2ProofHits(row, hits);
     continue;
   }
 
@@ -479,6 +497,14 @@ for (const row of rows) {
     }
   }
 }
+
+for (const [, ids] of t2FallbackEvidence)
+  if (ids.length > 1)
+    console.warn(
+      `⚠ T2 rows ${ids.join(", ")} share one byte-identical dischargeEvidence — that string ` +
+        `stands in for a Playwright result, so it must name the run that exercised EACH row. ` +
+        `Grandfathered (written before the rule); \`bugs.mjs discharge\` now refuses it.`,
+    );
 
 function checkProofHits(id, hits, sourceLabel) {
   if (hits.length === 0) {
