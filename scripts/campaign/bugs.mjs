@@ -5307,6 +5307,124 @@ cmds["self-test"] = () => {
     }
   }
 
+  // ── move takes the catalogue lock too ───────────────────────────────────
+  // `move` patches a catalogue row's `batch` field but used to read-modify-
+  // write bugs.jsonl with NO lock of its own, nested only inside its shard
+  // locks — a concurrent `file` (which DOES hold the catalogue lock across
+  // its own ledger write AND its catalogue write) could land in the gap and
+  // have its own change silently reverted.
+  //
+  // The concurrent filer deliberately targets F03 — a batch move never
+  // touches (move only takes F01 and F02's shard locks) — so this is a race
+  // on the CATALOGUE specifically, not one that happens to also serialize on
+  // a shard lock the two commands share. Without that, move (even unfixed)
+  // blocks on F01's shard lock for the length of file's stall regardless of
+  // whether it holds the catalogue lock, and the catalogue-level race never
+  // gets a chance to manifest — verified by hand: with the filer targeting
+  // F01 instead, this same test passed even against the unfixed `move`.
+  // file's stall sits INSIDE its hold of the catalogue lock, so for the
+  // length of the stall file is holding the one lock move must now also take
+  // before it can touch the catalogue at all; the fixed move blocks on it,
+  // reads a catalogue that already has file's row, and its patch survives
+  // file's own write. The unfixed move races ahead immediately (nothing of
+  // file's blocks it), writes its patch, and file's later write — built from
+  // the stale snapshot it read before the stall — overwrites it right back.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file([
+        "move fixture",
+        "--location",
+        "apps/api/src/move-fixture.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T1",
+      ]);
+      check(
+        "move-vs-file fixture: B1 seeded in F01",
+        readShard("F01").rows.map((r) => r.id),
+        ["B1"],
+      );
+
+      const orchestrator = join(tmp, "concurrent-move.mjs");
+      writeFileSync(
+        orchestrator,
+        [
+          'import { spawn } from "node:child_process";',
+          "const [script, root, stall] = process.argv.slice(2);",
+          "const run = (args, env, delay) =>",
+          "  new Promise((res) => {",
+          "    const start = () => {",
+          "      const p = spawn(process.execPath, [script, ...args], {",
+          "        env: { ...process.env, BUGS_ROOT: root, ...env },",
+          '        stdio: ["ignore", "pipe", "pipe"],',
+          "      });",
+          '      let out = "";',
+          '      p.stdout.on("data", (d) => (out += d));',
+          '      p.stderr.on("data", (d) => (out += d));',
+          '      p.on("close", (code) => res({ code, out }));',
+          "    };",
+          "    if (delay) setTimeout(start, delay);",
+          "    else start();",
+          "  });",
+          "const results = await Promise.all([",
+          "  run(",
+          '    ["file", "concurrent blocker", "--location", "apps/api/src/conc-blocker.ts", "--severity", "low", "--batch", "F03", "--tier", "T1"],',
+          '    { BUGS_SELF_TEST: "1", BUGS_TEST_STALL_MS: stall },',
+          "    0,",
+          "  ),",
+          '  run(["move", "B1", "--to", "F02"], {}, 200),',
+          "]);",
+          "console.log(JSON.stringify(results));",
+        ].join("\n"),
+      );
+      const argv = [orchestrator, SCRIPT_PATH, tmp, "1500"].map((a) => JSON.stringify(a)).join(" ");
+      const t0 = Date.now();
+      let raced;
+      try {
+        raced = {
+          code: 0,
+          out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+        };
+      } catch (e) {
+        raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+      }
+      const elapsedMs = Date.now() - t0;
+      check("move vs file: the orchestrator exited 0", raced.code, 0);
+      const kids = JSON.parse(raced.out.trim().split("\n").pop());
+      check(
+        "move vs file: BOTH child processes exited 0 (no deadlock, no refusal)",
+        kids.map((k) => k.code),
+        [0, 0],
+      );
+      check(
+        "move vs file: the race finished well under the 10s lock-wait deadline",
+        elapsedMs < 8000,
+        true,
+      );
+      const cat = readCatalogue();
+      check(
+        "move vs file: the catalogue's batch for B1 matches where it actually landed — file's own catalogue write did not revert it",
+        cat.find((r) => r.id === "B1")?.batch,
+        "F02",
+      );
+      check(
+        "move vs file: the ledger agrees — B1 landed in F02, F03 holds only the concurrent filer's new bug",
+        [readShard("F02").rows.map((r) => r.id), readShard("F03").rows.map((r) => r.id)],
+        [["B1"], ["B2"]],
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
   // A filed bug's symptom must survive file → index round trip. Run this
   // against the REAL cmds.file/cmds.index against a throwaway BUGS_ROOT, never
   // a re-implementation — `index` used to rebuild the catalogue from a fixed
@@ -5482,80 +5600,89 @@ cmds.move = (args) => {
   if (!from) fail(`${id} is in no ledger shard — nothing to move`);
   if (from === to) fail(`${id} is already in ${to}`);
 
-  // BOTH shards are held for the whole transfer — the duplicate check, the
-  // additive write to `to` and the drop from `from` are one atomic unit, or a
-  // concurrent writer can observe (or create) the transient duplicate. Taken in
-  // sorted order by `withShardLocks`, so two opposite moves cannot deadlock.
-  withShardLocks([from, to], () => {
-    const row = readShard(from).rows.find((r) => r.id === id);
-    if (!row) fail(`${id} vanished from ${from}.jsonl while this move waited for the lock`);
-    if (row.state !== "queued")
-      fail(
-        `${id} is ${row.state}, not queued — moving a bug that already carries a proof would orphan it from its batch's evidence`,
+  // The catalogue lock is OUTERMOST, exactly like `file`'s — `move` is a
+  // catalogue writer too (it patches the row's `batch` field) and used to
+  // read-modify-write bugs.jsonl with no lock of its own at all, so a
+  // concurrent `file` landing between this read and this write silently lost
+  // its own catalogue row. BOTH shards are then held for the whole transfer —
+  // the duplicate check, the additive write to `to` and the drop from `from`
+  // are one atomic unit, or a concurrent writer can observe (or create) the
+  // transient duplicate. Taken in sorted order by `withShardLocks`, so two
+  // opposite moves cannot deadlock against EACH OTHER; ordering against the
+  // catalogue lock is one-way (catalogue, then shard — same as `file`), so
+  // there is no cycle to deadlock on there either.
+  withCatalogueLock(() =>
+    withShardLocks([from, to], () => {
+      const row = readShard(from).rows.find((r) => r.id === id);
+      if (!row) fail(`${id} vanished from ${from}.jsonl while this move waited for the lock`);
+      if (row.state !== "queued")
+        fail(
+          `${id} is ${row.state}, not queued — moving a bug that already carries a proof would orphan it from its batch's evidence`,
+        );
+
+      // Every check runs BEFORE any write. `findShardOf` alone only reports the
+      // FIRST shard holding an id (readdir order), so a genuine duplicate landed
+      // in some OTHER shard hides behind `from` whenever `from` happens to sort
+      // first — this must still catch it, or a refused move turns one duplicate
+      // into two instead of leaving the authoritative row untouched.
+      const holders = readdirSync(STATUS_DIR())
+        .filter((n) => n.endsWith(".jsonl"))
+        .map((n) => n.replace(/\.jsonl$/, ""))
+        .filter((b) => readShard(b).rows.some((r) => r.id === id));
+      if (holders.length !== 1 || holders[0] !== from)
+        fail(
+          `refusing to move ${id}: it has a row in ${holders.join(", ")}, not only ${from} — this is ` +
+            `the duplicate campaign-check rejects; repair the shards by hand before moving`,
+        );
+
+      // Write the TARGET first, additive. A refusal past this point (a duplicate
+      // that slipped in between the check above and here) must never have
+      // touched the source — `upsertLedgerRow`'s cross-shard guard would
+      // otherwise reject this legitimate in-flight duplicate (the row still
+      // lives in `from` until the drop below), so it is told explicitly that
+      // `id` is allowed to exist in `from` for the length of this one call.
+      const { row: landed } = upsertLedgerRow(to, { ...row, batch: to }, { allowExistingIn: from });
+      if (landed?.batch !== to)
+        fail(
+          `ledger write for ${id} did not land in ${to} as intended — re-read row is ${JSON.stringify(landed)}`,
+        );
+
+      // Only NOW drop it from the source — the target write already landed and
+      // was verified, so anything going wrong past this point leaves a loud,
+      // campaign-check-visible duplicate rather than a vanished authoritative row.
+      const old = readShard(from);
+      const kept = old.rows.filter((r) => r.id !== id);
+      writeFileSync(
+        shardPath(from),
+        kept.map((r) => JSON.stringify(r)).join(old.eol) + (kept.length ? old.eol : ""),
       );
+      if (readShard(from).rows.some((r) => r.id === id))
+        fail(`${id} is still present in ${shardPath(from)} after the drop — inspect it by hand`);
 
-    // Every check runs BEFORE any write. `findShardOf` alone only reports the
-    // FIRST shard holding an id (readdir order), so a genuine duplicate landed
-    // in some OTHER shard hides behind `from` whenever `from` happens to sort
-    // first — this must still catch it, or a refused move turns one duplicate
-    // into two instead of leaving the authoritative row untouched.
-    const holders = readdirSync(STATUS_DIR())
-      .filter((n) => n.endsWith(".jsonl"))
-      .map((n) => n.replace(/\.jsonl$/, ""))
-      .filter((b) => readShard(b).rows.some((r) => r.id === id));
-    if (holders.length !== 1 || holders[0] !== from)
-      fail(
-        `refusing to move ${id}: it has a row in ${holders.join(", ")}, not only ${from} — this is ` +
-          `the duplicate campaign-check rejects; repair the shards by hand before moving`,
+      const rows = readCatalogue();
+      const cat = rows.find((r) => r.id === id);
+      if (cat) {
+        cat.batch = to;
+        writeCatalogue(rows);
+      }
+
+      const rec = readRecord(id);
+      if (rec) {
+        const body = appendEvent(
+          rec.body,
+          `move-${from}-${to}`,
+          "re-batched",
+          `${from} → ${to}${why ? ` — ${why}` : ""}`,
+        );
+        writeRecord(id, { ...rec.front, batch: to }, body);
+      }
+
+      console.log(`${id}: ${from} → ${to}${why ? ` (${why})` : ""}`);
+      console.log(
+        `  ${from} now holds ${kept.length} row(s); verify with: node scripts/campaign-check.mjs`,
       );
-
-    // Write the TARGET first, additive. A refusal past this point (a duplicate
-    // that slipped in between the check above and here) must never have
-    // touched the source — `upsertLedgerRow`'s cross-shard guard would
-    // otherwise reject this legitimate in-flight duplicate (the row still
-    // lives in `from` until the drop below), so it is told explicitly that
-    // `id` is allowed to exist in `from` for the length of this one call.
-    const { row: landed } = upsertLedgerRow(to, { ...row, batch: to }, { allowExistingIn: from });
-    if (landed?.batch !== to)
-      fail(
-        `ledger write for ${id} did not land in ${to} as intended — re-read row is ${JSON.stringify(landed)}`,
-      );
-
-    // Only NOW drop it from the source — the target write already landed and
-    // was verified, so anything going wrong past this point leaves a loud,
-    // campaign-check-visible duplicate rather than a vanished authoritative row.
-    const old = readShard(from);
-    const kept = old.rows.filter((r) => r.id !== id);
-    writeFileSync(
-      shardPath(from),
-      kept.map((r) => JSON.stringify(r)).join(old.eol) + (kept.length ? old.eol : ""),
-    );
-    if (readShard(from).rows.some((r) => r.id === id))
-      fail(`${id} is still present in ${shardPath(from)} after the drop — inspect it by hand`);
-
-    const rows = readCatalogue();
-    const cat = rows.find((r) => r.id === id);
-    if (cat) {
-      cat.batch = to;
-      writeCatalogue(rows);
-    }
-
-    const rec = readRecord(id);
-    if (rec) {
-      const body = appendEvent(
-        rec.body,
-        `move-${from}-${to}`,
-        "re-batched",
-        `${from} → ${to}${why ? ` — ${why}` : ""}`,
-      );
-      writeRecord(id, { ...rec.front, batch: to }, body);
-    }
-
-    console.log(`${id}: ${from} → ${to}${why ? ` (${why})` : ""}`);
-    console.log(
-      `  ${from} now holds ${kept.length} row(s); verify with: node scripts/campaign-check.mjs`,
-    );
-  });
+    }),
+  );
 };
 
 // ── enrich: pull the register's DETAIL into every record ──────────────────
