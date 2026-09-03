@@ -886,14 +886,18 @@ cmds.next = (args) => {
     for (const b of top.bugs)
       console.log(`    ${b.id.padEnd(5)} ${String(b.severity).padEnd(8)} ${b.title.slice(0, 76)}`);
     if (top.claimCheck) console.log(`  ⚠ ${top.claimCheck}`);
-    if (wave1.length > 1)
-      console.log(
-        `  safe to run alongside it (same wave, no shared non-hub file): ` +
-          wave1
-            .slice(1)
-            .map((b) => b.batch)
-            .join(" "),
-      );
+    if (wave1.length > 1) {
+      // Each alongside batch gets its OWN claimCheck line — this used to be
+      // consulted for `top` alone, so a batch whose claim check failed
+      // identically to the head's was still listed as "safe to run
+      // alongside it" with no warning at all (`waves` already does this
+      // per-batch; `next`'s text path did not).
+      console.log(`  safe to run alongside it (same wave, no shared non-hub file):`);
+      for (const b of wave1.slice(1)) {
+        console.log(`    ${b.batch}`);
+        if (b.claimCheck) console.log(`      ⚠ ${b.claimCheck}`);
+      }
+    }
     console.log(`\n  claim it:  ${claimHint(top)}`);
   }
 
@@ -2850,6 +2854,53 @@ cmds["self-test"] = () => {
       JSON.parse(JSON.stringify({ waves: wavesWithBusy })).waves[0],
       [],
     );
+  }
+
+  // `next`'s text output only ever warned about the HEAD's claimCheck — the
+  // rest of wave 1 was printed as "safe to run alongside it" with no warning
+  // even when their own claim checks failed identically.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    const realLiveClaim = liveClaim;
+    try {
+      cmds.file([
+        "alongside fixture A",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "high",
+        "--batch",
+        "F01",
+        "--tier",
+        "T1",
+      ]);
+      cmds.file([
+        "alongside fixture B",
+        "--location",
+        "apps/web/src/self-test.ts",
+        "--severity",
+        "high",
+        "--batch",
+        "F02",
+        "--tier",
+        "T1",
+      ]);
+      writeFileSync(BOARD(), JSON.stringify({ batches: { F01: 501, F02: 502 } }));
+      liveClaim = () => ({ unknown: true, why: "network unreachable" });
+      const shown = capture(() => cmds.next([]));
+      check(
+        "next: the alongside batch's own claimCheck is shown, not silently dropped",
+        /F02[\s\S]*?⚠ claim check unavailable/.test(shown),
+        true,
+      );
+    } finally {
+      liveClaim = realLiveClaim;
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
   }
 
   // The shared REG token grammar (scripts/campaign/reg-token.mjs) is the ONE
