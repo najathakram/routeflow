@@ -74,7 +74,7 @@ import {
   openSync,
   closeSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync, execSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -2022,6 +2022,30 @@ function hasManualVerificationToken(text, id) {
   return new RegExp(`REG-${id}(?![0-9])`).test(m[1]);
 }
 
+// The ledger is SHARED (git-tracked, cloned onto every machine and CI
+// runner), so a `--build-plan` value is only useful stored as a path relative
+// to the repo root. An absolute path persists verbatim — leaking a local
+// username/drive letter into a repo that goes public for CI — and resolves
+// to nothing on any other checkout; a `../`-escaping relative path is the
+// same problem one step removed. Reject both here, before the value ever
+// reaches a shard, and persist the normalised, forward-slash form so the
+// field reads the same on every OS.
+function repoRelativeBuildPlan(raw) {
+  if (isAbsolute(raw))
+    fail(
+      `--build-plan must be a path inside the repo, not absolute (got "${raw}") — the ledger is ` +
+        `shared, and an absolute path resolves to nothing on any other machine`,
+    );
+  const resolved = resolve(REPO_ROOT, raw);
+  const rel = relative(REPO_ROOT, resolved);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel))
+    fail(
+      `--build-plan ${raw} escapes the repo root — the ledger is shared, and a path outside the ` +
+        `repo resolves to nothing on any other machine`,
+    );
+  return { resolved, rel: rel.split(sep).join("/") };
+}
+
 cmds.prove = (args) => {
   const typed = (args[0] ?? "").toUpperCase();
   const prRaw = flag(args, "pr");
@@ -2070,7 +2094,7 @@ cmds.prove = (args) => {
           `${id} is tier T3 — --build-plan <path/to/build-plan.md> is required, or campaign-check ` +
             `has no way to find its manual-verification row and this prove can never be discharged`,
         );
-      const resolved = resolve(REPO_ROOT, buildPlanRaw);
+      const { resolved, rel } = repoRelativeBuildPlan(buildPlanRaw);
       if (!existsSync(resolved))
         fail(`--build-plan ${buildPlanRaw} does not exist (resolved to ${resolved})`);
       const text = readFileSync(resolved, "utf8");
@@ -2079,9 +2103,9 @@ cmds.prove = (args) => {
           `--build-plan ${buildPlanRaw} has no REG-${id} row in its "## Manual verification" ` +
             `section — campaign-check will look there and find nothing`,
         );
-      buildPlan = buildPlanRaw;
+      buildPlan = rel;
     } else if (buildPlanRaw) {
-      buildPlan = buildPlanRaw;
+      buildPlan = repoRelativeBuildPlan(buildPlanRaw).rel;
     }
 
     const reproving =
@@ -4096,10 +4120,20 @@ cmds["self-test"] = () => {
   // token — without it campaign-check can never discharge the row (no writer
   // exists for the `buildPlan` field it needs) and `npm run verify` goes red
   // repo-wide the first time such a row is proven.
+  //
+  // The plan file itself lives INSIDE the repo (not the throwaway BUGS_ROOT):
+  // --build-plan is validated against REPO_ROOT, this script's own fixed
+  // location, never the ledger override — so a real relative path is the only
+  // way to prove the acceptance case, and an absolute path (even one inside
+  // the repo) or a `../`-escaping one must be refused before either resolves.
   {
     const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
     const prevRoot = process.env.BUGS_ROOT;
     process.env.BUGS_ROOT = tmp;
+    const relPlanPath = ".claude/campaign/self-test-buildplan/plan.md";
+    const planDir = join(REPO_ROOT, ".claude", "campaign", "self-test-buildplan");
+    const planPath = join(REPO_ROOT, ...relPlanPath.split("/"));
+    mkdirSync(planDir, { recursive: true });
     try {
       cmds.file([
         "T3 build-plan fixture",
@@ -4120,12 +4154,53 @@ cmds["self-test"] = () => {
       check("prove: refuses a T3 row with no --build-plan", noPlan.code !== 0, true);
       check("prove: the refusal wrote nothing", readShard("F01").rows[0].state, "queued");
 
-      // An absolute path so this proves the --build-plan RESOLUTION itself
-      // (path.resolve treats an absolute rightmost arg as the anchor, same as
-      // campaign-check.mjs's own `path.resolve(REPO_ROOT, row.buildPlan)`) —
-      // not just the file-not-found case, independent of this fixture's
-      // throwaway BUGS_ROOT.
-      const planPath = join(tmp, "build-plan.md");
+      // Absolute — even a REAL file inside the repo must be refused: the
+      // field is persisted verbatim, so an absolute path leaks a local
+      // machine's username/drive letter into a repo that goes public for CI,
+      // and resolves to nothing on any other checkout.
+      writeFileSync(planPath, "## Manual verification\n\n| REG-B1 | verified by hand |\n");
+      const absolute = runCli(
+        [
+          "prove",
+          "B1",
+          "--pr",
+          "701",
+          "--proof",
+          "REG-B1 manual verification row",
+          "--build-plan",
+          planPath,
+        ],
+        tmp,
+      );
+      check("prove: refuses an absolute --build-plan path", absolute.code !== 0, true);
+      check(
+        "prove: the absolute-path refusal wrote nothing",
+        readShard("F01").rows[0].state,
+        "queued",
+      );
+
+      // ../-escape — relative, but outside the repo root.
+      const escaping = runCli(
+        [
+          "prove",
+          "B1",
+          "--pr",
+          "701",
+          "--proof",
+          "REG-B1 manual verification row",
+          "--build-plan",
+          "../outside/build-plan.md",
+        ],
+        tmp,
+      );
+      check(
+        "prove: refuses a --build-plan path that escapes the repo root",
+        escaping.code !== 0,
+        true,
+      );
+
+      // A valid repo-relative path, wrong token first (proves the RESOLUTION
+      // itself is not just skipped), then the real one.
       writeFileSync(planPath, "## Manual verification\n\n| REG-B999 | ok |\n");
       const wrongToken = runCli(
         [
@@ -4136,7 +4211,7 @@ cmds["self-test"] = () => {
           "--proof",
           "REG-B1 manual verification row",
           "--build-plan",
-          planPath,
+          relPlanPath,
         ],
         tmp,
       );
@@ -4150,12 +4225,17 @@ cmds["self-test"] = () => {
         "--proof",
         "REG-B1 manual verification row",
         "--build-plan",
-        planPath,
+        relPlanPath,
       ]);
       const row = readShard("F01").rows[0];
       check("prove: a valid T3 build-plan lands the row as proven", row.state, "proven");
-      check("prove: the ledger row persists the buildPlan path", row.buildPlan, planPath);
+      check(
+        "prove: the ledger row persists the normalised repo-relative POSIX path",
+        row.buildPlan,
+        relPlanPath,
+      );
     } finally {
+      rmSync(planDir, { recursive: true, force: true });
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
       else process.env.BUGS_ROOT = prevRoot;
       rmSync(tmp, { recursive: true, force: true });
