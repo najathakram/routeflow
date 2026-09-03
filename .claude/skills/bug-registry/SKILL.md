@@ -259,14 +259,32 @@ each read the whole shard, each write their own copy back, and the second silent
 first — a proven, evidence-backed row back to `queued`, with `self-test` and `campaign-check` both
 green.
 
+**The catalogue is locked the same way.** `bugs.jsonl` gets its own `bugs.jsonl.lock` through the
+same primitive, and `file` holds it from the id allocation through the catalogue write — otherwise
+two sessions filing at once read one snapshot, allocate the SAME id, both print `filed B##`, and
+one whole bug (catalogue row, ledger row and record) disappears into a state so self-consistent
+that neither gate can see it. Lock order is one-way: catalogue first, then shard.
+
+A lock is broken on its owner being **dead**, never on its **age**. Each lock directory carries an
+`owner.json` (`{pid, token, at}`); a waiter breaks the lock only when `process.kill(pid, 0)`
+reports the pid is gone, and release deletes the directory only while the token in it is still
+ours. Age decides nothing except as a **last resort** — a lock directory carrying no readable
+`owner.json` at all, older than **120 s**. (Breaking on age robbed live holders, whose stale
+snapshot then reverted committed rows, and the stolen-from process went on to delete its
+successor's lock and admit a third writer.)
+
 What that means for you:
 
-- **Nothing to do in the normal case.** Every command takes and releases the lock itself.
-- **`bugs: could not lock … within 2000ms`** means another `bugs.mjs` really is writing that shard.
-  Retry. Only if nothing is running should you remove the named `.lock` directory by hand.
-- A lock left behind by a killed writer expires after 5s and is broken automatically, with
-  `bugs: breaking a stale lock on F##.jsonl …` on stderr. That line is worth reading — it means a
-  writer died mid-write, so re-read the shard before trusting it.
+- **Nothing to do in the normal case.** Every command takes and releases the lock itself, and a
+  Ctrl-C, SIGTERM or SIGHUP mid-write releases it too.
+- **`bugs: could not lock … within 10000ms`** means the named pid really is still writing. Retry.
+  Only if nothing is running should you remove the named `.lock` directory by hand.
+- **`bugs: breaking the lock on F##.jsonl — its owner (pid N) is gone`** means a writer died
+  mid-write. That line is worth reading: re-read the shard before trusting it. The `LAST RESORT`
+  variant of the same line means even the owner could not be identified.
+- **`bugs: our lock on F##.jsonl was broken by another process; verify the shard`** is the serious
+  one. Something outside `bugs.mjs` removed a live lock directory, so two writers may have been
+  inside the critical section — read the shard and the records it names before continuing.
 - **Still never hand-edit a shard.** The lock protects `bugs.mjs` from `bugs.mjs`; it cannot
   protect the ledger from an editor.
 
