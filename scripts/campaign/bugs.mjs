@@ -2031,7 +2031,11 @@ cmds.brief = (args) => {
 
   const state = readState();
   const out = [];
-  out.push(`# ${batch}${board.batches?.[batch] ? ` · board issue #${board.batches[batch]}` : ""}`);
+  // Validated at the boundary, same as `next`'s `issue` field — a raw board
+  // value printed a non-scalar as `(issue #[object Object])`, a claim
+  // instruction nobody could run.
+  const briefIssue = boardIssue(board.batches?.[batch]);
+  out.push(`# ${batch}${briefIssue ? ` · board issue #${briefIssue}` : ""}`);
 
   const pipelineDir = existsSync(PIPELINE_DIR())
     ? readdirSync(PIPELINE_DIR()).find((d) => d.toUpperCase().includes(`-${batch}-`))
@@ -2648,9 +2652,10 @@ cmds.status = (args) => {
       return rec && !rec.body.includes(UNANALYSED);
     }).length;
     const done = (by.done || 0) + (by["already-fixed"] || 0);
+    const statusIssue = boardIssue(board.batches?.[b]);
     console.log(
       `${b.padEnd(4)} ${String(done + "/" + rows.length).padStart(6)} done · ${String(analysed).padStart(2)} analysed · ` +
-        `${board.batches?.[b] ? "#" + board.batches[b] : "  —  "}  ${Object.entries(by)
+        `${statusIssue ? "#" + statusIssue : "  —  "}  ${Object.entries(by)
           .map(([k, v]) => `${k}:${v}`)
           .join(" ")}`,
     );
@@ -3581,6 +3586,28 @@ cmds["self-test"] = () => {
         "hostile board: a non-scalar never prints as '(issue #[object Object])'",
         /\[object Object\]/.test(objish.out),
         false,
+      );
+
+      // `status` and `brief` used to read board.json RAW rather than through
+      // boardIssue() — the exact same regression `next` was already fixed
+      // for, just at two different call sites nobody had re-checked.
+      writeFileSync(BOARD(), JSON.stringify({ batches: { F01: { n: 1 } } }));
+      const briefOut = capture(() => cmds.brief(["F01"]));
+      check(
+        "board.json non-scalar: `brief` never prints '[object Object]'",
+        briefOut.includes("[object Object]"),
+        false,
+      );
+      const statusOut = capture(() => cmds.status(["F01"]));
+      check(
+        "board.json non-scalar: `status` never prints '[object Object]'",
+        statusOut.includes("[object Object]"),
+        false,
+      );
+      check(
+        "board.json non-scalar: `status` falls back to the honest placeholder",
+        statusOut.includes("  —  "),
+        true,
       );
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
