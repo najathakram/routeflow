@@ -181,7 +181,10 @@ Guards you cannot talk your way past:
   defeat this), and the check is scoped to the **whole ledger**, not just this call: reusing a
   string across two separate `discharge` calls (a different batch, a later session) is refused too,
   not silently "grandfathered" the way a pre-rule row is. The batch-wide `--evidence` stays right
-  for T1/T3 and lands in `evidence`.
+  for T1/T3 and lands in `evidence`. **Only three ids are ever grandfathered — a hard-coded set
+  (`B24`, `B130`, `B154`) in `campaign-check.mjs`, not an open-ended "any shared bucket" rule.** A
+  fresh duplicate outside that set fails the gate outright; only when EVERY id in a shared bucket is
+  one of those three does it fall back to a warning.
 - `--pending-deploy` is T2-only.
 - **A T3 row needs `--build-plan <path/to/build-plan.md>` on `prove`, or the prove is refused.**
   `campaign-check` discharges a T3 row only from a `REG-B###` row in its batch's OWN
@@ -286,31 +289,48 @@ first — a proven, evidence-backed row back to `queued`, with `self-test` and `
 green.
 
 **The catalogue is locked the same way.** `bugs.jsonl` gets its own `bugs.jsonl.lock` through the
-same primitive, and `file` holds it from the id allocation through the catalogue write — otherwise
-two sessions filing at once read one snapshot, allocate the SAME id, both print `filed B##`, and
-one whole bug (catalogue row, ledger row and record) disappears into a state so self-consistent
-that neither gate can see it. Lock order is one-way: catalogue first, then shard.
+same primitive, and `file`, `move`, `import`, `index` and `discharge` all hold it — otherwise two
+sessions writing the catalogue at once (or, for `discharge`, scanning every OTHER shard's evidence
+while holding only their own) read one snapshot, act on it, and the second write silently discards
+the first's. **Lock order is one-way and load-bearing: the catalogue lock is OUTERMOST, and a
+shard lock (or several, for `move`) nests inside it — never the reverse.** One-way ordering is what
+makes deadlock structurally impossible; nothing here ever waits on the two locks in opposite
+directions, so there is no cycle to wait on. `bugs.mjs self-test` enforces this two ways: it parses
+its own source to fail if a `withCatalogueLock(` call ever turns up nested inside a
+`withShardLock(`/`withShardLocks(` callback, and it races two lock-order-obeying commands against
+each other to confirm they still finish in seconds, not the ~10s+ a reversed-order deadlock would
+cost.
 
 A lock is broken on its owner being **dead**, never on its **age**. Each lock directory carries an
-`owner.json` (`{pid, token, at}`); a waiter breaks the lock only when `process.kill(pid, 0)`
-reports the pid is gone, and release deletes the directory only while the token in it is still
-ours. Age decides nothing except as a **last resort** — a lock directory carrying no readable
-`owner.json` at all, older than **120 s**. (Breaking on age robbed live holders, whose stale
-snapshot then reverted committed rows, and the stolen-from process went on to delete its
-successor's lock and admit a third writer.)
+`owner.json` (`{pid, token, at, bootAt}`); a waiter breaks the lock when `process.kill(pid, 0)`
+reports the pid is gone, **or when `bootAt` (a boot-epoch stamp, `Date.now() - os.uptime()*1000`)
+no longer matches the CURRENT boot** — proof the recorded pid cannot possibly still be that
+process even if the OS has since reused the same pid number for something else entirely. Release
+deletes the directory only while the token in it is still ours. Age decides nothing except as a
+**last resort** — a lock directory carrying no readable `owner.json` at all, older than **120 s**.
+(Breaking on age robbed live holders, whose stale snapshot then reverted committed rows, and the
+stolen-from process went on to delete its successor's lock and admit a third writer.)
+
+Lock directories are **gitignored** (`.claude/campaign/**/*.lock/`, `.claude/campaign/bugs.jsonl.lock/`)
+— they live inside the tracked `.claude/campaign/` tree the shards and catalogue occupy, so without
+that rule one left behind by a crash could land in a commit.
 
 What that means for you:
 
 - **Nothing to do in the normal case.** Every command takes and releases the lock itself, and a
   Ctrl-C, SIGTERM or SIGHUP mid-write releases it too.
 - **`bugs: could not lock … within 10000ms`** means the named pid really is still writing. Retry.
-  Only if nothing is running should you remove the named `.lock` directory by hand.
+  Only if nothing is running should you remove the named `.lock` directory by hand — and if the
+  message says the lockdir carries no owner stamp, you don't even need to: it breaks itself once
+  it is 120s old.
 - **`bugs: breaking the lock on F##.jsonl — its owner (pid N) is gone`** means a writer died
-  mid-write. That line is worth reading: re-read the shard before trusting it. The `LAST RESORT`
-  variant of the same line means even the owner could not be identified.
+  mid-write. **`… predates this boot`** means the pid answered but cannot be the same process (a
+  reboot recycled it). Either line is worth reading: re-read the shard before trusting it. The
+  `LAST RESORT` variant means even the owner could not be identified.
 - **`bugs: our lock on F##.jsonl was broken by another process; verify the shard`** is the serious
-  one. Something outside `bugs.mjs` removed a live lock directory, so two writers may have been
-  inside the critical section — read the shard and the records it names before continuing.
+  one, and the process now **exits non-zero** for it — something outside `bugs.mjs` removed a live
+  lock directory, so two writers may have been inside the critical section — read the shard and the
+  records it names before continuing.
 - **Still never hand-edit a shard.** The lock protects `bugs.mjs` from `bugs.mjs`; it cannot
   protect the ledger from an editor.
 
