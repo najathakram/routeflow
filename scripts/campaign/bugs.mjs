@@ -26,6 +26,19 @@
 // directory (see `withShardLock` below): the READ is inside the lock too, or the
 // patch a caller computed is already stale by the time it writes.
 //
+// LOCK ORDER — CATALOGUE, THEN SHARD. ONE WAY, NEVER THE REVERSE.
+// bugs.jsonl (the catalogue) gets the exact same protection, for the exact
+// same reason: `file`, `move`, `import`, `index` and `discharge` all
+// read-modify-write it, and every one of them ALSO touches a shard (a ledger
+// row, or — for `discharge` — every OTHER shard's dischargeEvidence) in the
+// same critical section. The rule, enforced by this file's own self-test
+// (both statically, by parsing this source for the pattern, and at runtime,
+// by racing two lock-order-obeying commands against each other): a command
+// that needs both locks takes `withCatalogueLock` FIRST and `withShardLock`/
+// `withShardLocks` nested INSIDE it, never the other way round. One-way
+// ordering is what makes deadlock structurally impossible — there is no
+// cycle to wait on when nothing ever takes them in the opposite order.
+//
 // THE CARVE-OUT
 // Owner decision (2026-09-02): agents may auto-take normal bugs unattended, but
 // anything touching money math, tenant scoping, or migrations is planned and
@@ -5723,6 +5736,161 @@ cmds["self-test"] = () => {
         "discharge race: F02's row was never written — still proven, refusal happened before any write",
         byBatch.F02?.state,
         "proven",
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // ── lock order: catalogue, then shard — enforced two ways ───────────────
+  // Nothing above ever ASSERTS the order itself — every fix (file/move/
+  // import/index/discharge) happened to get it right, but nothing would
+  // notice a FUTURE command that took the locks the other way round until it
+  // deadlocked in production. Two independent guards:
+  //
+  // (a) STATIC: parse this file's own source and fail if `withCatalogueLock(`
+  //     appears lexically inside a `withShardLock(`/`withShardLocks(` call's
+  //     own argument list (which is where its callback lives) — found by
+  //     locating each opener's MATCHING close-paren via a paren-depth count
+  //     from the opener, then searching that span as plain text. This is
+  //     deliberately dumber than a real parser (no comment/string awareness),
+  //     which is exactly what makes it trustworthy: nothing here needs to
+  //     agree with what V8 thinks a token is, it only needs to see the same
+  //     textual nesting a human reviewer would.
+  {
+    const src = readFileSync(SCRIPT_PATH, "utf8");
+    const violations = [];
+    const opener = /withShardLocks?\(/g;
+    let m;
+    while ((m = opener.exec(src))) {
+      const parenStart = m.index + m[0].length - 1;
+      let depth = 0;
+      let end = -1;
+      for (let i = parenStart; i < src.length; i++) {
+        if (src[i] === "(") depth++;
+        else if (src[i] === ")") {
+          depth--;
+          if (depth === 0) {
+            end = i;
+            break;
+          }
+        }
+      }
+      if (end === -1) continue; // unbalanced parens — a syntax error elsewhere, not this check's job
+      const span = src.slice(parenStart, end);
+      if (/withCatalogueLock\(/.test(span)) {
+        const line = src.slice(0, m.index).split("\n").length;
+        violations.push(`${m[0]} opener at line ${line} has withCatalogueLock( nested inside it`);
+      }
+    }
+    check(
+      "lock order (static): no withCatalogueLock( call is nested inside a withShardLock(/withShardLocks( callback",
+      violations,
+      [],
+    );
+  }
+
+  // (b) RUNTIME: race two DIFFERENT commands that both take catalogue-then-
+  //     shard — `move` (catalogue, then two shards) and `discharge`
+  //     (catalogue, then one shard) — against each other on batches that
+  //     share no shard lock at all, so the ONLY thing serializing them is the
+  //     catalogue lock both correctly take first. If either ever regressed to
+  //     the opposite order, this does not merely run slow: a cycle (one
+  //     process holding shard-A waiting on the catalogue lock, another
+  //     holding the catalogue lock waiting on shard-A) has no exit but each
+  //     side's own LOCK_SPIN_MS timeout, so the pair would take upwards of
+  //     10s and one side would exit non-zero — comfortably outside this
+  //     probe's 5s budget.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file([
+        "lock-order fixture A",
+        "--location",
+        "apps/api/src/lock-order-a.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T1",
+      ]);
+      cmds.file([
+        "lock-order fixture B",
+        "--location",
+        "apps/api/src/lock-order-b.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F02",
+        "--tier",
+        "T1",
+      ]);
+      cmds.prove(["B2", "--pr", "960", "--proof", "REG-B2 jest: lock-order fixture"]);
+
+      const orchestrator = join(tmp, "lock-order-race.mjs");
+      writeFileSync(
+        orchestrator,
+        [
+          'import { spawn } from "node:child_process";',
+          "const [script, root, stall] = process.argv.slice(2);",
+          "const run = (args, env, delay) =>",
+          "  new Promise((res) => {",
+          "    const start = () => {",
+          "      const p = spawn(process.execPath, [script, ...args], {",
+          "        env: { ...process.env, BUGS_ROOT: root, ...env },",
+          '        stdio: ["ignore", "pipe", "pipe"],',
+          "      });",
+          '      let out = "";',
+          '      p.stdout.on("data", (d) => (out += d));',
+          '      p.stderr.on("data", (d) => (out += d));',
+          '      p.on("close", (code) => res({ code, out }));',
+          "    };",
+          "    if (delay) setTimeout(start, delay);",
+          "    else start();",
+          "  });",
+          "const results = await Promise.all([",
+          "  run(",
+          '    ["move", "B1", "--to", "F03"],',
+          '    { BUGS_SELF_TEST: "1", BUGS_TEST_STALL_MS: stall },',
+          "    0,",
+          "  ),",
+          "  run(",
+          '    ["discharge", "F02", "--evidence", "batch-wide evidence for F02, well over 40 chars"],',
+          "    {},",
+          "    200,",
+          "  ),",
+          "]);",
+          "console.log(JSON.stringify(results));",
+        ].join("\n"),
+      );
+      const argv = [orchestrator, SCRIPT_PATH, tmp, "1200"].map((a) => JSON.stringify(a)).join(" ");
+      const t0 = Date.now();
+      let raced;
+      try {
+        raced = {
+          code: 0,
+          out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+        };
+      } catch (e) {
+        raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+      }
+      const elapsedMs = Date.now() - t0;
+      check("lock order (runtime): the orchestrator exited 0", raced.code, 0);
+      const kids = JSON.parse(raced.out.trim().split("\n").pop());
+      check(
+        "lock order (runtime): move and discharge BOTH exited 0 — no deadlock, no refusal",
+        kids.map((k) => k.code),
+        [0, 0],
+      );
+      check(
+        "lock order (runtime): the race finished in well under 5s — a genuine deadlock costs ~10s+",
+        elapsedMs < 5000,
+        true,
       );
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
