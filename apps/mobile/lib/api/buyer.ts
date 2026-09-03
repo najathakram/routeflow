@@ -6,6 +6,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { buyerApiClient, type BuyerSeller } from "../buyer-auth";
+import { trackingRefetchInterval } from "../order-tracking-logic";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -603,17 +604,16 @@ export interface BuyerOrderTracking {
 /** Live-ish: polls while the order can still move. There is no per-stop push
  *  to the buyer socket namespace today — only order.statusChanged is wired
  *  (useBuyerSocket.ts), which covers status transitions but not driver
- *  progress WITHIN a status (stopsAhead ticking down). Paused (no interval)
- *  once DELIVERED/CANCELLED or before dispatch. TanStack v5 function form. */
+ *  progress WITHIN a status (stopsAhead ticking down). Paused once
+ *  DELIVERED/CANCELLED or before dispatch. ALSO polls while the run is
+ *  IN_PROGRESS so a CONFIRMED order can observe its own skip (F11). TanStack
+ *  v5 function form. */
 export function useBuyerOrderTracking(id: string) {
   return useQuery<BuyerOrderTracking>({
     queryKey: ["buyer-order-tracking", id],
     queryFn: () => buyerApiClient.get(`/buyer/orders/${id}/tracking`).then((r) => r.data),
     enabled: !!id,
-    refetchInterval: (query) => {
-      const s = query.state.data?.status;
-      return s === "OUT_FOR_DELIVERY" || s === "PARTIALLY_DELIVERED" ? 20_000 : false;
-    },
+    refetchInterval: (query) => trackingRefetchInterval(query.state.data),
   });
 }
 

@@ -24,6 +24,7 @@ import {
 import {
   buildReorderItems,
   canReorder,
+  trackingHeadline,
   trackingStepIndex,
 } from "../../../lib/order-tracking-logic";
 import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
@@ -120,6 +121,7 @@ export default function CustomerOrderDetailScreen() {
   const canEdit = orderEditable(order);
   const canRequest = !canEdit && canRequestChange(order);
   const canDoReorder = canReorder(order) && buildReorderItems(order).length > 0;
+  const headline = tracking?.tracking ? trackingHeadline(tracking.tracking) : null;
 
   const onReorder = () =>
     confirm(
@@ -253,14 +255,9 @@ export default function CustomerOrderDetailScreen() {
                   {tracking.tracking.driverName ? (
                     <Text style={styles.trackingLine}>Driver: {tracking.tracking.driverName}</Text>
                   ) : null}
-                  {tracking.tracking.runStatus === "IN_PROGRESS" ? (
-                    <Text style={styles.trackingLine}>
-                      {tracking.tracking.stopsAhead === 0
-                        ? "You're next on the route"
-                        : `${tracking.tracking.stopsAhead} stop${tracking.tracking.stopsAhead === 1 ? "" : "s"} ahead of you`}
-                    </Text>
-                  ) : null}
-                  {tracking.tracking.estimatedArrivalWindow.start ? (
+                  {headline ? <Text style={styles.trackingLine}>{headline}</Text> : null}
+                  {tracking.tracking.stopStatus !== "SKIPPED" &&
+                  tracking.tracking.estimatedArrivalWindow.start ? (
                     <Text style={styles.trackingLine}>
                       Estimated: {tracking.tracking.estimatedArrivalWindow.start}
                       {tracking.tracking.estimatedArrivalWindow.end

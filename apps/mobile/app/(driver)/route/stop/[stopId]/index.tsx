@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { showToast } from "../../../../../lib/toast";
 import { confirm } from "../../../../../lib/confirm";
+import { createSkipStopHandler } from "../../../../../lib/skip-stop";
 import { useDriverPayments } from "../../../../../lib/api/addons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -21,6 +22,7 @@ import { ListGroup, NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui
 import {
   useActiveRouteRun,
   useRouteRun,
+  useUpdateStopStatus,
   IDENTITY_TYPES,
   IDENTITY_TYPE_LABELS,
   type RouteRunStop,
@@ -77,6 +79,22 @@ export default function StopDetailScreen() {
   const runIdFromActive = activeData?.data?.[0]?.id;
   const runId = params.runId ?? runIdFromActive;
   const { data: run, isLoading: runLoading } = useRouteRun(runId ?? "");
+
+  // F11 (B34): Skip actually PATCHes the stop. The handler is memoised so its
+  // in-flight guard survives a second tap on the button while the first PATCH
+  // is still outstanding (a fresh closure per press would reset it).
+  const updateStopStatus = useUpdateStopStatus();
+  const onSkipConfirm = useMemo(
+    () =>
+      createSkipStopHandler({
+        runId,
+        stopId,
+        mutate: updateStopStatus.mutate,
+        navigateBack: () => router.replace("/(driver)/route" as any),
+        toast: showToast,
+      }),
+    [runId, stopId, updateStopStatus.mutate, router],
+  );
 
   const stop = useMemo(() => run?.stops?.find((s) => s.id === stopId), [run, stopId]);
   const pod = usePodStore((s) => s.pods[stopId ?? ""] ?? undefined);
@@ -331,10 +349,14 @@ export default function StopDetailScreen() {
             <SecondaryBtn
               label="Skip stop"
               onPress={() =>
+                // scan-ok: confirm-navigate — onSkipConfirm PATCHes SKIPPED, navigates only onSuccess (T21/T25)
                 confirm(
                   "Skip stop",
-                  "Mark this stop as skipped? You can reopen it later.",
-                  () => router.replace("/(driver)/route" as any),
+                  // F11 (B211): the promise is bounded on purpose — once the run
+                  // is completed, the skipped stop's orders are released to
+                  // dispatch and the server refuses to reopen the stop.
+                  "Mark this stop as skipped? It can be reopened until this run is completed.",
+                  onSkipConfirm,
                   { confirmText: "Skip", destructive: true },
                 )
               }
