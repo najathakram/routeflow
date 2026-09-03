@@ -6570,6 +6570,89 @@ cmds["self-test"] = () => {
       );
       const fourDigitRow = runCampaignCheck();
       check("campaign-check: a 4-digit id (B1000) passes the row-id grammar", fourDigitRow.code, 0);
+
+      // The grandfathered set is a hard-coded ALLOWLIST of exactly the three
+      // historical ids (B24/B130/B154) — a fresh, planted duplicate outside
+      // it must turn the gate red, never just warn, or the "byte-identical
+      // dischargeEvidence" control is soft for every row, not just those
+      // three.
+      // B950/B951 — clearly clear of every id a fixture ABOVE this point in
+      // this same self-test block already used (B900 in particular already
+      // has a leftover, unrelated web-e2e.json artifact from an earlier
+      // check), so this test cannot accidentally pass or fail via a stale
+      // artifact hit instead of the shared-evidence logic under test.
+      const SAME_EVIDENCE = "shared discharge run https://example.invalid/run/9999";
+      writeFileSync(
+        join(statusTmp, "F02.jsonl"),
+        [
+          JSON.stringify({
+            id: "B950",
+            batch: "F02",
+            tier: "T2",
+            state: "done",
+            pr: 950,
+            proof: "REG-B950",
+            evidence: SAME_EVIDENCE,
+            dischargeEvidence: SAME_EVIDENCE,
+          }),
+          JSON.stringify({
+            id: "B951",
+            batch: "F02",
+            tier: "T2",
+            state: "done",
+            pr: 951,
+            proof: "REG-B951",
+            evidence: SAME_EVIDENCE,
+            dischargeEvidence: SAME_EVIDENCE,
+          }),
+        ].join("\n") + "\n",
+      );
+      const freshDuplicate = runCampaignCheck();
+      check(
+        "campaign-check: a fresh shared-evidence duplicate OUTSIDE the grandfathered set fails the gate",
+        freshDuplicate.code !== 0,
+        true,
+      );
+      check(
+        "campaign-check: the failure names both rows and the grandfathered set",
+        freshDuplicate.out.includes("B950, B951") && freshDuplicate.out.includes("grandfathered"),
+        true,
+      );
+
+      // The three HISTORICAL rows, by contrast, still only warn — this is
+      // not a blanket allowlist bypass, just the three ids the ruling names.
+      writeFileSync(
+        join(statusTmp, "F02.jsonl"),
+        [
+          JSON.stringify({
+            id: "B24",
+            batch: "F02",
+            tier: "T2",
+            state: "done",
+            pr: 24,
+            proof: "REG-B24",
+            evidence: SAME_EVIDENCE,
+            dischargeEvidence: SAME_EVIDENCE,
+          }),
+          JSON.stringify({
+            id: "B130",
+            batch: "F02",
+            tier: "T2",
+            state: "done",
+            pr: 130,
+            proof: "REG-B130",
+            evidence: SAME_EVIDENCE,
+            dischargeEvidence: SAME_EVIDENCE,
+          }),
+        ].join("\n") + "\n",
+      );
+      const historicalDuplicate = runCampaignCheck();
+      check(
+        "campaign-check: the historical grandfathered pair still only warns (stays green)",
+        historicalDuplicate.code,
+        0,
+      );
+      rmSync(join(statusTmp, "F02.jsonl"), { force: true });
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

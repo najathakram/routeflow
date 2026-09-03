@@ -510,13 +510,31 @@ for (const row of rows) {
   }
 }
 
+// The ONLY rows ever allowed to share one byte-identical dischargeEvidence —
+// written before `bugs.mjs discharge` refused it. RULING (owner): hard-coded,
+// not "any bucket with more than one id" — an open-ended warn-only rule
+// waved through a FRESH duplicate exactly like these three historical ones,
+// which is precisely the control this gate exists to be. A duplicate outside
+// this set is a real violation and must turn the gate red, not print a
+// warning that looks identical to the grandfathered case.
+const GRANDFATHERED_SHARED_EVIDENCE = new Set(["B24", "B130", "B154"]);
+
 for (const [, ids] of t2FallbackEvidence)
-  if (ids.length > 1)
-    console.warn(
-      `⚠ T2 rows ${ids.join(", ")} share one byte-identical dischargeEvidence — that string ` +
-        `stands in for a Playwright result, so it must name the run that exercised EACH row. ` +
-        `Grandfathered (written before the rule); \`bugs.mjs discharge\` now refuses it.`,
-    );
+  if (ids.length > 1) {
+    if (ids.every((id) => GRANDFATHERED_SHARED_EVIDENCE.has(id))) {
+      console.warn(
+        `⚠ T2 rows ${ids.join(", ")} share one byte-identical dischargeEvidence — that string ` +
+          `stands in for a Playwright result, so it must name the run that exercised EACH row. ` +
+          `Grandfathered (written before the rule); \`bugs.mjs discharge\` now refuses it.`,
+      );
+    } else {
+      fail(
+        `T2 rows ${ids.join(", ")} share one byte-identical dischargeEvidence, and at least one of ` +
+          `them is not in the grandfathered set (${[...GRANDFATHERED_SHARED_EVIDENCE].join(", ")}) ` +
+          `— each row's discharge must cite the run that exercised THAT row`,
+      );
+    }
+  }
 
 function checkProofHits(id, hits, sourceLabel) {
   if (hits.length === 0) {
