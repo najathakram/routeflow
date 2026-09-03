@@ -86,6 +86,7 @@ import {
   statSync,
   openSync,
   closeSync,
+  chmodSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { tmpdir, uptime } from "node:os";
@@ -2393,6 +2394,14 @@ cmds.discharge = (args) => {
       // a `bugs:` message.
       const shardFile = shardPath(batch);
       const snapshot = readFileSync(shardFile, "utf8");
+      // Records already WRITTEN before the failure are not this rollback's to
+      // leave behind either — a record left at `state: done`/`closed: yes`,
+      // with a permanent, self-deduplicating History line, for a discharge
+      // that never happened is a fiction the shard rollback alone cannot
+      // undo (readRecord/writeRecord never consult the shard). Captured
+      // BEFORE each write, so a failure on THIS row's own writeRecord call
+      // still has its pre-write snapshot to restore.
+      const recordRestores = [];
       try {
         for (const row of ready) {
           const own = perRow.get(row.id);
@@ -2407,6 +2416,11 @@ cmds.discharge = (args) => {
               fail(
                 `ledger write for ${row.id} did not land as intended (${k}) — re-read row is ${JSON.stringify(after)}`,
               );
+          const rp = recordPath(row.id);
+          recordRestores.push({
+            path: rp,
+            before: existsSync(rp) ? readFileSync(rp, "utf8") : null,
+          });
           const rec = readRecord(row.id);
           if (rec)
             writeRecord(
@@ -2421,6 +2435,18 @@ cmds.discharge = (args) => {
             );
         }
       } catch (e) {
+        // Records BEFORE the shard: a caller reading a record mid-rollback
+        // (an interleaved `show`) must never see a `done` record backed by a
+        // shard that has already reverted to `proven` — the record is the
+        // more visible artifact, so it goes back first.
+        for (const { path: rp, before } of recordRestores) {
+          try {
+            if (before === null) rmSync(rp, { force: true });
+            else writeFileSync(rp, before);
+          } catch {
+            /* best effort — the shard restore and the loud fail() below still fire */
+          }
+        }
         writeFileSync(shardFile, snapshot);
         fail(
           `discharge: ${batch} failed mid-batch and was rolled back to its pre-discharge state (${e.message})`,
@@ -4547,6 +4573,86 @@ cmds["self-test"] = () => {
         [BATCH_EV, undefined],
       );
     } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // discharge's rollback used to restore the SHARD only — a record already
+  // written before a mid-batch failure kept `state: done`/`closed: yes` and a
+  // permanent History line for a discharge that never happened, while the
+  // shard (and the CLI's own message) claimed a full rollback. A read-only
+  // record forces writeRecord to throw on the SECOND row, after the first
+  // row's record has already been written — exactly the ordering that used
+  // to leave one record correctly rolled back (never touched) and the other
+  // permanently wrong (touched, then abandoned).
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    let lockedRecordPath = null;
+    try {
+      for (const title of ["rollback fixture A", "rollback fixture B", "rollback fixture C"])
+        cmds.file([
+          title,
+          "--location",
+          "apps/api/src/rollback-fixture.ts",
+          "--severity",
+          "low",
+          "--batch",
+          "F01",
+          "--tier",
+          "T1",
+        ]);
+      cmds.prove(["B1", "--pr", "970", "--proof", "REG-B1 jest: rollback fixture A"]);
+      cmds.prove(["B2", "--pr", "971", "--proof", "REG-B2 jest: rollback fixture B"]);
+      cmds.prove(["B3", "--pr", "972", "--proof", "REG-B3 jest: rollback fixture C"]);
+      check(
+        "rollback fixture: all three rows proven",
+        readShard("F01").rows.map((r) => r.state),
+        ["proven", "proven", "proven"],
+      );
+
+      const shardBefore = readFileSync(shardPath("F01"), "utf8");
+      const recordsBefore = new Map(
+        ["B1", "B2", "B3"].map((id) => [id, readFileSync(recordPath(id), "utf8")]),
+      );
+
+      // `ready` (built from readShard's row order, which is FILE order —
+      // append order here) processes B1 before B2 — make B2's record
+      // read-only so the failure lands strictly AFTER B1's record has
+      // already been written, and strictly BEFORE B3's ever is.
+      lockedRecordPath = recordPath("B2");
+      chmodSync(lockedRecordPath, 0o444);
+
+      const result = runCli(
+        ["discharge", "F01", "--evidence", "rolled-back discharge fixture run, well over 40 chars"],
+        tmp,
+      );
+      check("rollback: discharge fails loudly on the read-only record", result.code !== 0, true);
+
+      const shardAfter = readFileSync(shardPath("F01"), "utf8");
+      check("rollback: the shard is byte-identical to before the attempt", shardAfter, shardBefore);
+      for (const id of ["B1", "B2", "B3"])
+        check(
+          `rollback: ${id}'s record is byte-identical to before the attempt`,
+          readFileSync(recordPath(id), "utf8"),
+          recordsBefore.get(id),
+        );
+      check(
+        "rollback: every row is still `proven`, none stuck at `done` from the abandoned attempt",
+        readShard("F01").rows.map((r) => r.state),
+        ["proven", "proven", "proven"],
+      );
+    } finally {
+      if (lockedRecordPath) {
+        try {
+          chmodSync(lockedRecordPath, 0o644);
+        } catch {
+          /* best effort — the rmSync below still cleans up the whole tmp tree */
+        }
+      }
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
       else process.env.BUGS_ROOT = prevRoot;
       rmSync(tmp, { recursive: true, force: true });
