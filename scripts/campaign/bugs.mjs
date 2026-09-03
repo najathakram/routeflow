@@ -751,6 +751,7 @@ function selectBatches(args) {
       skipped.push({
         ...b,
         busy: b.inFlight.length > 0,
+        busyWhy: b.inFlight.length > 0 ? "in-flight" : null,
         why: `no workable rows (${b.inFlight.length} in-flight)`,
       });
       continue;
@@ -759,6 +760,7 @@ function selectBatches(args) {
       skipped.push({
         ...b,
         busy: true,
+        busyWhy: "in-flight",
         why: `${b.inFlight.length} row(s) in-flight: ${b.inFlight.join(", ")}`,
       });
       continue;
@@ -796,6 +798,7 @@ function selectBatches(args) {
         skipped.push({
           ...b,
           busy: true,
+          busyWhy: "leased",
           why: `claimed by ${c.id} until ${c.leaseUntil.toISOString()}`,
         });
       } else {
@@ -812,6 +815,10 @@ function selectBatches(args) {
   // handed to a second agent.
   const conflicts = batchConflicts(hubThreshold);
   const busy = skipped.filter((s) => s.busy).map((s) => s.batch);
+  // Which KIND of busy each holder is — a local in-flight row, or a remote
+  // team.mjs lease — so the blocked reason below can say which, instead of
+  // hardcoding "in-flight" for a holder that may not have one at all.
+  const busyKind = new Map(skipped.filter((s) => s.busy).map((s) => [s.batch, s.busyWhy]));
   const waves = computeWaves(candidates, conflicts, cap, busy);
   const blocked = candidates
     .filter((b) => b.blockedBy?.length)
@@ -819,12 +826,15 @@ function selectBatches(args) {
       const files = [
         ...new Set(b.blockedBy.flatMap((o) => [...(conflicts.get(b.batch)?.get(o) ?? [])])),
       ];
+      const holders = b.blockedBy
+        .map((o) => `${busyKind.get(o) === "leased" ? "leased" : "in-flight"} ${o}`)
+        .join(", ");
       return {
         batch: b.batch,
         blockedBy: b.blockedBy,
         files,
         why:
-          `blocked by in-flight ${b.blockedBy.join(", ")} — shares ` +
+          `blocked by ${holders} — shares ` +
           `${files.slice(0, 2).join(", ")}${files.length > 2 ? ` (+${files.length - 2} more)` : ""}`,
       };
     });
@@ -2893,6 +2903,59 @@ cmds["self-test"] = () => {
       check(
         "next: the alongside batch's own claimCheck is shown, not silently dropped",
         /F02[\s\S]*?⚠ claim check unavailable/.test(shown),
+        true,
+      );
+    } finally {
+      liveClaim = realLiveClaim;
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // `blocked`'s reason hardcoded "in-flight" even when the blocking batch was
+  // held only by a REMOTE team.mjs lease — an operator who grepped the
+  // ledger for a local in-flight row on that batch found none.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    const SHARED = "apps/web/app/(dashboard)/lease-occupancy/page.tsx";
+    const realLiveClaim = liveClaim;
+    try {
+      for (const [title, batch] of [
+        ["lease occupancy fixture A", "F01"],
+        ["lease occupancy fixture B", "F02"],
+      ])
+        cmds.file([
+          title,
+          "--location",
+          SHARED,
+          "--severity",
+          "high",
+          "--batch",
+          batch,
+          "--tier",
+          "T1",
+          "--files",
+          SHARED,
+        ]);
+      writeFileSync(BOARD(), JSON.stringify({ batches: { F01: 701, F02: 702 } }));
+      liveClaim = (issue) =>
+        issue === 701
+          ? { id: "rf-remote", leaseUntil: new Date("2099-01-01T00:00:00.000Z") }
+          : null;
+      const { blocked, busy } = selectBatches([]);
+      check("blocked reason: a remote lease is reported busy", busy, ["F01"]);
+      check(
+        "blocked reason: names the holder as LEASED, not in-flight, when held only by a remote lease",
+        blocked.map((b) => b.why),
+        [`blocked by leased F01 — shares ${SHARED}`],
+      );
+      const shown = capture(() => cmds.next([]));
+      check(
+        "blocked reason: `next` prints 'blocked by leased F01', not 'in-flight'",
+        /F02\s+blocked by leased F01/.test(shown),
         true,
       );
     } finally {
