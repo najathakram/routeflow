@@ -249,32 +249,38 @@ cmds.import = () => {
       "no bug rows matched — the register markup changed; fix the pattern rather than importing nothing",
     );
 
-  const existing = readCatalogue();
-  const known = new Set(existing.map((r) => r.id));
-  const state = readState();
-  let added = 0;
+  // The read, the merge and the write are ONE critical section — this used to
+  // run with no lock at all, so a concurrent `file`/`index`/`move` landing
+  // between the read and this write had its own catalogue change silently
+  // discarded when this write landed second.
+  withCatalogueLock(() => {
+    const existing = readCatalogue();
+    const known = new Set(existing.map((r) => r.id));
+    const state = readState();
+    let added = 0;
 
-  for (const [, id, title, location, sevCell, stateCell] of rows) {
-    if (known.has(id)) continue;
-    const sev = /chip (critical|high|medium|low)/.exec(sevCell);
-    const bug = {
-      id,
-      title: stripTags(title),
-      location: stripTags(location),
-      severity: sev ? sev[1] : "none",
-      register: stripTags(stateCell),
-      batch: state.get(id)?.batch ?? null,
-      source: "register-import",
-      filedAt: null,
-    };
-    const c = classify(bug);
-    bug.sensitive = c.sensitive;
-    bug.sensitiveFor = c.reasons;
-    existing.push(bug);
-    added++;
-  }
-  writeCatalogue(existing);
-  console.log(`imported ${added} new row(s); catalogue now holds ${existing.length}.`);
+    for (const [, id, title, location, sevCell, stateCell] of rows) {
+      if (known.has(id)) continue;
+      const sev = /chip (critical|high|medium|low)/.exec(sevCell);
+      const bug = {
+        id,
+        title: stripTags(title),
+        location: stripTags(location),
+        severity: sev ? sev[1] : "none",
+        register: stripTags(stateCell),
+        batch: state.get(id)?.batch ?? null,
+        source: "register-import",
+        filedAt: null,
+      };
+      const c = classify(bug);
+      bug.sensitive = c.sensitive;
+      bug.sensitiveFor = c.reasons;
+      existing.push(bug);
+      added++;
+    }
+    writeCatalogue(existing);
+    console.log(`imported ${added} new row(s); catalogue now holds ${existing.length}.`);
+  });
 };
 
 cmds.file = (args) => {
@@ -1540,34 +1546,41 @@ cmds.note = (args) => {
 // bugs.jsonl is a DERIVED index over the records — regenerate, never hand-edit.
 cmds.index = () => {
   if (!existsSync(RECORD_DIR())) fail("no records yet — run `expand`");
-  // Preserve every catalogue field this command does not derive from the record
-  // front matter (symptom, filedAt, register, source, …) by reading the EXISTING
-  // row and spreading the derived keys on top of it, never the other way round.
-  // A prior `index` rebuilt a fixed 9-key shape from scratch and silently
-  // destroyed the filed symptom, filedAt, and 61 register PR links.
-  const priorById = new Map(readCatalogue().map((r) => [r.id, r]));
-  const rows = readdirSync(RECORD_DIR())
-    .filter((f) => f.endsWith(".md"))
-    .map((f) => parseRecord(readFileSync(join(RECORD_DIR(), f), "utf8")).front)
-    .map((fm) => ({
-      ...(priorById.get(fm.id) ?? {}),
-      id: fm.id,
-      title: fm.title,
-      location: fm.location,
-      severity: fm.severity,
-      batch: fm.batch,
-      // `register` is NOT recomputed here — it means what the register said at
-      // import time (or "open" for a bug that never had a prior row at all),
-      // and `closed` is a ledger-derived front-matter field, not a register verdict.
-      register: priorById.get(fm.id)?.register ?? "open",
-      sensitive: fm.sensitive === "true",
-      sensitiveFor: fm.sensitiveFor ? fm.sensitiveFor.split(",") : [],
-    }));
-  writeCatalogue(rows);
-  const preserved = rows.filter((r) => priorById.has(r.id)).length;
-  console.log(
-    `index: rebuilt bugs.jsonl from ${rows.length} record(s) (${preserved} row(s) carried forward prior catalogue fields).`,
-  );
+  // The read, the rebuild and the write are ONE critical section — this used
+  // to rewrite bugs.jsonl wholesale with no lock at all, so a concurrent
+  // `file` landing between the read and this write had its brand-new row
+  // silently dropped when this rebuild landed second. `index` takes no shard
+  // lock, so the ordering rule (catalogue, then shard) is trivially satisfied.
+  withCatalogueLock(() => {
+    // Preserve every catalogue field this command does not derive from the record
+    // front matter (symptom, filedAt, register, source, …) by reading the EXISTING
+    // row and spreading the derived keys on top of it, never the other way round.
+    // A prior `index` rebuilt a fixed 9-key shape from scratch and silently
+    // destroyed the filed symptom, filedAt, and 61 register PR links.
+    const priorById = new Map(readCatalogue().map((r) => [r.id, r]));
+    const rows = readdirSync(RECORD_DIR())
+      .filter((f) => f.endsWith(".md"))
+      .map((f) => parseRecord(readFileSync(join(RECORD_DIR(), f), "utf8")).front)
+      .map((fm) => ({
+        ...(priorById.get(fm.id) ?? {}),
+        id: fm.id,
+        title: fm.title,
+        location: fm.location,
+        severity: fm.severity,
+        batch: fm.batch,
+        // `register` is NOT recomputed here — it means what the register said at
+        // import time (or "open" for a bug that never had a prior row at all),
+        // and `closed` is a ledger-derived front-matter field, not a register verdict.
+        register: priorById.get(fm.id)?.register ?? "open",
+        sensitive: fm.sensitive === "true",
+        sensitiveFor: fm.sensitiveFor ? fm.sensitiveFor.split(",") : [],
+      }));
+    writeCatalogue(rows);
+    const preserved = rows.filter((r) => priorById.has(r.id)).length;
+    console.log(
+      `index: rebuilt bugs.jsonl from ${rows.length} record(s) (${preserved} row(s) carried forward prior catalogue fields).`,
+    );
+  });
 };
 
 // ── ledger writes ─────────────────────────────────────────────────────────
@@ -5455,6 +5468,117 @@ cmds["self-test"] = () => {
         "filed symptom survives file -> index round trip (record body)",
         !!rec && rec.body.includes("SELF_TEST_SYMPTOM_MARKER survives the round trip"),
         true,
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // ── index takes the catalogue lock too ──────────────────────────────────
+  // `index` rewrites bugs.jsonl WHOLESALE with no lock at all — a whole
+  // rebuild used to be silently discarded by a concurrent `file`: `file`
+  // captures its own in-memory catalogue snapshot at the START of its
+  // critical section, and if `index` reads, rebuilds and writes ENTIRELY
+  // inside that window, `file`'s own later write (built from the now-stale
+  // snapshot) overwrites index's rebuild right back out.
+  //
+  // The extra record (B50 — an id well clear of the fixture's own allocator,
+  // so it cannot collide with the id the concurrent filer allocates) is
+  // hand-written directly, bypassing `file`/`expand` entirely, and
+  // deliberately has NO catalogue row at all — `expand` only ever touches
+  // bugs already IN the catalogue, so the concurrent filer's own
+  // unconditional `expand()` call cannot interfere with it. Only `index` ever
+  // notices B50 exists, which is exactly what makes this the sharpest probe
+  // for "did index's rebuild survive": if it did, B50 is in the final
+  // catalogue; if `file`'s stale write clobbered it, B50 is gone.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file(["seed bug", "--location", "apps/api/src/index-fixture.ts", "--severity", "low"]);
+      check(
+        "index-vs-file fixture: B1 seeded",
+        readCatalogue().map((r) => r.id),
+        ["B1"],
+      );
+      writeRecord(
+        "B50",
+        {
+          id: "B50",
+          title: "hand-added record",
+          location: "apps/api/src/index-fixture-2.ts",
+          severity: "low",
+          batch: null,
+          register: "open",
+          sensitive: "false",
+          sensitiveFor: "",
+        },
+        "\n# B50 · hand-added record\n\n## History\n",
+      );
+      check(
+        "index-vs-file fixture: B50 has a record but NO catalogue row yet",
+        [existsSync(recordPath("B50")), readCatalogue().some((r) => r.id === "B50")],
+        [true, false],
+      );
+
+      const orchestrator = join(tmp, "concurrent-index.mjs");
+      writeFileSync(
+        orchestrator,
+        [
+          'import { spawn } from "node:child_process";',
+          "const [script, root, stall] = process.argv.slice(2);",
+          "const run = (args, env, delay) =>",
+          "  new Promise((res) => {",
+          "    const start = () => {",
+          "      const p = spawn(process.execPath, [script, ...args], {",
+          "        env: { ...process.env, BUGS_ROOT: root, ...env },",
+          '        stdio: ["ignore", "pipe", "pipe"],',
+          "      });",
+          '      let out = "";',
+          '      p.stdout.on("data", (d) => (out += d));',
+          '      p.stderr.on("data", (d) => (out += d));',
+          '      p.on("close", (code) => res({ code, out }));',
+          "    };",
+          "    if (delay) setTimeout(start, delay);",
+          "    else start();",
+          "  });",
+          "const results = await Promise.all([",
+          "  run(",
+          '    ["file", "concurrent filer", "--location", "apps/api/src/conc-index.ts", "--severity", "low", "--batch", "F01", "--tier", "T1"],',
+          '    { BUGS_SELF_TEST: "1", BUGS_TEST_STALL_MS: stall },',
+          "    0,",
+          "  ),",
+          '  run(["index"], {}, 300),',
+          "]);",
+          "console.log(JSON.stringify(results));",
+        ].join("\n"),
+      );
+      const argv = [orchestrator, SCRIPT_PATH, tmp, "1500"].map((a) => JSON.stringify(a)).join(" ");
+      let raced;
+      try {
+        raced = {
+          code: 0,
+          out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+        };
+      } catch (e) {
+        raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+      }
+      check("index vs file: the orchestrator exited 0", raced.code, 0);
+      const kids = JSON.parse(raced.out.trim().split("\n").pop());
+      check(
+        "index vs file: BOTH child processes exited 0",
+        kids.map((k) => k.code),
+        [0, 0],
+      );
+      check(
+        "index vs file: the rebuild survives — B1, B50 and the concurrent filer's new bug all landed",
+        readCatalogue()
+          .map((r) => r.id)
+          .sort(),
+        ["B1", "B2", "B50"],
       );
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
