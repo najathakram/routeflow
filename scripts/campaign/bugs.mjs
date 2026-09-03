@@ -88,7 +88,7 @@ import {
   closeSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { tmpdir } from "node:os";
+import { tmpdir, uptime } from "node:os";
 import { execFileSync, execSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -1658,10 +1658,30 @@ const readLockOwner = (p) => {
   }
 };
 
-// true = alive, false = definitely gone (ESRCH), null = cannot tell.
-// EPERM means the pid exists and belongs to someone else — alive, not free.
-const pidAlive = (pid) => {
+// A boot-epoch stamp: current time minus how long THIS boot has been up, so
+// it is (near enough) constant across every process started on the same
+// boot and DIFFERENT after a reboot — even if the OS immediately reuses the
+// exact same pid. Without this, `pidAlive(owner.pid)` alone cannot tell "the
+// original writer is still running" from "an unrelated process now happens
+// to hold this pid", and a lockdir whose owner pid gets reused by ANY live
+// process was never broken — permanently wedged, since `process.kill(pid,0)`
+// answers `true` for the impostor forever. A live pid on the SAME boot is
+// still unbreakable — bootAt only ever proves a NEGATIVE (this cannot be the
+// same process), never used to break a lock whose boot actually matches.
+const bootStamp = () => Math.round(Date.now() - uptime() * 1000);
+// A few seconds of slop for clock/measurement jitter between the stamp this
+// process wrote and the one read back moments (or days) later — comfortably
+// smaller than any real reboot gap, which is measured in minutes at least.
+const BOOT_STAMP_SLOP_MS = 5000;
+
+// true = alive, false = definitely gone (ESRCH) OR its owner pid predates
+// this boot (so it cannot possibly be the process that wrote the lock), null
+// = cannot tell. EPERM means the pid exists and belongs to someone else —
+// alive, not free, UNLESS the boot stamp already proved it can't be ours.
+const pidAlive = (pid, ownerBootAt) => {
   if (!Number.isInteger(pid) || pid <= 0) return null;
+  if (typeof ownerBootAt === "number" && Math.abs(ownerBootAt - bootStamp()) > BOOT_STAMP_SLOP_MS)
+    return false;
   try {
     process.kill(pid, 0);
     return true;
@@ -1723,14 +1743,21 @@ function acquireLock(p, name, guarded) {
       // a waiter that reads the lockdir in that sub-millisecond window sees no
       // owner, cannot conclude anything, and simply spins again.
       const token = randomUUID();
-      writeFileSync(ownerPath(p), JSON.stringify({ pid: process.pid, token, at: Date.now() }));
+      writeFileSync(
+        ownerPath(p),
+        JSON.stringify({ pid: process.pid, token, at: Date.now(), bootAt: bootStamp() }),
+      );
       heldLocks.set(p, token);
       return p;
     } catch (e) {
       if (e.code !== "EEXIST") throw e;
     }
     const owner = readLockOwner(p);
-    const alive = owner ? pidAlive(owner.pid) : null;
+    const alive = owner ? pidAlive(owner.pid, owner.bootAt) : null;
+    const bootMismatch =
+      alive === false &&
+      typeof owner?.bootAt === "number" &&
+      Math.abs(owner.bootAt - bootStamp()) > BOOT_STAMP_SLOP_MS;
     let age = null;
     try {
       age = Date.now() - statSync(p).mtimeMs;
@@ -1738,7 +1765,9 @@ function acquireLock(p, name, guarded) {
       age = null; // it vanished between the mkdir and the stat — just retry
     }
     let breakWhy = null;
-    if (alive === false)
+    if (bootMismatch)
+      breakWhy = `its owner (pid ${owner.pid}) predates this boot — it cannot possibly still be that process`;
+    else if (alive === false)
       breakWhy = `its owner (pid ${owner.pid}) is gone — a writer was killed mid-write`;
     else if (alive === null && age !== null && age > LOCK_ABANDON_MS)
       breakWhy =
@@ -5219,6 +5248,55 @@ cmds["self-test"] = () => {
         "T2",
       );
 
+      // (f) PID REUSE. A lockdir whose owner pid has been reused by some
+      // UNRELATED live process must still be broken — before the boot stamp,
+      // `alive === true` (the pid genuinely answers) meant "never break it",
+      // permanently wedging every later caller on a lock nobody actually
+      // holds. A real, currently-running (but entirely unrelated) child
+      // process stands in for the impostor; its bootAt is stamped from a
+      // fabricated boot far in the past, which is the one thing that can
+      // prove "this cannot be the process that wrote this lock" even though
+      // `process.kill(pid, 0)` alone would say it is alive.
+      rmSync(lockDir, { recursive: true, force: true });
+      const impostor = spawn(process.execPath, ["-e", "setTimeout(() => {}, 15000)"], {
+        stdio: "ignore",
+      });
+      mkdirSync(lockDir);
+      writeFileSync(
+        ownerPath(lockDir),
+        JSON.stringify({
+          pid: impostor.pid,
+          token: "pid-reuse-fixture-token",
+          at: Date.now() - LOCK_ABANDON_MS * 10,
+          bootAt: Date.now() - LOCK_ABANDON_MS * 10,
+        }),
+      );
+      const pidReuseCheck = pidAlive(impostor.pid);
+      const rescuedFromReuse = runCli(["tier", "B1", "T1", "--why", "pid-reuse fixture"], tmp);
+      impostor.kill();
+      check(
+        "pid reuse: the impostor pid genuinely answers to a liveness check with no boot stamp",
+        pidReuseCheck,
+        true,
+      );
+      check(
+        "pid reuse: the NEXT waiter succeeds in one invocation, not after LOCK_ABANDON_MS",
+        rescuedFromReuse.code,
+        0,
+      );
+      check(
+        "pid reuse: breaking it names the boot mismatch, never the age-based last resort",
+        /breaking the lock on F01\.jsonl — its owner \(pid \d+\) predates this boot/.test(
+          rescuedFromReuse.out,
+        ),
+        true,
+      );
+      check(
+        "pid reuse: the write it was blocking actually landed",
+        readShard("F01").rows.find((r) => r.id === "B1")?.tier,
+        "T1",
+      );
+
       // (e) The seam itself. Unguarded, ONE env var made both blockers above
       // trivially reachable from a normal run: set above the old 5s threshold
       // it did not merely slow a write down, it MANUFACTURED the theft.
@@ -5247,6 +5325,34 @@ cmds["self-test"] = () => {
       else process.env.BUGS_ROOT = prevRoot;
       rmSync(tmp, { recursive: true, force: true });
     }
+  }
+
+  // Lock directories are NOT gitignored by accident — the shards and the
+  // catalogue they guard live in the TRACKED .claude/campaign/ tree, so
+  // without an explicit rule a lockdir left behind by a crash (or committed
+  // by an agent that ran `git add -A`) lands in a commit. Checked against the
+  // REAL repo root, not a throwaway BUGS_ROOT — .gitignore rules are read
+  // relative to the repo they live in, and a fixture root outside the repo
+  // would prove nothing about whether git actually ignores the real paths.
+  {
+    const checkIgnore = (relPath) => {
+      try {
+        execFileSync("git", ["check-ignore", relPath], { cwd: REPO_ROOT, encoding: "utf8" });
+        return true;
+      } catch (e) {
+        return e.status === 1 ? false : null; // 1 = genuinely not ignored; anything else is a real error
+      }
+    };
+    check(
+      "gitignore: a shard lockdir is ignored",
+      checkIgnore(".claude/campaign/status/F01.jsonl.lock/owner.json"),
+      true,
+    );
+    check(
+      "gitignore: the catalogue lockdir is ignored",
+      checkIgnore(".claude/campaign/bugs.jsonl.lock/owner.json"),
+      true,
+    );
   }
 
   // ── the catalogue lock ──────────────────────────────────────────────────
