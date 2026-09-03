@@ -8,6 +8,15 @@
 // happen again.
 export const REG_TOKEN_RE = /REG-B(\d{1,4})(?![0-9])/g;
 
+// The bug-id grammar itself, stated once so campaign-check's ROW-ID check and
+// bugs.mjs's own id-argument checks cannot drift the way REG_TOKEN_RE's digit
+// count and campaign-check's row-id digit count already had: campaign-check
+// hard-coded /^B\d{1,3}$/ while REG_TOKEN_RE (and bugs.mjs's own
+// `/^B\d+$/`-style checks) allow 4 digits, so `file` could mint B1000 — a row
+// campaign-check would then refuse forever, an unrepairable claim of the
+// opposite shape from the one REG_TOKEN_RE was fixed for.
+export const BUG_ID_RE = /^B\d{1,4}$/;
+
 // True when `text` contains the EXACT token for `id` — never a prefix match
 // ("REG-B12" must not be satisfied by "REG-B120"). `id` may be given with or
 // without its leading "B" ("B12" or "12").

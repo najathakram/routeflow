@@ -93,6 +93,7 @@ import { fileURLToPath } from "node:url";
 import { normalizeEvidence } from "./campaign/normalize-evidence.mjs";
 import {
   REG_TOKEN_RE,
+  BUG_ID_RE,
   manualVerificationIds as manualVerificationIdsFromText,
 } from "./campaign/reg-token.mjs";
 
@@ -177,7 +178,7 @@ for (const file of shardFiles) {
       fail(`${batch}: malformed JSONL line: ${line.slice(0, 80)}...`);
       continue;
     }
-    if (!row.id || !/^B\d{1,3}$/.test(row.id)) {
+    if (!row.id || !BUG_ID_RE.test(row.id)) {
       fail(`${batch}: row missing a valid "id": ${line}`);
       continue;
     }

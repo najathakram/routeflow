@@ -93,7 +93,12 @@ import { execFileSync, execSync, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { normalizeEvidence } from "./normalize-evidence.mjs";
-import { hasRegToken, hasManualVerificationRow, manualVerificationIds } from "./reg-token.mjs";
+import {
+  hasRegToken,
+  hasManualVerificationRow,
+  manualVerificationIds,
+  BUG_ID_RE,
+} from "./reg-token.mjs";
 
 // The repo root, independent of cwd — resolved from this file's own location
 // (scripts/campaign/bugs.mjs) rather than process.cwd(), so a --build-plan
@@ -1426,7 +1431,7 @@ function parseMentions(log, state) {
     const short = sha.slice(0, 8);
     // Bug ids first: when a commit names both, the bug-id detail is the one
     // that lands (both share the `commit-<sha>` marker, first write wins).
-    for (const raw of new Set(subject.match(/\bB\d{1,3}\b/g) ?? []))
+    for (const raw of new Set(subject.match(/\bB\d{1,4}\b/g) ?? []))
       add(raw, { sha: short, detail: `\`${short}\` ${subject}` });
     for (const m of new Set([...subject.matchAll(/\(F(\d{2})\)/g)].map((x) => `F${x[1]}`)))
       for (const id of idsInShard.get(m) ?? [])
@@ -1524,7 +1529,7 @@ cmds.sync = (args) => {
 
 cmds.show = (args) => {
   const typed = (args[0] ?? "").toUpperCase();
-  if (!/^B\d+$/.test(typed)) fail("usage: show <B###>");
+  if (!BUG_ID_RE.test(typed)) fail("usage: show <B###>");
   const id = resolveId(typed);
   if (!existsSync(recordPath(id))) fail(`no record for ${id} — run \`expand\``);
   process.stdout.write(readFileSync(recordPath(id), "utf8"));
@@ -1535,7 +1540,7 @@ cmds.show = (args) => {
 cmds.note = (args) => {
   const typed = (args[0] ?? "").toUpperCase();
   const text = args[1];
-  if (!/^B\d+$/.test(typed) || !text || text.startsWith("--"))
+  if (!BUG_ID_RE.test(typed) || !text || text.startsWith("--"))
     fail('usage: note <B###> "<text>" [--section "Root cause"]');
   const id = resolveId(typed);
   const rec = readRecord(id);
@@ -2008,7 +2013,11 @@ const findShardOf = (id) => {
 // ends up fixing the right bug the wrong way.
 cmds.brief = (args) => {
   const typed = (args[0] ?? "").toUpperCase();
-  if (!/^(F\d{2}|B\d+)$/.test(typed)) fail("usage: brief <F##|B###>");
+  // A compound of the batch grammar and BUG_ID_RE's own pattern (stated here
+  // as literal digits rather than composed from BUG_ID_RE.source, since a
+  // regex source string embedded inside a bigger pattern is far easier to
+  // get subtly wrong than it is to keep readable).
+  if (!/^(F\d{2}|B\d{1,4})$/.test(typed)) fail("usage: brief <F##|B###>");
   const target = /^B/.test(typed) ? resolveId(typed) : typed;
 
   const board = existsSync(BOARD()) ? JSON.parse(readFileSync(BOARD(), "utf8")) : { batches: {} };
@@ -2078,7 +2087,7 @@ cmds.brief = (args) => {
         .split("->")
         .flatMap((g) => g.split("+"))
         .map((s) => s.trim().toUpperCase())
-        .filter((s) => /^B\d+$/.test(s));
+        .filter((s) => BUG_ID_RE.test(s));
   } else {
     out.push(
       `\n## Batch plan\n\n⚠ none yet — run the analysis pass before fixing (see the bug-registry skill).`,
@@ -2175,7 +2184,7 @@ cmds.prove = (args) => {
   const prRaw = flag(args, "pr");
   const proof = flag(args, "proof");
   const buildPlanRaw = flag(args, "build-plan");
-  if (!/^B\d+$/.test(typed) || !prRaw || !proof)
+  if (!BUG_ID_RE.test(typed) || !prRaw || !proof)
     fail(
       'usage: prove <B###> --pr <number> --proof "REG-B### <what the passing test asserts>" ' +
         "[--build-plan <path/to/build-plan.md>]   # required for a T3 row",
@@ -2433,7 +2442,7 @@ cmds.discharge = (args) => {
 cmds.reopen = (args) => {
   const typed = (args[0] ?? "").toUpperCase();
   const why = flag(args, "why");
-  if (!/^B\d+$/.test(typed) || !why)
+  if (!BUG_ID_RE.test(typed) || !why)
     fail(
       'usage: reopen <B###> --why "<the failing REG-B### token, or the run/report that showed it>"',
     );
@@ -2576,7 +2585,7 @@ cmds.tier = (args) => {
   const typed = (args[0] ?? "").toUpperCase();
   const tier = (args[1] ?? "").toUpperCase();
   const why = flag(args, "why");
-  if (!/^B\d+$/.test(typed) || !["T1", "T2", "T3"].includes(tier) || !why)
+  if (!BUG_ID_RE.test(typed) || !["T1", "T2", "T3"].includes(tier) || !why)
     fail('usage: tier <B###> <T1|T2|T3> --why "<reason the analysis changed>"');
   const id = resolveId(typed);
 
@@ -6310,6 +6319,28 @@ cmds["self-test"] = () => {
         deferredRow.code !== 0,
         true,
       );
+
+      // The token grammar (REG_TOKEN_RE, shared with bugs.mjs via
+      // reg-token.mjs) allows up to 4 digits, and bugs.mjs's own id-argument
+      // checks match it via BUG_ID_RE — but this gate's ROW-ID check used to
+      // be hard-coded to exactly 1-3 digits, so a real `file`-minted B1000
+      // row would be rejected by THIS check forever, an unrepairable claim.
+      // An evidence-only state (already-fixed) reaches the row-id check with
+      // no jest/e2e artifact needed at all.
+      writeFileSync(
+        join(statusTmp, "F01.jsonl"),
+        JSON.stringify({
+          id: "B1000",
+          batch: "F01",
+          tier: "T1",
+          state: "already-fixed",
+          pr: null,
+          proof: null,
+          evidence: "confirmed already fixed on master, see PR #123",
+        }) + "\n",
+      );
+      const fourDigitRow = runCampaignCheck();
+      check("campaign-check: a 4-digit id (B1000) passes the row-id grammar", fourDigitRow.code, 0);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -6327,7 +6358,7 @@ cmds["self-test"] = () => {
 cmds.move = (args) => {
   const typed = (args[0] ?? "").toUpperCase();
   const why = flag(args, "why");
-  if (!/^B\d+$/.test(typed)) fail('usage: move <B###> --to <F##> [--why "<reason>"]');
+  if (!BUG_ID_RE.test(typed)) fail('usage: move <B###> --to <F##> [--why "<reason>"]');
   const id = resolveId(typed);
   const to = normBatch(flag(args, "to"));
 
