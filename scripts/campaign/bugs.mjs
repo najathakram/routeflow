@@ -87,6 +87,8 @@ import {
   openSync,
   closeSync,
   chmodSync,
+  realpathSync,
+  symlinkSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { tmpdir, uptime } from "node:os";
@@ -2180,6 +2182,33 @@ function repoRelativeBuildPlan(raw) {
     fail(
       `--build-plan ${raw} escapes the repo root — the ledger is shared, and a path outside the ` +
         `repo resolves to nothing on any other machine`,
+    );
+  // Containment checked on the TEXT of the path alone is not containment — a
+  // symlink or (on win32) a junction living inside the repo can point
+  // anywhere, and a path that reads as repo-relative on its face can still
+  // resolve somewhere else entirely. realpathSync.native follows those,
+  // platform junctions included. A target that does not exist YET cannot be
+  // resolved at all — fall back to the unresolved path in that case and let
+  // the caller's own existsSync check fire with its own clearer message,
+  // rather than this one misreporting "escapes the repo" for a typo.
+  let realTarget;
+  try {
+    realTarget = realpathSync.native(resolved);
+  } catch {
+    realTarget = resolved;
+  }
+  let realRoot;
+  try {
+    realRoot = realpathSync.native(REPO_ROOT);
+  } catch {
+    realRoot = REPO_ROOT;
+  }
+  const realRel = relative(realRoot, realTarget);
+  if (realRel === "" || realRel.startsWith("..") || isAbsolute(realRel))
+    fail(
+      `--build-plan ${raw} resolves outside the repo root once symlinks/junctions are followed ` +
+        `(${realTarget}) — the ledger is shared, and a path outside the repo resolves to nothing ` +
+        `on any other machine`,
     );
   return { resolved, rel: rel.split(sep).join("/") };
 }
@@ -4916,6 +4945,73 @@ cmds["self-test"] = () => {
       );
     } finally {
       rmSync(planDir, { recursive: true, force: true });
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // --build-plan containment must survive a symlink/junction living INSIDE
+  // the repo: checking the path's TEXT alone (resolve + relative, no
+  // realpath) lets a junction that resolves somewhere else entirely still
+  // read as repo-relative on its face — persisting a value that names no
+  // username or drive letter but is exactly as escaped as an absolute path.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    const junctionDir = join(REPO_ROOT, ".claude", "campaign", "self-test-junction");
+    const outsideDir = mkdtempSync(join(tmpdir(), "bugs-self-test-outside-"));
+    const junctionPath = join(junctionDir, "link");
+    const relJunctionPlan = ".claude/campaign/self-test-junction/link/plan.md";
+    try {
+      mkdirSync(junctionDir, { recursive: true });
+      writeFileSync(
+        join(outsideDir, "plan.md"),
+        "## Manual verification\n\n| REG-B1 | verified by hand |\n",
+      );
+      // "junction" on win32, a plain directory symlink everywhere else —
+      // both are followed by realpathSync.native.
+      symlinkSync(outsideDir, junctionPath, process.platform === "win32" ? "junction" : "dir");
+
+      cmds.file([
+        "junction fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T3",
+      ]);
+      const attempt = runCli(
+        [
+          "prove",
+          "B1",
+          "--pr",
+          "801",
+          "--proof",
+          "REG-B1 manual verification row",
+          "--build-plan",
+          relJunctionPlan,
+        ],
+        tmp,
+      );
+      check(
+        "build-plan containment: a junction resolving outside the repo is refused",
+        attempt.code !== 0,
+        true,
+      );
+      check(
+        "build-plan containment: the refusal wrote nothing",
+        readShard("F01").rows[0].state,
+        "queued",
+      );
+    } finally {
+      rmSync(junctionPath, { recursive: true, force: true });
+      rmSync(junctionDir, { recursive: true, force: true });
+      rmSync(outsideDir, { recursive: true, force: true });
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
       else process.env.BUGS_ROOT = prevRoot;
       rmSync(tmp, { recursive: true, force: true });
