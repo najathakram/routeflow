@@ -46,10 +46,10 @@ Two items were explicitly requested by the product owner and are called out inli
 
 Money math lives in **four** files, two of them inside the API alone:
 
-- [`apps/api/src/common/pricing.ts`](apps/api/src/common/pricing.ts)
-- [`apps/api/src/utils/pricing.ts`](apps/api/src/utils/pricing.ts)
-- [`apps/web/lib/pricing.ts`](apps/web/lib/pricing.ts)
-- [`apps/mobile/lib/pricing.ts`](apps/mobile/lib/pricing.ts)
+- [`apps/api/src/common/pricing.ts`](../apps/api/src/common/pricing.ts)
+- [`apps/api/src/utils/pricing.ts`](../apps/api/src/utils/pricing.ts)
+- [`apps/web/lib/pricing.ts`](../apps/web/lib/pricing.ts)
+- [`apps/mobile/lib/pricing.ts`](../apps/mobile/lib/pricing.ts)
 
 They are "kept in sync by hand" and pinned by a regression spec, but hand-sync of pricing logic is
 the single most likely path to silently over/under-charging a customer (`CLAUDE.md` already warns
@@ -66,7 +66,7 @@ merge immediately regardless of the cross-app work.
 
 The API **must run exactly one replica** or a cross-replica order-merge race corrupts order line
 items (`B199`). Today the only guard is a comment in
-[`apps/api/railway.toml`](apps/api/railway.toml); nothing detects a second replica, and Railway
+[`apps/api/railway.toml`](../apps/api/railway.toml); nothing detects a second replica, and Railway
 injects no replica-count env var, so the process can't self-check **(inferred)**.
 
 **Proposed change (pick one):**
@@ -85,9 +85,9 @@ injects no replica-count env var, so the process can't self-check **(inferred)**
 
 1. Prisma migrations applied manually before merge (`railway run … prisma migrate deploy`).
 2. **Boot-time raw DDL** on every startup — `ALTER TABLE … ADD COLUMN IF NOT EXISTS` in
-   [`apps/api/src/main.ts:69`](apps/api/src/main.ts) — an acknowledged (`F12-002`) contradiction of
+   [`apps/api/src/main.ts:69`](../apps/api/src/main.ts) — an acknowledged (`F12-002`) contradiction of
    the never-auto-migrate policy.
-3. A migration-replay CI job ([`db-migrations.yml`](.github/workflows/db-migrations.yml)) that
+3. A migration-replay CI job ([`db-migrations.yml`](../.github/workflows/db-migrations.yml)) that
    proves history applies cleanly, but nothing checks the deployed DB for **drift** against the
    schema, and nothing lints migrations for destructive operations.
 
@@ -123,13 +123,13 @@ of production surprises.
 ### 4. Add a staging environment · M · 🔴
 
 There is **no staging environment** — nothing in any `railway.toml` defines one, and E2E runs against
-**production** off Railway's `deployment_status` signal ([`ci.yml`](.github/workflows/ci.yml)), so
+**production** off Railway's `deployment_status` signal ([`ci.yml`](../.github/workflows/ci.yml)), so
 **production is the canary**.
 
 **Proposed change.** Stand up a `staging` Railway environment (or project) mirroring prod services,
 fed by a `staging` branch or manual promotion, seeded only with approved test tenants
 (`e2e-*`, `qa-*`, `routeflow-demo` — per the `assertTestTenant` policy in
-[`scripts/lib/test-tenants.cjs`](scripts/lib/test-tenants.cjs)). Point the post-deploy E2E suite at
+[`scripts/lib/test-tenants.cjs`](../scripts/lib/test-tenants.cjs)). Point the post-deploy E2E suite at
 staging first; promote to prod only on green.
 
 **Payoff.** A real environment to catch integration failures before customers do.
@@ -144,7 +144,7 @@ browser runs. Mobile is "pure-logic only" by policy, leaving its components unte
 **Proposed change.** Add **Jest + React Testing Library** to `apps/web` (Jest is already the
 sanctioned runner — respects the "no Vitest" rule) for components, hooks, and `lib/` logic. Target
 the high-value surfaces first: pricing/display, form validation (react-hook-form + zod), and the
-axios refresh/interceptor logic in [`apps/web/lib/api-client.ts`](apps/web/lib/api-client.ts).
+axios refresh/interceptor logic in [`apps/web/lib/api-client.ts`](../apps/web/lib/api-client.ts).
 
 **Payoff.** Moves regression-catching down into fast tests; shrinks reliance on end-to-end runs.
 
@@ -167,7 +167,7 @@ session state. Re-enable the quarantined F14 projects on that basis.
 
 **Problem.** Today the only local surfaces are watch-mode dev servers (`npm run dev`) and
 `npm run db:up`, which starts **only Postgres + Redis** (see
-[`docker-compose.yml`](docker-compose.yml)). The `apps/api` and `apps/web` **production Docker images
+[`docker-compose.yml`](../docker-compose.yml)). The `apps/api` and `apps/web` **production Docker images
 are never run locally** — they're built only by Railway. So the first time the real containers run
 against a real database is **in production**. Combined with the absence of a staging env (#4), there
 is no integrated place to smoke-test a change before opening a PR.
@@ -214,7 +214,7 @@ so the instructions themselves now conflict.
 
 ### 9. Constrain the `SKIP_VERIFY` bypass; split the CI job · S · 🟡
 
-- The one authoritative quality gate (`npm run verify` in [`.husky/pre-push`](.husky/pre-push)) has a
+- The one authoritative quality gate (`npm run verify` in [`.husky/pre-push`](../.husky/pre-push)) has a
   `SKIP_VERIFY=1` bypass. If the whole bar is skippable and silent, it's optional.
 - CI is a single serial `verify` job (`check-types` → `lint` → `test`), so a type error and a lint
   error are found one after another, not together.
@@ -239,11 +239,11 @@ CI stays cache-off by design).
   `@routeflow/types` is imported by only **27** source files across all apps (verified). Push shared
   request/response shapes into `@routeflow/types` (or generate them) instead of duplicating.
 - The **React 18 vs 19** split (mobile pulls 19, web needs 18, force-pinned at the image root in
-  [`apps/web/Dockerfile`](apps/web/Dockerfile)) is a hoisting hack worth revisiting.
+  [`apps/web/Dockerfile`](../apps/web/Dockerfile)) is a hoisting hack worth revisiting.
 
 ### 11. Rewrite the stale README; slim `CLAUDE.md`; drop dead deps · S · 🟡
 
-- [`README.md`](README.md) is **actively misleading**: it documents `main`/`develop` branches
+- [`README.md`](../README.md) is **actively misleading**: it documents `main`/`develop` branches
   (trunk is `master`) and a `deploy-staging.yml`/`deploy-production.yml` GHCR→Railway CI/CD table for
   workflows that are **dormant**. Rewrite it to match reality (single `verify` job → Railway
   auto-deploy → `deployment_status`-triggered E2E). It also lists the remote as `najathakram1` while
@@ -261,7 +261,7 @@ A balanced review should say what not to touch:
 
 - **Tenant isolation** is genuinely strong — three independent layers (Prisma `$extends`, a
   transaction Proxy, and Postgres RLS) in
-  [`apps/api/src/prisma/prisma.service.ts`](apps/api/src/prisma/prisma.service.ts).
+  [`apps/api/src/prisma/prisma.service.ts`](../apps/api/src/prisma/prisma.service.ts).
 - **The DB backup pipeline** (`apps/db-backup`) is well-designed: 2-hourly `pg_dump` → Cloudflare R2
   (S3-compatible, zero egress fees), 30-day prune, **monthly restore-verify**, and a healthchecks.io
   dead-man's switch. R2 is object storage, not a backup tool — this is a sound, cheap choice.
