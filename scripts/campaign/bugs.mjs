@@ -420,8 +420,13 @@ cmds.file = (args) => {
       }
     } catch (e) {
       writeCatalogue(before);
+      // The ledger row this call just ADDED (mustBeNew:true guarantees it was
+      // an add, never an update) is not this catch's to leave behind — left
+      // in place, it is an orphan with no catalogue row and no record, and
+      // no gate or command can see it.
+      if (bug.batch) dropLedgerRow(bug.batch, bug.id);
       fail(
-        `file: ${bug.id} failed after the catalogue write (${e.message}) — catalogue restored to its pre-write state`,
+        `file: ${bug.id} failed after the catalogue write (${e.message}) — catalogue and ledger restored to their pre-write state`,
       );
     }
   });
@@ -1855,6 +1860,24 @@ function upsertLedgerRowLocked(batch, row, opts = {}) {
   writeFileSync(shardPath(batch), rows.map((r) => JSON.stringify(r)).join(eol) + eol);
   const after = readShard(batch).rows.find((r) => r.id === row.id);
   return { what: i === -1 ? "added" : "updated", row: after };
+}
+
+// The other half of `upsertLedgerRow` — removes a row this process just
+// added, under the same lock. Used ONLY to roll back a ledger write whose
+// batch commit later failed: `file` used to restore the catalogue on a late
+// failure but never touch the ledger row it had just added, leaving an
+// ORPHAN row (no catalogue entry, no record) that no gate and no command
+// could see.
+function dropLedgerRowLocked(batch, id) {
+  const { rows, eol } = readShard(batch);
+  const next = rows.filter((r) => r.id !== id);
+  if (next.length === rows.length) return false;
+  mkdirSync(STATUS_DIR(), { recursive: true });
+  writeFileSync(shardPath(batch), next.map((r) => JSON.stringify(r)).join(eol) + eol);
+  return true;
+}
+function dropLedgerRow(batch, id) {
+  return withShardLock(batch, () => dropLedgerRowLocked(batch, id));
 }
 
 const findShardOf = (id) => {
@@ -3520,7 +3543,18 @@ cmds["self-test"] = () => {
       mkdirSync(join(tmp, "bugs"), { recursive: true });
       mkdirSync(join(tmp, "bugs", "B1.md"));
       const attempt = runCli(
-        ["file", "restore fixture", "--location", "apps/api/src/self-test.ts", "--severity", "low"],
+        [
+          "file",
+          "restore fixture",
+          "--location",
+          "apps/api/src/self-test.ts",
+          "--severity",
+          "low",
+          "--batch",
+          "F01",
+          "--tier",
+          "T1",
+        ],
         tmp,
       );
       check(
@@ -3532,6 +3566,15 @@ cmds["self-test"] = () => {
         "file: the catalogue is restored to its pre-write state on that failure",
         readCatalogue(),
         beforeRows,
+      );
+      // THE assertion: the ledger row `file` had just added (with --batch, it
+      // always is one — mustBeNew:true guarantees it) must not survive as an
+      // orphan. Before the fix, F01.jsonl kept a `{"id":"B1", ..., "state":
+      // "queued"}` row here with no catalogue entry and no record.
+      check(
+        "file: the ledger row it just added is dropped too, not left as an orphan",
+        readShard("F01").rows,
+        [],
       );
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
@@ -3955,6 +3998,19 @@ cmds["self-test"] = () => {
       seen.set(r.id, true);
     }
   check("ledger: one row per bug id across all shards", dupes, 0);
+
+  // A ledger row with no catalogue row at all is an ORPHAN — invisible to
+  // `list`/`stats`/`next` and every gate — which is exactly what a
+  // half-rolled-back `file` failure used to leave behind (the catalogue was
+  // restored, the freshly-added ledger row was not).
+  {
+    const catalogueIds = new Set(readCatalogue().map((r) => r.id));
+    const orphans = [];
+    for (const f of readdirSync(STATUS_DIR()).filter((n) => n.endsWith(".jsonl")))
+      for (const r of readShard(f.replace(/\.jsonl$/, "")).rows)
+        if (!catalogueIds.has(r.id)) orphans.push(r.id);
+    check("every ledger row has a matching catalogue row (no orphans)", orphans, []);
+  }
 
   // The catalogue must never describe a different bug than its own ledger
   // row or record — `file` used to write the catalogue BEFORE the ledger
