@@ -38,6 +38,51 @@ or inside a workspace — `eslint` from the repo root will not resolve a config.
 - **Web**: `next dev` on `:3001`.
 - **Mobile**: `expo start`.
 
+## Local hosting environment (Docker — test features before you commit)
+
+There is **no staging env** — `master` deploys straight to Railway. Before committing a
+new feature/fix, run it against the **whole system built from the production Dockerfiles**
+locally. This is the pre-PR gate the reverse-engineering review flagged as missing; the
+decision + rationale is [`docs/adr/0001-local-hosting-environment.md`](docs/adr/0001-local-hosting-environment.md).
+
+**Two modes, one [`docker-compose.yml`](docker-compose.yml), gated by profiles:**
+
+- **Deps only** (backs the fast `npm run dev` host loop) — `npm run db:up` (== `docker compose up -d postgres redis`). Unchanged.
+- **Full stack** (the pre-PR test target) — the `--profile app` services: a one-shot
+  `migrate` (`prisma migrate deploy`, mirrors prod), `api` (`:3000`), `web` (`:3001`).
+
+### Runbook (agent: run these in order)
+
+```bash
+npm run local:up          # build images + start postgres, redis, migrate, api, web
+npm run local:seed        # seed approved `test` tenant → operator admin / Admin@123
+npm run local:validate    # smoke + post-deploy-check @ localhost:3000 (the core gate)
+```
+
+`local:validate` is the dependable pre-PR gate: `smoke` (health + unauth routes) then
+`post-deploy-check` (operator login, orders/invoices/customers/products, **money-math +
+invoice reconciliation**). `npm run local:validate:features` runs the deeper
+`feature-smoke` battery — note it needs a **fully provisioned** tenant (a published
+billing plan catalog); the base `test` seed doesn't publish one, so catalog-dependent
+flows (e.g. estimate→invoice convert) 404 until that's seeded. Verified working
+2026-09-03: build → migrate → healthy api+web → seed → `local:validate` green.
+
+Then exercise the feature: **Web** http://localhost:3001 · **API/Swagger**
+http://localhost:3000/api/docs · **Health** http://localhost:3000/api/v1/health.
+`npm run local:logs` tails api+web; `npm run local:down` stops (keeps data);
+`npm run local:reset` stops **and wipes** the Postgres/Redis volumes for a clean DB.
+Added a Prisma migration mid-session? Re-run `npm run local:migrate` before re-validating.
+
+### Guardrails
+
+- `local:validate` runs **only** against the approved **`test`** tenant (`SMOKE_TENANT_SLUG=test`) —
+  never a live tenant (enforced by `assertTestTenant` / the seed's `assertSafeTarget`).
+- Compose secrets are **local throwaways** (obvious `*-change-me` values, localhost-only) —
+  never reuse them anywhere real; never add prod connection strings or client identifiers.
+- Full image builds take minutes (cold cache) — that's fine for a pre-PR check; keep using
+  `npm run dev` for line-by-line editing. `web`'s API URL is baked at build time, so
+  changing it needs a rebuild. Mobile (Expo) is out of scope — run `expo start` against `:3000`.
+
 ## Architecture (API feature modules → `apps/api/src/*`)
 
 - Tenancy/identity: `tenant`, `tenants`, `auth`, `users`, `platform-admin` — **everything is tenant-scoped**; JWT payload carries `tenantId`/`role`.

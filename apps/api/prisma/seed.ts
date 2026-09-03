@@ -99,6 +99,22 @@ async function main() {
     },
   });
 
+  // ─── Add-ons ────────────────────────────────────────────────────────────────
+  // This tenant seeds drivers, routes and delivery orders below, so it must carry
+  // the matching entitlements — otherwise the AddonGuard 403s the very features we
+  // seed (e.g. GET /drivers requires "order_delivery" | "recurring_routes"). Mirrors
+  // the standing demo tenant (apps/api/scripts/demo-seed.js). `update: {}` preserves
+  // any admin toggle on reseed.
+  await Promise.all(
+    ["order_delivery", "recurring_routes"].map((addonKey) =>
+      prisma.tenantAddon.upsert({
+        where: { tenantId_addonKey: { tenantId, addonKey } },
+        create: { tenantId, addonKey, active: true },
+        update: {},
+      }),
+    ),
+  );
+
   // ─── Drivers ──────────────────────────────────────────────────────────────────
   const [carlosUser, jamesUser] = await Promise.all([
     prisma.user.upsert({
