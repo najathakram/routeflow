@@ -89,7 +89,7 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { tmpdir, uptime } from "node:os";
-import { execFileSync, execSync, spawn } from "node:child_process";
+import { execFileSync, execSync, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { normalizeEvidence } from "./normalize-evidence.mjs";
@@ -1806,6 +1806,12 @@ function releaseLock(p, token = heldLocks.get(p)) {
     console.error(
       `bugs: our lock on ${shardOfLockPath(p)} was broken by another process; verify the shard`,
     );
+    // A stolen lock means a SECOND writer was inside the critical section
+    // while this one still believed it held it exclusively — the integrity
+    // of whatever this process just wrote is exactly what is now unknown.
+    // Left at the default 0, a caller that shells out and branches on the
+    // exit code (a hook, a CI step) read this as a clean success.
+    process.exitCode = 1;
     return;
   }
   try {
@@ -5183,6 +5189,71 @@ cmds["self-test"] = () => {
       check(
         "stolen lock: the stolen-from writer says so on stderr",
         /our lock on F01\.jsonl was broken by another process; verify the shard/.test(stolenErr),
+        true,
+      );
+      rmSync(lockDir, { recursive: true, force: true });
+
+      // (c2) The exit code, from a THIRD process. Node only populates a
+      // spawned child's OWN ChildProcess.exitCode once this process's event
+      // loop gets a tick to reap it — which the busy-poll pattern above
+      // (`awaitExit`, built on a raw `process.kill(pid, 0)` liveness check)
+      // never yields for, so it cannot observe the real exit STATUS, only
+      // that the process eventually died. `spawnSync` is Node's own
+      // dedicated primitive for exactly that: it blocks this process until
+      // the child truly exits and reports its real status, while a
+      // completely separate, independently-scheduled OS process (spawned
+      // async, fire-and-forget) performs the theft concurrently — proven by
+      // that process itself capturing the ORIGINAL owner content before it
+      // overwrites it.
+      const stealerScript = join(tmp, "stealer.mjs");
+      const stolenMarker = join(tmp, "stolen-marker.json");
+      writeFileSync(
+        stealerScript,
+        [
+          'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
+          "const [dir, marker] = process.argv.slice(2);",
+          'const ownerFile = dir + "/owner.json";',
+          "const deadline = Date.now() + 10000;",
+          "while (!existsSync(ownerFile) && Date.now() < deadline) {}",
+          'const original = existsSync(ownerFile) ? readFileSync(ownerFile, "utf8") : "";',
+          "writeFileSync(marker, original);",
+          "if (original) {",
+          "  writeFileSync(",
+          "    ownerFile,",
+          '    JSON.stringify({ pid: process.pid, token: "a-second-successor-token", at: Date.now() }),',
+          "  );",
+          "}",
+        ].join("\n"),
+      );
+      spawn(process.execPath, [stealerScript, lockDir, stolenMarker], { stdio: "ignore" });
+      const exitCodeProbe = spawnSync(
+        process.execPath,
+        [SCRIPT_PATH, "tier", "B6", "T2", "--why", "stolen-lock exit-code fixture"],
+        {
+          encoding: "utf8",
+          env: { ...process.env, BUGS_ROOT: tmp, BUGS_SELF_TEST: "1", BUGS_TEST_STALL_MS: "3000" },
+        },
+      );
+      const markerContent = existsSync(stolenMarker) ? readFileSync(stolenMarker, "utf8") : "";
+      let markerOwner = null;
+      try {
+        markerOwner = JSON.parse(markerContent);
+      } catch {
+        /* stealer never saw an owner.json in time — the checks below catch it */
+      }
+      check(
+        "stolen lock (exit code): the stealer really observed the victim's own owner stamp first",
+        typeof markerOwner?.pid === "number",
+        true,
+      );
+      check(
+        "stolen lock (exit code): the successor's lockdir SURVIVES this writer's exit too",
+        existsSync(lockDir),
+        true,
+      );
+      check(
+        "stolen lock (exit code): the stolen-from writer's real process exit status is non-zero",
+        exitCodeProbe.status !== 0,
         true,
       );
       rmSync(lockDir, { recursive: true, force: true });
