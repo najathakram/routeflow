@@ -1743,10 +1743,34 @@ function acquireLock(p, name, guarded) {
       // a waiter that reads the lockdir in that sub-millisecond window sees no
       // owner, cannot conclude anything, and simply spins again.
       const token = randomUUID();
-      writeFileSync(
-        ownerPath(p),
-        JSON.stringify({ pid: process.pid, token, at: Date.now(), bootAt: bootStamp() }),
-      );
+      try {
+        // TEST SEAM, gated exactly like BUGS_TEST_STALL_MS: a real disk-full
+        // or permission fault here is not reproducible on demand, so the
+        // self-test drives this exact path through an env var instead of a
+        // hand-rolled re-implementation of the cleanup logic below.
+        if (process.env.BUGS_SELF_TEST === "1" && process.env.BUGS_TEST_FAIL_OWNER_WRITE === "1")
+          throw Object.assign(new Error("BUGS_TEST_FAIL_OWNER_WRITE fixture"), {
+            code: "EFIXTURE",
+          });
+        writeFileSync(
+          ownerPath(p),
+          JSON.stringify({ pid: process.pid, token, at: Date.now(), bootAt: bootStamp() }),
+        );
+      } catch (writeErr) {
+        // A crash here (disk full, a permission fault) must not leave behind
+        // a lockdir with no owner stamp — that is exactly the "no readable
+        // owner.json" case that wedges every later waiter for a full
+        // LOCK_ABANDON_MS before it self-heals. Remove the directory THIS
+        // call just created (never one it merely found already there)
+        // before rethrowing — the crash itself is a real fault the caller
+        // needs to see, not something to retry silently.
+        try {
+          rmSync(p, { recursive: true, force: true });
+        } catch {
+          /* best effort — surfacing writeErr matters more than this cleanup */
+        }
+        throw writeErr;
+      }
       heldLocks.set(p, token);
       return p;
     } catch (e) {
@@ -1788,7 +1812,15 @@ function acquireLock(p, name, guarded) {
       fail(
         `could not lock ${guarded} within ${LOCK_SPIN_MS}ms — ${name} is held by ` +
           `${owner?.pid ? `pid ${owner.pid}, which still answers` : "another bugs.mjs process"}. ` +
-          `Retry; if nothing is running, remove ${p}`,
+          `Retry; if nothing is running, remove ${p}` +
+          // A lockdir with no readable owner.json isn't stuck forever — it is
+          // exactly the LAST-RESORT case above, just not yet old enough to
+          // trip it. Without this, the give-up message reads as a permanent
+          // wedge needing a manual `rm`, when the honest story is "wait".
+          (!owner
+            ? ` — it carries no owner stamp and will be broken automatically ` +
+              `once it is ${LOCK_ABANDON_MS / 1000}s old`
+            : ""),
       );
     sleepSync(LOCK_STEP_MS);
   }
@@ -5367,6 +5399,77 @@ cmds["self-test"] = () => {
         readShard("F01").rows.find((r) => r.id === "B1")?.tier,
         "T1",
       );
+
+      // (g) OWNER-WRITE FAILURE. A crash between the mkdir that wins the lock
+      // and the owner.json write that follows it (disk full, a permission
+      // fault) used to leave the directory behind with no owner stamp at
+      // all — exactly the "no readable owner.json" case, which every OTHER
+      // waiter can only break as a LAST RESORT once it is a full
+      // LOCK_ABANDON_MS old, wedging every caller for two minutes over a
+      // fault that had nothing to do with contention. Driven through the
+      // real CLI via the same gated test-seam pattern as BUGS_TEST_STALL_MS
+      // — a real disk-full fault isn't reproducible on demand.
+      const ownerWriteFailure = () => {
+        try {
+          execSync(
+            `node ${[SCRIPT_PATH, "tier", "B1", "T2", "--why", "owner-write-fail fixture"].map((a) => JSON.stringify(a)).join(" ")}`,
+            {
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "pipe"],
+              env: {
+                ...process.env,
+                BUGS_ROOT: tmp,
+                BUGS_SELF_TEST: "1",
+                BUGS_TEST_FAIL_OWNER_WRITE: "1",
+              },
+            },
+          );
+          return { code: 0, out: "" };
+        } catch (e) {
+          return { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+        }
+      };
+      check(
+        "owner-write failure: no lock exists before the fixture runs",
+        existsSync(lockDir),
+        false,
+      );
+      const ownerWriteResult = ownerWriteFailure();
+      check(
+        "owner-write failure: the command fails loudly, never silently",
+        ownerWriteResult.code !== 0,
+        true,
+      );
+      check(
+        "owner-write failure: the lockdir it just created is cleaned up, not left to wedge every later caller",
+        existsSync(lockDir),
+        false,
+      );
+      check(
+        "owner-write failure: a NEXT, unfixtured caller succeeds immediately — nothing was left behind to break",
+        runCli(["tier", "B1", "T3", "--why", "owner-write-fail recovery check"], tmp).code,
+        0,
+      );
+
+      // (h) GIVE-UP MESSAGE HONESTY. A lockdir with NO readable owner.json is
+      // not stuck forever — it is exactly the LAST-RESORT case, just not yet
+      // LOCK_ABANDON_MS old — but the give-up message a waiter prints when
+      // ITS OWN LOCK_SPIN_MS deadline expires used to read as a permanent
+      // wedge needing a manual `rm`, hiding that this self-heals. A FRESH,
+      // owner-less lockdir forces the waiter to spin its full LOCK_SPIN_MS
+      // before giving up (~10s — the one slow check in this suite, and
+      // unavoidable: anything shorter wouldn't be testing the real deadline).
+      mkdirSync(lockDir);
+      const givesUp = runCli(["tier", "B1", "T2", "--why", "give-up message fixture"], tmp);
+      check("give-up message: the waiter genuinely gives up (non-zero)", givesUp.code !== 0, true);
+      check(
+        "give-up message: it tells the operator this self-heals, not just to `rm` it",
+        /it carries no owner stamp and will be broken automatically once it is 120s old/.test(
+          givesUp.out,
+        ),
+        true,
+      );
+      rmSync(lockDir, { recursive: true, force: true });
 
       // (e) The seam itself. Unguarded, ONE env var made both blockers above
       // trivially reachable from a normal run: set above the old 5s threshold
