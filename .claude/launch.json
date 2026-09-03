@@ -45,6 +45,13 @@
       "runtimeArgs": ["serve", "--listen", "4600", "--no-clipboard", "."],
       "cwd": "routeflow-app",
       "port": 4600
+    },
+    {
+      "name": "bug-register",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "serve", "--listen", "4700", "--no-clipboard", "."],
+      "cwd": "local-assets/docs",
+      "port": 4700
     }
   ]
 }
