@@ -177,17 +177,23 @@
 > `post-deploy-check` 9/9 green:** #580 → #582 → #584 (B167 discharged) → #581 → #579 → #571
 > (lessons register + Gate 3 now LIVE) → #574 (16 dep bumps) → #585 (three fleet lessons).
 >
-> **Ledger now: 193 rows — 64 `done`, 2 `already-fixed`, 2 `proven-pending-deploy`, 125 `queued`**
-> (66 of 193 = 34.2% terminal; F14 shipped #598/#599 — B52 Critical cross-tenant read closed, so
-> **7 open Criticals** remain. ⚠️ F14's two e2e projects are QUARANTINED — see B138/B155.)
-> (was 61 of 193 = 31.6% terminal) — counted off the shards, not carried forward from an earlier
+> **Ledger now: 194 rows — 68 `done`, 2 `already-fixed`, 2 `proven-pending-deploy`, 122 `queued`**
+> (70 of 194 = 36.1% terminal; **F11 shipped #603 (master `d0769701`) and fully discharged
+> 2026-09-02** — B129 Critical closed and B211, filed by F11 itself as the COMPLETED-with-SKIPPED
+> half of B129, fixed in the same batch: it is the 194th row. **6 open Criticals** remain: B46 B48
+> B53 B58 B59 B128. ⚠️ F14's two e2e projects are still QUARANTINED — see B138/B155.)
+> (was 66 of 193 = 34.2% terminal) — counted off the shards, not carried forward from an earlier
 > banner. Shipped and fully discharged: F00, F01, F02 (9), F03 (9), F04 (3), **F05 (5)**,
-> F06 (6), **F07 (7)**, **F10 (6)**, F17 (4), F30 (12). **8 Criticals still open** (B46 B48 B52
-> B53 B58 B59 B128 B129) — B54/B55/B56 cleared with F10 and F07.
+> F06 (6), **F07 (7)**, **F10 (6)**, **F11 (4)**, F17 (4), F30 (12); F14 (7) shipped with 5 `done`
+> and B138/B155 `proven-pending-deploy` behind the e2e quarantine.
 >
-> **In flight now:** nothing mid-flight. F07 (#588) and F10 (#591) are merged, deployed and
-> **fully discharged** — all 13 rows `done`. Their worktrees are gone; `rf-F09`/`rf-F11`/
-> `rf-F13`/`rf-F14` hold planning output only (zero commits ahead of master).
+> **In flight now:** F13 planning (routes lane clear). `rf-F13` was found on 2026-09-02 holding an
+> UNCOMMITTED F13 v1 implementation (19 files, +759/−600, tagged REG-B09/B46/B48/B92/B106) built
+> on #602's master and never committed — preserved as a NAMED git stash and under evaluation so the
+> F13 plan decides reuse-vs-rebuild on facts. ⚠️ Stashes are repo-global across worktrees: a bare
+> `git stash pop` in ANY checkout takes the newest entry (it popped that F13 stash into the main
+> checkout once — recovered from the dropped commit). Pop by index or message, never bare.
+> `rf-F11` is removed (merged); `rf-F09`/`rf-F14` hold planning output only.
 >
 > ⚠️ **Discharge trap recorded:** F07's OWN post-deploy run (33551932237, sha `7dcf390c`) reports
 > conclusion **success with every real step `skipped`** — "Skip superseded deployments" fired, so
