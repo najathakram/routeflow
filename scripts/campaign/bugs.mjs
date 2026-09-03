@@ -2225,105 +2225,122 @@ cmds.discharge = (args) => {
   // The proven-row read, the per-row evidence checks and every write are ONE
   // critical section — a concurrent `prove` landing between the read and the
   // loop below would otherwise be spread back over by the stale `{ ...row }`.
-  withShardLock(batch, () => {
-    const { rows } = readShard(batch);
-    const ready = rows.filter((r) => r.state === "proven" || r.state === "proven-pending-deploy");
-    if (!ready.length)
-      fail(
-        `${batch} has no proven row to discharge (states: ${[...new Set(rows.map((r) => r.state))].join(", ")})`,
-      );
+  //
+  // The catalogue lock wraps the shard lock (same one-way order as `file` and
+  // `move`) for a reason that has nothing to do with the catalogue file
+  // itself: the `seen` scan just below reads EVERY OTHER shard's
+  // dischargeEvidence while holding only THIS batch's shard lock, so two
+  // `discharge` calls on different batches never serialised against each
+  // other — each could scan before the other's write landed, and both could
+  // admit the same evidence string. The catalogue lock is the one mutex every
+  // writer already takes, so holding it here makes discharge exclusive
+  // repo-wide for the length of its own critical section too.
+  withCatalogueLock(() =>
+    withShardLock(batch, () => {
+      const { rows } = readShard(batch);
+      const ready = rows.filter((r) => r.state === "proven" || r.state === "proven-pending-deploy");
+      if (!ready.length)
+        fail(
+          `${batch} has no proven row to discharge (states: ${[...new Set(rows.map((r) => r.state))].join(", ")})`,
+        );
 
-    // --evidence-B### <text>, collected before ANY write so a missing one refuses
-    // the whole discharge rather than leaving half the batch done.
-    const perRow = new Map();
-    for (let i = 0; i < args.length; i++) {
-      const m = /^--evidence-(B\d+)$/i.exec(args[i]);
-      if (!m) continue;
-      const id = resolveId(m[1].toUpperCase());
-      const text = args[i + 1];
-      if (text === undefined || text.startsWith("--")) fail(`${args[i]} requires a value`);
-      if (!ready.some((r) => r.id === id))
-        fail(`${args[i]}: ${id} is not a proven row in ${batch} — nothing to discharge for it`);
-      thin(args[i], text);
-      perRow.set(id, text);
-    }
-
-    const missing = ready.filter((r) => r.tier === "T2" && !perRow.has(r.id));
-    if (missing.length)
-      fail(
-        `T2 row(s) ${missing.map((r) => r.id).join(", ")} need their OWN evidence — ` +
-          `pass --evidence-${missing[0].id} "<the run that exercised THIS bug against the deployed build>". ` +
-          `campaign-check accepts dischargeEvidence in place of a Playwright artifact, so one batch-wide ` +
-          `string would discharge every T2 row in the batch past the only control that reads it.`,
-      );
-    // Normalized (trim, collapse whitespace, lowercase) with the SAME helper
-    // campaign-check.mjs uses for its own byte-identical-evidence warning — a
-    // trailing space or a case difference must not let this guard admit what
-    // the gate would still flag.
-    //
-    // Scoped to the WHOLE ledger, not just this call: `discharge` is
-    // per-batch, so seeding `seen` from only this invocation's rows let the
-    // exact same string reused across TWO SEPARATE `discharge` calls (each
-    // exit 0, neither refusing the other) sail straight through — and
-    // campaign-check then had to call the second one "grandfathered" rather
-    // than refuse it, because nothing here had ever seen it.
-    const seen = new Map();
-    if (existsSync(STATUS_DIR()))
-      for (const f of readdirSync(STATUS_DIR()).filter((n) => n.endsWith(".jsonl")))
-        for (const r of readShard(f.replace(/\.jsonl$/, "")).rows)
-          if (r.dischargeEvidence) seen.set(normalizeEvidence(r.dischargeEvidence), r.id);
-    for (const [id, text] of perRow) {
-      const key = normalizeEvidence(text);
-      const prior = seen.get(key);
-      if (prior && prior !== id)
-        fail(`${id} and ${prior} were given byte-identical evidence — cite each row's own run`);
-      seen.set(key, id);
-    }
-
-    // Snapshot the shard as it stands right now — every refusal above has
-    // already run, so nothing below this point is a validation failure —
-    // and restore it whole on any throw. Without this, an IO failure
-    // part-way through the loop (a record path replaced by a directory, a
-    // full disk) left the batch HALF discharged: some rows `done`, the rest
-    // still `proven`, with no rollback and a raw Node stack trace instead of
-    // a `bugs:` message.
-    const shardFile = shardPath(batch);
-    const snapshot = readFileSync(shardFile, "utf8");
-    try {
-      for (const row of ready) {
-        const own = perRow.get(row.id);
-        // T2 is the only tier campaign-check reads dischargeEvidence for; every
-        // other tier records the batch string as plain `evidence`.
-        const patch = own
-          ? { state: "done", dischargeEvidence: own, evidence: own }
-          : { state: "done", evidence };
-        const { row: after } = upsertLedgerRow(batch, { ...row, ...patch });
-        for (const [k, v] of Object.entries(patch))
-          if (after?.[k] !== v)
-            fail(
-              `ledger write for ${row.id} did not land as intended (${k}) — re-read row is ${JSON.stringify(after)}`,
-            );
-        const rec = readRecord(row.id);
-        if (rec)
-          writeRecord(
-            row.id,
-            { ...rec.front, state: "done", closed: "yes" },
-            appendEvent(rec.body, `state-done-${today()}`, "done", (own ?? evidence).slice(0, 200)),
-          );
+      // --evidence-B### <text>, collected before ANY write so a missing one refuses
+      // the whole discharge rather than leaving half the batch done.
+      const perRow = new Map();
+      for (let i = 0; i < args.length; i++) {
+        const m = /^--evidence-(B\d+)$/i.exec(args[i]);
+        if (!m) continue;
+        const id = resolveId(m[1].toUpperCase());
+        const text = args[i + 1];
+        if (text === undefined || text.startsWith("--")) fail(`${args[i]} requires a value`);
+        if (!ready.some((r) => r.id === id))
+          fail(`${args[i]}: ${id} is not a proven row in ${batch} — nothing to discharge for it`);
+        thin(args[i], text);
+        perRow.set(id, text);
       }
-    } catch (e) {
-      writeFileSync(shardFile, snapshot);
-      fail(
-        `discharge: ${batch} failed mid-batch and was rolled back to its pre-discharge state (${e.message})`,
+
+      const missing = ready.filter((r) => r.tier === "T2" && !perRow.has(r.id));
+      if (missing.length)
+        fail(
+          `T2 row(s) ${missing.map((r) => r.id).join(", ")} need their OWN evidence — ` +
+            `pass --evidence-${missing[0].id} "<the run that exercised THIS bug against the deployed build>". ` +
+            `campaign-check accepts dischargeEvidence in place of a Playwright artifact, so one batch-wide ` +
+            `string would discharge every T2 row in the batch past the only control that reads it.`,
+        );
+      // Normalized (trim, collapse whitespace, lowercase) with the SAME helper
+      // campaign-check.mjs uses for its own byte-identical-evidence warning — a
+      // trailing space or a case difference must not let this guard admit what
+      // the gate would still flag.
+      //
+      // Scoped to the WHOLE ledger, not just this call: `discharge` is
+      // per-batch, so seeding `seen` from only this invocation's rows let the
+      // exact same string reused across TWO SEPARATE `discharge` calls (each
+      // exit 0, neither refusing the other) sail straight through — and
+      // campaign-check then had to call the second one "grandfathered" rather
+      // than refuse it, because nothing here had ever seen it.
+      const seen = new Map();
+      if (existsSync(STATUS_DIR()))
+        for (const f of readdirSync(STATUS_DIR()).filter((n) => n.endsWith(".jsonl")))
+          for (const r of readShard(f.replace(/\.jsonl$/, "")).rows)
+            if (r.dischargeEvidence) seen.set(normalizeEvidence(r.dischargeEvidence), r.id);
+      for (const [id, text] of perRow) {
+        const key = normalizeEvidence(text);
+        const prior = seen.get(key);
+        if (prior && prior !== id)
+          fail(`${id} and ${prior} were given byte-identical evidence — cite each row's own run`);
+        seen.set(key, id);
+      }
+
+      // Snapshot the shard as it stands right now — every refusal above has
+      // already run, so nothing below this point is a validation failure —
+      // and restore it whole on any throw. Without this, an IO failure
+      // part-way through the loop (a record path replaced by a directory, a
+      // full disk) left the batch HALF discharged: some rows `done`, the rest
+      // still `proven`, with no rollback and a raw Node stack trace instead of
+      // a `bugs:` message.
+      const shardFile = shardPath(batch);
+      const snapshot = readFileSync(shardFile, "utf8");
+      try {
+        for (const row of ready) {
+          const own = perRow.get(row.id);
+          // T2 is the only tier campaign-check reads dischargeEvidence for; every
+          // other tier records the batch string as plain `evidence`.
+          const patch = own
+            ? { state: "done", dischargeEvidence: own, evidence: own }
+            : { state: "done", evidence };
+          const { row: after } = upsertLedgerRow(batch, { ...row, ...patch });
+          for (const [k, v] of Object.entries(patch))
+            if (after?.[k] !== v)
+              fail(
+                `ledger write for ${row.id} did not land as intended (${k}) — re-read row is ${JSON.stringify(after)}`,
+              );
+          const rec = readRecord(row.id);
+          if (rec)
+            writeRecord(
+              row.id,
+              { ...rec.front, state: "done", closed: "yes" },
+              appendEvent(
+                rec.body,
+                `state-done-${today()}`,
+                "done",
+                (own ?? evidence).slice(0, 200),
+              ),
+            );
+        }
+      } catch (e) {
+        writeFileSync(shardFile, snapshot);
+        fail(
+          `discharge: ${batch} failed mid-batch and was rolled back to its pre-discharge state (${e.message})`,
+        );
+      }
+      console.log(
+        `${batch}: discharged ${ready.length} row(s) → done — ${ready.map((r) => r.id).join(", ")}`,
       );
-    }
-    console.log(
-      `${batch}: discharged ${ready.length} row(s) → done — ${ready.map((r) => r.id).join(", ")}`,
-    );
-    if (perRow.size)
-      console.log(`  per-row evidence recorded for: ${[...perRow.keys()].join(", ")}`);
-    console.log(`  verify: node scripts/campaign-check.mjs`);
-  });
+      if (perRow.size)
+        console.log(`  per-row evidence recorded for: ${[...perRow.keys()].join(", ")}`);
+      console.log(`  verify: node scripts/campaign-check.mjs`);
+    }),
+  );
 };
 
 // ── reopen: the state the ledger had no way to express ────────────────────
@@ -5579,6 +5596,133 @@ cmds["self-test"] = () => {
           .map((r) => r.id)
           .sort(),
         ["B1", "B2", "B50"],
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // ── discharge takes the catalogue lock too ──────────────────────────────
+  // discharge's whole-ledger "byte-identical evidence" scan (the `seen` map
+  // above) reads every OTHER shard's dischargeEvidence while holding only
+  // THIS batch's own shard lock — so two `discharge` calls on DIFFERENT
+  // batches never serialised against each other: each could scan before the
+  // other's write landed, and both could admit the same evidence string.
+  // Raced across F01 and F02 (which share no shard lock at all — the ONLY
+  // thing that can serialise them is the catalogue lock) with the identical
+  // evidence string on both sides.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file([
+        "discharge-race fixture A",
+        "--location",
+        "apps/api/src/discharge-race-a.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T1",
+      ]);
+      cmds.file([
+        "discharge-race fixture B",
+        "--location",
+        "apps/api/src/discharge-race-b.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F02",
+        "--tier",
+        "T1",
+      ]);
+      cmds.prove(["B1", "--pr", "950", "--proof", "REG-B1 jest: fixture A"]);
+      cmds.prove(["B2", "--pr", "951", "--proof", "REG-B2 jest: fixture B"]);
+      check(
+        "discharge-race fixture: both rows proven, one per batch",
+        [readShard("F01").rows[0]?.state, readShard("F02").rows[0]?.state],
+        ["proven", "proven"],
+      );
+
+      const SHARED_EVIDENCE = "shared discharge run https://example.invalid/run/1234567890";
+      const orchestrator = join(tmp, "concurrent-discharge.mjs");
+      writeFileSync(
+        orchestrator,
+        [
+          'import { spawn } from "node:child_process";',
+          "const [script, root, stall, evidence] = process.argv.slice(2);",
+          "const run = (args, env, delay) =>",
+          "  new Promise((res) => {",
+          "    const start = () => {",
+          "      const p = spawn(process.execPath, [script, ...args], {",
+          "        env: { ...process.env, BUGS_ROOT: root, ...env },",
+          '        stdio: ["ignore", "pipe", "pipe"],',
+          "      });",
+          '      let out = "";',
+          '      p.stdout.on("data", (d) => (out += d));',
+          '      p.stderr.on("data", (d) => (out += d));',
+          '      p.on("close", (code) => res({ code, out }));',
+          "    };",
+          "    if (delay) setTimeout(start, delay);",
+          "    else start();",
+          "  });",
+          "const results = await Promise.all([",
+          "  run(",
+          '    ["discharge", "F01", "--evidence", "batch-wide evidence for F01, well over 40 chars", "--evidence-B1", evidence],',
+          '    { BUGS_SELF_TEST: "1", BUGS_TEST_STALL_MS: stall },',
+          "    0,",
+          "  ),",
+          "  run(",
+          '    ["discharge", "F02", "--evidence", "batch-wide evidence for F02, well over 40 chars", "--evidence-B2", evidence],',
+          "    {},",
+          "    300,",
+          "  ),",
+          "]);",
+          "console.log(JSON.stringify(results));",
+        ].join("\n"),
+      );
+      const argv = [orchestrator, SCRIPT_PATH, tmp, "1500", SHARED_EVIDENCE]
+        .map((a) => JSON.stringify(a))
+        .join(" ");
+      let raced;
+      try {
+        raced = {
+          code: 0,
+          out: execSync(`node ${argv}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+        };
+      } catch (e) {
+        raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+      }
+      check("discharge race: the orchestrator exited 0", raced.code, 0);
+      const kids = JSON.parse(raced.out.trim().split("\n").pop());
+      check("discharge race: F01 (the one holding the lock first) succeeds", kids[0].code, 0);
+      check(
+        "discharge race: F02 is REFUSED the identical evidence — not silently admitted",
+        kids[1].code !== 0,
+        true,
+      );
+      check(
+        "discharge race: the refusal names both rows",
+        /B1 and B2|B2 and B1/.test(kids[1].out),
+        true,
+      );
+      const byBatch = {
+        F01: readShard("F01").rows[0],
+        F02: readShard("F02").rows[0],
+      };
+      check(
+        "discharge race: F01's row landed — done, with the shared evidence",
+        [byBatch.F01?.state, byBatch.F01?.dischargeEvidence],
+        ["done", SHARED_EVIDENCE],
+      );
+      check(
+        "discharge race: F02's row was never written — still proven, refusal happened before any write",
+        byBatch.F02?.state,
+        "proven",
       );
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
