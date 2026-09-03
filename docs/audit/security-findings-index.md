@@ -48,7 +48,7 @@ treat it as unconfirmed either way, not as "still open."
 | F5-003 | Buyer and staff JWTs shared one signing secret; refresh tokens carried no identity discriminator | OPEN (confirmed still open 2026-07-13) |
 | F5-004 | Tenant secrets stored in plaintext in `SystemConfig` | FIXED (#247 — `SECRET_KEYS` allowlist encrypted via `EncryptionService`) |
 | F9-006 | `trust proxy=2` with default throttler tracker enabled `X-Forwarded-For` spoofing of per-IP rate limit and audit IP | OPEN (confirmed still open 2026-07-13; deployment-topology-dependent) |
-| F12-002 | `runStartupMigration()` executes raw `ALTER TABLE` DDL on every API boot | OPEN (confirmed still open 2026-07-13) |
+| F12-002 | `runStartupMigration()` executes raw `ALTER TABLE` DDL on every API boot | FIXED (PR-1 `imp-03a`, 2026-09-03 — boot DDL deleted from `main.ts` and `platform-config.service.ts`; read-only drift gate `apps/api/scripts/schema-drift.mjs` + static tripwire `src/common/no-runtime-ddl.spec.ts`) |
 | F12-005 | Google OAuth deep-link callback (mobile) established a session purely from `routeflow://` URL query-param tokens | OPEN (confirmed still open 2026-07-13 — no state/PKCE nonce) |
 
 ## Low

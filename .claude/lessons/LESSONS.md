@@ -104,6 +104,19 @@
   commit title must name every layer it touches.**
 - **Guard:** none — judgment.
 
+### L-052 · 2026-09-03 · process · PR-1 `imp-03a`
+
+- **Symptom:** the documented boot-time DDL (`main.ts`) had an undocumented twin
+  (`platform-config.service.ts` creating two tables and an index on every boot, ungated).
+- **Root cause:** "retire the DDL" was scoped to the site the docs named, not to every raw-DDL
+  call site.
+- **Lesson:** Retiring a runtime schema writer means grepping every raw-execution shape —
+  `$executeRaw*`, `$queryRaw*`, AND bare driver calls like `pool.query(…)` — across `src` and
+  `scripts`, proving the live DB already matches the datamodel (`migrate diff --exit-code` → 0)
+  before deleting, then deleting: a default-off flag leaves the contradiction in place.
+- **Guard:** `apps/api/src/common/no-runtime-ddl.spec.ts` (static tripwire) + the drift gate in
+  `db-migrations.yml` and `prod-migrate.mjs`.
+
 ### L-051 · 2026-09-02 · process · #603 close-out
 
 - **Symptom:** `git stash pop` in the main checkout applied 19 files of ANOTHER worktree's
@@ -244,6 +257,19 @@
 - **Lesson:** **Read which step failed before hunting a code fix — an install-step or 0-step red
   proves nothing about the change; rerun first.**
 - **Guard:** none — judgment.
+
+### L-053 · 2026-09-03 · tooling · PR-1 `imp-03a`
+
+- **Symptom:** every `local:*` npm script that set an env var failed on Windows with "'DATABASE_URL'
+  is not recognized as an internal or external command", although a runbook said they were
+  verified green that day.
+- **Root cause:** npm runs package scripts through cmd.exe on Windows (no `script-shell`), and the
+  scripts used POSIX `VAR=val sh -c '…'` prefixes; the "verified" claim came from a POSIX shell.
+- **Lesson:** an npm script that must set environment is not cross-platform until the environment
+  is set by a node shim (`scripts/local-env.mjs`) — never by a `VAR=val` prefix or `sh -c`; a
+  runbook's "verified working" is true only for the shell it named.
+- **Guard:** `apps/api/src/common/local-env-script.spec.ts` + the `local:*` scripts all routed
+  through the shim.
 
 ## testing
 

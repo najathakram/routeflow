@@ -1,3 +1,6 @@
+// NOT A SCHEMA PATH (2026-09-03): applies Postgres RLS POLICIES only (not expressible in the
+// Prisma datamodel) — still the documented manual step in apps/api/docs/production-setup.md;
+// excluded from no-runtime-ddl.spec.ts for that reason.
 /**
  * Applies PostgreSQL Row-Level Security policies to all tenant-scoped tables.
  * Run: node apps/api/scripts/apply-rls.js

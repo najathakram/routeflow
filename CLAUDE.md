@@ -56,12 +56,13 @@ decision + rationale is [`docs/adr/0001-local-hosting-environment.md`](docs/adr/
 ```bash
 npm run local:up          # build images + start postgres, redis, migrate, api, web
 npm run local:seed        # seed `test` tenant (operator admin / Admin@123) + publish genesis plan catalog
-npm run local:validate    # smoke + post-deploy-check @ localhost:3000 (the core gate)
+npm run local:validate    # smoke + post-deploy-check + local:drift @ localhost:3000 (the core gate)
 ```
 
 `local:validate` is the dependable pre-PR gate: `smoke` (health + unauth routes) then
 `post-deploy-check` (operator login, orders/invoices/customers/products, **money-math +
-invoice reconciliation**). `npm run local:validate:features` runs the deeper
+invoice reconciliation**), then `local:drift` (read-only schema drift against the compose DB via
+`apps/api/scripts/schema-drift.mjs`; exit 2 = drift). `npm run local:validate:features` runs the deeper
 `feature-smoke` battery (estimate→invoice convert, AP bills, product-sales, fail-closed
 uploads). That battery needs a **published billing plan catalog** — global reference data
 the `PlanVersion` table starts empty of — so `local:seed` now publishes it as a genesis
@@ -76,6 +77,8 @@ http://localhost:3000/api/docs · **Health** http://localhost:3000/api/v1/health
 `npm run local:logs` tails api+web; `npm run local:down` stops (keeps data);
 `npm run local:reset` stops **and wipes** the Postgres/Redis volumes for a clean DB.
 Added a Prisma migration mid-session? Re-run `npm run local:migrate` before re-validating.
+`npm run local:drift` runs the read-only schema-drift gate against the compose DB.
+`npm run local:test:db` runs the `*.db.spec.ts` lane (DB-backed specs) against it.
 
 ### Guardrails
 
@@ -178,6 +181,19 @@ Names only — see each app's example file. Never commit values.
 - Docker `CMD` is **only** `node dist/main.js` — **never** auto-migrate on deploy.
 - Schema changes apply to prod **only** via `railway run npx prisma migrate deploy`; locally `npx prisma migrate dev` against docker-compose.
 - **Never** `--force-reset`; **never** run the destructive scripts listed in `CLAUDE_SESSION_PREAMBLE.md`; seed additively.
+- Boot-time DDL is gone (PR-1, `imp-03a`) — `main.ts` and `platform-config.service.ts` no longer
+  run any boot-time DDL — `main.ts` issued it through a raw `pg` `Pool.query`,
+  `platform-config.service.ts` through `$executeRaw` tagged templates; a grep for runtime DDL
+  must cover `$executeRaw`, `$executeRawUnsafe`/`$queryRaw*`, and `.query(` on a pg client.
+  `npm run db:drift -w apps/api`
+  (`apps/api/scripts/schema-drift.mjs`) is the drift gate: read-only `prisma migrate status` +
+  `migrate diff … --exit-code` against the target DB, exit 0 = no drift. Any schema PR runs it
+  against prod after deploy — `railway run --service postgres node
+apps/api/scripts/schema-drift.mjs` — and requires exit 0. Its `SCHEMA_DRIFT_PRISMA_CLI` stand-in
+  is a **test-only** hook: it is honoured only inside a Jest worker (`JEST_WORKER_ID`) that also
+  sets the override (and prints a WARNING when it is); `NODE_ENV` is deliberately not part of the
+  guard (CI's db-migrations job sets `NODE_ENV: test`). It is ignored — loudly — anywhere else, so
+  a stray export can never make the gate report NO DRIFT from a stub.
 
 ### Canonical deploy flow: **public → push/CI → merge → private** (deploy continues private)
 

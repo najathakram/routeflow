@@ -24,19 +24,19 @@ Two items were explicitly requested by the product owner and are called out inli
 
 ## Summary
 
-| #   | Tier | Item                                                         | Effort | Risk |
-| --- | ---- | ------------------------------------------------------------ | ------ | ---- |
-| 1   | P0   | Consolidate the 4 `pricing.ts` copies into one package       | M      | 🔴   |
-| 2   | P0   | Enforce the single-replica invariant (or remove the need)    | M      | 🔴   |
-| 3   | P0   | Schema-management tooling: retire boot-time DDL + drift gate | M      | 🔴   |
-| 4   | P1   | Add a staging environment before prod                        | M      | 🔴   |
-| 5   | P1   | Add web component/unit tests; rebalance the test pyramid     | L      | 🟡   |
-| 6   | P1   | Move E2E before prod; give specs dedicated users             | M      | 🟡   |
-| 7   | P1   | **Local full-stack hosting via Docker (pre-PR)**             | M      | 🟡   |
-| 8   | P2   | Retire the repo public/private flip; run CI private          | S      | 🟡   |
-| 9   | P2   | Constrain the `SKIP_VERIFY` bypass; split the CI job         | S      | 🟡   |
-| 10  | P3   | Split `schema.prisma`; share DTOs via `@routeflow/types`     | M      | ⚪   |
-| 11  | P3   | Rewrite the stale README; slim `CLAUDE.md`; drop dead deps   | S      | 🟡   |
+| #   | Tier | Item                                                         | Effort | Risk | Status         |
+| --- | ---- | ------------------------------------------------------------ | ------ | ---- | -------------- |
+| 1   | P0   | Consolidate the 4 `pricing.ts` copies into one package       | M      | 🔴   | open           |
+| 2   | P0   | Enforce the single-replica invariant (or remove the need)    | M      | 🔴   | open           |
+| 3   | P0   | Schema-management tooling: retire boot-time DDL + drift gate | M      | 🔴   | shipped (PR-1) |
+| 4   | P1   | Add a staging environment before prod                        | M      | 🔴   | open           |
+| 5   | P1   | Add web component/unit tests; rebalance the test pyramid     | L      | 🟡   | open           |
+| 6   | P1   | Move E2E before prod; give specs dedicated users             | M      | 🟡   | open           |
+| 7   | P1   | **Local full-stack hosting via Docker (pre-PR)**             | M      | 🟡   | shipped (#606) |
+| 8   | P2   | Retire the repo public/private flip; run CI private          | S      | 🟡   | open           |
+| 9   | P2   | Constrain the `SKIP_VERIFY` bypass; split the CI job         | S      | 🟡   | open           |
+| 10  | P3   | Split `schema.prisma`; share DTOs via `@routeflow/types`     | M      | ⚪   | open           |
+| 11  | P3   | Rewrite the stale README; slim `CLAUDE.md`; drop dead deps   | S      | 🟡   | open           |
 
 ---
 
@@ -84,9 +84,8 @@ injects no replica-count env var, so the process can't self-check **(inferred)**
 **Problem.** Schema changes reach production through **three uncoordinated paths**:
 
 1. Prisma migrations applied manually before merge (`railway run … prisma migrate deploy`).
-2. **Boot-time raw DDL** on every startup — `ALTER TABLE … ADD COLUMN IF NOT EXISTS` in
-   [`apps/api/src/main.ts:69`](../apps/api/src/main.ts) — an acknowledged (`F12-002`) contradiction of
-   the never-auto-migrate policy.
+2. **Boot-time raw DDL** on every startup (formerly `runStartupMigration()` in `main.ts`, an
+   acknowledged `F12-002` contradiction of the never-auto-migrate policy) — deleted in PR-1.
 3. A migration-replay CI job ([`db-migrations.yml`](../.github/workflows/db-migrations.yml)) that
    proves history applies cleanly, but nothing checks the deployed DB for **drift** against the
    schema, and nothing lints migrations for destructive operations.
@@ -97,10 +96,13 @@ The result: the live schema can diverge from `schema.prisma` and no gate catches
 level:
 
 - **Option A — Prisma-native, zero new dependencies (start here):**
-  1. Convert the boot-time `ALTER TABLE`s into real Prisma migrations and set `RUN_STARTUP_DDL=false`.
-  2. Add a **drift gate** to CI: `prisma migrate diff --from-url $DATABASE_URL --to-schema-datamodel
-prisma/schema.prisma --exit-code` (fails when the DB and schema disagree) plus
-     `prisma migrate status`.
+  1. Delete the boot-time `ALTER TABLE`s outright — no flag; schema now reaches the DB only via
+     `prisma migrate deploy`. **Shipped in PR-1.**
+  2. Add a **drift gate**: `npm run db:drift -w apps/api` → [`apps/api/scripts/schema-drift.mjs`](../apps/api/scripts/schema-drift.mjs), which runs `prisma migrate status` (informational) plus
+     `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script
+--exit-code` (fails when the DB and schema disagree). Wired into
+     [`db-migrations.yml`](../.github/workflows/db-migrations.yml) and the post-deploy step in
+     [`prod-migrate.mjs`](../apps/api/scripts/prod-migrate.mjs). **Shipped in PR-1.**
   3. Formalize `prisma migrate deploy` as a guarded, logged release step (not a manual one-off).
 - **Option B — dedicated schema tool, [Atlas](https://atlasgo.io) (`ariga/atlas`):** has a
   first-class Prisma provider and adds what Prisma Migrate lacks — **declarative** schema management,
@@ -172,20 +174,21 @@ are never run locally** — they're built only by Railway. So the first time the
 against a real database is **in production**. Combined with the absence of a staging env (#4), there
 is no integrated place to smoke-test a change before opening a PR.
 
-**Proposed change.** Add a local full-stack compose overlay that builds and runs the **actual
-production Dockerfiles** wired to the existing Postgres/Redis services — a local prod-like surrogate:
+**Shipped (#606).** Added an `app` profile to the existing `docker-compose.yml` — no separate
+overlay file — that builds and runs the **actual production Dockerfiles** wired to the existing
+Postgres/Redis services, a local prod-like surrogate:
 
-- New `docker-compose.full.yml` (overlay on the existing `docker-compose.yml`) with services:
-  - `api` — `build: { context: ., dockerfile: apps/api/Dockerfile }`, `depends_on` Postgres+Redis
-    (healthcheck-gated), `DATABASE_URL`/`REDIS_URL` pointing at the compose network,
-    `RUN_STARTUP_DDL=false` once #3 lands, and JWT secrets from a local `.env`.
-  - `web` — `build: { context: ., dockerfile: apps/web/Dockerfile }` with `NEXT_PUBLIC_API_URL`
-    pointed at the `api` service; note the image's React-18 pin (see #10 / the Dockerfile).
-- A one-time migration/seed step against the containerized DB using an **approved test tenant only**
-  (`assertTestTenant`), never live data.
-- Root scripts: `npm run local:up` (build + up), `npm run local:down`, `npm run local:seed`.
-- A short `docs/local-hosting.md` runbook and a note in the PR checklist: "ran `npm run local:up` and
-  smoke-tested the built images before pushing."
+- The `--profile app` services in `docker-compose.yml`: a one-shot `migrate` (`prisma migrate
+deploy`, mirroring prod), `api` (`build: { context: ., dockerfile: apps/api/Dockerfile }`,
+  `:3000`, `depends_on` Postgres+Redis healthcheck-gated), and `web` (`build: { context: .,
+dockerfile: apps/web/Dockerfile }`, `:3001`, `NEXT_PUBLIC_API_URL` pointed at the `api` service).
+- A seed step against the containerized DB using an **approved test tenant only**
+  (`assertSafeTarget`/`assertTestTenant`), never live data.
+- Root scripts: `npm run local:up`, `local:seed`, `local:validate`, `local:validate:features`,
+  `local:logs`, `local:down`, `local:reset`, `local:migrate`.
+- [`docs/adr/0001-local-hosting-environment.md`](../docs/adr/0001-local-hosting-environment.md) as
+  the runbook/ADR, plus a note in the PR checklist: run `npm run local:up` and `local:validate`
+  and smoke-test the built images before pushing.
 
 This is deliberately **not** `npm run dev` (watch mode): the point is to exercise the same multi-stage
 Docker images, standalone Next build, non-root runtime, and startup path that Railway runs — catching

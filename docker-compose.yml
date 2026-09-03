@@ -6,7 +6,7 @@
 #   Full stack (API + Web in containers) — the pre-PR local test target:
 #       npm run local:up        # build + start postgres, redis, migrate, api, web
 #       npm run local:seed      # seed the approved `test` tenant (admin / Admin@123)
-#       npm run local:validate  # smoke + post-deploy-check + feature-smoke @ :3000
+#       npm run local:validate  # smoke + post-deploy-check + drift check @ :3000
 #       npm run local:down
 #
 #   The `app` profile services are gated behind `--profile app`, so plain
@@ -71,7 +71,10 @@ services:
 
   # ─── Redis Commander (dev UI) ────────────────────────────────────────────────
   # Only started with: docker compose --profile tools up
-  # REDIS_COMMANDER_PASSWORD must be set — no default provided to prevent accidental exposure.
+  # REDIS_COMMANDER_PASSWORD defaults to an obvious local throwaway, like every other secret in
+  # this file: compose interpolates the WHOLE file even when only the `app` profile is started,
+  # so a `:?` guard here made `npm run local:up` fail for a service it never starts. The UI binds
+  # to 127.0.0.1 only; set a real value in the environment before exposing it anywhere.
   redis-commander:
     image: rediscommander/redis-commander:latest
     container_name: routeflow_redis_ui
@@ -79,7 +82,7 @@ services:
     environment:
       REDIS_HOSTS: "local:redis:6379"
       HTTP_USER: admin
-      HTTP_PASSWORD: ${REDIS_COMMANDER_PASSWORD:?REDIS_COMMANDER_PASSWORD must be set}
+      HTTP_PASSWORD: ${REDIS_COMMANDER_PASSWORD:-local-redis-commander-change-me}
     ports:
       - "127.0.0.1:8082:8081" # bind to localhost only, not 0.0.0.0
     depends_on:
@@ -114,6 +117,7 @@ services:
     image: routeflow-api:local
     container_name: routeflow_api
     restart: unless-stopped
+    # Schema is applied only by the one-shot 'migrate' service — the API never runs DDL.
     environment:
       # NODE_ENV=development keeps local boot requirements minimal (only the two
       # JWT secrets are mandatory; STORAGE_URL_SIGNING_SECRET is prod-only) and
