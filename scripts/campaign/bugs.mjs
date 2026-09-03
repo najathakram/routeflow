@@ -80,6 +80,7 @@ import { execFileSync, execSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { normalizeEvidence } from "./normalize-evidence.mjs";
+import { hasRegToken, hasManualVerificationRow, manualVerificationIds } from "./reg-token.mjs";
 
 // The repo root, independent of cwd — resolved from this file's own location
 // (scripts/campaign/bugs.mjs) rather than process.cwd(), so a --build-plan
@@ -2010,18 +2011,6 @@ cmds.brief = (args) => {
 // deploy. Keeping them separate is the whole reason campaign-check can be
 // trusted, so neither command will invent the other's evidence.
 
-// Mirrors campaign-check.mjs's manualVerificationIds() section-scoped rule —
-// kept as a literal duplicate (campaign-check.mjs is a standalone script, not
-// a module there is anything to import from) so a T3 `prove` refuses a claim
-// campaign-check would reject anyway, at write time instead of at the next
-// `npm run verify`. Keep this in sync with campaign-check.mjs's regex/section
-// extraction if either changes.
-function hasManualVerificationToken(text, id) {
-  const m = text.match(/## Manual verification\s*\n([\s\S]*?)(?:\n## |\n$|$)/);
-  if (!m) return false;
-  return new RegExp(`REG-${id}(?![0-9])`).test(m[1]);
-}
-
 // The ledger is SHARED (git-tracked, cloned onto every machine and CI
 // runner), so a `--build-plan` value is only useful stored as a path relative
 // to the repo root. An absolute path persists verbatim — leaking a local
@@ -2098,7 +2087,7 @@ cmds.prove = (args) => {
       if (!existsSync(resolved))
         fail(`--build-plan ${buildPlanRaw} does not exist (resolved to ${resolved})`);
       const text = readFileSync(resolved, "utf8");
-      if (!hasManualVerificationToken(text, id))
+      if (!hasManualVerificationRow(text, id))
         fail(
           `--build-plan ${buildPlanRaw} has no REG-${id} row in its "## Manual verification" ` +
             `section — campaign-check will look there and find nothing`,
@@ -2800,6 +2789,40 @@ cmds["self-test"] = () => {
       "waves: never schedules more than the agent cap at once",
       computeWaves(rankBatches(five), new Map(), 4).map((w) => w.length),
       [4, 1],
+    );
+  }
+
+  // The shared REG token grammar (scripts/campaign/reg-token.mjs) is the ONE
+  // place `prove` and campaign-check both read now — they used to keep what a
+  // comment called "a literal duplicate" that had actually drifted: `prove`
+  // accepted REG-<id> at ANY digit count while campaign-check required
+  // exactly 2-3 digits, so a single-digit id (B1..B9) could be proven but
+  // could never be discharged — an unrepairable claim.
+  {
+    check(
+      "reg-token: hasRegToken agrees across digit counts (B1, B12, B120, B1234)",
+      ["B1", "B12", "B120", "B1234"].map((id) => hasRegToken(`REG-${id} passed`, id)),
+      [true, true, true, true],
+    );
+    check(
+      "reg-token: a token is never satisfied by a longer id sharing its prefix",
+      hasRegToken("REG-B120 passed", "B12"),
+      false,
+    );
+    check(
+      "reg-token: manualVerificationIds ignores a token inside a fenced code block",
+      [...manualVerificationIds("## Manual verification\n\n```\nREG-B120 do not use this\n```\n")],
+      [],
+    );
+    check(
+      "reg-token: manualVerificationIds ignores a bare prose mention outside any table row",
+      [...manualVerificationIds("## Manual verification\n\nREG-B120 was the old token.\n")],
+      [],
+    );
+    check(
+      "reg-token: manualVerificationIds accepts a real table row",
+      [...manualVerificationIds("## Manual verification\n\n| REG-B120 | click the thing |\n")],
+      ["B120"],
     );
   }
 

@@ -52,13 +52,16 @@
 // Token discipline: a bare `B###` collides with four pre-existing spec titles
 // (`B10`/`B11`/`B12`/`B13`, a superseded numbering round — see the campaign plan).
 // Every proof must carry the `REG-` prefix, and a title is matched by the EXACT
-// token via `/REG-B(\d{2,3})(?![0-9])/`, never a prefix — "REG-B12" must not be
-// satisfied by "REG-B120".."REG-B129".
+// token via `REG_TOKEN_RE` (scripts/campaign/reg-token.mjs — shared with
+// bugs.mjs's `prove`), never a prefix — "REG-B12" must not be satisfied by
+// "REG-B120".."REG-B129", at any digit count from 1 to 4.
 //
-// T3 (manual verification) rows are discharged only by a `REG-B###` row in the
-// CLAIMING BATCH'S OWN build-plan.md — never a glob over every pipeline folder,
-// which would let any batch's table satisfy any other's. Two ways to tell this
-// script where that file is:
+// T3 (manual verification) rows are discharged only by a `REG-B###` row in a
+// TABLE ROW of the CLAIMING BATCH'S OWN build-plan.md — never a glob over
+// every pipeline folder (which would let any batch's table satisfy any
+// other's), and never a token merely mentioned in prose or inside a fenced
+// code block (see reg-token.mjs's `manualVerificationIds`). Two ways to tell
+// this script where that file is:
 //   1. `--batch F02 --pipeline-dir <path>` — scopes the whole check to one batch
 //      and supplies its build-plan.md explicitly (used during Phase 6/8 close-out,
 //      before the ledger row is even committed).
@@ -88,6 +91,10 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { normalizeEvidence } from "./campaign/normalize-evidence.mjs";
+import {
+  REG_TOKEN_RE,
+  manualVerificationIds as manualVerificationIdsFromText,
+} from "./campaign/reg-token.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -122,8 +129,6 @@ const CLAIM_STATES = new Set([
 const EVIDENCE_ONLY_STATES = new Set(["already-fixed", "refuted", "regressed"]);
 const VALID_STATES = new Set([...CLAIM_STATES, "queued", "in-flight"]);
 const VALID_TIERS = new Set(["T1", "T2", "T3"]);
-
-const REG_TOKEN_RE = /REG-B(\d{2,3})(?![0-9])/g;
 
 function fail(msg) {
   failures.push(msg);
@@ -312,17 +317,16 @@ function mergeIndexes(...idxs) {
 }
 
 // ---- T3: manual-verification rows in a build-plan.md ----
-// Matches a markdown table row (or any line) starting with a REG-B### token
-// inside the "## Manual verification" section only.
+// A REG-B### token counts ONLY inside a table row (a line matching /^\s*\|/)
+// of the "## Manual verification" section, after stripping fenced code
+// blocks — see scripts/campaign/reg-token.mjs, which bugs.mjs's `prove`
+// reads too, so the two sides cannot drift the way they used to (prove
+// accepted any digit count; this file required exactly 2-3, so a
+// single-digit id could be proven but never discharged).
 function manualVerificationIds(buildPlanPath) {
   if (!buildPlanPath || !fs.existsSync(buildPlanPath)) return null; // artifact missing
   const text = fs.readFileSync(buildPlanPath, "utf8");
-  const sectionMatch = text.match(/## Manual verification\s*\n([\s\S]*?)(?:\n## |\n$|$)/);
-  if (!sectionMatch) return new Set(); // section absent = zero rows, not "missing tool"
-  const section = sectionMatch[1];
-  const ids = new Set();
-  for (const m of section.matchAll(REG_TOKEN_RE)) ids.add(`B${m[1]}`);
-  return ids;
+  return manualVerificationIdsFromText(text);
 }
 
 // Cache one manualVerificationIds() result per resolved build-plan path so a
