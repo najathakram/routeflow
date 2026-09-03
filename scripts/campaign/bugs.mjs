@@ -250,7 +250,14 @@ const stripTags = (s) =>
     .trim();
 
 // ── commands ──────────────────────────────────────────────────────────────
-const cmds = {};
+// A plain object literal inherits Object.prototype, so `cmds["toString"]`,
+// `cmds["constructor"]`, `cmds["valueOf"]` and `cmds["hasOwnProperty"]` are
+// all truthy inherited functions — `node bugs.mjs toString` (etc.) silently
+// exited 0 having done nothing, which a hook or script that shells out and
+// branches on the exit code reads as success. Object.create(null) has no
+// prototype at all, so the unknown-command guard below needs no special
+// case: `cmds[cmd]` is simply undefined for anything not explicitly assigned.
+const cmds = Object.create(null);
 
 // One-time seed. Idempotent: never overwrites a row that already exists, so a
 // hand-edited symptom survives a re-import.
@@ -6656,6 +6663,83 @@ cmds["self-test"] = () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  }
+
+  // The unknown-command guard used to consult the PROTOTYPE CHAIN
+  // (`!cmds[cmd]`, on a plain object literal) — `cmds["toString"]`,
+  // `["constructor"]`, `["valueOf"]` and `["hasOwnProperty"]` are all truthy
+  // inherited functions, so each silently exited 0 having done nothing. A
+  // hook or script that shells out and branches on the exit code reads that
+  // as success. `cmds = Object.create(null)` makes every one of these
+  // undefined, with no special-casing needed anywhere else.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    for (const inherited of ["toString", "constructor", "valueOf", "hasOwnProperty"]) {
+      const result = runCli([inherited], tmp);
+      check(
+        `unknown command: '${inherited}' (an inherited Object.prototype member) is refused, not silently run`,
+        result.code !== 0,
+        true,
+      );
+      check(
+        `unknown command: '${inherited}' is reported as unknown, not swallowed`,
+        /unknown command/.test(result.out),
+        true,
+      );
+    }
+    rmSync(tmp, { recursive: true, force: true });
+  }
+
+  // campaign-check.mjs had NO top-level error guard — bugs.mjs got one
+  // (`try { cmds[cmd](rest) } catch { … }`) but its sibling did not, so any
+  // IO fault (a shard path replaced by a directory, a full disk) surfaced as
+  // a raw Node stack trace in CI instead of the one-line `campaign-check:`
+  // message every other failure prints.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const statusTmp = join(tmp, "status");
+    const runsTmp = join(tmp, "runs");
+    // A DIRECTORY where a shard FILE is expected — readFileSync throws EISDIR,
+    // the same class of IO fault this guard exists for.
+    mkdirSync(join(statusTmp, "F02.jsonl"), { recursive: true });
+    mkdirSync(runsTmp, { recursive: true });
+    const runCampaignCheckRaw = (env) => {
+      try {
+        return {
+          code: 0,
+          out: execSync(`node scripts/campaign-check.mjs --runs-dir ${JSON.stringify(runsTmp)}`, {
+            encoding: "utf8",
+            env: { ...process.env, CAMPAIGN_CHECK_STATUS_DIR: statusTmp, ...env },
+            stdio: ["ignore", "pipe", "pipe"],
+          }),
+        };
+      } catch (e) {
+        return { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+      }
+    };
+    const guarded = runCampaignCheckRaw({});
+    check(
+      "campaign-check: an IO fault exits non-zero, guarded rather than crashing unhandled",
+      guarded.code !== 0,
+      true,
+    );
+    check(
+      "campaign-check: the guarded message names the fault in one line",
+      /campaign-check: unexpected failure — /.test(guarded.out),
+      true,
+    );
+    check(
+      "campaign-check: the raw stack is hidden by default (no 'at ...' frame)",
+      /\n\s+at /.test(guarded.out),
+      false,
+    );
+    const debugged = runCampaignCheckRaw({ CAMPAIGN_CHECK_DEBUG: "1" });
+    check(
+      "campaign-check: CAMPAIGN_CHECK_DEBUG=1 surfaces the real stack instead",
+      /\n\s+at /.test(debugged.out),
+      true,
+    );
+    rmSync(tmp, { recursive: true, force: true });
   }
 
   console.log(failures ? `\nself-test: ${failures} FAILURE(S)` : "\nself-test: all checks passed");
