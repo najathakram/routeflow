@@ -3024,18 +3024,35 @@ cmds["self-test"] = () => {
     );
 
     // The shared grammar is only shared if BOTH files still say it. There is
-    // nothing to import — team.mjs is a CLI — so the guard is that the two
-    // sources carry the same three load-bearing fragments.
+    // nothing to import — team.mjs is a CLI — so team.mjs's half is a source
+    // grep for the load-bearing fragment. THIS file's half is NOT: grepping our
+    // own source for the fragment is satisfied by the fragment literal on the
+    // line below it, so removing --paginate from the real argv would leave the
+    // check green. The local half is derived from the live value instead — the
+    // argv the reader actually builds, and the winner readClaims actually
+    // picks — which is the only half that can regress without the grep noticing.
     const teamSrc = readFileSync(join(dirname(SCRIPT_PATH), "..", "team", "team.mjs"), "utf8");
-    const selfSrc = readFileSync(SCRIPT_PATH, "utf8");
-    for (const [what, fragment] of [
-      ["paginate the comment list", '"--paginate", "--slurp"'],
-      ["ask for full pages", "per_page=100"],
-      ["take the lowest live comment id", ".sort((a, b) => a.commentId - b.commentId)"],
+    const localArgv = ghCommentsArgs(1);
+    for (const [what, fragment, hereHolds] of [
+      [
+        "paginate the comment list",
+        '"--paginate", "--slurp"',
+        () => localArgv.includes("--paginate") && localArgv.includes("--slurp"),
+      ],
+      [
+        "ask for full pages",
+        "per_page=100",
+        () => localArgv.some((a) => a.includes("per_page=100")),
+      ],
+      [
+        "take the lowest live comment id",
+        ".sort((a, b) => a.commentId - b.commentId)",
+        () => readClaims(two)?.id === "rf-LOW",
+      ],
     ])
       check(
         `shared grammar: BOTH readers still ${what}`,
-        [teamSrc.includes(fragment), selfSrc.includes(fragment)],
+        [teamSrc.includes(fragment), hereHolds()],
         [true, true],
       );
   }
