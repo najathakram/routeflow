@@ -104,6 +104,19 @@
   commit title must name every layer it touches.**
 - **Guard:** none — judgment.
 
+### L-051 · 2026-09-02 · process · #603 close-out
+
+- **Symptom:** `git stash pop` in the main checkout applied 19 files of ANOTHER worktree's
+  uncommitted batch work onto a docs-only close-out branch — and dropped that stash entry.
+- **Root cause:** stashes are refs on the shared repository, not per worktree: an entry pushed in
+  `.claude/worktrees/rf-F13` became `stash@{0}` for every checkout, and a bare `pop` takes the
+  newest entry wherever it was made. The intended entry had silently become `stash@{1}`.
+- **Lesson:** **With several worktrees, never `git stash pop` bare — `git stash list`, then pop
+  by index or message, and prefix every stash message with its worktree name.** A dropped stash is
+  recoverable from the commit id `pop` prints (`git stash store <sha>`), so keep that line.
+- **Guard:** stash messages here carry the worktree name (`rf-F13: …`); no hook — HANDOFF and the
+  fleet-state memory carry the rule.
+
 ## tooling
 
 ### L-039 · 2026-09-01 · tooling
