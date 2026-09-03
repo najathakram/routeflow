@@ -166,9 +166,11 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   invariant `Order.shippingFee == Σ shippingFee of the order's non-VOID invoices`
   (back-synced by `recomputeOrderFromInvoices`; from-order invoice creation seeds the whole
   fee onto the largest-subtotal sibling, never prorated).
-- **`prisma/seed.ts`** (2026-08-15, multi-tenant aware) — local dev seed for the approved `test`
-  tenant only: upserts tenant + 7 users (`Test@1234`), drivers, customers(+addresses), 15
-  products, routes/stops, 10 orders; every row carries `tenantId`. Two guards run before any
+- **`prisma/seed.ts`** (2026-09-03, multi-tenant aware) — local dev seed for the approved `test`
+  tenant only: upserts tenant + 7 users (`Test@1234`), the `order_delivery`+`recurring_routes`
+  TenantAddons (so its own seeded drivers/routes aren't `AddonGuard`-403'd; mirrors demo-seed's
+  `update: {}` preserve-on-reseed), drivers, customers(+addresses), 15 products, routes/stops,
+  10 orders; every row carries `tenantId`. Two guards run before any
   write: `assertTestTenant(TENANT_SLUG)` (scripts/lib/test-tenants.cjs, slug allow-list) and
   `assertSafeTarget()` (DATABASE_URL host must be localhost/127.0.0.1/::1/postgres and
   NODE_ENV≠production, else throws unless `SEED_ALLOW_REMOTE=1` — reaching a remote DB is
