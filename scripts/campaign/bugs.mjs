@@ -3376,8 +3376,17 @@ cmds["self-test"] = () => {
     const localArgv = ghCommentsArgs(1);
     for (const [what, fragment, hereHolds] of [
       [
-        "paginate the comment list",
-        '"--paginate", "--slurp"',
+        // The WHOLE expression, not just the array literal — a fragment of
+        // '"--paginate", "--slurp"' alone is satisfied by a partial line and
+        // does not cover the `.flat()` half at all: removing ONLY `.flat()`
+        // from team.mjs (real regression, real mutation-probe) left the
+        // narrower fragment matching and this whole grammar guard green,
+        // while every lease over 100 comments became invisible to it —
+        // `--paginate --slurp` hands back an ARRAY OF PAGES, and skipping the
+        // flatten step means `.find`/`.sort` over live claims silently see
+        // nothing past the first page's shape.
+        "paginate the comment list AND flatten the resulting pages",
+        '["--paginate", "--slurp"]) ?? []).flat()',
         () => localArgv.includes("--paginate") && localArgv.includes("--slurp"),
       ],
       [
@@ -3396,6 +3405,16 @@ cmds["self-test"] = () => {
         [teamSrc.includes(fragment), hereHolds()],
         [true, true],
       );
+
+    // Behavioural half of the same guard, independent of the source-grep
+    // above: THIS file's own flattenCommentPages must actually flatten an
+    // array of pages, so a mutation that broke the WHOLE reading path
+    // (not just team.mjs's copy) cannot hide behind a source match alone.
+    check(
+      "shared grammar: flattenCommentPages actually flattens two fixture pages",
+      flattenCommentPages([[{ id: 1, body: "x" }], [{ id: 2, body: "y" }]]).length,
+      2,
+    );
   }
 
   // ── wave occupancy ──────────────────────────────────────────────────────
