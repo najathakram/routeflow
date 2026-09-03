@@ -6,7 +6,6 @@ import type { NestExpressApplication } from "@nestjs/platform-express";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 
 import helmet from "helmet";
-import { Pool } from "pg";
 import { AppModule } from "./app.module";
 import { RedisIoAdapter } from "./gateways/redis-io.adapter";
 import { ThrottlerExceptionFilter } from "./common/throttler-exception.filter";
@@ -65,54 +64,7 @@ function assertSecrets() {
   }
 }
 
-/** Idempotent startup migrations — runs before NestJS boots. */
-async function runStartupMigration() {
-  const url = process.env.DATABASE_URL;
-  if (!url) return;
-  const pool = new Pool({ connectionString: url });
-  try {
-    await pool.query(
-      `ALTER TABLE "TenantConfig"
-         ADD COLUMN IF NOT EXISTS "invoiceNotes" TEXT,
-         ADD COLUMN IF NOT EXISTS "invoiceTerms" TEXT`,
-    );
-    // Emergency 20260623: unlisted items + shipment tracking columns
-    await pool.query(`
-      DO $$ BEGIN
-        IF EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_name = 'OrderItem' AND column_name = 'productId' AND is_nullable = 'NO'
-        ) THEN
-          ALTER TABLE "OrderItem" ALTER COLUMN "productId" DROP NOT NULL;
-        END IF;
-      END $$;
-      ALTER TABLE "OrderItem" ADD COLUMN IF NOT EXISTS "name" TEXT;
-      ALTER TABLE "Order"
-        ADD COLUMN IF NOT EXISTS "shippingCarrier"        TEXT,
-        ADD COLUMN IF NOT EXISTS "shippingTrackingNumber" TEXT,
-        ADD COLUMN IF NOT EXISTS "shippedAt"              TIMESTAMP(3);
-      ALTER TABLE "Invoice"
-        ADD COLUMN IF NOT EXISTS "shippingCarrier"        TEXT,
-        ADD COLUMN IF NOT EXISTS "shippingTrackingNumber" TEXT,
-        ADD COLUMN IF NOT EXISTS "shippedAt"              TIMESTAMP(3)
-    `);
-    console.log("✅ Startup migrations applied");
-  } catch (err) {
-    console.warn("⚠️  Startup migration error:", (err as Error).message);
-  } finally {
-    await pool.end();
-  }
-}
-
 async function bootstrap() {
-  // F12-002: the raw boot-time ALTER TABLE DDL contradicts the never-auto-migrate
-  // deploy policy, but is the current safety net for columns not yet backfilled by a
-  // Prisma migration. Gate it behind an env flag that DEFAULTS ON (prod behavior is
-  // unchanged) so it can be turned OFF — set RUN_STARTUP_DDL=false — once proper
-  // migrations cover these columns, with no code change or redeploy of logic.
-  if (process.env.RUN_STARTUP_DDL !== "false") {
-    await runStartupMigration();
-  }
   assertSecrets();
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     // rawBody: true preserves req.rawBody for Stripe webhook signature verification

@@ -218,7 +218,7 @@ One Socket.io gateway, `RouteFlowGateway` ([`routeflow.gateway.ts:144`](../apps/
 - **CORS:** default localhost list + `CORS_ORIGINS` allow-list + `CORS_WILDCARD_DOMAINS` subdomain patterns ([`main.ts:152`](../apps/api/src/main.ts)).
 - **Feature gating:** per-tenant **addons** (`@RequireAddon`) and **plan flags** (`@RequirePlanFlag`, with a `PLAN_FLAG_ENFORCEMENT` dark-launch kill switch), plus a `developer_mode` addon for in-dev surfaces.
 - **Env files (names only, never committed):** [`apps/api/.env.example`](../apps/api/.env.example), [`apps/web/.env.example`](../apps/web/.env.example), [`apps/mobile/.env.example`](../apps/mobile/.env.example). `NEXT_PUBLIC_*`/`EXPO_PUBLIC_*` are inlined at build time.
-- **Startup DDL safety-net:** [`main.ts:69`](../apps/api/src/main.ts) runs idempotent `ALTER TABLE … ADD COLUMN IF NOT EXISTS` before boot, gated by `RUN_STARTUP_DDL` (defaults on) — a deliberate, acknowledged exception to the never-auto-migrate rule for columns not yet covered by a Prisma migration (F12-002).
+- **Boot-time DDL: none (F12-002 closed by PR-1, `imp-03a`, 2026-09-03).** The former `runStartupMigration()` in `main.ts` and the `CREATE TABLE IF NOT EXISTS` block in `platform-config.service.ts` are deleted; schema reaches prod only via `prisma migrate deploy` ([`apps/api/scripts/prod-migrate.mjs`](../apps/api/scripts/prod-migrate.mjs)), and drift is caught read-only by [`apps/api/scripts/schema-drift.mjs`](../apps/api/scripts/schema-drift.mjs) (post-deploy in `prod-migrate.mjs` and the `Schema drift` step of [`.github/workflows/db-migrations.yml`](../.github/workflows/db-migrations.yml)); [`src/common/no-runtime-ddl.spec.ts`](../apps/api/src/common/no-runtime-ddl.spec.ts) is the static tripwire.
 
 ---
 

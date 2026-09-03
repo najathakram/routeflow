@@ -84,7 +84,8 @@ scripts and a runbook in `CLAUDE.md`. Concretely:
      - [`scripts/post-deploy-check.mjs`](../../scripts/post-deploy-check.mjs) against
        `http://localhost:3000` with `SMOKE_TENANT_SLUG=test`: health, operator login,
        orders/invoices/customers/products, money-math and invoice reconciliation. Green on a
-       freshly seeded stack.
+       freshly seeded stack, then [`scripts/schema-drift.mjs`](../../apps/api/scripts/schema-drift.mjs)
+       (`local:drift`) — read-only schema drift against the compose DB; exit 2 = drift.
    - **`npm run local:validate:features`** — [`scripts/feature-smoke.mjs`](../../scripts/feature-smoke.mjs),
      the exhaustive feature battery (estimate→invoice convert, AP bills, product-sales
      invariants, fail-closed uploads, …). It needs a **published billing plan catalog** on
@@ -123,7 +124,7 @@ start order: postgres+redis healthy → migrate exits 0 → api healthy → web
 # 0. one-time: Docker Desktop running
 npm run local:up          # build images + start postgres, redis, migrate, api, web
 npm run local:seed        # seed approved `test` tenant (operator admin / Admin@123) + publish genesis plan catalog
-npm run local:validate    # smoke + post-deploy-check @ localhost:3000 (the core gate)
+npm run local:validate    # smoke + post-deploy-check + local:drift @ localhost:3000 (the core gate)
 npm run local:validate:features   # deeper feature battery (needs the catalog local:seed now publishes)
 # ... exercise your feature at http://localhost:3001 (web) / http://localhost:3000/api/docs (Swagger) ...
 npm run local:logs        # tail api + web logs
@@ -131,8 +132,16 @@ npm run local:down        # stop the stack (keeps volumes)
 npm run local:reset       # stop AND wipe postgres/redis volumes (fresh DB)
 ```
 
+`local:validate` ends with `local:drift`; exit 2 means the local database differs from
+`prisma/schema.prisma` (the SQL is printed) — re-run `npm run local:migrate` if a migration
+was added mid-session, else treat it as a real finding.
+
 After adding a Prisma migration during a session, re-run `npm run local:migrate` (or
 `local:up` again) before re-validating.
+
+The `local:*` scripts set their environment through
+[`scripts/local-env.mjs`](../../scripts/local-env.mjs) so they run identically under cmd.exe
+(the Windows npm default) and sh.
 
 The authoritative copy of this runbook lives in [`CLAUDE.md`](../../CLAUDE.md) so the
 coding agent picks it up automatically.
