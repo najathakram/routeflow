@@ -2248,26 +2248,42 @@ cmds.discharge = (args) => {
       seen.set(key, id);
     }
 
-    for (const row of ready) {
-      const own = perRow.get(row.id);
-      // T2 is the only tier campaign-check reads dischargeEvidence for; every
-      // other tier records the batch string as plain `evidence`.
-      const patch = own
-        ? { state: "done", dischargeEvidence: own, evidence: own }
-        : { state: "done", evidence };
-      const { row: after } = upsertLedgerRow(batch, { ...row, ...patch });
-      for (const [k, v] of Object.entries(patch))
-        if (after?.[k] !== v)
-          fail(
-            `ledger write for ${row.id} did not land as intended (${k}) — re-read row is ${JSON.stringify(after)}`,
+    // Snapshot the shard as it stands right now — every refusal above has
+    // already run, so nothing below this point is a validation failure —
+    // and restore it whole on any throw. Without this, an IO failure
+    // part-way through the loop (a record path replaced by a directory, a
+    // full disk) left the batch HALF discharged: some rows `done`, the rest
+    // still `proven`, with no rollback and a raw Node stack trace instead of
+    // a `bugs:` message.
+    const shardFile = shardPath(batch);
+    const snapshot = readFileSync(shardFile, "utf8");
+    try {
+      for (const row of ready) {
+        const own = perRow.get(row.id);
+        // T2 is the only tier campaign-check reads dischargeEvidence for; every
+        // other tier records the batch string as plain `evidence`.
+        const patch = own
+          ? { state: "done", dischargeEvidence: own, evidence: own }
+          : { state: "done", evidence };
+        const { row: after } = upsertLedgerRow(batch, { ...row, ...patch });
+        for (const [k, v] of Object.entries(patch))
+          if (after?.[k] !== v)
+            fail(
+              `ledger write for ${row.id} did not land as intended (${k}) — re-read row is ${JSON.stringify(after)}`,
+            );
+        const rec = readRecord(row.id);
+        if (rec)
+          writeRecord(
+            row.id,
+            { ...rec.front, state: "done", closed: "yes" },
+            appendEvent(rec.body, `state-done-${today()}`, "done", (own ?? evidence).slice(0, 200)),
           );
-      const rec = readRecord(row.id);
-      if (rec)
-        writeRecord(
-          row.id,
-          { ...rec.front, state: "done", closed: "yes" },
-          appendEvent(rec.body, `state-done-${today()}`, "done", (own ?? evidence).slice(0, 200)),
-        );
+      }
+    } catch (e) {
+      writeFileSync(shardFile, snapshot);
+      fail(
+        `discharge: ${batch} failed mid-batch and was rolled back to its pre-discharge state (${e.message})`,
+      );
     }
     console.log(
       `${batch}: discharged ${ready.length} row(s) → done — ${ready.map((r) => r.id).join(", ")}`,
@@ -4076,6 +4092,105 @@ cmds["self-test"] = () => {
     );
   check("exactly one '## History' heading per record", multiHistory, []);
 
+  // `discharge` must be atomic across its row loop: an IO failure part-way
+  // through used to leave half the batch `done` and half still `proven`,
+  // with no rollback, and exit with a raw Node stack trace instead of a
+  // `bugs:` message. Force the SECOND row's own record read to throw by
+  // replacing its record path with a directory.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file([
+        "atomic discharge fixture A",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T1",
+      ]);
+      cmds.file([
+        "atomic discharge fixture B",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T1",
+      ]);
+      cmds.prove(["B1", "--pr", "910", "--proof", "REG-B1 jest: fixture A"]);
+      cmds.prove(["B2", "--pr", "910", "--proof", "REG-B2 jest: fixture B"]);
+      const before = readShard("F01").rows.map((r) => ({ id: r.id, state: r.state }));
+
+      rmSync(recordPath("B2"), { recursive: true, force: true });
+      mkdirSync(recordPath("B2"));
+
+      const attempt = runCli(
+        [
+          "discharge",
+          "F01",
+          "--evidence",
+          "Railway deploy 1234abcd SUCCESS; Actions run 999 green against it",
+        ],
+        tmp,
+      );
+      check("discharge: an IO failure mid-batch exits non-zero", attempt.code !== 0, true);
+      check(
+        "discharge: the failure prints a bugs: message, never a raw stack trace",
+        [/^bugs: /m.test(attempt.out), /\bat .*\.m?js:\d+:\d+/.test(attempt.out)],
+        [true, false],
+      );
+      check(
+        "discharge: the shard is rolled back whole, not left half-done",
+        readShard("F01").rows.map((r) => ({ id: r.id, state: r.state })),
+        before,
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // The CLI entry point must never let a genuinely UNANTICIPATED exception
+  // (one `fail()` never saw coming) surface as a raw Node stack trace — this
+  // is a CLI a hook shells out to. A malformed catalogue line throws a real
+  // SyntaxError straight out of readCatalogue's unguarded JSON.parse, which
+  // nothing downstream of it catches.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      mkdirSync(tmp, { recursive: true });
+      writeFileSync(join(tmp, "bugs.jsonl"), "not json at all\n");
+      const attempt = runCli(["list"], tmp);
+      check(
+        "unexpected failure: a genuinely unanticipated exception exits non-zero",
+        attempt.code !== 0,
+        true,
+      );
+      check(
+        "unexpected failure: prints ONE 'bugs: unexpected failure in <cmd> —' line, never a stack trace",
+        [
+          /^bugs: unexpected failure in list —/m.test(attempt.out),
+          /\bat .*\.m?js:\d+:\d+/.test(attempt.out),
+        ],
+        [true, false],
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
   // The T2 evidence rule. A refusal path cannot be exercised in-process
   // (`fail` exits), so the refusal runs the REAL CLI in a child process and
   // asserts BOTH the non-zero exit and that nothing was written.
@@ -5777,4 +5892,14 @@ function apply(){
 const [, , cmd, ...rest] = process.argv;
 if (!cmd || !cmds[cmd])
   fail(`unknown command '${cmd ?? ""}' — try: ${Object.keys(cmds).join(", ")}`);
-cmds[cmd](rest);
+// An exception `fail()` did not anticipate (an IO error, a malformed shard a
+// command forgot to guard) used to surface as a raw Node stack trace — this
+// is a CLI a hook shells out to, and that reads as a crash rather than the
+// one-line `bugs:` refusal every other failure prints. Set BUGS_DEBUG=1 to
+// see the real stack while debugging.
+try {
+  cmds[cmd](rest);
+} catch (e) {
+  if (process.env.BUGS_DEBUG === "1") throw e;
+  fail(`unexpected failure in ${cmd} — ${e.message}`);
+}
