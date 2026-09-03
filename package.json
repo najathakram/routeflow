@@ -26,7 +26,7 @@
     "local:build": "docker compose --profile app build",
     "local:up": "docker compose --profile app up -d --build",
     "local:migrate": "docker compose --profile app run --rm migrate",
-    "local:seed": "DATABASE_URL=\"postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-pass}@localhost:5432/${POSTGRES_DB:-routeflow_dev}\" npm --prefix apps/api run db:seed",
+    "local:seed": "DATABASE_URL=\"postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-pass}@localhost:5432/${POSTGRES_DB:-routeflow_dev}\" sh -c 'npm --prefix apps/api run db:seed && npm --prefix apps/api run db:publish:catalog:v11'",
     "local:validate": "SMOKE_BASE_URL=http://localhost:3000 SMOKE_TENANT_SLUG=test SMOKE_WAIT_RETRIES=30 sh -c 'npm run smoke && npm run post-deploy-check'",
     "local:validate:features": "SMOKE_BASE_URL=http://localhost:3000 SMOKE_TENANT_SLUG=test npm run feature-smoke",
     "local:logs": "docker compose --profile app logs -f api web",

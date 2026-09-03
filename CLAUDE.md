@@ -55,17 +55,21 @@ decision + rationale is [`docs/adr/0001-local-hosting-environment.md`](docs/adr/
 
 ```bash
 npm run local:up          # build images + start postgres, redis, migrate, api, web
-npm run local:seed        # seed approved `test` tenant → operator admin / Admin@123
+npm run local:seed        # seed `test` tenant (operator admin / Admin@123) + publish genesis plan catalog
 npm run local:validate    # smoke + post-deploy-check @ localhost:3000 (the core gate)
 ```
 
 `local:validate` is the dependable pre-PR gate: `smoke` (health + unauth routes) then
 `post-deploy-check` (operator login, orders/invoices/customers/products, **money-math +
 invoice reconciliation**). `npm run local:validate:features` runs the deeper
-`feature-smoke` battery — note it needs a **fully provisioned** tenant (a published
-billing plan catalog); the base `test` seed doesn't publish one, so catalog-dependent
-flows (e.g. estimate→invoice convert) 404 until that's seeded. Verified working
-2026-09-03: build → migrate → healthy api+web → seed → `local:validate` green.
+`feature-smoke` battery (estimate→invoice convert, AP bills, product-sales, fail-closed
+uploads). That battery needs a **published billing plan catalog** — global reference data
+the `PlanVersion` table starts empty of — so `local:seed` now publishes it as a genesis
+step: after the guarded tenant seed it runs the shipped, idempotent
+`db:publish:catalog:v11` publisher (tenant seed **first**, so its `assertSafeTarget` guard
+aborts a mis-pointed DB before the prod-capable catalog publisher writes). Verified working
+2026-09-03: build → migrate → healthy api+web → seed (+catalog v1) → `local:validate` **and**
+`local:validate:features` both green.
 
 Then exercise the feature: **Web** http://localhost:3001 · **API/Swagger**
 http://localhost:3000/api/docs · **Health** http://localhost:3000/api/v1/health.

@@ -85,15 +85,23 @@ scripts and a runbook in `CLAUDE.md`. Concretely:
        `http://localhost:3000` with `SMOKE_TENANT_SLUG=test`: health, operator login,
        orders/invoices/customers/products, money-math and invoice reconciliation. Green on a
        freshly seeded stack.
-   - **`npm run local:validate:features`** (optional) — [`scripts/feature-smoke.mjs`](../../scripts/feature-smoke.mjs),
-     the exhaustive feature battery. It assumes a **fully provisioned** operator tenant,
-     including a **published billing plan catalog**, which the minimal `test` seed does not
-     create (there is no genesis catalog seed in-repo — the ladder is normally published via
-     the platform-admin Plans editor / `PlanCatalogService`; the `v8–v11` scripts are
-     incremental bumps that each assume a prior published version). So catalog-dependent
-     flows (e.g. `POST /estimates/:id/convert-to-invoice` → _"No published plan catalog
-     exists"_) 404 locally until a catalog is seeded. **Follow-up:** add a genesis
-     catalog-seed step to `local:seed` to make the deeper battery pass locally.
+   - **`npm run local:validate:features`** — [`scripts/feature-smoke.mjs`](../../scripts/feature-smoke.mjs),
+     the exhaustive feature battery (estimate→invoice convert, AP bills, product-sales
+     invariants, fail-closed uploads, …). It needs a **published billing plan catalog** on
+     top of the tenant seed, because catalog-dependent flows (e.g.
+     `POST /estimates/:id/convert-to-invoice`) resolve entitlements against it and otherwise
+     404 with _"No published plan catalog exists"_. The billing catalog is **global
+     reference data** (not tenant-scoped) and is normally published through the platform-admin
+     Plans editor / `PlanCatalogService`; on a fresh local DB the `PlanVersion` table is empty.
+     So **`local:seed` now publishes the current catalog as a genesis step**: after the
+     `assertSafeTarget`-guarded tenant seed runs, it invokes the already-shipped, idempotent
+     [`publish-plan-catalog-v11`](../../apps/api/prisma/publish-plan-catalog-v11.ts) publisher
+     (`db:publish:catalog:v11`). On an empty DB that script creates version 1 (4 plan
+     definitions + 5 add-on SKUs) and PUBLISHES it, mirroring `PlanCatalogService`
+     byte-for-byte; on a re-run it's a no-op. Reusing the canonical publisher rather than a
+     bespoke seed keeps the local catalog from drifting from what prod ships. The tenant seed
+     runs **first** so its local-only guard aborts a mis-pointed `DATABASE_URL` before the
+     (prod-capable, unguarded) catalog publisher can write.
 
 ## Ports & topology
 
@@ -114,9 +122,9 @@ start order: postgres+redis healthy → migrate exits 0 → api healthy → web
 ```bash
 # 0. one-time: Docker Desktop running
 npm run local:up          # build images + start postgres, redis, migrate, api, web
-npm run local:seed        # seed approved `test` tenant (operator admin / Admin@123)
+npm run local:seed        # seed approved `test` tenant (operator admin / Admin@123) + publish genesis plan catalog
 npm run local:validate    # smoke + post-deploy-check @ localhost:3000 (the core gate)
-npm run local:validate:features   # optional deeper battery (needs a seeded billing catalog)
+npm run local:validate:features   # deeper feature battery (needs the catalog local:seed now publishes)
 # ... exercise your feature at http://localhost:3001 (web) / http://localhost:3000/api/docs (Swagger) ...
 npm run local:logs        # tail api + web logs
 npm run local:down        # stop the stack (keeps volumes)
