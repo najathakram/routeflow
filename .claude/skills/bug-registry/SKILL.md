@@ -105,9 +105,12 @@ slot of the cap and keeps its hard conflicts, which is why wave 1 can be shorter
 empty, while work is clearly available. It is never offered as a pick.
 
 Both commands say **why** a batch is not on offer: a live lease, rows already `in-flight`, the
-carve-out, or `blocked by in-flight F## — shares <file>`. A prose "claimed for planning" comment is
-surfaced as a warning, never treated as a lock. A batch with no `board.json` issue is reported as
-**unchecked**, not as free — no lease could be read for it at all.
+carve-out, or `blocked by in-flight F## — shares <file>` (or `blocked by leased F##` when the holder
+is a remote `team.mjs` lease rather than a local row — the two are distinguished, not both reported
+as "in-flight"). A prose "claimed for planning" comment is surfaced as a warning, never treated as a
+lock. A batch with no `board.json` issue is reported as **unchecked**, not as free — no lease could
+be read for it at all. `next`'s text output warns about EVERY batch's own claim check, not just the
+head's — a batch listed as "safe to run alongside it" carries its own `⚠` line when its check failed.
 
 `next --json` and `waves --json` carry the same self-describing payload, so a dispatcher never has
 to infer the schedule it was given:
@@ -175,18 +178,41 @@ Guards you cannot talk your way past:
   verify runner never has one), so one batch-wide sentence would otherwise discharge every T2 row
   in the batch past the strongest control the campaign has. Two rows given identical text are
   refused too (normalized — trim, collapse whitespace, lowercase — so a trailing space cannot
-  defeat this). The batch-wide `--evidence` stays right for T1/T3 and lands in `evidence`.
+  defeat this), and the check is scoped to the **whole ledger**, not just this call: reusing a
+  string across two separate `discharge` calls (a different batch, a later session) is refused too,
+  not silently "grandfathered" the way a pre-rule row is. The batch-wide `--evidence` stays right
+  for T1/T3 and lands in `evidence`.
 - `--pending-deploy` is T2-only.
 - **A T3 row needs `--build-plan <path/to/build-plan.md>` on `prove`, or the prove is refused.**
   `campaign-check` discharges a T3 row only from a `REG-B###` row in its batch's OWN
   `build-plan.md` "## Manual verification" section, read from the ledger's `buildPlan` field — with
   nothing writing that field, a T3 prove used to land a claim the gate could never verify and no
-  command could repair. `prove` now resolves the path against the repo root, asserts the file
-  exists and its Manual verification section carries the exact token, and persists it:
+  command could repair. `prove` resolves the path against the repo root, asserts the file exists and
+  its Manual verification section carries the exact token, and persists it:
 
   ```bash
   npm run bugs -- prove B211 --pr 601 --proof "REG-B211 manual verification row" \
     --build-plan .claude/pipeline/2026-09-02-f11-run-cancel-skip/build-plan.md
+  ```
+
+  **The path must be repo-relative** — an absolute path or one that escapes the repo root (`../…`)
+  is refused outright, never persisted. The ledger is shared across every machine and CI runner: an
+  absolute path leaks a local username/drive letter into a repo that goes public for CI and resolves
+  to nothing anywhere else, turning the gate red there. `prove` stores the normalised,
+  forward-slash, repo-relative form regardless of OS.
+
+  **The token must sit in a table row.** Both `prove` and `campaign-check` (via the shared
+  `scripts/campaign/reg-token.mjs`) require the `REG-B###` token to appear on a line starting with
+  `|` inside the "## Manual verification" section, after stripping fenced code blocks — a token
+  merely mentioned in prose, or inside a fence explicitly saying not to use it, does not discharge
+  the row. T3's whole proof is "a manual-verification **row**"; write it as one:
+
+  ```markdown
+  ## Manual verification
+
+  | Token    | What was checked by hand             |
+  | -------- | ------------------------------------ |
+  | REG-B211 | Cancelling the run left it sweepable |
   ```
 
 ### When a closed bug comes back
