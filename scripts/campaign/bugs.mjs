@@ -2216,13 +2216,23 @@ cmds.discharge = (args) => {
     // campaign-check.mjs uses for its own byte-identical-evidence warning — a
     // trailing space or a case difference must not let this guard admit what
     // the gate would still flag.
+    //
+    // Scoped to the WHOLE ledger, not just this call: `discharge` is
+    // per-batch, so seeding `seen` from only this invocation's rows let the
+    // exact same string reused across TWO SEPARATE `discharge` calls (each
+    // exit 0, neither refusing the other) sail straight through — and
+    // campaign-check then had to call the second one "grandfathered" rather
+    // than refuse it, because nothing here had ever seen it.
     const seen = new Map();
+    if (existsSync(STATUS_DIR()))
+      for (const f of readdirSync(STATUS_DIR()).filter((n) => n.endsWith(".jsonl")))
+        for (const r of readShard(f.replace(/\.jsonl$/, "")).rows)
+          if (r.dischargeEvidence) seen.set(normalizeEvidence(r.dischargeEvidence), r.id);
     for (const [id, text] of perRow) {
       const key = normalizeEvidence(text);
-      if (seen.has(key))
-        fail(
-          `${id} and ${seen.get(key)} were given byte-identical evidence — cite each row's own run`,
-        );
+      const prior = seen.get(key);
+      if (prior && prior !== id)
+        fail(`${id} and ${prior} were given byte-identical evidence — cite each row's own run`);
       seen.set(key, id);
     }
 
@@ -4107,6 +4117,76 @@ cmds["self-test"] = () => {
         "discharge: the refusal wrote nothing",
         readShard("F01").rows.map((r) => r.state),
         ["proven", "proven"],
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // The byte-identical-evidence guard must be scoped to the WHOLE ledger, not
+  // just one call — `discharge` is per-batch, so a string reused across TWO
+  // SEPARATE discharge calls (a second batch, a later session) used to sail
+  // through both, and campaign-check then had to call the second one
+  // "grandfathered" instead of refusing it outright.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    const EV = "Actions run 999 job 42: spec 28 REG-B1 passed against deploy 1234abcd";
+    try {
+      cmds.file([
+        "T2 cross-batch fixture A",
+        "--location",
+        "apps/web/e2e/self-test.spec.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T2",
+      ]);
+      cmds.file([
+        "T2 cross-batch fixture B",
+        "--location",
+        "apps/web/e2e/self-test.spec.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F02",
+        "--tier",
+        "T2",
+      ]);
+      cmds.prove(["B1", "--pr", "620", "--proof", "REG-B1 e2e: fixture A"]);
+      cmds.prove(["B2", "--pr", "620", "--proof", "REG-B2 e2e: fixture B"]);
+      cmds.discharge([
+        "F01",
+        "--evidence",
+        "Railway deploy 1234abcd SUCCESS; Actions run 999 green against it",
+        "--evidence-B1",
+        EV,
+      ]);
+      const cross = runCli(
+        [
+          "discharge",
+          "F02",
+          "--evidence",
+          "Railway deploy 1234abcd SUCCESS; Actions run 999 green against it",
+          "--evidence-B2",
+          EV,
+        ],
+        tmp,
+      );
+      check(
+        "discharge: refuses evidence reused across a SEPARATE batch's discharge call",
+        cross.code !== 0,
+        true,
+      );
+      check(
+        "discharge: the cross-batch refusal wrote nothing to F02",
+        readShard("F02").rows[0].state,
+        "proven",
       );
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
