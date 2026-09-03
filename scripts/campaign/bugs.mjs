@@ -707,7 +707,12 @@ function computeWaves(ranked, conflicts, cap = AGENT_CAP, busy = []) {
     const w = waveOf.get(b.batch);
     (waves[w] ??= []).push(b);
   }
-  return waves.map((w) => w ?? []);
+  // When busy batches alone fill wave 1, index 0 is never assigned above and
+  // `waves` is a SPARSE array — `Array.prototype.map` skips holes rather than
+  // visiting them, so a `w ?? []` map here never runs and the hole survives
+  // into `JSON.stringify` as `null`. Fill holes in place instead.
+  for (let i = 0; i < waves.length; i++) waves[i] ??= [];
+  return waves;
 }
 
 // The one selector both `next` and `waves` run on, so they can never disagree
@@ -2828,6 +2833,22 @@ cmds["self-test"] = () => {
       "waves: never schedules more than the agent cap at once",
       computeWaves(rankBatches(five), new Map(), 4).map((w) => w.length),
       [4, 1],
+    );
+
+    // When busy batches ALONE fill the cap, no candidate is ever assigned
+    // wave 0 — `waves[0]` is a hole `Array.prototype.map` skips over, and
+    // JSON.stringify then serialises it as `null` instead of `[]`.
+    const busyFour = ["F10", "F11", "F12", "F13"];
+    const wavesWithBusy = computeWaves(rankBatches(five), new Map(), 4, busyFour);
+    check(
+      "waves: wave 1 is [] (never a hole) when busy batches alone fill the cap",
+      wavesWithBusy[0],
+      [],
+    );
+    check(
+      "waves: JSON.stringify agrees — no null where an empty wave belongs",
+      JSON.parse(JSON.stringify({ waves: wavesWithBusy })).waves[0],
+      [],
     );
   }
 
