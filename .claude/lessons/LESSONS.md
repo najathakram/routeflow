@@ -309,6 +309,23 @@
 - **Guard:** `REG-B55 (T21)`; the write-by-write enumeration is recorded in F11's fix card so the
   next batch on this path starts from it rather than rebuilding it.
 
+### L-045 · 2026-09-02 · domain · #TBD
+
+- **Symptom:** every cancelled run, and every run completed with a skipped stop, left its
+  undelivered orders pinned to a stale `routeRunStopId` — invisible to the dispatch sweep and the
+  trip builder (both require the pointer null), while the buyer card kept showing a driver and
+  "you're next" for a called-off run.
+- **Root cause:** the pointer was set by one path (dispatch) and every re-entry reader keyed on it
+  being null, but neither terminal transition ever cleared it. The invariant had a writer and its
+  readers, and no releaser — same shape as [[L-029]]'s teardown paths.
+- **Lesson:** **A pointer that gates re-entry must be released by every transition that makes the
+  pointed-at thing terminal, inside that transition's own transaction — and the release predicate
+  must be the durable marker the forward path writes (here `stop.status = COMPLETED`), never the
+  existence of a side row a payment-only path skips.** When the release makes a new state pair
+  reachable (a SKIPPED stop on a COMPLETED run), ship the refusal for it in the same PR ([[L-030]]).
+- **Guard:** `REG-B129 (T5 path: cancel → un-cancel → re-dispatch)`, `REG-B211 (T12 path:
+complete-with-skipped → reopen refused)`; mutation probes in the F11 PR body.
+
 ### L-029 · 2026-09-01 · domain · #588
 
 - **Symptom:** cancelling an order destroyed value three ways at once — it voided the invoice for

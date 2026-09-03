@@ -373,6 +373,13 @@ export function useUpdateRouteRunStatus() {
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["route-runs"] });
       qc.invalidateQueries({ queryKey: ["route-runs", id] });
+      // F11: a CANCELLED/COMPLETED write releases undelivered orders — refresh order lists so they reappear as dispatchable.
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      // F11: same release also frees the pointer the trip builder reads — both the
+      // picker list of addable orders (trips.ts `useEligibleTripOrders`) and the
+      // per-selection eligibility verdict (`useTripEligibility` below).
+      qc.invalidateQueries({ queryKey: ["trips-eligible-orders"] });
+      qc.invalidateQueries({ queryKey: ["trip-eligibility"] });
     },
   });
 }

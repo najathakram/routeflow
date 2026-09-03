@@ -5231,9 +5231,11 @@ export class OrdersService implements OnApplicationBootstrap {
     // Status alone isn't enough: the dispatch sweep attaches orders to a run
     // while they're still CONFIRMED, so a freshly dispatched order would flip
     // to SHIP and render as "Shipped" while still standing as a stop on the
-    // driver's live run. Stale attachments (finished/cancelled runs —
-    // `routeRunStopId` is never cleared) are harmless, so only ACTIVE runs
+    // driver's live run. Stale attachments are harmless, so only ACTIVE runs
     // block, mirroring TripsService.checkEligibility's ON_ACTIVE_RUN predicate.
+    // Since F11 a run going terminal RELEASES the orders of every stop that
+    // recorded no work, so a stale attachment now only survives on a COMPLETED
+    // stop — or on a row stranded before that deploy, until the D4 repair runs.
     const run = order.routeRunStop?.routeRun ?? null;
     const onActiveRun =
       order.routeRunStopId != null &&
@@ -5329,6 +5331,18 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     if (!order.routeRunStop) {
+      return { status: order.status, tracking: null };
+    }
+
+    // F11 (B129 / B146 contract, spec R5): a CANCELLED run is not tracking —
+    // the buyer card must never show a driver, a stop number or "you're next"
+    // for a called-off run. After F11 the release nulls the pointer at cancel
+    // time, so this branch serves rows stranded BEFORE the deploy until the D4
+    // repair frees them, and stays as the written contract. A SKIPPED own-stop
+    // on a live or completed run keeps the FULL payload (stopStatus: "SKIPPED",
+    // stopsAhead exactly as computed below) — the client branches on
+    // stopStatus; the server invents no "skipped shape".
+    if (order.routeRunStop.routeRun.status === RouteRunStatus.CANCELLED) {
       return { status: order.status, tracking: null };
     }
 

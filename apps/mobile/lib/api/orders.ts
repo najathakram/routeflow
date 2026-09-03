@@ -284,8 +284,13 @@ export function useCancelImpact(id: string, enabled = true) {
  * Both prefixes also cover every per-id key beneath them, so these two calls
  * are the complete set. EVERY order mutation goes through this helper; do not
  * hand-roll the invalidation again, that is how the families drifted apart.
+ *
+ * Exported because a non-order mutation can release orders too: a terminal
+ * route-run write (lib/api/routes.ts#useUpdateRunStatus, F11) unpins the
+ * undelivered orders server-side, and the screen that cancels the run is the
+ * OPERATOR one — which reads the ["admin", "orders"] family.
  */
-function invalidateOrderCaches(qc: QueryClient) {
+export function invalidateOrderCaches(qc: QueryClient) {
   void qc.invalidateQueries({ queryKey: ["orders"] });
   void qc.invalidateQueries({ queryKey: ["admin", "orders"] });
 }

@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { invalidateOrderCaches } from "./orders";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -204,6 +205,10 @@ export function useUpdateRunStatus() {
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["route-runs"] });
       qc.invalidateQueries({ queryKey: ["route-runs", id] });
+      // F11: a CANCELLED/COMPLETED write releases undelivered orders — refresh order lists so
+      // they reappear as dispatchable. Goes through invalidateOrderCaches so BOTH key families
+      // are hit: the operator route-run screen that issues the cancel reads ["admin", "orders"].
+      invalidateOrderCaches(qc);
     },
   });
 }

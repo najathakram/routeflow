@@ -17,10 +17,16 @@ export class UpdateRunStatusDto {
  *
  * CANCELLED is deliberately NOT absorbing. Un-cancelling back to
  * SCHEDULED/IN_PROGRESS is the ONLY recovery an accidentally cancelled run
- * has: `deleteRun` refuses any run with a recorded deliveryMutation, reopenStop
- * refuses a cancelled run, and the dispatch sweep only picks up orders whose
- * `routeRunStopId` is null — so a terminal CANCELLED would strand the run AND
- * its undelivered orders with no path out. Restricting WHO may un-cancel is
+ * has: `deleteRun` refuses any run with a recorded deliveryMutation and
+ * reopenStop refuses a cancelled run. Since F11 a cancel RELEASES the
+ * undelivered orders (their `routeRunStopId` is nulled inside the cancel
+ * transaction, so a fresh dispatch re-collects them); un-cancel is a
+ * status-only restore that re-pins nothing. Un-cancel stays legal as the
+ * non-destructive recovery for the RUN itself (its completed stops' POD and
+ * settlement) — it does NOT bring the released orders back onto the run, and
+ * `createRun` refuses a route that already carries a SCHEDULED/IN_PROGRESS
+ * run, so re-dispatching those orders means cancelling this run again and
+ * dispatching a fresh one. Restricting WHO may un-cancel is
  * `updateRunStatus`'s job (drivers may not); the matrix stays role-agnostic.
  *
  * Same-status writes stay allowed so offline retries remain idempotent.
