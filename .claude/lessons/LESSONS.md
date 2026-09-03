@@ -325,6 +325,23 @@
   mid-loop for `sync` — and asserts the PRE-failure state (source row, catalogue, anchor) survives
   untouched, not just that the command exits non-zero.
 
+### L-057 · 2026-09-02 · tooling · #597
+
+- **Symptom:** a mutual-exclusion lock whose holders were all alive still put three writers in one
+  critical section and reverted two proven ledger rows — every process exited 0, self-test green,
+  campaign gate green. The documented recovery from a killed writer had never once run.
+- **Root cause:** staleness was measured as AGE since acquire ("held for a while", not "abandoned"),
+  so a waiter stole a LIVE lock and the holder wrote its stale snapshot back. Release deleted the
+  lock PATH unconditionally, so the robbed holder deleted its successor's lock and admitted a third
+  writer. Spin (2 s) was shorter than stale (5 s) — two constants that must be ordered, untested.
+- **Lesson:** **Break a lock on liveness, never on age — abandoned means the owner is dead. Release
+  only the lock you own (a token, checked on the way out). Fix break and release TOGETHER: either
+  alone looks green. When two constants only work in one order, test the order.**
+- **Guard:** `<lock>/owner.json` {pid, token}; break only on ESRCH (120 s last resort for an
+  unreadable owner); release rm's only on a matching token; spin 10 s; signals through the exit
+  hook. Child-process self-tests (live holder kept, dead holder broken in one invocation, foreign
+  token refuses release), mutation-probed: restoring the age break reddens six checks (bb141004).
+
 ## testing
 
 ### L-050 · 2026-09-02 · testing · #598
