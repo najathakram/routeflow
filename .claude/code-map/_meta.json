@@ -1,7 +1,7 @@
 {
-  "mappedSha": "ab922112",
-  "generatedAt": "2026-09-04T15:05:00.000Z",
+  "mappedSha": "f60bd27c",
+  "generatedAt": "2026-09-04T17:00:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
-  "fileCount": 935,
-  "notes": "**2026-09-04** — (branch `fix/imp-02-order-merge-advisory-lock`, PR #609) VISIBILITY WATCHDOG: new `scripts/visibility-watchdog.mjs` arms the private flip on a detached, fixed 45-min deadline BEFORE any public-repo CI window — the fix for the killed-session incident where the repo stayed public ~6.5h because the flip lived only in the (killed) session's control flow. `docs/runbooks/deploy-visibility-flip.md`, `CLAUDE.md`, and the `rebuild` skill all now require launching it first. Spec: `apps/api/src/common/visibility-watchdog-script.spec.ts`. `api.md` gains an entry; lesson L-057 (deploy). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "fileCount": 936,
+  "notes": "**2026-09-04** — (`watchdog-spec-host-speed` fix, L-061) `visibility-watchdog-script.spec.ts`'s \"defaults\" test replaced its fixed 500 ms readiness wait with `awaitStartLine`, a capped poll on the script's own `\" start \"` log line (kills the child in `finally` on every path); added a deterministic slow-boot repro test (`REG-WATCHDOG-SLOWBOOT`, new fixture `src/common/testing/slow-boot.cjs`) and a non-empty guard on the stdout-mirror test. `scripts/visibility-watchdog.mjs` itself is unchanged. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

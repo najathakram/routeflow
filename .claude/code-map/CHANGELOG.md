@@ -8,6 +8,13 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-04** — (`watchdog-spec-host-speed` fix, L-061) `visibility-watchdog-script.spec.ts`'s
+  "defaults" test replaced its fixed 500 ms readiness wait with `awaitStartLine`, a capped poll on
+  the script's own `" start "` log line (kills the child in `finally` on every path); added a
+  deterministic slow-boot repro test (`REG-WATCHDOG-SLOWBOOT`, new fixture
+  `src/common/testing/slow-boot.cjs`) and a non-empty guard on the stdout-mirror test.
+  `scripts/visibility-watchdog.mjs` itself is unchanged.
+
 - **2026-09-04** — (branch `fix/imp-02-order-merge-advisory-lock`, PR #609) VISIBILITY WATCHDOG:
   new `scripts/visibility-watchdog.mjs` arms the private flip on a detached, fixed 45-min
   deadline BEFORE any public-repo CI window — the fix for the killed-session incident where

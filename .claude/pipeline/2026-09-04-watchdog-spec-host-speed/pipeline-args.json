@@ -1,0 +1,82 @@
+{
+  "mode": "bugfix",
+  "scale": "small",
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/.claude/pipeline/2026-09-04-watchdog-spec-host-speed/build-plan.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/.claude/pipeline/2026-09-04-watchdog-spec-host-speed/bug-test-plan.md",
+  "lessonsPath": ".claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-04T20:15:05Z",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog",
+  "context": "watchdog spec host-speed race; spec-only fix; unblocks the local pre-push gate and #597's push",
+  "formatCommand": "git ls-files -mo --exclude-standard | grep -E '\\.(ts|tsx|js|jsx|json|md|cjs)$' | grep -v '^\\.claude/pipeline/' | xargs -r npx prettier --write",
+  "testPackages": [
+    {
+      "id": "TP1",
+      "title": "Seam extraction + deterministic repro + pins",
+      "files": [
+        "apps/api/src/common/visibility-watchdog-script.spec.ts",
+        "apps/api/src/common/testing/slow-boot.cjs"
+      ],
+      "brief": "Create the slow-boot.cjs fixture (Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);). Extract the CURRENT fixed-500ms wait verbatim into a new awaitStartLine({argv, env, capMs=30000, intervalMs=50}) helper (behavior-preserving at this step). Author T1 (REG-WATCHDOG-SLOWBOOT, title contains 'boots slowly'): awaitStartLine driven with NODE_OPTIONS=--require <forward-slash slow-boot.cjs path>, asserting the log contains 'minutes=45 repo=najathakram/routeflow'; must fail today with received \"\" since the helper still just does the old fixed delay. Author T3 pin: awaitStartLine({argv:['-e','setInterval(() => {}, 1000)'], capMs:300}) rejects with the cap message and the child is dead afterward. Author T4 pin: add a non-empty-log guard to the stdout-mirror test before it compares lines."
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "cd apps/api && npx jest src/common/visibility-watchdog-script.spec.ts -t \"boots slowly\" --runInBand"
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "WP1",
+      "title": "Poll/cap/kill helper + explicit timeouts",
+      "files": ["apps/api/src/common/visibility-watchdog-script.spec.ts"],
+      "brief": "Replace awaitStartLine's body (extracted verbatim by TP1) with the real poll/cap/kill design: spawn the child, poll readLog(logFile) every intervalMs until it contains ' start ' (the exact tag log() writes at scripts/visibility-watchdog.mjs:137-144), resolve {child, log}; on reaching capMs reject with Error('start line not seen within <capMs> ms; log=<last 300 chars>'); kill the child in a finally on every path (resolve, cap-reject, and the child's 'error' event) and await its exit (up to 2s) before returning. Add an explicit third-argument timeout of 35000 to T1 and to the converted 'defaults' test (T2). Do not weaken or remove T4's non-empty-log guard. Do not touch scripts/visibility-watchdog.mjs or the four spawnSync-based sibling tests.",
+      "satisfies": ["watchdog-spec-host-speed"],
+      "provenBy": ["T1", "T2", "T3"],
+      "effort": "medium"
+    },
+    {
+      "id": "WP-DOCS",
+      "title": "Code map, lessons, changelog",
+      "files": [
+        ".claude/code-map/api.md",
+        ".claude/code-map/_meta.json",
+        ".claude/code-map/CHANGELOG.md",
+        ".claude/lessons/LESSONS.md",
+        ".claude/lessons/_meta.json"
+      ],
+      "brief": "Add/update the code-map entry for the spec's awaitStartLine helper and the new slow-boot.cjs fixture; bump code-map _meta.json mappedSha/generatedAt and replace (never accumulate) its notes; add one dated CHANGELOG bullet. Append the exact L-061 entry given in build-plan.md under '## testing' in LESSONS.md; set lessons _meta.json nextId=62, activeCount+1, updatedAt=now, and append the given sentence to note. If validate-lessons.mjs reports the byte cap exceeded, hold back the L-061 entry (bump updatedAt alone) and keep the entry text in RESUME.md for the owner's caps ruling instead of failing the package.",
+      "dependsOn": ["WP1"],
+      "effort": "low"
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "cd apps/api && npx jest src/common/visibility-watchdog-script.spec.ts --runInBand",
+      "cd apps/api && npx tsc -p tsconfig.build.json --noEmit"
+    ],
+    "final": [
+      "cd apps/api && npx jest src/common/visibility-watchdog-script.spec.ts --runInBand",
+      "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+      "cd apps/api && npx jest src/common --runInBand",
+      "node scripts/validate-lessons.mjs"
+    ]
+  },
+  "radiusFiles": [
+    "apps/api/src/common/visibility-watchdog-script.spec.ts",
+    "apps/api/src/common/testing/slow-boot.cjs",
+    "scripts/visibility-watchdog.mjs",
+    "apps/api/package.json",
+    "apps/api/jest.db.config.js"
+  ],
+  "siblingPatterns": [
+    {
+      "pattern": "setTimeout\\([^)]*,\\s*\\d{2,4}\\s*\\)",
+      "note": "a literal-ms timer standing in for readiness in a spec under apps/api/src or scripts (db-locks.db.spec.ts:22 is a reusable sleep helper -- exclude)"
+    },
+    {
+      "pattern": "\\bspawn\\(",
+      "note": "a spawn in a *.spec.ts with no following exit/close listener or readiness poll -- judge by reading the surrounding test"
+    }
+  ]
+}
