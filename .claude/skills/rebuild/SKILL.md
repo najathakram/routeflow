@@ -13,7 +13,11 @@ description: >
 > `scripts/lib/test-tenants.cjs` (`test`, `e2e-routeflow`, or `qa-*`/`e2e-*`/`ux-audit-*`).
 > Never target a live client tenant — see CLAUDE.md "Test tenants & real-client data".
 
-**MANDATORY — run ALL 3 steps in order every time the user asks to rebuild/deploy.**
+**MANDATORY — run ALL 3 steps in order every time the user asks to rebuild/deploy**, including
+Step 2's public/private visibility flip **while private-minute Actions billing is broken** (see
+[`docs/runbooks/deploy-visibility-flip.md`](../../../docs/runbooks/deploy-visibility-flip.md) —
+its retirement checklist governs when Step 2 stops needing the flip; nothing else in this skill
+changes when it does).
 
 This is a standing behavioral instruction. Never skip steps or reorder them.
 
@@ -52,11 +56,12 @@ and the new image needs them. Do not merge until the migration shows as applied.
 
 ## Step 2 — Make repo public, merge PR, make repo private
 
-RouteFlow uses a $0 GitHub Actions budget; CI only runs on public repos.
+While private-minute Actions billing is unbilled-broken (see the runbook linked above), a private
+run dies as a 0-step failure, so CI needs the public window below.
 
 ```bash
 # 1. Make public
-gh repo edit najathakram/routeflow --visibility public --yes
+gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences
 
 # 2. Find the open PR on the current branch (or pass the PR number explicitly)
 gh pr list --state open --json number,headRefName
@@ -64,14 +69,21 @@ gh pr list --state open --json number,headRefName
 # 3. Squash-merge the PR to master
 gh pr merge <PR_NUMBER> --squash --auto --delete-branch
 
-# 4. Wait for CI to pass (GitHub Actions — lint + type-check + test + e2e)
+# 4. Wait for CI to pass (GitHub Actions — lint + type-check + test)
 gh run watch          # or: gh pr checks <PR_NUMBER> --watch
 
-# 5. Make private again (ALWAYS do this, even if CI fails)
-gh repo edit najathakram/routeflow --visibility private --yes
+# 5. Wait until the Railway deploy reaches BUILDING — never flip during INITIALIZING, which IS
+#    the snapshot-clone window (flipping there caused five failed deploys). Full writeup:
+#    docs/runbooks/deploy-visibility-flip.md
+until railway deployment list --service @routeflow/api | sed -n '2p' | grep -qE 'BUILDING|DEPLOYING|SUCCESS'; do sleep 10; done
+
+# 6. THEN make private again — as a `finally`, even if CI failed or the merge was aborted
+gh repo edit najathakram/routeflow --visibility private --accept-visibility-change-consequences
 ```
 
-**Never leave the repo public.** Step 5 must run even if CI fails — put it in a finally block in your mental model.
+**Never leave the repo public.** Step 6 must run even if CI fails, and must wait for `BUILDING`
+first — put both in a finally block in your mental model; see the runbook linked above for the
+failure modes this guards against and the retirement checklist.
 
 Railway deploys automatically from master after the merge.
 
@@ -102,14 +114,11 @@ If the smoke probe passes → deploy is verified. Report the result to the user.
 
 ## Quick reference
 
-| Step | What    | Command                                        |
-| ---- | ------- | ---------------------------------------------- |
-| 0    | Gate    | `npm run verify`                               |
-| 1    | Public  | `gh repo edit ... --visibility public`         |
-| 2    | Merge   | `gh pr merge <N> --squash --auto`              |
-| 3    | Wait CI | `gh run watch`                                 |
-| 4    | Private | `gh repo edit ... --visibility private`        |
-| 5    | Smoke   | `SMOKE_BASE_URL=... npm run post-deploy-check` |
+| Step | What                    | Command                                                                                                                                                                                                          |
+| ---- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | Gate                    | `npm run verify`                                                                                                                                                                                                 |
+| 2    | Visibility flip + merge | public → merge PR → wait for `BUILDING` → private — see [`docs/runbooks/deploy-visibility-flip.md`](../../../docs/runbooks/deploy-visibility-flip.md) for the rationale, failure modes, and retirement checklist |
+| 3    | Smoke                   | `SMOKE_BASE_URL=https://routeflowapi-production.up.railway.app SMOKE_TENANT_SLUG=e2e-routeflow npm run post-deploy-check`                                                                                        |
 
 Railway webhook → `post-deploy.yml` → Playwright e2e runs automatically after deploy.
 See `.github/workflows/post-deploy.yml` for the webhook setup.

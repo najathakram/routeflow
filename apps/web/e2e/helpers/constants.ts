@@ -24,6 +24,10 @@ export const CREDENTIALS = {
   operator: { username: "admin", password: "Admin@123" },
   customer: { username: "harbor_cafe", password: "Customer1!" },
   tenantAdmin: { username: "e2e_admin", password: "TenantAdmin1!" },
+  // Dedicated identity for the spec that revokes /auth/sessions rows server-side (L-050) — never
+  // the shared operator/tenant-admin above, which every storageState: operator.json project
+  // also loads. Seeded by apps/api/scripts/e2e-seed.js.
+  sessionsOp: { username: "e2e_sessions_op", password: "Sessions1!" },
 } as const;
 
 /** True when super-admin credentials are provided via env (super-admin specs skip otherwise). */

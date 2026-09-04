@@ -271,6 +271,20 @@
 - **Guard:** `apps/api/src/common/local-env-script.spec.ts` + the `local:*` scripts all routed
   through the shim.
 
+### L-054 · 2026-09-03 · tooling · wave D imp-05
+
+- **Symptom:** Jest matched **zero tests** in this worktree with the documented
+  `testMatch: ["<rootDir>/**/*.test.{ts,tsx}"]` — `npx jest --listTests` returned empty.
+- **Root cause:** every worktree here lives under `.claude/worktrees/<name>`, so a
+  rootDir-substituted glob always contains a `\.claude` segment on Windows. `jest-config`'s glob
+  normalizer converts `\` → `/` EXCEPT when the backslash precedes one of `$()+.?^{}` (assumed an
+  escaped glob char), so that one separator survives literally and picomatch then compiles `\.` as
+  an escaped dot — matching nothing.
+- **Lesson:** on Windows, never embed `<rootDir>` in a Jest glob when the path can contain a
+  dot-directory; use a relative `testMatch` scoped by `roots` instead.
+- **Guard:** `apps/web/jest.config.js`'s inline comment on `testMatch`; the web suite count (19
+  spec files) pinned in `.claude/code-map/web.md`.
+
 ## testing
 
 ### L-050 · 2026-09-02 · testing · #598

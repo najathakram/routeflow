@@ -8,7 +8,9 @@
 # source, and until 2026-08-30 it was flipped PUBLIC for a few minutes around every
 # merge for no reason other than to make CI free — a ritual with real exposure and
 # real failure modes (five consecutive `repository not found` deploys came out of
-# racing that flip against Railway's snapshot).
+# racing that flip against Railway's snapshot). The push trigger was retired
+# 2026-08-30 (see below); PR CI still runs in a brief public window until private-
+# minute billing works (runbook: docs/runbooks/deploy-visibility-flip.md).
 #
 # Measured over 2026-07-31..2026-08-30 (417 runs, per-job wall clock from the
 # Actions API, each job billed rounded UP to the whole minute — this reconciles to

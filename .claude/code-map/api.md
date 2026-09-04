@@ -73,6 +73,22 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   `package.json` `"jest"` config with `testRegex: ".*\\.db\\.spec\\.ts$"`; API script `test:db`
   runs it; root script `local:test:db` sets `RUN_DB_SPECS=local` and runs it against the compose
   DB. The default `*.spec.ts` regex now excludes `.db.spec.ts` so `npm test` never touches Postgres.
+- **`src/common/docs-truth.spec.ts` + `src/common/no-dead-deps.spec.ts` (wave D, item 11,
+  2026-09-03)** — static tripwires living in the API project because the repo has no root test
+  runner (CLAUDE.md "DO NOT introduce ... a root-level test runner"). `docs-truth.spec.ts` reads
+  `README.md`/`CLAUDE.md` off disk and pins the specific stale claims item 11 fixed: README no
+  longer names the dead `najathakram1` remote or the deleted `deploy-staging.yml`, doesn't claim a
+  `develop` branch or "main is production-ready", and documents the `deployment_status`-triggered
+  E2E flow; CLAUDE.md no longer lists Zustand in the web stack and states the lessons-register
+  40,960-byte cap `validate-lessons.mjs` enforces. `no-dead-deps.spec.ts` proves four packages
+  removed as verified zero-reference dead weight stay removed, on BOTH halves (manifest no longer
+  declares it AND no source file under the app's tree imports it): `zustand` from `apps/web`
+  (web state is TanStack Query + context — see [`web`](web.md) `app/providers.tsx`) and
+  `@nestjs/axios`/`passport-google-oauth20`/`@types/passport-google-oauth20` from `apps/api`
+  (outbound HTTP goes through vendor SDKs; Google OAuth is `google-auth-library`'s `OAuth2Client`
+  in `auth/google-oauth.service.ts`, not a Passport `GoogleStrategy`); a reverse guard pins that
+  mobile's own zustand (a real, used dependency) and its `react-test-renderer` pin were NOT
+  collaterally touched.
 - **`src/main.ts`** — ⚠️ NEVER `app.use(json())` here: it consumes the body before Nest captures `rawBody` and silently breaks EVERY Stripe webhook signature (#400 — the 2mb body limit goes through Nest's parser options). **Sentry (2026-08-26, DSN-optional):** `import "./instrument"` is the FIRST import (`src/instrument.ts` — `Sentry.init` with `enabled: !!process.env.SENTRY_DSN`, inert otherwise); global filters registered as `useGlobalFilters(new SentryExceptionFilter(httpAdapter), new ThrottlerExceptionFilter(), new MulterExceptionFilter())` — Nest reverses the array so the specific filters still win for their types; ⚠️ the catch-all Sentry filter MUST stay first or the narrow ones are never reached. `src/common/sentry-exception.filter.ts` captures ONLY ≥500s with `tenant`/user/path tags then defers to `super.catch`; `src/common/multer-exception.filter.ts` maps multer 2.3.0's newer codes (`LIMIT_FIELD_ARRAY_INDEX`, `INVALID_FIELD_NAME`, `STREAM_DESTROYED`) to 400 — @nestjs/platform-express's `transformException` switches on a frozen message list that predates them, so without it they arrive as raw `MulterError`s, score as 500, and capture one Sentry event per attacker probe. startup: `assertSecrets()` (JWT required in all envs; **`STORAGE_URL_SIGNING_SECRET` now FATAL in production too — F5-001 fail-closed**; `ENCRYPTION_KEY` still warn-only), **no boot-time DDL (PR-1, `imp-03a`, 2026-09-03)** — `runStartupMigration()` is deleted; schema drift is now caught read-only by `scripts/schema-drift.mjs`, not by a startup writer,
   helmet, trust proxy 2 (Railway CDN), CORS wildcard
   patterns, global `ValidationPipe` (whitelist/forbidNonWhitelisted/transform),
@@ -216,8 +232,20 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   hardcoded twice. Migration `20260823000000_plan_catalog_customers_axis` (additive: `MeterKey`
   gains `CUSTOMERS` outside a transaction, `PlanDefinition.customersIncluded` nullable) must be
   applied first.
-- **`scripts/e2e-seed.js`** — idempotent seed for the `e2e-routeflow` tenant (operator
-  `admin`/`Admin@123`, customer `harbor_cafe`); on an existing tenant it also SWEEPS stale
+- **`scripts/e2e-seed.js`** — idempotent seed for the `e2e-routeflow` tenant. Seeds **four fixed
+  users** (both the fresh-tenant and existing-tenant branches): operator `admin`/`Admin@123`,
+  customer `harbor_cafe`/`Customer1!`, tenant admin `e2e_admin`/`TenantAdmin1!` (B138 —
+  `platform-admin.service.ts impersonate()` requires an ACTIVE `TENANT_ADMIN` to resolve, and
+  spec 31 `impersonation-signout` impersonates this same user), and — wave D, L-050, #598/#607 —
+  one more dedicated identity so spec 32 stops mutating the shared operator session every
+  `storageState: operator.json` project also loads: `e2e_sessions_op`/`Sessions1!` (OPERATOR,
+  spec 32 `active-sessions` logs in fresh as this user and only ever revokes its own
+  `/auth/sessions` rows). Spec 31 needed no dedicated identity — it only ever mutates its own
+  fresh impersonation session, and a wave-D attempt to give it a separate
+  `e2e_impersonated_admin` identity was reverted (it would have left `e2e-routeflow` with two
+  ACTIVE `TENANT_ADMIN`s, which makes `impersonate()`'s unordered `findFirst` ambiguous).
+  `helpers/constants.ts CREDENTIALS.sessionsOp` on the web side carries the pair. On an existing
+  tenant it also SWEEPS stale
   parked SaleDrafts from the operator's dock (kind ORDER + device "Desktop web" + title
   `Order…` — residue web e2e 08-create-order-escape parked before it cleaned up after itself,
   2026-08-19). **2026-08-20, generalized 2026-08-28:** `ensureAddon(tenantId, addonKey)` (was
