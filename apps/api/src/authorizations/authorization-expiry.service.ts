@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { Cron } from "@nestjs/schedule";
+import { LeaderCron } from "../common/cron-lock";
 import { NotificationEvent } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -54,7 +54,7 @@ export class AuthorizationExpiryService {
     return null;
   }
 
-  @Cron("0 3 * * *") // 03:00 UTC daily (offset from tobacco's 02:00)
+  @LeaderCron("0 3 * * *", "authorization-expiry.runExpirySweep") // 03:00 UTC daily (offset from tobacco's 02:00)
   async runExpirySweep(): Promise<void> {
     const [activeTenants, gatedRows] = await Promise.all([
       this.prisma.tenant.findMany({ where: { status: "ACTIVE" }, select: { id: true } }),

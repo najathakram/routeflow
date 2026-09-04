@@ -9,7 +9,7 @@ import {
   OnApplicationBootstrap,
   ServiceUnavailableException,
 } from "@nestjs/common";
-import { Cron } from "@nestjs/schedule";
+import { LeaderCron } from "../common/cron-lock";
 import { InjectQueue } from "@nestjs/bull";
 import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
@@ -1548,7 +1548,7 @@ export class OrdersService implements OnApplicationBootstrap {
       });
   }
 
-  @Cron("0 * * * *")
+  @LeaderCron("0 * * * *", "orders.cronSweepPendingOrders")
   async cronSweepPendingOrders() {
     try {
       await this.sweepAllPendingOrders();

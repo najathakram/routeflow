@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { Cron, CronExpression } from "@nestjs/schedule";
+import { CronExpression } from "@nestjs/schedule";
+import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { roundMoney } from "@routeflow/pricing";
@@ -50,7 +51,7 @@ export class BillingCronService {
   }
 
   /** Trial expiry → READ_ONLY (NOT suspended — exports + sign-in still work). */
-  @Cron(CronExpression.EVERY_HOUR)
+  @LeaderCron(CronExpression.EVERY_HOUR, "billing-cron.expireTrials")
   async expireTrials(): Promise<void> {
     const now = new Date();
     const expired = await this.prisma.tenant.findMany({
@@ -81,7 +82,7 @@ export class BillingCronService {
    * grace.expired emitted) as soon as the tenant is back within cap, e.g. after buying a
    * CUSTOMER_PACK_100, upgrading, or deleting customers.
    */
-  @Cron(CronExpression.EVERY_HOUR)
+  @LeaderCron(CronExpression.EVERY_HOUR, "billing-cron.expireGrace")
   async expireGrace(): Promise<void> {
     const cutoff = new Date(Date.now() - GRACE_DAYS * 24 * 60 * 60 * 1000);
     const subs = await this.prisma.tenantSubscription.findMany({
@@ -117,7 +118,7 @@ export class BillingCronService {
 
   /** Apply scheduled downgrades whose effective date has passed. Nothing is deleted;
    *  non-retained team users are deactivated (freeing seats), over-cap data goes read-only. */
-  @Cron("0 2 * * *")
+  @LeaderCron("0 2 * * *", "billing-cron.applyScheduledDowngrades")
   async applyScheduledDowngrades(): Promise<void> {
     const now = new Date();
     const subs = await this.prisma.tenantSubscription.findMany({
@@ -212,7 +213,7 @@ export class BillingCronService {
 
   /** End access for self-cancelled subscriptions whose period has ended → READ_ONLY
    *  (data intact, exports + sign-in + re-subscribe still work). */
-  @Cron(CronExpression.EVERY_HOUR)
+  @LeaderCron(CronExpression.EVERY_HOUR, "billing-cron.applyScheduledCancellations")
   async applyScheduledCancellations(): Promise<void> {
     const now = new Date();
     const subs = await this.prisma.tenantSubscription.findMany({
@@ -270,7 +271,7 @@ export class BillingCronService {
 
   /** Advance billing periods past their end so SCANS/MSGS meters bucket into the new
    *  cycle (bucketed by periodStart, so a new period reads 0 automatically). */
-  @Cron("5 0 * * *")
+  @LeaderCron("5 0 * * *", "billing-cron.rollCycles")
   async rollCycles(): Promise<void> {
     const now = new Date();
     const subs = await this.prisma.tenantSubscription.findMany({

@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { Cron } from "@nestjs/schedule";
+import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { RegulatedFilingService } from "./regulated-filing.service";
@@ -59,7 +59,7 @@ export class RegulatedFilingCronService {
    * Daily at 04:00 UTC — offset from the tobacco (02:00) and auth-expiry (03:00)
    * crons so they don't pile onto the same tick.
    */
-  @Cron("0 4 * * *")
+  @LeaderCron("0 4 * * *", "regulated-filing.autoPrepareClosedFilings")
   async autoPrepareClosedFilings(): Promise<void> {
     const now = new Date();
     // System-level (NO forTenant) → every tenant's active categories; each row

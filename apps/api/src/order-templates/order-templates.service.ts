@@ -7,7 +7,7 @@ import {
 } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole } from "@prisma/client";
-import { Cron } from "@nestjs/schedule";
+import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
@@ -292,7 +292,7 @@ export class OrderTemplatesService {
     return this.generateOrder(templateId);
   }
 
-  @Cron("0 6 * * *")
+  @LeaderCron("0 6 * * *", "order-templates.generateDailyOrders")
   async generateDailyOrders() {
     const today = new Date();
     // ISO weekday: 1=Mon, 7=Sun

@@ -1,5 +1,6 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from "@nestjs/common";
-import { Cron, CronExpression } from "@nestjs/schedule";
+import { CronExpression } from "@nestjs/schedule";
+import { LeaderCron } from "../common/cron-lock";
 import { Prisma, TenantPlan } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
@@ -713,7 +714,7 @@ export class BillingService {
    *  1. Are in TRIAL status with trialEndsAt in the past, OR
    *  2. Have a subscription whose periodEnd is past + grace period and still ACTIVE
    */
-  @Cron(CronExpression.EVERY_HOUR)
+  @LeaderCron(CronExpression.EVERY_HOUR, "billing.suspendOverdueTenants")
   async suspendOverdueTenants(): Promise<void> {
     if (!this.stripe.isConfigured) return; // No billing = no suspension logic
 

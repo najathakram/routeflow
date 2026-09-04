@@ -66,6 +66,10 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
     it("exports withAdvisoryLock — the customer advisory lock helper — as a function", () => {
       expect(typeof mod.withAdvisoryLock).toBe("function");
     });
+
+    it("exports LOCK_FAMILIES as the closed list of families that may own a pool", () => {
+      expect(mod.LOCK_FAMILIES).toEqual(["order-merge", "cron"]);
+    });
   });
 
   describe("withAdvisoryLock", () => {
@@ -288,6 +292,95 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
       // pg re-emits an idle client's socket error on the pool; with no listener EventEmitter
       // throws it uncaught and takes the API process down.
       expect(mockPoolOn).toHaveBeenCalledWith("error", expect.any(Function));
+    });
+
+    // Shared helper for the per-family pool cases: one clean wait-mode acquisition on `family`.
+    const acquireOnce = async (family: string) => {
+      const client = makeClient();
+      client.query
+        .mockResolvedValueOnce(undefined) // SET lock_timeout
+        .mockResolvedValueOnce({ rows: [] }) // pg_advisory_lock
+        .mockResolvedValueOnce({ rows: [] }); // pg_advisory_unlock
+      mockConnect.mockResolvedValueOnce(client);
+      return withAdvisoryLock(
+        { family, key: "k-1", mode: "wait" },
+        jest.fn().mockResolvedValue("ok"),
+      );
+    };
+
+    it("(p) each family gets its OWN pool, sized for its own peak (order-merge 8, cron 12) and kept alive at the socket; a second order-merge acquisition reuses the first", async () => {
+      await mod._resetLockPoolForTests?.();
+      mockPoolCtor.mockClear();
+
+      await acquireOnce("order-merge");
+      await acquireOnce("cron");
+      await acquireOnce("order-merge");
+
+      // A cron WINNER pins its slot for the whole tick (minutes), and up to 7 ticks fire at once
+      // on the monthly peak — out of ONE shared pool that left merges a single slot and 503s.
+      // Per-family pools bound that peak inside cron's own pool.
+      expect(mockPoolCtor).toHaveBeenCalledTimes(2);
+      const [poolA, poolB] = mockPoolCtor.mock.results.map((r) => r.value);
+      expect(poolA).not.toBe(poolB);
+      // The two families are sized differently ON PURPOSE: order-merge checkouts are short and
+      // request-path, while cron must fit the monthly 7-holder peak PLUS a straggling hourly
+      // sweep — a cron holder that finds no slot skips its tick outright.
+      expect(callArgs(mockPoolCtor, 0)[0]).toMatchObject({
+        max: 8,
+        connectionTimeoutMillis: 5_000,
+      });
+      expect(callArgs(mockPoolCtor, 1)[0]).toMatchObject({
+        max: 12,
+        connectionTimeoutMillis: 5_000,
+      });
+      // BOTH pools keep TCP keepalive on: a lock connection is socket-idle for the whole critical
+      // section (a cron leader's work runs on the Prisma pool), so an idle-reap anywhere on the
+      // path would end the session and release the advisory lock MID-TICK — another replica would
+      // then win an election for a job still running. Probes every 30 s keep the session honest.
+      for (const i of [0, 1]) {
+        expect(callArgs(mockPoolCtor, i)[0]).toMatchObject({
+          keepAlive: true,
+          keepAliveInitialDelayMillis: 30_000,
+        });
+      }
+      // The third acquisition built NO third pool: pools are memoized per family, so `order-merge`
+      // keeps one 8-slot pool rather than one per call site.
+      expect(mockPoolOn).toHaveBeenCalledTimes(2);
+    });
+
+    it("(q) an unknown family rejects with TypeError and never takes a connection — the allow-list is closed", async () => {
+      // Without this the typo would lazily stand up a THIRD pool: 8 more pinned connections whose
+      // holders serialize against nobody, while every caller reads its section as locked.
+      const fn = jest.fn();
+
+      await expect(
+        withAdvisoryLock({ family: "order-merges", key: "cust-1", mode: "wait" }, fn),
+      ).rejects.toBeInstanceOf(TypeError);
+      await expect(
+        withAdvisoryLock({ family: "crons", key: "cust-1", mode: "wait" }, fn),
+      ).rejects.toThrow(/unknown lock family/);
+
+      expect(mockConnect).not.toHaveBeenCalled();
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    it("(r) _resetLockPoolForTests ends EVERY family's pool, not just the last one built", async () => {
+      await mod._resetLockPoolForTests?.();
+      mockPoolCtor.mockClear();
+      mockPoolEnd.mockClear();
+
+      await acquireOnce("order-merge");
+      await acquireOnce("cron");
+      expect(mockPoolCtor).toHaveBeenCalledTimes(2);
+
+      await mod._resetLockPoolForTests?.();
+
+      // A reset that ended only one pool would leave the other's sockets open across suites and,
+      // worse, leave a stale pool memoized for the family it forgot.
+      expect(mockPoolEnd).toHaveBeenCalledTimes(2);
+      mockPoolCtor.mockClear();
+      await acquireOnce("order-merge");
+      expect(mockPoolCtor).toHaveBeenCalledTimes(1);
     });
 
     it("(j) a non-Error thrown by fn plus a failing unlock: the call rejects with the original thrown value and the client is still destroyed", async () => {

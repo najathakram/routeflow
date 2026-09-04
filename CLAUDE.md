@@ -155,6 +155,8 @@ removed only after a registry equivalent for plan flags lands.
 
 Customer-level order merges (staff `create()` auto-merge, buyer `createOrder`, `mergeAllPendingForCustomer`, `forceConsolidateCustomer`) serialize through `withAdvisoryLock` in `apps/api/src/common/db-locks.ts` — a customer-keyed Postgres advisory lock that is cross-replica safe. **Never add a second in-process lock** on top of it, and never thread a transaction into `updateOrderItems`.
 
+Scheduled jobs use **`@LeaderCron(expr, "<area>.<method>")`** (`apps/api/src/common/cron-lock.ts`) — a per-job try-mode advisory lock, so a second replica is safe. **Never write a bare `@Cron(`**; `apps/api/src/common/no-bare-cron.spec.ts` fails the build if you do.
+
 ## Conventions
 
 - **Tests**: NestJS `Test.createTestingModule`; mock at the module boundary; `class-validator` DTOs. **No snapshot tests, no Vitest.**

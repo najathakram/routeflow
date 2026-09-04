@@ -27,7 +27,7 @@ Two items were explicitly requested by the product owner and are called out inli
 | #   | Tier | Item                                                         | Effort | Risk | Status                                                                        |
 | --- | ---- | ------------------------------------------------------------ | ------ | ---- | ----------------------------------------------------------------------------- |
 | 1   | P0   | Consolidate the 4 `pricing.ts` copies into one package       | M      | 🔴   | shipped (PR-4)                                                                |
-| 2   | P0   | Enforce the single-replica invariant (or remove the need)    | M      | 🔴   | shipped (PR-2)                                                                |
+| 2   | P0   | Enforce the single-replica invariant (or remove the need)    | M      | 🔴   | shipped (PR-2 #609 + 2b)                                                      |
 | 3   | P0   | Schema-management tooling: retire boot-time DDL + drift gate | M      | 🔴   | shipped (PR-1, #608 + wave B′)                                                |
 | 4   | P1   | Add a staging environment before prod                        | M      | 🔴   | deferred — ADR 0002 (wave D)                                                  |
 | 5   | P1   | Add web component/unit tests; rebalance the test pyramid     | L      | 🟡   | shipped (wave D)                                                              |
@@ -72,15 +72,56 @@ mirrors gave the same call sites. Narrow the parameter type in a follow-on.
 
 ### 2. Enforce the single-replica invariant — or remove the need for it · M · 🔴
 
-**Shipped (PR-2).** Order merges no longer need the single-replica cap; scheduled jobs still do until
-2b: order merges now serialise per customer on a **Postgres advisory lock**, held on a dedicated
+**Shipped (PR-2 #609 + 2b).** Order merges now serialise per customer on a **Postgres advisory lock**, held on a dedicated
 connection rather than in-process (`apps/api/src/common/db-locks.ts`, `withAdvisoryLock`) —
 `pg_advisory_lock(hashtext('order-merge'), hashtext(customerId))` in `wait` mode, `SET lock_timeout`
 bounding the wait, on its own small `pg.Pool` kept separate from Prisma's pool. Because the lock lives
 on a Postgres session rather than in a process's memory, it coordinates correctly across replicas —
 the cross-replica order-merge race (`B199`) that motivated the one-replica cap is closed, and the
-comment in [`apps/api/railway.toml`](../apps/api/railway.toml) now guards the crons (single replica
-until the cron leader lock, 2b) and stays until that PR lands.
+comment in [`apps/api/railway.toml`](../apps/api/railway.toml) records that.
+
+**2b — cron leader lock.** All 13 `@Cron` jobs are now `@LeaderCron(expr, "<area>.<method>")`
+([`apps/api/src/common/cron-lock.ts`](../apps/api/src/common/cron-lock.ts)): the decorator wraps the
+tick in `withAdvisoryLock({family:"cron", key:name, mode:"try"})` and then applies `@Cron` with that
+stable name, so a tick runs only on the instance that wins the lock. `no-bare-cron.spec.ts` keeps a
+new bare `@Cron(` from being added; `cron-lock.db.spec.ts` proves on real Postgres that two
+concurrent ticks run the body once. The single-replica guard comment in `railway.toml` is retired —
+`numReplicas` may be raised. Residual: `OrdersService.onApplicationBootstrap`'s pending-order sweep is
+a startup call, not a tick, and stays un-elected — safe on two replicas because it merges through
+`mergeAllPendingForCustomer`, which takes PR-2's customer-keyed lock. `EntitlementsService`'s 30 s
+cache is per-process staleness only. `@Cron` was the whole recurring surface: there are no
+`@Interval`/`@Timeout` decorators, no `setInterval`, and no Bull repeatable jobs.
+
+**What a skipped tick costs (not uniform).** Eleven of the thirteen jobs re-derive their work from
+state, so a lost tick self-repairs on the next one (`rollCycles` re-selects any passed `periodEnd`,
+commission reconciliation looks back 25 h on an hourly cadence, recurring invoices keep `nextRunAt`
+in the past until they generate, and the rest are due-date sweeps). **Two do not:**
+`tobacco-report.generateMonthlyReports` generates only `now − 1 month` and
+`order-templates.generateDailyOrders` only today's weekday — a lost tick there is a missed month /
+missed day that needs a manual re-run. **Follow-on:** give those two a catch-up window (every
+unreported period / un-generated day since the last run) instead of a single-period query.
+Residual, deliberately unfixed: a body that never settles pins the lock and every replica skips
+that job until the process ends — a hold cap is rejected because releasing the lock cannot cancel
+the running body, which would license two concurrent money ticks; the remedy is the job's own
+timeouts plus the pool keepalive below.
+
+**Pool sizing, settled in 2b:** a cron winner pins a lock slot for its whole tick, and peak
+concurrent cron holders is 5 hourly / 7 at 02:00 UTC on the 1st — out of ONE shared `max: 8` pool
+that left order merges 3 (resp. 1) slots, and a merge finding none waited `connectionTimeoutMillis`
+and 503d on a key nobody held. `db-locks.ts` now keeps **one pool per family** (`LOCK_FAMILIES =
+["order-merge","cron"]`), each sized for its own peak: **`cron` `max: 12`** — the 7-holder monthly
+peak plus a straggling hourly sweep that has not finished when the next hour's five fire, because a
+cron holder that finds no slot skips its tick outright — and **`order-merge` `max: 8`**, unchanged,
+since its checkouts are short and its real bound is the callers' wait budgets. Worst case 20 lock
+connections + Prisma's 10 = 30, far below `max_connections`. The family list is closed and checked
+before any connect (`TypeError` otherwise), so a typo cannot silently stand up a third pool.
+
+**Keepalive on both lock pools (`keepAlive: true`, `keepAliveInitialDelayMillis: 30_000`).** An
+advisory lock lives with the _session_, and a cron leader's lock connection is socket-idle for the
+whole tick (the tick's work runs on the Prisma pool). An idle-reap anywhere on the path would drop
+that session, Postgres would release the lock mid-tick, and the next replica's election would win a
+job already in flight — the duplicate money run `@LeaderCron` exists to prevent. TCP probes every
+30 s keep the session provably alive; the lock is released only when the session really ends.
 
 Four call sites take the lock, keyed by `customerId`: staff order `create()` (auto-merge into an
 existing pending order), buyer `createOrder`, `mergeAllPendingForCustomer`, and

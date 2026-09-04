@@ -26,21 +26,6 @@
 - **Guard:** `gh run view <id> --json jobs` — assert the specific step is `success`, not
   `skipped`; for one test, grep the log for its `✓`. Step COUNT is not execution.
 
-### L-040 · 2026-09-01 · process
-
-- **Symptom:** three ledgers for one campaign, three answers — machine ledger 61 rows shipped,
-  hand-maintained HTML register 7 of those still open (one a Critical), prose summary 48.
-- **Root cause:** only the machine ledger is written by tooling and read by a gate. The mirror is
-  updated by hand at batch close-out — one batch did it, the next did not, and nothing compares
-  the two.
-- **Lesson:** **A status mirror that no gate checks is not a second source, it is a slower copy —
-  derive every count from the machine ledger instead of quoting a summary.** The drift has a
-  direction: it runs toward MORE open work, and nobody audits a number saying there is more left
-  to do, so the error survives every review.
-- **Guard:** none — `campaign-check` reads the ledger, the mirror has no equivalent. Count from
-  `.claude/campaign/status/*.jsonl` (last state per row id) before repeating any figure. Same
-  family as [[L-034]].
-
 ### L-035 · 2026-09-01 · process · #TBD
 
 - **Symptom:** B120's POD archive was designed onto a generic `AuditLog` row; review found
@@ -232,15 +217,6 @@
   change, and expect all worktrees to share one generated client.**
 - **Guard:** none — judgment.
 
-### L-013 · 2026-08-17 · tooling
-
-- **Symptom:** three of four CI jobs red on a dependency error the change never introduced.
-- **Root cause:** the failure was at the _install_ step (registry flake), not the job's own
-  command; separately, 0-step ~3 s "failures" while private are Actions billing, not the suite.
-- **Lesson:** **Read which step failed before hunting a code fix — an install-step or 0-step red
-  proves nothing about the change; rerun first.**
-- **Guard:** none — judgment.
-
 ### L-055 · 2026-09-03 · tooling · wave D imp-05
 
 - **Symptom:** Jest matched **zero tests** in this worktree with the documented
@@ -427,6 +403,19 @@
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
 ## deploy
+
+### L-075 · 2026-09-04 · deploy · PR-2b `imp-02b-cron-leader-lock`
+
+- **Symptom:** a leader lock held for a whole cron tick sits on a SOCKET-IDLE connection for
+  minutes — the tick's own work runs on a different pool.
+- **Root cause:** an advisory lock lives with the SESSION, and an idle TCP session can be reaped
+  anywhere on the path (NAT, LB, platform network). The reap ends the session, Postgres releases
+  the lock, and a rival replica wins an election for a job still running.
+- **Lesson:** **any connection pinned for a long-held lock needs TCP keepalive, and a lock whose
+  loss allows a duplicate money run must be sized and monitored as a SESSION, not a statement** —
+  pool `max` covers its family's concurrent HOLDERS, not its call rate.
+- **Guard:** `db-locks.spec.ts` (p) pins `keepAlive: true` / `keepAliveInitialDelayMillis: 30_000`
+  on both lock pools, and their per-family `max`.
 
 ### L-064 · 2026-09-04 · deploy · imp-04
 
