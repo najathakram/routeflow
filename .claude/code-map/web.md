@@ -775,7 +775,7 @@ now contributes alongside api/mobile).
   precedes `$()+.?^{}` (assumed an escaped glob char), so that one separator survives literally and
   picomatch then compiles `\.` as an escaped dot — matching nothing (confirmed via
   `npx jest --listTests` returning empty). `roots: ["<rootDir>/{app,components,lib,hooks}"]` scopes
-  discovery instead, so the plain relative glob needs no rootDir anchor. Lesson **L-054**.
+  discovery instead, so the plain relative glob needs no rootDir anchor. Lesson **L-055**.
   `moduleNameMapper` pins a **single `react` instance** for the whole run
   (`^react$`/`^react/jsx-runtime$`/`^react/jsx-dev-runtime$` → `<rootDir>/node_modules/react`):
   `apps/web/package.json` still pins `"react"`/`"react-dom"` to `^18` (a stale range — its own
