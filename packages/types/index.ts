@@ -171,11 +171,15 @@ export const ORDER_DELIVERY_ADDON = "order_delivery";
 /**
  * TenantAddon.addonKey gating the AI document-reading features (owner decision
  * 2026-08-28): vendor-bill scan, batch invoice scan, supplier-statement scan,
- * and expense-receipt extraction. Server-enforced via @RequireAddon("ocr") on
- * those endpoints (403 without it). Granted from the platform-admin tenant page
- * or via the OCR_PACK_250 SKU bridge. ⚠️ Web/mobile entry surfaces are NOT yet
- * hidden behind `useHasAddon(OCR_ADDON)` — follow-up owed; until then, tenants
- * without the addon still see scan buttons and get 403s. Route insights are NOT
- * covered by this key.
+ * and expense-receipt extraction. Gated via @RequireAddon("ocr") on those
+ * endpoints; the gate's rollout state lives in
+ * apps/api/src/billing/addon-gate-registry.ts and currently ships `dark`
+ * (allow + would-deny warn, no 403) — it flips to `enforced` only after the
+ * owner runs apps/api/scripts/report-addon-gate-blast-radius.mjs. Granted from
+ * the platform-admin tenant page or via the OCR_PACK_250 SKU bridge.
+ * ⚠️ Web/mobile entry surfaces are NOT yet hidden behind
+ * `useHasAddon(OCR_ADDON)` — follow-up owed; until then, tenants without the
+ * addon still see scan buttons (and will get 403s once the key is enforced).
+ * Route insights are NOT covered by this key.
  */
 export const OCR_ADDON = "ocr";

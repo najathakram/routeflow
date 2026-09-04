@@ -132,6 +132,15 @@ All line/tax/total math goes through `pricing.ts` helpers: `computeLineSubtotal`
 monetary write**; never re-derive `qty * unitPrice` for a boxed line (over-charges by `unitsPerBox`).
 Regression specs: `apps/api/src/common/pricing.spec.ts`. Run `npm run verify` before pushing.
 
+**Entitlement gates**: every `@RequireAddon` key is declared in
+`apps/api/src/billing/addon-gate-registry.ts`; a new gate ships `dark` (allow + would-deny warn)
+and flips to `enforced` only in a separate diff after the owner runs
+`apps/api/scripts/report-addon-gate-blast-radius.mjs` against prod; the registry spec makes an
+unregistered key a red `npm run verify`. The sibling `@RequirePlanFlag` gate has no registry yet:
+a new plan flag ships inside `DARK_PLAN_FLAGS` (`apps/api/src/billing/plan-flag.guard.ts`) until
+the same blast-radius evidence exists, and `DARK_PLAN_FLAGS` / `PLAN_FLAG_ENFORCEMENT` may be
+removed only after a registry equivalent for plan flags lands.
+
 ## Conventions
 
 - **Tests**: NestJS `Test.createTestingModule`; mock at the module boundary; `class-validator` DTOs. **No snapshot tests, no Vitest.**
