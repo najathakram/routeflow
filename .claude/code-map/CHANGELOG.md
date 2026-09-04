@@ -8,6 +8,13 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-04** — (branch `fix/imp-02-order-merge-advisory-lock`, PR #609) VISIBILITY WATCHDOG:
+  new `scripts/visibility-watchdog.mjs` arms the private flip on a detached, fixed 45-min
+  deadline BEFORE any public-repo CI window — the fix for the killed-session incident where
+  the repo stayed public ~6.5h because the flip lived only in the (killed) session's control
+  flow. `docs/runbooks/deploy-visibility-flip.md`, `CLAUDE.md`, and the `rebuild` skill all now
+  require launching it first. Spec: `apps/api/src/common/visibility-watchdog-script.spec.ts`.
+  `api.md` gains an entry; lesson L-057 (deploy).
 - **2026-09-04** — (branch `fix/imp-02-order-merge-advisory-lock`, PR #609) CI ADVISORY-GATE
   OUTAGE TOLERANCE: new `scripts/ci-audit-critical.mjs` replaces the two `npm audit` steps in
   `.github/workflows/ci.yml` — fails on a real critical finding, warns and skips (bounded 3

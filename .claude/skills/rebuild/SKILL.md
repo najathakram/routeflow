@@ -60,6 +60,12 @@ While private-minute Actions billing is unbilled-broken (see the runbook linked 
 run dies as a 0-step failure, so CI needs the public window below.
 
 ```bash
+# 0. Start the visibility watchdog detached FIRST (45 min) — see
+#    docs/runbooks/deploy-visibility-flip.md "Watchdog (mandatory)". It flips the repo
+#    private on its own deadline even if this session dies mid-window.
+#    Windows: Start-Process -WindowStyle Hidden -FilePath node -ArgumentList "scripts/visibility-watchdog.mjs","--minutes","45"
+#    POSIX:   nohup node scripts/visibility-watchdog.mjs --minutes 45 >/dev/null 2>&1 &
+
 # 1. Make public
 gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences
 

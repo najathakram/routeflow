@@ -82,6 +82,21 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
     `Fail on critical production advisories` / `Report high-severity advisories` steps. Contract
     spec: `src/common/ci-audit-script.spec.ts` (spawn-level, fake npm-audit driver written to an
     mkdtemp'd dir, `FAKE_MODE` critical/clean/outage/unknown, counter file proves retry count).
+- **`scripts/visibility-watchdog.mjs` (2026-09-04, killed-session incident)** — a detached
+  safety net for the public-repo CI window in the canonical deploy flow (`CLAUDE.md`,
+  `docs/runbooks/deploy-visibility-flip.md`): launched BEFORE `gh repo edit … public`, it
+  `setTimeout`-sleeps `--minutes` (default 45, never a busy-wait, so signals still work),
+  then flips `--repo` (default `najathakram/routeflow`) private via `spawnSync("gh", …,
+{shell:false})` and read-back-verifies `gh repo view --json visibility` in a loop (≤5
+  tries, 10s apart) until `PRIVATE`. Appends one `<ISO> start|flip|verified|error <detail>`
+  line per event to `local-assets/visibility-watchdog.log` (gitignored) and mirrors it to
+  stdout; exits 0 once verified, 1 on an edit failure or an unconfirmed flip. A flip landing
+  mid-CI/mid-deploy is by design — a private-repo Action just fails on billing and gets
+  rerun. Test-only env: `VISIBILITY_WATCHDOG_GH_CMD` (JSON argv, swaps in a fake `gh` — no
+  network), `VISIBILITY_WATCHDOG_LOG_FILE` (scratch log path), `VISIBILITY_WATCHDOG_VERIFY_INTERVAL_MS`
+  (collapses the 10s poll for fast specs). Contract spec:
+  `src/common/visibility-watchdog-script.spec.ts` (spawn-level, fake `gh` driver, 5 cases:
+  success, never-verifies, edit-fails, stdout mirrors log, arg defaults).
 - **`src/common/testing/db-spec.ts` + `db-lane.db.spec.ts`, `jest.db.config.js` (PR-1, `imp-03a`,
   2026-09-03)** — the new `*.db.spec.ts` lane for specs that need a real Postgres. `db-spec.ts`:
   `requireLocalDatabaseUrl(env)` throws unless `DATABASE_URL`'s host is local

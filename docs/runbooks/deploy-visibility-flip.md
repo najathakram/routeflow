@@ -14,6 +14,28 @@ minutes it takes to run. This is the ONLY reason the flip exists — the push-tr
 that used to run on every merge was retired 2026-08-30 (`ci.yml` no longer has a `push:` trigger);
 this routine covers PR CI only.
 
+## Watchdog (mandatory)
+
+**Launch `scripts/visibility-watchdog.mjs` detached, BEFORE step 1 below, every time.** It sleeps
+45 minutes, then flips the repo private and verifies the flip, independent of whatever session
+started it — the safety net for the 2026-09-04 incident where a session was killed by a process
+restart mid-public-window and the repo stayed public for ~6.5 hours because the private flip lived
+only in that session's own control flow (nothing else was ever going to run it).
+
+```bash
+# Windows PowerShell
+Start-Process -WindowStyle Hidden -FilePath node -ArgumentList "scripts/visibility-watchdog.mjs","--minutes","45"
+
+# POSIX
+nohup node scripts/visibility-watchdog.mjs --minutes 45 >/dev/null 2>&1 &
+```
+
+Verify it started (log at `local-assets/visibility-watchdog.log`, gitignored — see its `start`
+line) before proceeding to step 1. A flip-to-private by the watchdog while CI, a merge, or a
+deploy is still running is the CORRECT outcome, not a failure — a GitHub Actions run on a private
+repo just fails on billing (see below); rerun it once the window reopens. The watchdog's later
+flip is harmless if the routine's own step 4 already flipped private first.
+
 ## The routine
 
 1. **Make the repo public:**

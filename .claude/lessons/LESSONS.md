@@ -350,6 +350,18 @@
 
 ## deploy
 
+### L-057 · 2026-09-04 · deploy · #609
+
+- **Symptom:** a process restart killed the agent session inside a public-repo CI window;
+  the repo stayed public ~6.5 hours (07:38Z→14:18Z) before anyone noticed.
+- **Root cause:** the private flip lived only in the session's own control flow — a
+  `finally` in an agent that no longer existed to run it.
+- **Lesson:** **an irreversible-if-forgotten safety action (flip private) must be armed by
+  a process that outlives the session BEFORE the risky action (flip public) — a detached
+  watchdog with a fixed deadline, never a `finally` in an agent.**
+- **Guard:** `scripts/visibility-watchdog.mjs`, mandatory in
+  `docs/runbooks/deploy-visibility-flip.md` and the `rebuild` skill.
+
 ### L-016 · 2026-08-29 · deploy · #475
 
 - **Symptom:** (caught pre-merge) four endpoints would have 403'd for every tenant on deploy day.

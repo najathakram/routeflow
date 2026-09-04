@@ -1,7 +1,7 @@
 {
   "mappedSha": "ab922112",
-  "generatedAt": "2026-09-04T06:00:00.000Z",
+  "generatedAt": "2026-09-04T15:05:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
-  "fileCount": 933,
-  "notes": "**2026-09-04** — (branch `fix/imp-02-order-merge-advisory-lock`, PR #609) CI ADVISORY-GATE OUTAGE TOLERANCE: new `scripts/ci-audit-critical.mjs` replaces the two `npm audit` steps in `.github/workflows/ci.yml` — fails on a real critical finding, warns and skips (bounded 3 retries, 15s/45s backoff) on an `npm` registry/transport outage, and the `--report-only` (high-level) step now always exits 0 instead of `|| true`. Spec: `apps/api/src/common/ci-audit-script.spec.ts`. `api.md` gains an entry; lesson L-056 (tooling). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "fileCount": 935,
+  "notes": "**2026-09-04** — (branch `fix/imp-02-order-merge-advisory-lock`, PR #609) VISIBILITY WATCHDOG: new `scripts/visibility-watchdog.mjs` arms the private flip on a detached, fixed 45-min deadline BEFORE any public-repo CI window — the fix for the killed-session incident where the repo stayed public ~6.5h because the flip lived only in the (killed) session's control flow. `docs/runbooks/deploy-visibility-flip.md`, `CLAUDE.md`, and the `rebuild` skill all now require launching it first. Spec: `apps/api/src/common/visibility-watchdog-script.spec.ts`. `api.md` gains an entry; lesson L-057 (deploy). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
