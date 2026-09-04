@@ -259,18 +259,33 @@ export class RecurringInvoicesService {
       // invoice exists — restoring nextRunAt cannot mint a duplicate, and it lets the
       // midnight cron retry tomorrow / "Run now" bill THIS cycle rather than the next.
       // lastRunAt is deliberately kept: it is the time of the attempt.
+      // REG-B106: the restore is a COMPARE-AND-SET on the value this run's own claim
+      // wrote (`nextRunAt`), not a plain update on the id. Between the claim and this
+      // catch a newer run ("Run now", or the next tick) can claim the row and bill the
+      // cycle for real; an unconditional restore would hand the schedule back to a
+      // pre-claim date for a cycle that is already invoiced and mint a duplicate. A
+      // `count: 0` means someone newer owns the row — write NOTHING and still rethrow.
       const message = (err instanceof Error ? err.message : String(err)).slice(0, 500);
-      await this.prisma
+      const rolledBack = await this.prisma
         .forTenant()
-        .recurringInvoice.update({
-          where: { id: ri.id },
+        .recurringInvoice.updateMany({
+          where: { id: ri.id, nextRunAt },
           data: { nextRunAt: ri.nextRunAt, lastRunStatus: RUN_STATUS_FAILED, lastError: message },
         })
-        .catch((e: any) =>
+        .catch((e: any) => {
           this.logger.error(
             `Recurring invoice ${ri.id}: generation failed AND the failure could not be recorded (${e?.message ?? e})`,
-          ),
+          );
+          return null;
+        });
+      if (rolledBack && rolledBack.count === 0) {
+        this.logger.warn(
+          `Recurring invoice ${ri.id}: recurring-invoice rollback skipped: row re-claimed ` +
+            `(claimed nextRunAt ${nextRunAt.toISOString()}, pre-claim nextRunAt ${
+              ri.nextRunAt ? new Date(ri.nextRunAt).toISOString() : "null"
+            })`,
         );
+      }
       throw err;
     }
 

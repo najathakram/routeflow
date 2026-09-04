@@ -172,26 +172,50 @@ describe("RecurringInvoicesService — schedule + outcome (F13)", () => {
   });
 
   describe("failure/success outcome recording (R12-R15, B106)", () => {
-    it("REG-B106 T17 — a create failure restores nextRunAt, records FAILED, and rethrows the original error", async () => {
+    it("REG-B106 T17 — a create failure restores nextRunAt by compare-and-set on the claimed value, records FAILED, and rethrows the original error", async () => {
       const ri = template({ nextRunAt: new Date(2026, 6, 15) });
-      prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 1 });
+      // The mock's default updateMany is { count: 0 } (a lost claim), so both writes are
+      // stubbed explicitly and IN ORDER: [0] the claim, [1] the rollback.
+      prisma.recurringInvoice.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 1 });
       const failure = new NotFoundException("Customer not found");
       invoices.create.mockRejectedValue(failure);
 
       await expect((service as any).generateInvoiceFromTemplate(ri)).rejects.toBe(failure);
 
-      expect(prisma.recurringInvoice.update).toHaveBeenCalledWith({
-        where: { id: "ri-1" },
-        data: expect.objectContaining({
+      // The rollback must be conditioned on the ADVANCED value the claim wrote — a plain
+      // update({where:{id}}) would clobber a newer claimant's schedule (the B106 race).
+      const claimed: Date = prisma.recurringInvoice.updateMany.mock.calls[0][0].data.nextRunAt;
+      expect(prisma.recurringInvoice.updateMany).toHaveBeenCalledTimes(2);
+      const rollback = prisma.recurringInvoice.updateMany.mock.calls[1][0];
+      expect(rollback.where).toEqual(expect.objectContaining({ id: "ri-1", nextRunAt: claimed }));
+      expect(rollback.data).toEqual(
+        expect.objectContaining({
           nextRunAt: ri.nextRunAt,
           lastRunStatus: "FAILED",
           lastError: expect.stringContaining("Customer not found"),
         }),
-      });
-      const failedWrite = prisma.recurringInvoice.update.mock.calls.find(
-        (c: any) => c[0]?.data?.lastRunStatus === "FAILED",
       );
-      expect(failedWrite?.[0].data).not.toHaveProperty("lastRunAt");
+      expect(rollback.data).not.toHaveProperty("lastRunAt");
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("REG-B106 T17c — a rollback that matches nothing (row re-claimed) writes nothing and still rethrows", async () => {
+      const ri = template({ nextRunAt: new Date(2026, 6, 15) });
+      // [0] the claim succeeds; [1] the rollback's CAS misses — a newer run (Run Now, or
+      // the next tick) already claimed the row and may have billed the cycle for real.
+      prisma.recurringInvoice.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 });
+      const failure = new NotFoundException("Customer not found");
+      invoices.create.mockRejectedValue(failure);
+
+      await expect((service as any).generateInvoiceFromTemplate(ri)).rejects.toBe(failure);
+
+      // Nothing further may touch the row: no fallback update, no second updateMany.
+      expect(prisma.recurringInvoice.update).not.toHaveBeenCalled();
+      expect(prisma.recurringInvoice.updateMany).toHaveBeenCalledTimes(2);
       expect(prisma.invoice.update).not.toHaveBeenCalled();
     });
 
