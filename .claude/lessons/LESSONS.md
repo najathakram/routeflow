@@ -143,6 +143,20 @@
 - **Guard:** `no-runtime-workspace-imports.spec.ts` (PR-1's engine already seeded the idea; this PR
   makes it assert every `@routeflow/*` the API imports has a built `main`).
 
+### L-059 · 2026-09-03 · tooling · wave B′
+
+- **Symptom:** the architecture review's Option B recommended Atlas for destructive-migration
+  linting; planning around it would have shipped a tool that can't do the job.
+- **Root cause:** Atlas's `migrate lint` went **Pro-only since v0.38**, and its `--dir-format`
+  flag never supported Prisma's migrations layout to begin with — neither fact was checked against
+  current docs before the recommendation was written down.
+- **Lesson:** **A tool recommendation in a review is a claim — verify licensing and format support
+  against current docs before planning around it.** (Atlas lint went Pro-only; its dir formats
+  never included Prisma.)
+- **Guard:** `docs/IMPROVEMENTS.md` item 3 now names Squawk (`squawk-cli`, free, Prisma-compatible)
+  with the refuted Atlas facts inline; `scripts/lint-migrations.mjs` + `apps/api/.squawk.toml`
+  ship the working substitute.
+
 ### L-039 · 2026-09-01 · tooling
 
 - **Symptom:** a green PR went red after a routine rebase, on a check unrelated to its contents —
@@ -313,6 +327,37 @@
   `apps/api/src/common/ci-audit-script.spec.ts`.
 
 ## testing
+
+### L-061 · 2026-09-04 · testing · wave B′ P4
+
+- **Symptom:** a fail-closed `default:` added beside Prisma's named `$allModels` handlers threw on
+  every scoped query. Only the DB lane caught it — a unit test calling the handler directly stayed
+  green.
+- **Root cause:** Prisma composes `$allModels.$allOperations` WITH the named per-operation handlers
+  rather than choosing the most specific one: a named handler's `query()` runs the catch-all next.
+- **Lesson:** **A client-extension catch-all cannot coexist with a named map — write ONE
+  `$allOperations` switch with an explicit default. And a spec that calls an extension handler
+  directly proves nothing about how the framework COMPOSES it: exercise the composed chain (a real
+  client, or the DB lane).**
+- **Guard:** `prisma-isolation.spec.ts` drives the real `_tenantExtension`; `local:test:db` runs on
+  `apps/api/src/prisma/**` PRs (`db-migrations.yml` paths).
+
+### L-060 · 2026-09-03 · testing · wave B′ P4
+
+- **Symptom:** a spec commissioned as a "pin" (`tenant-findunique.db.spec.ts`) shipped 8/17 RED. Its
+  own header said the block was red "before the fix", but the package was scoped test-only, so no
+  fix was written and the branch's `npm run local:test:db` acceptance could not pass.
+- **Root cause:** the brief asked for tests that _pin_ an invariant (cross-tenant
+  `findUniqueOrThrow` throws) without anyone first checking the invariant held. It did not:
+  `findUniqueOrThrow` was in neither tenancy layer of `prisma.service.ts` — absent from
+  `POST_FILTER_METHODS`/`SCOPED_METHODS` in `_wrapTxWithTenant` and from `_tenantExtension`'s
+  `$allModels` map — so it returned another tenant's row on `forTenant()` and inside
+  `tenantTransaction()`.
+- **Lesson:** **A "pin" brief must state the expected colour per test, and any test that comes out
+  red escalates the package from `test:` to `fix:` on the spot.** A red pin is a live defect
+  report, never a spec to ship as-is — and "we only add tests" is not a reason to leave one red.
+- **Guard:** the RED BAR block now asserts `code: "P2025"` (Prisma's own not-found shape), so a
+  regression that returns the row — or throws something else — fails the DB lane.
 
 ### L-050 · 2026-09-02 · testing · #598
 

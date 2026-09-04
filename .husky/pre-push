@@ -34,8 +34,11 @@
 # post-dep-bump run by narrowing globalDependencies; that is the false-green
 # mechanism #495 shipped and 6c8f1401 closed.
 #
-# Emergency escape hatch:  SKIP_VERIFY=1 git push ...
-# It is loud, and it deliberately does NOT record a verification marker.
+# Emergency escape hatch:  SKIP_VERIFY=1 SKIP_VERIFY_REASON="why" git push ...
+# It is loud, and it deliberately does NOT record a verification marker. It DOES record an
+# audit line (branch, head, docs-only?, reason) to .git/skip-verify.log via
+# scripts/skip-verify-audit.mjs — a push that touches code (apps/, packages/, scripts/,
+# .github/) is refused without SKIP_VERIFY_REASON; a docs-only push needs no reason.
 
 # Cheapest check first: refuse a trunk push before spending any time verifying.
 branch="$(git rev-parse --abbrev-ref HEAD)"
@@ -45,6 +48,13 @@ if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
 fi
 
 if [ "$SKIP_VERIFY" = "1" ]; then
+  upstream="$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || echo origin/master)"
+  changed="$(git diff --name-only "$upstream"...HEAD 2>/dev/null || git diff --name-only origin/master...HEAD)"
+  export RF_BRANCH="$branch"
+  export RF_HEAD="$(git rev-parse --short HEAD)"
+  export RF_CHANGED_FILES="$changed"
+  export RF_AUDIT_LOG="$(git rev-parse --git-dir)/skip-verify.log"
+  node scripts/skip-verify-audit.mjs || exit 1
   echo "⚠ SKIP_VERIFY=1 — skipping 'npm run verify'."
   echo "⚠ CI runs ONE consolidated job on the PR; it will re-check this on Linux,"
   echo "⚠ and every failure there costs paid Actions minutes. Push knowingly."
