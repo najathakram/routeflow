@@ -8,6 +8,21 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-04** — (worktree `rf-imp-04`, branch `refactor/imp-01-pricing-package`) — **CSP
+  connect-src local-lane fix.** Root cause (proven by a Playwright trace): `next.config.mjs`'s
+  `headers()` gated the `connect-src` dev-localhost relaxation on
+  `isDev = NODE_ENV !== "production"`, which is always `false` in a **built** image (`next build`
+  forces production) — so the local Docker/E2E lane's browser login (`POST
+http://localhost:3000/api/v1/auth/login` from `http://localhost:3001`) was CSP-blocked with no
+  HTTP response at all (`status -1`), and the login page's no-response fallback rendered it as
+  "Invalid username or password." Fix: extracted the CSP construction into new
+  `apps/web/csp.mjs` (`apiConnectSources(apiUrl)` + `buildContentSecurityPolicy({ isDev, apiUrl })`)
+  and drive the http/ws relaxation off the **baked** `NEXT_PUBLIC_API_URL` instead of `NODE_ENV` —
+  an `http:` API origin now gets its concrete `http:`/`ws:` pair added to `connect-src` whenever
+  the bundle was actually built with one, regardless of `isDev`; a normal `https://` prod build is
+  byte-identical to before (pinned in `apps/web/lib/csp.test.ts`). Docs: `apps/web/e2e/LOCAL-LANE.md`.
+  Lesson L (see `.claude/lessons/LESSONS.md` — deploy category): never gate a build-time artifact
+  (CSP headers, routes manifest) on `NODE_ENV`; derive it from the build input it must match.
 - **2026-09-04** — (branch `refactor/imp-01-pricing-package`, rebased onto master `f60bd27c` — PR-2
   - wave D — then merged with `feat/imp-wave-b-api-hardening`) — **PRICING PACKAGE (PR-4, imp-01)
   - WAVE B′ API HARDENING, combined.** PR-4: consolidated the four `pricing.ts` copies (api

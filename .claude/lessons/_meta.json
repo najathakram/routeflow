@@ -1,10 +1,10 @@
 {
-  "nextId": 64,
-  "activeCount": 33,
+  "nextId": 65,
+  "activeCount": 34,
   "archivedCount": 24,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-04T19:15:00.000Z",
+  "updatedAt": "2026-09-04T20:00:00.000Z",
   "schemaVersion": 1,
-  "note": "Bookkeeping only — never accumulate prose here (see L-006). updatedAt bump = acknowledged lesson-free fix. 2026-09-04 compaction (before PR-4 + B′ land): archived 8 entries to restore headroom — L-008, L-021 (aged pre-2026-08-15, zero citations); L-052, L-053, L-059, L-032, L-033, L-031 (each guarded by a merged mechanical spec/script verified present in the tree). Moved verbatim to ARCHIVE.md under '## Archived 2026-09-04 — compaction before PR-4 + B′ landing', one reason line each. No ids reused or renumbered; nextId unchanged at 63."
+  "note": "L-064 added (imp-04, deploy category): CSP connect-src gated on NODE_ENV was dead in every built image (next build forces production); fix derives the http/ws relaxation from the baked NEXT_PUBLIC_API_URL instead, pinned byte-identical in apps/web/lib/csp.test.ts. Prior note: 2026-09-04 compaction (before PR-4 + B′ land) archived 8 entries to restore headroom — L-008, L-021 (aged pre-2026-08-15, zero citations); L-052, L-053, L-059, L-032, L-033, L-031 (each guarded by a merged mechanical spec/script verified present in the tree). Moved verbatim to ARCHIVE.md under '## Archived 2026-09-04 — compaction before PR-4 + B′ landing', one reason line each."
 }

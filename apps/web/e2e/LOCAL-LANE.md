@@ -17,6 +17,13 @@ catch a UI/wiring regression **before** that, not to replace it.
   `E2E_SEED_DATABASE_URL`.
 - `web`'s Docker image bakes `NEXT_PUBLIC_API_URL=http://localhost:3000/api/v1` at build time,
   so the browser talks straight to the local API.
+- The served `Content-Security-Policy`'s `connect-src` is derived from that same baked
+  `NEXT_PUBLIC_API_URL` (`apps/web/csp.mjs`, `apiConnectSources`) — an `http:` API origin is
+  added to `connect-src`/CSP only when the bundle was actually built with an `http:`
+  `NEXT_PUBLIC_API_URL`; a normal `https://` prod build is unaffected. Before this, the policy
+  was gated on `NODE_ENV`, which `next build` always forces to `"production"` — so a built image
+  could never reach an `http:` API and browser login against this lane was CSP-blocked with no
+  HTTP response at all.
 
 ## How to run
 

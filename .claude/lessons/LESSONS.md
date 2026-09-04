@@ -360,6 +360,23 @@
 
 ## deploy
 
+### L-064 · 2026-09-04 · deploy · imp-04
+
+- **Symptom:** the local E2E lane's browser login against the Docker-built web image was
+  CSP-blocked with no HTTP response at all (`POST http://localhost:3000/api/v1/auth/login`
+  from `http://localhost:3001`, `status -1`); the login page's no-response fallback rendered
+  it as "Invalid username or password" even though API, CORS, seed, and throttle were all fine.
+- **Root cause:** `next.config.mjs`'s CSP gated the `connect-src` localhost relaxation on
+  `isDev = NODE_ENV !== "production"`, which is always `false` in a **built** image — `next
+build` forces production — so that branch was dead in every Docker image, not just prod.
+- **Lesson:** **never gate a build-time artifact (a CSP header, a routes manifest) on
+  `NODE_ENV` — every built image reports `production` regardless of its actual deployment
+  target. Derive the decision from the build input it must actually match instead** (here,
+  whether the baked `NEXT_PUBLIC_API_URL` itself is `http:`), and pin the production output
+  byte-identical in a spec so the fix can't silently change what ships.
+- **Guard:** `apps/web/csp.mjs` (`apiConnectSources`) + `apps/web/lib/csp.test.ts` (prod-identity
+  case pins the exact production `Content-Security-Policy` string).
+
 ### L-057 · 2026-09-04 · deploy · #609
 
 - **Symptom:** a process restart killed the agent session inside a public-repo CI window;
