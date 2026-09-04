@@ -185,6 +185,23 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   in `auth/google-oauth.service.ts`, not a Passport `GoogleStrategy`); a reverse guard pins that
   mobile's own zustand (a real, used dependency) and its `react-test-renderer` pin were NOT
   collaterally touched.
+- **`jest.repo-truth.config.js` + `src/common/turbo-inputs.spec.ts` (imp-04, PR-4 + wave B′ merge
+  follow-up, 2026-09-04)** — cache-safety fix for the two specs above: both read files OUTSIDE
+  apps/api (README.md, CLAUDE.md, apps/web's `app`/`components`/`hooks`/`lib` trees + its
+  `package.json`, apps/mobile's `package.json`), but apps/api's own `test` task only hashes its
+  own `$TURBO_DEFAULT$`, so an edit to any of those could bust no cache and `turbo run test`
+  would replay a stale green. `jest.repo-truth.config.js` extends the `package.json` `"jest"`
+  config the same way `jest.db.config.js` does (`reporters: ["default"]` — never the campaign
+  reporter, which would clobber `.campaign/runs/api.json`) with `testRegex:
+"(docs-truth|no-dead-deps)\\.spec\\.ts$"`; the main config's `testPathIgnorePatterns` excludes
+  both by name so `npm test` never double-runs them. New API script `test:repo-truth`; root
+  `verify` gained the `test:repo-truth` token on the `turbo run check-types lint test` list. A
+  `@routeflow/api#test` workspace-task override was tried first and reverted —
+  `packages/pricing/src/package-shape.spec.ts` forbids that exact key — so `turbo.json` instead
+  carries a GENERIC `test:repo-truth` task (`dependsOn: ["^build"]`, outside paths as explicit
+  `$TURBO_ROOT$/…` `inputs`, `outputs: []`); only apps/api declares the script, so turbo only
+  ever executes it there. `turbo-inputs.spec.ts` pins the task's inputs list, the verify/script
+  wiring, and the jest-config split (Lesson L-062, tooling).
 - **`src/main.ts`** — ⚠️ NEVER `app.use(json())` here: it consumes the body before Nest captures `rawBody` and silently breaks EVERY Stripe webhook signature (#400 — the 2mb body limit goes through Nest's parser options). **Sentry (2026-08-26, DSN-optional):** `import "./instrument"` is the FIRST import (`src/instrument.ts` — `Sentry.init` with `enabled: !!process.env.SENTRY_DSN`, inert otherwise); global filters registered as `useGlobalFilters(new SentryExceptionFilter(httpAdapter), new ThrottlerExceptionFilter(), new MulterExceptionFilter())` — Nest reverses the array so the specific filters still win for their types; ⚠️ the catch-all Sentry filter MUST stay first or the narrow ones are never reached. `src/common/sentry-exception.filter.ts` captures ONLY ≥500s with `tenant`/user/path tags then defers to `super.catch`; `src/common/multer-exception.filter.ts` maps multer 2.3.0's newer codes (`LIMIT_FIELD_ARRAY_INDEX`, `INVALID_FIELD_NAME`, `STREAM_DESTROYED`) to 400 — @nestjs/platform-express's `transformException` switches on a frozen message list that predates them, so without it they arrive as raw `MulterError`s, score as 500, and capture one Sentry event per attacker probe. startup: `assertSecrets()` (JWT required in all envs; **`STORAGE_URL_SIGNING_SECRET` now FATAL in production too — F5-001 fail-closed**; `ENCRYPTION_KEY` still warn-only), **no boot-time DDL (PR-1, `imp-03a`, 2026-09-03)** — `runStartupMigration()` is deleted; schema drift is now caught read-only by `scripts/schema-drift.mjs`, not by a startup writer,
   helmet, trust proxy 2 (Railway CDN), CORS wildcard
   patterns, global `ValidationPipe` (whitelist/forbidNonWhitelisted/transform),

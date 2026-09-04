@@ -8,6 +8,29 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-04** — (branch `refactor/imp-01-pricing-package`, rebased onto master `f60bd27c` — PR-2
+  - wave D — then merged with `feat/imp-wave-b-api-hardening`) — **PRICING PACKAGE (PR-4, imp-01)
+  - WAVE B′ API HARDENING, combined.** PR-4: consolidated the four `pricing.ts` copies (api
+    `common`+`utils`, web `lib`, mobile `lib`) into one compiled workspace package
+    `packages/pricing` (`@routeflow/pricing`, `dist`-built by a root `postinstall`, imported by
+    api/web/mobile as a bare specifier); bodies proven byte-identical by
+    `scripts/codemods/pricing-body-diff.mjs`; golden tests + money fixtures moved into the
+    package; the four legacy files and api's `pricing-parity.spec.ts`/`.fixtures.ts` deleted.
+    Lesson L-058 (tooling). Wave B′: Squawk destructive-migration lint (`apps/api/.squawk.toml`,
+    `scripts/lint-migrations.mjs`, `db-migrations.yml` step, root `lint:migrations`) replaces the
+    Atlas recommendation and fails CLOSED; `SKIP_VERIFY` bypass now audited
+    (`scripts/skip-verify-audit.mjs`, `.husky/pre-push`, requires `SKIP_VERIFY_REASON`) and root
+    `verify` gained `--continue=dependencies-successful`; `app.service.ts healthCheck()` returns
+    `commit`/`branch`, mirrored by `ci.yml`'s readiness-gate API-sha check; `app.module.ts`
+    APP_GUARD order pinned; cross-tenant `findUniqueOrThrow`/`findUnique` fail-closed pinned by
+    `src/prisma/tenant-findunique*.db.spec.ts`, fixed in both tenancy layers of `prisma.service.ts`
+    (lessons renumbered on this merge — see LESSONS.md); login-throttle limit/ttl made
+    env-configurable. Code map + `CLAUDE.md` updated for both. FOLLOW-UP (imp-04): `49097cf9`
+    dropped the `@routeflow/api#test` cache-inputs override to satisfy `package-shape.spec.ts`,
+    which left `docs-truth.spec.ts`/`no-dead-deps.spec.ts`'s outside-apps/api reads unhashed by any
+    turbo task; fixed with a GENERIC `test:repo-truth` turbo task (`jest.repo-truth.config.js`,
+    explicit `$TURBO_ROOT$/…` inputs, `apps/api/src/common/turbo-inputs.spec.ts` pins it). Lesson
+    L-062 (tooling).
 - **2026-09-04** — (branch `fix/imp-02-order-merge-advisory-lock`, PR #609) VISIBILITY WATCHDOG:
   new `scripts/visibility-watchdog.mjs` arms the private flip on a detached, fixed 45-min
   deadline BEFORE any public-repo CI window — the fix for the killed-session incident where

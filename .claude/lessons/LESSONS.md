@@ -326,6 +326,15 @@
   detection, `::warning::…SKIPPED` + exit 0 on outage, fail-closed otherwise); contract spec
   `apps/api/src/common/ci-audit-script.spec.ts`.
 
+### L-062 · 2026-09-04 · tooling · imp-04
+
+- **Symptom:** dropping `@routeflow/api#test` (forbidden by package-shape.spec.ts) left
+  docs-truth.spec.ts/no-dead-deps.spec.ts's outside-workspace reads unhashed by any turbo task.
+- **Lesson:** a tripwire spec reaching outside its own workspace must own a turbo task whose
+  `inputs` name those files — a `<workspace>#<task>` override is one spec away from forbidden; a
+  GENERIC task with explicit inputs survives.
+- **Guard:** `turbo.json` `test:repo-truth`; `apps/api/src/common/turbo-inputs.spec.ts`.
+
 ## testing
 
 ### L-061 · 2026-09-04 · testing · wave B′ P4

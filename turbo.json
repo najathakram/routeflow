@@ -82,6 +82,29 @@
       "inputs": ["test/**", "**/*.e2e-spec.ts"],
       "outputs": []
     },
+    // apps/api's docs-truth.spec.ts and no-dead-deps.spec.ts are tripwires that reach
+    // OUTSIDE apps/api (README.md, CLAUDE.md, apps/web's app/components/hooks/lib trees,
+    // apps/web + apps/mobile package.json) — apps/api's own `test` task's $TURBO_DEFAULT$
+    // never hashes those, so a change to any of them would replay a cached green. A
+    // `@routeflow/api#test` workspace-task override was tried for this and reverted:
+    // packages/pricing/src/package-shape.spec.ts forbids that key outright (one spec away
+    // from being forbidden entirely). A GENERIC task with explicit inputs survives instead —
+    // it isn't scoped to apps/api, so it can't collide with the forbidden override.
+    "test:repo-truth": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/README.md",
+        "$TURBO_ROOT$/CLAUDE.md",
+        "$TURBO_ROOT$/apps/web/package.json",
+        "$TURBO_ROOT$/apps/web/app/**",
+        "$TURBO_ROOT$/apps/web/components/**",
+        "$TURBO_ROOT$/apps/web/hooks/**",
+        "$TURBO_ROOT$/apps/web/lib/**",
+        "$TURBO_ROOT$/apps/mobile/package.json"
+      ],
+      "outputs": []
+    },
     // `^build` first: @routeflow/pricing is a COMPILED workspace package, so its
     // dependents cannot typecheck until its dist/*.d.ts exists.
     "check-types": {
