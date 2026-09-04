@@ -2803,6 +2803,31 @@ const capture = (fn) => {
 };
 
 cmds["self-test"] = () => {
+  // Git EXPORTS repo-scoped variables (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE,
+  // GIT_COMMON_DIR, GIT_QUARANTINE_PATH …) into every hook it runs, and every
+  // child process inherits them. This self-test drives THROWAWAY git repos
+  // (mkdtemp + `git init`) and spawns CLI children that scan commits, so under
+  // the pre-push hook those inherited variables silently re-point all of them at
+  // the REAL repository: `git add` inside the temp repo dies with "this
+  // operation must be run in a work tree", and a commit scan that did NOT die
+  // would have quietly read the wrong repository's history. Scrub them once,
+  // here — every check below (the real-repo ones included) discovers the
+  // repository from the process cwd, which is what they meant all along.
+  // Deliberately not restored: `self-test` is a terminal command.
+  for (const k of [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_QUARANTINE_PATH",
+    "GIT_PREFIX",
+    "GIT_NAMESPACE",
+    "GIT_CEILING_DIRECTORIES",
+  ])
+    delete process.env[k];
+
   let failures = 0;
   const check = (name, got, want) => {
     const ok = JSON.stringify(got) === JSON.stringify(want);
