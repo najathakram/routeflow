@@ -223,7 +223,9 @@ Full rationale, failure modes, and the retirement checklist:
 4. **Wait until the deploy reaches `BUILDING`** (never `INITIALIZING`), **then flip private as a
    `finally`** — even if CI or the merge failed — and read visibility back to confirm `PRIVATE`.
 5. **Watch the deploy to SUCCESS**, then `npm run post-deploy-check` — E2E fires itself off the
-   deploy signal; do not dispatch it.
+   deploy signal; do not dispatch it. The deploy-triggered E2E's freshness guard
+   (`scripts/ci-freshness-guard.mjs`) fails OPEN on any API error and needs `deployments: read`
+   on the `e2e` job.
 
 > ⚠️ Don't `railway up` an UNMERGED branch when master will later auto-deploy: a subsequent master
 > push auto-deploys master-without-your-branch and can briefly regress it (hit + fixed on

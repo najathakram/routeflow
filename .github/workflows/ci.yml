@@ -336,6 +336,11 @@ jobs:
   e2e:
     name: E2E (Playwright)
     runs-on: ubuntu-latest
+    # Restricted default = contents+packages read only. The freshness guard
+    # below needs deployments:read to see the newest deployment (REG-E2EGUARD-403).
+    permissions:
+      contents: read
+      deployments: read
     # 45, not 25: the readiness gate below still owns a 15-minute budget for the
     # case where Railway reports success before the web service is actually
     # serving, so the suite needs its own budget on top of that.
@@ -358,6 +363,22 @@ jobs:
       group: ci-e2e-${{ github.event.deployment.sha || github.sha }}
       cancel-in-progress: true
     steps:
+      # A minimal, unconditional checkout — just `scripts/` — so the freshness
+      # guard below has scripts/ci-freshness-guard.mjs to run. Cheap (one
+      # small dir, no history) and always safe: it never depends on which
+      # deployment is newest, unlike the full checkout further down.
+      # The script is taken from the DEFAULT BRANCH — the same place the workflow
+      # file itself comes from on deployment_status — so a superseded or
+      # rolled-back deployment sha that predates the script (checkout's default
+      # ref is that sha) can never MODULE_NOT_FOUND the guard.
+      - name: Checkout freshness guard script
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: |
+            scripts
+          sparse-checkout-cone-mode: true
+
       # ─── Freshness guard ─────────────────────────────────────────────────────
       # Railway posts more `success` statuses than there are deploys. Measured
       # over the 12 most recent deployments (2026-08-28..29): 18 `success` events
@@ -370,49 +391,31 @@ jobs:
       # legitimately differ — sit in the readiness gate for its full 15 minutes
       # and then fail. That is a false red AND ~17 billed minutes, per deploy.
       #
-      # So: bail out before the checkout. `gh` and GITHUB_TOKEN are already on the
-      # runner, this costs ~2s of a 1-minute minimum billing increment, and it
-      # cannot be expressed in the `if:` above — nothing in the event payload says
-      # whether the deployment is still current.
-      #
-      # It never fails the job. A skipped stale run reporting green is correct:
-      # the commit it describes has already been replaced in production.
+      # So: bail out before the FULL checkout, via scripts/ci-freshness-guard.mjs.
+      # It ALWAYS exits 0 and only ever emits run=false when a real, structurally
+      # valid deployments response shows this commit was genuinely superseded —
+      # a non-zero exit, an unparseable body, a timeout, or a missing permission
+      # (this job needs deployments:read, above) all fail OPEN (run=true, with an
+      # ::warning::) instead of silently skipping the suite (REG-E2EGUARD-403).
       - name: Skip superseded deployments
         id: freshness
         env:
           GH_TOKEN: ${{ github.token }}
-          EVENT_NAME: ${{ github.event_name }}
           DEPLOY_SHA: ${{ github.event.deployment.sha }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          # Dispatch runs carry no deployment: the guard reports that as a
+          # notice and proceeds, instead of warning about an API read that
+          # never failed.
+          EVENT_NAME: ${{ github.event_name }}
+        # The `||` fallback covers a crash OUTSIDE the script's own fail-open
+        # logic (a missing/unreadable file, a node startup failure): it still
+        # publishes run=true. `continue-on-error` would NOT — it leaves the
+        # output unset, and all 7 consumers below would skip: the original bug.
         run: |
-          set -uo pipefail
-
-          if [ "$EVENT_NAME" != "deployment_status" ]; then
+          node "$(git rev-parse --show-toplevel)/scripts/ci-freshness-guard.mjs" || {
+            echo "::warning::freshness guard crashed (exit $?) — proceeding rather than skipping"
             echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "$EVENT_NAME run — the freshness guard only applies to deployment_status."
-            exit 0
-          fi
-
-          # Compare against the newest DEPLOYMENT, deliberately not the branch
-          # tip: commits outside Railway's watchPatterns (docs/, root files)
-          # produce NO deployment at all, so tip-comparison would make the real
-          # deploy's success look stale whenever such a commit lands inside the
-          # deploy window — and E2E would silently never run for either commit.
-          # "Is this deployment still the newest one" is the question; the
-          # deployments API answers exactly that.
-          latest=$(gh api "repos/$GITHUB_REPOSITORY/deployments?per_page=1" --jq '.[0].sha' 2>/dev/null || true)
-          if [ -z "$latest" ]; then
-            echo "::warning::Could not read the newest deployment — proceeding rather than skipping, so a GitHub API blip cannot silently cancel E2E coverage."
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [ "$DEPLOY_SHA" = "$latest" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "Deployment $DEPLOY_SHA is still the newest deployment — running the suite."
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Skipping — this success is for $DEPLOY_SHA but the newest deployment is $latest. Railway re-posts success on the previous deployment when a new one goes live; the newer deployment has its own run."
-          fi
+          }
 
       - uses: actions/checkout@v7
         if: steps.freshness.outputs.run == 'true'
