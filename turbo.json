@@ -55,23 +55,6 @@
       "inputs": ["$TURBO_DEFAULT$"],
       "outputs": ["coverage/**"]
     },
-    // docs-truth.spec.ts and no-dead-deps.spec.ts (both apps/api/src/common) read README.md,
-    // CLAUDE.md, and apps/web's app/components/hooks/lib trees directly, outside apps/api's own
-    // $TURBO_DEFAULT$ — so those paths must be hashed into THIS task's own key. Add an entry
-    // here whenever a spec in apps/api reaches outside apps/api.
-    "@routeflow/api#test": {
-      "dependsOn": ["^build"],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/README.md",
-        "$TURBO_ROOT$/CLAUDE.md",
-        "$TURBO_ROOT$/apps/web/app/**",
-        "$TURBO_ROOT$/apps/web/components/**",
-        "$TURBO_ROOT$/apps/web/hooks/**",
-        "$TURBO_ROOT$/apps/web/lib/**"
-      ],
-      "outputs": ["coverage/**"]
-    },
     // A package's $TURBO_DEFAULT$ only ever covers its OWN directory. @routeflow/pricing's
     // specs reach outside packages/pricing — no-mirrors.spec.ts walks apps/api/src, apps/web
     // and apps/mobile to prove no mirror pricing files exist; package-shape.spec.ts reads the
