@@ -228,6 +228,9 @@ function main() {
   // apps/web/playwright.config.ts (verified: reporter: [["list"], ["html", ...]]
   // only, no JSON entry, as of this writing). Once it does, this is where its
   // output should land.
+  // NOTE: `npm run local:e2e`/`local:e2e:all` (apps/web/e2e/LOCAL-LANE.md) write
+  // `.campaign/runs/web-e2e-local.json` instead (PLAYWRIGHT_JSON_OUTPUT_NAME) — that
+  // file is NEVER read here or anywhere else; only web-e2e.json above is campaign evidence.
   const webE2eJsonPath = path.join(runsDir, "web-e2e.json");
 
   let apiJson, mobileJson, webE2eJson;

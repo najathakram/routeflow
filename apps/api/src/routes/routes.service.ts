@@ -22,6 +22,7 @@ import {
   RouteOptimizeMetric,
   PaymentMethod,
   InvoiceStatus,
+  ChangeRequestStatus,
 } from "@prisma/client";
 import { roundMoney } from "../common/pricing";
 // F03/F05: the settlement cash basis stays pinned to the shared CONFIRMED
@@ -62,6 +63,11 @@ import {
   loadAgeIdCategorySets,
   type RegulatedDeliveryDb,
 } from "../common/regulated-delivery";
+
+// F11 (B129 / B211): the `resolutionReason` stamped on a ChangeRequest that a
+// run-terminal release declined. Exported so a UI/report can recognise a
+// system decline without string-matching a literal in two places.
+export const RELEASED_CHANGE_REQUEST_REASON = "Run cancelled — order released to dispatch";
 
 // G7: single shared `lineItems` select for the ENTIRE run read path —
 // RUN_STOP_INCLUDE below, findOneRun's main query, and findOneRun's
@@ -1252,7 +1258,29 @@ export class RoutesService {
     // Fallback for runs where orders were not linked at dispatch time (legacy/seeded data):
     // if no stop has linked orders, fetch active orders per customer and merge them in.
     const anyLinked = normalisedStops.some((s: any) => (s.orders as any[]).length > 0);
-    if (!anyLinked && normalisedStops.length > 0) {
+    // F11 (spec R4): a run that has gone TERMINAL has released the undelivered
+    // orders of every stop that recorded no work, so it is exactly the "no stop
+    // has linked orders" shape this legacy fallback keys on — without the guard
+    // its detail page would display the customers' CURRENT open orders (created
+    // days later, in any state) as if they had been on the run. Both terminal
+    // states reach that shape: a cancel releases every non-COMPLETED stop's
+    // orders, and a run completed with EVERY stop skipped releases all of them
+    // too. (An un-cancelled, fully-released run still reaches the fallback —
+    // recorded as a follow-up row; the durable fix is retiring the fallback.)
+    //
+    // The COMPLETED arm is NARROWED to the shape a release can actually
+    // produce: the helper is only ever handed the ids of stops whose status is
+    // not COMPLETED, so a COMPLETED run whose stops are ALL COMPLETED was never
+    // released by F11 — its empty `orders` arrays are the genuine legacy/seeded
+    // shape this fallback exists for (demo-seed's `past-1`/`past-2` runs are
+    // exactly that: every stop COMPLETED, no `Order.routeRunStopId` ever
+    // written). Blanket-skipping COMPLETED would blank every stop on those
+    // detail pages.
+    const runWentTerminal =
+      run.status === RouteRunStatus.CANCELLED ||
+      (run.status === RouteRunStatus.COMPLETED &&
+        normalisedStops.some((s: any) => s.status !== "COMPLETED"));
+    if (!anyLinked && normalisedStops.length > 0 && !runWentTerminal) {
       const customerIds = normalisedStops
         .map((s: any) => s._resolvedCustomerId)
         .filter((cid: string | null): cid is string => cid !== null);
@@ -1446,13 +1474,57 @@ export class RoutesService {
     if (dto.status === RouteRunStatus.IN_PROGRESS && !run.startedAt) updates.startedAt = new Date();
     if (dto.status === RouteRunStatus.COMPLETED) updates.completedAt = new Date();
 
-    const updated = await this.prisma.forTenant().routeRun.update({
-      where: { id },
-      data: updates,
-      include: {
-        driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
-      },
-    });
+    const include = {
+      driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
+    };
+
+    // F11 (B129 / B211): the two TERMINAL transitions release the orders of
+    // every stop that recorded no work, in the SAME transaction as the status
+    // write. Stop ids are read inside the tx (not from the findUnique above) so
+    // a driver's completeStop that committed in between is seen as COMPLETED
+    // and drops out; the helper's status filter is the second guard. Gate
+    // reads above (stops-complete, cash backstop) ran pre-release against the
+    // FULL order set, which can only make them stricter. SCHEDULED /
+    // IN_PROGRESS writes — including un-cancel — stay the bare update: un-cancel
+    // is a status-only restore that re-pins NOTHING. It restores the RUN row
+    // (its completed stops' POD and settlement), never its order set: createRun
+    // refuses a route that already carries a SCHEDULED/IN_PROGRESS run, so
+    // re-dispatching the released orders means cancelling this run again and
+    // dispatching a FRESH run on the route — un-cancel is not a path back to
+    // them (spec R3; follow-up row).
+    //
+    // No run-row FOR UPDATE is taken (follow-up row). Concurrent PATCHes are
+    // idempotent under the matrix and the release matches 0 rows twice, but
+    // this branch locks the run row BEFORE the order rows while completeStop /
+    // completeWithPayment lock a stop's order rows before the run row — a
+    // simultaneous operator cancel and driver stop completion can therefore
+    // deadlock, and Postgres aborts one of the two requests.
+    const releasesOrders =
+      dto.status === RouteRunStatus.CANCELLED || dto.status === RouteRunStatus.COMPLETED;
+
+    const updated = releasesOrders
+      ? await this.prisma.tenantTransaction(async (tx) => {
+          const row = await tx.routeRun.update({ where: { id }, data: updates, include });
+          const stops = await tx.routeRunStop.findMany({
+            where: { routeRunId: id, status: { not: "COMPLETED" } },
+            select: { id: true },
+          });
+          const stopIds = stops.map((s: { id: string }) => s.id);
+          // Without this line the release is invisible: an operator asking
+          // "why did these orders come off run X / reappear in dispatch?" has
+          // nothing but a null pointer, indistinguishable from an order that
+          // was never dispatched (same reason completeStop logs its withheld
+          // auto-completion below).
+          const { released } = await this.releaseUndeliveredOrders(tx, stopIds);
+          if (released > 0) {
+            this.logger.log(
+              `updateRunStatus: run ${id} → ${dto.status} released ${released} undelivered order(s) ` +
+                `from stop(s) ${stopIds.join(",")}.`,
+            );
+          }
+          return row;
+        })
+      : await this.prisma.forTenant().routeRun.update({ where: { id }, data: updates, include });
 
     if (updated.driver) {
       this.gateway.emitDriverStatusUpdated(this.prisma.getTenantId(), {
@@ -1539,6 +1611,115 @@ export class RoutesService {
       client,
     );
     return roundMoney(cashTotal + checkTotal);
+  }
+
+  /**
+   * F11 (B129 / B211): a run going terminal releases the orders of every stop
+   * that recorded no work, so createRun's sweep (`routeRunStopId: null`) and the
+   * trip builder (`checkEligibility`) can re-collect them. Callers pass the ids
+   * of stops whose status !== "COMPLETED" — the ONLY durable "work happened
+   * here" marker: completeStop and completeWithPayment both write
+   * stop.status = "COMPLETED" inside their own transaction, deliveries[] is
+   * optional on both, so a deliveryMutation-existence predicate would release a
+   * payment-only completion (the exact hole F05 found in deleteRun). Every
+   * at-door payment therefore sits on a COMPLETED stop and is never in scope.
+   *
+   * Two writes, this order, both on the caller's tx client:
+   *   1. OUT_FOR_DELIVERY → CONFIRMED, scoped to the released stops, BEFORE the
+   *      unlink (the stop filter is lost once the pointer is null). Defensive:
+   *      no run-lifecycle code writes OUT_FOR_DELIVERY, but an office-set one
+   *      must be trip-eligible again (TRIP_ELIGIBLE_STATUSES excludes it).
+   *   2. Null both pointers for orders whose status ∉ {DELIVERED, CANCELLED}.
+   *
+   * BOTH writes carry `routeRunStop: { status: { not: "COMPLETED" } }`: each
+   * write re-checks the stop's status in the same statement, so a stop
+   * completed between the caller's read and this write is excluded. Without it
+   * the caller's `routeRunStop.findMany` and these writes are two statements
+   * under READ COMMITTED, and a driver's completeWithPayment committing in that
+   * window (it takes no run-row lock while other stops are still PENDING, so
+   * RF-016 never fires) leaves the stop COMPLETED with its order
+   * PARTIALLY_DELIVERED — a status that is NOT in the notIn list, so the unlink
+   * would strip the pointers of an order the driver had just delivered and paid
+   * for at the door: its cash drops out of getRunCashCollections'
+   * `invoice.order.routeRunId` join and the order reappears as trip-eligible.
+   * PARTIALLY_DELIVERED is deliberately NOT added to the notIn list — a
+   * partially-delivered order on a genuinely non-completed stop must still
+   * release. No FOR UPDATE is taken and the write order is unchanged; the
+   * relation filter is the whole fix.
+   *
+   * A third write follows: every PENDING ChangeRequest on an order write 2
+   * actually released is DECLINED. ChangeRequests are only created (and only
+   * applied) while `order.routeRun.status === IN_PROGRESS`, so a released order
+   * is back in the buyer's direct-edit window (`updateOrderItems` has no
+   * pending-CR check) while its CR sits PENDING — on re-dispatch the driver
+   * could approve it and apply the same items a second time. `updateMany`
+   * returns no ids, so write 2's row set is read FIRST (same predicate) and
+   * write 2 is then keyed by those ids as well as the predicate, which makes
+   * the released set and the declined set provably the same rows. No
+   * notification is sent (`notifyRequester` is a follow-up row) — this is a
+   * system decline inside someone else's transaction, so the resolver identity
+   * fields are left null.
+   *
+   * An office-recorded CONFIRMED CASH/CHECK InvoicePayment on such an order is
+   * RELEASED, not refused (spec R15): getRunCashCollections joins through
+   * invoice.order.routeRunId, so its attribution moves off the run by design —
+   * the money was never collected at the door (that always COMPLETEs the stop),
+   * and refusing would re-create the stranded order.
+   *
+   * TWO reports attribute through that pointer and BOTH shift by design:
+   * getRunCashCollections (a run's expected cash, above) and
+   * BookkeepingService.getSalesByDriver, which credits an invoice to the driver
+   * of its order's CURRENT run and skips an order with no run — so EVERY
+   * invoice on a released order (payment or not, not just the R15 edge) drops
+   * out of Sales-by-Driver until a re-dispatch re-pins it, and the credit then
+   * lands on the driver who actually delivers. Accepted, not worked around:
+   * both reads have always followed the live pointer (a re-dispatch or a driver
+   * reassignment already moved them), and a stop that recorded no work is the
+   * proof this driver never delivered that order. Stop rows are kept as
+   * history. Never route through OrdersService.changeStatus (own txs, gates,
+   * notifications) and never wrap in a retry loop (only safe in a FRESH tx).
+   */
+  private async releaseUndeliveredOrders(
+    tx: any,
+    stopIds: string[],
+  ): Promise<{ released: number }> {
+    if (stopIds.length === 0) return { released: 0 };
+    // Re-checked by EVERY statement below, never read once into a variable: a
+    // stop the caller saw as non-COMPLETED can be COMPLETED by the time each
+    // write runs.
+    const stopStillOpen = { routeRunStop: { status: { not: "COMPLETED" } } };
+    await tx.order.updateMany({
+      where: {
+        routeRunStopId: { in: stopIds },
+        ...stopStillOpen,
+        status: OrderStatus.OUT_FOR_DELIVERY,
+      },
+      data: { status: OrderStatus.CONFIRMED },
+    });
+    const releaseWhere = {
+      routeRunStopId: { in: stopIds },
+      ...stopStillOpen,
+      status: { notIn: [OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
+    };
+    const releasedIds: string[] = (
+      await tx.order.findMany({ where: releaseWhere, select: { id: true } })
+    ).map((o: { id: string }) => o.id);
+    const { count } = await tx.order.updateMany({
+      where: { id: { in: releasedIds }, ...releaseWhere },
+      data: { routeRunId: null, routeRunStopId: null },
+    });
+    if (releasedIds.length > 0) {
+      await tx.changeRequest.updateMany({
+        where: { orderId: { in: releasedIds }, status: ChangeRequestStatus.PENDING },
+        data: {
+          status: ChangeRequestStatus.DECLINED,
+          resolution: "DECLINED",
+          resolutionReason: RELEASED_CHANGE_REQUEST_REASON,
+          resolvedAt: new Date(),
+        },
+      });
+    }
+    return { released: count };
   }
 
   /**
@@ -2165,6 +2346,25 @@ export class RoutesService {
             where: { id: runId },
             data: { status: RouteRunStatus.COMPLETED, completedAt: new Date() },
           });
+          // F11 / B211: the run is COMPLETED now — release the orders of the
+          // stops that recorded no work (the SKIPPED ones; allDone already
+          // excluded PENDING/IN_PROGRESS). `allStops` was read after THIS
+          // stop's COMPLETED write, so `id !== stopId` is a second guard for a
+          // snapshot that still shows it PENDING. A withheld auto-completion
+          // (the `if` branch above) releases nothing — the run is still open.
+          const releasedStopIds = allStops
+            .filter((s: any) => s.id !== stopId && s.status !== "COMPLETED")
+            .map((s: any) => s.id);
+          const { released } = await this.releaseUndeliveredOrders(tx, releasedStopIds);
+          if (released > 0) {
+            // Logged for the same reason as the withheld branch above: once the
+            // pointers are null nothing else records that this run released
+            // them.
+            this.logger.log(
+              `completeStop: RF-016 auto-completion of run ${runId} released ${released} ` +
+                `undelivered order(s) from stop(s) ${releasedStopIds.join(",")}.`,
+            );
+          }
           autoCompleted = true;
         }
       }
@@ -2420,6 +2620,25 @@ export class RoutesService {
             where: { id: runId },
             data: { status: RouteRunStatus.COMPLETED, completedAt: new Date() },
           });
+          // F11 / B211: the run is COMPLETED now — release the orders of the
+          // stops that recorded no work (the SKIPPED ones; allDone already
+          // excluded PENDING/IN_PROGRESS). `allStops` was read after THIS
+          // stop's COMPLETED write, so `id !== stopId` is a second guard for a
+          // snapshot that still shows it PENDING. A withheld auto-completion
+          // (the `if` branch above) releases nothing — the run is still open.
+          const releasedStopIds = allStops
+            .filter((s: any) => s.id !== stopId && s.status !== "COMPLETED")
+            .map((s: any) => s.id);
+          const { released } = await this.releaseUndeliveredOrders(tx, releasedStopIds);
+          if (released > 0) {
+            // Logged for the same reason as the withheld branch above: once the
+            // pointers are null nothing else records that this run released
+            // them.
+            this.logger.log(
+              `completeWithPayment: RF-016 auto-completion of run ${runId} released ${released} ` +
+                `undelivered order(s) from stop(s) ${releasedStopIds.join(",")}.`,
+            );
+          }
           autoCompleted = true;
         }
       }
@@ -2695,6 +2914,40 @@ export class RoutesService {
       throw new BadRequestException("Cannot reopen a stop on a cancelled run");
     if (stop.status !== "COMPLETED" && stop.status !== "SKIPPED")
       throw new BadRequestException("Only completed or skipped stops can be reopened");
+
+    // F11 / B211 (spec R7): after F11 every COMPLETED transition releases the
+    // orders of its SKIPPED stops, so "run COMPLETED ∧ stop SKIPPED" IS the
+    // state "this stop's orders were released" — one named condition (L-030),
+    // not `stop.orders.length === 0`, which would read the release's EFFECT
+    // and let a pre-fix stranded stop reopen into a run whose settlement is
+    // already closed until the D4 repair happens to run. REFUSAL, not
+    // reversal: the released orders are dispatchable on a new run. Reopening a
+    // COMPLETED stop on a COMPLETED run is unchanged. Sits with the existing
+    // state checks — reordering against the ownership block below is a
+    // B72-class change with its own row.
+    //
+    // The REFUSAL is keyed on the state pair only. The MESSAGE is not: rows
+    // completed BEFORE this deploy are refused by the same pair but were never
+    // released (their pointers still stand), so telling that operator the
+    // orders are "in dispatch" sends them to a trip builder that cannot see
+    // them. The honest discriminator is the RELEASE HELPER'S OWN PREDICATE, not
+    // `orders.length > 0`: `releaseUndeliveredOrders` leaves DELIVERED and
+    // CANCELLED orders pinned, so a post-deploy release can hand this stop back
+    // still holding some — and those rows are exactly the ones the D4 repair
+    // (`scripts/repair-f11-stranded-orders.mjs`, same status filter) would skip,
+    // so pointing that operator at the repair sends them on a flight that can
+    // never report anything to fix. Only an order the release WOULD have taken
+    // and did not means "this row predates the fix".
+    if (stop.status === "SKIPPED" && run.status === "COMPLETED") {
+      const stranded = stop.orders.some(
+        (o) => o.status !== OrderStatus.DELIVERED && o.status !== OrderStatus.CANCELLED,
+      );
+      throw new BadRequestException(
+        stranded
+          ? "This run is complete and this skipped stop's orders are still attached to it (they predate the release fix) — ask an operator to run the F11 stranded-order repair, which frees them for a new run."
+          : "This run is complete and the skipped stop's orders were released to dispatch — dispatch them on a new run instead of reopening this stop.",
+      );
+    }
 
     // Driver isolation
     if (user.role === UserRole.DRIVER) {

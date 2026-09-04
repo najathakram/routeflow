@@ -71,7 +71,6 @@
     "apps/web/lib/api/vendor-bills.ts::export function useDeleteVendorBill() {",
     "apps/web/lib/api/vendor-bills.ts::export function useProductMappings(supplierName: string) {"
   ],
-  "confirm-navigate": ["apps/mobile/app/(driver)/route/stop/[stopId]/index.tsx::confirm("],
   "inert-form": ["apps/web/app/contact/page.tsx::<form className=\"space-y-6\">"],
   "decorative-label": [
     "apps/mobile/app/(driver)/route/stop/[stopId]/return/index.tsx::{action ? <Text style={styles.sectionLink}>{action}</Text> : null}"

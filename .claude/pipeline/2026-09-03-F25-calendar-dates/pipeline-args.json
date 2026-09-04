@@ -1,0 +1,210 @@
+{
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-03-F25-calendar-dates/build-plan.md",
+  "discoveryPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-03-F25-calendar-dates/discovery.md",
+  "specPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-03-F25-calendar-dates/spec.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-03-F25-calendar-dates/test-plan.md",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-03T00:00:00Z",
+  "scale": "major",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25",
+  "context": "F25 calendar/date correctness — B59 Critical; no schema; three apps; spec 34 deploy-only",
+  "formatCommand": "git ls-files -mo --exclude-standard | grep -E '\\.(ts|tsx|js|jsx|json|md)$' | grep -v '^\\.claude/pipeline/' | xargs -r npx prettier --write",
+  "testPackages": [
+    {
+      "id": "TP1",
+      "title": "api unit tests",
+      "files": [
+        "apps/api/src/analytics/analytics.service.calendar.spec.ts",
+        "apps/api/src/drivers/dto/post-location.dto.spec.ts",
+        "apps/api/src/drivers/drivers.service.spec.ts",
+        "apps/api/src/common/calendar-date.pins.spec.ts",
+        "apps/api/src/drivers/post-location.pins.spec.ts",
+        "apps/api/src/common/calendar-date.spec.ts"
+      ],
+      "tests": ["T5", "T6", "T7", "T8", "T9", "T10", "T11", "T16"],
+      "brief": "T5-T7 accumulateRunMetrics tenant-tz day-end incl. DST fixture; T8 pin of the extracted startOfCalendarDay (byte-identical to invoices.service.ts's current private copy); T9 PostLocationDto accuracy (4.5 accepted / -1 rejected / absent accepted); T10 adds a recordLocation describe block to the existing drivers.service.spec.ts asserting the create() call carries accuracy; T11 pin that heading/speedKph -1 still rejects; T16 recoverCalendarDay (pre-fix 23:59:59-local row recovered, already-UTC-midnight row returns null/unchanged). Exact G/W/T + oracle for each in test-plan.md §2/§2.1."
+    },
+    {
+      "id": "TP2",
+      "title": "mobile unit tests",
+      "files": [
+        "apps/mobile/__tests__/calendar-date.test.ts",
+        "apps/mobile/__tests__/location-sentinels.test.ts",
+        "apps/mobile/__tests__/calendar-date.pins.test.ts"
+      ],
+      "tests": ["T12", "T13", "T14", "T15"],
+      "brief": "T12 normalizeLocationSample sentinel mapping; T13 calendarDayBounds DST-day fixture (must match the driver-screen's device-local semantics); T14 isoFromCalendarDate/calendarDateFromIso round-trip + UTC-midnight assertion; T15 fmtCalendarDate offset-independence at two opposite process TZ settings; plus a mirror-identity pin diffing apps/web/lib/calendar-date.ts against apps/mobile/lib/calendar-date.ts body-for-body. Exact G/W/T + oracle for each in test-plan.md §2/§2.1."
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "cd apps/api && npx jest src/analytics/analytics.service.calendar.spec.ts src/drivers/dto/post-location.dto.spec.ts src/common/calendar-date.spec.ts --runInBand && cd ../mobile && npx jest __tests__/calendar-date.test.ts __tests__/location-sentinels.test.ts"
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "WP-API-CAL",
+      "title": "shared api calendar-date helper",
+      "files": [
+        "apps/api/src/common/calendar-date.ts",
+        "apps/api/src/invoices/invoices.service.ts",
+        "apps/api/src/analytics/analytics.service.ts"
+      ],
+      "brief": "NEW common/calendar-date.ts exports startOfCalendarDay(date, timeZone) [extracted byte-for-byte from invoices.service.ts:69-89, args reordered], endOfCalendarDay(date, timeZone) [DST-safe offset-correction derivation — see build-plan.md's 'Exact code' section and its documented divergence from the ruling's literal 'add 24h then startOfCalendarDay' description, which does not hold for negative-UTC-offset zones], resolveTenantTimezone(config) [falls back to schema default America/New_York, not UTC]. invoices.service.ts deletes its private copy and updates its 4 call sites (:489,:628,:2412,:2637) to the new arg order. analytics.service.ts's accumulateRunMetrics (:335-353) gains a tenantTimezone param and calls endOfCalendarDay instead of setUTCHours(23,59,59,999); both call sites (:400 getRoutePerformance, :447 getDriverPerformance) resolve the tenant's timezone ONCE per call via a new private helper, before their existing findMany.",
+      "satisfies": ["R5"],
+      "provenBy": ["T5", "T6", "T7", "T8"]
+    },
+    {
+      "id": "WP-API-LOC",
+      "title": "GPS DTO + persistence",
+      "files": [
+        "apps/api/src/drivers/dto/post-location.dto.ts",
+        "apps/api/src/drivers/drivers.service.ts"
+      ],
+      "brief": "post-location.dto.ts gains an additive optional accuracy field (@IsOptional @Type(Number) @IsNumber @Min(0), no @Max — schema column is unbounded Decimal(8,2)), inserted after the existing speedKph block. drivers.service.ts's recordLocation (:105-116) create() call gains `accuracy: dto.accuracy`. routes.service.ts's latestLocation reader is explicitly NOT touched (F11's file, out of scope).",
+      "satisfies": ["R6"],
+      "provenBy": ["T9", "T10", "T11"]
+    },
+    {
+      "id": "WP-MOB-CAL",
+      "title": "mobile calendar-date helper + call sites",
+      "files": [
+        "apps/mobile/lib/calendar-date.ts",
+        "apps/mobile/app/(operator)/exceptions.tsx",
+        "apps/mobile/app/(operator)/customers/[id]/licenses.tsx"
+      ],
+      "brief": "NEW lib/calendar-date.ts: the byte-identical-with-web pure helpers (calendarDateFromIso, isoFromCalendarDate, calendarDayBounds, plus the 3 private helpers readCalendarParts/addUtcCalendarDays/localMidnightUtc — exact bodies in build-plan.md's 'Exact code' section) plus `export { fmtCalendarDate } from './format-date'` (mobile already has one at format-date.ts:25 — re-export, never reimplement). exceptions.tsx:42-43,58-65 replaced with calendarDayBounds(deviceTimeZone) calls (Intl.DateTimeFormat().resolvedOptions().timeZone), matching the driver route screen's device-local semantics. licenses.tsx:84's `new Date(`${expiresAt}T23:59:59`).toISOString()` replaced with `isoFromCalendarDate(expiresAt.trim())`.",
+      "satisfies": ["R3", "R4", "R2"],
+      "provenBy": ["T13", "T14"]
+    },
+    {
+      "id": "WP-MOB-LOC",
+      "title": "mobile GPS sentinel mapping",
+      "files": [
+        "apps/mobile/lib/location-sentinels.ts",
+        "apps/mobile/lib/location-tracker.native.ts"
+      ],
+      "brief": "NEW lib/location-sentinels.ts exports normalizeLocationSample({accuracy,speed,heading}) mapping any negative-or-null value to undefined (exact code in build-plan.md). location-tracker.native.ts's LocationPayload interface gains `accuracy?: number` and heading/speedKph become `number | undefined`; both payload-building sites (:32-39 the defineTask callback, :78-85 startLocationTracking) call normalizeLocationSample before building the postLocation payload, reading expo-location's existing `.coords.accuracy` (no new capture logic, no new dependency).",
+      "satisfies": ["R6"],
+      "provenBy": ["T12"]
+    },
+    {
+      "id": "WP-WEB-CAL",
+      "title": "web calendar-date helper + 8 sites",
+      "files": [
+        "apps/web/lib/calendar-date.ts",
+        "apps/web/lib/formatting.ts",
+        "apps/web/app/(dashboard)/routes/_components/EditRunModal.tsx",
+        "apps/web/app/(dashboard)/dashboard/page.tsx",
+        "apps/web/app/(dashboard)/routes/my-runs/page.tsx",
+        "apps/web/app/(dashboard)/routes/[id]/dispatch/page.tsx",
+        "apps/web/app/(dashboard)/deliveries/page.tsx",
+        "apps/web/app/(dashboard)/customers/_components/AuthorizationsTab.tsx",
+        "apps/web/app/buyer/portal/[seller]/licenses/page.tsx",
+        "apps/web/app/(dashboard)/finance/reports/page.tsx"
+      ],
+      "brief": "NEW lib/calendar-date.ts: the same byte-identical pure helpers as mobile's, plus `export { fmtCalendarDate } from './formatting'` (fmtCalendarDate stays IN formatting.ts, never moved). formatting.ts's fmtCalendarDate (:55-65) gains an additive 3-arg overload (locale, Intl.DateTimeFormatOptions) for the two styled sites — every existing 1-arg call is byte-identical in output (unchanged branch). EditRunModal.tsx: delete formatLocalDate (:17-23); read the date field via calendarDateFromIso, write it via isoFromCalendarDate, and only include scheduledDate in the PATCH when `date !== initialDate` (fixes both the local-getter misread AND the unconditional-echo destructive write in one change). The 7 display sites swap toLocaleDateString/local fmtDate for fmtCalendarDate at exactly the cited lines; deliveries/page.tsx keeps its createdAt fallback on fmtDate (a timestamp, not a calendar date); finance/reports/page.tsx branches on row type (only INVOICE rows are calendar dates per the discovery report's correction of the register's overstatement).",
+      "satisfies": ["R1", "R2"],
+      "provenBy": ["T1", "T2"]
+    },
+    {
+      "id": "WP-WEB-E2E",
+      "title": "spec 34 + project entry",
+      "files": ["apps/web/e2e/34-calendar-dates.spec.ts", "apps/web/playwright.config.ts"],
+      "brief": "NEW playwright.config.ts project 'calendar-dates' (testMatch /34-calendar-dates\\.spec\\.ts/, dependencies:['setup'], use: {...devices['Desktop Chrome'], storageState: operator.json, timezoneId: 'America/Los_Angeles'}), placed with the other phase-2 entries near :393-418, never touching the commented-out spec-31/32 quarantine block. NEW 34-calendar-dates.spec.ts follows 23-run-settlement-note.spec.ts's exact self-provisioning fixture idiom (page.goto('/routes'), operatorAccessToken(page), apiBase(page.url()), Date.now()-suffixed throwaway names) for the two flows in test-plan.md §8; mutates no shared auth state (L-050 does not apply).",
+      "satisfies": ["R8"],
+      "provenBy": ["T1", "T2"]
+    },
+    {
+      "id": "WP-SCRIPT",
+      "title": "D4 repair script",
+      "files": ["scripts/repair-f25-licence-dates.mjs", "scripts/REPAIR-RUNBOOK.md"],
+      "dependsOn": ["WP-API-CAL"],
+      "brief": "NEW repair-f25-licence-dates.mjs: safety model copied from repair-f11-stranded-orders.mjs (dry-run default via read-only transaction, one tx per row with in-transaction re-read, JSONL before-state log to local-assets/, refuses a non-railway/routeflow database without --force-nonprod) combined with enable-developer-mode.mjs's test-tenant gate (assertTestTenant from scripts/lib/test-tenants.cjs; a live tenant needs --live-tenant-override + the readline type-back confirm). Scope query finds rows whose UTC time-of-day is not 00:00:00.000 (the pre-fix local-23:59:59 tell). Duplicates recoverCalendarDay (also added to apps/api/src/common/calendar-date.ts by this same package, sharing WP-API-CAL's file) with a 'MUST stay byte-identical to...' comment, mirroring the RELEASED_CHANGE_REQUEST_REASON convention already in repair-f11-stranded-orders.mjs — no cross-package import exists between scripts/*.mjs and apps/api/src today (confirmed zero hits). REPAIR-RUNBOOK.md gains a new table row + a new ### section in the same shape as the existing repair-f11-stranded-orders.mjs entry.",
+      "satisfies": ["R7"],
+      "provenBy": ["T16"]
+    },
+    {
+      "id": "WP-DOCS",
+      "title": "close-out bookkeeping",
+      "files": [
+        ".claude/campaign/status/F25.jsonl",
+        ".claude/code-map/api.md",
+        ".claude/code-map/web.md",
+        ".claude/code-map/mobile.md",
+        ".claude/code-map/_meta.json",
+        ".claude/code-map/CHANGELOG.md",
+        ".claude/lessons/LESSONS.md",
+        ".claude/lessons/_meta.json"
+      ],
+      "dependsOn": [
+        "WP-API-CAL",
+        "WP-API-LOC",
+        "WP-MOB-CAL",
+        "WP-MOB-LOC",
+        "WP-WEB-CAL",
+        "WP-WEB-E2E",
+        "WP-SCRIPT"
+      ],
+      "brief": "F25.jsonl rows replaced in place: B90/B118/B185 -> state proven (T13; T5-T8; T9-T12 respectively); B59/B91 -> state proven-pending-deploy (spec 34 + T1/T2, per L-041). Code-map surgical entries for every new/touched file in api.md/web.md/mobile.md; _meta.json mappedSha -> 0cfad7ed, notes replaced with this batch's one-line note + the CHANGELOG.md pointer sentence; the code-map CHANGELOG bullet at the top of the list (.claude/code-map/CHANGELOG.md — no root CHANGELOG.md exists). LESSONS.md appends L-047 verbatim under ## domain (exact text in build-plan.md — id pre-allocated per SEQUENCE R6, nextId stays 52); _meta.json activeCount 29 -> 30, updatedAt bumped.",
+      "satisfies": [],
+      "provenBy": []
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+      "cd apps/api && npx jest src/common src/analytics src/drivers --runInBand",
+      "cd apps/mobile && npx tsc --noEmit",
+      "cd apps/mobile && npx jest __tests__/calendar-date.test.ts __tests__/location-sentinels.test.ts __tests__/calendar-date.pins.test.ts",
+      "cd apps/web && npx tsc --noEmit"
+    ],
+    "final": [
+      "cd apps/api && npx jest --silent",
+      "cd apps/mobile && npx jest --silent",
+      "node scripts/campaign-check.mjs",
+      "node scripts/validate-lessons.mjs",
+      "cd apps/web && npx playwright test --list --reporter=list"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/api/src/common/calendar-date.ts",
+        "behavior": "endOfCalendarDay is the tenant-tz day end, DST-safe",
+        "test": "T5,T6,T7"
+      },
+      {
+        "file": "apps/api/src/analytics/analytics.service.ts",
+        "behavior": "on-time compares against the tenant-tz day end, not UTC",
+        "test": "T5"
+      },
+      {
+        "file": "apps/api/src/drivers/dto/post-location.dto.ts",
+        "behavior": "accuracy < 0 is rejected",
+        "test": "T9"
+      },
+      {
+        "file": "apps/mobile/lib/location-sentinels.ts",
+        "behavior": "negative/null sentinels become undefined",
+        "test": "T12"
+      },
+      {
+        "file": "apps/mobile/lib/calendar-date.ts",
+        "behavior": "isoFromCalendarDate yields UTC midnight, never local",
+        "test": "T14"
+      },
+      {
+        "file": "apps/mobile/lib/calendar-date.ts",
+        "behavior": "calendarDayBounds matches the driver-screen semantics on a DST day",
+        "test": "T13"
+      },
+      {
+        "file": "apps/api/src/common/calendar-date.ts",
+        "behavior": "recoverCalendarDay interprets the stored instant in the tenant tz",
+        "test": "T16"
+      }
+    ]
+  }
+}

@@ -1,0 +1,327 @@
+{
+  "scale": "major",
+  "ui": true,
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11",
+  "context": "F11 run cancel/skip reconciliation (B129 Critical strand-on-cancel; B211 strand-on-complete-with-SKIPPED; B146 buyer card says 'You're next' for a skipped/cancelled stop; B34 driver Skip never PATCHes) — api + mobile (+ optional web hook), no migration, B32 is OUT (F20, no REG-B32 anywhere). ALL rows are T1 jest: NEVER run playwright in any form (clobbers .campaign/runs/web-e2e.json); NEVER run `npm run format` (repo-wide) — use the scoped formatCommand only; NEVER run `npm run verify`; never route the release through orders.service.changeStatus and never add a retry loop inside an open tx; do not run jest while npm ci is still running in the worktree; pins live ONLY in *.pins.spec.ts / *.pins.test.ts and are NOT swept by the red gate (test-plan T6/T11 are re-homed as pins P13/P14); lesson id is the pre-allocated L-045 (nextId stays 51). LEAD RULINGS: WP1 item (g) sweepOrdersOntoStops extraction is DROPPED; WP5 ships both halves.",
+  "specPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/.claude/pipeline/2026-09-02-F11-run-cancel-skip/spec.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/.claude/pipeline/2026-09-02-F11-run-cancel-skip/test-plan.md",
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/.claude/pipeline/2026-09-02-F11-run-cancel-skip/build-plan.md",
+  "formatCommand": "git ls-files -mo --exclude-standard | grep -E '\\.(ts|tsx|js|jsx|json|md)$' | grep -v '^\\.claude/pipeline/' | xargs -r npx prettier --write",
+  "testPackages": [
+    {
+      "id": "TP1",
+      "title": "REG-B129 / REG-B211 routes proofs: release helper, cancel/complete tx, RF-016 hooks, reopen refusal, findOneRun guard, two L-036 path tests (T1-T5, T7-T10, T12-T14)",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/routes.service.run-terminal-release.spec.ts"
+      ],
+      "brief": "Exact fixtures, the stateful in-memory order table (`matches`/`wireTable`) and the explicit `makeTx()` client are in build-plan.md §1 TP1. Harness mirrors routes.service.stop-state-guards.spec.ts:1-141 (createMockPrisma, Test.createTestingModule with Gateway/Notifications/Messaging/InvoicesService/ConfigService/StorageService useValue mocks, jest.mock of ../common/geocode.util and ../storage/compress.util). 12 REG tests, titles verbatim from the table: T1 cancel releases non-COMPLETED stops' orders on the tx client with the exact where/data deep-equal and top-level order.updateMany NOT called; T2 OUT_FOR_DELIVERY→CONFIRMED revert scoped to released stops and ordered before the unlink; T3 empty stop list → no order write (positive assertion on tx.routeRun.update makes it red pre-impl); T4 gateway emit after tx completion marker; T5 PATH cancel → un-cancel (snapshot unchanged) → createRun re-collects B,C,D onto run-2 with A/E as negative controls; T7 findOneRun no fallback for CANCELLED + IN_PROGRESS control; T8 PATCH COMPLETED releases only s3 (no \"s1\" in any where); T9 completeStop RF-016 release in tx with DELIVERED-flip control and autoCompleted true; T10 completeWithPayment RF-016 release excludes the just-completed stop (in: [\"s3\"] not [\"s2\",\"s3\"]); T12 PATH complete-with-SKIPPED → reopenStop rejects BadRequestException /released to dispatch/ with no tx and no writes, plus the unwired-table variant (pre-fix stranded shape still refused) and the COMPLETED-stop W3 control that resolves; T13 driver on released stop gets BadRequestException (not Forbidden) before any tx; T14 idempotent second cancel re-issues the release and the table returns count 0. Every REG test must fail on an ASSERTION against c60fe214. NO pins in this file."
+    },
+    {
+      "id": "TP2",
+      "title": "REG-B129 / REG-B146 getOrderTracking contract proof (T15)",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/orders/orders.service.tracking-contract.spec.ts"
+      ],
+      "brief": "Module setup copied from orders.lifecycle-conservation.spec.ts (jest.mock of ../invoices/invoices.service and ../notifications/notifications.service FIRST, then the full useValue provider list from orders.service.spec.ts:140-240). One test titled exactly `REG-B129 / REG-B146: an order whose stop sits on a CANCELLED run reports tracking: null — the buyer card must never show a driver for a called-off run`: customer.findFirst → {id:'cust-1'}; order.findUnique → CONFIRMED order with routeRunStop {stopNumber:2, status:'PENDING', routeRun {status:'CANCELLED', driver {contactName:'Dee'}, route, stops [1 PENDING, 2 PENDING]}} → getOrderTracking('ord-1', customerPayload) toEqual {status:'CONFIRMED', tracking:null}; control in the same it with runStatus IN_PROGRESS → tracking objectContaining {driverName:'Dee', runStatus:'IN_PROGRESS', stopsAhead:1, stopStatus:'PENDING'}. Red pre-impl (full payload returned today). NO pins in this file."
+    },
+    {
+      "id": "TP3",
+      "title": "REG-B146 mobile headline/poll proofs (T17-T20, appended) + REG-B34 skip-handler and wiring proofs (T21-T26, new)",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile/__tests__/order-tracking-logic.test.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile/__tests__/skip-stop.test.ts"
+      ],
+      "brief": "Exact code in build-plan.md §1 TP3. Load new symbols via `require` with existence assertions FIRST so pre-impl failures are assertions (mobile ts-jest has diagnostics:false; a missing module throws at require → wrap in try/catch). order-tracking-logic.test.ts: append describe('trackingHeadline / trackingRefetchInterval (F11)') with T17 (SKIPPED never reads 'You're next', stopsAhead ignored), T18 it.each precedence table (CANCELLED>SKIPPED>IN_PROGRESS copy byte-for-byte incl. singular/plural, SCHEDULED/COMPLETED-COMPLETED → null), T19 source-text wiring of app/(customer)/orders/[id].tsx (toMatch /trackingHeadline\\(/, not /You're next on the route/, not /stopsAhead === 0\\s*\\?/, ETA guard regex on stopStatus !== \"SKIPPED\"), T20 trackingRefetchInterval values (CONFIRMED+IN_PROGRESS→20000, OUT_FOR_DELIVERY→20000, SCHEDULED→false, DELIVERED/COMPLETED→false, undefined→false) + buyer.ts wiring regexes. skip-stop.test.ts: T21 mutate called with exact vars then navigate only after captured onSuccess (toast 'Stop skipped'); T22 runId undefined → no mutate/no navigate, toast /not loaded/i; T23 isOfflineQueued → toast /queued/i + navigate, server response.data.message → exact toast + no navigate, Error('boom') → 'boom'; T24 in-flight guard (h();h() → 1 call; clears after onError and after onSuccess); T25 driver screen source matches useUpdateStopStatus and createSkipStopHandler( and NOT /confirm\\([\\s\\S]{0,300}\\(\\)\\s*=>\\s*router\\.replace\\(/; T26 JSON.parse of ../../../.claude/skills/bug-hunt/scan-ignore.json has no confirm-navigate entry for (driver)/route/stop/[stopId]/index.tsx. Pre-existing tests in order-tracking-logic.test.ts stay untouched and green. NO pins in these files."
+    },
+    {
+      "id": "TP4",
+      "title": "Pins P1-P14 (GREEN pre-impl and post-impl) — separate *.pins.* files, EXCLUDED from the red gate",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/routes.service.run-terminal-release.pins.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/orders/orders.service.tracking-contract.pins.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile/__tests__/f11-run-cancel-skip.pins.test.ts"
+      ],
+      "brief": "Titles `pin (B###): …` — NO REG- token anywhere in these files. Bodies in build-plan.md §1 TP4. Routes pins: P1 at-door payment completes the stop inside the payment tx (recordDeliveryPaymentInTx receives the same tx); P2 SCHEDULED sweep where deep-equals {customerId, status notIn [DELIVERED,CANCELLED], routeRunStopId:null, fulfillPath:'ROUTE'}; P3 T9b twin (operator CAN un-cancel); P4 reopening a COMPLETED stop on a COMPLETED run still resolves and resets the run to IN_PROGRESS; P5 settleRun accepts CANCELLED; P6 updateStopStatus refuses on CANCELLED run (ConflictException); P7 DRIVER cannot CANCEL (Forbidden /Drivers can only set/, no tx); P8 COMPLETED with a PENDING stop refused before any write (/still pending/, no tx, no order.updateMany); P13 (re-homed test-plan T6) un-cancel writes only status for SCHEDULED/ADHOC/no-route fixtures — no order.updateMany, no tenantTransaction; P14 (re-homed test-plan T11) withheld auto-completion (tx invoicePayment.findMany → [{amount:25, method:'CASH'}]) releases nothing, routeRun.update not called, autoCompleted false. Orders pins: P9 SKIPPED own-stop on IN_PROGRESS run keeps full payload {stopStatus:'SKIPPED', stopsAhead:1}; P10 routeRunStop:null → tracking:null. Mobile pins: P11 trackingStepIndex unchanged; P12 operator route-runs/[id].tsx source still matches /status: \"SKIPPED\"/ and /useUpdateStopStatus/. Run them with `npm --prefix …/apps/api test -- src/routes/routes.service.run-terminal-release.pins.spec.ts src/orders/orders.service.tracking-contract.pins.spec.ts` and `npm --prefix …/apps/mobile test -- __tests__/f11-run-cancel-skip.pins.test.ts` BEFORE the implementation — all must pass; a red pin is a proof in disguise and must be moved, never retitled."
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api test -- src/routes/routes.service.run-terminal-release.spec.ts src/orders/orders.service.tracking-contract.spec.ts -t \"REG-B(129|146|34|211)\"",
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile test -- __tests__/order-tracking-logic.test.ts __tests__/skip-stop.test.ts -t \"REG-B(129|146|34|211)\""
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "WP1",
+      "title": "routes.service.ts: releaseUndeliveredOrders helper, sweepOrdersOntoStops extraction, tenantTransaction around CANCELLED/COMPLETED writes, RF-016 hooks, reopenStop refusal, findOneRun guard (+ DTO/T9b doc text)",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/routes.service.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/dto/update-run-status.dto.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/routes.service.stop-state-guards.spec.ts"
+      ],
+      "brief": "EXACT CODE in build-plan.md §2 WP1 (a)-(h); anchors verified at c60fe214. (a) `private async releaseUndeliveredOrders(tx: any, stopIds: string[])` below getUnsettledPhysicalMoney: return {released:0} on empty input; write 1 `tx.order.updateMany({ where:{ routeRunStopId:{in:stopIds}, status: OrderStatus.OUT_FOR_DELIVERY }, data:{ status: OrderStatus.CONFIRMED } })`; write 2 `tx.order.updateMany({ where:{ routeRunStopId:{in:stopIds}, status:{ notIn:[OrderStatus.DELIVERED, OrderStatus.CANCELLED] } }, data:{ routeRunId:null, routeRunStopId:null } })`; nothing else — never changeStatus, never a retry loop. (b) updateRunStatus :1445-1455: `releasesOrders = CANCELLED || COMPLETED`; if so `this.prisma.tenantTransaction(async tx => { row = tx.routeRun.update({where:{id}, data:updates, include}); stops = tx.routeRunStop.findMany({ where:{ routeRunId:id, status:{ not:'COMPLETED' } }, select:{id:true} }); await this.releaseUndeliveredOrders(tx, stops.map(s=>s.id)); return row; })` else the bare forTenant().routeRun.update; gateway emit stays AFTER, unchanged; gates above unchanged. (c)/(d) inside the RF-016 `else` of completeStop (:2163-2168) and completeWithPayment (:2418-2424), one call after tx.routeRun.update and before autoCompleted=true: `await this.releaseUndeliveredOrders(tx, allStops.filter(s => s.id !== stopId && s.status !== 'COMPLETED').map(s => s.id))`; the withheld branch releases nothing. (e) reopenStop after the two state checks (:2694-2697), BEFORE driver isolation: `if (stop.status === 'SKIPPED' && run.status === 'COMPLETED') throw new BadRequestException(\"This run is complete and the skipped stop's orders were released to dispatch — dispatch them on a new run instead of reopening this stop.\")` — single named condition, NOT stop.orders.length. (f) findOneRun :1255 add `&& run.status !== RouteRunStatus.CANCELLED`. (g) extract createRun's sweep :936-967 verbatim into `private async sweepOrdersOntoStops(runId, stops, adhocOrderIds): Promise<number>` and call it for attachedOrderCount (P2 pure refactor, byte-equivalent where; droppable only on the lead's word). (h) rewrite update-run-status.dto.ts:18-25 'would strand' sentence and the T9b comment at stop-state-guards.spec.ts:390-394 to the new truth (cancel releases; un-cancel status-only; re-dispatch re-collects) — T9b's it() body byte-identical. Do NOT touch updateStopStatus, deleteRun, deleteRoute, getRunCashCollections, settleRun, the controller. ⚠️ LEAD RULING (post-plan): SKIP item (g) entirely — do NOT extract sweepOrdersOntoStops; createRun's sweep (:936-967) stays byte-for-byte untouched. With R3 (un-cancel is status-only) the helper would have no second caller, and a caller-less refactor on a HIGH-risk file is diff noise. Pin P2 still pins the sweep's where. Everything else in WP1 stands.",
+      "satisfies": ["R1", "R2", "R3", "R4", "R6", "R7", "R12", "R15"],
+      "provenBy": [
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "T7",
+        "T8",
+        "T9",
+        "T10",
+        "T12",
+        "T13",
+        "T14",
+        "P1",
+        "P2",
+        "P3",
+        "P4",
+        "P5",
+        "P6",
+        "P7",
+        "P8",
+        "P13",
+        "P14"
+      ],
+      "dependsOn": []
+    },
+    {
+      "id": "WP2",
+      "title": "orders.service.ts: getOrderTracking CANCELLED-run short-circuit (written contract)",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/orders/orders.service.ts"
+      ],
+      "brief": "EXACT CODE in build-plan.md §2 WP2. Immediately after the existing `if (!order.routeRunStop) return { status: order.status, tracking: null }` (:5331-5333) add `if (order.routeRunStop.routeRun.status === RouteRunStatus.CANCELLED) { return { status: order.status, tracking: null }; }` with the contract comment (CANCELLED → null; SKIPPED own-stop on a live/complete run keeps the FULL payload, stopsAhead computed exactly as today; the client branches on stopStatus). RouteRunStatus is already imported (:41). Ownership gate (:5323-5329) and stopsAhead (:5341-5343) untouched. Nothing else in this file (F13 edits :115/:137 — disjoint).",
+      "satisfies": ["R5"],
+      "provenBy": ["T15", "P9", "P10"],
+      "dependsOn": []
+    },
+    {
+      "id": "WP3",
+      "title": "mobile buyer tracking: trackingHeadline + trackingRefetchInterval helpers, customer order screen headline/ETA, useBuyerOrderTracking poll",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile/lib/order-tracking-logic.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile/app/(customer)/orders/[id].tsx",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile/lib/api/buyer.ts"
+      ],
+      "brief": "EXACT CODE in build-plan.md §2 WP3. (a) order-tracking-logic.ts: export `trackingHeadline({runStatus, stopStatus, stopsAhead}): string | null` — precedence CANCELLED → \"This delivery run was cancelled — your order will be rescheduled.\"; SKIPPED (any runStatus) → \"Your stop was skipped on this run — the seller will follow up to reschedule.\"; IN_PROGRESS → today's copy (`stopsAhead === 0 ? \"You're next on the route\" : `${n} stop${n === 1 ? \"\" : \"s\"} ahead of you``); else null. Export `trackingRefetchInterval(data): number | false` — 20_000 when status ∈ {OUT_FOR_DELIVERY, PARTIALLY_DELIVERED} OR tracking?.runStatus === 'IN_PROGRESS'; false otherwise incl. undefined. Structural param types only (the file's existing `import type` from ./api/buyer is erased at runtime — no cycle). (b) buyer.ts useBuyerOrderTracking (:608-618): import trackingRefetchInterval from '../order-tracking-logic'; `refetchInterval: (query) => trackingRefetchInterval(query.state.data)`; remove the inline `s === \"OUT_FOR_DELIVERY\" || s === \"PARTIALLY_DELIVERED\" ? 20_000` lambda. (c) (customer)/orders/[id].tsx: add trackingHeadline to the order-tracking-logic import; `const headline = tracking?.tracking ? trackingHeadline(tracking.tracking) : null;`; replace the :256-262 runStatus ternary with `{headline ? <Text style={styles.trackingLine}>{headline}</Text> : null}`; ETA guard becomes `tracking.tracking.stopStatus !== \"SKIPPED\" && tracking.tracking.estimatedArrivalWindow.start`. Driver line and map placeholder stay; no 'You're next on the route' or 'stopsAhead === 0 ?' text may remain in the screen.",
+      "satisfies": ["R8"],
+      "provenBy": ["T17", "T18", "T19", "T20", "P11"],
+      "dependsOn": []
+    },
+    {
+      "id": "WP4",
+      "title": "mobile driver skip (B34): pure createSkipStopHandler, wire the stop screen through useUpdateStopStatus, delete the confirm-navigate scan suppression",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile/lib/skip-stop.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile/app/(driver)/route/stop/[stopId]/index.tsx",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/.claude/skills/bug-hunt/scan-ignore.json"
+      ],
+      "brief": "EXACT CODE in build-plan.md §2 WP4. (a) new lib/skip-stop.ts: `export interface SkipStopDeps { runId: string | undefined; stopId: string; mutate(vars:{runId,stopId,status:'SKIPPED'}, cbs:{onSuccess, onError}); navigateBack(); toast(msg) }` and `export function createSkipStopHandler(deps): () => void` — closure `inFlight` flag; !runId → toast('Run not loaded yet — try again'), no mutate, no navigate; inFlight → no-op; else mutate({runId, stopId, status:'SKIPPED'}, { onSuccess: clear flag, toast('Stop skipped'), navigateBack(); onError(e): clear flag; e?.isOfflineQueued === true → toast('Offline — skip queued and will sync when you reconnect') + navigateBack(); else toast(e?.response?.data?.message ?? e?.message ?? 'Could not skip this stop') and stay }). (b) (driver)/route/stop/[stopId]/index.tsx: add `useUpdateStopStatus` to the lib/api/routes import (:21-27); import createSkipStopHandler from '../../../../../lib/skip-stop'; after useRouteRun (:79): `const updateStopStatus = useUpdateStopStatus(); const onSkipConfirm = useMemo(() => createSkipStopHandler({ runId, stopId, mutate: updateStopStatus.mutate, navigateBack: () => router.replace('/(driver)/route' as any), toast: showToast }), [runId, stopId, updateStopStatus.mutate, router]);` (memoised so the in-flight guard survives a second tap); the confirm(...) at :334-339 keeps title/body/options and its onConfirm becomes `onSkipConfirm` (no `() => router.replace(` may follow `confirm(` within 300 chars). (c) delete scan-ignore.json line 74 (`\"confirm-navigate\": [\"apps/mobile/app/(driver)/route/stop/[stopId]/index.tsx::confirm(\"],`) keeping valid JSON. NO server change; operator handleSkip untouched; skipReason NOT written.",
+      "satisfies": ["R9", "R10"],
+      "provenBy": ["T21", "T22", "T23", "T24", "T25", "T26", "P12"],
+      "dependsOn": []
+    },
+    {
+      "id": "WP5",
+      "title": "client cache invalidation after a terminal run write (R14, P2 — droppable on the lead's word)",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile/lib/api/routes.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/web/lib/api/routes.ts"
+      ],
+      "brief": "mobile useUpdateRunStatus.onSuccess (:203-206): add `qc.invalidateQueries({ queryKey: [\"orders\"] });` with the F11 comment (a CANCELLED/COMPLETED write releases undelivered orders — refresh order lists). web useUpdateRouteRunStatus.onSuccess (:372-375): add `qc.invalidateQueries({ queryKey: [\"orders\"] })` and the trip-eligibility hook's key — grep apps/web/lib/api for its exact queryKey string first and use THAT; if none exists invalidate [\"orders\"] only. tsc-only verification (check-types in mobile and web). If the web half ships the commit title names `web` (L-008); if the lead drops it, WP7 omits web.md. ⚠️ LEAD RULING: ship BOTH halves (mobile + web). The commit title MUST name web (L-008).",
+      "satisfies": ["R14"],
+      "provenBy": ["tsc"],
+      "dependsOn": []
+    },
+    {
+      "id": "WP6",
+      "title": "D4 historical repair: scripts/repair-f11-stranded-orders.mjs + REPAIR-RUNBOOK section and rollback row",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/scripts/repair-f11-stranded-orders.mjs",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/scripts/REPAIR-RUNBOOK.md"
+      ],
+      "brief": "House pattern = scripts/repair-f10-reopen-damage.mjs (flag parsing, `default_transaction_read_only = on` dry run by default, current_database() guard with --force-nonprod, JSONL writer, ids-only output). Scope query and writes in build-plan.md §2 WP6: Order rows with routeRunStopId NOT NULL, status NOT IN (DELIVERED,CANCELLED), whose run is CANCELLED OR (run COMPLETED AND stop SKIPPED); optional --tenant <slug>; `attribution_moved` flag via EXISTS on InvoicePayment status='PAID' method IN (CASH,CHECK) joined through Invoice.orderId (verify every table/column name against apps/api/prisma/schema.prisma first). Per run ONE transaction: re-read run status and each order's (status, routeRunId, routeRunStopId), abort that run on drift; write 1 OUT_FOR_DELIVERY→CONFIRMED, write 2 null both pointers for status NOT IN (DELIVERED,CANCELLED). Writes need --execute --i-have-a-fresh-backup --confirm <runId> (repeatable) or --confirm-all-listed. JSONL before-state per order to local-assets/f11-repair-<ts>.jsonl {orderId, runId, stopId, before:{status,routeRunId,routeRunStopId}, attributionMoved}. attribution_moved rows are released AND listed under a 'settlement attribution moved' heading. REPAIR-RUNBOOK.md: new §2 HIGH subsection 'F11 — stranded orders on cancelled / completed runs (B129 / B211)' (repairs / reports-only / command sequence) and a §4 rollback row `UPDATE \"Order\" SET \"routeRunId\"='<before>', \"routeRunStopId\"='<before>', status='<before>'::\"OrderStatus\" WHERE id='<id>';`. Builder runs the DRY RUN only, against local docker Postgres seeded on the `test` tenant (assertTestTenant; never a live slug) with one cancelled run + one completed-with-skipped run, `--force-nonprod`, and pastes the output into build-plan.md §7. Owner runs it on prod post-deploy.",
+      "satisfies": ["R13", "R15"],
+      "provenBy": ["dry-run output in build-plan.md §7"],
+      "dependsOn": []
+    },
+    {
+      "id": "WP7",
+      "title": "close-out: L-045, lessons _meta, F11/F20 ledger shards, code-map bullets + _meta + CHANGELOG, scan-ignore check, follow-up rows (runs LAST)",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/.claude/lessons/LESSONS.md",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/.claude/lessons/_meta.json",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/.claude/campaign/status/F11.jsonl",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/.claude/campaign/status/F20.jsonl",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/.claude/code-map/api.md",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/.claude/code-map/mobile.md",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/.claude/code-map/web.md",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/.claude/code-map/_meta.json",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/.claude/code-map/CHANGELOG.md"
+      ],
+      "brief": "Exact text and JSONL rows in build-plan.md §2 WP7. (1) Run `node C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/scripts/validate-lessons.mjs` FIRST and read `binding:` (master: 27/40 entries, maxBytes 40960 — entry count binds); if size binds with ~0 headroom STOP and report. (2) Append L-045 (≤ ~1 KB, category `domain`, after the L-037 entry, no client identifiers, `#TBD`) — Symptom/Root cause/Lesson/Guard text verbatim from the plan, cites [[L-029]] [[L-030]], guards REG-B129 (T5) and REG-B211 (T12). (3) lessons _meta.json: activeCount 27→28, updatedAt now, nextId STAYS 51 (L-045 is pre-allocated; bump nextId only if a second unallocated lesson is written); re-run validate-lessons → exit 0. (4) F11.jsonl: re-read first; final = four rows B34/B129/B146/B211 with state 'proven', pr null, proof = the spec paths per the plan, roundSha 'c60fe214', buildPlan '.claude/pipeline/2026-09-02-F11-run-cancel-skip/build-plan.md'; REMOVE the B32 row; append to F20.jsonl (only if absent) `{\"id\":\"B32\",\"batch\":\"F20\",\"tier\":\"T3\",\"state\":\"queued\",\"pr\":null,\"proof\":null,\"evidence\":null,\"roundSha\":\"c60fe214\"}`. (5) Surgical code-map bullets: api.md routes-service (helper, tx placement, RF-016 hooks, reopen refusal, findOneRun guard, sweep extraction, R15 attribution note, spec names), api.md orders (getOrderTracking contract), api.md trips (PREVIOUSLY_DISPATCHED now pre-fix rows only; repair script), mobile.md driver row (skip-stop.ts + screen wiring + orders invalidation) and buyer row (trackingHeadline/trackingRefetchInterval + screen + hook + tests), web.md only if WP5's web half shipped; code-map _meta.json mappedSha = `git rev-parse --short HEAD` in the worktree, generatedAt now, notes REPLACED (never appended); ONE new bullet at the top of CHANGELOG.md with the same text. (6) Confirm scan-ignore.json:74 is gone (WP4 owns the delete; remove it here if still present). (7) Record the follow-up table (skipReason zero writers/readers; controller inline body / non-tx updateStopStatus / FAILED_DELIVERY; deliveredQty only in completeWithPayment; findOneRun fallback on un-cancelled released run; deleteRun/B209 + cancel-while-unsettled; no run-row FOR UPDATE; PARTIALLY_DELIVERED release) — allocate B212+ before any REG- title, F11 writes none. Build-plan carries `## Manual verification → (none)`.",
+      "satisfies": ["R11", "R12"],
+      "provenBy": ["node scripts/validate-lessons.mjs exit 0", "review"],
+      "dependsOn": ["WP1", "WP2", "WP3", "WP4", "WP5", "WP6"]
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api run check-types",
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile run check-types",
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api test -- src/routes/routes.service.run-terminal-release.spec.ts src/routes/routes.service.run-terminal-release.pins.spec.ts src/orders/orders.service.tracking-contract.spec.ts src/orders/orders.service.tracking-contract.pins.spec.ts src/routes/routes.service.stop-state-guards.spec.ts src/routes/routes.service.spec.ts",
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile test -- __tests__/order-tracking-logic.test.ts __tests__/skip-stop.test.ts __tests__/f11-run-cancel-skip.pins.test.ts"
+    ],
+    "final": [
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api run check-types",
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile run check-types",
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/web run check-types",
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api test",
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile test",
+      "node C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/scripts/validate-lessons.mjs"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/routes.service.ts",
+        "behavior": "release also runs for COMPLETED stops — change the in-tx stop read to `where: { routeRunId: id }` (money regression: DELIVERED/at-door orders lose their run attribution)",
+        "test": "REG-B129 T1 (where deep-equal), REG-B129 T5 (order A loses her pointer), REG-B211 T8 (\"s1\" appears in a where)"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/routes.service.ts",
+        "behavior": "release skipped on CANCELLED — `releasesOrders` true only for COMPLETED",
+        "test": "REG-B129 T1, T2, T3, T5, T14"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/routes.service.ts",
+        "behavior": "release moved outside the transaction (call on this.prisma.forTenant() after the tx)",
+        "test": "REG-B129 T1 (top-level order.updateMany called), REG-B129 T4"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/routes.service.ts",
+        "behavior": "swap the helper's two writes (unlink before the OUT_FOR_DELIVERY revert)",
+        "test": "REG-B129 T2"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/routes.service.ts",
+        "behavior": "remove the `stopIds.length === 0` short-circuit",
+        "test": "REG-B129 T3"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/routes.service.ts",
+        "behavior": "gateway emit inside the tx callback",
+        "test": "REG-B129 T4"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/routes.service.ts",
+        "behavior": "un-cancel re-sweeps (call sweepOrdersOntoStops in the SCHEDULED/IN_PROGRESS branch)",
+        "test": "REG-B129 T5 (W2 snapshot), pin P13"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/routes.service.ts",
+        "behavior": "drop the `run.status !== CANCELLED` guard in findOneRun's legacy fallback",
+        "test": "REG-B129 T7"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/routes.service.ts",
+        "behavior": "omit the RF-016 release in completeStop / in completeWithPayment (two probes)",
+        "test": "REG-B211 T9 / REG-B211 T10"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/routes.service.ts",
+        "behavior": "drop `s.id !== stopId` from the RF-016 filter",
+        "test": "REG-B211 T10"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/routes.service.ts",
+        "behavior": "call the RF-016 release whenever allDone (outside the withheld-cash else)",
+        "test": "pin P14 (routes.service.run-terminal-release.pins.spec.ts)"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/routes.service.ts",
+        "behavior": "reopenStop accepts a released SKIPPED stop — delete the R7 refusal",
+        "test": "REG-B211 T12 (W2 resolves), REG-B211 T13"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/routes.service.ts",
+        "behavior": "reopen refusal predicate `stop.orders.length === 0` instead of `stop SKIPPED && run COMPLETED`",
+        "test": "REG-B211 T12 (unwired-table variant: pre-fix stranded stop must still be refused)"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/routes.service.ts",
+        "behavior": "move the reopen refusal inside the tenantTransaction / after ownership",
+        "test": "REG-B211 T13, REG-B211 T12 (tenantTransaction call count)"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/routes/routes.service.ts",
+        "behavior": "skip the release when run.status === dto.status (same-status cancel)",
+        "test": "REG-B129 T14"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/orders/orders.service.ts",
+        "behavior": "getOrderTracking returns the full payload for a CANCELLED run (delete the short-circuit)",
+        "test": "REG-B129 / REG-B146 T15"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/orders/orders.service.ts",
+        "behavior": "over-reach: return tracking: null for SKIPPED stops too",
+        "test": "pin P9 (orders.service.tracking-contract.pins.spec.ts)"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/api/src/trips/trips.service.ts",
+        "behavior": "FENCE (F11 does not edit this file): remove `routeRunStopId: null` from getEligibleOrders' where — confirm an existing trips.service.spec.ts eligibility test goes red; if none does, record the gap as a follow-up row, do not add a test to F11",
+        "test": "existing trips.service.spec.ts eligibility tests"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile/lib/order-tracking-logic.ts",
+        "behavior": "IN_PROGRESS branch evaluated before the SKIPPED branch (stopsAhead 0 → 'You're next')",
+        "test": "REG-B146 T17, T18"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile/lib/order-tracking-logic.ts",
+        "behavior": "drop the `runStatus === 'IN_PROGRESS'` arm of trackingRefetchInterval",
+        "test": "REG-B146 T20"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile/app/(customer)/orders/[id].tsx",
+        "behavior": "restore the inline stopsAhead ternary / drop the SKIPPED ETA guard",
+        "test": "REG-B146 T19"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile/lib/skip-stop.ts",
+        "behavior": "navigate before mutate",
+        "test": "REG-B34 T21"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile/lib/skip-stop.ts",
+        "behavior": "send the PATCH with runId undefined",
+        "test": "REG-B34 T22"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile/lib/skip-stop.ts",
+        "behavior": "treat every error as offline-queued (navigate on a real server error)",
+        "test": "REG-B34 T23 (b)"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile/lib/skip-stop.ts",
+        "behavior": "drop the in-flight flag / never clear it after settle",
+        "test": "REG-B34 T24"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/apps/mobile/app/(driver)/route/stop/[stopId]/index.tsx",
+        "behavior": "restore `() => router.replace(...)` as the Skip confirm's onConfirm",
+        "test": "REG-B34 T25"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F11/.claude/skills/bug-hunt/scan-ignore.json",
+        "behavior": "re-add the confirm-navigate suppression for the driver stop screen",
+        "test": "REG-B34 T26"
+      }
+    ]
+  }
+}

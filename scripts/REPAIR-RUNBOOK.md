@@ -15,11 +15,12 @@ damage-writing bug ships its own scoped script beside this runbook, same safety 
 (dry-run default, explicit `--execute` + backup attestation + per-row confirm, one
 transaction per row with an in-transaction re-read, JSONL log to `local-assets/`):
 
-| Script                                                         | Batch      | Repairs                                                                                                                                                                 | Report-only                                                                                                                                                                                  |
-| -------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`repair-f03.mjs`](repair-f03.mjs)                             | F03        | payment-status truth                                                                                                                                                    | —                                                                                                                                                                                            |
-| [`repair-f17.mjs`](repair-f17.mjs)                             | F17        | duplicate import payments                                                                                                                                               | clusters > 2                                                                                                                                                                                 |
-| [`repair-f10-reopen-damage.mjs`](repair-f10-reopen-damage.mjs) | F10 (#591) | **B55** — `Product.currentStock` inflated by pre-fix reopens, derived from the only rows that record them (`type:SALE`, `quantity>0`, `reference LIKE 'Reopen stop %'`) | **B54** — invoices left PAID/PARTIAL on a reopened stop. NEVER auto-mutated: the money really was collected, so whether the order state or the invoice is wrong is a per-case owner judgment |
+| Script                                                             | Batch      | Repairs                                                                                                                                                                                                                                                                                                                                                                                                             | Report-only                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`repair-f03.mjs`](repair-f03.mjs)                                 | F03        | payment-status truth                                                                                                                                                                                                                                                                                                                                                                                                | —                                                                                                                                                                                                                                                                                  |
+| [`repair-f17.mjs`](repair-f17.mjs)                                 | F17        | duplicate import payments                                                                                                                                                                                                                                                                                                                                                                                           | clusters > 2                                                                                                                                                                                                                                                                       |
+| [`repair-f10-reopen-damage.mjs`](repair-f10-reopen-damage.mjs)     | F10 (#591) | **B55** — `Product.currentStock` inflated by pre-fix reopens, derived from the only rows that record them (`type:SALE`, `quantity>0`, `reference LIKE 'Reopen stop %'`)                                                                                                                                                                                                                                             | **B54** — invoices left PAID/PARTIAL on a reopened stop. NEVER auto-mutated: the money really was collected, so whether the order state or the invoice is wrong is a per-case owner judgment                                                                                       |
+| [`repair-f11-stranded-orders.mjs`](repair-f11-stranded-orders.mjs) | F11 (#TBD) | **B129 / B211** — orders stranded on a CANCELLED run's non-COMPLETED stop or a COMPLETED run's SKIPPED stop: `routeRunId`/`routeRunStopId` never released, invisible to the dispatch sweep and the trip builder. One transaction per run, with the stop's status re-read under lock: revert `OUT_FOR_DELIVERY` → `CONFIRMED`, null both pointers, then DECLINE every PENDING `ChangeRequest` on the released orders | settlement attribution — a released order that also carries a PAID CASH/CHECK `InvoicePayment`. Still released (spec R15); printed so the owner can check that run's settlement. Sales-by-Driver also drops every released order's invoices (not itemised — see the section below) |
 
 ⚠️ **`Reopen stop %` is load-bearing.** It is simultaneously the B55 damage footprint and the
 only historical trace of a pre-fix reopen (F10 added an `AuditLog` + `podHistory` trail going
@@ -120,6 +121,98 @@ and the line would still look fully billed — permanently un-re-invoiceable.
 
 ### HIGH
 
+#### `repair-f11-stranded-orders.mjs` — stranded orders on cancelled / completed runs (B129 / B211) — auto
+
+Before F11 (#TBD), cancelling a run — or completing one with a SKIPPED stop — never released the
+stop's undelivered orders: `Order.routeRunId`/`routeRunStopId` stayed pinned to the now-dead run,
+invisible to the dispatch sweep and the trip builder (both require the pointer null), so the
+order was stranded with no path back to a route. The fixed code now runs the release inline, in
+the same transaction as the status write, for every run going terminal from the deploy forward.
+This script finds every row that predates the deploy — `routeRunStopId IS NOT NULL`, order status
+NOT IN (DELIVERED, CANCELLED), **the stop itself not COMPLETED**, and its run CANCELLED, or
+COMPLETED with that stop SKIPPED — and applies the identical release retroactively, one
+transaction per run. **What it changes, in this order:**
+
+1. an `OUT_FOR_DELIVERY` order → `CONFIRMED` (its stop filter is lost the moment the pointer is
+   nulled, so this has to run first);
+2. `routeRunId` / `routeRunStopId` → NULL for those orders;
+3. every **PENDING `ChangeRequest`** on the orders step 2 actually released → `status='DECLINED'`,
+   `resolution='DECLINED'`, `resolutionReason='Run cancelled — order released to dispatch'`,
+   `resolvedAt=NOW()`, `updatedAt=NOW()` (the shipped helper bumps `updatedAt` through Prisma's
+   `@updatedAt`; raw SQL has to set it). Resolver identity fields stay NULL (a system decline,
+   exactly as the shipped helper writes it) and no notification is sent. Without this a released
+   order carries a PENDING CR that a re-dispatched driver could approve, **applying the same items
+   a second time** — CRs are only created and applied while the order's run is IN_PROGRESS, so a
+   released order is back in the buyer's own edit window while its CR still sits PENDING. Step 3
+   is keyed by the same locked id array as step 2, so the released set and the declined set are
+   provably the same rows.
+
+Nothing outside that predicate is written. The RouteRunStop rows themselves
+are untouched — they stay as history. Inside each run's transaction the run's status and every
+scoped order's `(status, routeRunId, routeRunStopId)` are re-read and compared to the dry-run
+snapshot; any drift aborts that run and moves on to the next one.
+
+⚠️ **The stop's status is re-read inside the transaction too**, after the order rows are locked,
+and any order whose stop has become COMPLETED since the scan is dropped from **all three** writes
+and reported as `skipped (stop completed since scan): N` (printed in both modes). The scan and the
+writes are two statements under READ COMMITTED; a driver's `completeStop` / `completeWithPayment`
+committing in that window would otherwise let the script strip the pointers off an order that had
+just been delivered and paid for at the door. The shipped fix closes the same hole by carrying
+`routeRunStop: { status: { not: "COMPLETED" } }` in every statement. The re-check runs _before_ the
+drift comparison on purpose: completing a stop usually moves its order's status too, and such an
+order must be skipped, not treated as drift that aborts the whole run. A run whose every scoped
+order is skipped this way commits nothing and is counted under `skipped`.
+
+The dry run also prints `change requests declined: N` — a COUNT over step 3's own predicate, never
+a write.
+
+**Report-only:** a released order that also carries a PAID CASH/CHECK `InvoicePayment` (joined
+through `Invoice.orderId`) is still released — the money really was collected, and leaving the
+pointer pinned would just re-strand the order — but is printed under a **"settlement attribution
+moved"** heading so the owner can check whether that run's settlement (if one was recorded) needs
+a second look. This is the forward-fix's own intended contract (spec R15), not a bug the script
+corrects, and the script never mutates money.
+
+**Report-only:** an undelivered order still pinned to a **COMPLETED** stop of a cancelled run. The
+fixed code only ever releases stops read with `status: { not: "COMPLETED" }`, so such a row is not
+the damage this bug wrote — work was recorded at that door, and its cash is attributed to that run.
+The script lists it under **"pinned to a COMPLETED stop — NOT repaired"** and never writes it;
+freeing one is an owner decision, taken row by row.
+
+⚠️ **Run this promptly after the F11 deploy — until it runs, those operators have no self-service
+recovery.** From the deploy forward `reopenStop` refuses a SKIPPED stop on a COMPLETED run, and it
+refuses pre-deploy rows too — reopening one used to be the operator's own way back to its orders.
+The API tells them which case they are in, using this script's own scope filter: a stop that still
+holds an order with status **not in** `DELIVERED`/`CANCELLED` (a row this script has not reached
+yet) says _"still attached to it … ask an operator to run the F11 stranded-order repair"_, while
+any other stop says _"released to dispatch — dispatch them on a new run"_. An operator reporting
+that first message is asking for this script. The discriminator is deliberately not "does the stop
+have any orders": a released stop keeps its DELIVERED and CANCELLED orders pinned (this script
+skips them too), so keying on order count would send an operator here for rows the dry run reports
+nothing about.
+
+⚠️ **`--tenant` takes the slug, not the business name.** An unknown slug now exits non-zero with
+`No tenant with slug "<x>"` instead of scanning nothing and reporting "nothing to repair" — but
+re-check the slug against `Tenant.slug` before reading a clean dry run as a clean tenant.
+
+**Two reports attribute through `Order.routeRunId`, and this repair moves both — retroactively.**
+`getRunCashCollections` (a run's expected cash at settlement, the note above) and **Sales-by-Driver**
+(`BookkeepingService.getSalesByDriver`, which credits an invoice to the driver of its order's
+_current_ run and skips an order that has no run). So releasing an order drops **every** invoice on
+it — payment or not, i.e. a wider set than the payment-scoped print above — out of Sales-by-Driver
+until a re-dispatch re-pins it, at which point the credit lands on the driver who actually delivers.
+Running this script applies that shift in one go across every historical cancelled /
+completed-with-skipped run. It is intended (spec R15): the stop recorded no work, so that driver
+never delivered the order. The affected invoices are **not** itemised by the script, so if
+Sales-by-Driver numbers for a past period feed driver pay or commission, export them **before** the
+run and re-run the report afterwards.
+
+```bash
+railway run --service postgres node scripts/repair-f11-stranded-orders.mjs [--tenant <slug>] [--verbose]
+railway run --service postgres node scripts/repair-f11-stranded-orders.mjs \
+  --execute --i-have-a-fresh-backup --confirm <runId>   # repeat --confirm per run, or use --confirm-all-listed
+```
+
 #### `unpaidpay-638eb534`, `unpaidpay-bc48a97b` (invoice-unpaid-with-payments) — auto
 
 Invoices carrying real non-VOID payments (824.00 / 1371.00) whose status was never recomputed
@@ -210,16 +303,18 @@ Open follow-ups the repairs do **not** cover:
 Full rollback = restore the pre-repair backup (house method, `psql` — never raw `pg` binary
 restore). For single repairs, use the before-state in `local-assets/repair-log-*.jsonl`:
 
-| Repair type                                                               | Rollback                                                                                                                                                                                                                                                                                                                                                                  |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status recompute (`unpaidpay-*`, `paidbal`, and the status leg of others) | `UPDATE "Invoice" SET status='<before.status>'::"InvoiceStatus", "paidAt"=<before paidAt or NULL> WHERE id='<id>';`                                                                                                                                                                                                                                                       |
-| `deadpay-cf082424` (payment deleted + wallet restored)                    | Re-insert the InvoicePayment from the log's before-state, then reverse the wallet: CreditNote `amountUsed += amount` (and restore its previous status/appliedAt/expiresAt from the log) or AdvancePayment `balance -= amount`.                                                                                                                                            |
-| `overpaid` void-duplicate-payment                                         | `UPDATE "InvoicePayment" SET status='PAID' WHERE id='<payment>';` then re-run the status leg's rollback. If the payment was credit/advance money, also re-consume the wallet (reverse of the restore above).                                                                                                                                                              |
-| `overpaid` convert-excess-to-advance                                      | `DELETE FROM "AdvancePayment" WHERE id='<minted id from log>';` and restore the source payment's amount (or its PAID status if it was fully voided). **Only while the advance is unspent** — if the customer already applied it, unwind the application first (`POST /credit-notes`-style unapply does not exist for advances; void the application payment via the app). |
-| `overbill` / `retdel` counter resets                                      | `UPDATE "OrderItem" SET "invoicedQty"=<before>` / `SET "deliveredQty"=<before>` for the ids in the log.                                                                                                                                                                                                                                                                   |
-| Header math / line re-sum                                                 | `UPDATE "Invoice" SET total=<before>, subtotal=<before> WHERE id='<id>';` plus the status leg.                                                                                                                                                                                                                                                                            |
-| Tenant stamp                                                              | `UPDATE "Return" SET "tenantId"=NULL …` / same for the logged ReturnItem ids (before-state in log).                                                                                                                                                                                                                                                                       |
-| Template deactivation                                                     | `UPDATE "RecurringInvoice" SET "isActive"=true WHERE id='<id>';` — for `61bc82ba…` **only together with** a corrected future `nextRunAt`, otherwise the nightly duplicate-fire risk returns.                                                                                                                                                                              |
+| Repair type                                                               | Rollback                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status recompute (`unpaidpay-*`, `paidbal`, and the status leg of others) | `UPDATE "Invoice" SET status='<before.status>'::"InvoiceStatus", "paidAt"=<before paidAt or NULL> WHERE id='<id>';`                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `deadpay-cf082424` (payment deleted + wallet restored)                    | Re-insert the InvoicePayment from the log's before-state, then reverse the wallet: CreditNote `amountUsed += amount` (and restore its previous status/appliedAt/expiresAt from the log) or AdvancePayment `balance -= amount`.                                                                                                                                                                                                                                                                                                                       |
+| `overpaid` void-duplicate-payment                                         | `UPDATE "InvoicePayment" SET status='PAID' WHERE id='<payment>';` then re-run the status leg's rollback. If the payment was credit/advance money, also re-consume the wallet (reverse of the restore above).                                                                                                                                                                                                                                                                                                                                         |
+| `overpaid` convert-excess-to-advance                                      | `DELETE FROM "AdvancePayment" WHERE id='<minted id from log>';` and restore the source payment's amount (or its PAID status if it was fully voided). **Only while the advance is unspent** — if the customer already applied it, unwind the application first (`POST /credit-notes`-style unapply does not exist for advances; void the application payment via the app).                                                                                                                                                                            |
+| `overbill` / `retdel` counter resets                                      | `UPDATE "OrderItem" SET "invoicedQty"=<before>` / `SET "deliveredQty"=<before>` for the ids in the log.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Header math / line re-sum                                                 | `UPDATE "Invoice" SET total=<before>, subtotal=<before> WHERE id='<id>';` plus the status leg.                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Tenant stamp                                                              | `UPDATE "Return" SET "tenantId"=NULL …` / same for the logged ReturnItem ids (before-state in log).                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Template deactivation                                                     | `UPDATE "RecurringInvoice" SET "isActive"=true WHERE id='<id>';` — for `61bc82ba…` **only together with** a corrected future `nextRunAt`, otherwise the nightly duplicate-fire risk returns.                                                                                                                                                                                                                                                                                                                                                         |
+| F11 release (`repair-f11-stranded-orders.mjs`)                            | `UPDATE "Order" SET "routeRunId"='<before>', "routeRunStopId"='<before>', status='<before>'::"OrderStatus" WHERE id='<id>';` — per order, from that order's `before` object in `local-assets/f11-repair-<ts>.jsonl`.                                                                                                                                                                                                                                                                                                                                 |
+| F11 change-request decline (same script, same log)                        | `UPDATE "ChangeRequest" SET status='PENDING', resolution=NULL, "resolutionReason"=NULL, "resolvedAt"=NULL WHERE id IN (<before.pendingChangeRequestIds>);` — the ids are the exact rows that order's decline touched (the write's own `RETURNING`), so an empty list means nothing was declined for it. Run this **with** the release rollback above: a re-pinned order whose CR stayed DECLINED is still un-approvable. `updatedAt` is deliberately NOT restored — a rollback is itself a modification, so a fresh `updatedAt` after it is correct. |
 
 After any rollback, re-run `scripts/data-integrity-report.mjs` — the original finding should
 reappear (that's the proof the rollback landed).

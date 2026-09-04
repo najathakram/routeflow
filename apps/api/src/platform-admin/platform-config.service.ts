@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -29,53 +29,13 @@ function modelPrice(model: string): { in: number; out: number } {
 }
 
 @Injectable()
-export class PlatformConfigService implements OnModuleInit {
+export class PlatformConfigService {
   private readonly logger = new Logger(PlatformConfigService.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
   ) {}
-
-  /**
-   * Auto-create the PlatformConfig table if it doesn't exist yet.
-   * This avoids needing a manual migration when the feature is first deployed.
-   */
-  async onModuleInit() {
-    try {
-      await this.prisma.$executeRaw`
-        CREATE TABLE IF NOT EXISTS "PlatformConfig" (
-          "id"        TEXT NOT NULL DEFAULT gen_random_uuid()::text,
-          "key"       TEXT NOT NULL,
-          "value"     TEXT NOT NULL,
-          "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
-          CONSTRAINT "PlatformConfig_pkey" PRIMARY KEY ("id"),
-          CONSTRAINT "PlatformConfig_key_key" UNIQUE ("key")
-        )
-      `;
-      // AI usage/metering log — additive + idempotent (same auto-create pattern
-      // as PlatformConfig above, so no Prisma migration is required to ship).
-      await this.prisma.$executeRaw`
-        CREATE TABLE IF NOT EXISTS "AiUsageEvent" (
-          "id"           TEXT NOT NULL DEFAULT gen_random_uuid()::text,
-          "tenantId"     TEXT,
-          "feature"      TEXT NOT NULL,
-          "model"        TEXT NOT NULL,
-          "inputTokens"  INTEGER NOT NULL DEFAULT 0,
-          "outputTokens" INTEGER NOT NULL DEFAULT 0,
-          "success"      BOOLEAN NOT NULL DEFAULT true,
-          "createdAt"    TIMESTAMP(3) NOT NULL DEFAULT now(),
-          CONSTRAINT "AiUsageEvent_pkey" PRIMARY KEY ("id")
-        )
-      `;
-      await this.prisma.$executeRaw`
-        CREATE INDEX IF NOT EXISTS "AiUsageEvent_createdAt_idx" ON "AiUsageEvent"("createdAt")
-      `;
-      this.logger.log("PlatformConfig + AiUsageEvent tables ready");
-    } catch (err: any) {
-      this.logger.error(`Platform table setup failed: ${err?.message}`);
-    }
-  }
 
   // ─── Low-level helpers ──────────────────────────────────────────────────────
 

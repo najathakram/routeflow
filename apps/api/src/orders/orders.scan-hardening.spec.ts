@@ -50,12 +50,91 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+// T2 (PR-2 imp-02-order-merge-lock) — `apps/api/src/common/db-locks.ts` exists
+// on disk (shipped in this PR), so this is an ordinary — NOT `virtual` — mock:
+// renaming or deleting the real module makes this suite fail loudly instead of
+// Jest fabricating a stand-in. It stands in for `withAdvisoryLock` with an
+// in-memory FIFO per-key serializer (a real Postgres advisory lock's ordering
+// guarantee, without touching Postgres): calls sharing a `family:key` chain run
+// one at a time, FIFO, each resolving `{ acquired: true, value }`. Individual
+// tests override `withAdvisoryLock`'s implementation to prove the controller's
+// 55P03 → 409 MERGE_IN_PROGRESS / connect-failure → 503 mapping once R2 wires
+// it in — see `requireDbLocksMock()` below and its callers.
+jest.mock("../common/db-locks", () => {
+  class LockTimeoutError extends Error {
+    constructor(
+      public readonly family: string,
+      public readonly key: string,
+      public readonly waitMs: number,
+    ) {
+      super(`advisory lock timeout: ${family}:${key} after ${waitMs}ms`);
+      this.name = "LockTimeoutError";
+    }
+  }
+  class LockUnavailableError extends Error {
+    constructor(public readonly cause?: unknown) {
+      super("advisory lock unavailable");
+      this.name = "LockUnavailableError";
+    }
+  }
+  const chains = new Map<string, Promise<unknown>>();
+  // Shared call-ORDER ledger (test-only export `__lockEvents`). The serializer
+  // pushes `enter:<family>:<key>` before running the body and `exit:…` once it
+  // settles; a test makes the writes it cares about push their own marker onto
+  // the same array. That turns "the write happened INSIDE the critical section"
+  // into a concrete oracle — a controller that took the lock but did the fold
+  // outside it (or never entered at all) produces a different sequence, where a
+  // bare call-count assertion would still pass.
+  const events: string[] = [];
+  const withAdvisoryLock = jest.fn(
+    async (
+      opts: { family: string; key: string; mode: "wait" | "try"; waitMs?: number },
+      fn: () => Promise<unknown>,
+    ) => {
+      const chainKey = `${opts.family}:${opts.key}`;
+      const prior = chains.get(chainKey) ?? Promise.resolve();
+      const turn = prior
+        .catch(() => undefined)
+        .then(async () => {
+          events.push(`enter:${chainKey}`);
+          try {
+            return await fn();
+          } finally {
+            events.push(`exit:${chainKey}`);
+          }
+        });
+      chains.set(
+        chainKey,
+        turn.then(
+          () => undefined,
+          () => undefined,
+        ),
+      );
+      const value = await turn;
+      return { acquired: true, value };
+    },
+  );
+  return { withAdvisoryLock, LockTimeoutError, LockUnavailableError, __lockEvents: events };
+});
+
+/**
+ * Reaches the mocked module instance registered by `jest.mock` above; it stays
+ * a `require` only so the handle is fetched at call time, after the mock
+ * registry is in place. Unguarded on purpose — a missing or renamed
+ * `../common/db-locks` throws here rather than being silently papered over.
+ */
+function requireDbLocksMock(): any {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  return require("../common/db-locks");
+}
+
 import { Test, TestingModule } from "@nestjs/testing";
 import {
   BadRequestException,
   ConflictException,
   ExecutionContext,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { getQueueToken } from "@nestjs/bull";
@@ -706,7 +785,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
     expect("unitPrice" in merged).toBe(false);
   });
 
-  it("two concurrent merges on one instance serialize — the second folds onto the first's write, not a stale snapshot", async () => {
+  it("two concurrent merges serialize under the customer advisory lock — the second folds onto the first's write, not a stale snapshot", async () => {
     // The fake IS the store: findActiveOrder snapshots `storeQty` at the moment
     // it is CALLED, and updateOrderItems writes the merged absolute qty back.
     // So the outcome turns purely on when each read lands relative to the other
@@ -779,18 +858,17 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
     expect(storeQty).toBe(15);
 
     // ⚠️ SCOPE — what this proves, and what it deliberately does not. The
-    // mechanism under test is OrdersController's per-order merge lock, and that
-    // Map lives on the controller INSTANCE: it serializes every merge this api
-    // process handles — the whole population on a single-replica deployment (no
-    // replica count is configured in apps/api/railway.toml) — and nothing
-    // across processes. updateOrderItems' `SELECT … FOR UPDATE` serializes the
-    // WRITE, not the controller-side read the absolute totals were folded from,
-    // so two replicas (or a queue replay landing on a different instance than
-    // the live request) could still clobber one another. Closing that means
-    // folding inside updateOrderItems' own transaction, which is a reshape of
-    // that method, not a tightening of this test — see withOrderMergeLock's own
-    // SCOPE note; tracked as an F30 follow-up. Do NOT widen this test's name
-    // back to "atomic claim" until that lands.
+    // mechanism under test is `withAdvisoryLock` from `../common/db-locks`,
+    // keyed on `dto.customerId` — mocked at the top of this file as an
+    // in-memory FIFO per-`family:key` serializer standing in for the real
+    // Postgres advisory lock. The old in-process per-order Map is gone, so what
+    // this case pins is the CONTROLLER's half: that both merges run inside the
+    // same customer-keyed critical section, so the second folds onto the first's
+    // write. It does NOT prove the lock is really cross-process — a mock cannot;
+    // the two-session proof against a live Postgres lives in
+    // `../common/db-locks.db.spec.ts` (T4). Do NOT widen this test's name back
+    // to "atomic claim": the fold still happens outside updateOrderItems' own
+    // transaction, and only the advisory lock keeps the two reads apart.
   });
 
   it("the folded payload run through the REAL updateOrderItems leaves ONE line per product — no duplicate, no dropped case", async () => {
@@ -900,6 +978,470 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
     expect(written.filter((d: any) => d.productId === "prod-2")).toEqual([
       expect.objectContaining({ qty: 48, boxes: 2, pieces: 0, unitsPerBox: 24 }),
     ]);
+  });
+
+  // ─── T2 new-1..new-4 (R2/R5) — customer advisory lock wiring ────────────
+  //
+  // PR-2 (imp-02-order-merge-lock) replaces this controller's in-process
+  // `mergeLocksByOrder` Map with `withAdvisoryLock` from `../common/db-locks`
+  // (mocked above — see `requireDbLocksMock()`), keyed by CUSTOMER, not
+  // order, so it also serializes across the whole api process's replicas via
+  // a real Postgres advisory lock (proven single-process here; proven
+  // cross-process by T4's `db-locks.db.spec.ts`). Before R2 lands, this
+  // controller never calls the mock at all, so every one of these four fails
+  // on its OWN value: the mock's call count/args, or a resolved value where
+  // a 409/503 rejection was expected — never a crash.
+
+  it("T2 new-1 (R2): two concurrent merges for one customer go through the customer advisory lock — called twice with family/key/mode/waitMs (10s), storeQty unchanged at 15", async () => {
+    const dbLocks = requireDbLocksMock();
+    dbLocks.withAdvisoryLock?.mockClear?.();
+    const events: string[] = dbLocks.__lockEvents;
+    events.length = 0;
+
+    // Same fake-store shape as the "two concurrent merges on one instance
+    // serialize" test above (storeQty read-modify-write) — this block adds
+    // the NEW assertion (the lock mock itself), the old one is left untouched
+    // per R5.
+    let storeQty = 10;
+    const store: Record<string, any> = {
+      findActiveOrder: jest.fn(async () => ({
+        id: "ord-active",
+        orderNumber: "ORD-1",
+        status: "PENDING",
+        createdAt: new Date(),
+        total: storeQty * 5,
+        lineItems: [{ id: "li-1", productId: "prod-1", qty: storeQty, unitPrice: 5 }],
+      })),
+      updateOrderItems: jest.fn(async (_orderId: string, dto: any) => {
+        // Marker on the SHARED ledger: the fold's write must land between an
+        // `enter:` and its matching `exit:` — i.e. INSIDE the critical section.
+        events.push("updateOrderItems");
+        const line = dto.items.find((i: any) => i.productId === "prod-1");
+        if (line) storeQty = Number(line.qty);
+        return undefined;
+      }),
+      mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
+      findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
+    };
+    const ordersService: any = new Proxy(store, {
+      get(target, prop) {
+        if (typeof prop === "symbol" || prop in target) return target[prop as string];
+        target[prop as string] = jest.fn(async () => undefined);
+        return target[prop as string];
+      },
+    });
+    const controller = buildController(ordersService);
+
+    await Promise.all([
+      controller.create(
+        {
+          customerId: "cust-1",
+          mergeChoice: "merge",
+          items: [{ productId: "prod-1", qty: 3 }],
+        } as any,
+        operatorPayload as any,
+      ),
+      controller.create(
+        {
+          customerId: "cust-1",
+          mergeChoice: "merge",
+          items: [{ productId: "prod-1", qty: 2 }],
+        } as any,
+        operatorPayload as any,
+      ),
+    ]);
+
+    // The outcome is unchanged — this is a regression pin, not the new part.
+    expect(storeQty).toBe(15);
+
+    // The new part: both turns went through the SAME shared lock — one call
+    // per merge, each keyed on the CUSTOMER (not the order), waiting up to
+    // 10s. Before R2: the controller never imports db-locks at all, so this
+    // is 0 calls, not 2.
+    const calls = dbLocks.withAdvisoryLock?.mock?.calls ?? [];
+    expect(calls).toHaveLength(2);
+    for (const [opts] of calls) {
+      // Deep-equal, not `objectContaining`: the options are the whole contract.
+      // Keying on anything but `dto.customerId` (the order id, or a constant)
+      // fails here — that is the exact defect the mutation probe injects.
+      //
+      // waitMs is 10_000, NOT the module default of 20_000: the mobile api client
+      // aborts at 15s (apps/mobile/lib/api-client.ts), so a 20s wait can only ever
+      // reach the operator as a client-side timeout — the 409 that tells them to
+      // retry has to be reachable inside that budget.
+      expect(opts).toEqual({
+        family: "order-merge",
+        key: "cust-1",
+        mode: "wait",
+        waitMs: 10000,
+      });
+    }
+
+    // …and the fold's write happened INSIDE the section, not merely alongside
+    // it. A per-key FIFO serializer plus a write inside each turn can only
+    // produce this exact sequence; a controller that took the lock and then
+    // wrote outside it (or wrote before entering) reorders these markers while
+    // still making the two calls asserted above.
+    expect(events).toEqual([
+      "enter:order-merge:cust-1",
+      "updateOrderItems",
+      "exit:order-merge:cust-1",
+      "enter:order-merge:cust-1",
+      "updateOrderItems",
+      "exit:order-merge:cust-1",
+    ]);
+  });
+
+  it("T2 new-2 (R2): a timed-out advisory lock (LockTimeoutError) maps to 409 MERGE_IN_PROGRESS, not a silent success", async () => {
+    const dbLocks = requireDbLocksMock();
+    const defaultImpl = dbLocks.withAdvisoryLock?.getMockImplementation?.();
+    dbLocks.withAdvisoryLock?.mockImplementation?.(async () => {
+      throw new dbLocks.LockTimeoutError("order-merge", "cust-1", 20000);
+    });
+
+    try {
+      const ordersService: any = {
+        findActiveOrder: jest.fn().mockResolvedValue({
+          id: "ord-active",
+          orderNumber: "ORD-1",
+          status: "PENDING",
+          createdAt: new Date(),
+          total: 96,
+          lineItems: [
+            {
+              id: "li-1",
+              productId: "prod-1",
+              qty: 48,
+              boxes: 2,
+              pieces: 0,
+              unitPrice: 20,
+              unitsPerBox: 24,
+              priceType: "MANUAL",
+              notes: null,
+            },
+          ],
+        }),
+        updateOrderItems: jest.fn().mockResolvedValue(undefined),
+        mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
+        findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
+      };
+      const controller = buildController(ordersService);
+      const dto = {
+        customerId: "cust-1",
+        mergeChoice: "merge",
+        items: [{ productId: "prod-1", qty: 5 }],
+      } as any;
+
+      let caught: any;
+      try {
+        await controller.create(dto, operatorPayload as any);
+      } catch (e) {
+        caught = e;
+      }
+
+      // Before R2: the controller never calls the (throwing) mock, so
+      // `create()` resolves normally and `caught` stays undefined here.
+      expect(caught).toBeInstanceOf(ConflictException);
+      expect(caught?.getResponse?.()).toMatchObject({ code: "MERGE_IN_PROGRESS" });
+      // The wire contract the client retries on, stated explicitly: a lock
+      // timeout that lands as anything but 409 (a 500 crash, a 503) fails here.
+      expect(caught?.getStatus?.()).toBe(409);
+    } finally {
+      if (defaultImpl) dbLocks.withAdvisoryLock?.mockImplementation?.(defaultImpl);
+    }
+  });
+
+  it("T2 new-3 (R2): the advisory-lock connection being unavailable (LockUnavailableError) maps to a 503, not a 500 crash or a silent success", async () => {
+    const dbLocks = requireDbLocksMock();
+    const defaultImpl = dbLocks.withAdvisoryLock?.getMockImplementation?.();
+    dbLocks.withAdvisoryLock?.mockImplementation?.(async () => {
+      throw new dbLocks.LockUnavailableError(new Error("pool exhausted"));
+    });
+
+    try {
+      const ordersService: any = {
+        findActiveOrder: jest.fn().mockResolvedValue({
+          id: "ord-active",
+          orderNumber: "ORD-1",
+          status: "PENDING",
+          createdAt: new Date(),
+          total: 96,
+          lineItems: [
+            {
+              id: "li-1",
+              productId: "prod-1",
+              qty: 48,
+              boxes: 2,
+              pieces: 0,
+              unitPrice: 20,
+              unitsPerBox: 24,
+              priceType: "MANUAL",
+              notes: null,
+            },
+          ],
+        }),
+        updateOrderItems: jest.fn().mockResolvedValue(undefined),
+        mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
+        findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
+      };
+      const controller = buildController(ordersService);
+      const dto = {
+        customerId: "cust-1",
+        mergeChoice: "merge",
+        items: [{ productId: "prod-1", qty: 5 }],
+      } as any;
+
+      let caught: any;
+      try {
+        await controller.create(dto, operatorPayload as any);
+      } catch (e) {
+        caught = e;
+      }
+
+      // Before R2: same as new-2 — the mock is never reached, so `create()`
+      // resolves and `caught` stays undefined instead of a ServiceUnavailableException.
+      expect(caught).toBeInstanceOf(ServiceUnavailableException);
+      // 503, not 409 and not an unmapped 500 — an unavailable lock connection is
+      // an infrastructure failure, a different retry signal from contention.
+      expect(caught?.getStatus?.()).toBe(503);
+    } finally {
+      if (defaultImpl) dbLocks.withAdvisoryLock?.mockImplementation?.(defaultImpl);
+    }
+  });
+
+  // ─── T2 new-5..new-7 — POST-COMMIT consolidation is deferred, never an error ──
+  //
+  // The invariant (orders/merge-contention.ts): 409/503 may only be raised BEFORE
+  // any write in the request. The two consolidation calls below run AFTER their
+  // row has committed, so contention on them is deferred work — logged, then the
+  // committed result is returned. Answering a committed write with a retryable
+  // 409 would be worse than useless: the folds compute ABSOLUTE totals, so the
+  // client's retry folds the same items in a second time and inflates the order.
+
+  const mergeInProgress = () =>
+    new ConflictException({
+      code: "MERGE_IN_PROGRESS",
+      message: "Another merge for this customer is in progress — retry.",
+    });
+
+  const activeOrderFixture = {
+    id: "ord-active",
+    orderNumber: "ORD-1",
+    status: "PENDING",
+    createdAt: new Date(),
+    total: 96,
+    lineItems: [
+      {
+        id: "li-1",
+        productId: "prod-1",
+        qty: 48,
+        boxes: 2,
+        pieces: 0,
+        unitPrice: 20,
+        unitsPerBox: 24,
+        priceType: "MANUAL",
+        notes: null,
+      },
+    ],
+  };
+
+  it("T2 new-5: the POST-MERGE sweep hitting contention does not fail the request — create() still resolves with the merged order and warns once", async () => {
+    const ordersService: any = {
+      findActiveOrder: jest.fn().mockResolvedValue(activeOrderFixture),
+      updateOrderItems: jest.fn().mockResolvedValue(undefined),
+      // The fold inside the lock has ALREADY committed at this point.
+      mergeAllPendingForCustomer: jest.fn().mockRejectedValue(mergeInProgress()),
+      findOne: jest.fn().mockResolvedValue({ id: "ord-active", status: "PENDING" }),
+    };
+    const controller = buildController(ordersService);
+    const warn = jest.spyOn((controller as any).logger, "warn").mockImplementation(() => undefined);
+
+    const result = await controller.create(
+      {
+        customerId: "cust-1",
+        mergeChoice: "merge",
+        items: [{ productId: "prod-1", qty: 5 }],
+      } as any,
+      operatorPayload as any,
+    );
+
+    // The concrete oracle: the merged order comes back, not a 409. Before the fix
+    // the rejection propagated and this line never ran.
+    expect(result).toEqual({ id: "ord-active", status: "PENDING" });
+    expect(ordersService.updateOrderItems).toHaveBeenCalledTimes(1);
+    expect(ordersService.mergeAllPendingForCustomer).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("cust-1");
+  });
+
+  it("T2 new-6: the POST-CREATE auto-consolidation hitting contention does not fail the request — create() resolves with the created order", async () => {
+    const created = { id: "ord-new", customerId: "cust-1", status: "PENDING" };
+    const ordersService: any = {
+      create: jest.fn().mockResolvedValue(created),
+      mergeAllPendingForCustomer: jest.fn().mockRejectedValue(mergeInProgress()),
+    };
+    const controller = buildController(ordersService);
+    const warn = jest.spyOn((controller as any).logger, "warn").mockImplementation(() => undefined);
+
+    // A CUSTOMER caller: not staff, so the request goes straight to create() and
+    // then to the auto-consolidation that this case contends.
+    const result = await controller.create(
+      { items: [{ productId: "prod-1", qty: 5 }] } as any,
+      customerPayload as any,
+    );
+
+    // The row exists. Reporting a failure here would have the buyer place a second
+    // order for the same cart.
+    expect(result).toBe(created);
+    expect(ordersService.mergeAllPendingForCustomer).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("T2 new-7: a NON-contention failure from the post-merge sweep still propagates — the swallow is by CODE, not blanket", async () => {
+    const ordersService: any = {
+      findActiveOrder: jest.fn().mockResolvedValue(activeOrderFixture),
+      updateOrderItems: jest.fn().mockResolvedValue(undefined),
+      mergeAllPendingForCustomer: jest.fn().mockRejectedValue(new Error("boom")),
+      findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
+    };
+    const controller = buildController(ordersService);
+    jest.spyOn((controller as any).logger, "warn").mockImplementation(() => undefined);
+
+    await expect(
+      controller.create(
+        {
+          customerId: "cust-1",
+          mergeChoice: "merge",
+          items: [{ productId: "prod-1", qty: 5 }],
+        } as any,
+        operatorPayload as any,
+      ),
+    ).rejects.toThrow("boom");
+    // A blanket try/catch here would swallow every sweep fault — including a
+    // genuinely broken merge — and hand back a half-consolidated order as success.
+    expect(ordersService.findOne).not.toHaveBeenCalled();
+  });
+
+  // ─── Round 2 (R1/R2/R3) — post-commit never waits; the in-lock re-read rules ──
+
+  it("R1: both post-commit consolidations ask for the customer lock with { lockMode: 'try' } — deferrable work never waits out another holder", async () => {
+    const ordersService: any = {
+      findActiveOrder: jest.fn().mockResolvedValue(activeOrderFixture),
+      updateOrderItems: jest.fn().mockResolvedValue(undefined),
+      mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
+      findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
+      create: jest.fn().mockResolvedValue({ id: "ord-new", customerId: "cust-1" }),
+    };
+    const controller = buildController(ordersService);
+
+    // (a) the POST-MERGE sweep, after the fold inside the lock committed.
+    await controller.create(
+      {
+        customerId: "cust-1",
+        mergeChoice: "merge",
+        items: [{ productId: "prod-1", qty: 5 }],
+      } as any,
+      operatorPayload as any,
+    );
+    // Third argument, so `{ buyerInitiated }` keeps its slot. `wait` here would hold a request
+    // open for up to 20s to do work the hourly sweep does for free.
+    expect(ordersService.mergeAllPendingForCustomer).toHaveBeenNthCalledWith(
+      1,
+      "cust-1",
+      {},
+      { lockMode: "try" },
+    );
+
+    // (b) the POST-CREATE auto-consolidation on a CUSTOMER caller.
+    await controller.create(
+      { items: [{ productId: "prod-1", qty: 5 }] } as any,
+      customerPayload as any,
+    );
+    expect(ordersService.mergeAllPendingForCustomer).toHaveBeenNthCalledWith(
+      2,
+      "cust-1",
+      { buyerInitiated: true },
+      { lockMode: "try" },
+    );
+  });
+
+  it("R2: the in-lock re-read is authoritative — a merge target that vanished while we queued falls through to the create path instead of folding into the stale snapshot", async () => {
+    const created = { id: "ord-new", customerId: "cust-1", status: "PENDING" };
+    const ordersService: any = {
+      findActiveOrder: jest
+        .fn()
+        // Pre-lock snapshot: an active order exists …
+        .mockResolvedValueOnce(activeOrderFixture)
+        // … but by the time this request's turn in the lock arrives, the holder before us
+        // merged it away (or deleted it).
+        .mockResolvedValueOnce(null),
+      updateOrderItems: jest.fn().mockResolvedValue(undefined),
+      mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
+      findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
+      create: jest.fn().mockResolvedValue(created),
+    };
+    const controller = buildController(ordersService);
+    const warn = jest.spyOn((controller as any).logger, "warn").mockImplementation(() => undefined);
+
+    const result = await controller.create(
+      {
+        customerId: "cust-1",
+        mergeChoice: "merge",
+        items: [{ productId: "prod-1", qty: 5 }],
+      } as any,
+      operatorPayload as any,
+    );
+
+    // The fold computes ABSOLUTE totals: writing them onto a row that no longer exists (the old
+    // `?? activeOrder` fallback) is the defect. Nothing is folded at all.
+    expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
+    // Exactly the path a PRE-lock null would have taken: a plain create, returned as-is (staff
+    // caller, so no post-create consolidation), and no read of the vanished order.
+    expect(ordersService.create).toHaveBeenCalledTimes(1);
+    expect(ordersService.findOne).not.toHaveBeenCalled();
+    expect(result).toBe(created);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("ord-active");
+  });
+
+  it("R3: an idempotency record that fails AFTER the fold committed is logged, never thrown — the merged order still comes back", async () => {
+    const ordersService: any = {
+      findActiveOrder: jest.fn().mockResolvedValue(activeOrderFixture),
+      findOrderIdByIdempotencyKey: jest.fn().mockResolvedValue(null),
+      updateOrderItems: jest.fn().mockResolvedValue(undefined),
+      recordIdempotencyKey: jest.fn().mockRejectedValue(new Error("unique violation")),
+      mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
+      findOne: jest.fn().mockResolvedValue({ id: "ord-active", status: "PENDING" }),
+    };
+    const controller = buildController(ordersService);
+    const error = jest
+      .spyOn((controller as any).logger, "error")
+      .mockImplementation(() => undefined);
+
+    const result = await controller.create(
+      {
+        customerId: "cust-1",
+        mergeChoice: "merge",
+        items: [{ productId: "prod-1", qty: 5 }],
+      } as any,
+      operatorPayload as any,
+      "idem-key-1",
+    );
+
+    // A 500 here would invite the retry the key exists to prevent — and the fold is ABSOLUTE, so
+    // that retry folds the same cart in a second time.
+    expect(ordersService.updateOrderItems).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ id: "ord-active", status: "PENDING" });
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0][0]).toContain("idem-key-1");
+  });
+
+  it("T2 new-4 (R2/R5): no in-process lock survives on the controller — mergeLocksByOrder and withOrderMergeLock are both gone", () => {
+    const controller = buildController({} as any);
+    // Today `mergeLocksByOrder` is a live `Map` instance and `withOrderMergeLock`
+    // a live method — both fail these `undefined` checks until R2 deletes them.
+    expect((controller as any).mergeLocksByOrder).toBeUndefined();
+    expect(typeof (controller as any).withOrderMergeLock).toBe("undefined");
   });
 });
 

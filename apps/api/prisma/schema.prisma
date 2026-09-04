@@ -4047,16 +4047,18 @@ model ImportQueueItem {
   @@index([duplicateOfInvoiceId])
 }
 
-// ─── Runtime-provisioned tables ───────────────────────────────────────────────
-// Both tables are created at boot by the application itself, via raw
-// `CREATE TABLE IF NOT EXISTS` (PlatformConfigService and RoutesService), a pattern
-// chosen so those features could ship without a Prisma migration. The cost is that
-// Prisma had no idea they existed and treated them as drift — meaning any generated
-// migration would have emitted `DROP TABLE` for both, destroying the AI metering log
-// and every in-flight idempotency key.
+// ─── Formerly runtime-provisioned tables ─────────────────────────────────────
+// AiUsageEvent and IdempotencyKey are ORDINARY MIGRATED MODELS: both are created by
+// `prisma/migrations/0_init/migration.sql` like every other table here, and nothing
+// creates them at boot any more.
 //
-// Declaring them here is what stops that. The shapes below mirror the raw DDL
-// exactly, including the database-side defaults, so `migrate diff` sees no change.
+// History, so the shapes below are not "cleaned up" by mistake: they were once created
+// at boot via raw `CREATE TABLE IF NOT EXISTS` (PlatformConfigService and RoutesService)
+// so those features could ship without a migration. Declaring them here is what stopped
+// Prisma from treating them as drift and emitting `DROP TABLE`. The database-side
+// defaults below mirror that original DDL exactly, which is why `migrate diff` sees no
+// change against a live database — keep them byte-for-byte unless a real migration
+// changes them.
 
 /// AI usage / metering log — written by PlatformConfigService.recordAiUsage.
 model AiUsageEvent {

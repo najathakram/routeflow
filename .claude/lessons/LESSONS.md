@@ -104,38 +104,49 @@
   commit title must name every layer it touches.**
 - **Guard:** none — judgment.
 
+### L-052 · 2026-09-03 · process · PR-1 `imp-03a`
+
+- **Symptom:** the documented boot-time DDL (`main.ts`) had an undocumented twin
+  (`platform-config.service.ts` creating two tables and an index on every boot, ungated).
+- **Root cause:** "retire the DDL" was scoped to the site the docs named, not to every raw-DDL
+  call site.
+- **Lesson:** Retiring a runtime schema writer means grepping every raw-execution shape —
+  `$executeRaw*`, `$queryRaw*`, AND bare driver calls like `pool.query(…)` — across `src` and
+  `scripts`, proving the live DB already matches the datamodel (`migrate diff --exit-code` → 0)
+  before deleting, then deleting: a default-off flag leaves the contradiction in place.
+- **Guard:** `apps/api/src/common/no-runtime-ddl.spec.ts` (static tripwire) + the drift gate in
+  `db-migrations.yml` and `prod-migrate.mjs`.
+
+### L-051 · 2026-09-02 · process · #603 close-out
+
+- **Symptom:** `git stash pop` in the main checkout applied 19 files of ANOTHER worktree's
+  uncommitted batch work onto a docs-only close-out branch — and dropped that stash entry.
+- **Root cause:** stashes are refs on the shared repository, not per worktree: an entry pushed in
+  `.claude/worktrees/rf-F13` became `stash@{0}` for every checkout, and a bare `pop` takes the
+  newest entry wherever it was made. The intended entry had silently become `stash@{1}`.
+- **Lesson:** **With several worktrees, never `git stash pop` bare — `git stash list`, then pop
+  by index or message, and prefix every stash message with its worktree name.** A dropped stash is
+  recoverable from the commit id `pop` prints (`git stash store <sha>`), so keep that line.
+- **Guard:** stash messages here carry the worktree name (`rf-F13: …`); no hook — HANDOFF and the
+  fleet-state memory carry the rule.
+
+### L-060 · 2026-09-04 · process · #597
+
+- **Symptom:** claiming a batch made the dispatcher offer the batch touching the same files to a
+  second agent; a copied claim grammar freed another script's leases.
+- **Root cause:** the scheduler removed in-flight work from the candidate list before building the
+  conflict graph, so taking a batch DELETED its edges; and a protocol restated by eye drifted on
+  three details, each toward the permissive read.
+- **Lesson:** **Excluding an entity from a constraint problem deletes its constraints — model
+  in-progress work as an OCCUPANT that holds capacity and keeps its edges, never as a deletion. A
+  protocol restated in a second file drifts toward whatever is permissive: extract the reading as a
+  pure function, test it against the other side's exact payloads, and make both files say they
+  change together.**
+- **Guard:** busy batches pre-coloured into wave 1, `CONFLICTING` includes `in-flight`; `readClaims`
+  is pure and asserted against the three comment sets that broke it; both files carry the
+  paired-change warning.
+
 ## tooling
-
-### L-052 · 2026-09-02 · tooling
-
-- **Symptom:** two separate source edits in the same session produced a file that still passed
-  `node -c` (syntax-valid) but was actually broken. One: `.replace(/**([^*]+)**/g, ...)` — the
-  asterisks lost their escaping in transit, so the unescaped `/**...**/` was parsed as a BLOCK
-  COMMENT, not a regex literal, leaving a bare `.replace(g, ...)` behind that would throw
-  `ReferenceError: g is not defined` the first time the patched function actually ran. Two: an
-  editing pass meant to write a short escape sequence as visible source text instead wrote real
-  non-printable control characters into the file, which then made `grep` refuse to read it and
-  report "binary file matches".
-- **Root cause:** a Unicode escape sequence typed directly into a tool call's text parameter can
-  get decoded into the real character it names before the tool ever receives the string — there
-  is no reliable way to hand a tool the literal escape text that way, only the character itself.
-  Separately, routing a regex-bearing replacement through an intermediate script's own string or
-  template-literal layer is a SECOND round of escaping stacked on the target file's real source:
-  an unrecognized escape inside a JS template literal silently drops the backslash (confirmed
-  directly against node — a digit-class escape inside a template literal evaluates to the bare
-  letter, not the escape). Neither failure shows up in the generator itself, only in the file it
-  produced, and `node -c` proves the RESULT parses; it does not execute it, so a comment silently
-  swallowing a regex is invisible to it.
-- **Lesson:** **Never type a literal escape sequence into a tool call expecting it to survive as
-  visible source text, and never round-trip a regex- or backslash-heavy edit through an
-  intermediate script's own string/template-literal layer — write the replacement directly with
-  the editing tool, and after any generated change to a regex or escape-heavy line, EXECUTE the
-  specific function it touches, not just syntax-check it.** `node -c` is necessary, never
-  sufficient.
-- **Guard:** the registry self-test now calls the real `cmds.render` against a fixture containing
-  a code span and a bold marker (not a hand copy of the markdown renderer) — this exact class of
-  defect fails that check before commit. A file `grep` reports as "binary" is a signal to inspect
-  with `od -c`, never a tool quirk to wave off.
 
 ### L-039 · 2026-09-01 · tooling
 
@@ -263,84 +274,84 @@
   proves nothing about the change; rerun first.**
 - **Guard:** none — judgment.
 
-### L-051 · 2026-09-02 · tooling
+### L-053 · 2026-09-03 · tooling · PR-1 `imp-03a`
 
-- **Symptom:** five defects shipped from one script in a single session — a generator that fought
-  prettier and re-dirtied 210 files on every turn, two code-map edits that printed "updated" while
-  changing nothing, and twice, caller text mangled mid-write (a bug whose evidence reads
-  `bills $235.00 vs PERCENT's $181.05` got `## History` written into the middle of five records).
-- **Root cause:** every one was a write path that reported success without checking what it wrote.
-  Two mechanisms. `String.prototype.replace` with a **string** replacement expands `$1` / `$&` /
-  `` $` `` **out of the caller's text**, not the author's — so any authored prose containing a
-  dollar amount rewrites itself. And an anchored `replace` whose pattern does not match returns the
-  subject unchanged, so the script writes a byte-identical file and reports a successful edit.
-- **Lesson:** **A script that edits files must assert its own effect. Never insert authored text
-  through a string replacement — use a function replacement, which performs no expansion. After any
-  anchored edit, compare before and after and fail loudly when they are equal: "wrote the file" is
-  not "changed the file".**
-- **Guard:** `npm run bugs -- self-test`, step 8 of `npm run verify` — asserts `$`-safety in
-  `note()`, no trailing space on an empty front-matter field, exactly one `## History` per record,
-  single-line history entries, ledger id-uniqueness across shards, and record coverage. It caught
-  the fifth defect, which was the fourth one reintroduced in a new function.
+- **Symptom:** every `local:*` npm script that set an env var failed on Windows with "'DATABASE_URL'
+  is not recognized as an internal or external command", although a runbook said they were
+  verified green that day.
+- **Root cause:** npm runs package scripts through cmd.exe on Windows (no `script-shell`), and the
+  scripts used POSIX `VAR=val sh -c '…'` prefixes; the "verified" claim came from a POSIX shell.
+- **Lesson:** an npm script that must set environment is not cross-platform until the environment
+  is set by a node shim (`scripts/local-env.mjs`) — never by a `VAR=val` prefix or `sh -c`; a
+  runbook's "verified working" is true only for the shell it named.
+- **Guard:** `apps/api/src/common/local-env-script.spec.ts` + the `local:*` scripts all routed
+  through the shim.
 
-### L-053 · 2026-09-02 · tooling
+### L-055 · 2026-09-03 · tooling · wave D imp-05
 
-- **Symptom:** after `reopen` cleared a bug's ledger proof, the very next `sync` wrote the
-  `REG-B###` token straight back into the record; two `already-fixed` rows (B126/B127) asserted a
-  proof their ledger never held; and `sync` printed "recorded N event(s)" for a state revisit it had
-  silently dropped — the record claimed a proof it did not have, and the console claimed an event
-  that did not land.
-- **Root cause:** deriving from a **proxy** instead of the source. `frontFor` computed `proof` from
-  the row's _state_ ("not queued ⇒ has a proof") rather than from the row's own `proof` field;
-  `sync` judged "did this event land?" from a once-per-bug body snapshot rather than from the
-  return value of the append it had just made. Both proxies were correlated with the truth on the
-  day they were written and diverged the first time a state was revisited.
-- **Lesson:** **A derived field is derived from the field it represents, never from something
-  correlated with it — `proof` comes from `row.proof`, "event recorded" comes from the append's
-  own return. When a derivation reads a proxy, the first path that breaks the correlation (here:
-  reopen, re-prove, already-fixed) makes the record lie with full confidence.**
-- **Guard:** `bugs self-test` drives the real `cmds.sync` through done → queued → done and asserts
-  two `done` lines, and reopens then syncs and asserts the front-matter proof stays clear
-  (19bcecdc, e6d71ae6). The `frontFor` source-field derivation (`st?.proof`) landed in the commit after 7332c32f, with B126/B127 (already-fixed, no ledger proof) as its check.
+- **Symptom:** Jest matched **zero tests** in this worktree with the documented
+  `testMatch: ["<rootDir>/**/*.test.{ts,tsx}"]` — `npx jest --listTests` returned empty.
+- **Root cause:** every worktree here lives under `.claude/worktrees/<name>`, so a
+  rootDir-substituted glob always contains a `\.claude` segment on Windows. `jest-config`'s glob
+  normalizer converts `\` → `/` EXCEPT when the backslash precedes one of `$()+.?^{}` (assumed an
+  escaped glob char), so that one separator survives literally and picomatch then compiles `\.` as
+  an escaped dot — matching nothing.
+- **Lesson:** on Windows, never embed `<rootDir>` in a Jest glob when the path can contain a
+  dot-directory; use a relative `testMatch` scoped by `roots` instead.
+- **Guard:** `apps/web/jest.config.js`'s inline comment on `testMatch`; the web suite count (19
+  spec files) pinned in `.claude/code-map/web.md`.
 
-### L-054 · 2026-09-02 · tooling · #597
+### L-056 · 2026-09-04 · tooling · #609
 
-- **Symptom:** three write paths in `bugs.mjs` could leave a WORSE state on a refusal or a crash
-  than doing nothing at all: `move` dropped the source shard's row before the guarded destination
-  write, so a rejected move (a duplicate elsewhere) destroyed the authoritative row while reporting
-  that nothing was written; `file` wrote the catalogue row before the ledger write that can `fail()`,
-  so a refused concurrent write left a catalogue row naming a different session's bug/batch; the
-  commit-scan anchor was persisted before the per-record loop that consumes it, so a mid-run crash
-  (a corrupted record) permanently lost every event for a bug processed after the crash point while
-  `sync` looked perfectly healthy on the next run.
-- **Root cause:** each ordered the write that IS the durable record of intent — the destination
-  shard row, the catalogue row, the scan anchor — BEFORE the step that could still fail or crash,
-  instead of after it. A failure then landed on the wrong side of an already-committed change.
-- **Lesson:** **Order a sequence of writes so a failure anywhere in it leaves the SAFEST reachable
-  state: perform the additive/idempotent write first, verify it landed, and only then perform the
-  step that destroys the old state or advances past events not yet durably written — never the
-  reverse. "Did this fully complete?" gates the point of no return, not just the closing report.**
-- **Guard:** `bugs self-test` plants a genuine failure for each path — a cross-shard duplicate for
-  `move`, a directory-shaped record path forcing a real `EISDIR` for `file`, a corrupted record
-  mid-loop for `sync` — and asserts the PRE-failure state (source row, catalogue, anchor) survives
-  untouched, not just that the command exits non-zero.
+- **Symptom:** the `Fail on critical production advisories` CI step (`npm audit --omit=dev
+--audit-level=critical`) blew its 20-minute `timeout-minutes` twice in one day, 8 minutes
+  apart; the non-blocking high-severity step hit the same failure masked by `|| true`.
+- **Root cause:** npm's registry started returning 500 on the quick-audit endpoint ("This
+  endpoint is being retired. Use the bulk advisory endpoint instead."), and npm's own client
+  retries internally for ~12 minutes before giving up — the gate had no way to tell an upstream
+  outage apart from a real finding.
+- **Lesson:** a CI gate that depends on a third-party service must distinguish a finding from an
+  outage: fail on findings, warn-and-skip on unavailability with a bounded retry — otherwise an
+  upstream deprecation blocks every merge.
+- **Guard:** `scripts/ci-audit-critical.mjs` (bounded 3-attempt retry, registry/transport-error
+  detection, `::warning::…SKIPPED` + exit 0 on outage, fail-closed otherwise); contract spec
+  `apps/api/src/common/ci-audit-script.spec.ts`.
 
-### L-057 · 2026-09-02 · tooling · #597
+### L-058 · 2026-09-04 · tooling · #597
 
-- **Symptom:** a mutual-exclusion lock whose holders were all alive still put three writers in one
-  critical section and reverted two proven ledger rows — every process exited 0, self-test green,
-  campaign gate green. The documented recovery from a killed writer had never once run.
-- **Root cause:** staleness was measured as AGE since acquire ("held for a while", not "abandoned"),
-  so a waiter stole a LIVE lock and the holder wrote its stale snapshot back. Release deleted the
-  lock PATH unconditionally, so the robbed holder deleted its successor's lock and admitted a third
-  writer. Spin (2 s) was shorter than stale (5 s) — two constants that must be ordered, untested.
-- **Lesson:** **Break a lock on liveness, never on age — abandoned means the owner is dead. Release
-  only the lock you own (a token, checked on the way out). Fix break and release TOGETHER: either
-  alone looks green. When two constants only work in one order, test the order.**
-- **Guard:** `<lock>/owner.json` {pid, token}; break only on ESRCH (120 s last resort for an
-  unreadable owner); release rm's only on a matching token; spin 10 s; signals through the exit
-  hook. Child-process self-tests (live holder kept, dead holder broken in one invocation, foreign
-  token refuses release), mutation-probed: restoring the age break reddens six checks (bb141004).
+- **Symptom:** eight defects from one script: "updated" edits that changed nothing, mangled authored
+  text, a regex parsed as a comment, a record claiming a proof it never held.
+- **Root cause:** each write and derivation trusted something other than its own result — a STRING
+  `replace` expands `$1`/`$&` out of the CALLER's text; an anchored replace that misses returns the
+  subject unchanged; a regex routed through a script's template literal loses a backslash layer; a
+  derived field read a proxy, not the field it names.
+- **Lesson:** **A write must prove its own effect; a derived field comes from the field it
+  represents, never a correlate. Function replacement for authored text; compare before/after and
+  fail when equal ("wrote" ≠ "changed"); `proof` from `row.proof`, "event recorded" from the
+  append's return; write regex/escape-heavy edits directly, never through an intermediate script's
+  string layer; EXECUTE the function you patched — `node -c` proves it parses, not that it runs.**
+- **Guard:** `bugs self-test` (step 6 of `npm run verify`): `$`-safety, one `## History` per record,
+  ledger id-uniqueness, real `cmds.render` on a fixture, sync done→queued→done, reopen leaves the
+  proof clear.
+
+### L-059 · 2026-09-04 · tooling · #597
+
+- **Symptom:** a proven ledger row silently back to `queued`; a live lock stolen, admitting three
+  writers; a refused `move` destroying the authoritative row — every gate green.
+- **Root cause:** an unlocked read-modify-write (stale data enters at the READ, and a
+  read-back-assert re-reads the row that survived); staleness measured as AGE, so a waiter stole a
+  LIVE lock and release deleted the lock PATH unconditionally; and the durable record of intent was
+  written BEFORE the step that could still fail.
+- **Lesson:** **Hold an exclusive lock across the READ as well as the write wherever two processes
+  may touch one file — a read-back-assert can never see the write yours erased. Break a lock on
+  LIVENESS (owner pid/token, ESRCH), never on age; release only the lock you own; fix break and
+  release together; when two constants work in only one order, test the order. Order writes so any
+  failure leaves the safest reachable state: additive write first, verify it landed, irreversible
+  step last.**
+- **Guard:** `withShardLock`/`withCatalogueLock` (atomic `mkdir` lockdir, `owner.json` {pid, token},
+  released from an `exit` handler); `BUGS_TEST_STALL_MS` widens the race; planted failures
+  (cross-shard duplicate, real `EISDIR`, corrupted record mid-loop) assert the PRE-failure state
+  survives.
 
 ## testing
 
@@ -349,10 +360,11 @@
 - **Symptom:** two new e2e specs went red post-deploy AND dragged an unrelated, previously-green
   test (`AP-06`, re-auth resumes the session) down with them.
 - **Root cause:** neither new project declared `dependencies`, so the runner placed both in the
-  FIRST phase — alongside every other dependency-free project — and all of them authenticate as
-  the same shared operator. One spec revokes that user's sessions by design, so a sibling test's
-  token refresh 401'd mid-flow. Scoping the spec's own CLEANUP was necessary and not sufficient:
-  the body of the test revokes during the phase too.
+  first phase, while the victim ran in phase 2 on a stored session for the same shared operator;
+  the mutating spec revoked the newest session row, which was that stored one. One spec revokes
+  that user's sessions by design, so a sibling test's token refresh 401'd mid-flow. Scoping the
+  spec's own CLEANUP was necessary and not sufficient: the body of the test revokes during the
+  phase too.
 - **Lesson:** **A spec that mutates shared auth state needs its own user, not a scheduling tweak.**
   Reordering only moves the collision — here phase 2 holds ~20 projects reusing the same stored
   session. Ask which fixtures a new suite MUTATES, and who else in its phase reads them.
@@ -390,6 +402,18 @@
 
 ## deploy
 
+### L-057 · 2026-09-04 · deploy · #609
+
+- **Symptom:** a process restart killed the agent session inside a public-repo CI window;
+  the repo stayed public ~6.5 hours (07:38Z→14:18Z) before anyone noticed.
+- **Root cause:** the private flip lived only in the session's own control flow — a
+  `finally` in an agent that no longer existed to run it.
+- **Lesson:** **an irreversible-if-forgotten safety action (flip private) must be armed by
+  a process that outlives the session BEFORE the risky action (flip public) — a detached
+  watchdog with a fixed deadline, never a `finally` in an agent.**
+- **Guard:** `scripts/visibility-watchdog.mjs`, mandatory in
+  `docs/runbooks/deploy-visibility-flip.md` and the `rebuild` skill.
+
 ### L-016 · 2026-08-29 · deploy · #475
 
 - **Symptom:** (caught pre-merge) four endpoints would have 403'd for every tenant on deploy day.
@@ -401,6 +425,19 @@
 - **Guard:** gate checklist in feature-plan P4; legacy-key → SKU bridge.
 
 ## domain
+
+### L-054 · 2026-09-03 · domain · PR-2 `imp-02-order-merge-advisory-lock`
+
+- **Symptom:** a money-critical read-fold-write (order merge) was serialized by an in-process
+  promise chain that a second replica cannot see; the deferral note said scaling would corrupt
+  lines silently.
+- **Root cause:** the lock lived where the code was, not where the data is.
+- **Lesson:** a lock guarding a read-then-absolute-write must live in the system of record
+  (`pg_advisory_lock` on a pinned connection, or inside the write's own transaction) — never in
+  process memory; prove it with two sessions against a real database (`*.db.spec.ts`), never a
+  mocked service alone.
+- **Guard:** `db-locks.spec.ts` (T1), `db-locks.db.spec.ts` (T4, `npm run local:test:db`),
+  `orders.merge-lock.spec.ts` (T3), and `orders.scan-hardening.spec.ts`'s concurrent-merge case.
 
 ### L-037 · 2026-09-01 · domain · #TBD
 
@@ -417,6 +454,23 @@
   reversal gap REACHABLE, so a fix can open the path to a latent bug.
 - **Guard:** `REG-B55 (T21)`; the write-by-write enumeration is recorded in F11's fix card so the
   next batch on this path starts from it rather than rebuilding it.
+
+### L-045 · 2026-09-02 · domain · #TBD
+
+- **Symptom:** every cancelled run, and every run completed with a skipped stop, left its
+  undelivered orders pinned to a stale `routeRunStopId` — invisible to the dispatch sweep and the
+  trip builder (both require the pointer null), while the buyer card kept showing a driver and
+  "you're next" for a called-off run.
+- **Root cause:** the pointer was set by one path (dispatch) and every re-entry reader keyed on it
+  being null, but neither terminal transition ever cleared it. The invariant had a writer and its
+  readers, and no releaser — same shape as [[L-029]]'s teardown paths.
+- **Lesson:** **A pointer that gates re-entry must be released by every transition that makes the
+  pointed-at thing terminal, inside that transition's own transaction — and the release predicate
+  must be the durable marker the forward path writes (here `stop.status = COMPLETED`), never the
+  existence of a side row a payment-only path skips.** When the release makes a new state pair
+  reachable (a SKIPPED stop on a COMPLETED run), ship the refusal for it in the same PR ([[L-030]]).
+- **Guard:** `REG-B129 (T5 path: cancel → un-cancel → re-dispatch)`, `REG-B211 (T12 path:
+complete-with-skipped → reopen refused)`; mutation probes in the F11 PR body.
 
 ### L-029 · 2026-09-01 · domain · #588
 
@@ -532,39 +586,3 @@
   restriction at all until the callers are split.**
 - **Guard:** three-key model recorded in memory `project_maps_key_architecture_2026-09-01`;
   `docs/plans/maps-key-split-note.md` is STALE and must not be followed verbatim.
-
-### L-055 · 2026-09-02 · tooling · #597
-
-- **Symptom:** two sub-agents proving different bugs of the same batch left one of the two proofs
-  gone — an already-proven, evidence-backed ledger row silently back to `queued` — with the
-  self-test AND the campaign gate both green afterwards.
-- **Root cause:** the shard writer was an unlocked read-modify-write, and every caller "verified"
-  its write by re-reading its OWN row, which is exactly the row that survives. A lost update is
-  invisible to a read-back-assert: the assert passes because the writer clobbered somebody else.
-  Serialising only the write would not have helped either — the stale data enters at the READ.
-- **Lesson:** **A read-back-assert proves your write landed; it can never see the write yours
-  erased. Whenever more than one process may write one file, hold an exclusive lock across the
-  READ as well as the write, and make the losing case a deterministic test — a race that only
-  sometimes reproduces is a race nobody fixes.**
-- **Guard:** `withShardLock` (an atomic `mkdir` lockdir, re-entrant, stale-broken at 5s, released
-  from an `exit` handler because `fail()` calls `process.exit`); a `BUGS_TEST_STALL_MS` seam widens
-  the window so the self-test's two real child processes always interleave; mutation-probed.
-
-### L-056 · 2026-09-02 · process · #597
-
-- **Symptom:** claiming a batch made the dispatcher offer the one batch that edits the same files
-  to a second agent, and `deps` stopped reporting the conflicting pair at the moment it mattered.
-  Separately, the dispatcher's copy of another script's GitHub claim grammar freed leases that
-  script still held, and honoured "leases" it did not.
-- **Root cause:** two forms of the same mistake. The scheduler removed in-flight work from the
-  candidate list and then built the conflict graph from what was left, so taking a batch DELETED
-  the edges it contributed. And a protocol re-implemented by eye drifted on three details at once
-  (a marker filter, a `^` anchor, a per-comment boundary) — every drift toward the permissive read.
-- **Lesson:** **Excluding an entity from a constraint problem deletes its constraints: model
-  in-progress work as an OCCUPANT that holds capacity and keeps its edges, never as a deletion.
-  And a protocol re-stated in a second file diverges toward whatever is permissive — extract the
-  reading as a pure function, test it against the other side's exact payloads, and make both files
-  say they change together.**
-- **Guard:** busy batches are pre-coloured into wave 1 and `CONFLICTING` includes `in-flight`;
-  `readClaims` is pure and asserted against the three constructed comment sets that broke it;
-  `bugs.mjs` and `scripts/team/team.mjs` each carry the paired-change warning.

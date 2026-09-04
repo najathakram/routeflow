@@ -8,7 +8,9 @@
 # source, and until 2026-08-30 it was flipped PUBLIC for a few minutes around every
 # merge for no reason other than to make CI free — a ritual with real exposure and
 # real failure modes (five consecutive `repository not found` deploys came out of
-# racing that flip against Railway's snapshot).
+# racing that flip against Railway's snapshot). The push trigger was retired
+# 2026-08-30 (see below); PR CI still runs in a brief public window until private-
+# minute billing works (runbook: docs/runbooks/deploy-visibility-flip.md).
 #
 # Measured over 2026-07-31..2026-08-30 (417 runs, per-job wall clock from the
 # Actions API, each job billed rounded UP to the whole minute — this reconciles to
@@ -253,12 +255,20 @@ jobs:
       # blocking on) highs. Kept non-blocking at the high level for now so every
       # PR isn't wedged on the two known SemVer-MAJOR fixes (next 14→16,
       # nodemailer 9); tighten to `--audit-level=high` once those are migrated.
+      #
+      # 2026-09-04: `npm audit` calls the registry's `/-/npm/v1/security/audits/quick`
+      # endpoint, which has started returning 500 ("This endpoint is being retired.
+      # Use the bulk advisory endpoint instead.") — npm retries internally for ~12
+      # minutes, blowing this job's timeout-minutes twice in one day. Both steps now
+      # run through scripts/ci-audit-critical.mjs (bounded retries, node, no deps):
+      # the advisory gate fails on critical findings, never on registry
+      # unavailability (warning + skip; Dependabot is the standing net).
       - name: Fail on critical production advisories
-        run: npm audit --omit=dev --audit-level=critical
+        run: node scripts/ci-audit-critical.mjs
 
       - name: Report high-severity advisories (non-blocking)
         if: always()
-        run: npm audit --omit=dev --audit-level=high || true
+        run: node scripts/ci-audit-critical.mjs --level high --report-only
 
   # ─── Playwright E2E ────────────────────────────────────────────────────────
   # Runs when RAILWAY REPORTS A SUCCESSFUL DEPLOY — plus repository_dispatch and

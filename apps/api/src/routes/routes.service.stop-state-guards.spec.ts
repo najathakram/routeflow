@@ -388,10 +388,11 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
 
     it("T9b — REG-B72: an operator CAN restart a cancelled run that already recorded deliveries — CANCELLED is not an absorbing state", async () => {
       // The recovery pin. deleteRun refuses any run with a deliveryMutation and
-      // reopenStop refuses a cancelled run, so if the un-cancel were denied too
-      // an accidental cancel would strand the run and its undelivered orders
-      // permanently (nothing else clears Order.routeRunStopId, which the
-      // dispatch sweep requires to be null).
+      // reopenStop refuses a cancelled run, so un-cancel is the only path back
+      // for the RUN itself. Since F11 the cancel already released the run's
+      // undelivered orders (routeRunStopId nulled inside the cancel
+      // transaction), so this restore is status-only — it does not re-pin them
+      // and does not re-run the release; a fresh dispatch re-collects them.
       prisma.routeRun.findUnique.mockResolvedValue({ ...RUN_FIXTURE, status: "CANCELLED" });
       prisma.routeRun.update.mockResolvedValue({ id: "run-1", status: "IN_PROGRESS" });
 

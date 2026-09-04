@@ -18,6 +18,18 @@
  *     (#181 / the #288 resync path) — never a `qty * unitPrice` recompute.
  */
 
+// The merge paths now run inside a Postgres advisory lock (`common/db-locks.ts`,
+// R3). These specs exercise the merge FOLD's money math, not the lock, so run
+// the critical section inline — the real helper would open a `pg` pool.
+jest.mock("../common/db-locks", () => ({
+  withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  })),
+  LockTimeoutError: class LockTimeoutError extends Error {},
+  LockUnavailableError: class LockUnavailableError extends Error {},
+}));
+
 // Mirrors invoices.service.spec.ts's guard: prevents Jest from traversing
 // ESM-only dependencies (@react-pdf/renderer via invoice-pdf.service) pulled in
 // transitively by importing the REAL InvoicesService class below — needed for

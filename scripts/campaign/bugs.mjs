@@ -1173,7 +1173,7 @@ function uniqueHistoryKey(body, base) {
 // of this are all guarded by a real comparison (the ledger state differs from
 // the record's, `move` refuses from===to, `tier` refuses a no-op), so a
 // no-change return here is a defect, never a benign dedupe — fail loudly
-// rather than report an event the record does not carry (L-051).
+// rather than report an event the record does not carry (L-058).
 function appendEvent(body, base, event, detail) {
   const next = appendHistory(body, uniqueHistoryKey(body, base), event, detail);
   if (next === body)
@@ -1336,7 +1336,7 @@ function readSyncState() {
   }
 }
 
-// Reads back and asserts, like every other write path here (L-051): an anchor
+// Reads back and asserts, like every other write path here (L-058): an anchor
 // that silently fails to advance re-scans the same range forever.
 function writeSyncState(lastSha) {
   const p = SYNC_STATE();
