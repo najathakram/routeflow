@@ -56,14 +56,36 @@ beforeAll(() => {
       "  });",
       "}",
       "",
+      "function highJson() {",
+      "  return JSON.stringify({",
+      "    vulnerabilities: {",
+      "      'acme-high-lib': {",
+      "        name: 'acme-high-lib',",
+      "        severity: 'high',",
+      "        via: [{ title: 'Prototype Pollution in acme-high-lib', severity: 'high', range: '<3.0.0' }],",
+      "        range: '<3.0.0',",
+      "      },",
+      "    },",
+      "    metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 2, critical: 0, total: 2 } },",
+      "  });",
+      "}",
+      "",
       "switch (mode) {",
       "  case 'critical':",
       "    process.stdout.write(criticalJson());",
       "    process.exit(1);",
       "    break;",
+      "  case 'high':",
+      "    process.stdout.write(highJson());",
+      "    process.exit(1);",
+      "    break;",
       "  case 'clean':",
       "    process.stdout.write(cleanJson());",
       "    process.exit(0);",
+      "    break;",
+      "  case 'lockfile503':",
+      "    process.stdout.write('Fatal: cannot read lockfile at offset 503 bytes\\n');",
+      "    process.exit(1);",
       "    break;",
       "  case 'outage':",
       "    process.stderr.write('npm error code E500\\n');",
@@ -172,6 +194,24 @@ describe("ci-audit-critical.mjs contract", () => {
     const res = run(["--level", "high", "--report-only"], fakeEnv("critical", counter));
 
     expect(res.stdout).toContain("critical=1");
+    expect(res.status).toBe(0);
+  });
+
+  it("unparseable non-registry output (lockfile error mentioning a 503 offset): exits 1, fails closed, NOT skipped", () => {
+    const counter = newCounter("lockfile503");
+    const res = run([], fakeEnv("lockfile503", counter));
+
+    expect(res.status).toBe(1);
+    expect(res.stdout).not.toContain("SKIPPED");
+    expect(res.stdout).toContain("::error::");
+  });
+
+  it("report-only high: exits 0 and names the high advisory", () => {
+    const counter = newCounter("report-only-high");
+    const res = run(["--level", "high", "--report-only"], fakeEnv("high", counter));
+
+    expect(res.stdout).toContain("high=2");
+    expect(res.stdout).toContain("acme-high-lib");
     expect(res.status).toBe(0);
   });
 });

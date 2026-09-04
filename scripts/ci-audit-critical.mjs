@@ -36,18 +36,26 @@ import fs from "node:fs";
 import path from "node:path";
 
 const MAX_BUFFER = 64 * 1024 * 1024; // 64 MiB
-const ATTEMPT_TIMEOUT_MS = 120_000; // 2 min per attempt
+// 3 attempts x 60s + the default 15s + 45s backoff = 4 min worst case per
+// step. This script runs as two steps in CI (the blocking critical gate and
+// the --report-only high-severity report), so ~8 min worst case total —
+// inside the job's `timeout-minutes: 20` with ~7 min of margin left over the
+// rest of the job body (checkout, install, build) on the worst observed run.
+const ATTEMPT_TIMEOUT_MS = 60_000; // 1 min per attempt
 const MAX_ATTEMPTS = 3;
 const DEFAULT_BACKOFF_MS = [15_000, 45_000];
 
 // Any of these anywhere in the combined stdout+stderr+spawn-error text means the
-// registry/transport failed us, not that it found something. " 5\d\d " catches an
-// HTTP 5xx line (e.g. "npm error 500 Internal Server Error") without matching
-// unrelated four/five-digit numbers elsewhere in the output.
+// registry/transport failed us, not that it found something. The 5xx pattern
+// requires npm/HTTP context (e.g. "npm error 500 Internal Server Error",
+// "HTTP 500", "status 500") so it never matches an unrelated 3-digit number
+// buried in unparseable, non-registry output (e.g. "cannot read lockfile at
+// offset 503 bytes") — that case must fail closed via branch (D), not be
+// mistaken for an outage.
 const OUTAGE_PATTERNS = [
   /audit endpoint returned an error/i,
   /ENOAUDIT/,
-  / 5\d\d /,
+  /\b(npm (warn|error)|HTTP|status)\b[^\n]*\b5\d\d\b/i,
   /ECONNRESET/,
   /ETIMEDOUT/,
   /ENOTFOUND/,
@@ -141,11 +149,11 @@ function lastErrorLine(result) {
   return result.error ? result.error.message : "unknown error";
 }
 
-function printAdvisories(json) {
+function printAdvisories(json, { severities = ["critical"], noticePrefix = false } = {}) {
   const vulns = json.vulnerabilities || {};
   const rows = [];
   for (const [name, info] of Object.entries(vulns)) {
-    if (info.severity !== "critical") continue;
+    if (!severities.includes(info.severity)) continue;
     const viaList = Array.isArray(info.via) ? info.via : [info.via];
     const detailed = viaList.filter((v) => v && typeof v === "object");
     if (detailed.length === 0) {
@@ -166,9 +174,13 @@ function printAdvisories(json) {
       });
     }
   }
-  for (const r of rows) {
-    console.log(`CRITICAL: ${r.name} (severity=${r.severity}) — ${r.title} — range ${r.range}`);
-  }
+  rows.forEach((r, i) => {
+    const label = r.severity.toUpperCase();
+    const prefix = noticePrefix && i === 0 ? "::notice::" : "";
+    console.log(
+      `${prefix}${label}: ${r.name} (severity=${r.severity}) — ${r.title} — range ${r.range}`,
+    );
+  });
 }
 
 function runAttempt(level) {
@@ -196,14 +208,16 @@ function main() {
     if (json && json.metadata && json.metadata.vulnerabilities) {
       const counts = json.metadata.vulnerabilities;
       const critical = counts.critical || 0;
+      const high = counts.high || 0;
       if (reportOnly) {
-        console.log(
-          `advisories: critical=${critical} high=${counts.high || 0} (report-only, level=${level})`,
-        );
+        console.log(`advisories: critical=${critical} high=${high} (report-only, level=${level})`);
+        if (high + critical > 0) {
+          printAdvisories(json, { severities: ["critical", "high"], noticePrefix: true });
+        }
         return 0;
       }
       if (critical > 0) {
-        printAdvisories(json);
+        printAdvisories(json, { severities: ["critical"] });
         console.log(`::error::${critical} critical production advisory(ies) found`);
         return 1;
       }
@@ -212,7 +226,7 @@ function main() {
     }
 
     // No usable JSON. Decide (C) outage vs (D) unknown failure from the raw text.
-    const combinedText = `${result.stdout || ""}\n${result.stderr || ""}${
+    const combinedText = `${result.stdout || ""}\n${result.stderr || ""}\n${
       result.error ? result.error.message : ""
     }`;
 
