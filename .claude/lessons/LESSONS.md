@@ -104,6 +104,32 @@
   commit title must name every layer it touches.**
 - **Guard:** none — judgment.
 
+### L-052 · 2026-09-03 · process · PR-1 `imp-03a`
+
+- **Symptom:** the documented boot-time DDL (`main.ts`) had an undocumented twin
+  (`platform-config.service.ts` creating two tables and an index on every boot, ungated).
+- **Root cause:** "retire the DDL" was scoped to the site the docs named, not to every raw-DDL
+  call site.
+- **Lesson:** Retiring a runtime schema writer means grepping every raw-execution shape —
+  `$executeRaw*`, `$queryRaw*`, AND bare driver calls like `pool.query(…)` — across `src` and
+  `scripts`, proving the live DB already matches the datamodel (`migrate diff --exit-code` → 0)
+  before deleting, then deleting: a default-off flag leaves the contradiction in place.
+- **Guard:** `apps/api/src/common/no-runtime-ddl.spec.ts` (static tripwire) + the drift gate in
+  `db-migrations.yml` and `prod-migrate.mjs`.
+
+### L-051 · 2026-09-02 · process · #603 close-out
+
+- **Symptom:** `git stash pop` in the main checkout applied 19 files of ANOTHER worktree's
+  uncommitted batch work onto a docs-only close-out branch — and dropped that stash entry.
+- **Root cause:** stashes are refs on the shared repository, not per worktree: an entry pushed in
+  `.claude/worktrees/rf-F13` became `stash@{0}` for every checkout, and a bare `pop` takes the
+  newest entry wherever it was made. The intended entry had silently become `stash@{1}`.
+- **Lesson:** **With several worktrees, never `git stash pop` bare — `git stash list`, then pop
+  by index or message, and prefix every stash message with its worktree name.** A dropped stash is
+  recoverable from the commit id `pop` prints (`git stash store <sha>`), so keep that line.
+- **Guard:** stash messages here carry the worktree name (`rf-F13: …`); no hook — HANDOFF and the
+  fleet-state memory carry the rule.
+
 ## tooling
 
 ### L-039 · 2026-09-01 · tooling
@@ -232,31 +258,50 @@
   proves nothing about the change; rerun first.**
 - **Guard:** none — judgment.
 
+### L-053 · 2026-09-03 · tooling · PR-1 `imp-03a`
+
+- **Symptom:** every `local:*` npm script that set an env var failed on Windows with "'DATABASE_URL'
+  is not recognized as an internal or external command", although a runbook said they were
+  verified green that day.
+- **Root cause:** npm runs package scripts through cmd.exe on Windows (no `script-shell`), and the
+  scripts used POSIX `VAR=val sh -c '…'` prefixes; the "verified" claim came from a POSIX shell.
+- **Lesson:** an npm script that must set environment is not cross-platform until the environment
+  is set by a node shim (`scripts/local-env.mjs`) — never by a `VAR=val` prefix or `sh -c`; a
+  runbook's "verified working" is true only for the shell it named.
+- **Guard:** `apps/api/src/common/local-env-script.spec.ts` + the `local:*` scripts all routed
+  through the shim.
+
+### L-055 · 2026-09-03 · tooling · wave D imp-05
+
+- **Symptom:** Jest matched **zero tests** in this worktree with the documented
+  `testMatch: ["<rootDir>/**/*.test.{ts,tsx}"]` — `npx jest --listTests` returned empty.
+- **Root cause:** every worktree here lives under `.claude/worktrees/<name>`, so a
+  rootDir-substituted glob always contains a `\.claude` segment on Windows. `jest-config`'s glob
+  normalizer converts `\` → `/` EXCEPT when the backslash precedes one of `$()+.?^{}` (assumed an
+  escaped glob char), so that one separator survives literally and picomatch then compiles `\.` as
+  an escaped dot — matching nothing.
+- **Lesson:** on Windows, never embed `<rootDir>` in a Jest glob when the path can contain a
+  dot-directory; use a relative `testMatch` scoped by `roots` instead.
+- **Guard:** `apps/web/jest.config.js`'s inline comment on `testMatch`; the web suite count (19
+  spec files) pinned in `.claude/code-map/web.md`.
+
+### L-056 · 2026-09-04 · tooling · #609
+
+- **Symptom:** the `Fail on critical production advisories` CI step (`npm audit --omit=dev
+--audit-level=critical`) blew its 20-minute `timeout-minutes` twice in one day, 8 minutes
+  apart; the non-blocking high-severity step hit the same failure masked by `|| true`.
+- **Root cause:** npm's registry started returning 500 on the quick-audit endpoint ("This
+  endpoint is being retired. Use the bulk advisory endpoint instead."), and npm's own client
+  retries internally for ~12 minutes before giving up — the gate had no way to tell an upstream
+  outage apart from a real finding.
+- **Lesson:** a CI gate that depends on a third-party service must distinguish a finding from an
+  outage: fail on findings, warn-and-skip on unavailability with a bounded retry — otherwise an
+  upstream deprecation blocks every merge.
+- **Guard:** `scripts/ci-audit-critical.mjs` (bounded 3-attempt retry, registry/transport-error
+  detection, `::warning::…SKIPPED` + exit 0 on outage, fail-closed otherwise); contract spec
+  `apps/api/src/common/ci-audit-script.spec.ts`.
+
 ## testing
-
-### L-046 · 2026-09-03 · testing
-
-- **Symptom:** one batch produced two alarming results that were both false. A mutation probe
-  reported `caught: false` for a test that demonstrably turns red under that exact defect, and the
-  same run reported two healthy money-path files as "NOT back to their pre-probe content" — which
-  dispatches a fixer whose instructions end in "reconstruct the correct content by hand".
-- **Root cause:** neither negative came from the code; both came from the measuring apparatus. The
-  probe's test selector (`-t "REG-B09"`) matched **zero** tests because a sibling fix had retitled
-  them minutes earlier, and a filter that selects nothing fails exactly like a blind test. The
-  restore check compared against a baseline captured by a _different_ agent during a window in
-  which another process rewrote the working tree, so the comparison measured the baseline moving,
-  not the file changing.
-- **Lesson:** **a negative or "it changed" result is evidence only when the instrument that
-  produced it is pinned.** Before believing "the test did not catch it", assert the selector
-  matches at least one test; before believing "the file changed", require before/after readings
-  taken by the same agent that owns the file for that interval — never a baseline someone else's
-  write could have moved. Same family as [[L-034]] and [[L-041]]: green, zero and changed are all
-  claims about the instrument until something pins it.
-- **Guard:** mutation probes now report their own `preHash`/`postHash`, and a pre/post baseline
-  disagreement whose probes agree with the final state is classified `baselineDisturbed` instead of
-  a restore failure (`~/.claude/skills/dev-pipeline/pipeline.js`, harness scenarios M and N). No
-  guard yet for the empty selector — re-run any not-caught probe with a selector proven to match
-  before accepting its verdict.
 
 ### L-050 · 2026-09-02 · testing · #598
 
@@ -305,6 +350,18 @@
 
 ## deploy
 
+### L-057 · 2026-09-04 · deploy · #609
+
+- **Symptom:** a process restart killed the agent session inside a public-repo CI window;
+  the repo stayed public ~6.5 hours (07:38Z→14:18Z) before anyone noticed.
+- **Root cause:** the private flip lived only in the session's own control flow — a
+  `finally` in an agent that no longer existed to run it.
+- **Lesson:** **an irreversible-if-forgotten safety action (flip private) must be armed by
+  a process that outlives the session BEFORE the risky action (flip public) — a detached
+  watchdog with a fixed deadline, never a `finally` in an agent.**
+- **Guard:** `scripts/visibility-watchdog.mjs`, mandatory in
+  `docs/runbooks/deploy-visibility-flip.md` and the `rebuild` skill.
+
 ### L-016 · 2026-08-29 · deploy · #475
 
 - **Symptom:** (caught pre-merge) four endpoints would have 403'd for every tenant on deploy day.
@@ -316,6 +373,19 @@
 - **Guard:** gate checklist in feature-plan P4; legacy-key → SKU bridge.
 
 ## domain
+
+### L-054 · 2026-09-03 · domain · PR-2 `imp-02-order-merge-advisory-lock`
+
+- **Symptom:** a money-critical read-fold-write (order merge) was serialized by an in-process
+  promise chain that a second replica cannot see; the deferral note said scaling would corrupt
+  lines silently.
+- **Root cause:** the lock lived where the code was, not where the data is.
+- **Lesson:** a lock guarding a read-then-absolute-write must live in the system of record
+  (`pg_advisory_lock` on a pinned connection, or inside the write's own transaction) — never in
+  process memory; prove it with two sessions against a real database (`*.db.spec.ts`), never a
+  mocked service alone.
+- **Guard:** `db-locks.spec.ts` (T1), `db-locks.db.spec.ts` (T4, `npm run local:test:db`),
+  `orders.merge-lock.spec.ts` (T3), and `orders.scan-hardening.spec.ts`'s concurrent-merge case.
 
 ### L-037 · 2026-09-01 · domain · #TBD
 

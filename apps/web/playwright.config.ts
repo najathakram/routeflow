@@ -436,21 +436,13 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
-    // ⚠️ QUARANTINED 2026-09-02 — both F14 project entries are commented out, NOT deleted.
-    // Post-deploy run 33612887226 (master 24421170) went red: all three spec-32 tests failed AND
-    // they took `AP-06` (07-auth-password.spec.ts:141, "re-auth sheet unlock resumes the session")
-    // down with them — a test that was green on the previous deploy.
-    // Cause (corrected 2026-09-02): `auth-password` is PHASE 2 (`dependencies: ["setup"]`); these two are
-    // phase 1. Spec 32 revokes `rows[0]` of /auth/sessions, which lists by createdAt DESC — so whenever
-    // `setup` logs in after spec 32's own login, rows[0] IS operator.json's session, and every phase-2
-    // project 401s on its first refresh. A phase-1 WRITE against a phase-2 READ on one shared user.
-    // Scoping spec 32's CLEANUP (done in #598) was necessary but not sufficient — tests 1 and 3
-    // revoke during the phase too.
-    // The fix is a DEDICATED e2e user for these specs, not an ordering tweak: putting them in
-    // phase 2 only moves the collision onto the ~20 `storageState: operator.json` projects.
-    // The specs and their seed support stay on master so that work is a seed change plus
-    // re-enabling these two blocks. B138/B155 remain `proven-pending-deploy` — they were never
-    // discharged, so nothing proven is lost by this quarantine (L-041: a skip is not a discharge).
+    // Un-quarantined 2026-09-03 (L-050, #598/#607): only spec 32 (active-sessions) needed a
+    // dedicated seeded user — it logs in fresh as e2e_sessions_op and only ever revokes ITS OWN
+    // sessions, so it must never consume the shared admin/e2e_admin every storageState:
+    // operator.json project also loads. Spec 31 (impersonation-signout) mutates only its own
+    // fresh session and stayed on the shared e2e_admin (as on master). e2e_sessions_op is seeded
+    // by apps/api/scripts/e2e-seed.js. B138/B155 were never discharged during the quarantine
+    // (L-041: a skip is not a discharge).
     // ── Impersonation sign-out (F14, spec 31) ──────────────────────────────────
     // REG-B138: while impersonating, the avatar menu offers "Exit impersonation"
     // and never "Sign out"; exiting POSTs no /auth/logout and the impersonated
@@ -460,24 +452,24 @@ export default defineConfig({
     // PLAYWRIGHT_SA_* are set and e2e-seed.js has seeded `e2e_admin` on the target.
     // Targets e2e-routeflow BY SLUG, never `tenants?limit=1`.
     // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
-    // {
-    // name: "impersonation-signout",
-    // testMatch: /31-impersonation-signout\.spec\.ts/,
-    // use: { ...devices["Desktop Chrome"] },
-    // },
+    {
+      name: "impersonation-signout",
+      testMatch: /31-impersonation-signout\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
 
     // ── Active Sessions identity (F14, spec 32) ────────────────────────────────
     // REG-B155: a session row captured BEFORE a refresh-token rotation is still
     // listed (same id, same createdAt) and can be revoked; the revoke bites (the
     // rotated token then 401s); a failed revoke re-syncs the list, and a sign-out-all
     // whose revokes all fail reports the failure instead of faking success. NO storageState
-    // on purpose — the spec revokes its OWN fresh login and must never consume the
-    // shared operator.json refresh token.
+    // on purpose — the spec revokes its OWN fresh login (e2e_sessions_op) and must never
+    // consume the shared operator.json refresh token.
     // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
-    // {
-    // name: "active-sessions",
-    // testMatch: /32-active-sessions\.spec\.ts/,
-    // use: { ...devices["Desktop Chrome"] },
-    // },
+    {
+      name: "active-sessions",
+      testMatch: /32-active-sessions\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
   ],
 });

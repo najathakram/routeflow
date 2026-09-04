@@ -28,7 +28,7 @@ import { BuyerSellerContextGuard } from "./guards/buyer-seller-context.guard";
 import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
 import { CurrentBuyer, CurrentBuyerCustomer } from "./decorators/current-buyer.decorator";
 import type { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
-import { ForbiddenException, NotFoundException } from "@nestjs/common";
+import { ForbiddenException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RequestSellerDto } from "./dto/request-seller.dto";
 import { PrismaService } from "../prisma/prisma.service";
@@ -56,6 +56,13 @@ import {
   normalizeBareIncomingSellingUnits,
   normalizeBoxUnawareSnapshots,
 } from "../orders/merge-items";
+import { withAdvisoryLock } from "../common/db-locks";
+import {
+  LOCK_UNAVAILABLE,
+  LOCK_UNAVAILABLE_MESSAGE,
+  isMergeContention,
+  mapLockError,
+} from "../orders/merge-contention";
 
 /** Upper bound on `GET /buyer/products?ids=` — a cart is far smaller than this. */
 const MAX_PRODUCT_IDS = 200;
@@ -525,99 +532,166 @@ export class BuyerController {
   async createOrder(@Body() dto: BuyerCreateOrderDto, @CurrentBuyerCustomer() ctx: any) {
     // Check if buyer has an active DRAFT/PENDING order (unless forceNew is set)
     if (!dto.forceNew) {
-      const activeOrder = await this.ordersService.findActiveOrder(ctx.customerId);
-      if (activeOrder) {
-        // REG-B47: denomination-aware fold (F30's staff exemplar, shared module) over
-        // LIVE-normalized snapshots — a box-unaware line of a boxed product counts
-        // selling units, so give the fold its real box split before summing.
-        // REG-B51: unlisted lines are server-preserved by updateOrderItems now —
-        // filter them out of the payload entirely (single owner).
-        const lineItems = activeOrder.lineItems ?? [];
-        const incomingItems = dto.items ?? [];
-        // REG-B47, denomination convention: on every BUYER path a bare `{productId,
-        // qty}` counts SELLING UNITS, never loose pieces — create() stores such a
-        // line box-unaware and bills qty x the BOX price, and both cart builders say
-        // so out loud (shelf.service.ts lowItems(), mobile shelf-logic.ts's header).
-        // foldMergeItems was written for the STAFF scan path, where a bare incoming
-        // qty IS a loose piece, so the two halves of the fold must be reconciled per
-        // denomination pair (see merge-items.ts): a box-UNAWARE stored line is
-        // rewritten only when its incoming counterpart carries a split, and a bare
-        // incoming item is expanded only when the STORED line is box-split (where
-        // the accumulator is in pieces). Where both sides are bare they already
-        // agree in selling units and neither is touched.
-        const boxAwareIncoming = new Set(
-          incomingItems.filter((i) => i.boxes != null || i.pieces != null).map((i) => i.productId),
-        );
-        const productIds = lineItems
-          .map((li: { productId?: string | null }) => li.productId)
-          .filter((id: string | null | undefined): id is string => !!id);
-        const products = productIds.length
-          ? await this.prisma.forTenant().product.findMany({
-              where: { id: { in: productIds } },
-              select: { id: true, unitsPerBox: true },
-            })
-          : [];
-        const upbByProduct = new Map(products.map((p) => [p.id, Number(p.unitsPerBox ?? 0)]));
-        const upbForStoredSnapshots = new Map(
-          [...upbByProduct].filter(([id]) => boxAwareIncoming.has(id)),
-        );
-        // ⚠️ The fold's R0/R11 price-survival contract ("a merge is never where an
-        // operator's price override silently disappears") does NOT hold on THIS
-        // caller, and not because of anything here: `updateOrderItems`' CUSTOMER
-        // branch re-prices every catalog line through `resolveBuyerLinePrice` and
-        // never reads `item.unitPrice`, so a preserved MANUAL override is dropped
-        // and the line re-prices at the tier ladder. That is pre-existing (the
-        // naive merge dropped it too) and B13-correct in posture — a buyer payload
-        // must never set a price — but it means an operator's courtesy price on the
-        // buyer's active order does not survive the buyer adding to it. Filed as a
-        // register entry rather than fixed here: the fix belongs in the CUSTOMER
-        // branch (honour a STORED override, still never a client-supplied one),
-        // which is F07's file region.
-        const mergedItems = foldMergeItems(
-          normalizeBoxUnawareSnapshots(lineItems, upbForStoredSnapshots),
-          normalizeBareIncomingSellingUnits(incomingItems, lineItems, upbByProduct),
-        ).filter((i) => i.productId);
-        await this.ordersService.updateOrderItems(
-          activeOrder.id,
-          { items: mergedItems, replaceAll: true } as UpdateOrderItemsDto,
-          makePseudoUser(ctx),
-        );
-        // REG-B78: carry the buyer's header fields onto the merged order (append/OR/set
-        // semantics) BEFORE the sibling-order sweep, so they land on the surviving order.
-        // BEST-EFFORT ON PURPOSE: the line write above has already COMMITTED (it runs in
-        // its own transaction), so a throw here would report a merge that DID land as a
-        // failure. The cart clears only on success, so the buyer would re-submit — and
-        // the fold above computes ABSOLUTE totals, so the same cart would be added a
-        // second time. Losing a note/urgent flag is far cheaper than a double order; the
-        // realistic failure is a concurrent sweep consolidating this order away between
-        // the two calls, which the sweep below reconciles anyway.
-        try {
-          await this.ordersService.applyBuyerMergeHeader(
-            activeOrder.id,
-            {
-              notes: dto.notes,
-              urgent: dto.urgent,
-              requestedDeliveryDate: dto.requestedDeliveryDate,
-            },
-            makePseudoUser(ctx),
-          );
-        } catch (err) {
-          this.logger.error(
-            `Buyer merge header (notes/urgent/date) not applied to order ${activeOrder.id}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
+      // IMP-02 (R2 companion): this is the SAME read-fold-absolute-write critical
+      // section the staff merge guards, over the SAME rows — findActiveOrder →
+      // foldMergeItems → updateOrderItems({ replaceAll: true }) writes ABSOLUTE
+      // totals folded from the snapshot read at the top. Without the lock a staff
+      // merge (or a second buyer submit) committing between that read and this
+      // write is silently overwritten — a lost update on money, on ONE replica.
+      // Same family + customer key as the staff path and OrdersService's sweeps,
+      // so all of them serialize against each other across replicas.
+      //
+      // ⚠️ The sibling sweep and the response read below stay OUTSIDE the lock on
+      // purpose: `mergeAllPendingForCustomer` takes this very (family, key) itself,
+      // and a nested acquire runs on a DIFFERENT pooled connection — nested, it can
+      // only lose to the lock this call already holds (under `wait`, by blocking until
+      // lock_timeout and 409-ing every buyer merge; under the `try` the sweep now uses,
+      // by deferring every single time, so the sweep would never run at all). This
+      // mirrors the staff controller, which likewise sweeps and re-reads after its lock
+      // has been released.
+      let mergedOrderId: string | null = null;
+      try {
+        const lock = await withAdvisoryLock(
+          // 10s, not the module default of 20s: the mobile api client aborts every request
+          // at 15s (apps/mobile/lib/api-client.ts), so a 20s wait can only ever be seen by
+          // the operator as a client-side timeout — the 409 that tells them to retry must be
+          // reachable inside that budget. This PRE-commit acquire is the only one on this path
+          // that waits at all: both POST-COMMIT consolidations below pass `{ lockMode: "try" }`,
+          // and only the sweep/force paths (no client attached) take the service's 20s wait.
+          { family: "order-merge", key: ctx.customerId, mode: "wait", waitMs: 10_000 },
+          async () => {
+            const activeOrder = await this.ordersService.findActiveOrder(ctx.customerId);
+            if (!activeOrder) return null;
+            // REG-B47: denomination-aware fold (F30's staff exemplar, shared module) over
+            // LIVE-normalized snapshots — a box-unaware line of a boxed product counts
+            // selling units, so give the fold its real box split before summing.
+            // REG-B51: unlisted lines are server-preserved by updateOrderItems now —
+            // filter them out of the payload entirely (single owner).
+            const lineItems = activeOrder.lineItems ?? [];
+            const incomingItems = dto.items ?? [];
+            // REG-B47, denomination convention: on every BUYER path a bare `{productId,
+            // qty}` counts SELLING UNITS, never loose pieces — create() stores such a
+            // line box-unaware and bills qty x the BOX price, and both cart builders say
+            // so out loud (shelf.service.ts lowItems(), mobile shelf-logic.ts's header).
+            // foldMergeItems was written for the STAFF scan path, where a bare incoming
+            // qty IS a loose piece, so the two halves of the fold must be reconciled per
+            // denomination pair (see merge-items.ts): a box-UNAWARE stored line is
+            // rewritten only when its incoming counterpart carries a split, and a bare
+            // incoming item is expanded only when the STORED line is box-split (where
+            // the accumulator is in pieces). Where both sides are bare they already
+            // agree in selling units and neither is touched.
+            const boxAwareIncoming = new Set(
+              incomingItems
+                .filter((i) => i.boxes != null || i.pieces != null)
+                .map((i) => i.productId),
+            );
+            const productIds = lineItems
+              .map((li: { productId?: string | null }) => li.productId)
+              .filter((id: string | null | undefined): id is string => !!id);
+            const products = productIds.length
+              ? await this.prisma.forTenant().product.findMany({
+                  where: { id: { in: productIds } },
+                  select: { id: true, unitsPerBox: true },
+                })
+              : [];
+            const upbByProduct = new Map(products.map((p) => [p.id, Number(p.unitsPerBox ?? 0)]));
+            const upbForStoredSnapshots = new Map(
+              [...upbByProduct].filter(([id]) => boxAwareIncoming.has(id)),
+            );
+            // ⚠️ The fold's R0/R11 price-survival contract ("a merge is never where an
+            // operator's price override silently disappears") does NOT hold on THIS
+            // caller, and not because of anything here: `updateOrderItems`' CUSTOMER
+            // branch re-prices every catalog line through `resolveBuyerLinePrice` and
+            // never reads `item.unitPrice`, so a preserved MANUAL override is dropped
+            // and the line re-prices at the tier ladder. That is pre-existing (the
+            // naive merge dropped it too) and B13-correct in posture — a buyer payload
+            // must never set a price — but it means an operator's courtesy price on the
+            // buyer's active order does not survive the buyer adding to it. Filed as a
+            // register entry rather than fixed here: the fix belongs in the CUSTOMER
+            // branch (honour a STORED override, still never a client-supplied one),
+            // which is F07's file region.
+            const mergedItems = foldMergeItems(
+              normalizeBoxUnawareSnapshots(lineItems, upbForStoredSnapshots),
+              normalizeBareIncomingSellingUnits(incomingItems, lineItems, upbByProduct),
+            ).filter((i) => i.productId);
+            await this.ordersService.updateOrderItems(
+              activeOrder.id,
+              { items: mergedItems, replaceAll: true } as UpdateOrderItemsDto,
+              makePseudoUser(ctx),
+            );
+            // REG-B78: carry the buyer's header fields onto the merged order (append/OR/set
+            // semantics) BEFORE the sibling-order sweep, so they land on the surviving order.
+            // BEST-EFFORT ON PURPOSE: the line write above has already COMMITTED (it runs in
+            // its own transaction), so a throw here would report a merge that DID land as a
+            // failure. The cart clears only on success, so the buyer would re-submit — and
+            // the fold above computes ABSOLUTE totals, so the same cart would be added a
+            // second time. Losing a note/urgent flag is far cheaper than a double order; the
+            // realistic failure is a concurrent sweep consolidating this order away between
+            // the two calls, which the sweep below reconciles anyway.
+            try {
+              await this.ordersService.applyBuyerMergeHeader(
+                activeOrder.id,
+                {
+                  notes: dto.notes,
+                  urgent: dto.urgent,
+                  requestedDeliveryDate: dto.requestedDeliveryDate,
+                },
+                makePseudoUser(ctx),
+              );
+            } catch (err) {
+              this.logger.error(
+                `Buyer merge header (notes/urgent/date) not applied to order ${activeOrder.id}: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              );
+            }
 
+            return activeOrder.id;
+          },
+        );
+        // `wait` mode either acquires or throws, so this is defensive only — but it must NOT
+        // collapse into `null`. That is the same value "this customer has no active order"
+        // produces, and it would fall through to the create path below: a buyer whose merge
+        // never ran would silently get a SECOND order instead of the retryable signal. Same
+        // coded body as mapLockError's 503, so `isMergeContention` recognises it downstream
+        // exactly as it does on the staff path and in the service.
+        if (!lock.acquired) {
+          throw new ServiceUnavailableException({
+            code: LOCK_UNAVAILABLE,
+            message: LOCK_UNAVAILABLE_MESSAGE,
+          });
+        }
+        mergedOrderId = lock.value;
+      } catch (lockErr) {
+        mapLockError(lockErr);
+      }
+
+      if (mergedOrderId) {
         // Sweep any other PENDING orders for this customer into the winner. The
         // buyer drove this, so a merged BUY_N_GET_M line earns the free units the
         // combined quantity qualifies for (split carts keep the promo).
-        await this.ordersService.mergeAllPendingForCustomer(ctx.customerId, {
-          buyerInitiated: true,
-        });
+        //
+        // POST-COMMIT (see ../orders/merge-contention.ts): the fold inside the lock has already
+        // committed and the buyer's cart clears on success, so a 409 here would send them back
+        // to a cart they already submitted — and the fold is ABSOLUTE, so re-submitting doubles
+        // the order. Contention is deferred: warn and return the merged order.
+        // `lockMode: "try"`: this consolidation is deferrable by construction, so it must not
+        // wait out another holder's turn inside a request whose write already landed.
+        try {
+          await this.ordersService.mergeAllPendingForCustomer(
+            ctx.customerId,
+            { buyerInitiated: true },
+            { lockMode: "try" },
+          );
+        } catch (e) {
+          if (!isMergeContention(e)) throw e;
+          this.logger.warn(
+            `post-commit consolidation deferred (merge in progress) tenant=${ctx.tenantId} customer=${ctx.customerId}`,
+          );
+        }
 
         // Return the updated order
-        return this.ordersService.findOne(activeOrder.id, makePseudoUser(ctx));
+        return this.ordersService.findOne(mergedOrderId, makePseudoUser(ctx));
       }
     }
 
@@ -639,9 +713,24 @@ export class BuyerController {
     // Newly-created order may share a customer with pre-existing PENDINGs —
     // consolidate them so the customer ends up with a single PENDING (buyer-driven,
     // so the merged quantity earns its own BUY_N_GET_M free units).
-    const merged = await this.ordersService.mergeAllPendingForCustomer(ctx.customerId, {
-      buyerInitiated: true,
-    });
+    //
+    // POST-COMMIT (see ../orders/merge-contention.ts): `created` exists already, so contention
+    // must not become the response — the buyer would be told their order failed and would place
+    // a second one. Return the unconsolidated order; the hourly sweep folds it later.
+    let merged: Awaited<ReturnType<OrdersService["mergeAllPendingForCustomer"]>> | null = null;
+    try {
+      merged = await this.ordersService.mergeAllPendingForCustomer(
+        ctx.customerId,
+        { buyerInitiated: true },
+        // POST-COMMIT: never wait — see the sibling sweep above.
+        { lockMode: "try" },
+      );
+    } catch (e) {
+      if (!isMergeContention(e)) throw e;
+      this.logger.warn(
+        `post-commit consolidation deferred (merge in progress) tenant=${ctx.tenantId} customer=${ctx.customerId}`,
+      );
+    }
     return merged ?? created;
   }
 

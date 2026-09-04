@@ -11,6 +11,7 @@ import { Cron } from "@nestjs/schedule";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
+import { isMergeContention } from "../orders/merge-contention";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -489,7 +490,30 @@ export class OrderTemplatesService {
     // If the customer already had PENDING orders, fold the newly-created one
     // (and any pre-existing duplicates) into a single winner. The newest order
     // wins on price/metadata per the merge rules.
-    const merged = await this.ordersService.mergeAllPendingForCustomer(template.customerId);
+    //
+    // POST-COMMIT (see orders/merge-contention.ts): `created` is already in the
+    // database. On the 06:00 cron a thrown 409 lands in generateDailyOrders' per-
+    // template catch, which logs an ERROR and counts the day's standing order as
+    // neither created nor skipped — for an order that WAS placed; on the manual
+    // generateOrder path it becomes the caller's response, reporting a placed order
+    // as a failure. Contention here is deferred: log it and return the
+    // unconsolidated order; the hourly sweep folds it later.
+    let merged: Awaited<ReturnType<OrdersService["mergeAllPendingForCustomer"]>> | null = null;
+    try {
+      merged = await this.ordersService.mergeAllPendingForCustomer(
+        template.customerId,
+        {},
+        // POST-COMMIT: `try`, never `wait`. On the 06:00 cron this runs once per template in a
+        // loop — waiting 20 s on each contended customer would stretch the run without changing
+        // the outcome, since the hourly sweep folds whatever is left anyway.
+        { lockMode: "try" },
+      );
+    } catch (e) {
+      if (!isMergeContention(e)) throw e;
+      this.logger.warn(
+        `post-commit consolidation deferred (merge in progress) tenant=${tenantId} customer=${template.customerId}`,
+      );
+    }
     return merged ?? created;
   }
 

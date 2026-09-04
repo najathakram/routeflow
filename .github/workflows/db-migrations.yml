@@ -28,6 +28,13 @@ on:
     branches: [master]
     paths:
       - "apps/api/prisma/**"
+      - "apps/api/scripts/schema-drift.mjs"
+      - "apps/api/scripts/lib/**"
+      - "apps/api/jest.db.config.js"
+      - "apps/api/package.json"
+      - "apps/api/src/**/*.db.spec.ts"
+      - "apps/api/src/common/testing/**"
+      - ".github/workflows/db-migrations.yml"
   workflow_dispatch:
 
 concurrency:
@@ -77,3 +84,15 @@ jobs:
       - name: Verify migrations apply to a fresh database
         working-directory: apps/api
         run: npx prisma migrate deploy
+
+      - name: Schema drift (history → datamodel)
+        working-directory: apps/api
+        run: node scripts/schema-drift.mjs
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/routeflow_test
+
+      - name: DB-backed specs
+        run: npm run test:db -w apps/api
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/routeflow_test
+          RUN_DB_SPECS: ci

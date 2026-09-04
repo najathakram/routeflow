@@ -1,5 +1,5 @@
 import { Test } from "@nestjs/testing";
-import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import { OrderTemplatesService } from "./order-templates.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -146,6 +146,58 @@ describe("OrderTemplatesService — regulated license guard on reorder", () => {
     await expect(service.generateOrder("t1")).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.order.create).not.toHaveBeenCalled();
     expect(notifications.sendToCustomer).toHaveBeenCalled(); // still notified about the skip
+  });
+
+  // ─── PR-2 (imp-02): post-commit consolidation is deferred, never an error ───
+  //
+  // The invariant (orders/merge-contention.ts): the standing order has already
+  // COMMITTED by the time mergeAllPendingForCustomer runs. Letting its 409 out
+  // would report a placed order as a failure — on the 06:00 cron it lands in
+  // generateDailyOrders' per-template catch and is logged as an ERROR while the
+  // row exists; on the manual path it becomes the caller's response.
+
+  it("asks for the merge lock with lockMode 'try' — a post-commit consolidation never waits", async () => {
+    authGuard.checkAuthorized.mockResolvedValue({ blocked: [] });
+
+    await service.generateOrder("t1");
+
+    // Third argument, not second: `{ buyerInitiated }` keeps its slot. On the 06:00 cron this
+    // runs once per template, so waiting 20s per contended customer would stretch the run
+    // without changing the outcome — the hourly sweep folds whatever is left.
+    expect(ordersService.mergeAllPendingForCustomer).toHaveBeenCalledWith(
+      "c1",
+      expect.any(Object),
+      { lockMode: "try" },
+    );
+  });
+
+  it("returns the created order when the post-commit consolidation hits merge-lock contention", async () => {
+    authGuard.checkAuthorized.mockResolvedValue({ blocked: [] });
+    ordersService.mergeAllPendingForCustomer.mockRejectedValue(
+      new ConflictException({
+        code: "MERGE_IN_PROGRESS",
+        message: "Another merge for this customer is in progress — retry.",
+      }),
+    );
+    const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+
+    const order = await service.generateOrder("t1");
+
+    // The row that WAS written comes back — unconsolidated, which the hourly
+    // sweep fixes. Before the fix this rejected with the 409.
+    expect(order).toMatchObject({ id: "o1" });
+    expect(prisma.order.create).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("c1");
+  });
+
+  it("still propagates a non-contention failure from the post-commit consolidation", async () => {
+    authGuard.checkAuthorized.mockResolvedValue({ blocked: [] });
+    ordersService.mergeAllPendingForCustomer.mockRejectedValue(new Error("boom"));
+    jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+
+    // The swallow is by CODE: a real merge fault must not be hidden behind a warning.
+    await expect(service.generateOrder("t1")).rejects.toThrow("boom");
   });
 });
 

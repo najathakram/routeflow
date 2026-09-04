@@ -24,8 +24,12 @@ const files = execSync("git diff --cached --name-only --diff-filter=ACMR -z", {
   .split("\0")
   .filter(Boolean);
 
+// lockfile is text and always committed; the gate is for binaries (owner ruling 2026-09-03)
+const EXEMPT = new Set(["package-lock.json"]);
+
 const offenders = [];
 for (const f of files) {
+  if (EXEMPT.has(f)) continue;
   // Size of the STAGED blob (not the working-tree file, which may differ).
   const out = execSync(`git cat-file -s ":${f.replaceAll('"', '\\"')}"`, { encoding: "utf8" });
   const kb = Number(out.trim()) / 1024;

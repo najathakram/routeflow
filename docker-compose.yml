@@ -1,3 +1,26 @@
+# RouteFlow local hosting environment.
+#
+#   Default (deps only) — for `npm run dev` on the host:
+#       docker compose up -d postgres redis          (== npm run db:up)
+#
+#   Full stack (API + Web in containers) — the pre-PR local test target:
+#       npm run local:up        # build + start postgres, redis, migrate, api, web
+#       npm run local:seed      # seed the approved `test` tenant (admin / Admin@123)
+#       npm run local:validate  # smoke + post-deploy-check + drift check @ :3000
+#       npm run local:down
+#
+#   The `app` profile services are gated behind `--profile app`, so plain
+#   `docker compose up` still brings up ONLY postgres + redis (unchanged).
+#
+#   Runbook + rationale: docs/adr/0001-local-hosting-environment.md
+#   Secrets below are throwaway LOCAL-ONLY values — never reuse in any real env.
+
+# Shared build context for the two services that run the API image (api + the
+# one-shot migrate job). Same tag ⇒ Docker builds the image once and reuses it.
+x-api-build: &api-build
+  context: .
+  dockerfile: apps/api/Dockerfile
+
 services:
   # ─── PostgreSQL ─────────────────────────────────────────────────────────────
   postgres:
@@ -48,7 +71,10 @@ services:
 
   # ─── Redis Commander (dev UI) ────────────────────────────────────────────────
   # Only started with: docker compose --profile tools up
-  # REDIS_COMMANDER_PASSWORD must be set — no default provided to prevent accidental exposure.
+  # REDIS_COMMANDER_PASSWORD defaults to an obvious local throwaway, like every other secret in
+  # this file: compose interpolates the WHOLE file even when only the `app` profile is started,
+  # so a `:?` guard here made `npm run local:up` fail for a service it never starts. The UI binds
+  # to 127.0.0.1 only; set a real value in the environment before exposing it anywhere.
   redis-commander:
     image: rediscommander/redis-commander:latest
     container_name: routeflow_redis_ui
@@ -56,14 +82,99 @@ services:
     environment:
       REDIS_HOSTS: "local:redis:6379"
       HTTP_USER: admin
-      HTTP_PASSWORD: ${REDIS_COMMANDER_PASSWORD:?REDIS_COMMANDER_PASSWORD must be set}
+      HTTP_PASSWORD: ${REDIS_COMMANDER_PASSWORD:-local-redis-commander-change-me}
     ports:
-      - "127.0.0.1:8082:8081"  # bind to localhost only, not 0.0.0.0
+      - "127.0.0.1:8082:8081" # bind to localhost only, not 0.0.0.0
     depends_on:
       redis:
         condition: service_healthy
     profiles:
       - tools
+
+  # ─── DB migrations (one-shot) ────────────────────────────────────────────────
+  # Applies committed Prisma migrations before the API starts, mirroring prod
+  # (`railway run npx prisma migrate deploy`). Reuses the built API image, which
+  # ships prisma/schema.prisma + prisma/migrations + the Prisma CLI. Exits 0 when
+  # the schema is up to date; `api` waits for it via service_completed_successfully.
+  migrate:
+    build: *api-build
+    image: routeflow-api:local
+    container_name: routeflow_migrate
+    command: ["npx", "--no-install", "prisma", "migrate", "deploy"]
+    working_dir: /app/apps/api
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-pass}@postgres:5432/${POSTGRES_DB:-routeflow_dev}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    profiles:
+      - app
+
+  # ─── API (NestJS) ────────────────────────────────────────────────────────────
+  api:
+    build: *api-build
+    image: routeflow-api:local
+    container_name: routeflow_api
+    restart: unless-stopped
+    # Schema is applied only by the one-shot 'migrate' service — the API never runs DDL.
+    environment:
+      # NODE_ENV=development keeps local boot requirements minimal (only the two
+      # JWT secrets are mandatory; STORAGE_URL_SIGNING_SECRET is prod-only) and
+      # enables Swagger at /api/docs. These secrets are LOCAL throwaways.
+      NODE_ENV: development
+      PORT: "3000"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-pass}@postgres:5432/${POSTGRES_DB:-routeflow_dev}
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: local-dev-only-jwt-secret-change-me
+      JWT_REFRESH_SECRET: local-dev-only-jwt-refresh-secret-change-me
+      CORS_ORIGINS: http://localhost:3001,http://localhost:3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    profiles:
+      - app
+
+  # ─── Web (Next.js) ───────────────────────────────────────────────────────────
+  # NEXT_PUBLIC_API_URL is baked at BUILD time and read by the browser (which runs
+  # on the host), so it must point at the host-published API port, not `api:3000`.
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:3000/api/v1
+    image: routeflow-web:local
+    container_name: routeflow_web
+    restart: unless-stopped
+    environment:
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    ports:
+      - "3001:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/login || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    profiles:
+      - app
 
 volumes:
   postgres_data:
