@@ -62,10 +62,18 @@
       // replayed a cached green for the very test that proves the mirrors agree.
       // $TURBO_ROOT$ pulls those two files into this task's key (and only this one).
       // Add an entry here whenever a spec in apps/api reaches outside apps/api.
+      // Root scripts spawned/required by specs: lint-migrations-script.spec.ts and
+      // skip-verify-audit-script.spec.ts (wave B), local-env-script.spec.ts and
+      // test-tenants.guard.spec.ts (pre-existing); .squawk.toml is lint-migrations.mjs's config.
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/apps/web/lib/pricing.ts",
-        "$TURBO_ROOT$/apps/mobile/lib/pricing.ts"
+        "$TURBO_ROOT$/apps/mobile/lib/pricing.ts",
+        "$TURBO_ROOT$/scripts/lint-migrations.mjs",
+        "$TURBO_ROOT$/scripts/skip-verify-audit.mjs",
+        "$TURBO_ROOT$/apps/api/.squawk.toml",
+        "$TURBO_ROOT$/scripts/local-env.mjs",
+        "$TURBO_ROOT$/scripts/lib/test-tenants.cjs"
       ],
       "outputs": ["coverage/**"]
     },

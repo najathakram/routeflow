@@ -123,8 +123,15 @@ async function run() {
   // ── 1. Public health ─────────────────────────────────────────────────────────
   try {
     const res = await get("/api/v1/health");
-    if (res.ok) pass(`Health — ${res.status}`);
-    else {
+    if (res.ok) {
+      pass(`Health — ${res.status}`);
+      try {
+        const body = await res.json();
+        console.log(`  ℹ️  commit ${body?.commit ?? "null"} · branch ${body?.branch ?? "null"}`);
+      } catch {
+        // health body isn't JSON or lacks commit/branch — informational only, never fail the gate
+      }
+    } else {
       fail(`Health — ${res.status}`);
       failures++;
     }

@@ -89,6 +89,9 @@ Added a Prisma migration mid-session? Re-run `npm run local:migrate` before re-v
 - Full image builds take minutes (cold cache) — that's fine for a pre-PR check; keep using
   `npm run dev` for line-by-line editing. `web`'s API URL is baked at build time, so
   changing it needs a rebuild. Mobile (Expo) is out of scope — run `expo start` against `:3000`.
+- The `/auth/login` throttle (`AUTH_LOGIN_THROTTLE_LIMIT` / `AUTH_LOGIN_THROTTLE_TTL_MS`, prod
+  default 10/300000 unchanged) is set to a generous local-only value in `docker-compose.yml`'s
+  `api` environment so repeated local Playwright logins from `127.0.0.1` don't exhaust it.
 
 ## Architecture (API feature modules → `apps/api/src/*`)
 
@@ -181,6 +184,8 @@ Names only — see each app's example file. Never commit values.
 - Docker `CMD` is **only** `node dist/main.js` — **never** auto-migrate on deploy.
 - Schema changes apply to prod **only** via `railway run npx prisma migrate deploy`; locally `npx prisma migrate dev` against docker-compose.
 - **Never** `--force-reset`; **never** run the destructive scripts listed in `CLAUDE_SESSION_PREAMBLE.md`; seed additively.
+- Destructive migrations are blocked in CI by Squawk (`npm run lint:migrations`); whitelist a
+  statement with `-- reason:` + `-- squawk-ignore <rule>`.
 - Boot-time DDL is gone (PR-1, `imp-03a`) — `main.ts` and `platform-config.service.ts` no longer
   run any boot-time DDL — `main.ts` issued it through a raw `pg` `Pool.query`,
   `platform-config.service.ts` through `$executeRaw` tagged templates; a grep for runtime DDL
@@ -302,3 +307,8 @@ git status && git log --oneline -5
 npm run check-types
 npx jest --selectProjects api --listTests >/dev/null 2>&1 || true  # confirm Jest resolves
 ```
+
+`npm run verify` runs `check-types`/`lint`/`test` with `--continue=dependencies-successful`, so a
+failing task no longer hides the others. `SKIP_VERIFY=1` (the pre-push escape hatch) now requires
+`SKIP_VERIFY_REASON="<why>"` for any push touching code (`apps/`, `packages/`, `scripts/`,
+`.github/`) and writes an audit line to `.git/skip-verify.log`; docs-only pushes are exempt.

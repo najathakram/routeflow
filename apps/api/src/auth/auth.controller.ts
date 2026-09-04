@@ -30,6 +30,7 @@ import { SetPasswordDto } from "./dto/set-password.dto";
 import { RequestPasswordResetDto } from "./dto/request-password-reset.dto";
 import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { ExchangeCodeDto } from "./dto/exchange-code.dto";
+import { resolveLoginThrottle } from "./login-throttle.config";
 
 // SEC-4 / F11-002: name + scope of the httpOnly refresh cookie. Path is scoped
 // to the auth routes so it is never sent to unrelated API endpoints. Kept in
@@ -63,7 +64,16 @@ export class AuthController {
   @Post("login")
   @HttpCode(HttpStatus.OK)
   @UseGuards(LocalAuthGuard)
-  @Throttle({ default: { ttl: 300_000, limit: 10 } }) // RF-160: 10 attempts per 5 min per IP to block brute-force
+  // RF-160: 10 attempts per 5 min per IP to block brute-force. pB10: env override for
+  // local stacks only, prod defaults unchanged. Resolved per request (memoized on first
+  // use) rather than at module init — this module is imported before
+  // `ConfigModule.forRoot()` runs, so a module-init read would ignore `apps/api/.env`.
+  @Throttle({
+    default: {
+      limit: () => resolveLoginThrottle().limit,
+      ttl: () => resolveLoginThrottle().ttl,
+    },
+  })
   @ApiOperation({ summary: "Login with username and password" })
   async login(
     @CurrentUser() user: any,

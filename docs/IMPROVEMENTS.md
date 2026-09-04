@@ -24,19 +24,19 @@ Two items were explicitly requested by the product owner and are called out inli
 
 ## Summary
 
-| #   | Tier | Item                                                         | Effort | Risk | Status         |
-| --- | ---- | ------------------------------------------------------------ | ------ | ---- | -------------- |
-| 1   | P0   | Consolidate the 4 `pricing.ts` copies into one package       | M      | 🔴   | open           |
-| 2   | P0   | Enforce the single-replica invariant (or remove the need)    | M      | 🔴   | open           |
-| 3   | P0   | Schema-management tooling: retire boot-time DDL + drift gate | M      | 🔴   | shipped (PR-1) |
-| 4   | P1   | Add a staging environment before prod                        | M      | 🔴   | open           |
-| 5   | P1   | Add web component/unit tests; rebalance the test pyramid     | L      | 🟡   | open           |
-| 6   | P1   | Move E2E before prod; give specs dedicated users             | M      | 🟡   | open           |
-| 7   | P1   | **Local full-stack hosting via Docker (pre-PR)**             | M      | 🟡   | shipped (#606) |
-| 8   | P2   | Retire the repo public/private flip; run CI private          | S      | 🟡   | open           |
-| 9   | P2   | Constrain the `SKIP_VERIFY` bypass; split the CI job         | S      | 🟡   | open           |
-| 10  | P3   | Split `schema.prisma`; share DTOs via `@routeflow/types`     | M      | ⚪   | open           |
-| 11  | P3   | Rewrite the stale README; slim `CLAUDE.md`; drop dead deps   | S      | 🟡   | open           |
+| #   | Tier | Item                                                         | Effort | Risk | Status                   |
+| --- | ---- | ------------------------------------------------------------ | ------ | ---- | ------------------------ |
+| 1   | P0   | Consolidate the 4 `pricing.ts` copies into one package       | M      | 🔴   | open                     |
+| 2   | P0   | Enforce the single-replica invariant (or remove the need)    | M      | 🔴   | open                     |
+| 3   | P0   | Schema-management tooling: retire boot-time DDL + drift gate | M      | 🔴   | shipped (#608 + wave B′) |
+| 4   | P1   | Add a staging environment before prod                        | M      | 🔴   | open                     |
+| 5   | P1   | Add web component/unit tests; rebalance the test pyramid     | L      | 🟡   | open                     |
+| 6   | P1   | Move E2E before prod; give specs dedicated users             | M      | 🟡   | open                     |
+| 7   | P1   | **Local full-stack hosting via Docker (pre-PR)**             | M      | 🟡   | shipped (#606)           |
+| 8   | P2   | Retire the repo public/private flip; run CI private          | S      | 🟡   | open                     |
+| 9   | P2   | Constrain the `SKIP_VERIFY` bypass; split the CI job         | S      | 🟡   | shipped (wave B′)        |
+| 10  | P3   | Split `schema.prisma`; share DTOs via `@routeflow/types`     | M      | ⚪   | open                     |
+| 11  | P3   | Rewrite the stale README; slim `CLAUDE.md`; drop dead deps   | S      | 🟡   | open                     |
 
 ---
 
@@ -104,16 +104,16 @@ level:
      [`db-migrations.yml`](../.github/workflows/db-migrations.yml) and the post-deploy step in
      [`prod-migrate.mjs`](../apps/api/scripts/prod-migrate.mjs). **Shipped in PR-1.**
   3. Formalize `prisma migrate deploy` as a guarded, logged release step (not a manual one-off).
-- **Option B — dedicated schema tool, [Atlas](https://atlasgo.io) (`ariga/atlas`):** has a
-  first-class Prisma provider and adds what Prisma Migrate lacks — **declarative** schema management,
-  **migration linting** (blocks destructive changes: dropped columns, table rewrites, unsafe index
-  builds), and **drift detection** against a live database, all runnable in CI. It is **not** on the
-  repo's "DO NOT introduce" list, and it complements rather than replaces Prisma Migrate.
+- **Option B — destructive-migration linting, [Squawk](https://squawkhq.com) (`squawk-cli`),
+  shipped in wave B′:** Atlas's `migrate lint` went **Pro-only since v0.38** and its `--dir-format`
+  never supported Prisma's migrations layout, so it cannot do this job. Squawk lints every
+  `migration.sql` for destructive operations (`ban-drop-table`/`-column`, `adding-required-field`,
+  `renaming-column`/`-table`, …) for free, wired into `db-migrations.yml` via
+  `npm run lint:migrations` (`scripts/lint-migrations.mjs`), with a reason-gated
+  `-- squawk-ignore <rule>` whitelist.
 
-**Recommendation.** Do **Option A now** (it directly retires the boot-time DDL and closes the drift
-hole with tools already in the repo). Adopt **Atlas (Option B)** as a team decision once you want
-destructive-change linting and continuous drift detection — it is the natural fit for this TS/Prisma
-stack (Flyway/Liquibase would drag in a JVM and are not recommended here).
+**Recommendation.** Option A is done; Option B (Squawk) is done. Both now run in CI on every
+migration.
 
 **Payoff.** One coherent schema pipeline; drift and destructive migrations become CI failures instead
 of production surprises.
@@ -222,12 +222,40 @@ so the instructions themselves now conflict.
 - CI is a single serial `verify` job (`check-types` → `lint` → `test`), so a type error and a lint
   error are found one after another, not together.
 
-**Proposed change.** Emit telemetry/an audit line whenever `SKIP_VERIFY` is used (keep the escape
-hatch for genuine docs-only pushes, but make it visible). Split the CI `verify` job into parallel
-`check-types` / `lint` / `test` lanes for faster, clearer feedback (Turbo already caches locally;
-CI stays cache-off by design).
+**Shipped (wave B′).** Ruling: keep the one-job `verify` (splitting contradicts `ci.yml:1-63`'s
+measured one-job decision while private minutes stay constrained — see #8) but stop the escape
+hatch from being silent. `.husky/pre-push` now requires `SKIP_VERIFY_REASON="<why>"` for any push
+that touches code (`apps/`, `packages/`, `scripts/`, `.github/`) via `scripts/skip-verify-audit.mjs`,
+which appends an audit line to `.git/skip-verify.log`; docs-only pushes need no reason. The root
+`verify` script (and the CI "Verify" step, byte-identical) gained `--continue=dependencies-successful`
+so a failing type-check no longer hides a failing lint/test in the same run.
 
 **Payoff.** Faster feedback; the safety bypass stops being invisible.
+
+> **P4 note (wave B′, shipped).** Alongside #9's audit trail: the global `APP_GUARD` order
+> (`ThrottlerGuard`, `TenantStatusGuard`, `ImpersonationGuard`, no `JwtAuthGuard`) is now pinned by
+> a static spec and a load-bearing comment in `app.module.ts`; cross-tenant `findUniqueOrThrow`
+> (throws Prisma's own `P2025`) fail-closed behavior is pinned by the DB-backed
+> [`tenant-findunique.db.spec.ts`](../apps/api/src/prisma/tenant-findunique.db.spec.ts), and
+> cross-tenant `findUnique` (returns `null`) plus the RLS session-variable hand-off by its sibling
+> [`tenant-findunique-pins.db.spec.ts`](../apps/api/src/prisma/tenant-findunique-pins.db.spec.ts) —
+> both across `forTenant()` and `tenantTransaction()` for `Customer`/`Product`/`Order`/`Invoice` in
+> the compose-DB lane. That pin came out **red** for
+> `findUniqueOrThrow`, which was scoped by neither tenancy layer — it fell through to the raw
+> client and resolved the other tenant's row — so P4 escalated from `test:` to a fix:
+> `prisma.service.ts` now post-filters `findUniqueOrThrow` in both `_wrapTxWithTenant` and
+> `_tenantExtension`, throwing `P2025` for a foreign-tenant row ([[L-055]]).
+> `apps/api/src/app.service.ts`'s health check now returns
+> `commit`/`branch` from `RAILWAY_GIT_COMMIT_SHA`/`RAILWAY_GIT_BRANCH` (mirroring the web health
+> route), and `ci.yml`'s readiness gate checks the API's deployed sha with the same tolerance
+> shape as the existing web check.
+>
+> **Follow-on.** `ALLOW_NULL_API_SHA` in `ci.yml` is transitional — flip it to `"false"` after
+> the first post-merge deploy proves the API reports `commit`; tracked as a program follow-on.
+> Follow-on (tenancy): scope the tx-proxy `upsert` `where` — requires a null guard
+> (`tenantNotFound`) + a backfill migration
+> `UPDATE "PaymentCounter" SET "tenantId" = "id" WHERE "tenantId" IS NULL AND "id" IN (SELECT "id" FROM "Tenant")`,
+> preceded by a read-only prod count of such rows; the `forTenant()` layer already scopes it.
 
 ---
 
