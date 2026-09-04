@@ -234,6 +234,30 @@
 
 ## testing
 
+### L-046 · 2026-09-03 · testing
+
+- **Symptom:** one batch produced two alarming results that were both false. A mutation probe
+  reported `caught: false` for a test that demonstrably turns red under that exact defect, and the
+  same run reported two healthy money-path files as "NOT back to their pre-probe content" — which
+  dispatches a fixer whose instructions end in "reconstruct the correct content by hand".
+- **Root cause:** neither negative came from the code; both came from the measuring apparatus. The
+  probe's test selector (`-t "REG-B09"`) matched **zero** tests because a sibling fix had retitled
+  them minutes earlier, and a filter that selects nothing fails exactly like a blind test. The
+  restore check compared against a baseline captured by a _different_ agent during a window in
+  which another process rewrote the working tree, so the comparison measured the baseline moving,
+  not the file changing.
+- **Lesson:** **a negative or "it changed" result is evidence only when the instrument that
+  produced it is pinned.** Before believing "the test did not catch it", assert the selector
+  matches at least one test; before believing "the file changed", require before/after readings
+  taken by the same agent that owns the file for that interval — never a baseline someone else's
+  write could have moved. Same family as [[L-034]] and [[L-041]]: green, zero and changed are all
+  claims about the instrument until something pins it.
+- **Guard:** mutation probes now report their own `preHash`/`postHash`, and a pre/post baseline
+  disagreement whose probes agree with the final state is classified `baselineDisturbed` instead of
+  a restore failure (`~/.claude/skills/dev-pipeline/pipeline.js`, harness scenarios M and N). No
+  guard yet for the empty selector — re-run any not-caught probe with a selector proven to match
+  before accepting its verdict.
+
 ### L-050 · 2026-09-02 · testing · #598
 
 - **Symptom:** two new e2e specs went red post-deploy AND dragged an unrelated, previously-green

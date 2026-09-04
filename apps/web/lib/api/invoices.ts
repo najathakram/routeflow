@@ -766,8 +766,24 @@ export interface RecurringInvoice {
   shippingFee?: number;
   nextRunAt: string;
   lastRunAt?: string;
+  lastRunStatus?: "SUCCESS" | "FAILED" | null;
+  lastError?: string | null;
   items: RecurringInvoiceItem[];
   createdAt: string;
+}
+
+/**
+ * REG-B106: mirrors `RUN_UNFINALIZED_ERROR` in
+ * `apps/api/src/recurring-invoices/recurring-invoices.service.ts`. A `lastError` starting
+ * with this text means the invoice WAS created (the cycle is billed) and only the run's
+ * bookkeeping failed — so that failure must never be offered as a retry: re-running would
+ * bill the same cycle twice.
+ */
+export const RUN_UNFINALIZED_PREFIX = "The invoice was created but the run could not be finalized";
+
+/** True when a FAILED cycle produced no invoice, so "Run Now" is a safe retry. */
+export function isRetryableRunFailure(lastError?: string | null): boolean {
+  return !!lastError && !lastError.startsWith(RUN_UNFINALIZED_PREFIX);
 }
 
 export interface CreateRecurringInvoiceDto {
@@ -833,8 +849,10 @@ export function useDeactivateRecurringInvoice() {
 /**
  * Resume a paused template via the dedicated `POST /:id/activate` endpoint. The
  * old approach (`useUpdateRecurringInvoice` with `{ isActive: true }`) never
- * persisted — the PATCH validates against CreateRecurringInvoiceDto (no isActive
- * field; whitelist ValidationPipe) and was rejected.
+ * persisted — the PATCH was unvalidated before `UpdateRecurringInvoiceDto`
+ * (F13/B92); it now validates and whitelists, and `isActive` is deliberately
+ * absent from that DTO, so a `{ isActive: true }` PATCH is a 400 — the activate
+ * endpoint stays the resume path.
  */
 export function useActivateRecurringInvoice() {
   const qc = useQueryClient();

@@ -37,6 +37,9 @@
  *   • REFUTED: stock-vs-last-movement — the invariant is false by design (movements do not
  *     reconstruct currentStock), so it floods with false positives. B55/B64 are real but
  *     not detectable via that footprint. (Confirmed in prod: 315 rows = noise.)
+ *   • B48 (F13): template-order-list-price-vs-tier is CURRENT-basis (tier/override as of now;
+ *     promotion-based overcharges are unrecoverable) — read it beside
+ *     order-list-price-vs-tier-any (positive control) and f13-gate-state (rows = closed gates).
  *
  */
 import pg from "pg";
@@ -417,6 +420,83 @@ const CHECKS = [
       FROM "RecurringInvoice" x
       WHERE x."isActive" = true ${t}
         AND x."nextRunAt" < now() - interval '3 days'`,
+  },
+  // ── Standing-order pricing (B48, F13) ───────────────────────────────────────
+  {
+    name: "template-order-list-price-vs-tier",
+    severity: "high",
+    explain:
+      "template-generated line billed at the CURRENT list price while the customer's CURRENT tier/override price differs (B48 overcharge candidates — current-basis; promotions unrecoverable)",
+    sql: (t) => `
+      SELECT li.id, o.id AS order_id, o.status::text AS order_status,
+             li."unitPrice"::float8 AS billed, tp.tier_price::float8 AS tier_price,
+             (li."unitPrice" - tp.tier_price)::float8 AS delta_per_unit, li.qty::float8 AS qty
+      FROM "OrderItem" li
+      JOIN "Order" o ON o.id = li."orderId"
+      JOIN "Product" p ON p.id = li."productId"
+      JOIN "Customer" c ON c.id = o."customerId"
+      LEFT JOIN "CustomerPrice" cp ON cp."customerId" = c.id AND cp."productId" = p.id
+      CROSS JOIN LATERAL (
+        SELECT CASE COALESCE(cp."pricingTier", c."pricingTier", 1)
+                 WHEN 2 THEN p."priceTier2" WHEN 3 THEN p."priceTier3"
+                 WHEN 4 THEN p."priceTier4" WHEN 5 THEN p."priceTier5"
+                 ELSE p."pricePerUnit" END AS tier_price
+      ) tp
+      WHERE o."templateId" IS NOT NULL
+        AND li.status <> 'CANCELLED'
+        AND li."priceType" = 'STANDARD'
+        AND abs(li."unitPrice" - p."pricePerUnit") <= 0.005
+        AND tp.tier_price > 0
+        AND abs(li."unitPrice" - tp.tier_price) > 0.005 ${t.replace(/x\./g, "o.")}`,
+  },
+  {
+    name: "order-list-price-vs-tier-any",
+    severity: "info",
+    explain:
+      "POSITIVE CONTROL for the check above: the same arithmetic over ALL orders — expected > 0 on any tenant with tiered customers; if this is ALSO 0, distrust the predicate, not the data",
+    sql: (t) => `
+      SELECT li.id, o.id AS order_id, li."unitPrice"::float8 AS billed, tp.tier_price::float8 AS tier_price
+      FROM "OrderItem" li
+      JOIN "Order" o ON o.id = li."orderId"
+      JOIN "Product" p ON p.id = li."productId"
+      JOIN "Customer" c ON c.id = o."customerId"
+      LEFT JOIN "CustomerPrice" cp ON cp."customerId" = c.id AND cp."productId" = p.id
+      CROSS JOIN LATERAL (
+        SELECT CASE COALESCE(cp."pricingTier", c."pricingTier", 1)
+                 WHEN 2 THEN p."priceTier2" WHEN 3 THEN p."priceTier3"
+                 WHEN 4 THEN p."priceTier4" WHEN 5 THEN p."priceTier5"
+                 ELSE p."pricePerUnit" END AS tier_price
+      ) tp
+      WHERE li.status <> 'CANCELLED'
+        AND li."priceType" = 'STANDARD'
+        AND abs(li."unitPrice" - p."pricePerUnit") <= 0.005
+        AND tp.tier_price > 0
+        AND abs(li."unitPrice" - tp.tier_price) > 0.005 ${t.replace(/x\./g, "o.")}`,
+  },
+  {
+    name: "f13-gate-state",
+    severity: "info",
+    explain:
+      "each row is a CLOSED gate for the B46/B48 checks (recurring-duplicate-fire, template-order-list-price-vs-tier): a 0-row result on those is only evidence of no damage while THIS returns 0 rows",
+    sql: (t) => `
+      SELECT g.id, g.n
+      FROM (
+        SELECT 'monthly-templates-ever-run' AS id,
+               (SELECT count(*) FROM "RecurringInvoice" x
+                 WHERE x.frequency = 'MONTHLY' AND x."lastRunAt" IS NOT NULL ${t})::int AS n
+        UNION ALL
+        SELECT 'template-generated-orders',
+               (SELECT count(*) FROM "Order" x WHERE x."templateId" IS NOT NULL ${t})::int
+        UNION ALL
+        SELECT 'template-orders-for-tiered-or-override-customers',
+               (SELECT count(*) FROM "Order" x
+                 JOIN "Customer" c ON c.id = x."customerId"
+                 WHERE x."templateId" IS NOT NULL ${t}
+                   AND (c."pricingTier" <> 1 OR EXISTS (
+                     SELECT 1 FROM "CustomerPrice" cp
+                     WHERE cp."customerId" = c.id AND cp."pricingTier" IS NOT NULL)))::int
+      ) g
+      WHERE g.n = 0`,
   },
   // ── Routes / delivery record honesty ───────────────────────────────────────
   {

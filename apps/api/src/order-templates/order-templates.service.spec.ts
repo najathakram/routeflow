@@ -21,7 +21,17 @@ describe("OrderTemplatesService — regulated license guard on reorder", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   let authGuard: { checkAuthorized: jest.Mock };
   let notifications: { sendToCustomer: jest.Mock; sendToUser: jest.Mock };
-  let ordersService: { mergeAllPendingForCustomer: jest.Mock };
+  // REG-B48 widened createOrderFromTemplate's collaborator surface: it now prices every
+  // line through the shared buyer resolver, so this guard suite has to mock the same
+  // OrdersService methods the real module boundary exposes. `resolveBuyerLinePrice`
+  // delegates to the REAL implementation (it uses no `this`) so the license-guard
+  // assertions below still measure real money, not a stub's.
+  let ordersService: {
+    mergeAllPendingForCustomer: jest.Mock;
+    loadActivePromotions: jest.Mock;
+    getCustomerPriceHistory: jest.Mock;
+    resolveBuyerLinePrice: jest.Mock;
+  };
 
   const template = {
     id: "t1",
@@ -45,7 +55,14 @@ describe("OrderTemplatesService — regulated license guard on reorder", () => {
       sendToCustomer: jest.fn().mockResolvedValue(1),
       sendToUser: jest.fn().mockResolvedValue(1),
     };
-    ordersService = { mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null) };
+    ordersService = {
+      mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
+      loadActivePromotions: jest.fn().mockResolvedValue([]),
+      getCustomerPriceHistory: jest.fn().mockResolvedValue({}),
+      resolveBuyerLinePrice: jest.fn((...args: any[]) =>
+        (OrdersService.prototype as any).resolveBuyerLinePrice(...args),
+      ),
+    };
 
     const mod = await Test.createTestingModule({
       providers: [
@@ -290,5 +307,131 @@ describe("OrderTemplatesService — template ownership (F2-003)", () => {
     await (service as any).addItemForUser("t1", { productId: "p1", qty: 1 }, asOperator);
     expect(prisma.customer.findFirst).not.toHaveBeenCalled();
     expect(prisma.orderTemplateItem.create).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * B48 (R10) pin: a tier-1 customer with no CustomerPrice override, no active
+ * promotion and no remembered upsell price must land byte-identical to the
+ * pre-fix behaviour — list price, STANDARD, no strikethrough.
+ */
+describe("OrderTemplatesService — pricing pin, tier 1 unchanged (T16)", () => {
+  let service: OrderTemplatesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let ordersService: {
+    mergeAllPendingForCustomer: jest.Mock;
+    loadActivePromotions: jest.Mock;
+    getCustomerPriceHistory: jest.Mock;
+    resolveBuyerLinePrice: jest.Mock;
+  };
+
+  const realResolver = (OrdersService.prototype as any).resolveBuyerLinePrice;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    ordersService = {
+      mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
+      loadActivePromotions: jest.fn().mockResolvedValue([]),
+      getCustomerPriceHistory: jest.fn().mockResolvedValue({}),
+      resolveBuyerLinePrice: jest.fn((...args: any[]) => realResolver(...args)),
+    };
+
+    const mod = await Test.createTestingModule({
+      providers: [
+        OrderTemplatesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
+        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
+        { provide: OrdersService, useValue: ordersService },
+        {
+          provide: AuthorizationGuardService,
+          useValue: { checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }) },
+        },
+        {
+          provide: NotificationsService,
+          useValue: { sendToCustomer: jest.fn(), sendToUser: jest.fn() },
+        },
+      ],
+    }).compile();
+    service = mod.get(OrderTemplatesService);
+
+    prisma.customer.findUnique.mockResolvedValue({ id: "c1", pricingTier: 1 });
+    prisma.customerPrice.findMany.mockResolvedValue([]);
+    prisma.order.create.mockImplementation((a: any) => Promise.resolve({ id: "o1", ...a.data }));
+    prisma.orderTemplate.findUnique.mockResolvedValue({
+      id: "t1",
+      customerId: "c1",
+      name: "Weekly",
+      isActive: true,
+      items: [{ productId: "p1", qty: 2, notes: null }],
+    });
+    prisma.product.findMany.mockResolvedValue([
+      { id: "p1", pricePerUnit: 10, unitsPerBox: null, category: null, trackedCategoryId: null },
+    ]);
+  });
+
+  // Only the money half is a genuine pin: today's created line carries no `priceType`
+  // or `originalPrice` key at all, so asserting those here would be a post-fix
+  // expectation wearing a pin's clothes. They are proven instead by the tokened
+  // red test in order-templates.pricing-and-items.spec.ts (T16).
+  it("pin (T16): tier 1, no override/promo/history -> list price and subtotal unchanged", async () => {
+    await service.generateOrder("t1");
+    const line = prisma.order.create.mock.calls[0][0].data.lineItems.create[0];
+    expect(line).toMatchObject({ unitPrice: 10, subtotal: 20 });
+  });
+});
+
+/**
+ * B48 (R23) pin: a PATCH that names no `items` key must leave item
+ * replacement completely untouched — no deleteMany, no transaction.
+ */
+describe("OrderTemplatesService — update() with no items key (T27)", () => {
+  let service: OrderTemplatesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    const mod = await Test.createTestingModule({
+      providers: [
+        OrderTemplatesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
+        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
+        { provide: OrdersService, useValue: { mergeAllPendingForCustomer: jest.fn() } },
+        {
+          provide: AuthorizationGuardService,
+          useValue: { checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }) },
+        },
+        {
+          provide: NotificationsService,
+          useValue: { sendToCustomer: jest.fn(), sendToUser: jest.fn() },
+        },
+      ],
+    }).compile();
+    service = mod.get(OrderTemplatesService);
+
+    prisma.orderTemplate.findUnique.mockResolvedValue({
+      id: "t1",
+      customerId: "c1",
+      name: "Weekly",
+      isActive: true,
+      items: [],
+    });
+    prisma.orderTemplate.update.mockImplementation((a: any) =>
+      Promise.resolve({ id: "t1", ...a.data }),
+    );
+  });
+
+  it("pin (T27): a PATCH with no items key leaves item replacement untouched", async () => {
+    await service.update("t1", { name: "n" } as any);
+
+    expect(prisma.orderTemplateItem.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    expect(prisma.orderTemplate.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "t1" },
+        data: expect.objectContaining({ name: "n" }),
+      }),
+    );
   });
 });
