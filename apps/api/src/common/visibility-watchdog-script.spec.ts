@@ -137,28 +137,41 @@ describe("visibility-watchdog.mjs contract", () => {
     }
   });
 
-  it("defaults --minutes to 45 and --repo to najathakram/routeflow when omitted", () => {
+  it("defaults --minutes to 45 and --repo to najathakram/routeflow when omitted", async () => {
     const logFile = newLogPath("defaults");
-    // Real sleep isn't exercised here (45 real minutes) — the process is left running
-    // briefly, then killed once the "start" line proves the defaults were applied.
+    // Real sleep isn't exercised here (45 real minutes, so --minutes can't be
+    // shrunk without defeating the point of this case) — the process is left
+    // running only long enough to prove the defaults were applied, then killed.
+    // Polls the log instead of racing it on a fixed delay: process startup +
+    // parseArgs + the log() write are async relative to this test, so a fixed
+    // timer flakes under host load (empty-file reads).
     const child = require("node:child_process").spawn(process.execPath, [SCRIPT], {
       env: fakeEnv("success", logFile),
     });
-    return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        child.kill();
-        try {
-          const log = readLog(logFile);
-          expect(log).toContain("minutes=45 repo=najathakram/routeflow");
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      }, 500);
-      child.on("error", (err: Error) => {
-        clearTimeout(timer);
-        reject(err);
-      });
+    let spawnError: Error | null = null;
+    child.on("error", (err: Error) => {
+      spawnError = err;
     });
+    try {
+      const deadline = Date.now() + 10_000;
+      let log = "";
+      while (Date.now() < deadline) {
+        if (spawnError) throw spawnError;
+        log = readLog(logFile);
+        if (log.includes(" start ")) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(log).toContain("minutes=45 repo=najathakram/routeflow");
+    } finally {
+      if (!child.killed) child.kill();
+      await new Promise<void>((resolve) => {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          resolve();
+          return;
+        }
+        child.once("exit", () => resolve());
+        setTimeout(resolve, 2_000);
+      });
+    }
   });
 });
