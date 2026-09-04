@@ -10,7 +10,7 @@
  * server truth (OR'd with this device's own signal for query-staleness right
  * after a collection). Pure — no RN import — Jest-testable.
  */
-import { roundMoney } from "./pricing";
+import { roundMoney } from "@routeflow/pricing";
 
 export type CollectedMethod = "CASH" | "CHECK" | "ZELLE" | "CREDIT_CARD" | "ADVANCE" | "OTHER";
 

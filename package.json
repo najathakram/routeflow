@@ -36,6 +36,7 @@
     "local:logs": "docker compose --profile app logs -f api web",
     "local:down": "docker compose --profile app down",
     "local:reset": "docker compose --profile app down -v",
+    "postinstall": "npm run build -w @routeflow/pricing",
     "prepare": "husky",
     "bogo-check": "node scripts/bogo-live-check.mjs",
     "scan": "node .claude/skills/bug-hunt/scripts/scan-signatures.mjs",

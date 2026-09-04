@@ -4,7 +4,7 @@ import type {
   ScanResult,
   ScannedItem,
 } from "./api/vendor-bills";
-import { roundMoney } from "./pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { toBillLine, type PieceSnapshot, type ScanLineUnit } from "./scan-line-units";
 
 /**

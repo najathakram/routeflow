@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductsService } from "../products/products.service";
 import { ProductAliasService } from "./product-alias.service";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 
 /** Default gross margin for a brand-new product's list price: cost × (1 + margin). */
 const DEFAULT_MARGIN = 0.3;

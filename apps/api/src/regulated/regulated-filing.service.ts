@@ -5,7 +5,7 @@ import { StorageService } from "../storage/storage.service";
 import { AuditService } from "../audit/audit.service";
 import { RegulatedService } from "./regulated.service";
 import { RegulatedReportService } from "./regulated-report.service";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { filingPeriod, FilingCadence } from "./period";
 import { buildFilingCsv } from "./filing-csv";
 import { serializeReportCsv } from "./report-csv";

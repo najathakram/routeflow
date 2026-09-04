@@ -173,7 +173,7 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   ("Aug 27, 2026", **LOCAL time — for UTC-midnight calendar dates use `lib/formatting.ts`
   `fmtCalendarDate` instead**, e.g. `RouteRun.scheduledDate` on routes/dispatch), `humanizeEnum`
   ("PARTIALLY_DELIVERED" → "Partially Delivered"). Display ONLY — money math stays in
-  `lib/pricing.ts`. Never inline `toFixed(2)`/`toLocaleDateString()` for user-visible money/dates.
+  `@routeflow/pricing`. Never inline `toFixed(2)`/`toLocaleDateString()` for user-visible money/dates.
   First adopters: orders/[id] (line/summary money, total qty), inventory (Stock Value KPI),
   orders list (status badge via label prop), routes templates Created. ⚠️ Near-duplicate of the
   older `lib/formatting.ts` (`fmt`/`fmtDate`/`fmtCalendarDate`) — consolidation queued for the
@@ -235,16 +235,18 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   `components/ScanInvoiceModal.tsx` — each had their own 4–5 option list and disagreed on the ACH
   label). **Never re-declare a method list — import from here**; mirror is
   `apps/mobile/lib/payment-methods.ts`, source of truth is the Prisma `PaymentMethod` enum.
-- **`lib/pricing.ts`** — `getTierPrice`, `computeLineSubtotal`, `normalizeBoxesPieces`, `roundMoney`,
+- **`@routeflow/pricing`** (was `lib/pricing.ts`, deleted — see `packages.md`) — `getTierPrice`,
+  `computeLineSubtotal`, `normalizeBoxesPieces`, `roundMoney`,
   **`prorateLineSubtotal(stored, delivered, ordered, freeUnits = 0, freeUnitSize = 1)`** (F04/REG-B50,
   2026-08-31 — partial-delivery money off the STORED subtotal; the paid-basis floored cumulative
   telescope of the oracle `invoices.service.ts#buildInvoiceItemData`, **never** a linear
-  `stored × delivered / ordered`. No web caller yet — it exists so the three mirrors stay identical and
-  the api parity spec can pin them),
+  `stored × delivered / ordered`. No web caller yet — it exists so api/web/mobile stay identical and
+  the package's golden tests pin them),
   the margin helpers `costPerSellingUnit`/`computeMarginFraction`/`priceForMarginFloor`/`classifyMargin`
   (box-vs-piece aware; the sale-builder "negotiation floor"), **`applyBestPromotion`/`promotionMatchesProduct`**
   (P5-04), and the zero-price guard `ruleCanZeroPrice`/`promotionZeroesProduct`/`scanPromotionZeroPrice`/
-  `zeroPriceWarning` (2026-08-21 — the promotions editor's live $0.00 blast-radius count). Mirror of `apps/api/src/common/pricing.ts` (+ `apps/mobile/lib/pricing.ts`) — keep all three in sync.
+  `zeroPriceWarning` (2026-08-21 — the promotions editor's live $0.00 blast-radius count). One copy —
+  api and mobile import the same package, there is no mirror to keep in sync.
 - **Your Shelf hooks (P5-06/07, WP3):** `lib/api/buyer.ts` += `ShelfEstimate`/`ShelfActiveOrder`/`ShelfResponse` types +
   `useBuyerShelf()` (`GET /buyer/shelf`, THE single source for the Shelf page, shop running-low strip, and dashboard
   chips — all three filter the same payload client-side so low lists/suggested qtys can't drift) +

@@ -72,20 +72,24 @@
  *   railway run --service postgres node scripts/repair-f17.mjs                      # dry run
  *   railway run --service postgres node scripts/repair-f17.mjs \
  *     --execute --i-have-a-fresh-backup
+ *
+ * `@routeflow/pricing`'s compiled `dist/` (imported below for `roundMoney`) is built by the root
+ * `postinstall` — an `npm install` at the repo root before running this script is enough.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import { roundMoney } from "@routeflow/pricing";
 
-// ─── Money + status mirrors ──────────────────────────────────────────────────
-// Local copies so the script carries zero project imports (it runs from the postgres service
-// container, where apps/api is not built). What MUST hold is that they keep returning the SAME
-// ANSWER as their originals for the rows this script reads — it WRITES what they compute — not
-// that they are character-for-character copies. So any change to the PAID threshold, the terminal
-// status list, or the CONFIRMED predicate has to be mirrored here; a refactor that cannot move an
-// answer does not.
+// ─── Status mirrors ──────────────────────────────────────────────────────────
+// Local copy of the STATUS logic only — money math (roundMoney) comes from the compiled
+// @routeflow/pricing workspace package (see the postinstall note in the header) instead of a
+// local mirror. What MUST hold for what remains here is that it keeps returning the SAME ANSWER
+// as its original for the rows this script reads — it WRITES what it computes — not that it is a
+// character-for-character copy. So any change to the PAID threshold, the terminal status list, or
+// the CONFIRMED predicate has to be mirrored here; a refactor that cannot move an answer does not.
 //
 // One such divergence already exists and is deliberate: the local `sumConfirmed` wraps its reduce
 // in `roundMoney`, while `apps/api/src/invoices/payment-predicates.ts#sumConfirmed` returns the
@@ -93,16 +97,8 @@ import { randomUUID } from "node:crypto";
 // column, so the true sum is cent-exact and the only thing rounding removes is float
 // representation error, orders of magnitude below the 0.001 slack in `recomputeStatus`'s PAID
 // comparison. Both places this script derives a status (`identifyRepairs` and `deriveAfterStatus`,
-// plus the in-transaction re-derivation in `createPgStore`) go through this same local copy, so
-// the script also stays self-consistent with itself.
-
-/** Mirrors apps/api/src/common/pricing.ts#roundMoney — half-away-from-zero at the cent. */
-const roundMoney = (n) => {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return 0;
-  const sign = v < 0 ? -1 : 1;
-  return (sign * Math.round(Number((Math.abs(v) * 100).toFixed(4)))) / 100;
-};
+// plus the in-transaction re-derivation in `createPgStore`) go through this same imported
+// `roundMoney`, so the script also stays self-consistent with itself.
 
 /** Mirrors InvoicesService.recomputeStatus — DRAFT/VOID/WRITTEN_OFF are terminal. */
 function recomputeStatus(totalPaid, total, dueDate, currentStatus) {

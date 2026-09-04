@@ -9,7 +9,7 @@ import {
   PaymentStatus,
   CreditNoteStatus,
 } from "@prisma/client";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import {
   estimateCogs,
   fetchCostIndex,

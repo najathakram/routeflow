@@ -27,7 +27,7 @@ import {
   type AtDoorAddedLine,
   type AtDoorEditedLine,
 } from "../../../../../lib/at-door-diff";
-import { computeLineSubtotal, normalizeBoxesPieces } from "../../../../../lib/pricing";
+import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import { editedLineFreeUnits } from "../../../../../lib/invoice-totals";
 import { freeUnitsLabel } from "../../../../../lib/buyer-cart-logic";
 import { sanitizeIntInput, parseIntQty } from "../../../../../lib/qty";

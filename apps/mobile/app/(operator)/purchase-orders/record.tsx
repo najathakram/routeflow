@@ -8,7 +8,7 @@ import { OptionPickerSheet } from "../../../components/OptionPickerSheet";
 import { ProductPickerSheet } from "../../../components/ProductPickerSheet";
 import { useRecordPurchase } from "../../../lib/api/inventory";
 import { useSuppliers } from "../../../lib/api/purchase-orders";
-import { normalizeBoxesPieces } from "../../../lib/pricing";
+import { normalizeBoxesPieces } from "@routeflow/pricing";
 import { showToast } from "../../../lib/toast";
 
 export default function QuickReceiveScreen() {

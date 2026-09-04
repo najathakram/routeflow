@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { Package, Heart, Plus, Bell } from "lucide-react";
-import type { PromotionRule, PromoResult } from "@/lib/pricing";
+import type { PromotionRule, PromoResult } from "@routeflow/pricing";
 import type { BuyerProduct, BuyerPromotion, ReplenishmentEstimate } from "@/lib/api/buyer";
 import type { CartItem } from "@/lib/buyer-cart";
 import { objectPositionForUrl } from "@/lib/image-focal";

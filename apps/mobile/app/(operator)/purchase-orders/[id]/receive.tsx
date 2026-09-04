@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { FormField, FormSection, FormSheet, FormTextInput } from "../../../../components/FormSheet";
 import { usePurchaseOrder, useReceivePO } from "../../../../lib/api/purchase-orders";
-import { normalizeBoxesPieces } from "../../../../lib/pricing";
+import { normalizeBoxesPieces } from "@routeflow/pricing";
 import { showToast } from "../../../../lib/toast";
 
 /** Prisma Decimals arrive as strings; subtraction needs rounding to the column's 3dp. */

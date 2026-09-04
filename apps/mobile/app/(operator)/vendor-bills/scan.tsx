@@ -42,7 +42,7 @@ import {
 import { showToast } from "../../../lib/toast";
 import { fmtCalendarDate } from "../../../lib/format-date";
 import { chooseAction, confirm } from "../../../lib/confirm";
-import { roundMoney } from "../../../lib/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { ProductPickerSheet } from "../../../components/ProductPickerSheet";
 import { InlineCreateProductSheet } from "../../../components/InlineCreateProductSheet";
 import {

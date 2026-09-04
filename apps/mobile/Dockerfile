@@ -12,8 +12,15 @@ COPY package.json package-lock.json turbo.json ./
 # Shared packages (package.json only — source copied later)
 COPY packages/config/package.json            packages/config/
 COPY packages/eslint-config/package.json     packages/eslint-config/
+# @routeflow/pricing is COMPILED (see packages/pricing): the root `postinstall`
+# runs its tsc build during the `npm ci` below, so its sources + tsconfigs must
+# already be here — a manifest-only copy makes that build fail with no inputs.
+COPY packages/pricing/                       packages/pricing/
 COPY packages/types/package.json             packages/types/
-COPY packages/typescript-config/package.json packages/typescript-config/
+# Whole directory, not just the manifest: packages/pricing/tsconfig.json extends
+# `@routeflow/typescript-config/base.json`, which the postinstall build above
+# resolves during `npm ci` — a manifest-only copy leaves that file missing.
+COPY packages/typescript-config/             packages/typescript-config/
 COPY packages/ui/package.json               packages/ui/
 
 # Mobile workspace manifest

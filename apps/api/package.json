@@ -49,6 +49,7 @@
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "@react-pdf/renderer": "^4.9.0",
+    "@routeflow/pricing": "*",
     "@routeflow/types": "*",
     "@sentry/node": "^10.72.0",
     "@socket.io/redis-adapter": "^8.3.0",
@@ -141,6 +142,7 @@
       "^.+\\.(t|j)s$": "ts-jest"
     },
     "moduleNameMapper": {
+      "^@routeflow/pricing$": "<rootDir>/../../../packages/pricing/src/index.ts",
       "^ioredis$": "<rootDir>/../test/__mocks__/ioredis.js",
       "^expo-server-sdk$": "<rootDir>/../test/__mocks__/expo-server-sdk.js",
       "^@react-pdf/renderer$": "<rootDir>/../test/__mocks__/react-pdf-renderer.js",

@@ -28,7 +28,7 @@ import {
   type InvoiceTotalsLine,
 } from "../../../../../lib/invoice-totals";
 import { isPendingOrderMirror } from "../../../../../lib/invoices-logic";
-import { computeLineSubtotal } from "../../../../../lib/pricing";
+import { computeLineSubtotal } from "@routeflow/pricing";
 import { showToast } from "../../../../../lib/toast";
 
 /**

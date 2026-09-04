@@ -114,7 +114,7 @@ skill). **Use it instead of re-reading the repo.**
   exports/signatures, cross-refs) and bump `_meta.json` (`mappedSha`, `generatedAt`). A small code
   change is a few-line map edit.
 - Trust the code over the map when they disagree, and fix the map. Money math lives in
-  `apps/{api/src/common,web/lib,mobile/lib}/pricing.ts` — keep all three mirrors in sync.
+  `packages/pricing` (`@routeflow/pricing`) — api, web and mobile import it; there are no mirrors.
 
 ## Lessons learned routine
 
@@ -134,10 +134,12 @@ The rules this project has already paid for live at
 
 ## Money discipline
 
-All line/tax/total math goes through `pricing.ts` helpers: `computeLineSubtotal` (boxed proration),
+All line/tax/total math lives in `packages/pricing` (`@routeflow/pricing`) — api, web and mobile
+import it; there are no mirrors — every consumer, including root scripts, imports
+`@routeflow/pricing`. Key helpers: `computeLineSubtotal` (boxed proration),
 `normalizeBoxesPieces` (integer boxes/pieces + rollover), and `roundMoney` (cents). **Round every
 monetary write**; never re-derive `qty * unitPrice` for a boxed line (over-charges by `unitsPerBox`).
-Regression specs: `apps/api/src/common/pricing.spec.ts`. Run `npm run verify` before pushing.
+Regression specs: `packages/pricing/src/pricing.spec.ts`. Run `npm run verify` before pushing.
 
 Customer-level order merges (staff `create()` auto-merge, buyer `createOrder`, `mergeAllPendingForCustomer`, `forceConsolidateCustomer`) serialize through `withAdvisoryLock` in `apps/api/src/common/db-locks.ts` — a customer-keyed Postgres advisory lock that is cross-replica safe. **Never add a second in-process lock** on top of it, and never thread a transaction into `updateOrderItems`.
 

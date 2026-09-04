@@ -1,4 +1,4 @@
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 
 /** Sub-cent tolerance for paid/complete comparisons. */
 export const COMMISSION_EPS = 0.005;

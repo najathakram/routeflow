@@ -1,7 +1,7 @@
 {
-  "mappedSha": "ab922112",
-  "generatedAt": "2026-09-04T15:05:00.000Z",
+  "mappedSha": "83d53af1",
+  "generatedAt": "2026-09-04T16:00:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
-  "fileCount": 935,
-  "notes": "**2026-09-04** — (branch `fix/imp-02-order-merge-advisory-lock`, PR #609) VISIBILITY WATCHDOG: new `scripts/visibility-watchdog.mjs` arms the private flip on a detached, fixed 45-min deadline BEFORE any public-repo CI window — the fix for the killed-session incident where the repo stayed public ~6.5h because the flip lived only in the (killed) session's control flow. `docs/runbooks/deploy-visibility-flip.md`, `CLAUDE.md`, and the `rebuild` skill all now require launching it first. Spec: `apps/api/src/common/visibility-watchdog-script.spec.ts`. `api.md` gains an entry; lesson L-057 (deploy). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "fileCount": 936,
+  "notes": "**2026-09-04** — (branch `refactor/imp-01-pricing-package`, rebased onto master `f60bd27c` — PR-2 + wave D) — **PRICING PACKAGE (PR-4, imp-01).** Consolidated the four `pricing.ts` copies (api `common`+`utils`, web `lib`, mobile `lib`) into one compiled workspace package `packages/pricing` (`@routeflow/pricing`, `dist`-built by a root `postinstall`, imported by api/web/mobile as a bare specifier); bodies proven byte-identical by `scripts/codemods/pricing-body-diff.mjs`. Golden tests + the money fixtures moved into the package; api's `pricing-parity.spec.ts`/`.fixtures.ts` and mobile's two parity test files deleted (nothing left to compare against). Code map + `CLAUDE.md` updated to point at the package; \"3 mirrors\" language corrected. Lesson L-058 (tooling). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

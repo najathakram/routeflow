@@ -7,7 +7,7 @@ import { ArrowLeft } from "lucide-react";
 import { Badge, type BadgeVariant, Button, Card, PageHeader } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { fmt, fmtDate } from "@/lib/formatting";
-import { roundMoney } from "@/lib/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import {
   computeCountedAfter,
   computeQtyVariance,

@@ -132,6 +132,17 @@
 
 ## tooling
 
+### L-058 · 2026-09-03 · tooling · PR-4 `imp-01`
+
+- **Symptom:** the review counted "four copies", the first plan promised a source-direct package
+  "exactly like `@routeflow/types`", and the repo's own comments already said that shape crashes
+  `node dist/main.js`.
+- **Lesson:** a workspace package the API imports at runtime must ship compiled JS — `nest build`
+  emits `require()` verbatim; source-direct packages are a client-only convenience. Build it on
+  `postinstall` so every `npm ci` (CI, Docker, dev) produces `dist` before anything typechecks.
+- **Guard:** `no-runtime-workspace-imports.spec.ts` (PR-1's engine already seeded the idea; this PR
+  makes it assert every `@routeflow/*` the API imports has a built `main`).
+
 ### L-039 · 2026-09-01 · tooling
 
 - **Symptom:** a green PR went red after a routine rebase, on a check unrelated to its contents —

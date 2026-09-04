@@ -26,7 +26,7 @@ Two items were explicitly requested by the product owner and are called out inli
 
 | #   | Tier | Item                                                         | Effort | Risk | Status                                                                        |
 | --- | ---- | ------------------------------------------------------------ | ------ | ---- | ----------------------------------------------------------------------------- |
-| 1   | P0   | Consolidate the 4 `pricing.ts` copies into one package       | M      | 🔴   | open                                                                          |
+| 1   | P0   | Consolidate the 4 `pricing.ts` copies into one package       | M      | 🔴   | shipped (PR-4)                                                                |
 | 2   | P0   | Enforce the single-replica invariant (or remove the need)    | M      | 🔴   | shipped (PR-2)                                                                |
 | 3   | P0   | Schema-management tooling: retire boot-time DDL + drift gate | M      | 🔴   | shipped (PR-1, #608)                                                          |
 | 4   | P1   | Add a staging environment before prod                        | M      | 🔴   | deferred — ADR 0002 (wave D)                                                  |
@@ -44,23 +44,31 @@ Two items were explicitly requested by the product owner and are called out inli
 
 ### 1. Consolidate the four `pricing.ts` copies · M · 🔴
 
-Money math lives in **four** files, two of them inside the API alone:
+Money math lived in **four** files, two of them inside the API alone: `apps/api/src/common/pricing.ts`,
+`apps/api/src/utils/pricing.ts`, `apps/web/lib/pricing.ts`, `apps/mobile/lib/pricing.ts`. All four
+are now deleted; the math they held lives in [`packages/pricing`](../packages/pricing).
 
-- [`apps/api/src/common/pricing.ts`](../apps/api/src/common/pricing.ts)
-- [`apps/api/src/utils/pricing.ts`](../apps/api/src/utils/pricing.ts)
-- [`apps/web/lib/pricing.ts`](../apps/web/lib/pricing.ts)
-- [`apps/mobile/lib/pricing.ts`](../apps/mobile/lib/pricing.ts)
+They were "kept in sync by hand" and pinned by a regression spec, but hand-sync of pricing logic
+was the single most likely path to silently over/under-charging a customer (`CLAUDE.md` already
+warned that re-deriving `qty * unitPrice` for a boxed line overcharges by `unitsPerBox`).
 
-They are "kept in sync by hand" and pinned by a regression spec, but hand-sync of pricing logic is
-the single most likely path to silently over/under-charging a customer (`CLAUDE.md` already warns
-that re-deriving `qty * unitPrice` for a boxed line overcharges by `unitsPerBox`).
+**Shipped in PR-4.** One compiled workspace package, `packages/pricing` (`@routeflow/pricing`),
+holds `computeLineSubtotal`, `normalizeBoxesPieces`, `roundMoney`, and the rest of the money math;
+api, web and mobile all import it, and the four legacy files above are gone. It ships **compiled
+CJS** under `dist/`, built by the root `postinstall` — not a source-direct package "exactly like
+`@routeflow/types`" as first proposed here: `nest build` emits `require()` verbatim, so
+`node dist/main.js` cannot load a `.ts` file, and a workspace package the API imports at runtime
+must therefore ship built JS (L-058). `scripts/codemods/pricing-import-rewrite.mjs` rewrote all 147
+importers across the three apps onto `@routeflow/pricing`; `scripts/codemods/pricing-body-diff.mjs`
+proved every moved function byte-identical to its pre-move source before the four copies were
+deleted. The package's own golden money table (`packages/pricing/src/golden.fixtures.ts` +
+`golden.spec.ts`) replaces the four hand-synced regression specs with one.
 
-**Proposed change.** Extract one `@routeflow/pricing` workspace package (mirrors `@routeflow/types`)
-holding `computeLineSubtotal`, `normalizeBoxesPieces`, `roundMoney`, and import it in all three apps.
-Delete the copies. Keep `pricing.spec.ts` as the package's own test. The two intra-API copies should
-merge immediately regardless of the cross-app work.
+**Follow-on.** `getTierPrice` now takes `any` for its `product` parameter (the api's original,
+looser signature) — web and mobile lost the compile-time `TierPriceable`-shape check their own
+mirrors gave the same call sites. Narrow the parameter type in a follow-on.
 
-**Payoff.** Removes an entire class of money bugs; one source of truth, one test suite.
+**Payoff.** Removed an entire class of money bugs; one source of truth, one test suite.
 
 ### 2. Enforce the single-replica invariant — or remove the need for it · M · 🔴
 

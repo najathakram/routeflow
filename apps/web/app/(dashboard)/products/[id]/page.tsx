@@ -49,7 +49,7 @@ import {
   type ReportTemplateDef,
 } from "@/lib/api/tracked-categories";
 import { sectionPickerOptions } from "@/lib/regulated-format";
-import { getTierPrice, cascadeTierPrices, perUnitPrice, type TierField } from "@/lib/pricing";
+import { getTierPrice, cascadeTierPrices, perUnitPrice, type TierField } from "@routeflow/pricing";
 import { useTierLabels } from "@/lib/api/tier-labels";
 import { tierLabel } from "@/lib/tier-label";
 import { unitsLabel } from "@/lib/stock-label";

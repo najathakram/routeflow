@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { AppConfig } from "../../config/configuration";
-import { roundMoney } from "../../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import {
   PaymentProvider,
   CreateHostedCheckoutRequest,

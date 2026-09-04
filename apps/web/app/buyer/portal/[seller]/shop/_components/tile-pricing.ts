@@ -4,7 +4,7 @@ import {
   promotionMatchesProduct,
   type PromotionRule,
   type PromoResult,
-} from "@/lib/pricing";
+} from "@routeflow/pricing";
 import type { BuyerProduct, BuyerPromotion } from "@/lib/api/buyer";
 import type { CartItem } from "@/lib/buyer-cart";
 

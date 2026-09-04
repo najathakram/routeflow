@@ -42,7 +42,7 @@ import { InlineCreateProductModal } from "@/components/InlineCreateProductModal"
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { VariantSplitModal } from "@/components/VariantSplitModal";
 import { useProduct } from "@/lib/api/products";
-import { roundMoney } from "@/lib/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { usePreferences, useSavePreferences } from "@/lib/api/users";
 import {

@@ -15,7 +15,7 @@ import { PlatformConfigService } from "../platform-admin/platform-config.service
 import { DuplicateMatchService } from "../import/duplicate-match.service";
 import { StorageService } from "../storage/storage.service";
 import { matchSupplier } from "../import/supplier-match";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { hashFile } from "../vendor-bills/invoice-scan.fingerprint";
 import {
   matchStatementLines,

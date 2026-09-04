@@ -43,7 +43,7 @@ import {
 } from "../../../../lib/invoice-send-logic";
 import { showToast } from "../../../../lib/toast";
 import { alertInfo, confirm } from "../../../../lib/confirm";
-import { formatQtySplit } from "../../../../lib/pricing";
+import { formatQtySplit } from "@routeflow/pricing";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import {
   ACTIVATION_BUDGET_MS,

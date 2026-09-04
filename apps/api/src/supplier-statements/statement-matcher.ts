@@ -1,4 +1,4 @@
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { normalizeInvoiceNumber } from "../import/duplicate-match.service";
 import type { ParsedStatementLine } from "./dto/statement.dto";
 

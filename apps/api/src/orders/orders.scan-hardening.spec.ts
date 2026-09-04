@@ -155,7 +155,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
-import { normalizeBoxesPieces } from "../common/pricing";
+import { normalizeBoxesPieces } from "@routeflow/pricing";
 import { normalizeScanCode } from "../common/barcode-normalize";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";

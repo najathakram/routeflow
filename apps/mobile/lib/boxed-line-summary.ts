@@ -15,7 +15,7 @@
  * state can't arise from the UI; if you ever add a path that creates boxed
  * lines from a bare qty, normalize the split FIRST (see setLineUnits).
  */
-import { computeLineSubtotal, normalizeBoxesPieces } from "./pricing";
+import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 
 export interface BoxedSummaryLine {
   qty: number;

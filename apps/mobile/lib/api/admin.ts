@@ -161,7 +161,7 @@ export interface AdminOrder {
     /**
      * When the operator split a boxed product, `boxes` + `pieces` are stored
      * alongside the total `qty`. The line subtotal uses BOX-price proration
-     * (unitPrice × (boxes + pieces / unitsPerBox)) — see common/pricing.ts.
+     * (unitPrice × (boxes + pieces / unitsPerBox)) — see `@routeflow/pricing`.
      */
     boxes?: number | null;
     pieces?: number | null;

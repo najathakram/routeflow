@@ -3,7 +3,7 @@ import type { CommissionAccrualStatus, CommissionAdjustmentKind } from "@prisma/
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { AuditService } from "../audit/audit.service";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import {
   COMMISSION_EPS,
   InvoiceMoneyState,

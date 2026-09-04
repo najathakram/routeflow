@@ -11,11 +11,7 @@
 // ─── Report registry ────────────────────────────────────────────────────────────
 
 export type ReportId =
-  | "profit-loss"
-  | "cashflow"
-  | "sales-by-customer"
-  | "sales-by-item"
-  | "ar-aging";
+  "profit-loss" | "cashflow" | "sales-by-customer" | "sales-by-item" | "ar-aging";
 
 /** Which control a report needs above its body: a date range, or an aging interval. */
 export type ReportControl = "date" | "interval";

@@ -1,5 +1,3 @@
-import * as fs from "fs";
-import * as path from "path";
 import {
   computeLineSubtotal,
   roundMoney,
@@ -559,6 +557,11 @@ describe("applyBestPromotion", () => {
     expect(r.unitPrice).toBe(90);
     expect(r.originalPrice).toBe(100);
     expect(r.appliedPromoId).toBe("a");
+    // A price promo carries freeUnits: 0 — only BUY_N_GET_M ever gives units
+    // away (ported from mobile's __tests__/pricing.test.ts, which asserted
+    // this via a full toEqual on the result; the assertion wasn't otherwise
+    // pinned here — see the p3 deviation note).
+    expect(r.freeUnits).toBe(0);
   });
 
   it("FIXED subtracts $ off the SELLING-UNIT (box) price, floored at 0", () => {
@@ -927,37 +930,6 @@ describe("applyBestPromotion — whole-box-only control (guards T-B109 against o
       freeUnits: result.freeUnits,
     });
     expect(billed).toBe(360); // 3 of 6 boxes free @ $120 = $360.00
-  });
-});
-
-// ─── Mirror parity — the marked Promotions block stays byte-identical ─────────
-
-describe("mirror parity — the Promotions block is byte-identical across api/web/mobile", () => {
-  const START = "// ─── Promotions (P5-04, + BUY_N_GET_M)";
-  const END = "// ─── Price-override direction:";
-
-  function extractPromotionsBlock(filePath: string): string {
-    const src = fs.readFileSync(filePath, "utf8");
-    const start = src.indexOf(START);
-    const end = src.indexOf(END, start);
-    if (start === -1 || end === -1) {
-      throw new Error(`Promotions marker block not found in ${filePath}`);
-    }
-    return src.slice(start, end);
-  }
-
-  const apiBlock = extractPromotionsBlock(path.join(__dirname, "pricing.ts"));
-
-  it("apps/web/lib/pricing.ts matches apps/api/src/common/pricing.ts", () => {
-    const webBlock = extractPromotionsBlock(path.join(__dirname, "../../../web/lib/pricing.ts"));
-    expect(webBlock).toBe(apiBlock);
-  });
-
-  it("apps/mobile/lib/pricing.ts matches apps/api/src/common/pricing.ts", () => {
-    const mobileBlock = extractPromotionsBlock(
-      path.join(__dirname, "../../../mobile/lib/pricing.ts"),
-    );
-    expect(mobileBlock).toBe(apiBlock);
   });
 });
 

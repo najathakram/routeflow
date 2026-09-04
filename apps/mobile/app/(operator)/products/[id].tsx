@@ -24,7 +24,7 @@ import {
   useDeleteProductImage,
 } from "../../../lib/api/products";
 import { productImageFile } from "../../../lib/product-image";
-import { costPerSellingUnit, formatQtySplit } from "../../../lib/pricing";
+import { costPerSellingUnit, formatQtySplit } from "@routeflow/pricing";
 import { useInventoryMovements } from "../../../lib/api/inventory";
 import { useProductSales, type ProductSaleLine } from "../../../lib/api/product-sales";
 import { productSalesSummaryLine, productSaleRowTarget } from "../../../lib/product-sales-logic";
