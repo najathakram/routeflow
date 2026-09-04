@@ -1,14 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { ExpenseCategory } from "@routeflow/types";
+export type { ExpenseCategory } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type ExpenseStatus = "PENDING" | "RECEIVED" | "PAID" | "VOID";
-
-export interface ExpenseCategory {
-  id: string;
-  name: string;
-}
 
 export interface Expense {
   id: string;

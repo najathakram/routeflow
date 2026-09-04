@@ -2,7 +2,7 @@
 name: db-migration
 description: >
   Auto-load for any Prisma schema change, migration, or seed work in RouteFlow. Keywords:
-  "migration", "schema.prisma", "prisma migrate", "seed", "alter table", "new column/model".
+  "migration", "schema.prisma", "prisma/schema", "prisma migrate", "seed", "alter table", "new column/model".
 ---
 
 # Skill: DB Migration & Seeding (RouteFlow / Railway / Prisma)
@@ -12,7 +12,11 @@ description: >
 > Never target a live client tenant — see CLAUDE.md "Test tenants & real-client data".
 
 Encodes the production-safety rules in `CLAUDE_SESSION_PREAMBLE.md`. Prisma 7 + PostgreSQL,
-schema at `apps/api/prisma/schema.prisma`, migrations in `apps/api/prisma/migrations/`.
+schema is a **folder** — `apps/api/prisma/schema/{_base,tenancy,catalog,sales,finance,platform,compliance}.prisma`
+(Prisma multi-file; `prisma.config.ts` points `schema` at the folder and `migrations.path` at
+`prisma/migrations`). Add a model to the domain file it belongs to AND to the `MODEL_DOMAIN` map in
+`apps/api/scripts/split-prisma-schema.mjs` (`--check` fails on an unmapped model). Migrations are
+unchanged, in `apps/api/prisma/migrations/`.
 
 ## Hard rules — never break these
 
@@ -46,5 +50,5 @@ Commit the generated migration **with** the code that uses it (same PR, separate
 
 ## Binary targets (Alpine/Docker)
 
-`schema.prisma` declares `native`, `linux-musl-openssl-3.0.x`, `linux-musl-arm64-openssl-3.0.x`
+`prisma/schema/_base.prisma` declares `native`, `linux-musl-openssl-3.0.x`, `linux-musl-arm64-openssl-3.0.x`
 so the client works in the Railway Alpine image — keep these if you touch the generator block.

@@ -1,4 +1,4 @@
-// ─── Enums (synced with apps/api/prisma/schema.prisma) ────────────────────────
+// ─── Enums (synced with apps/api/prisma/schema/*.prisma) ────────────────────────
 
 export enum UserRole {
   OPERATOR = "OPERATOR",
@@ -132,6 +132,25 @@ export { formatCountList, parsePackSizeDetailed, suggestPackSize } from "./pack-
 // ─── Trip grouping (ad-hoc trip stop grouping helper) ─────────────────────────
 
 export * from "./trip-grouping";
+
+// ─── Shared API DTOs + Prisma-enum parity (wave E / imp-10b) ──────────────────
+//
+// Request/response shapes duplicated identically (or near-identically) between
+// apps/web/lib/api/* and apps/mobile/lib/api/* — moved here per the DTO sweep
+// (`.claude/pipeline/wave-E-structure/2026-09-03-imp-10b-shared-dtos/sweep.md`).
+// Prisma-enum mirrors live in `./api/enums.ts`, pinned set-equal to
+// `@prisma/client` by `apps/api/src/common/enum-parity.spec.ts`.
+
+export * from "./api/enums";
+export * from "./api/orders";
+export * from "./api/customers";
+export * from "./api/products";
+export * from "./api/finance";
+export * from "./api/returns";
+export * from "./api/regulated";
+export * from "./api/routes";
+export * from "./api/buyer";
+export * from "./api/misc";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 

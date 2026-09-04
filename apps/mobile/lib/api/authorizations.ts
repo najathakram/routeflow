@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { CreateAuthorizationInput, CreateOverrideInput } from "../authorizations-logic";
 import type { AuthorizationSource, AuthorizationStatus } from "../customer-authorizations-logic";
+import type { CustomerAuthorization, ExpiringAuthorization } from "@routeflow/types";
+export type { CustomerAuthorization, ExpiringAuthorization } from "@routeflow/types";
 
 /**
  * Operator regulated-license (authorization) hooks — capture a customer's
@@ -16,23 +18,6 @@ import type { AuthorizationSource, AuthorizationStatus } from "../customer-autho
 export * from "../authorizations-logic";
 
 const authKey = (customerId: string) => ["customers", customerId, "authorizations"] as const;
-
-export interface CustomerAuthorization {
-  id: string;
-  customerId: string;
-  trackedCategoryId: string;
-  status: AuthorizationStatus;
-  source: AuthorizationSource;
-  licenseNumber: string | null;
-  expiresAt: string | null;
-  documentKey: string | null;
-  verifiedById: string | null;
-  verifiedByName: string | null;
-  verifiedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-  trackedCategory: { id: string; name: string; requiresLicense: boolean };
-}
 
 /** All authorization rows on a customer's file, newest first. */
 export function useCustomerAuthorizations(customerId: string) {
@@ -99,19 +84,6 @@ export function useCreateAuthorizationOverride(customerId: string) {
       apiClient.post(`/customers/${customerId}/authorization-overrides`, dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: authKey(customerId) }),
   });
-}
-
-/** A license expiring soon (30/7/1 windows) or already expired. */
-export interface ExpiringAuthorization {
-  id: string;
-  customerId: string;
-  customerName: string;
-  trackedCategoryId: string;
-  categoryName: string;
-  status: "VERIFIED" | "EXPIRED";
-  expiresAt: string | null;
-  bucket: 30 | 7 | 1 | null;
-  expired: boolean;
 }
 
 /** Tenant-wide expiring/expired licenses — mirrors web's header expiry bell. */

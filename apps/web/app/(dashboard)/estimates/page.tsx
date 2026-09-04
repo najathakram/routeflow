@@ -82,7 +82,6 @@ const STATUS_OPTIONS = [
   { value: "SENT", label: "Sent" },
   { value: "ACCEPTED", label: "Accepted" },
   { value: "DECLINED", label: "Declined" },
-  { value: "EXPIRED", label: "Expired" },
 ];
 
 // ─── Estimate Line Item ───────────────────────────────────────────────────────
@@ -704,13 +703,12 @@ export default function EstimatesPage() {
   const all = allData?.data ?? [];
 
   const kpiCounts = React.useMemo(() => {
-    const counts = { total: all.length, draft: 0, sent: 0, accepted: 0, declined: 0, expired: 0 };
+    const counts = { total: all.length, draft: 0, sent: 0, accepted: 0, declined: 0 };
     for (const est of all) {
       if (est.status === "DRAFT") counts.draft++;
       if (est.status === "SENT") counts.sent++;
       if (est.status === "ACCEPTED") counts.accepted++;
       if (est.status === "DECLINED") counts.declined++;
-      if (est.status === "EXPIRED") counts.expired++;
     }
     return counts;
   }, [all]);
@@ -773,16 +771,6 @@ export default function EstimatesPage() {
           active={statusFilter === "DECLINED"}
           onClick={() => {
             setStatusFilter("DECLINED");
-            setPage(1);
-          }}
-        />
-        <KpiChip
-          label="Expired"
-          value={kpiCounts.expired}
-          danger
-          active={statusFilter === "EXPIRED"}
-          onClick={() => {
-            setStatusFilter("EXPIRED");
             setPage(1);
           }}
         />

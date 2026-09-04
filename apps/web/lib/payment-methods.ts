@@ -1,6 +1,6 @@
 /**
  * Single source of truth for payment-method lists in the web app.
- * Mirrors the Prisma `PaymentMethod` enum (apps/api/prisma/schema.prisma).
+ * Mirrors the Prisma `PaymentMethod` enum (apps/api/prisma/schema/finance.prisma).
  *
  * CREDIT_NOTE and ADVANCE are system-written (the dedicated Apply Credit Note /
  * Apply Advance actions create them; POST /invoices/:id/payments rejects them),

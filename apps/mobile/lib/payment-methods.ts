@@ -1,6 +1,6 @@
 /**
  * Single source of truth for payment-method lists in the mobile app.
- * Mirrors the Prisma `PaymentMethod` enum (apps/api/prisma/schema.prisma) and
+ * Mirrors the Prisma `PaymentMethod` enum (apps/api/prisma/schema/finance.prisma) and
  * apps/web/lib/payment-methods.ts — keep the three in sync.
  *
  * CREDIT_NOTE and ADVANCE are system-written (the dedicated Apply Credit Note /

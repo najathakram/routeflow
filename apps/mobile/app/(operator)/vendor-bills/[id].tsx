@@ -11,26 +11,11 @@ import {
   useVoidVendorBill,
   getUnlinkedItemsError,
   billNeedsMapping,
-  type VendorBillStatus,
 } from "../../../lib/api/vendor-bills";
+import { vendorBillPillFor as billPill } from "../../../lib/vendor-bill-logic";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 import { fmtCalendarDate } from "../../../lib/format-date";
-
-function billPill(status: VendorBillStatus) {
-  switch (status) {
-    case "DRAFT":
-      return { variant: "gray" as const, label: "Draft" };
-    case "RECEIVED":
-      return { variant: "orange" as const, label: "Received" };
-    case "PARTIAL":
-      return { variant: "orange" as const, label: "Partial" };
-    case "FULL":
-      return { variant: "green" as const, label: "Paid" };
-    case "VOID":
-      return { variant: "gray" as const, label: "Void" };
-  }
-}
 
 function formatCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);

@@ -299,7 +299,7 @@ describe("scripts/repair-f03.mjs — F03 repair lane (T-R10 / R10)", () => {
         });
 
         // An order line re-invoiced and then reduced: the live invoice lines conserve MORE than
-        // the line now carries. invoicedQty is documented "Capped at qty" (schema.prisma) and
+        // the line now carries. invoicedQty is documented "Capped at qty" (the Prisma schema) and
         // adjustInvoicedQtyForInvoice's adjust() clamps to it, so the proposal must be the cap
         // (10) and never the raw sum (25) — an over-cap write turns every remaining-qty reader's
         // qty - invoicedQty negative.

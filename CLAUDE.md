@@ -160,6 +160,13 @@ Customer-level order merges (staff `create()` auto-merge, buyer `createOrder`, `
 - **Tests**: NestJS `Test.createTestingModule`; mock at the module boundary; `class-validator` DTOs. **No snapshot tests, no Vitest.**
 - **Commits**: Conventional Commits (enforced by commitlint) — `feat|fix|test|ci|refactor|docs|chore|perf|revert|build|style`.
 - **Mobile mirrors web**: reuse the same API endpoints/DTOs/flows; only the UI differs.
+- **Shared DTOs/enums**: request/response shapes identical (or near-identical) between web and
+  mobile live in `packages/types/api/*.ts`, imported via `@routeflow/types` — never redeclare one
+  a second time. Prisma-enum mirrors specifically live in `packages/types/api/enums.ts` — the
+  shared source for the pinned enums (see `enum-parity.spec.ts` for coverage) — with one
+  `X_VALUES` const array + derived type per enum, pinned set-equal to `@prisma/client`'s
+  generated enum by `apps/api/src/common/enum-parity.spec.ts` — a hand-typed local mirror of a
+  server enum is how three real bugs shipped (see lesson `L-072`).
 - **Prettier**: semicolons, double quotes, `printWidth` 100, trailing commas.
 
 ## Test tenants & real-client data (POLICY — no exceptions)
@@ -202,6 +209,22 @@ Names only — see each app's example file. Never commit values.
 ## Deployment & DB safety (Railway)
 
 - Docker `CMD` is **only** `node dist/main.js` — **never** auto-migrate on deploy.
+- **The Prisma schema is a FOLDER, not a file** (item 10a): `apps/api/prisma/schema/{_base,tenancy,catalog,sales,finance,platform,compliance}.prisma`,
+  pointed at by `prisma.config.ts` (`schema: prisma/schema`, explicit `migrations.path: prisma/migrations`).
+  Add a model to the domain file it belongs to **and** to the `MODEL_DOMAIN` map in
+  [`apps/api/scripts/split-prisma-schema.mjs`](apps/api/scripts/split-prisma-schema.mjs) — an unmapped
+  model fails `node apps/api/scripts/split-prisma-schema.mjs --check` (there is no "misc" bucket).
+  `--check` ALWAYS enforces the structural invariants (file set, `_base` holds only
+  datasource+generator, unique names, every model where the map says, every enum in a file that
+  actually references it) with **no original file needed**. Only with `--from <path>` or
+  `--from-ref <git-ref>` does it ALSO re-derive the concatenation and prove the folder
+  block-identical to that original — the retired single file itself is never read implicitly. The
+  one-time lossless proof was recorded at split time against `e39bf9db` (207 blocks); re-derive it
+  any time with `node apps/api/scripts/split-prisma-schema.mjs --check --from-ref e39bf9db`. The
+  permanent _standing_ lossless guard going forward is the drift gate (`npm run local:drift` /
+  CI replay), not a byte/block diff against a file that no longer exists. `apps/api/prisma/migrations/`
+  is untouched by the split — the split generated **no** migration. `migrate diff --to-schema`
+  takes the folder (help text says "file"; the folder form works).
 - Schema changes apply to prod **only** via `railway run npx prisma migrate deploy`; locally `npx prisma migrate dev` against docker-compose.
 - **Never** `--force-reset`; **never** run the destructive scripts listed in `CLAUDE_SESSION_PREAMBLE.md`; seed additively.
 - Destructive migrations are blocked in CI by Squawk (`npm run lint:migrations`); whitelist a

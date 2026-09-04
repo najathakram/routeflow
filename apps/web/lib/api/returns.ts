@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { CreateReturnItemDto } from "@routeflow/types";
+export type { CreateReturnItemDto } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -14,11 +16,7 @@ export type ReturnStatus =
   | "PROCESSED";
 
 export type ReturnReason =
-  | "DAMAGED"
-  | "WRONG_ITEM"
-  | "EXCESS_ORDER"
-  | "CUSTOMER_REFUSED"
-  | "QUALITY_ISSUE";
+  "DAMAGED" | "WRONG_ITEM" | "EXCESS_ORDER" | "CUSTOMER_REFUSED" | "QUALITY_ISSUE";
 
 export interface ReturnItem {
   id: string;
@@ -98,13 +96,6 @@ export function useReturn(id: string) {
 }
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
-
-export interface CreateReturnItemDto {
-  productId: string;
-  qty: number;
-  notes?: string;
-  restock?: boolean;
-}
 
 export interface CreateReturnDto {
   customerId: string;

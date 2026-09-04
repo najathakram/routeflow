@@ -126,7 +126,7 @@ Multi-tenant delivery / route-management SaaS. **npm workspaces + Turbo** monore
 
 ## Areas
 
-- [`api`](api.md) — NestJS API: 30+ tenant-scoped feature modules, Prisma schema, auth, finance.
+- [`api`](api.md) — NestJS API: 30+ tenant-scoped feature modules, the multi-file Prisma schema folder (`apps/api/prisma/schema/*.prisma` — 7 domain files, 125 models; split + guarded by `scripts/split-prisma-schema.mjs`), auth, finance.
 - [`web`](web.md) — Next.js dashboard (operator), platform-admin panel, buyer portal, marketing.
 - [`mobile`](mobile.md) — Expo multi-role app: `(auth)`, `(customer)`, `(driver)`, `(operator)`, `(tenant)`.
 - [`packages`](packages.md) — shared `types`, `ui`, and build/config presets.

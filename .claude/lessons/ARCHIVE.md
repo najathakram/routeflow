@@ -392,3 +392,34 @@ L-028, whose rule now lives at its call site in `.claude/code-map/api.md` beside
   otherwise forbids: `overrides` is the only mechanism that beats a parent's exact pin on a
   **runtime** transitive, so state the exception in the PR or the next reader reverts it as a
   violation.
+
+## Archived 2026-09-05 — cap discipline on the wave E rebase (post-#618)
+
+> Moved verbatim to hold BOTH caps when wave E (`fix/imp-wave-e-structure`) rebased onto
+> master `8f136b9a`: master stood at 39 entries / 38,945 B and wave E contributes two, which
+> broke the 40-entry cap and left ~223 B of headroom. Two rather than the one strictly
+> required, per [[L-039]]: a cap reached with ~0 margin is a tripwire for the next branch.
+> Both are the OLDEST entries whose guard has landed, and neither is cited by any `[[L-0xx]]`.
+
+### L-016 · 2026-08-29 · deploy · #475
+
+- **Symptom:** (caught pre-merge) four endpoints would have 403'd for every tenant on deploy day.
+- **Root cause:** a server-side `@RequireAddon` gate keyed on an addon that no shipped UI or SKU
+  activation could grant.
+- **Lesson:** **An entitlement gate with no way to GRANT it is a self-inflicted outage — for
+  every new gate: which UI grants it, does activation write THAT key, what happens to existing
+  users on deploy day?**
+- **Guard:** gate checklist in feature-plan P4; legacy-key → SKU bridge.
+
+### L-024 · 2026-09-01 · security
+
+- **Symptom:** the obvious plan — restrict the one Maps key to the Android app — would have taken
+  down server geocoding, address autocomplete and every browser map at once.
+- **Root cause:** one key served three call origins (Android app, Railway server, browser), and a
+  cloud API key accepts exactly **one** application-restriction type. The key had to stay
+  unrestricted because the API deliberately re-serves it to browsers at runtime.
+- **Lesson:** **One credential per call origin. Before restricting any shared key, enumerate who
+  calls it and from where — a key with both a server and a browser origin can carry no application
+  restriction at all until the callers are split.**
+- **Guard:** three-key model recorded in memory `project_maps_key_architecture_2026-09-01`;
+  `docs/plans/maps-key-split-note.md` is STALE and must not be followed verbatim.

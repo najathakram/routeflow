@@ -1,19 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-
-/**
- * Cost history for a product (pos-cost-roles-spec §1) — the bills/lots behind the
- * live cost number. Backed by `GET /analytics/cost-history/:productId`, which
- * returns each PURCHASE / COST_BASIS movement with the running average after it.
- * Shared by the product-detail chart and the sale-builder cost popover.
- */
-export interface CostHistoryEntry {
-  date: string;
-  unitCost: number;
-  avgCostAfter: number | null;
-  /** StockMovement type — PURCHASE, COST_BASIS, etc. */
-  type: string;
-}
+import type { CostHistoryEntry } from "@routeflow/types";
+export type { CostHistoryEntry } from "@routeflow/types";
 
 export function useCostHistory(productId: string | null | undefined) {
   return useQuery<CostHistoryEntry[]>({

@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { invalidateSupplierLists } from "./suppliers";
+import type { InventoryValuation, RecomputeCostsResult } from "@routeflow/types";
+export type { InventoryValuation, RecomputeCostsResult } from "@routeflow/types";
 
 // ─── Stock overview ───────────────────────────────────────────────────────────
 
@@ -73,13 +75,6 @@ export function useRecordAdjustment() {
 
 // ─── Cost basis & valuation ───────────────────────────────────────────────────
 
-export interface InventoryValuation {
-  totalValue: number;
-  productCount: number;
-  missingCostCount: number;
-  missingCostProducts: { id: string; name: string }[];
-}
-
 export function useInventoryValuation() {
   return useQuery<InventoryValuation>({
     queryKey: ["inventory", "valuation"],
@@ -119,21 +114,6 @@ export function useBulkSetCostBasis() {
       qc.invalidateQueries({ queryKey: ["products"] });
     },
   });
-}
-
-export interface RecomputeCostsResult {
-  dryRun: boolean;
-  processed: number;
-  updated: number;
-  noHistory: { productId: string; name: string }[];
-  results: {
-    productId: string;
-    name: string;
-    oldAvgCost: number | null;
-    newAvgCost: number | null;
-    stockDrift: number;
-    movementsBackfilled: number;
-  }[];
 }
 
 export function useRecomputeCosts() {

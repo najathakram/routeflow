@@ -1,9 +1,15 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { PurchaseOrderStatus } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type POStatus = "DRAFT" | "SENT" | "PARTIALLY_RECEIVED" | "RECEIVED" | "CLOSED";
+/**
+ * Wave E / imp-10b, L-072: was a hand-typed local union with `"PARTIALLY_RECEIVED"`
+ * where the schema says `PARTIAL` — now imported (aliased to this file's historical
+ * local name) from `@routeflow/types`, pinned to the schema by `enum-parity.spec.ts`.
+ */
+export type POStatus = PurchaseOrderStatus;
 
 export interface POItem {
   id: string;
@@ -49,7 +55,10 @@ export function usePurchaseOrders(status?: POStatus) {
 }
 
 export function useOpenPurchaseOrders() {
-  // Open = DRAFT or SENT or PARTIALLY_RECEIVED
+  // Open = DRAFT or SENT or PARTIAL. Wave E / imp-10b, L-072: this third leg used
+  // to send status: "PARTIALLY_RECEIVED", a value the server's PurchaseOrderStatus
+  // enum has never had — the request always returned zero rows, so every
+  // partially-received PO silently dropped out of the "Open" list.
   return useQuery<{ data: PurchaseOrder[]; meta: any }>({
     queryKey: ["purchase-orders", "open"],
     queryFn: async () => {
@@ -61,7 +70,7 @@ export function useOpenPurchaseOrders() {
           .get("/inventory/purchase-orders", { params: { status: "SENT" } })
           .then((r) => r.data),
         apiClient
-          .get("/inventory/purchase-orders", { params: { status: "PARTIALLY_RECEIVED" } })
+          .get("/inventory/purchase-orders", { params: { status: "PARTIAL" } })
           .then((r) => r.data),
       ]);
       const data = [...(draft.data ?? []), ...(sent.data ?? []), ...(partial.data ?? [])].sort(

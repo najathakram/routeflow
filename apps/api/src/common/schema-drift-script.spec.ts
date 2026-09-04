@@ -57,7 +57,7 @@ describe("schema-drift.mjs contract (T3 / R3, R4)", () => {
     expect(res.stdout).toContain("alice:***@localhost:5432/routeflow");
     expect(res.stdout).toContain("migrate status");
     expect(res.stdout).toContain(
-      "migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script --exit-code",
+      "migrate diff --from-config-datasource --to-schema prisma/schema --script --exit-code",
     );
     expect(res.stdout + res.stderr).not.toContain("secretpw");
     // A dry run spawns no prisma, so it must never assert a verdict about the database:

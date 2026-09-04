@@ -138,6 +138,19 @@
 - **Guard:** `no-runtime-workspace-imports.spec.ts` (PR-1's engine already seeded the idea; this PR
   makes it assert every `@routeflow/*` the API imports has a built `main`).
 
+### L-073 · 2026-09-04 · tooling · wave E `imp-10a`
+
+- **Symptom:** "generated client `index.d.ts` byte-identical before/after" failed on a
+  provably-lossless schema-folder split and would have read as a blocking regression.
+- **Root cause:** a multi-file schema concatenates in filename order, so a split reorders every
+  generated declaration (`modelProps` union, `ModelName` map, top-level re-exports) though content
+  stayed set-identical.
+- **Lesson:** **Never make a generated artifact's byte identity the oracle for a source
+  reorganization — pin the SEMANTICS instead** (block/name multisets on the input, an empty
+  `migrate diff` on the output).
+- **Guard:** `split-prisma-schema.mjs --check` proves block-identity + `MODEL_DOMAIN` placement;
+  `npm run local:drift` is the output-side oracle — both cheap/re-runnable, unlike a `.d.ts` diff.
+
 ### L-039 · 2026-09-01 · tooling
 
 - **Symptom:** a green PR went red after a routine rebase, on a check unrelated to its contents —
@@ -432,16 +445,6 @@ build` forces production — so that branch was dead in every Docker image, not 
 - **Guard:** `scripts/visibility-watchdog.mjs`, mandatory in
   `docs/runbooks/deploy-visibility-flip.md` and the `rebuild` skill.
 
-### L-016 · 2026-08-29 · deploy · #475
-
-- **Symptom:** (caught pre-merge) four endpoints would have 403'd for every tenant on deploy day.
-- **Root cause:** a server-side `@RequireAddon` gate keyed on an addon that no shipped UI or SKU
-  activation could grant.
-- **Lesson:** **An entitlement gate with no way to GRANT it is a self-inflicted outage — for
-  every new gate: which UI grants it, does activation write THAT key, what happens to existing
-  users on deploy day?**
-- **Guard:** gate checklist in feature-plan P4; legacy-key → SKU bridge.
-
 ## domain
 
 ### L-071 · 2026-09-04 · domain · OCR gate
@@ -491,6 +494,19 @@ build` forces production — so that branch was dead in every Docker image, not 
   mocked service alone.
 - **Guard:** `db-locks.spec.ts` (T1), `db-locks.db.spec.ts` (T4, `npm run local:test:db`),
   `orders.merge-lock.spec.ts` (T3), and `orders.scan-hardening.spec.ts`'s concurrent-merge case.
+
+### L-072 · 2026-09-03 · domain · wave E `imp-10b`
+
+- **Symptom:** 4 hand-typed client mirrors of Prisma enums drifted from the schema (invented,
+  renamed, or omitted values); one hid a real action and broke a list filter.
+- **Root cause:** each mirror was an independently hand-typed string union — TS never compares two
+  such unions to each other, so the drift compiled clean and stayed invisible.
+- **Lesson:** **Never hand-declare a client mirror of a server (Prisma) enum — derive one
+  const-array union per enum from a shared package and pin it set-equal to `Object.values()` of
+  the real enum in a spec, never against a second hand-typed "expected" list.**
+- **Guard:** `apps/api/src/common/enum-parity.spec.ts` — a generic table (40 enums) against
+  `packages/types/api/enums.ts`, plus a regression layer pinning the drifted files and the mobile
+  jest stub that can't `require` the shared package directly.
 
 ### L-037 · 2026-09-01 · domain · #TBD
 
@@ -558,15 +574,3 @@ complete-with-skipped → reopen refused)`; mutation probes in the F11 PR body.
 - **Guard:** `REG-B132` (the inverted test) and `REG-B165` (`impersonation.guard.spec.ts` header
   case with `req.user` undefined); mutation probes in the F14 PR body.
 
-### L-024 · 2026-09-01 · security
-
-- **Symptom:** the obvious plan — restrict the one Maps key to the Android app — would have taken
-  down server geocoding, address autocomplete and every browser map at once.
-- **Root cause:** one key served three call origins (Android app, Railway server, browser), and a
-  cloud API key accepts exactly **one** application-restriction type. The key had to stay
-  unrestricted because the API deliberately re-serves it to browsers at runtime.
-- **Lesson:** **One credential per call origin. Before restricting any shared key, enumerate who
-  calls it and from where — a key with both a server and a browser origin can carry no application
-  restriction at all until the callers are split.**
-- **Guard:** three-key model recorded in memory `project_maps_key_architecture_2026-09-01`;
-  `docs/plans/maps-key-split-note.md` is STALE and must not be followed verbatim.

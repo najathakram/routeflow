@@ -7,6 +7,45 @@ import {
 } from "@tanstack/react-query";
 import { buyerApiClient, type BuyerSeller } from "../buyer-auth";
 import { trackingRefetchInterval } from "../order-tracking-logic";
+import type {
+  ChangeRequestResolution,
+  ChangeRequestStatus,
+  ChangeRequestType,
+} from "./change-requests";
+import type {
+  BuyerAnalytics,
+  BuyerAuthorizationRow,
+  BuyerCreateChangeRequestInput,
+  BuyerPayment,
+  BuyerPromotion,
+  BuyerRemittance,
+  BuyerStatement,
+  BuyerStockAlerts,
+  ExpiringAuthorization,
+  LockedCategory,
+  ReplenishmentEstimate,
+  ShelfResponse,
+  SubmitBuyerAuthorizationInput,
+} from "@routeflow/types";
+export type {
+  BuyerAnalytics,
+  BuyerAuthorizationRow,
+  BuyerCreateChangeRequestInput,
+  BuyerPayment,
+  BuyerPromotion,
+  BuyerRemittance,
+  BuyerStatement,
+  BuyerStatementTransaction,
+  BuyerStockAlerts,
+  ExpiringAuthorization,
+  LockedCategory,
+  ReplenishmentEstimate,
+  ShelfActiveOrder,
+  ShelfEstimate,
+  ShelfResponse,
+  SubmitBuyerAuthorizationInput,
+} from "@routeflow/types";
+export type { ChangeRequestStatus, ChangeRequestType } from "./change-requests";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,9 +78,12 @@ export interface BuyerProduct {
 }
 
 // ─── Change requests (P5-09/10 twin — P5-16b) ─────────────────────────────────
-export type ChangeRequestType = "ADD_ITEM" | "CHANGE_QTY" | "REMOVE_ITEM" | "NOTE";
-export type ChangeRequestStatus = "PENDING" | "APPROVED" | "DECLINED";
-export type ChangeRequestResolution = "MERGED_AT_STOP" | "NEXT_DELIVERY" | "DECLINED";
+// Type/Status/Resolution are identical to `./change-requests`'s (which now
+// sources Type/Status from `@routeflow/types`) — imported, not redeclared
+// (wave E / imp-10b R2 intra-app dedup). `ChangeRequest` itself is NOT
+// deduped: this buyer-facing shape carries resolver-name/reason fields
+// `./change-requests`'s driver-flow shape lacks — a real divergence the sweep
+// undercounted, kept local on both sides.
 
 export interface ChangeRequest {
   id: string;
@@ -216,13 +258,6 @@ export interface BuyerDashboard {
 
 // ─── Catalog ──────────────────────────────────────────────────────────────────
 
-/** A regulated category hidden from this buyer pending license verification (W7b). */
-export interface LockedCategory {
-  id: string;
-  name: string;
-  status: "NONE" | "PENDING_REVIEW" | "EXPIRED" | "REJECTED";
-}
-
 export function useBuyerProducts(params?: {
   search?: string;
   category?: string;
@@ -312,21 +347,11 @@ export async function resolveBuyerProductByCode(
 }
 
 // ─── Promotions (P5-04, buyer cart) ────────────────────────────────────────────
-
-/** An active, in-window promotion (GET /buyer/promotions). Mirrors web's shape. */
-export interface BuyerPromotion {
-  id: string;
-  name: string;
-  bannerText: string | null;
-  type: "PERCENT" | "FIXED" | "QTY_BREAK";
-  value: number;
-  minQty: number | null;
-  scope: "ALL" | "CATEGORY" | "PRODUCTS";
-  category: string | null;
-  startsAt: string;
-  endsAt: string;
-  productIds: string[];
-}
+// `BuyerPromotion` now imported from @routeflow/types (wave E / imp-10b, L-072):
+// this local copy's `type` field omitted "BUY_N_GET_M", which the schema, web,
+// and this app's own lib/pricing.ts PromotionType already carried — see
+// matchingBogoPromo in buyer-cart-logic.ts, whose compensating `as PromotionType`
+// cast is now removed.
 
 /**
  * Active promotions for the current seller — feeds the mobile cart's per-line
@@ -341,19 +366,6 @@ export function useBuyerPromotions() {
   });
 }
 
-/** A license expiring soon (30/7/1) or already expired — W7b expiry bell. */
-export interface ExpiringAuthorization {
-  id: string;
-  customerId: string;
-  customerName: string;
-  trackedCategoryId: string;
-  categoryName: string;
-  status: "VERIFIED" | "EXPIRED";
-  expiresAt: string | null;
-  bucket: 30 | 7 | 1 | null;
-  expired: boolean;
-}
-
 /** Buyer: the caller's own expiring/expired licenses at this seller (W7b bell). */
 export function useBuyerExpiringAuthorizations() {
   return useQuery<ExpiringAuthorization[]>({
@@ -365,29 +377,6 @@ export function useBuyerExpiringAuthorizations() {
 }
 
 // ─── License self-serve (submit / renew) ───────────────────────────────────────
-
-/** One regulated-category authorization row for the buyer's licenses screen. */
-export interface BuyerAuthorizationRow {
-  trackedCategoryId: string;
-  categoryName: string;
-  status: "NONE" | "PENDING_REVIEW" | "VERIFIED" | "EXPIRED" | "REJECTED";
-  source: "RETAILER_SUBMITTED" | "WHOLESALER_ADDED" | null;
-  licenseNumber: string | null;
-  expiresAt: string | null;
-  documentKey: string | null;
-  submittedAt: string | null;
-  verifiedAt: string | null;
-}
-
-export interface SubmitBuyerAuthorizationInput {
-  trackedCategoryId: string;
-  licenseNumber: string;
-  /** ISO 8601 (@IsISO8601 server-side). */
-  expiresAt: string;
-  documentKey?: string;
-  /** Must be true (@Equals(true) server-side). */
-  shareConsent: boolean;
-}
 
 /** Per-category license status for the buyer's self-serve screen (GET /buyer/authorizations). */
 export function useBuyerAuthorizations() {
@@ -443,10 +432,6 @@ export function useToggleFavorite() {
 
 // ─── Stock alerts / Notify-me (P5-03 twin — P5-16a) ───────────────────────────
 
-export interface BuyerStockAlerts {
-  productIds: string[];
-}
-
 export function useBuyerStockAlerts() {
   return useQuery<BuyerStockAlerts>({
     queryKey: ["buyer-stock-alerts"],
@@ -481,22 +466,6 @@ export function useUnsubscribeStockAlert() {
 
 // ─── Replenishment (P5-05 twin — behavioral tile chips) ───────────────────────
 
-export interface ReplenishmentEstimate {
-  productId: string;
-  name: string;
-  unit: string;
-  unitsPerBox: number | null;
-  imageKey: string | null;
-  lastOrderedAt: string;
-  orderCount: number;
-  cadenceDays: number | null;
-  daysSinceLast: number;
-  estDaysLeft: number | null;
-  typicalQty: number;
-  suggestedQty: number;
-  state: "low" | "due-soon" | "ok";
-}
-
 export function useBuyerReplenishment() {
   return useQuery<ReplenishmentEstimate[]>({
     queryKey: ["buyer-replenishment"],
@@ -506,22 +475,6 @@ export function useBuyerReplenishment() {
 }
 
 // ─── Your Shelf (P5-06/07 twin — P5-16b) ──────────────────────────────────────
-export interface ShelfEstimate extends ReplenishmentEstimate {
-  imageUrl: string | null;
-  snoozed: boolean;
-  snoozedUntil: string | null;
-}
-export interface ShelfActiveOrder {
-  id: string;
-  orderNumber: string | null;
-  itemCount: number;
-  total: number;
-}
-export interface ShelfResponse {
-  estimates: ShelfEstimate[];
-  activeOrder: ShelfActiveOrder | null;
-}
-
 export function useBuyerShelf() {
   return useQuery<ShelfResponse>({
     queryKey: ["buyer-shelf"],
@@ -691,20 +644,6 @@ export function useBuyerDashboard() {
 
 // ─── Finances / analytics (mirrors web useBuyerAnalytics) ─────────────────────
 
-export interface BuyerAnalytics {
-  monthlySpend: Array<{ month: string; spend: number; orderCount: number }>;
-  summary: {
-    totalOrders: number;
-    totalSpend: number;
-    avgOrderValue: number;
-    unpaidInvoiceCount: number;
-    /** Server-truth outstanding total — render VERBATIM, never re-derive. */
-    unpaidInvoiceTotal: number;
-  };
-  invoiceBreakdown: { paid: number; unpaid: number; overdue: number };
-  recentPayments: Array<{ date: string; amount: number; method: string; invoiceNumber: string }>;
-}
-
 export function useBuyerAnalytics() {
   return useQuery<BuyerAnalytics>({
     queryKey: ["buyer", "analytics"],
@@ -718,28 +657,6 @@ export function useBuyerAnalytics() {
 // keys so useBuyerSocket prefix-invalidation covers them. ALL money figures are
 // server values — render verbatim, NEVER recompute.
 
-export interface BuyerStatementTransaction {
-  type: "INVOICE" | "CREDIT_NOTE" | "ADVANCE_PAYMENT";
-  id: string;
-  description: string;
-  date: string;
-  amount: number;
-  /** Server-computed OPEN/remaining amount (CREDIT_NOTE = amount − amountUsed). */
-  runningBalance: number;
-  status: string;
-  expiresAt?: string | null;
-}
-
-export interface BuyerStatement {
-  outstandingAmount: number;
-  overdueAmount: number;
-  /** Wallet balance (server Σ roundMoney(amount − amountUsed) over open credits). NEVER re-derive. */
-  availableCredit: number;
-  advanceBalance: number;
-  pendingOrdersAmount: number;
-  transactions: BuyerStatementTransaction[];
-}
-
 export function useBuyerStatement() {
   return useQuery<BuyerStatement>({
     queryKey: ["buyer-statement"],
@@ -748,17 +665,6 @@ export function useBuyerStatement() {
   });
 }
 
-export interface BuyerPayment {
-  id: string;
-  invoiceId: string;
-  invoiceNumber: string;
-  amount: number;
-  method: string;
-  status: "DRAFT" | "PAID" | "VOID";
-  checkStatus: BuyerCheckStatus | null;
-  nsfFeeAmount: number | null;
-  paidAt: string;
-}
 export interface BuyerPaymentsMeta {
   total: number;
   page: number;
@@ -776,19 +682,6 @@ export function useBuyerPayments(params?: { page?: number; limit?: number }) {
     // every pagination tap (mirrors web scoping the load gate to the history).
     placeholderData: keepPreviousData,
   });
-}
-
-export interface BuyerRemittance {
-  payToName?: string;
-  bankName?: string;
-  accountName?: string;
-  accountNumber?: string;
-  routingNumber?: string;
-  achInstructions?: string;
-  wireInstructions?: string;
-  checkInstructions?: string;
-  mailingAddress?: string;
-  notes?: string;
 }
 
 export function useBuyerRemittance() {
@@ -863,15 +756,6 @@ export function useBuyerUpdateOrderItems() {
 }
 
 // ─── Post-dispatch change requests (P5-10 twin — P5-16b) ──────────────────────
-export interface BuyerCreateChangeRequestInput {
-  orderId: string;
-  type: ChangeRequestType;
-  productId?: string;
-  orderItemId?: string;
-  qty?: number;
-  note?: string;
-}
-
 export function useBuyerCreateChangeRequest() {
   const qc = useQueryClient();
   return useMutation<ChangeRequest, Error, BuyerCreateChangeRequestInput>({

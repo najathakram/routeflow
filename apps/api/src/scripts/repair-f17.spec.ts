@@ -1002,10 +1002,17 @@ describe("scripts/repair-f17.mjs — F17 repair lane (T-R17 / REG-B99)", () => {
   // earlier in this batch — the same mistake made in a SELECT fails just as silently).
   describe("createPgStore SQL vs the Prisma schema", () => {
     const script = fs.readFileSync(SCRIPT, "utf8");
-    const schema = fs.readFileSync(
-      path.join(REPO_ROOT, "apps", "api", "prisma", "schema.prisma"),
-      "utf8",
-    );
+    // The datamodel is a FOLDER of *.prisma files (item 10a) — concatenate them all, and fail
+    // loudly if the folder is missing or empty rather than checking against an empty string.
+    const schemaDir = path.join(REPO_ROOT, "apps", "api", "prisma", "schema");
+    const schemaFiles = fs.readdirSync(schemaDir).filter((f) => f.endsWith(".prisma"));
+    if (schemaFiles.length === 0) {
+      throw new Error(`no *.prisma files under ${schemaDir} — the Prisma schema folder moved`);
+    }
+    const schema = schemaFiles
+      .sort()
+      .map((f) => fs.readFileSync(path.join(schemaDir, f), "utf8"))
+      .join("\n");
 
     /** Field names declared on a Prisma model. */
     const fieldsOf = (model: string): string[] => {
@@ -1075,7 +1082,7 @@ describe("scripts/repair-f17.mjs — F17 repair lane (T-R17 / REG-B99)", () => {
       const sql = freshDerivationSelect();
 
       // Every aliased table has to BE a model — fieldsOf fails the test if the regex finds no
-      // `model <Table> {` block in schema.prisma.
+      // `model <Table> {` block in the prisma/schema folder.
       const aliases = tableAliases(sql);
       expect(aliases.size).toBeGreaterThanOrEqual(2);
       for (const table of aliases.values()) {

@@ -1,29 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-
-/**
- * Minimize & resume drafts (pos-cost-roles-spec §2) — mobile mirror of
- * apps/web/lib/api/drafts.ts. `payload` is the full order-builder state (see
- * ../drafts-payload.ts for the pure shape + conversion helpers) so a parked
- * draft restores exactly — on the SAME device or the other one, since the
- * payload shape is shared with web. Per-user, tenant-scoped server-side
- * (apps/api/src/drafts/): `/drafts` is used exactly as it exists, no API change.
- */
-export interface SaleDraft {
-  id: string;
-  kind: "ORDER" | "INVOICE";
-  customerId?: string | null;
-  customerName?: string | null;
-  title?: string | null;
-  payload: Record<string, unknown>;
-  device?: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export type SaveDraftInput = Partial<
-  Pick<SaleDraft, "kind" | "customerId" | "customerName" | "title" | "payload" | "device">
->;
+import type { SaleDraft, SaveDraftInput } from "@routeflow/types";
+export type { SaleDraft, SaveDraftInput } from "@routeflow/types";
 
 export function useDrafts() {
   return useQuery<SaleDraft[]>({

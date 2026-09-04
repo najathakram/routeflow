@@ -1,0 +1,262 @@
+// ─── Prisma-enum mirrors (wave E / imp-10b) ────────────────────────────────────
+//
+// One `const` array + derived type per Prisma enum that web and/or mobile
+// hand-declare as a client-side string union. Values are copied EXACTLY from
+// `apps/api/prisma/schema.prisma` — this file is the shared source for the
+// pinned enums (see enum-parity.spec.ts for coverage — not every Prisma enum a
+// client mirrors has a row here yet; see docs/IMPROVEMENTS.md item 10's
+// follow-on), and `apps/api/src/common/enum-parity.spec.ts` pins every array
+// here set-equal to the generated `@prisma/client` enum so a value can never
+// silently drift again (a value invented, a value renamed, a value dropped).
+//
+// Convention: `export const X_VALUES = [...] as const;` +
+// `export type X = (typeof X_VALUES)[number];` — never hand-write the union.
+
+export const ESTIMATE_STATUS_VALUES = [
+  "DRAFT",
+  "SENT",
+  "ACCEPTED",
+  "DECLINED",
+  "CONVERTED",
+] as const;
+export type EstimateStatus = (typeof ESTIMATE_STATUS_VALUES)[number];
+
+export const EXPENSE_STATUS_VALUES = ["PENDING", "RECEIVED", "PAID", "VOID"] as const;
+export type ExpenseStatus = (typeof EXPENSE_STATUS_VALUES)[number];
+
+export const INVOICE_STATUS_VALUES = [
+  "DRAFT",
+  "SENT",
+  "VIEWED",
+  "PARTIAL",
+  "PAID",
+  "OVERDUE",
+  "VOID",
+  "WRITTEN_OFF",
+] as const;
+export type InvoiceStatus = (typeof INVOICE_STATUS_VALUES)[number];
+
+export const RETURN_STATUS_VALUES = [
+  "PENDING",
+  "APPROVED",
+  "REJECTED",
+  "IN_TRANSIT",
+  "RECEIVED",
+  "REFUNDED",
+  "PROCESSED",
+  "CANCELLED",
+] as const;
+export type ReturnStatus = (typeof RETURN_STATUS_VALUES)[number];
+
+export const RETURN_REASON_VALUES = [
+  "DAMAGED",
+  "WRONG_ITEM",
+  "CUSTOMER_REFUSED",
+  "QUALITY_ISSUE",
+  "EXCESS_ORDER",
+] as const;
+export type ReturnReason = (typeof RETURN_REASON_VALUES)[number];
+
+export const CREDIT_NOTE_STATUS_VALUES = ["ISSUED", "APPLIED", "VOID"] as const;
+export type CreditNoteStatus = (typeof CREDIT_NOTE_STATUS_VALUES)[number];
+
+export const REGULATED_FILING_STATUS_VALUES = ["GENERATED", "FAILED"] as const;
+export type RegulatedFilingStatus = (typeof REGULATED_FILING_STATUS_VALUES)[number];
+
+export const INVOICE_TREATMENT_VALUES = [
+  "SEPARATE_INVOICE",
+  "SEPARATE_SECTION",
+  "LINE_TAX",
+] as const;
+export type InvoiceTreatment = (typeof INVOICE_TREATMENT_VALUES)[number];
+
+export const REPORT_CADENCE_VALUES = ["MONTHLY", "QUARTERLY", "ANNUAL"] as const;
+export type ReportCadence = (typeof REPORT_CADENCE_VALUES)[number];
+
+export const TRACKED_CATEGORY_TAX_TYPE_VALUES = [
+  "EXCISE_PER_UNIT",
+  "PERCENT_OF_SALE",
+  "PER_VOLUME",
+  "DEPOSIT_PER_CONTAINER",
+  "NONE",
+] as const;
+export type TrackedCategoryTaxType = (typeof TRACKED_CATEGORY_TAX_TYPE_VALUES)[number];
+
+export const INVOICE_SCAN_STATUS_VALUES = ["SCANNED", "POSTED", "DISCARDED", "DUPLICATE"] as const;
+export type InvoiceScanStatus = (typeof INVOICE_SCAN_STATUS_VALUES)[number];
+
+export const SUPPLIER_STATEMENT_SCAN_STATUS_VALUES = ["SCANNED", "APPLIED", "DISCARDED"] as const;
+export type SupplierStatementScanStatus = (typeof SUPPLIER_STATEMENT_SCAN_STATUS_VALUES)[number];
+
+/**
+ * ⚠️ Drift fixed here (Wave E / imp-10b, L-072): mobile previously hand-typed
+ * this union with a value `"FULL"` that has never existed in the schema, and
+ * both apps omitted `OVERDUE`. This array is the corrected, pinned source —
+ * see `enum-parity.spec.ts` for the regression guard and `.claude/lessons/LESSONS.md` L-072.
+ */
+export const VENDOR_BILL_STATUS_VALUES = [
+  "DRAFT",
+  "RECEIVED",
+  "PARTIAL",
+  "PAID",
+  "OVERDUE",
+  "VOID",
+] as const;
+export type VendorBillStatus = (typeof VENDOR_BILL_STATUS_VALUES)[number];
+
+/**
+ * ⚠️ Drift fixed here (Wave E / imp-10b, L-072): mobile previously hand-typed
+ * this union (as `POStatus`) with `"PARTIALLY_RECEIVED"` where the schema says
+ * `PARTIAL`. This array is the corrected, pinned source.
+ */
+export const PURCHASE_ORDER_STATUS_VALUES = [
+  "DRAFT",
+  "SENT",
+  "PARTIAL",
+  "RECEIVED",
+  "CLOSED",
+] as const;
+export type PurchaseOrderStatus = (typeof PURCHASE_ORDER_STATUS_VALUES)[number];
+
+export const PAYMENT_STATUS_VALUES = ["DRAFT", "PAID", "VOID"] as const;
+export type PaymentStatus = (typeof PAYMENT_STATUS_VALUES)[number];
+
+export const PRICE_TYPE_VALUES = ["STANDARD", "SPECIAL", "DISCOUNTED", "MANUAL", "PROMO"] as const;
+export type PriceType = (typeof PRICE_TYPE_VALUES)[number];
+
+export const CHECK_STATUS_VALUES = ["RECORDED", "DEPOSITED", "CLEARED", "BOUNCED"] as const;
+export type CheckStatus = (typeof CHECK_STATUS_VALUES)[number];
+
+export const DOCUMENT_NUMBER_TYPE_VALUES = [
+  "INVOICE",
+  "ESTIMATE",
+  "CREDIT_NOTE",
+  "PAYMENT",
+  "RETURN",
+  "ORDER",
+] as const;
+export type DocumentNumberType = (typeof DOCUMENT_NUMBER_TYPE_VALUES)[number];
+
+export const COSTING_METHOD_VALUES = ["FIFO", "LIFO", "AVCO", "STANDARD", "LAST_COST"] as const;
+export type CostingMethod = (typeof COSTING_METHOD_VALUES)[number];
+
+export const AUTHORIZATION_STATUS_VALUES = [
+  "NONE",
+  "PENDING_REVIEW",
+  "VERIFIED",
+  "EXPIRED",
+  "REJECTED",
+] as const;
+export type AuthorizationStatus = (typeof AUTHORIZATION_STATUS_VALUES)[number];
+
+export const AUTHORIZATION_SOURCE_VALUES = ["RETAILER_SUBMITTED", "WHOLESALER_ADDED"] as const;
+export type AuthorizationSource = (typeof AUTHORIZATION_SOURCE_VALUES)[number];
+
+/**
+ * ⚠️ Drift fixed here (Wave E / imp-10b, L-072): mobile's `BuyerPromotion.type`
+ * omitted `"BUY_N_GET_M"` (present in the schema, on web, and already in
+ * `apps/mobile/lib/pricing.ts`'s own `PromotionType` — mobile's BOGO matcher
+ * worked around the hole with an explicit `as PromotionType` cast, now removed).
+ */
+export const PROMOTION_TYPE_VALUES = ["PERCENT", "FIXED", "QTY_BREAK", "BUY_N_GET_M"] as const;
+export type PromotionType = (typeof PROMOTION_TYPE_VALUES)[number];
+
+export const PROMOTION_SCOPE_VALUES = ["ALL", "CATEGORY", "PRODUCTS"] as const;
+export type PromotionScope = (typeof PROMOTION_SCOPE_VALUES)[number];
+
+export const MIGRATION_SOURCE_VALUES = ["ZOHO", "QUICKBOOKS", "CSV", "PAPER"] as const;
+export type MigrationSource = (typeof MIGRATION_SOURCE_VALUES)[number];
+
+export const MIGRATION_JOB_STATUS_VALUES = [
+  "FETCHING",
+  "STAGED",
+  "CONFIRMED",
+  "UNDONE",
+  "FAILED",
+] as const;
+export type MigrationJobStatus = (typeof MIGRATION_JOB_STATUS_VALUES)[number];
+
+export const STOCK_COUNT_STATUS_VALUES = ["OPEN", "REVIEW", "COMMITTED", "DISCARDED"] as const;
+export type StockCountStatus = (typeof STOCK_COUNT_STATUS_VALUES)[number];
+
+export const SALES_AGENT_STATUS_VALUES = ["ACTIVE", "PAUSED", "STOPPED_FOR_NEW"] as const;
+export type SalesAgentStatus = (typeof SALES_AGENT_STATUS_VALUES)[number];
+
+export const COMMISSION_RATE_SOURCE_VALUES = [
+  "ORDER_OVERRIDE",
+  "CUSTOMER_RATE",
+  "AGENT_DEFAULT",
+  "NONE",
+] as const;
+export type CommissionRateSource = (typeof COMMISSION_RATE_SOURCE_VALUES)[number];
+
+export const COMMISSION_ACCRUAL_STATUS_VALUES = [
+  "PENDING",
+  "PARTIAL",
+  "PAYABLE",
+  "SETTLED",
+  "VOID",
+] as const;
+export type CommissionAccrualStatus = (typeof COMMISSION_ACCRUAL_STATUS_VALUES)[number];
+
+export const COMMISSION_STATEMENT_STATUS_VALUES = ["PENDING", "APPROVED", "PAID", "VOID"] as const;
+export type CommissionStatementStatus = (typeof COMMISSION_STATEMENT_STATUS_VALUES)[number];
+
+export const COMMISSION_STATEMENT_LINE_KIND_VALUES = [
+  "CLAIM",
+  "ADJUSTMENT",
+  "CARRYFORWARD",
+] as const;
+export type CommissionStatementLineKind = (typeof COMMISSION_STATEMENT_LINE_KIND_VALUES)[number];
+
+export const IMPORT_FILE_STATUS_VALUES = [
+  "QUEUED",
+  "PROCESSING",
+  "CLEAN",
+  "NEEDS_REVIEW",
+  "DUPLICATE",
+  "FAILED",
+  "POSTED",
+] as const;
+export type ImportFileStatus = (typeof IMPORT_FILE_STATUS_VALUES)[number];
+
+export const IMPORT_BATCH_STATUS_VALUES = [
+  "PROCESSING",
+  "READY",
+  "POSTED",
+  "PARTIALLY_POSTED",
+] as const;
+export type ImportBatchStatus = (typeof IMPORT_BATCH_STATUS_VALUES)[number];
+
+export const ROUTE_ORIGIN_KIND_VALUES = ["TENANT", "DRIVER", "ADDRESS"] as const;
+export type RouteOriginKind = (typeof ROUTE_ORIGIN_KIND_VALUES)[number];
+
+export const ROUTE_END_KIND_VALUES = ["NONE", "RETURN_TO_START", "DRIVER_HOME", "ADDRESS"] as const;
+export type RouteEndKind = (typeof ROUTE_END_KIND_VALUES)[number];
+
+export const ROUTE_OPTIMIZE_METRIC_VALUES = ["TIME", "DISTANCE"] as const;
+export type RouteOptimizeMetric = (typeof ROUTE_OPTIMIZE_METRIC_VALUES)[number];
+
+export const CHANGE_REQUEST_TYPE_VALUES = [
+  "ADD_ITEM",
+  "CHANGE_QTY",
+  "REMOVE_ITEM",
+  "NOTE",
+] as const;
+export type ChangeRequestType = (typeof CHANGE_REQUEST_TYPE_VALUES)[number];
+
+export const CHANGE_REQUEST_STATUS_VALUES = ["PENDING", "APPROVED", "DECLINED"] as const;
+export type ChangeRequestStatus = (typeof CHANGE_REQUEST_STATUS_VALUES)[number];
+
+export const RECURRING_FREQUENCY_VALUES = ["WEEKLY", "BIWEEKLY", "MONTHLY"] as const;
+export type RecurringFrequency = (typeof RECURRING_FREQUENCY_VALUES)[number];
+
+export const MOVEMENT_TYPE_VALUES = [
+  "PURCHASE",
+  "SALE",
+  "ADJUSTMENT",
+  "RETURN",
+  "WRITE_OFF",
+  "COST_BASIS",
+] as const;
+export type MovementType = (typeof MOVEMENT_TYPE_VALUES)[number];

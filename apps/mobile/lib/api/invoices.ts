@@ -2,18 +2,16 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { InvoicePdfVariant } from "../invoice-pdf-variant";
 import type { AnyPaymentMethod } from "../payment-methods";
+import type {
+  CreateInvoiceItem,
+  CreatePartialInvoiceDto,
+  SendInvoiceEmailResult,
+} from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type InvoiceStatus =
-  | "DRAFT"
-  | "SENT"
-  | "VIEWED"
-  | "PARTIAL"
-  | "PAID"
-  | "OVERDUE"
-  | "VOID"
-  | "WRITTEN_OFF";
+  "DRAFT" | "SENT" | "VIEWED" | "PARTIAL" | "PAID" | "OVERDUE" | "VOID" | "WRITTEN_OFF";
 
 export interface InvoiceItem {
   id: string;
@@ -143,26 +141,6 @@ export function useRecordInvoicePayment() {
   });
 }
 
-export interface CreateInvoiceItem {
-  /** Free-text label. For an unlisted (non-catalog) line, omit productId. */
-  description: string;
-  productId?: string;
-  qty: number;
-  unitPrice: number;
-  /** Optional box/piece split for boxed products. Server prorates the line. */
-  boxes?: number;
-  pieces?: number;
-  /** BUY_N_GET_M: whole free SELLING units on this line (boxes for a boxed line).
-   *  Server subtracts them before pricing — MUST round-trip on an items PATCH. */
-  promoFreeUnits?: number;
-  /** Flat dollars off this line — server: lineSub = roundMoney(subtotal − discount). */
-  discount?: number;
-  /** Tax FRACTION (0.08 = 8%), charged on the POST-discount line subtotal. */
-  taxRate?: number;
-  /** Buyer-visible line note — prints under the description on the PDF (≤2000). */
-  notes?: string;
-}
-
 export interface CreateInvoiceDto {
   customerId: string;
   items: CreateInvoiceItem[];
@@ -192,23 +170,6 @@ export function useCreateInvoice() {
       qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
     },
   });
-}
-
-/**
- * Shape of a successful `send-email` / `send-reminder` response. Mirrors web's
- * `SendInvoiceEmailResult` (apps/web/lib/api/invoices.ts).
- *
- * `warning` is non-blocking: the tenant's own SMTP failed but Resend (RouteFlow's
- * platform mail service) rescued the send, so the invoice really did go out. It
- * carries `email.service.ts#send()`'s mapped `smtpFallbackReason`, and
- * `fromAddress` is the platform address the mail actually came from — the
- * operator has to be told both, or a dead mailbox stays invisible.
- */
-export interface SendInvoiceEmailResult {
-  success: boolean;
-  sentTo: string;
-  warning?: string;
-  fromAddress?: string;
 }
 
 /** `/send-email` resolves to `SendInvoiceEmailResult`; the bodyless `/send`
@@ -424,23 +385,6 @@ export function useUpdateInvoiceShipment() {
 
 // ─── Split / partial invoice from order ───────────────────────────────────────
 
-export interface CreatePartialInvoiceItem {
-  orderItemId: string;
-  qty: number;
-}
-
-export interface CreatePartialInvoiceDto {
-  orderId: string;
-  items: CreatePartialInvoiceItem[];
-  dueDate?: string;
-  /** Long-form Terms & Conditions text — NEVER a "Net N" label. */
-  terms?: string;
-  /** Structured "Net N" label describing dueDate. */
-  paymentTermsLabel?: string;
-  notes?: string;
-  send?: boolean;
-}
-
 /**
  * Create one of N partial invoices from an order. Available to operator and driver
  * (driver uses it from the stop-completion flow). Each call increments
@@ -497,7 +441,13 @@ export function useCreateInvoiceFromOrder() {
 /** DRAFT (proforma, pre-delivery) vs FINAL (issued) invoice-PDF stage. */
 // Canonical type + smart-default live in ../invoice-pdf-variant (triple mirror with
 // apps/api + apps/web); re-exported here so existing importers keep their path.
-export type { InvoicePdfVariant };
+export type { InvoicePdfVariant } from "../invoice-pdf-variant";
+export type {
+  CreateInvoiceItem,
+  CreatePartialInvoiceDto,
+  CreatePartialInvoiceItem,
+  SendInvoiceEmailResult,
+} from "@routeflow/types";
 
 export function useInvoicePdf() {
   return useMutation<

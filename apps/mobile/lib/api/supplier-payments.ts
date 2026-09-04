@@ -1,6 +1,28 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { EditablePaymentMethod } from "./payments";
+import type {
+  RecordSupplierPaymentDto,
+  RecordSupplierPaymentResult,
+  SupplierAllocationLine,
+  SupplierStatement,
+} from "@routeflow/types";
+// X1: the payment DTO below is re-exported bare — its `TMethod` stays
+// generic in `packages/types/api/finance.ts` on purpose. Do NOT bind that
+// parameter with a same-named local alias in this file (the T1 sweep's "no
+// local re-declaration in lib/api" guards — the shared-dto inventory spec and
+// the shared-dto-rewrite codemod's `--check` — read this file's raw text and
+// can't tell a narrowing alias apart from a forked duplicate). Bind the
+// narrow union at each USE site instead: see `useRecordSupplierPayment`
+// below, which applies the `EditablePaymentMethod` type argument where it
+// types the mutation payload.
+export type {
+  RecordSupplierPaymentDto,
+  RecordSupplierPaymentResult,
+  SupplierStatement,
+  SupplierStatementRow,
+  SupplierStatementRowType,
+} from "@routeflow/types";
 
 /**
  * PR-E WP6 — supplier-level payment allocation, the AP mirror of
@@ -14,28 +36,16 @@ import type { EditablePaymentMethod } from "./payments";
 
 // ─── Record a supplier payment (multi-bill allocation) ───────────────────────
 
-export interface SupplierAllocationRow {
-  vendorBillId: string;
-  /** Cents-rounded CLIENT-side (`lib/supplier-payment-logic.ts`) so the sheet's
-   *  arithmetic matches the server's. Unlike the AR standalone endpoint, the
-   *  server DOES re-round and validate here: it rejects an allocation to
-   *  another supplier's bill, one exceeding that bill's remaining balance, or
-   *  a set summing past `totalAmount`. */
-  amount: number;
-}
-
-export interface RecordSupplierPaymentDto {
-  supplierId: string;
-  /** Cash actually paid out. Anything not covered by `allocations`
-   *  (> 0.001) becomes a `SupplierCredit` for the supplier, server-side. */
-  totalAmount: number;
-  /** Hand-enterable methods only — mirrors the AR DTO's `EditablePaymentMethod`. */
-  method: EditablePaymentMethod;
-  paidAt?: string;
-  reference?: string;
-  notes?: string;
-  allocations: SupplierAllocationRow[];
-}
+/**
+ * Wave E / imp-10b R2: identical to web's `SupplierAllocationLine` — imported
+ * (aliased to this file's historical local name) rather than redeclared.
+ * Cents-rounded CLIENT-side (`lib/supplier-payment-logic.ts`) so the sheet's
+ * arithmetic matches the server's. Unlike the AR standalone endpoint, the
+ * server DOES re-round and validate here: it rejects an allocation to another
+ * supplier's bill, one exceeding that bill's remaining balance, or a set
+ * summing past `totalAmount`.
+ */
+export type SupplierAllocationRow = SupplierAllocationLine;
 
 export interface SupplierBillPayment {
   id: string;
@@ -46,14 +56,6 @@ export interface SupplierBillPayment {
   notes?: string | null;
   paymentGroupId?: string | null;
   createdAt: string;
-}
-
-export interface RecordSupplierPaymentResult {
-  paymentGroupId: string;
-  payments: SupplierBillPayment[];
-  /** Unallocated remainder — becomes a `SupplierCredit`, never rejected. */
-  excess: number;
-  bills: { id: string; status: string; totalPaid: number }[];
 }
 
 /**
@@ -67,7 +69,12 @@ export interface RecordSupplierPaymentResult {
  */
 export function useRecordSupplierPayment() {
   const qc = useQueryClient();
-  return useMutation<RecordSupplierPaymentResult, Error, RecordSupplierPaymentDto>({
+  return useMutation<
+    RecordSupplierPaymentResult,
+    Error,
+    // X1: bind TMethod to mobile's enterable subset at the use site.
+    RecordSupplierPaymentDto<EditablePaymentMethod>
+  >({
     mutationFn: (dto) => apiClient.post("/vendor-bills/payments/record", dto).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["suppliers"] });
@@ -79,40 +86,6 @@ export function useRecordSupplierPayment() {
 }
 
 // ─── Supplier statement (running balance) ─────────────────────────────────────
-
-export type SupplierStatementRowType = "BILL" | "PAYMENT" | "CREDIT";
-
-/** One line of the running-balance timeline. Mirrors what
- *  `VendorBillsService.getSupplierStatement` actually returns: the array is
- *  `timeline` (not `rows`), the caption is `description` (not `label`), and
- *  `amount` is SIGNED — a BILL is positive, a PAYMENT/CREDIT negative. A
- *  credit's draw-down against a bill is folded into that bill's `totalPaid`
- *  and deliberately omitted as its own row (it is not new money), so PAYMENT
- *  rows are real cash movements only. */
-export interface SupplierStatementRow {
-  id: string;
-  type: SupplierStatementRowType;
-  date: string;
-  description: string;
-  billId?: string;
-  billNumber?: string;
-  paymentGroupId?: string | null;
-  /** Signed: BILL increases what's owed (+); PAYMENT/CREDIT decreases it (−). */
-  amount: number;
-  /** Running balance AFTER this row is applied. */
-  balance: number;
-}
-
-export interface SupplierStatement {
-  supplierId: string;
-  timeline: SupplierStatementRow[];
-  totalOwed: number;
-  totalPaid: number;
-  /** Σ(totalOwed − totalPaid) over non-VOID bills — arithmetic, never status. */
-  outstanding: number;
-  /** Current `SupplierCredit.balance` sum available to draw down. */
-  creditBalance: number;
-}
 
 /**
  * Running-balance timeline for one supplier —

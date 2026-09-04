@@ -20,8 +20,38 @@ Shared workspace packages (types, UI, configs) consumed by apps via npm workspac
 
 ### `@routeflow/types` (`packages/types`)
 
-Shared DTO/enum definitions. Entry: `index.ts` (no `src/`).
+Shared DTO/enum definitions. Entry: `index.ts` (no `src/`), re-exports `./api/*` (below) via
+`export * from "./api/<domain>"`.
 
+- **`api/enums.ts` (2026-09-03, wave E / imp-10b)** — one `export const X_VALUES = [...] as const` +
+  `export type X = (typeof X_VALUES)[number]` per Prisma enum a web/mobile `lib/api/*` file mirrors
+  as a hand-typed string union (40 enums; values copied from `apps/api/prisma/schema.prisma`).
+  Pinned set-equal to `@prisma/client`'s generated enum by
+  `apps/api/src/common/enum-parity.spec.ts` — this is the guard against the drift class that shipped
+  three real bugs (see `L-072`): `VendorBillStatus` mirrors had invented `"FULL"`/omitted
+  `OVERDUE`, `PurchaseOrderStatus` (mobile local name `POStatus`) had `"PARTIALLY_RECEIVED"` instead
+  of `PARTIAL`, `PromotionType` (`BuyerPromotion.type`) omitted `"BUY_N_GET_M"`; plus a sibling-sweep
+  find, a phantom `"EXPIRED"` on `EstimateStatus` in both apps.
+- **`api/{orders,customers,products,finance,returns,regulated,routes,buyer,misc}.ts` (2026-09-03,
+  wave E / imp-10b)** — the 95 identical/near-identical request/response DTOs the sweep
+  (`.claude/pipeline/wave-E-structure/2026-09-03-imp-10b-shared-dtos/sweep.md`) found duplicated
+  byte-for-byte or near-byte-for-byte across `apps/web/lib/api/*` and `apps/mobile/lib/api/*` (134
+  cross-app duplicate names total: 49 identical, 46 near-identical, 39 genuinely divergent — the
+  divergent 39 stay local, listed in the PR body). Near-identical resolution rule: union of optional
+  fields (present-on-one-side ⇒ optional), nullable widening wins, named unions replace inline
+  literals, comments kept from the richer side. Both apps' `lib/api/*.ts` import these instead of
+  redeclaring, rewritten by `scripts/codemods/shared-dto-rewrite.mjs` (`--check`/`--write`, manifest-
+  driven, idempotent). A few names collided or diverged **within** one app and were renamed apart
+  rather than shared: web `OrderTemplate` (buyer.ts) → `BuyerOrderTemplate`; mobile
+  `SalesByCustomerRow`/`SalesByItemRow` (reports.ts) → `ReportSalesByCustomerRow`/`ReportSalesByItemRow`;
+  mobile `VariantAssignResultRow` → shared `VariantAssignResultItem`; mobile
+  `SupplierAllocationRow` → aliased to shared `SupplierAllocationLine`. `BuyerPromotion` itself
+  (previously sweep-classified divergent solely because of the `type` enum drift) is now shared once
+  `type`/`scope` are typed from `enums.ts`. Intra-app dedup per R2: web `PriceType` (was declared
+  identically in both `orders.ts` and `invoices.ts`); mobile `ChangeRequestType`/`ChangeRequestStatus`
+  (collapsed into `change-requests.ts`, re-exported from `@routeflow/types`; `ChangeRequestResolution`
+  and the richer buyer-facing `ChangeRequest` interface stay local — NOT deduped, a real divergence
+  the sweep undercounted).
 - **Enums** (synced with Prisma): `UserRole`, `UserStatus`; `OrderStatus`, `ItemStatus`;
   `RouteRunStatus`, `RouteRunStopStatus`; `TxnStatus`, `PaymentMethod` (2026-08-21: backfilled
   from a stale 4 values to all 8 — `CASH,CHECK,ACH,OTHER,CREDIT_NOTE,ADVANCE,CREDIT_CARD,ZELLE`

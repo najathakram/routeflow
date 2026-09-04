@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { Badge, Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
-import { useBuyerTemplates, useBuyerReorder, type OrderTemplate } from "@/lib/api/buyer";
+import { useBuyerTemplates, useBuyerReorder, type BuyerOrderTemplate } from "@/lib/api/buyer";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -38,7 +38,7 @@ function TemplateRow({
   onReorder,
   isReordering,
 }: {
-  template: OrderTemplate;
+  template: BuyerOrderTemplate;
   onReorder: () => void;
   isReordering: boolean;
 }) {
