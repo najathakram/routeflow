@@ -115,7 +115,9 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   (TX_COMPTROLLER → "Texas Comptroller", `humanizeEnum` fallback).
 - **`app/layout.tsx`** — root metadata, fonts (Spline Sans + Spline Sans Mono + Instrument Serif +
   Inter fallback), `<Providers>` + `<TenantProvider>` + SW registry.
-- **`app/providers.tsx`** — QueryClient/TanStack Query, Zustand, toast container.
+- **`app/providers.tsx`** — QueryClient/TanStack Query, toast container. (Zustand was removed
+  wave D/item 11 2026-09-03 — verified zero imports in web source; `no-dead-deps.spec.ts` in
+  [`api`](api.md) pins it. Web state is TanStack Query + context.)
 - **`next.config.mjs`** — standalone output (Docker), CSP headers, X-Frame-Options DENY, image domains. **CSP `frame-src 'self' blob: https:`** (2026-08-21) — without it iframes fell back to `default-src 'self'` and every blob:/API-origin PDF preview (invoice scan, invoice builder, customer docs) rendered blank while `<img>` previews worked; `data:` deliberately excluded from frames. **`Permissions-Policy: camera=(self), geolocation=(self)`** — `camera=()` previously disabled the in-browser barcode/invoice scanner on Android Chrome ("access denied"; iOS Safari ignored it).
 - **`lib/api-client.ts`** — axios instance, `getTenantSlugFromCookie()`, token+tenant interceptors, refresh queue. **`paramsSerializer: { indexes: null }`** (mirrors mobile's `buyerApiClient`) — array query params must go out as repeated keys (`?statuses=A&statuses=B`); axios's default `statuses[]=` survives Express's `simple` query parser as a literal `statuses[]` key and the global ValidationPipe (`forbidNonWhitelisted`) 400s it.
 - **`lib/auth.ts`** — operator auth types, login/refresh/logout, `onCrossTabTokenChange()`. ⚠️ The
@@ -755,6 +757,57 @@ AgentFormModal` in a nested modal (`isAgentModalOpen` state); on create it selec
   Middleware does not interfere: `/api/` skips the mobile-UA rewrite, the landing 307 is scoped to
   `pathname === "/"`, and the buyer guard's prefixes exclude `/api`.
 
+## Unit tests (Jest + RTL) (wave D, item 5, 2026-09-03)
+
+`apps/web` previously had **zero** unit/component tests (Playwright E2E only — the gap
+[`docs/IMPROVEMENTS.md`](../../docs/IMPROVEMENTS.md) item 5 flagged). Now 19 spec files, run via
+`npm test -w apps/web` (script `"test": "jest"`) or `npm run test` (Turbo `test` task; `apps/web`
+now contributes alongside api/mobile).
+
+- **`jest.config.js`** — built on `next/jest` (`createJestConfig`), `testEnvironment: "jsdom"`,
+  `setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"]`. Opts out of `next/jest`'s optional-dependency
+  lockfile auto-patch via `NEXT_IGNORE_INCORRECT_LOCKFILE=1` (network call to the npm registry is
+  unavailable in this environment and would abort config load; the lockfile itself is pD1's, not
+  touched here). ⚠️ **`testMatch` is deliberately `["**/*.test.{ts,tsx}"]`, NOT the
+  `<rootDir>`-anchored form the brief suggested** — every worktree in this repo lives under
+  `.claude/worktrees/<name>`, so a rootDir-substituted glob always contains a `\.claude` segment
+  on Windows; `jest-config`'s `replacePathSepForGlob()` converts `\`→`/` EXCEPT when the backslash
+  precedes `$()+.?^{}` (assumed an escaped glob char), so that one separator survives literally and
+  picomatch then compiles `\.` as an escaped dot — matching nothing (confirmed via
+  `npx jest --listTests` returning empty). `roots: ["<rootDir>/{app,components,lib,hooks}"]` scopes
+  discovery instead, so the plain relative glob needs no rootDir anchor. Lesson **L-054**.
+  `moduleNameMapper` pins a **single `react` instance** for the whole run
+  (`^react$`/`^react/jsx-runtime$`/`^react/jsx-dev-runtime$` → `<rootDir>/node_modules/react`):
+  `apps/web/package.json` still pins `"react"`/`"react-dom"` to `^18` (a stale range — its own
+  `@types/react` is `~19.2.2` and every other workspace is on React 19), so npm installs a nested
+  `apps/web/node_modules/react@18.3.1` beside root's hoisted `react@19.2.5` while there is only ONE
+  `react-dom` (root's 18.3.1). Without the pin, `@routeflow/ui`'s Radix-based `Modal`/`Toast`
+  resolve the hoisted React 19 while `apps/web`'s own component files resolve the nested React 18 —
+  two `react` instances paired with one `react-dom`, crashing any Radix render with "Cannot read
+  properties of undefined (reading 'ReactCurrentDispatcher')". Test-infra-only fix; the underlying
+  `^18` vs `~19.2.2` range drift is a real dependency bug, flagged separately (see the wave-D
+  README "Findings for later"), not fixed here.
+- **`jest.setup.ts`** — one line, `import "@testing-library/jest-dom"`.
+- **`test-utils/render.tsx`** — `renderWithProviders(ui, opts)` (re-exports RTL +
+  `createTestQueryClient()`: retries off, no caching). Wraps `QueryClientProvider` →
+  `ToastProvider` → `I18nProvider` → `BuyerAuthProvider` → `AuthProvider` — the REAL context
+  providers (safe with zero mocking as long as a test doesn't seed localStorage with a token,
+  since both auth providers' refresh calls short-circuit to `null` with no network call when
+  unauthenticated). Deliberately excludes `TenantProvider`/`ReAuthProvider` (both have safe
+  non-null defaults without a real provider).
+- **`lib/` suites (4)** — `api-client.test.ts`, `format.test.ts`, `formatting.test.ts`,
+  `tenant-host.test.ts` (the last pins `tenantSlugFromHostname()`, the single source of truth
+  documented above under "App shell & lib" — never re-inline its rules).
+- **Component specs (15)** — auth surfaces: `app/(auth)/{login,forgot-password}/page.test.tsx`,
+  `app/buyer/{login,forgot-password,portal}/page.test.tsx`; settings:
+  `app/(dashboard)/settings/settings-{password,profile,users}.test.tsx`; domain modals/cards:
+  `app/(dashboard)/bookkeeping/[transactionId]/page.test.tsx`,
+  `app/(dashboard)/drivers/_components/{Add,Edit}DriverModal.test.tsx`,
+  `app/(dashboard)/orders/_components/CreateOrderModal.test.tsx`,
+  `app/(dashboard)/products/[id]/SalesHistoryCard.test.tsx`,
+  `app/(dashboard)/routes/_components/CreateRouteModal.test.tsx`,
+  `components/MoneyInput.test.tsx`.
+
 ## E2E tests (`apps/web/e2e/`)
 
 Playwright against production (`routeflowweb-production.up.railway.app`). Auth via per-role
@@ -778,9 +831,11 @@ mutation is client-side localStorage (cleared at the end). Helpers: `helpers/api
 `apps/api/scripts/e2e-seed.js` sweeps any pre-cleanup draft residue from the operator's dock.
 **Tenant admin seeded (B138, F14 2026-09-02):** `e2e-seed.js` now also creates/verifies an ACTIVE
 `TENANT_ADMIN` user `e2e_admin`/`TenantAdmin1!` on `e2e-routeflow` (both the fresh-tenant and
-existing-tenant branches) — `platform-admin.service.ts impersonate()` requires one, and without
-it spec 31 below self-skips with a named reason rather than running. `helpers/constants.ts
-CREDENTIALS.tenantAdmin` carries the pair.
+existing-tenant branches) — `platform-admin.service.ts impersonate()` requires one ACTIVE
+TENANT_ADMIN to resolve, and without it spec 31 below self-skips with a named reason rather than
+running. `helpers/constants.ts CREDENTIALS.tenantAdmin` carries the pair; spec 31 targets this
+shared `e2e_admin` directly (as on master — a dedicated `impersonatedAdmin` identity was tried
+and reverted in wave D, see below), and `e2e-routeflow` holds exactly one ACTIVE TENANT_ADMIN.
 **Seeding contract (2026-08-26, `setup/global.setup.ts`):** SKIP_E2E_SEED=true → skip;
 `E2E_SEED_DATABASE_URL`/`DATABASE_URL` set → seed and **throw on failure** (aborts the run — no
 more "Continuing despite seed error", which let the CI suite rot red for a week unnoticed); no URL
@@ -788,6 +843,51 @@ more "Continuing despite seed error", which let the CI suite rot red for a week 
 - CI → loud skip (the deployed app's standing `e2e-routeflow` tenant is assumed pre-seeded; wire
   the `E2E_SEED_DATABASE_URL` repo secret to re-seed every run); no URL + local → seed the local-dev
   fallback DB, failure aborts.
+
+**Dedicated identity (L-050, wave D, #598/#607):** `helpers/constants.ts` `CREDENTIALS` gains
+`sessionsOp` (`e2e_sessions_op`/`Sessions1!`) — seeded by `apps/api/scripts/e2e-seed.js` (both
+branches). Spec 32 (active-sessions) logs in fresh as `sessionsOp` instead of the shared
+operator, so its session-revoke never touches the `admin` account every `storageState:
+operator.json` project also loads. Spec 31 (impersonation-signout) mutates only its own fresh
+impersonation session and stayed on the shared `e2e_admin` (a dedicated `impersonatedAdmin`
+identity was tried and reverted in wave D — see the 31 table row). This is what un-quarantines
+both `playwright.config.ts` project entries below (see the 31/32 table rows).
+
+**JSON reporter path (wave D — reverted to master's hardcoding):** `playwright.config.ts`'s
+`json` reporter keeps master's literal `outputFile: "../../.campaign/runs/web-e2e.json"` —
+unchanged. A wave-D attempt to read `PLAYWRIGHT_JSON_OUTPUT_NAME` in the config itself was wrong
+on two counts: that env var is never consulted by the JSON reporter (it only feeds an
+`OUTPUT_DIR`/`OUTPUT_NAME` fallback pair used when a reporter has no `outputFile` at all), and
+`resolveOutputFile()` in `node_modules/playwright/lib/runner/index.js` already checks
+`PLAYWRIGHT_JSON_OUTPUT_FILE` via `resolveFromEnv` **before** falling back to the config's
+`outputFile` (line 1520 runs first; line 1521 only applies when that env var is unset) — so the
+config never needed to change. `scripts/local-env.mjs --e2e` sets `PLAYWRIGHT_JSON_OUTPUT_FILE`
+to an ABSOLUTE `<repo-root>/.campaign/runs/web-e2e-local.json` (computed from the script's own
+file location — `resolveFromEnv` resolves relative to `process.cwd()`, not the config's
+directory, so a `../../`-relative value would be cwd-dependent) so a local run never touches
+campaign evidence; `scripts/campaign-check.mjs` carries a pointer comment to this file for the
+same reason.
+
+### Local E2E lane (`apps/web/e2e/LOCAL-LANE.md`, wave D)
+
+A pre-PR Playwright pass against the local Docker stack (ADR 0001: `npm run local:up`, API
+`:3000`, web `:3001`) — item 6 of `docs/IMPROVEMENTS.md` at "half" (dedicated users done; gating
+the merge on hosted-staging E2E stays deferred, ADR 0002). Root scripts `npm run local:e2e`
+(allow-listed `setup` + 7 money/guard projects, ≤ 10 min: `critical-paths`,
+`create-order-escape`, `boxed-order-entry`, `order-edit-pricing`, `payment-truth`,
+`destructive-guards`, `cancelled-edit-banner`) and `npm run local:e2e:all` (every project, no
+`--project` filter — a report, not a gate) both run through `node scripts/local-env.mjs --e2e --
+"npm --prefix apps/web run test:e2e -- ..."`. The `--e2e` flag (added to `local-env.mjs`
+alongside `--db`/`--smoke`/`--db-specs`) sets `PLAYWRIGHT_BASE_URL=http://localhost:3001`,
+`SMOKE_BASE_URL=http://localhost:3000`, `PLAYWRIGHT_TENANT_SLUG=e2e-routeflow`,
+`E2E_SEED_DATABASE_URL=<compose Postgres URL>`, `PLAYWRIGHT_JSON_OUTPUT_FILE=<repo-root>/
+.campaign/runs/web-e2e-local.json` (absolute), and unsets `CI`. Excludes `super-admin`/
+`impersonation-signout` (need
+`PLAYWRIGHT_SA_*`, not assumed present on every machine). Two known traps documented in
+LOCAL-LANE.md: the shared-IP `/auth/login` throttle (`@Throttle` 10/5min, RF-160 —
+`apps/api/src/auth/auth.controller.ts:66`) can present as a bogus login failure under retries,
+and host CPU contention (other concurrent sessions/builds) can blow Playwright's navigation
+timeouts even while the containers themselves respond in milliseconds.
 
 | File                                   | Project                | Coverage                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | -------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -807,8 +907,8 @@ more "Continuing despite seed error", which let the CI suite rot red for a week 
 | `22-payment-truth.spec.ts`             | `payment-truth`        | F03 (shipped #564; REG-B11 discharged post-deploy in #568). REG-B11's T2 leg: a DRAFT (unconfirmed) InvoicePayment must stay VISIBLE on the invoice payment-history row with a 'Draft - unconfirmed' badge while being excluded from every money SUM. **Its `payment-truth` project entry was added separately (commit e46cab10) because the authoring package could not reach `playwright.config.ts`** — the spec existed for a while with no entry, i.e. it would never have run. Third occurrence of that trap; see the #08 note above.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 | `24-order-edit-pricing.spec.ts` | `order-edit-pricing` | F06 (2026-09-01). REG-B62's T2 leg: the operator order-edit page auto-enters edit mode on a DRAFT the instant the ORDER resolves, while `useCustomer`/`useCustomerPrices` are still in flight and `customerTier` falls back to `?? 1` — so a line added in that window bakes the LIST price, and the substitute path (which always SENDS `unitPrice`) persists it. Spec holds `/customers/:id` with `page.route` to make the race deterministic, asserts the add + substitute controls stay disabled behind `pricingReady` until it resolves, then that the added line prices at the seeded tier. Self-provisioning fixtures (its own tier-2 customer + DRAFT order, unique suffix) — never selects "the first row" (see the 02-operator poisoning note). Its `projects[]` entry ships in the SAME PR as the spec. |
-| `31-impersonation-signout.spec.ts` | `impersonation-signout` | F14 (2026-09-02). REG-B138's T2 leg: logs in as super-admin, impersonates the `e2e_admin` TENANT_ADMIN seeded on `e2e-routeflow`, opens the avatar menu (asserts NO "Sign out" item, only "Exit impersonation"), clicks it, and proves the tenant admin's server-side session count is UNCHANGED and no `/auth/logout` request was ever made — the impersonated admin's own sign-in survives the super-admin walking away. No `storageState` (manages both sessions itself). Own `playwright.config.ts` project entry — without one it never runs (see 08's precedent). Skips (not a discharge, L-041) until `PLAYWRIGHT_SA_*` are set and `e2e-seed.js` has seeded `e2e_admin` on the target. ⚠️ **QUARANTINED 2026-09-02 (#599) — the `playwright.config.ts` project entry is COMMENTED OUT, so this spec does NOT run.** Post-deploy run 33612887226 went red. Cause (corrected 2026-09-02, #602): `auth-password` is PHASE 2 (`dependencies: ["setup"]`) while the two F14 projects are phase 1; spec 32 revokes `rows[0]` of `/auth/sessions`, which lists by `createdAt DESC`, so whenever `setup` logs in after spec 32's own login, `rows[0]` IS `operator.json`'s session and every phase-2 project 401s on its first refresh — a phase-1 WRITE against a phase-2 READ on one shared user. Scoping spec 32's cleanup was necessary but not sufficient (its tests revoke during the phase too). **Re-enabling needs a DEDICATED e2e user, not an ordering tweak** — phase 2 holds the ~20 `storageState: operator.json` projects. Spec, helper credentials and the `e2e-seed.js` TENANT_ADMIN all remain on master. B138/B155 stay `proven-pending-deploy` (L-041: a skip is not a discharge). |
-| `32-active-sessions.spec.ts` | `active-sessions` | F14 (2026-09-02). REG-B155's T2 leg: logs in fresh, captures its Active Sessions row's `data-session-id`, forces a refresh-token rotation, reloads the sessions list, and asserts the SAME `data-session-id` is still present with its ORIGINAL sign-in time (proves the api-side in-place rotation, not a new row); revokes it and confirms the rotated token then 401s (the revoke bites the live session, not a stale row); a second test forces a revoke to fail and asserts the list re-syncs instead of leaving a phantom row; a third adds a second login so "Sign out all" renders, forces EVERY revoke to 403 and asserts the honest branch — toast "Some sessions could not be revoked", rows still listed, one re-fetch — instead of the old swallow that emptied the list and claimed success. No `storageState` on purpose; its cleanup is scoped to the sessions it created, so it never revokes the shared `operator.json` row (Fable final-pass finding, #598). ⚠️ **QUARANTINED 2026-09-02 (#599) — the `playwright.config.ts` project entry is COMMENTED OUT, so this spec does NOT run.** Post-deploy run 33612887226 went red. Cause (corrected 2026-09-02, #602): `auth-password` is PHASE 2 (`dependencies: ["setup"]`) while the two F14 projects are phase 1; spec 32 revokes `rows[0]` of `/auth/sessions`, which lists by `createdAt DESC`, so whenever `setup` logs in after spec 32's own login, `rows[0]` IS `operator.json`'s session and every phase-2 project 401s on its first refresh — a phase-1 WRITE against a phase-2 READ on one shared user. Scoping spec 32's cleanup was necessary but not sufficient (its tests revoke during the phase too). **Re-enabling needs a DEDICATED e2e user, not an ordering tweak** — phase 2 holds the ~20 `storageState: operator.json` projects. Spec, helper credentials and the `e2e-seed.js` TENANT_ADMIN all remain on master. B138/B155 stay `proven-pending-deploy` (L-041: a skip is not a discharge). |
+| `31-impersonation-signout.spec.ts` | `impersonation-signout` | F14 (2026-09-02). REG-B138's T2 leg: logs in as super-admin, impersonates the shared `e2e_admin` TENANT_ADMIN seeded on `e2e-routeflow`, opens the avatar menu (asserts NO "Sign out" item, only "Exit impersonation"), clicks it, and proves the tenant admin's server-side session count is UNCHANGED and no `/auth/logout` request was ever made — the impersonated admin's own sign-in survives the super-admin walking away. No `storageState` (manages both sessions itself, mutating only its own fresh session). Own `playwright.config.ts` project entry — without one it never runs (see 08's precedent). Skips (not a discharge, L-041) until `PLAYWRIGHT_SA_*` are set and `e2e-seed.js` has seeded `e2e_admin` on the target. **Un-quarantined 2026-09-03 (L-050, #598/#607):** was quarantined 2026-09-02 (#599, post-deploy run 33612887226 red) because this phase-1 project and spec 32 both wrote to the shared `e2e_admin`/`admin` accounts every phase-2 `storageState: operator.json` project also reads (root cause: spec 32 revokes `/auth/sessions` `rows[0]`, listed `createdAt DESC`, which becomes `operator.json`'s own session once `setup` logs in after spec 32 — a phase-1 WRITE against a phase-2 READ on one shared user). Investigation found the collision was specific to spec 32's revoke, not spec 31's read-mostly impersonation flow (spec 31 only ever mutates the fresh impersonation session it creates and exits within the test) — so spec 32 alone needed a dedicated identity (`e2e_sessions_op`); a wave-D attempt to also give spec 31 a dedicated `e2e_impersonated_admin` identity was reverted (kept `e2e-routeflow` at exactly one ACTIVE TENANT_ADMIN, avoiding the two-admin `findFirst` ambiguity that identity would have introduced). `playwright.config.ts`'s project entry is re-enabled. B138/B155 stay `proven-pending-deploy` (L-041: a skip is not a discharge) until a real run confirms it. |
+| `32-active-sessions.spec.ts` | `active-sessions` | F14 (2026-09-02). REG-B155's T2 leg: logs in fresh as `sessionsOp` (`e2e_sessions_op`), captures its Active Sessions row's `data-session-id`, forces a refresh-token rotation, reloads the sessions list, and asserts the SAME `data-session-id` is still present with its ORIGINAL sign-in time (proves the api-side in-place rotation, not a new row); revokes it and confirms the rotated token then 401s (the revoke bites the live session, not a stale row); a second test forces a revoke to fail and asserts the list re-syncs instead of leaving a phantom row; a third adds a second login so "Sign out all" renders, forces EVERY revoke to 403 and asserts the honest branch — toast "Some sessions could not be revoked", rows still listed, one re-fetch — instead of the old swallow that emptied the list and claimed success. No `storageState` on purpose; its cleanup is scoped to the sessions it created, so it never revokes the shared `operator.json` row (Fable final-pass finding, #598). **Un-quarantined 2026-09-03 (L-050, #598/#607):** was quarantined 2026-09-02 (#599) for the same shared-user collision described in the 31 row above — this spec logs in fresh as the dedicated `e2e_sessions_op` operator (seeded by `e2e-seed.js`) instead of the shared `admin`, so its `/auth/sessions` revokes can no longer land on `operator.json`'s row; `playwright.config.ts`'s project entry is re-enabled. B138/B155 stay `proven-pending-deploy` (L-041: a skip is not a discharge). |
 
 `06-critical-paths.spec.ts` is the key regression guard for the money-math fix: verifies all
 displayed amounts are `$X.XX`, API money fields have ≤2 dp, and invoice `total = subtotal + tax`.

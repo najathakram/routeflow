@@ -146,6 +146,19 @@ The `local:*` scripts set their environment through
 The authoritative copy of this runbook lives in [`CLAUDE.md`](../../CLAUDE.md) so the
 coding agent picks it up automatically.
 
+## Local E2E lane (2026-09-03 addendum)
+
+[`docs/IMPROVEMENTS.md`](../IMPROVEMENTS.md) item 6 calls for moving the Playwright E2E suite
+before prod, with dedicated users for the specs that mutate shared auth state. Hosted staging
+(Option 2 below) is still deferred, so item 6 ships at **half**: a pre-PR local lane
+(`npm run local:e2e`, allow-listed money/guard projects, ≤ 10 min — see
+[`apps/web/e2e/LOCAL-LANE.md`](../../apps/web/e2e/LOCAL-LANE.md)) plus dedicated seeded users
+for the two specs (31, 32) that revoke `/auth/sessions` rows server-side. E2E still reports
+**authoritatively** only post-deploy against prod (`ci.yml`'s `deployment_status` trigger) — this
+lane catches a UI/wiring regression before that run, it does not replace it. The full suite
+(`npm run local:e2e:all`) runs against the local stack too, but as a report: a failure outside
+the allow-list is recorded in the PR, not treated as a gate failure here.
+
 ## Options considered
 
 1. **Compose `app` profile reusing the prod Dockerfiles (chosen).** One compose file,

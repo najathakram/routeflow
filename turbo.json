@@ -62,10 +62,19 @@
       // replayed a cached green for the very test that proves the mirrors agree.
       // $TURBO_ROOT$ pulls those two files into this task's key (and only this one).
       // Add an entry here whenever a spec in apps/api reaches outside apps/api.
+      // docs-truth.spec.ts and no-dead-deps.spec.ts (both apps/api/src/common) also read
+      // README.md, CLAUDE.md, and apps/web's app/components/hooks/lib trees directly — so
+      // those are hashed here too, per this file's own rule above.
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/apps/web/lib/pricing.ts",
-        "$TURBO_ROOT$/apps/mobile/lib/pricing.ts"
+        "$TURBO_ROOT$/apps/mobile/lib/pricing.ts",
+        "$TURBO_ROOT$/README.md",
+        "$TURBO_ROOT$/CLAUDE.md",
+        "$TURBO_ROOT$/apps/web/app/**",
+        "$TURBO_ROOT$/apps/web/components/**",
+        "$TURBO_ROOT$/apps/web/hooks/**",
+        "$TURBO_ROOT$/apps/web/lib/**"
       ],
       "outputs": ["coverage/**"]
     },

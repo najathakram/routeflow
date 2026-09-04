@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { loginAsOperator, setTenantCookie } from "./helpers/auth";
+import { fillWorkspaceIfShown, setTenantCookie } from "./helpers/auth";
 import { apiBase, operatorAccessToken } from "./helpers/api";
 import { CREDENTIALS, TENANT_SLUG } from "./helpers/constants";
 
@@ -11,6 +11,22 @@ async function refreshTokenFromPage(page: import("@playwright/test").Page) {
   );
 }
 
+/**
+ * Log in as the dedicated e2e_sessions_op OPERATOR (L-050) — never the shared
+ * admin/operator.json identity every storageState: operator.json project also loads.
+ * A local copy of helpers/auth.ts's loginAsOperator with a different username/password
+ * rather than parameterizing the shared helper, to keep this spec's dedicated-identity
+ * requirement self-contained.
+ */
+async function loginAsSessionsOp(page: import("@playwright/test").Page) {
+  await page.goto("/login");
+  await fillWorkspaceIfShown(page);
+  await page.getByLabel("Username or email").fill(CREDENTIALS.sessionsOp.username);
+  await page.getByPlaceholder("Enter your password").fill(CREDENTIALS.sessionsOp.password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.waitForURL("**/dashboard", { timeout: 30_000 });
+}
+
 test.describe("Active Sessions identity (F14 / B155)", () => {
   test.beforeEach(async ({ context, baseURL }) => {
     await setTenantCookie(context, baseURL ?? "", TENANT_SLUG);
@@ -20,7 +36,7 @@ test.describe("Active Sessions identity (F14 / B155)", () => {
     page,
     baseURL,
   }) => {
-    await loginAsOperator(page);
+    await loginAsSessionsOp(page);
     const api = `${apiBase(baseURL ?? page.url())}/api/v1`;
     const headers = (token: string) => ({
       Authorization: `Bearer ${token}`,
@@ -78,7 +94,7 @@ test.describe("Active Sessions identity (F14 / B155)", () => {
     page,
     baseURL,
   }) => {
-    await loginAsOperator(page);
+    await loginAsSessionsOp(page);
     let routeHits = 0;
     let listCalls = 0;
     await page.route("**/auth/sessions/*", (route) => {
@@ -115,17 +131,16 @@ test.describe("Active Sessions identity (F14 / B155)", () => {
     page,
     baseURL,
   }) => {
-    await loginAsOperator(page);
+    await loginAsSessionsOp(page);
     const api = `${apiBase(baseURL ?? page.url())}/api/v1`;
     const tenantHeaders = { "X-Tenant-Slug": TENANT_SLUG };
 
-    // Snapshot every session that already existed before this test added its own. The `admin`
-    // operator is SHARED, and one of these rows is the `setup` project's operator.json session.
-    // This project declares no `dependencies`, so Playwright puts it in phase 1 — BEFORE the ~20
-    // `storageState: operator.json` projects. Revoking that row makes their first token refresh
-    // 401 ("Refresh token revoked or expired") and bounces them to /login. The cleanup at the end
-    // therefore deletes ONLY what this test created. Matches playwright.config.ts's own note that
-    // this project "must never consume the shared operator.json refresh token".
+    // Snapshot every session that already exists for e2e_sessions_op before this test adds its
+    // own — including any orphaned row the intercepted-DELETE test above left behind on the
+    // server (its mocked 403 never reaches the real API, so that login's session outlives the
+    // test). e2e_sessions_op is dedicated to this spec (L-050) — never shared with "setup" or
+    // any storageState: operator.json project — so nothing outside this file's own runs is at
+    // risk; the cleanup at the end still deletes ONLY what this test created.
     const preexisting = new Set(
       (
         (await (
@@ -142,7 +157,10 @@ test.describe("Active Sessions identity (F14 / B155)", () => {
     // A second live session — the card only renders "Sign out all" when sessions.length > 1.
     const extraLogin = await page.request.post(`${api}/auth/login`, {
       headers: tenantHeaders,
-      data: { username: CREDENTIALS.operator.username, password: CREDENTIALS.operator.password },
+      data: {
+        username: CREDENTIALS.sessionsOp.username,
+        password: CREDENTIALS.sessionsOp.password,
+      },
     });
     expect(extraLogin.status()).toBe(200);
 
@@ -190,7 +208,7 @@ test.describe("Active Sessions identity (F14 / B155)", () => {
       await page.request.get(`${api}/auth/sessions`, { headers })
     ).json()) as SessionRow[];
     for (const s of live) {
-      // Never the shared setup session — see `preexisting` above.
+      // Never a row that predates this test — see `preexisting` above.
       if (preexisting.has(s.id)) continue;
       await page.request.delete(`${api}/auth/sessions/${s.id}`, { headers });
     }
