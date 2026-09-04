@@ -45,10 +45,7 @@ function run(env: NodeJS.ProcessEnv) {
     cwd: API_DIR,
     encoding: "utf8",
     env,
-    // The drift case lets real prisma exhaust its connect retries against a closed port
-    // (~42s measured locally), so this must stay well clear of that. spawnSync blocks the
-    // event loop, so jest's own 5s test timer cannot fire against these cases.
-    timeout: 180_000,
+    timeout: 30_000,
   });
 }
 
@@ -86,6 +83,7 @@ describe("prod-migrate.mjs contract (R4)", () => {
 
   describe("with all proxy vars present and prisma stubbed out", () => {
     let dir: string;
+    let fakePrisma: string;
 
     beforeAll(() => {
       dir = fs.mkdtempSync(path.join(os.tmpdir(), "prod-migrate-"));
@@ -93,6 +91,23 @@ describe("prod-migrate.mjs contract (R4)", () => {
       // POSIX `npx` and Windows `npx.cmd`. Neither touches a database.
       fs.writeFileSync(path.join(dir, "npx"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
       fs.writeFileSync(path.join(dir, "npx.cmd"), "@exit /b 0\r\n");
+      // The post-deploy drift step spawns scripts/schema-drift.mjs, which honours the same
+      // SCHEMA_DRIFT_PRISMA_CLI + JEST_WORKER_ID test hook covered exhaustively in
+      // schema-drift-script.spec.ts (T3(d)/T3(h)). Stubbing it here proves prod-migrate.mjs's
+      // OWN exit-code mapping (drift's nonzero status is propagated as prod-migrate's own
+      // status) without letting real prisma exhaust its connect retries against a dead port
+      // (~40s measured locally).
+      fakePrisma = path.join(dir, "fake-prisma.mjs");
+      fs.writeFileSync(
+        fakePrisma,
+        [
+          "const argv = process.argv.slice(2);",
+          "const isStatus = argv.includes('status');",
+          "const raw = isStatus ? process.env.FAKE_PRISMA_STATUS_EXIT : process.env.FAKE_PRISMA_DIFF_EXIT;",
+          "process.exit(Number(raw || 0));",
+          "",
+        ].join("\n"),
+      );
     });
 
     afterAll(() => {
@@ -106,6 +121,10 @@ describe("prod-migrate.mjs contract (R4)", () => {
         POSTGRES_DB: "d",
         RAILWAY_TCP_PROXY_DOMAIN: "127.0.0.1",
         RAILWAY_TCP_PROXY_PORT: "1",
+        // JEST_WORKER_ID is already inherited via scrubbedEnv (this test runs under jest).
+        SCHEMA_DRIFT_PRISMA_CLI: fakePrisma,
+        FAKE_PRISMA_STATUS_EXIT: "0",
+        FAKE_PRISMA_DIFF_EXIT: "2",
       });
       prependToPath(env, dir);
 
@@ -119,11 +138,35 @@ describe("prod-migrate.mjs contract (R4)", () => {
       expect(combined).not.toContain("p w");
       expect(combined).not.toContain("p%20w");
 
-      // The drift step runs after deploy, and its non-zero status is propagated.
+      // The drift step runs after deploy, using the stub (proving the override actually
+      // reached the drift child), and its non-zero status is propagated as prod-migrate's own.
       expect(res.stdout).toContain("post-deploy schema drift check");
+      expect(res.stderr).toContain("SCHEMA_DRIFT_PRISMA_CLI override in effect");
+      expect(res.stderr).toContain("DRIFT DETECTED");
       expect(res.stderr).toContain("post-deploy drift check FAILED");
       expect(res.stdout).not.toContain("✅ Migration applied.");
-      expect(res.status).not.toBe(0);
+      expect(res.status).toBe(2);
+    });
+
+    it("uses the real prisma CLI for the drift check when SCHEMA_DRIFT_PRISMA_CLI is unset", () => {
+      // The real path is proven the same way schema-drift-script.spec.ts's T3(h) does: spawn
+      // the exact script prod-migrate.mjs's drift step invokes, with --dry-run so it never
+      // touches a database or connects anywhere, and assert the printed argv names the real
+      // resolved prisma CLI module rather than any stand-in.
+      const driftScript = path.resolve(API_DIR, "scripts/schema-drift.mjs");
+      const realPrisma = require.resolve("prisma/build/index.js", { paths: [API_DIR] });
+      const env = scrubbedEnv({ DATABASE_URL: "postgresql://u:p@127.0.0.1:5432/db" });
+      delete env.SCHEMA_DRIFT_PRISMA_CLI;
+
+      const res = spawnSync(process.execPath, [driftScript, "--dry-run"], {
+        cwd: API_DIR,
+        encoding: "utf8",
+        env,
+      });
+
+      expect(res.stdout).toContain(realPrisma);
+      expect(res.stdout).not.toContain(fakePrisma);
+      expect(res.status).toBe(0);
     });
   });
 });

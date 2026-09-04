@@ -31,6 +31,8 @@
     "local:test:db": "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api\"",
     "local:validate": "node scripts/local-env.mjs --smoke --db -- \"npm run smoke && npm run post-deploy-check && npm run local:drift\"",
     "local:validate:features": "node scripts/local-env.mjs --smoke -- \"npm run feature-smoke\"",
+    "local:e2e": "node scripts/local-env.mjs --e2e -- \"npm --prefix apps/web run test:e2e -- --project=setup --project=critical-paths --project=create-order-escape --project=boxed-order-entry --project=order-edit-pricing --project=payment-truth --project=destructive-guards --project=cancelled-edit-banner --workers=1\"",
+    "local:e2e:all": "node scripts/local-env.mjs --e2e -- \"npm --prefix apps/web run test:e2e -- --workers=1\"",
     "local:logs": "docker compose --profile app logs -f api web",
     "local:down": "docker compose --profile app down",
     "local:reset": "docker compose --profile app down -v",

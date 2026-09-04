@@ -283,7 +283,7 @@ sequenceDiagram
 
 Key facts (verified in the workflow files):
 
-- **The container never migrates.** Prod schema changes are applied manually via `railway run … prisma migrate deploy` **before** the merge; the `deploy-production.yml`/`deploy-staging.yml` GHCR pipelines are **deliberately dormant** (they'd auto-migrate and race Railway's own deploy — [`deploy-production.yml:1`](../.github/workflows/deploy-production.yml), [`deploy-staging.yml:9`](../.github/workflows/deploy-staging.yml)).
+- **The container never migrates.** Prod schema changes are applied manually via `railway run … prisma migrate deploy` **before** the merge; the `deploy-production.yml` GHCR pipeline is **deliberately dormant** (it would auto-migrate and race Railway's own deploy — [`deploy-production.yml:1`](../.github/workflows/deploy-production.yml)). Its `deploy-staging.yml` sibling — deleted in wave D, see [ADR 0002](adr/0002-staging-environment.md) — carried the same dormant auto-migrate design.
 - **A `develop` branch does not exist**; `main` was renamed to `master`.
 - **Migration replay CI:** a separate workflow replays the full migration history against a fresh Postgres, but only on PRs touching `apps/api/prisma/**` ([`db-migrations.yml`](../.github/workflows/db-migrations.yml)).
 - **Backups:** 2-hourly `pg_dump` → R2 (30-day prune) + monthly restore-verify; runbook at `apps/db-backup/RESTORE.md` (restore with `psql`, not a raw pg client).

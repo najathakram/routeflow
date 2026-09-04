@@ -104,6 +104,26 @@ function serverMessage(err: unknown): string | undefined {
 }
 
 /**
+ * True when `err` is an order-merge advisory-lock contention response — the
+ * API raises these ONLY before any write (see
+ * apps/api/src/common/db-locks.ts / src/orders/merge-contention.ts), so a
+ * retry is always safe: a 409 `{ code: "MERGE_IN_PROGRESS" }` (another merge
+ * for this customer is running) or a 503 `{ code: "LOCK_UNAVAILABLE" }`
+ * (couldn't acquire the lock connection). Both take the SAME path as a
+ * 5xx/network failure instead of the non-retriable 4xx path a bare
+ * `status >= 400 && status < 500` check would put the 409 on — the item
+ * stays queued and is retried on the next drain.
+ */
+function isRetriableLockContention(err: unknown, status: number | undefined): boolean {
+  const data = (err as { response?: { data?: unknown } })?.response?.data as
+    { code?: unknown } | undefined;
+  const code = typeof data?.code === "string" ? data.code : undefined;
+  if (status === 409 && code === "MERGE_IN_PROGRESS") return true;
+  if (status === 503 && code === "LOCK_UNAVAILABLE") return true;
+  return false;
+}
+
+/**
  * Pure drain step over the current queue. Classifies every action into
  * exactly one of delivered / retriedIds / failedActions — nothing is ever
  * silently discarded (REG-B143 / REG-B111).
@@ -111,8 +131,9 @@ function serverMessage(err: unknown): string | undefined {
  * An entry that has already exhausted MAX_RETRIES is never re-attempted —
  * it goes straight to failedActions. Everything else is attempted via
  * `deps.request`: success delivers, a non-retriable 4xx response fails
- * (never a bare dequeue), and anything else (5xx, network/timeout errors)
- * is left queued with its retry count bumped by the caller.
+ * (never a bare dequeue), and anything else (5xx, network/timeout errors,
+ * or a merge-lock-contention 409/503 — see `isRetriableLockContention`) is
+ * left queued with its retry count bumped by the caller.
  */
 export async function drainQueue(actions: QueuedAction[], deps: DrainDeps): Promise<DrainResult> {
   const delivered: string[] = [];
@@ -136,7 +157,11 @@ export async function drainQueue(actions: QueuedAction[], deps: DrainDeps): Prom
       delivered.push(action.id);
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status;
-      const isNonRetriableClientError = status !== undefined && status >= 400 && status < 500;
+      const isNonRetriableClientError =
+        status !== undefined &&
+        status >= 400 &&
+        status < 500 &&
+        !isRetriableLockContention(err, status);
       if (isNonRetriableClientError) {
         const message = serverMessage(err) ?? (err instanceof Error ? err.message : String(err));
         const record: FailedActionRecord = {

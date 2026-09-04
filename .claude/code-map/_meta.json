@@ -1,7 +1,7 @@
 {
-  "mappedSha": "91c5333b",
-  "generatedAt": "2026-09-03T12:05:00.000Z",
+  "mappedSha": "ab922112",
+  "generatedAt": "2026-09-04T15:05:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
-  "fileCount": 931,
-  "notes": "**2026-09-03** — (branch `fix/imp-03a-ddl-to-migrations-drift-gate`, off master `91c5333b`; no schema change, no migration) — **BOOT-TIME DDL RETIRED + DRIFT GATE (PR-1, imp-03a).** Deleted `runStartupMigration()` (main.ts) and the PlatformConfig/AiUsageEvent CREATE TABLE block (platform-config.service.ts); added `scripts/schema-drift.mjs` + `scripts/lib/railway-db-url.mjs` (shared Railway URL helper, used by prod-migrate.mjs with a post-deploy drift step); new `*.db.spec.ts` lane (`jest.db.config.js`, `src/common/testing/db-spec.ts`, `test:db`); `no-runtime-ddl.spec.ts` tripwire; db-migrations.yml drift + db-lane steps; F12-002 CLOSED. Review fix: `prod-migrate.mjs` keeps its own fail-closed RAILWAY_PROXY_VARS pre-check (the helper's DATABASE_URL fallback is read-only-scripts-only) and prints `redactUrl(url)` as the target; new spawn-level `src/common/prod-migrate-script.spec.ts` proves both plus the drift-step exit propagation. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "fileCount": 935,
+  "notes": "**2026-09-04** — (branch `fix/imp-02-order-merge-advisory-lock`, PR #609) VISIBILITY WATCHDOG: new `scripts/visibility-watchdog.mjs` arms the private flip on a detached, fixed 45-min deadline BEFORE any public-repo CI window — the fix for the killed-session incident where the repo stayed public ~6.5h because the flip lived only in the (killed) session's control flow. `docs/runbooks/deploy-visibility-flip.md`, `CLAUDE.md`, and the `rebuild` skill all now require launching it first. Spec: `apps/api/src/common/visibility-watchdog-script.spec.ts`. `api.md` gains an entry; lesson L-057 (deploy). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

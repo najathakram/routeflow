@@ -11,7 +11,8 @@ Multi-tenant delivery / route-management SaaS. **npm workspaces + Turbo** monore
 - **API** — [`apps/api`](api.md): NestJS 11, Prisma 7 + PostgreSQL, Redis (Socket.io), JWT auth.
   Everything tenant-scoped. Jest specs.
 - **Web** — [`apps/web`](web.md): Next.js 14 App Router. The **golden reference** for flows/DTOs.
-  Radix + Tailwind, TanStack Query, Zustand, RHF + zod. Playwright e2e.
+  Radix + Tailwind, TanStack Query, RHF + zod. Playwright e2e **+ Jest/RTL unit tests (wave D,
+  2026-09-03 — 19 spec files; was E2E-only before)**.
 - **Mobile** — [`apps/mobile`](mobile.md): Expo 55 / RN 0.83, expo-router, multi-role. Mirrors
   web's API/DTOs/flows; only UI differs. Jest (pure-logic).
 - **Packages** — [`packages`](packages.md): `types`, `ui`, `config`, `eslint-config`,
@@ -27,17 +28,17 @@ Multi-tenant delivery / route-management SaaS. **npm workspaces + Turbo** monore
 
 ## Build / test / run (from repo root)
 
-| Action      | Command                                        |
-| ----------- | ---------------------------------------------- |
-| dev (all)   | `npm run dev`                                  |
-| build       | `npm run build`                                |
-| typecheck   | `npm run check-types`                          |
-| lint        | `npm run lint` (per-workspace; no root config) |
-| test        | `npm run test` (Jest: api, mobile)             |
-| e2e         | `npm run test:e2e` (Playwright: web)           |
-| format      | `npm run format`                               |
-| db up/down  | `npm run db:up` / `npm run db:down`            |
-| api rebuild | `cd apps/api && npx nest build`                |
+| Action      | Command                                                  |
+| ----------- | -------------------------------------------------------- |
+| dev (all)   | `npm run dev`                                            |
+| build       | `npm run build`                                          |
+| typecheck   | `npm run check-types`                                    |
+| lint        | `npm run lint` (per-workspace; no root config)           |
+| test        | `npm run test` (Jest: api, mobile, **web** since wave D) |
+| e2e         | `npm run test:e2e` (Playwright: web)                     |
+| format      | `npm run format`                                         |
+| db up/down  | `npm run db:up` / `npm run db:down`                      |
+| api rebuild | `cd apps/api && npx nest build`                          |
 
 ## Where to find (global — cross-area greatest hits)
 

@@ -26,7 +26,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | File uploads/storage                     | `uploads/uploads.controller.ts` → multipart, disk write, HMAC-signed URLs. **Compression (`storage/compress.util.ts`):** `compressDocument(buf,mime)` (PDF passthrough, else sharp→JPEG q80 ≤1600px, byte-sniffs so a real image with generic/empty content-type still compresses) + `compressImage(buf,mime,maxWidth=1600)` (alpha-aware: WebP q82 keeps transparency, else JPEG q80). Applied at ALL server image uploads (2026-07-23): product images (`products.service uploadImage`, key ext = compressed ext, focal suffix kept), tenant logos (`tenants.service uploadLogo`, 512px, alpha-safe), customer tax docs + generic docs (`customers.service` via compressDocument), expense receipts (`bookkeeping.service uploadExpenseReceipt` refactored to compressDocument). Vendor-bill/batch scans not stored. Spec `storage/compress.util.spec.ts` (real sharp fixtures). **Payment image (2026-07-23):** `InvoicePayment.imageKey/imageOriginalName/imageMimeType` (migration `20260731000000_add_payment_image`). `invoices.service` `uploadPaymentImage/getPaymentImageUrl/deletePaymentImage` (compressDocument; group-anchor key `payments/<paymentGroupId ?? id>/image.<ext>` so grouped standalone rows share one object via updateMany; deletePayment cleans up only when no sibling references the key). `recordPayment` now returns `createdPaymentId`; `recordDeliveryPaymentInTx` returns `paymentIds[]` threaded through `routes.service.completeWithPayment` so the driver at-door flow can attach. Endpoints POST/GET/DELETE `/invoices/payments/:paymentId/image` (POST is `@Roles(OPERATOR, DRIVER)` for the driver photo; GET/DELETE OPERATOR-only). Web: `lib/api/invoices.ts` useUploadPaymentImage/useGetPaymentImageUrl/useDeletePaymentImage + record-payment modal/history/detail. Spec cases in `invoices.service.spec.ts`. |
 | Platform admin (tenants, billing, audit) | `platform-admin/platform-admin.controller.ts` → stats, tenant CRUD, impersonation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | Buyer portal (multi-tenant identity)     | `buyer/buyer.controller.ts`, `buyer-auth.controller.ts` → register, link sellers, invites                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| Orders & tracking                        | `orders/orders.controller.ts` → CRUD, status transitions, sweep-pending consolidation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Orders & tracking                        | `orders/orders.controller.ts` → CRUD, status transitions, sweep-pending consolidation; post-merge sweep / post-create auto-consolidation swallow contention (warn), waitMs 10 s                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | Routes & runs (driver)                   | `routes/routes.controller.ts` → stops, run completion, POD photos                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | Invoices                                 | `invoices/invoices.controller.ts` → from-order, payments, PDF, send-email, write-off                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | Returns & refunds                        | `returns/returns.controller.ts` → approve/reject/in-transit/receive/refund                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -63,6 +63,40 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   `Target host: ${redactUrl(url)}` so the announced target is the URL actually migrated. Contract
   specs: `src/common/schema-drift-script.spec.ts`, `src/common/prod-migrate-script.spec.ts`
   (spawn-level, stub `npx` on PATH, no database).
+- **`scripts/ci-audit-critical.mjs` (2026-09-04)** — CI advisory gate: wraps `npm audit
+--omit=dev --audit-level=<level> --json` in `spawnSync` (`shell:false`, up to 3 attempts,
+  15s/45s backoff, 120s per-attempt timeout, 64 MiB `maxBuffer`) so an `npm` registry
+  outage (the `/-/npm/v1/security/audits/quick` endpoint's ongoing 500s, "being retired")
+  cannot wedge CI the way it twice blew the job's 20-min `timeout-minutes`. Decision table:
+  parsed JSON with `metadata.vulnerabilities.critical>0` → prints each advisory + `::error::`
+  - exit 1; parsed JSON with critical=0 → exit 0; a registry/transport error (500, `ECONNRESET`,
+    `ETIMEDOUT`, `ENOTFOUND`, "being retired", "audit endpoint returned an error", or the spawn
+    itself timing out) → retries, then `::warning::…SKIPPED…` + exit 0 (Dependabot is the standing
+    net); any other non-zero exit fails closed (exit 1). `--level <lvl> --report-only` (the second
+    ci.yml step) always exits 0. Test-only env: `CI_AUDIT_CMD` (JSON argv array, swaps in a fake
+    driver — no network) and `CI_AUDIT_BACKOFF_MS` (collapses the backoff for fast specs). On
+    win32 without a `CI_AUDIT_CMD` override, resolves and invokes `npm-cli.js` next to
+    `process.execPath` via `node` instead of `npm.cmd` directly — `spawnSync` cannot launch a
+    `.cmd` shim with `shell:false` since Node's CVE-2024-27980 hardening (EINVAL); the real CI
+    codepath (ubuntu-latest, plain `npm`) is untouched. Called from `.github/workflows/ci.yml`'s
+    `Fail on critical production advisories` / `Report high-severity advisories` steps. Contract
+    spec: `src/common/ci-audit-script.spec.ts` (spawn-level, fake npm-audit driver written to an
+    mkdtemp'd dir, `FAKE_MODE` critical/clean/outage/unknown, counter file proves retry count).
+- **`scripts/visibility-watchdog.mjs` (2026-09-04, killed-session incident)** — a detached
+  safety net for the public-repo CI window in the canonical deploy flow (`CLAUDE.md`,
+  `docs/runbooks/deploy-visibility-flip.md`): launched BEFORE `gh repo edit … public`, it
+  `setTimeout`-sleeps `--minutes` (default 45, never a busy-wait, so signals still work),
+  then flips `--repo` (default `najathakram/routeflow`) private via `spawnSync("gh", …,
+{shell:false})` and read-back-verifies `gh repo view --json visibility` in a loop (≤5
+  tries, 10s apart) until `PRIVATE`. Appends one `<ISO> start|flip|verified|error <detail>`
+  line per event to `local-assets/visibility-watchdog.log` (gitignored) and mirrors it to
+  stdout; exits 0 once verified, 1 on an edit failure or an unconfirmed flip. A flip landing
+  mid-CI/mid-deploy is by design — a private-repo Action just fails on billing and gets
+  rerun. Test-only env: `VISIBILITY_WATCHDOG_GH_CMD` (JSON argv, swaps in a fake `gh` — no
+  network), `VISIBILITY_WATCHDOG_LOG_FILE` (scratch log path), `VISIBILITY_WATCHDOG_VERIFY_INTERVAL_MS`
+  (collapses the 10s poll for fast specs). Contract spec:
+  `src/common/visibility-watchdog-script.spec.ts` (spawn-level, fake `gh` driver, 5 cases:
+  success, never-verifies, edit-fails, stdout mirrors log, arg defaults).
 - **`src/common/testing/db-spec.ts` + `db-lane.db.spec.ts`, `jest.db.config.js` (PR-1, `imp-03a`,
   2026-09-03)** — the new `*.db.spec.ts` lane for specs that need a real Postgres. `db-spec.ts`:
   `requireLocalDatabaseUrl(env)` throws unless `DATABASE_URL`'s host is local
@@ -73,6 +107,56 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   `package.json` `"jest"` config with `testRegex: ".*\\.db\\.spec\\.ts$"`; API script `test:db`
   runs it; root script `local:test:db` sets `RUN_DB_SPECS=local` and runs it against the compose
   DB. The default `*.spec.ts` regex now excludes `.db.spec.ts` so `npm test` never touches Postgres.
+- **`src/common/db-locks.ts` (PR-2, `imp-02-order-merge-advisory-lock`, 2026-09-03)** — exports
+  `withAdvisoryLock<T>({family,key,mode:"wait"|"try",waitMs?}, fn): Promise<LockResult<T>>` where
+  `LockResult<T> = {acquired:true,value:T}|{acquired:false}`, plus `LockTimeoutError`/
+  `LockUnavailableError` and a test-only `_resetLockPoolForTests()`. Cross-process critical
+  section on a Postgres advisory lock (`pg_advisory_lock(hashtext(family), hashtext(key))`), held
+  on a small DEDICATED `pg.Pool` (max 8) it owns itself — Prisma's pool is private and offers no
+  connection-pinning API, so this module never touches it and cannot deadlock against it. `wait`
+  blocks up to `waitMs` (default 20s; SQLSTATE 55P03 on `lock_timeout` → `LockTimeoutError`); `try`
+  returns `{acquired:false}` without calling `fn` or issuing UNLOCK when the lock is already held.
+  `client.release(err)` on any failure destroys the connection (server drops the session lock with
+  it) — the clean path releases plain. **Call sites:** orders.controller.ts:~147 (staff `create()`
+  merge branch), orders.service.ts:~824 (`mergeAllPendingForCustomer`), orders.service.ts:~1169
+  (`forceConsolidateCustomer`), buyer.controller.ts:~547 (buyer `createOrder`). The in-process Map
+  is deleted. family `order-merge`, key `ctx.customerId`/`dto.customerId`, `mode:"wait"` for all
+  four — **but `waitMs` is NOT a flat 20_000**: staff `create()` and buyer `createOrder` pass
+  `waitMs:10_000` (the mobile client aborts at 15s, so a 20s wait can only ever surface as a
+  client-side timeout, never the 409 that tells the caller to retry); `mergeAllPendingForCustomer`/
+  `forceConsolidateCustomer` pass `waitMs:20_000` (no client attached, so the default stands).
+  Request-path post-commit callers (the sibling sweep / post-create auto-consolidation) pass
+  `{ lockMode: "try" }` instead — a contended lock is skipped with a warning, never blocks the
+  request. `LockTimeoutError` → 409 `MERGE_IN_PROGRESS`, `LockUnavailableError` → 503.
+- **`src/orders/merge-contention.ts` (PR-2, `imp-02-order-merge-advisory-lock`, 2026-09-03)** —
+  the ONE code-tagged mapping from a `db-locks` failure to its wire contract, plus the
+  post-commit-swallow helper: exports `MERGE_IN_PROGRESS`/`LOCK_UNAVAILABLE` (response `code`
+  constants), `mapLockError(e): never` (`LockTimeoutError`→409 `{code:MERGE_IN_PROGRESS}`,
+  `LockUnavailableError`→503 `{code:LOCK_UNAVAILABLE}`, anything else rethrown), and
+  `isMergeContention(e)` (recognises those two by `code`, never by exception type — a plain
+  409/503 elsewhere in the merge path is NOT contention). Raised ONLY before any write.
+  ⚠️ the sibling sweep and the response read stay OUTSIDE the lock —
+  `mergeAllPendingForCustomer` takes the SAME (family, key) on a different pooled connection, so
+  nesting it self-blocks until `lock_timeout`. Spec: `src/buyer/buyer.merge-lock.spec.ts`; the
+  pre-existing `src/buyer/buyer.controller.merge.spec.ts` now mocks `../common/db-locks` with a
+  pass-through. Specs: `src/common/db-locks.spec.ts` (`jest.mock("pg")`),
+  `src/common/db-locks.db.spec.ts` (real Postgres, `*.db.spec.ts` lane).
+- **`src/common/docs-truth.spec.ts` + `src/common/no-dead-deps.spec.ts` (wave D, item 11,
+  2026-09-03)** — static tripwires living in the API project because the repo has no root test
+  runner (CLAUDE.md "DO NOT introduce ... a root-level test runner"). `docs-truth.spec.ts` reads
+  `README.md`/`CLAUDE.md` off disk and pins the specific stale claims item 11 fixed: README no
+  longer names the dead `najathakram1` remote or the deleted `deploy-staging.yml`, doesn't claim a
+  `develop` branch or "main is production-ready", and documents the `deployment_status`-triggered
+  E2E flow; CLAUDE.md no longer lists Zustand in the web stack and states the lessons-register
+  40,960-byte cap `validate-lessons.mjs` enforces. `no-dead-deps.spec.ts` proves four packages
+  removed as verified zero-reference dead weight stay removed, on BOTH halves (manifest no longer
+  declares it AND no source file under the app's tree imports it): `zustand` from `apps/web`
+  (web state is TanStack Query + context — see [`web`](web.md) `app/providers.tsx`) and
+  `@nestjs/axios`/`passport-google-oauth20`/`@types/passport-google-oauth20` from `apps/api`
+  (outbound HTTP goes through vendor SDKs; Google OAuth is `google-auth-library`'s `OAuth2Client`
+  in `auth/google-oauth.service.ts`, not a Passport `GoogleStrategy`); a reverse guard pins that
+  mobile's own zustand (a real, used dependency) and its `react-test-renderer` pin were NOT
+  collaterally touched.
 - **`src/main.ts`** — ⚠️ NEVER `app.use(json())` here: it consumes the body before Nest captures `rawBody` and silently breaks EVERY Stripe webhook signature (#400 — the 2mb body limit goes through Nest's parser options). **Sentry (2026-08-26, DSN-optional):** `import "./instrument"` is the FIRST import (`src/instrument.ts` — `Sentry.init` with `enabled: !!process.env.SENTRY_DSN`, inert otherwise); global filters registered as `useGlobalFilters(new SentryExceptionFilter(httpAdapter), new ThrottlerExceptionFilter(), new MulterExceptionFilter())` — Nest reverses the array so the specific filters still win for their types; ⚠️ the catch-all Sentry filter MUST stay first or the narrow ones are never reached. `src/common/sentry-exception.filter.ts` captures ONLY ≥500s with `tenant`/user/path tags then defers to `super.catch`; `src/common/multer-exception.filter.ts` maps multer 2.3.0's newer codes (`LIMIT_FIELD_ARRAY_INDEX`, `INVALID_FIELD_NAME`, `STREAM_DESTROYED`) to 400 — @nestjs/platform-express's `transformException` switches on a frozen message list that predates them, so without it they arrive as raw `MulterError`s, score as 500, and capture one Sentry event per attacker probe. startup: `assertSecrets()` (JWT required in all envs; **`STORAGE_URL_SIGNING_SECRET` now FATAL in production too — F5-001 fail-closed**; `ENCRYPTION_KEY` still warn-only), **no boot-time DDL (PR-1, `imp-03a`, 2026-09-03)** — `runStartupMigration()` is deleted; schema drift is now caught read-only by `scripts/schema-drift.mjs`, not by a startup writer,
   helmet, trust proxy 2 (Railway CDN), CORS wildcard
   patterns, global `ValidationPipe` (whitelist/forbidNonWhitelisted/transform),
@@ -216,8 +300,20 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   hardcoded twice. Migration `20260823000000_plan_catalog_customers_axis` (additive: `MeterKey`
   gains `CUSTOMERS` outside a transaction, `PlanDefinition.customersIncluded` nullable) must be
   applied first.
-- **`scripts/e2e-seed.js`** — idempotent seed for the `e2e-routeflow` tenant (operator
-  `admin`/`Admin@123`, customer `harbor_cafe`); on an existing tenant it also SWEEPS stale
+- **`scripts/e2e-seed.js`** — idempotent seed for the `e2e-routeflow` tenant. Seeds **four fixed
+  users** (both the fresh-tenant and existing-tenant branches): operator `admin`/`Admin@123`,
+  customer `harbor_cafe`/`Customer1!`, tenant admin `e2e_admin`/`TenantAdmin1!` (B138 —
+  `platform-admin.service.ts impersonate()` requires an ACTIVE `TENANT_ADMIN` to resolve, and
+  spec 31 `impersonation-signout` impersonates this same user), and — wave D, L-050, #598/#607 —
+  one more dedicated identity so spec 32 stops mutating the shared operator session every
+  `storageState: operator.json` project also loads: `e2e_sessions_op`/`Sessions1!` (OPERATOR,
+  spec 32 `active-sessions` logs in fresh as this user and only ever revokes its own
+  `/auth/sessions` rows). Spec 31 needed no dedicated identity — it only ever mutates its own
+  fresh impersonation session, and a wave-D attempt to give it a separate
+  `e2e_impersonated_admin` identity was reverted (it would have left `e2e-routeflow` with two
+  ACTIVE `TENANT_ADMIN`s, which makes `impersonate()`'s unordered `findFirst` ambiguous).
+  `helpers/constants.ts CREDENTIALS.sessionsOp` on the web side carries the pair. On an existing
+  tenant it also SWEEPS stale
   parked SaleDrafts from the operator's dock (kind ORDER + device "Desktop web" + title
   `Order…` — residue web e2e 08-create-order-escape parked before it cleaned up after itself,
   2026-08-19). **2026-08-20, generalized 2026-08-28:** `ensureAddon(tenantId, addonKey)` (was
@@ -580,30 +676,20 @@ validate()` and `buyer/strategies/buyer-jwt.strategy.ts validate()` both now cop
       is null on pre-snapshot rows — `deriveUnitsPerBox` falls back to the row's own `(qty − pieces) / boxes` rather
       than reading null as 0 (which collapsed a boxed line to its loose pieces). The result is the order's COMPLETE
       new line set, so the caller passes `replaceAll: true` explicitly.
-    - **`withOrderMergeLock(orderId, fn)` + `mergeLocksByOrder` (R11, REG-B199),** module-private state on
-      `OrdersController`. The fold reads the order, computes ABSOLUTE totals, then writes them, so two merges
-      racing the same active order (two scanners hitting Confirm milliseconds apart, a queue replay racing a
-      live request) could both read the same pre-write snapshot and clobber each other's delta — the
-      lost-update half of B199. `fn` is chained onto the prior turn's SETTLED promise (`prior.then(fn, fn)`),
-      so the second caller can't start until the first's write completed; the map entry is deleted once its
-      turn settles, so it never grows unbounded. ⚠️ The `activeOrder` snapshot taken BEFORE the lock is stale
-      by the time a queued turn runs — `fn` re-reads `findActiveOrder` inside the lock and writes to / returns
-      THAT order. ⚠️ **SCOPE: the Map is per controller INSTANCE, so this serializes one API process only.**
-      Two Railway replicas merging the same order still race their reads: the row lock inside
-      `updateOrderItems` serializes the WRITE, not the read the absolute totals were computed from.
-      **DEFERRED ON EVIDENCE (2026-08-31), not merely pending:** `@routeflow/api` runs exactly ONE instance —
-      no `numReplicas` in `apps/api/railway.toml`, `numReplicas = null` for every service in Railway's API
-      (so no dashboard override either), and the live deployment reports 1 running instance — so the
-      cross-replica race is UNREACHABLE and restructuring a money-critical write path to close it would be
-      the bigger risk. ⚠️ **The trigger is scaling, and it is silent** (wrong money, no error/log/test), and
-      the process cannot self-detect it because Railway injects no replica-count variable — so the guard is a
-      comment in `apps/api/railway.toml`'s `[deploy]` block, where the scaling decision is actually made;
-      do not remove it. When picked up, three designs are spelled out in `withOrderMergeLock`'s doc comment,
-      cheapest first: (1) **Redis lock** (SET NX PX + token-checked release; Redis is already a dependency via
-      the Socket.io adapter, diff stays inside the method, and the T-B199 spec's one-instance framing survives),
-      (2) optimistic CAS on version/updatedAt inside `updateOrderItems`' transaction with a 409 + client retry,
-      (3) the "full" fix — fold inside that transaction, which REQUIRES moving (never deleting)
-      `orders.scan-hardening.spec.ts`'s "two concurrent merges on ONE INSTANCE serialize" block.
+    - **Customer-level merge serialization (R11, REG-B199, PR-2 2026-09-03):** the staff auto-merge branch of
+      `create()` runs its read→fold→write section inside `withAdvisoryLock({ family: "order-merge", key:
+dto.customerId, mode: "wait", waitMs: 10_000 })` from `src/common/db-locks.ts` (orders.controller.ts:~147);
+      `mergeAllPendingForCustomer` (orders.service.ts:~824) and `forceConsolidateCustomer` (orders.service.ts:~1169)
+      take the same customer-keyed lock at `waitMs: 20_000`; buyer `createOrder` (buyer.controller.ts:~547) also
+      uses `waitMs: 10_000` (same mobile-client-abort reasoning as the staff branch). Request-path post-commit
+      callers (the sibling sweep / post-create auto-consolidation) pass `{ lockMode: "try" }` instead — a
+      contended lock is skipped with a warning, never blocks the request. The lock is a Postgres
+      advisory lock on a dedicated pinned pg connection, so it is cross-replica; a 55P03 lock timeout surfaces as
+      409 `MERGE_IN_PROGRESS`. The former in-process `withOrderMergeLock`/`mergeLocksByOrder` Map is DELETED —
+      never re-add a second in-process lock (orders.controller.ts:~58-61 forbids it). ⚠️ Sibling sweeps outside
+      the lock stay outside it by design. Money math, `foldMergeItems` and `updateOrderItems` are byte-identical
+      to pre-PR-2; `updateOrderItems` is never handed a tx. `@Cron` jobs still assume one replica until the PR-3
+      cron leader lock — the scaling guard is the comment in `apps/api/railway.toml` [deploy].
     - **`UpdateOrderItemsDto.replaceAll` is EXPLICIT-ONLY (R10, REG-B198).** The legacy heuristic
       (`replaceAll = dto.replaceAll ?? allNewItems`, "every item lacks an id ⇒ replace") is GONE — that is exactly the
       shape of a mobile per-scan "just add these" PATCH, which wiped the order. Omitted or `false` ⇒ incremental merge.

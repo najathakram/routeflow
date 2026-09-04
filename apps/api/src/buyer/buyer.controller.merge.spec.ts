@@ -21,6 +21,39 @@
  * on the mock is safe — its absence surfaces as an unmet call-count assertion,
  * never a TypeError.
  */
+
+// IMP-02: the merge branch now runs inside `withAdvisoryLock`, which opens its own
+// `pg` connection — unreachable in a unit suite (it would 503 every case here).
+// Stand it in with a transparent pass-through so these assertions keep testing the
+// FOLD, not the lock; the lock's own contract is pinned in `./buyer.merge-lock.spec.ts`.
+// Not `virtual`: renaming or deleting the real module must fail this suite loudly.
+jest.mock("../common/db-locks", () => {
+  class LockTimeoutError extends Error {
+    constructor(
+      public readonly family: string,
+      public readonly key: string,
+      public readonly waitMs: number,
+    ) {
+      super(`advisory lock timeout: ${family}:${key} after ${waitMs}ms`);
+      this.name = "LockTimeoutError";
+    }
+  }
+  class LockUnavailableError extends Error {
+    constructor(public readonly cause?: unknown) {
+      super("advisory lock unavailable");
+      this.name = "LockUnavailableError";
+    }
+  }
+  return {
+    withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
+      acquired: true,
+      value: await fn(),
+    })),
+    LockTimeoutError,
+    LockUnavailableError,
+  };
+});
+
 import { Test, TestingModule } from "@nestjs/testing";
 import { UserRole } from "@prisma/client";
 import { BuyerController } from "./buyer.controller";

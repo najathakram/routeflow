@@ -9,6 +9,18 @@ import {
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
 
+// The merge paths now run inside a Postgres advisory lock (`common/db-locks.ts`,
+// R3). These specs exercise the merge FOLD's money math, not the lock, so run
+// the critical section inline — the real helper would open a `pg` pool.
+jest.mock("../common/db-locks", () => ({
+  withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  })),
+  LockTimeoutError: class LockTimeoutError extends Error {},
+  LockUnavailableError: class LockUnavailableError extends Error {},
+}));
+
 // Mock InvoicesService before it's imported — prevents Jest from traversing
 // invoice-pdf.service.ts which imports @react-pdf/renderer (ESM-only module)
 jest.mock("../invoices/invoices.service", () => ({

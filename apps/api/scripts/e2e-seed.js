@@ -3,9 +3,10 @@
  *
  * Idempotent seed for Playwright E2E tests.
  * Creates the `e2e-routeflow` tenant with:
- *   • Operator:     admin / Admin@123
- *   • Customer:     harbor_cafe / Customer1!
- *   • Tenant admin: e2e_admin / TenantAdmin1!
+ *   • Operator:            admin / Admin@123
+ *   • Customer:            harbor_cafe / Customer1!
+ *   • Tenant admin:        e2e_admin / TenantAdmin1!
+ *   • Sessions operator:   e2e_sessions_op / Sessions1! (dedicated — spec 32, L-050)
  *
  * Safe to run multiple times — skips creation if data already exists. On an
  * existing tenant it also sweeps stale parked SaleDrafts the web e2e suite
@@ -35,6 +36,11 @@ const CUSTOMER_USERNAME = "harbor_cafe";
 const CUSTOMER_PASSWORD = "Customer1!";
 const TENANT_ADMIN_USERNAME = "e2e_admin";
 const TENANT_ADMIN_PASSWORD = "TenantAdmin1!";
+// Dedicated identity for the spec that revokes /auth/sessions rows server-side (L-050,
+// #598) — never the shared OPERATOR_USERNAME/TENANT_ADMIN_USERNAME above, which every
+// storageState: operator.json project also loads.
+const SESSIONS_OP_USERNAME = "e2e_sessions_op";
+const SESSIONS_OP_PASSWORD = "Sessions1!";
 // Feature addons the web e2e suite depends on. developer_mode no longer
 // unlocks the GA delivery features in client UI (owner decision 2026-08-28) —
 // the web e2e suite exercises /routes and /deliveries, which now need the
@@ -142,6 +148,31 @@ async function main() {
       console.log(`  ✓ Tenant admin "${TENANT_ADMIN_USERNAME}" exists`);
     }
 
+    // ── SESSIONS_OP (F14 spec 32 precondition, L-050) ───────────────────────────
+    // Spec 32 (active-sessions) must never consume the shared admin/operator.json
+    // refresh token — it logs in fresh as its own OPERATOR and only ever revokes
+    // ITS OWN sessions.
+    const so = await prisma.user.findFirst({
+      where: { tenantId: existing.id, username: SESSIONS_OP_USERNAME },
+    });
+    if (!so) {
+      const hash = await bcrypt.hash(SESSIONS_OP_PASSWORD, 10);
+      await prisma.user.create({
+        data: {
+          email: "e2e_sessions_op@e2e-routeflow.test",
+          username: SESSIONS_OP_USERNAME,
+          password: hash,
+          role: "OPERATOR",
+          status: "ACTIVE",
+          forcePasswordChange: false,
+          tenantId: existing.id,
+        },
+      });
+      console.log(`  ✓ Created missing sessions-op operator: ${SESSIONS_OP_USERNAME}`);
+    } else {
+      console.log(`  ✓ Sessions-op operator "${SESSIONS_OP_USERNAME}" exists`);
+    }
+
     // ── Feature addons (developer_mode + recurring_routes + order_delivery) ─────
     await ensureAddon(existing.id, DEVELOPER_MODE_ADDON);
     await ensureAddon(existing.id, RECURRING_ROUTES_ADDON);
@@ -245,6 +276,22 @@ async function main() {
     },
   });
   console.log(`  ✓ Tenant admin created: ${TENANT_ADMIN_USERNAME} / ${TENANT_ADMIN_PASSWORD}`);
+
+  // ── Sessions operator (F14 spec 32 precondition, L-050) ─────────────────────
+  await prisma.user.create({
+    data: {
+      email: "e2e_sessions_op@e2e-routeflow.test",
+      username: SESSIONS_OP_USERNAME,
+      password: await bcrypt.hash(SESSIONS_OP_PASSWORD, 10),
+      role: "OPERATOR",
+      status: "ACTIVE",
+      forcePasswordChange: false,
+      tenantId: tenant.id,
+    },
+  });
+  console.log(
+    `  ✓ Sessions-op operator created: ${SESSIONS_OP_USERNAME} / ${SESSIONS_OP_PASSWORD}`,
+  );
 
   // ── Feature addons (developer_mode + recurring_routes + order_delivery) ───────
   await ensureAddon(tenant.id, DEVELOPER_MODE_ADDON);

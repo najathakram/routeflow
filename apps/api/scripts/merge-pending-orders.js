@@ -8,6 +8,15 @@
  *
  * Idempotent: re-running after consolidation is a no-op.
  *
+ * Serialises with the API's order-merge advisory lock
+ * (apps/api/src/common/db-locks.ts): same key pair
+ * (`hashtext('order-merge'), hashtext(<customerId>)`), transaction-scoped
+ * here via `pg_advisory_xact_lock` instead of the API's session-level
+ * `pg_advisory_lock`.
+ *
+ * Read-fold-write runs entirely inside the transaction-scoped advisory
+ * lock; lock_timeout 30 s.
+ *
  * Usage:
  *   node apps/api/scripts/merge-pending-orders.js            # dry run (counts only)
  *   node apps/api/scripts/merge-pending-orders.js --execute  # actually merge
@@ -50,110 +59,137 @@ const EXECUTE = process.argv.includes("--execute");
 
   for (const g of groups) {
     const customerId = g.customerId;
-    const orders = await prisma.order.findMany({
-      where: {
-        customerId,
-        status: "PENDING",
-        routeRunId: null,
-        routeRunStopId: null,
-        transaction: { is: null },
-        invoices: { none: {} },
-        returns: { none: {} },
-      },
-      include: {
-        lineItems: { where: { status: { not: "CANCELLED" } } },
-      },
-      orderBy: { updatedAt: "desc" },
-    });
-    if (orders.length <= 1) continue;
 
-    const [winner, ...losers] = orders;
-    const winnerProductIds = new Set(winner.lineItems.map((li) => li.productId));
+    // Read-fold-write runs entirely inside this transaction, under the
+    // advisory lock taken as its first two statements — a losing order can
+    // never be read (let alone folded) outside the lock.
+    const result = await prisma.$transaction(
+      async (tx) => {
+        // Bound how long we wait to acquire the advisory lock, rather than
+        // blocking indefinitely against a stuck API instance.
+        await tx.$executeRaw`SET LOCAL lock_timeout = '30s'`;
 
-    const qtyAdditions = new Map();
-    const newItemsByProductId = new Map();
-    for (const loser of losers) {
-      for (const li of loser.lineItems) {
-        if (winnerProductIds.has(li.productId)) {
-          qtyAdditions.set(li.productId, (qtyAdditions.get(li.productId) ?? 0) + Number(li.qty));
-        } else {
-          const existing = newItemsByProductId.get(li.productId);
-          if (existing) {
-            existing.qty += Number(li.qty);
-          } else {
-            newItemsByProductId.set(li.productId, {
-              qty: Number(li.qty),
-              unitPrice: Number(li.unitPrice),
-              priceType: li.priceType,
-              originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
-              overrideReason: li.overrideReason,
-              overriddenBy: li.overriddenBy,
-              notes: li.notes,
-              tenantId: li.tenantId ?? winner.tenantId,
-            });
+        // Same lock key pair as the API's session-level order-merge advisory
+        // lock (apps/api/src/common/db-locks.ts) — `pg_advisory_xact_lock` here
+        // is transaction-scoped and auto-releases at commit/rollback, but
+        // shares the same lock space, so this script and a running API
+        // instance serialise against each other for this customer.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('order-merge'), hashtext(${customerId}))`;
+
+        const orders = await tx.order.findMany({
+          where: {
+            customerId,
+            status: "PENDING",
+            routeRunId: null,
+            routeRunStopId: null,
+            transaction: { is: null },
+            invoices: { none: {} },
+            returns: { none: {} },
+          },
+          include: {
+            lineItems: { where: { status: { not: "CANCELLED" } } },
+          },
+          orderBy: { updatedAt: "desc" },
+        });
+        if (orders.length <= 1) return null;
+
+        const [winner, ...losers] = orders;
+        const winnerProductIds = new Set(winner.lineItems.map((li) => li.productId));
+
+        const qtyAdditions = new Map();
+        const newItemsByProductId = new Map();
+        for (const loser of losers) {
+          for (const li of loser.lineItems) {
+            if (winnerProductIds.has(li.productId)) {
+              qtyAdditions.set(
+                li.productId,
+                (qtyAdditions.get(li.productId) ?? 0) + Number(li.qty),
+              );
+            } else {
+              const existing = newItemsByProductId.get(li.productId);
+              if (existing) {
+                existing.qty += Number(li.qty);
+              } else {
+                newItemsByProductId.set(li.productId, {
+                  qty: Number(li.qty),
+                  unitPrice: Number(li.unitPrice),
+                  priceType: li.priceType,
+                  originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
+                  overrideReason: li.overrideReason,
+                  overriddenBy: li.overriddenBy,
+                  notes: li.notes,
+                  tenantId: li.tenantId ?? winner.tenantId,
+                });
+              }
+            }
           }
         }
-      }
-    }
 
-    // Read tax rate from this tenant's SystemConfig (falls back to 0).
-    let taxRate = 0;
-    if (winner.tenantId) {
-      const taxRow = await prisma.systemConfig.findFirst({
-        where: { tenantId: winner.tenantId, key: "settings.taxRate" },
-      });
-      if (taxRow?.value) taxRate = parseFloat(taxRow.value) || 0;
-    }
+        // Read tax rate from this tenant's SystemConfig (falls back to 0).
+        let taxRate = 0;
+        if (winner.tenantId) {
+          const taxRow = await tx.systemConfig.findFirst({
+            where: { tenantId: winner.tenantId, key: "settings.taxRate" },
+          });
+          if (taxRow?.value) taxRate = parseFloat(taxRow.value) || 0;
+        }
 
-    await prisma.$transaction(async (tx) => {
-      for (const li of winner.lineItems) {
-        const addQty = qtyAdditions.get(li.productId) ?? 0;
-        if (addQty <= 0) continue;
-        const newQty = Number(li.qty) + addQty;
-        const newSubtotal = newQty * Number(li.unitPrice);
-        await tx.orderItem.update({
-          where: { id: li.id },
-          data: { qty: newQty, subtotal: newSubtotal },
+        for (const li of winner.lineItems) {
+          const addQty = qtyAdditions.get(li.productId) ?? 0;
+          if (addQty <= 0) continue;
+          const newQty = Number(li.qty) + addQty;
+          const newSubtotal = newQty * Number(li.unitPrice);
+          await tx.orderItem.update({
+            where: { id: li.id },
+            data: { qty: newQty, subtotal: newSubtotal },
+          });
+        }
+
+        for (const [productId, data] of newItemsByProductId.entries()) {
+          await tx.orderItem.create({
+            data: {
+              orderId: winner.id,
+              productId,
+              qty: data.qty,
+              unitPrice: data.unitPrice,
+              subtotal: data.qty * data.unitPrice,
+              status: "PENDING",
+              priceType: data.priceType,
+              originalPrice: data.originalPrice,
+              overrideReason: data.overrideReason,
+              overriddenBy: data.overriddenBy,
+              notes: data.notes,
+              tenantId: data.tenantId,
+            },
+          });
+        }
+
+        for (const loser of losers) {
+          await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
+          await tx.order.delete({ where: { id: loser.id } });
+        }
+
+        const activeItems = await tx.orderItem.findMany({
+          where: { orderId: winner.id, status: { not: "CANCELLED" } },
         });
-      }
-
-      for (const [productId, data] of newItemsByProductId.entries()) {
-        await tx.orderItem.create({
-          data: {
-            orderId: winner.id,
-            productId,
-            qty: data.qty,
-            unitPrice: data.unitPrice,
-            subtotal: data.qty * data.unitPrice,
-            status: "PENDING",
-            priceType: data.priceType,
-            originalPrice: data.originalPrice,
-            overrideReason: data.overrideReason,
-            overriddenBy: data.overriddenBy,
-            notes: data.notes,
-            tenantId: data.tenantId,
-          },
+        const subtotal = activeItems.reduce((s, li) => s + Number(li.subtotal), 0);
+        const tax = subtotal * taxRate;
+        await tx.order.update({
+          where: { id: winner.id },
+          data: { subtotal, tax, total: subtotal + tax },
         });
-      }
 
-      for (const loser of losers) {
-        await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
-        await tx.order.delete({ where: { id: loser.id } });
-      }
+        return { winnerId: winner.id, mergedCount: losers.length };
+      },
+      { timeout: 60_000, maxWait: 10_000 },
+    );
 
-      const activeItems = await tx.orderItem.findMany({
-        where: { orderId: winner.id, status: { not: "CANCELLED" } },
-      });
-      const subtotal = activeItems.reduce((s, li) => s + Number(li.subtotal), 0);
-      const tax = subtotal * taxRate;
-      await tx.order.update({
-        where: { id: winner.id },
-        data: { subtotal, tax, total: subtotal + tax },
-      });
-    });
+    if (!result) continue;
 
-    console.log(`  customer ${customerId}: merged ${losers.length} → winner ${winner.id}`);
-    mergedOrders += losers.length;
+    console.log(
+      `  customer ${customerId}: merged ${result.mergedCount} → winner ${result.winnerId}`,
+    );
+    mergedOrders += result.mergedCount;
     winners += 1;
   }
 
