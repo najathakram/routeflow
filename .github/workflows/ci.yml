@@ -255,12 +255,20 @@ jobs:
       # blocking on) highs. Kept non-blocking at the high level for now so every
       # PR isn't wedged on the two known SemVer-MAJOR fixes (next 14→16,
       # nodemailer 9); tighten to `--audit-level=high` once those are migrated.
+      #
+      # 2026-09-04: `npm audit` calls the registry's `/-/npm/v1/security/audits/quick`
+      # endpoint, which has started returning 500 ("This endpoint is being retired.
+      # Use the bulk advisory endpoint instead.") — npm retries internally for ~12
+      # minutes, blowing this job's timeout-minutes twice in one day. Both steps now
+      # run through scripts/ci-audit-critical.mjs (bounded retries, node, no deps):
+      # the advisory gate fails on critical findings, never on registry
+      # unavailability (warning + skip; Dependabot is the standing net).
       - name: Fail on critical production advisories
-        run: npm audit --omit=dev --audit-level=critical
+        run: node scripts/ci-audit-critical.mjs
 
       - name: Report high-severity advisories (non-blocking)
         if: always()
-        run: npm audit --omit=dev --audit-level=high || true
+        run: node scripts/ci-audit-critical.mjs --level high --report-only
 
   # ─── Playwright E2E ────────────────────────────────────────────────────────
   # Runs when RAILWAY REPORTS A SUCCESSFUL DEPLOY — plus repository_dispatch and

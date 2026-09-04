@@ -63,6 +63,25 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   `Target host: ${redactUrl(url)}` so the announced target is the URL actually migrated. Contract
   specs: `src/common/schema-drift-script.spec.ts`, `src/common/prod-migrate-script.spec.ts`
   (spawn-level, stub `npx` on PATH, no database).
+- **`scripts/ci-audit-critical.mjs` (2026-09-04)** — CI advisory gate: wraps `npm audit
+--omit=dev --audit-level=<level> --json` in `spawnSync` (`shell:false`, up to 3 attempts,
+  15s/45s backoff, 120s per-attempt timeout, 64 MiB `maxBuffer`) so an `npm` registry
+  outage (the `/-/npm/v1/security/audits/quick` endpoint's ongoing 500s, "being retired")
+  cannot wedge CI the way it twice blew the job's 20-min `timeout-minutes`. Decision table:
+  parsed JSON with `metadata.vulnerabilities.critical>0` → prints each advisory + `::error::`
+  - exit 1; parsed JSON with critical=0 → exit 0; a registry/transport error (500, `ECONNRESET`,
+    `ETIMEDOUT`, `ENOTFOUND`, "being retired", "audit endpoint returned an error", or the spawn
+    itself timing out) → retries, then `::warning::…SKIPPED…` + exit 0 (Dependabot is the standing
+    net); any other non-zero exit fails closed (exit 1). `--level <lvl> --report-only` (the second
+    ci.yml step) always exits 0. Test-only env: `CI_AUDIT_CMD` (JSON argv array, swaps in a fake
+    driver — no network) and `CI_AUDIT_BACKOFF_MS` (collapses the backoff for fast specs). On
+    win32 without a `CI_AUDIT_CMD` override, resolves and invokes `npm-cli.js` next to
+    `process.execPath` via `node` instead of `npm.cmd` directly — `spawnSync` cannot launch a
+    `.cmd` shim with `shell:false` since Node's CVE-2024-27980 hardening (EINVAL); the real CI
+    codepath (ubuntu-latest, plain `npm`) is untouched. Called from `.github/workflows/ci.yml`'s
+    `Fail on critical production advisories` / `Report high-severity advisories` steps. Contract
+    spec: `src/common/ci-audit-script.spec.ts` (spawn-level, fake npm-audit driver written to an
+    mkdtemp'd dir, `FAKE_MODE` critical/clean/outage/unknown, counter file proves retry count).
 - **`src/common/testing/db-spec.ts` + `db-lane.db.spec.ts`, `jest.db.config.js` (PR-1, `imp-03a`,
   2026-09-03)** — the new `*.db.spec.ts` lane for specs that need a real Postgres. `db-spec.ts`:
   `requireLocalDatabaseUrl(env)` throws unless `DATABASE_URL`'s host is local

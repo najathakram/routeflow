@@ -285,6 +285,22 @@
 - **Guard:** `apps/web/jest.config.js`'s inline comment on `testMatch`; the web suite count (19
   spec files) pinned in `.claude/code-map/web.md`.
 
+### L-056 · 2026-09-04 · tooling · #609
+
+- **Symptom:** the `Fail on critical production advisories` CI step (`npm audit --omit=dev
+--audit-level=critical`) blew its 20-minute `timeout-minutes` twice in one day, 8 minutes
+  apart; the non-blocking high-severity step hit the same failure masked by `|| true`.
+- **Root cause:** npm's registry started returning 500 on the quick-audit endpoint ("This
+  endpoint is being retired. Use the bulk advisory endpoint instead."), and npm's own client
+  retries internally for ~12 minutes before giving up — the gate had no way to tell an upstream
+  outage apart from a real finding.
+- **Lesson:** a CI gate that depends on a third-party service must distinguish a finding from an
+  outage: fail on findings, warn-and-skip on unavailability with a bounded retry — otherwise an
+  upstream deprecation blocks every merge.
+- **Guard:** `scripts/ci-audit-critical.mjs` (bounded 3-attempt retry, registry/transport-error
+  detection, `::warning::…SKIPPED` + exit 0 on outage, fail-closed otherwise); contract spec
+  `apps/api/src/common/ci-audit-script.spec.ts`.
+
 ## testing
 
 ### L-050 · 2026-09-02 · testing · #598

@@ -8,6 +8,13 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-04** — (branch `fix/imp-02-order-merge-advisory-lock`, PR #609) CI ADVISORY-GATE
+  OUTAGE TOLERANCE: new `scripts/ci-audit-critical.mjs` replaces the two `npm audit` steps in
+  `.github/workflows/ci.yml` — fails on a real critical finding, warns and skips (bounded 3
+  retries, 15s/45s backoff) on an `npm` registry/transport outage (the observed cause: the
+  quick-audit endpoint's ongoing 500s, twice blowing the job's 20-min timeout), and the
+  `--report-only` (high-level) step now always exits 0 instead of `|| true`. Spec:
+  `apps/api/src/common/ci-audit-script.spec.ts`. `api.md` gains an entry; lesson L-056 (tooling).
 - **2026-09-03** — (branch `fix/imp-02-order-merge-advisory-lock`, off master `e39bf9db`) CROSS-REPLICA ORDER-MERGE LOCK (PR-2, imp-02): new `src/common/db-locks.ts` (`withAdvisoryLock` wait|try on a pinned pg connection, `connectionTimeoutMillis` 5 s, error listener, logger); staff `create()`, buyer `createOrder`, `mergeAllPendingForCustomer`/`forceConsolidateCustomer` wrapped; in-process `mergeLocksByOrder` deleted; `sweepAllPendingOrders` skips contended customers; specs T1–T4 + buyer.merge-lock.spec.
 - **2026-09-03** — (branch `test/imp-wave-d-web-e2e-docs`, worktree `.claude/worktrees/rf-imp-D`,
   HEAD `e39bf9db` off master `91c5333b`; docs/code-map/lessons bookkeeping only — no app code

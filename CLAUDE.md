@@ -203,6 +203,9 @@ apps/api/scripts/schema-drift.mjs` — and requires exit 0. Its `SCHEMA_DRIFT_PR
   sets the override (and prints a WARNING when it is); `NODE_ENV` is deliberately not part of the
   guard (CI's db-migrations job sets `NODE_ENV: test`). It is ignored — loudly — anywhere else, so
   a stray export can never make the gate report NO DRIFT from a stub.
+- CI's `npm audit` steps run through `scripts/ci-audit-critical.mjs`: the advisory gate fails on
+  critical findings, never on registry unavailability (warning + skip; Dependabot is the standing
+  net).
 
 ### Canonical deploy flow: **public → push/CI → merge → private** (deploy continues private)
 

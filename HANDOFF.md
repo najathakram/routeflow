@@ -200,6 +200,10 @@ Artifact tool with `url` = `https://claude.ai/code/artifact/f6717514-1725-4e34-a
 - **~25 Prisma enums are still hand-mirrored at ~56 client sites** with no parity row (web
   `OrderStatus` omits `PARTIALLY_DELIVERED`). Wave E covers a subset only.
 - **`PrismaService`'s pool has no `pool.on("error")`** — same class as the `db-locks.ts` fix in §3.A(2).
+- Follow-on (tenancy): scope the tx-proxy `upsert` `where` — requires a null guard
+  (`tenantNotFound`) + a backfill migration
+  `UPDATE "PaymentCounter" SET "tenantId" = "id" WHERE "tenantId" IS NULL AND "id" IN (SELECT "id" FROM "Tenant")`,
+  preceded by a read-only prod count of such rows; the `forTenant()` layer already scopes it.
 
 ---
 

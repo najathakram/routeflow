@@ -1,0 +1,251 @@
+#!/usr/bin/env node
+// CI advisory gate for `npm audit` — distinguishes a REAL finding from a
+// REGISTRY OUTAGE.
+//
+// WHY THIS EXISTS
+// `npm audit --omit=dev --audit-level=critical` calls the registry's
+// `/-/npm/v1/security/audits/quick` endpoint. That endpoint has started
+// returning 500 with the notice "This endpoint is being retired. Use the bulk
+// advisory endpoint instead." — npm's own client then retries internally for
+// ~12 minutes before giving up, which blew the `Fail on critical production
+// advisories` step's `timeout-minutes: 20` twice in one day (2026-09-03 and
+// 2026-09-04, 8 minutes apart). The follow-on "Report high-severity
+// advisories" step hit the same failure but was masked by `|| true`.
+//
+// This script fails ONLY on an actual critical (or, in --report-only mode,
+// reports without ever failing) — never on the registry being unavailable. A
+// registry/transport error gets a small bounded number of retries and then a
+// `::warning::` + a clean exit, so an upstream deprecation can never wedge
+// every PR. Dependabot alerts remain the standing net while the gate is
+// skipped for a run.
+//
+// USAGE
+//   node scripts/ci-audit-critical.mjs                             # audit-level critical, fails on findings
+//   node scripts/ci-audit-critical.mjs --level high --report-only  # never fails; prints counts only
+//
+// TEST-ONLY OVERRIDES (never set these in a real CI run — see
+// apps/api/src/common/ci-audit-script.spec.ts)
+//   CI_AUDIT_CMD          JSON array of argv, e.g. '["node","/tmp/fake-npm-audit.mjs"]',
+//                         replacing the real `npm[.cmd] audit ...` invocation entirely so
+//                         specs can drive a fake with no network.
+//   CI_AUDIT_BACKOFF_MS   Comma-separated backoff delays in ms (default "15000,45000") so
+//                         specs don't sleep for real minutes.
+
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+
+const MAX_BUFFER = 64 * 1024 * 1024; // 64 MiB
+const ATTEMPT_TIMEOUT_MS = 120_000; // 2 min per attempt
+const MAX_ATTEMPTS = 3;
+const DEFAULT_BACKOFF_MS = [15_000, 45_000];
+
+// Any of these anywhere in the combined stdout+stderr+spawn-error text means the
+// registry/transport failed us, not that it found something. " 5\d\d " catches an
+// HTTP 5xx line (e.g. "npm error 500 Internal Server Error") without matching
+// unrelated four/five-digit numbers elsewhere in the output.
+const OUTAGE_PATTERNS = [
+  /audit endpoint returned an error/i,
+  /ENOAUDIT/,
+  / 5\d\d /,
+  /ECONNRESET/,
+  /ETIMEDOUT/,
+  /ENOTFOUND/,
+  /being retired/i,
+];
+
+function parseArgs(argv) {
+  let level = "critical";
+  let reportOnly = false;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--level") {
+      level = argv[++i];
+    } else if (arg.startsWith("--level=")) {
+      level = arg.slice("--level=".length);
+    } else if (arg === "--report-only") {
+      reportOnly = true;
+    }
+  }
+  return { level, reportOnly };
+}
+
+function backoffSchedule() {
+  const raw = process.env.CI_AUDIT_BACKOFF_MS;
+  if (!raw) return DEFAULT_BACKOFF_MS;
+  const parsed = raw
+    .split(",")
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n >= 0);
+  return parsed.length > 0 ? parsed : DEFAULT_BACKOFF_MS;
+}
+
+function auditCommand(level) {
+  const overrideRaw = process.env.CI_AUDIT_CMD;
+  if (overrideRaw) {
+    // Test-only — see the header comment.
+    const argv = JSON.parse(overrideRaw);
+    return { cmd: argv[0], args: argv.slice(1) };
+  }
+  const args = ["audit", "--omit=dev", `--audit-level=${level}`, "--json"];
+  if (process.platform === "win32") {
+    // spawnSync cannot launch a .cmd shim directly with shell:false — Node
+    // refuses since the CVE-2024-27980 hardening (EINVAL), and this script
+    // deliberately never sets shell:true. npm ships a real JS entrypoint next
+    // to the node binary on every Windows install; invoke that through node
+    // instead so the real CI codepath below (plain "npm", ubuntu-latest only)
+    // stays untouched and this still works for a local Windows run.
+    const npmCli = path.join(
+      path.dirname(process.execPath),
+      "node_modules",
+      "npm",
+      "bin",
+      "npm-cli.js",
+    );
+    if (fs.existsSync(npmCli)) {
+      return { cmd: process.execPath, args: [npmCli, ...args] };
+    }
+  }
+  const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+  return { cmd: npmCmd, args };
+}
+
+function isOutage(text) {
+  return OUTAGE_PATTERNS.some((re) => re.test(text));
+}
+
+// Synchronous sleep with no dependency — spawnSync already makes this script
+// blocking end-to-end, so a blocking backoff between attempts is consistent.
+function sleepSync(ms) {
+  if (ms <= 0) return;
+  const view = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(view, 0, 0, ms);
+}
+
+function tryParseJson(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function lastErrorLine(result) {
+  const combined = `${result.stdout || ""}\n${result.stderr || ""}`;
+  const lines = combined
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length > 0) return lines[lines.length - 1];
+  return result.error ? result.error.message : "unknown error";
+}
+
+function printAdvisories(json) {
+  const vulns = json.vulnerabilities || {};
+  const rows = [];
+  for (const [name, info] of Object.entries(vulns)) {
+    if (info.severity !== "critical") continue;
+    const viaList = Array.isArray(info.via) ? info.via : [info.via];
+    const detailed = viaList.filter((v) => v && typeof v === "object");
+    if (detailed.length === 0) {
+      rows.push({
+        name,
+        severity: info.severity,
+        title: "(see npm audit for detail)",
+        range: info.range || "(range unknown)",
+      });
+      continue;
+    }
+    for (const v of detailed) {
+      rows.push({
+        name,
+        severity: info.severity,
+        title: v.title || v.name || "(untitled advisory)",
+        range: v.range || info.range || "(range unknown)",
+      });
+    }
+  }
+  for (const r of rows) {
+    console.log(`CRITICAL: ${r.name} (severity=${r.severity}) — ${r.title} — range ${r.range}`);
+  }
+}
+
+function runAttempt(level) {
+  const { cmd, args } = auditCommand(level);
+  return spawnSync(cmd, args, {
+    shell: false,
+    timeout: ATTEMPT_TIMEOUT_MS,
+    maxBuffer: MAX_BUFFER,
+    env: process.env,
+    encoding: "utf8",
+  });
+}
+
+function main() {
+  const { level, reportOnly } = parseArgs(process.argv.slice(2));
+  const backoffs = backoffSchedule();
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const result = runAttempt(level);
+    const json = tryParseJson(result.stdout);
+
+    // (A)/(B): a usable audit result — decide on its content, not its exit code
+    // (npm exits non-zero for a real finding at/above --audit-level, and 0 for
+    // a clean audit; both cases parse here).
+    if (json && json.metadata && json.metadata.vulnerabilities) {
+      const counts = json.metadata.vulnerabilities;
+      const critical = counts.critical || 0;
+      if (reportOnly) {
+        console.log(
+          `advisories: critical=${critical} high=${counts.high || 0} (report-only, level=${level})`,
+        );
+        return 0;
+      }
+      if (critical > 0) {
+        printAdvisories(json);
+        console.log(`::error::${critical} critical production advisory(ies) found`);
+        return 1;
+      }
+      console.log(`advisories: critical=0 (level=${level}) — no critical production advisories`);
+      return 0;
+    }
+
+    // No usable JSON. Decide (C) outage vs (D) unknown failure from the raw text.
+    const combinedText = `${result.stdout || ""}\n${result.stderr || ""}${
+      result.error ? result.error.message : ""
+    }`;
+
+    if (isOutage(combinedText)) {
+      if (attempt < MAX_ATTEMPTS) {
+        const wait = backoffs[attempt - 1] ?? backoffs[backoffs.length - 1] ?? 0;
+        console.log(
+          `npm audit attempt ${attempt}/${MAX_ATTEMPTS} hit a registry/transport error, retrying in ${wait}ms: ${lastErrorLine(result)}`,
+        );
+        sleepSync(wait);
+        continue;
+      }
+      console.log(
+        `::warning::npm advisory registry unavailable after ${MAX_ATTEMPTS} attempts (${lastErrorLine(result)}) — critical-advisory gate SKIPPED for this run; Dependabot alerts remain the standing net`,
+      );
+      return 0;
+    }
+
+    // (D) Any other non-zero exit / unparseable output that isn't a recognized
+    // outage — fail closed, unless this is the always-green report-only lane.
+    console.log(`npm audit failed unexpectedly (exit ${result.status}, level=${level})`);
+    const stderrTail = (result.stderr || "").split(/\r?\n/).slice(-20).join("\n").trim();
+    if (stderrTail) console.log(stderrTail);
+    if (reportOnly) {
+      console.log("::warning::report-only advisory check failed unexpectedly — not blocking");
+      return 0;
+    }
+    console.log(`::error::npm audit failed unexpectedly (exit ${result.status})`);
+    return 1;
+  }
+
+  // Unreachable — the loop always returns — but keep a safe fallback.
+  return reportOnly ? 0 : 1;
+}
+
+process.exit(main());
