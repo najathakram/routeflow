@@ -266,6 +266,22 @@
 
 ## testing
 
+### L-063 · 2026-09-04 · testing · imp-04
+
+- **Symptom:** after apps/api's suite was split into two `npx jest` invocations,
+  `scripts/campaign-check.mjs` reported 17 undischarged bug-registry claims that the first run
+  had already proven.
+- **Root cause:** apps/api's jest config wires a campaign reporter that OVERWRITES
+  `.campaign/runs/api.json` on every invocation (no merge), and non-anchored substring filters
+  (`auth` without a trailing slash) also ran `src/authorizations/**` in both partitions (239
+  suites/3686 tests vs the true 233/3632).
+- **Lesson:** **never split a jest invocation whose config wires a campaign/artifact reporter —
+  run apps/api's full suite in one `npx jest --maxWorkers=2` (~270 s) before `campaign-check`; if
+  partitioning is ever required, merge the reporter outputs and anchor patterns with a trailing
+  slash.**
+- **Guard:** `apps/api/package.json` `jest.reporters` (campaign reporter) +
+  `scripts/campaign-check.mjs`; the pre-push hook runs the suite unsplit.
+
 ### L-061 · 2026-09-04 · testing · wave B′ P4
 
 - **Symptom:** a fail-closed `default:` added beside Prisma's named `$allModels` handlers threw on
