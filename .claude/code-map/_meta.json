@@ -1,7 +1,7 @@
 {
-  "mappedSha": "f60bd27c",
-  "generatedAt": "2026-09-04T17:00:00.000Z",
+  "mappedSha": "a5be8626",
+  "generatedAt": "2026-09-04T22:35:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
-  "fileCount": 936,
+  "fileCount": 937,
   "notes": "**2026-09-04** — (`watchdog-spec-host-speed` fix, L-061) `visibility-watchdog-script.spec.ts`'s \"defaults\" test replaced its fixed 500 ms readiness wait with `awaitStartLine`, a capped poll on the script's own `\" start \"` log line (kills the child in `finally` on every path); added a deterministic slow-boot repro test (`REG-WATCHDOG-SLOWBOOT`, new fixture `src/common/testing/slow-boot.cjs`) and a non-empty guard on the stdout-mirror test. `scripts/visibility-watchdog.mjs` itself is unchanged. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
