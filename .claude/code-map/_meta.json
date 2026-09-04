@@ -1,7 +1,7 @@
 {
-  "mappedSha": "91c5333b",
-  "generatedAt": "2026-09-03T12:05:00.000Z",
+  "mappedSha": "e39bf9db",
+  "generatedAt": "2026-09-03T21:02:48.000Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 931,
-  "notes": "**2026-09-03** — (branch `fix/imp-03a-ddl-to-migrations-drift-gate`, off master `91c5333b`; no schema change, no migration) — **BOOT-TIME DDL RETIRED + DRIFT GATE (PR-1, imp-03a).** Deleted `runStartupMigration()` (main.ts) and the PlatformConfig/AiUsageEvent CREATE TABLE block (platform-config.service.ts); added `scripts/schema-drift.mjs` + `scripts/lib/railway-db-url.mjs` (shared Railway URL helper, used by prod-migrate.mjs with a post-deploy drift step); new `*.db.spec.ts` lane (`jest.db.config.js`, `src/common/testing/db-spec.ts`, `test:db`); `no-runtime-ddl.spec.ts` tripwire; db-migrations.yml drift + db-lane steps; F12-002 CLOSED. Review fix: `prod-migrate.mjs` keeps its own fail-closed RAILWAY_PROXY_VARS pre-check (the helper's DATABASE_URL fallback is read-only-scripts-only) and prints `redactUrl(url)` as the target; new spawn-level `src/common/prod-migrate-script.spec.ts` proves both plus the drift-step exit propagation. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "**2026-09-03** — (branch `fix/imp-02-order-merge-advisory-lock`, off master `e39bf9db`) CROSS-REPLICA ORDER-MERGE LOCK (PR-2, imp-02): new `src/common/db-locks.ts` (`withAdvisoryLock` wait|try on a pinned pg connection, `connectionTimeoutMillis` 5 s, error listener, logger); staff `create()`, buyer `createOrder`, `mergeAllPendingForCustomer`/`forceConsolidateCustomer` wrapped; in-process `mergeLocksByOrder` deleted; `sweepAllPendingOrders` skips contended customers; specs T1–T4 + buyer.merge-lock.spec. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

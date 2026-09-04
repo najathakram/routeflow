@@ -27,8 +27,8 @@ Two items were explicitly requested by the product owner and are called out inli
 | #   | Tier | Item                                                         | Effort | Risk | Status         |
 | --- | ---- | ------------------------------------------------------------ | ------ | ---- | -------------- |
 | 1   | P0   | Consolidate the 4 `pricing.ts` copies into one package       | M      | 🔴   | open           |
-| 2   | P0   | Enforce the single-replica invariant (or remove the need)    | M      | 🔴   | open           |
-| 3   | P0   | Schema-management tooling: retire boot-time DDL + drift gate | M      | 🔴   | shipped (PR-1) |
+| 2   | P0   | Enforce the single-replica invariant (or remove the need)    | M      | 🔴   | shipped (PR-2) |
+| 3   | P0   | Schema-management tooling: retire boot-time DDL + drift gate | M      | 🔴   | shipped #608   |
 | 4   | P1   | Add a staging environment before prod                        | M      | 🔴   | open           |
 | 5   | P1   | Add web component/unit tests; rebalance the test pyramid     | L      | 🟡   | open           |
 | 6   | P1   | Move E2E before prod; give specs dedicated users             | M      | 🟡   | open           |
@@ -64,20 +64,39 @@ merge immediately regardless of the cross-app work.
 
 ### 2. Enforce the single-replica invariant — or remove the need for it · M · 🔴
 
-The API **must run exactly one replica** or a cross-replica order-merge race corrupts order line
-items (`B199`). Today the only guard is a comment in
-[`apps/api/railway.toml`](../apps/api/railway.toml); nothing detects a second replica, and Railway
-injects no replica-count env var, so the process can't self-check **(inferred)**.
+**Shipped (PR-2).** Order merges no longer need the single-replica cap; scheduled jobs still do until
+2b: order merges now serialise per customer on a **Postgres advisory lock**, held on a dedicated
+connection rather than in-process (`apps/api/src/common/db-locks.ts`, `withAdvisoryLock`) —
+`pg_advisory_lock(hashtext('order-merge'), hashtext(customerId))` in `wait` mode, `SET lock_timeout`
+bounding the wait, on its own small `pg.Pool` kept separate from Prisma's pool. Because the lock lives
+on a Postgres session rather than in a process's memory, it coordinates correctly across replicas —
+the cross-replica order-merge race (`B199`) that motivated the one-replica cap is closed, and the
+comment in [`apps/api/railway.toml`](../apps/api/railway.toml) now guards the crons (single replica
+until the cron leader lock, 2b) and stays until that PR lands.
 
-**Proposed change (pick one):**
+Four call sites take the lock, keyed by `customerId`: staff order `create()` (auto-merge into an
+existing pending order), buyer `createOrder`, `mergeAllPendingForCustomer`, and
+`forceConsolidateCustomer`. In every case the lock is acquired **before any write** — a contended
+lock therefore always fails a request cleanly, never mid-write — and is reported to the client as
+HTTP 409 `{ code: "MERGE_IN_PROGRESS" }` (another merge for this customer is already running) or 503
+`{ code: "LOCK_UNAVAILABLE" }` (the dedicated lock connection couldn't be obtained), both safe to
+retry. A merge's own post-commit consolidation step, if it can't acquire the lock, is deferred with a
+warning log rather than blocking the request that triggered it. The old in-process guard
+(`withOrderMergeLock`, a `Map` keyed by order id) is deleted — it never protected against a second
+replica in the first place.
 
-- **Remove the constraint (preferred):** replace the in-process lock in `withOrderMergeLock` with a
-  **Postgres advisory lock** (`pg_advisory_xact_lock`), which coordinates correctly across replicas.
-  The one-replica cap then disappears and the service can scale horizontally.
-- **Or make it fail-loud:** assert a replica-count signal at boot and refuse to start if `> 1`, so a
-  mis-scale is a crash, not silent money corruption.
+The one-shot backfill script ([`apps/api/scripts/merge-pending-orders.js`](../apps/api/scripts/merge-pending-orders.js))
+takes the same lock, transaction-scoped: each customer's merge transaction opens with
+`pg_advisory_xact_lock(hashtext('order-merge'), hashtext(customerId))`, the same key pair as the
+API's session-level lock, so a manual backfill run and a live API instance serialise against each
+other instead of racing.
 
-**Payoff.** Turns an undocumented footgun into either a non-issue (scalable) or a safe failure.
+**Remaining work.** A **cron leader lock** (guarding scheduled jobs that must run on exactly one
+replica, distinct from the per-customer order-merge lock above) is tracked separately as its own PR
+and is not part of this item.
+
+**Payoff.** Turns an undocumented footgun into a non-issue: the service can now scale to multiple
+replicas without risking order-merge corruption.
 
 ### 3. Schema-management tooling for PostgreSQL + Prisma · M · 🔴 _(owner-requested)_
 
@@ -270,7 +289,7 @@ A balanced review should say what not to touch:
   dead-man's switch. R2 is object storage, not a backup tool — this is a sound, cheap choice.
 - **Redis + Postgres together is correct**, not redundant: Postgres is the durable system of record;
   Redis is ephemeral coordination (Socket.io fanout, rate-limit counters, BullMQ). (The Socket.io
-  Redis adapter specifically is unused at one replica — folded into #2.)
+  Redis adapter specifically is wired (`main.ts:98`) and idle at one replica — folded into #2.)
 - **The code map + lessons register** (`.claude/code-map`, `.claude/lessons`) and the "explain why"
   inline comments are better documentation than most codebases have.
 - **`campaign-check.mjs`** mechanically refusing an unproven "done" claim is a strong idea worth

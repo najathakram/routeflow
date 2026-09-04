@@ -132,6 +132,8 @@ All line/tax/total math goes through `pricing.ts` helpers: `computeLineSubtotal`
 monetary write**; never re-derive `qty * unitPrice` for a boxed line (over-charges by `unitsPerBox`).
 Regression specs: `apps/api/src/common/pricing.spec.ts`. Run `npm run verify` before pushing.
 
+Customer-level order merges (staff `create()` auto-merge, buyer `createOrder`, `mergeAllPendingForCustomer`, `forceConsolidateCustomer`) serialize through `withAdvisoryLock` in `apps/api/src/common/db-locks.ts` — a customer-keyed Postgres advisory lock that is cross-replica safe. **Never add a second in-process lock** on top of it, and never thread a transaction into `updateOrderItems`.
+
 ## Conventions
 
 - **Tests**: NestJS `Test.createTestingModule`; mock at the module boundary; `class-validator` DTOs. **No snapshot tests, no Vitest.**
