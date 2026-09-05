@@ -318,3 +318,27 @@ L-032, which asserts the 400 rejection end-to-end._
 
 _Archived: guarded by a merged mechanical check — `customers.purge-ledger.spec.ts` exists in the
 tree and covers all three sites with the reversal-before-delete ordering pinned._
+
+## Archived 2026-09-04 — guard in place, cap discipline (#597)
+
+### L-029 · 2026-09-01 · domain · #588
+
+- **Symptom:** cancelling an order destroyed value three ways at once — it voided the invoice for
+  goods already delivered, never returned the creation-time stock decrement, and its sibling
+  `deleteOrder` skipped the regulated-ledger reversal both other invoice-destruction paths
+  performed. All three had shipped green.
+- **Root cause:** the conservation rules were built for the **edit** path and the **teardown**
+  paths were simply never enrolled in them. Every signal each fix needed already sat in the same
+  file — the delivered-qty clamp, the reversal call — and was not consulted. Nothing failed
+  loudly, because a conservation law has no natural test: stock is only wrong much later, and
+  nowhere near the cancel that caused it.
+- **Lesson:** **When a codebase establishes an invariant on one path, enumerate every OTHER path
+  that reaches the same state and enroll it explicitly — an invariant with a known exception is a
+  bug with a scheduled date.** Search by the STATE being mutated (who else deletes an invoice, who
+  else writes `order.status`), never by the feature name: the violating paths are the ones that
+  never mention it.
+- **Guard:** `orders.lifecycle-conservation.spec.ts` + its pins spec, 9 mutation probes. The same
+  search immediately found two more instances, recorded not fixed: `routes.service.ts` has **five**
+  `order.status` writers and only one runs the invoicing side effects (→ F11), and the customer
+  purge is a **fourth** `reverseInvoiceEntries`-skipped hard delete — at four instances the answer
+  is a shared guard, not a fourth point-fix. See [[L-008]] for why they stayed out of scope.

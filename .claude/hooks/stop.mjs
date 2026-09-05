@@ -32,7 +32,7 @@
  * only runs per-workspace via `npm run lint` / Turbo. tsc is likewise excluded
  * (too slow/fragile per-file with Prisma); type-checks live in the pre-push hook.
  */
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 
 // Invoke prettier directly via node — this repo's root has no node_modules/.bin
@@ -171,6 +171,50 @@ if (hasLessons && !changed.some(isLesson)) {
       process.exit(2);
     }
   }
+}
+
+// ── Gate 4: bug-registry sync (reports, never blocks) ─────────────────────
+// The registry at `.claude/campaign/bugs/B###.md` must not depend on anyone
+// REMEMBERING to update it — that is exactly how the board drifted three stale
+// cards and the ledger kept thirteen `proven` rows past their deploy. So this
+// does not gate the turn; it runs the derivation. `sync` reads the two sources
+// that move on their own (the proof ledger and git log) and appends only events
+// a record does not already carry, deduped on a marker, so it is idempotent and
+// safe to run every turn.
+//
+// Deliberately non-blocking and fully swallowed: a bookkeeping refresh must
+// never be able to fail a turn or mask Gates 1-3 above it.
+if (existsSync(".claude/campaign/bugs") && existsSync("scripts/campaign/bugs.mjs")) {
+  // spawnSync, not sh()/execSync: execSync's return value on a SUCCESSFUL
+  // exit is stdout only — stderr is silently discarded even though it is
+  // piped — but `sync --quiet` deliberately writes its "an unscanned
+  // commit range" notes to stderr on a perfectly clean exit, and this gate
+  // needs to see them.
+  const proc = spawnSync("node", ["scripts/campaign/bugs.mjs", "sync", "--quiet"], {
+    encoding: "utf8",
+  });
+  const out = proc.stdout || "";
+  const err = proc.stderr || "";
+  const code = proc.status ?? 1;
+  const recorded = /recorded (\d+) new event/.exec(out);
+  if (code === 0 && recorded && Number(recorded[1]) > 0) {
+    process.stderr.write(
+      `Bug registry: recorded ${recorded[1]} new event(s) into .claude/campaign/bugs/ — ` +
+        `commit them alongside your change.\n`,
+    );
+  } else if (code !== 0) {
+    // Still never blocks — but a crash (e.g. a malformed status shard) used to
+    // go completely silent: the hook swallowed the non-zero exit and printed
+    // nothing, so the registry could go dark indefinitely with zero signal.
+    const firstLine = (out + err).trim().split(/\r?\n/)[0] || "(no output)";
+    process.stderr.write(`Bug registry: sync failed (non-blocking) — ${firstLine}\n`);
+  }
+  // A lost or unknown anchor drops a whole commit range with an otherwise
+  // clean (code === 0, "recorded 0") exit — surface it here even though
+  // nothing above triggered, so a quiet hook run never goes dark on it.
+  for (const line of err.split(/\r?\n/))
+    if (/no scan|not re-derived/i.test(line))
+      process.stderr.write(`Bug registry: ${line.trim()}\n`);
 }
 
 process.exit(0);

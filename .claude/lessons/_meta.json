@@ -1,10 +1,10 @@
 {
-  "nextId": 67,
-  "activeCount": 37,
-  "archivedCount": 24,
+  "nextId": 71,
+  "activeCount": 40,
+  "archivedCount": 25,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-05T07:05:29.000Z",
+  "updatedAt": "2026-09-05T09:39:38.000Z",
   "schemaVersion": 1,
-  "note": "Merge of origin/master (e07aa0b5, #611) into refactor/imp-01-pricing-package: master's #611 minted a NEW `L-061 · testing · watchdog spec` entry that collided with this branch's own pre-existing L-061 (testing, wave B′ P4, Prisma client-extension catch-all) — master's entry renumbered to L-066 (next free id after this branch's nextId of 66); this branch's own L-061 kept its id unchanged. nextId bumped to 67, activeCount 35→36. Prior note: merge of origin/master (a5be8626, #610) renumbered this branch's colliding L-058 to L-065. Merge of origin/master (16a486c2, #613–#615) into `fix/F13-recurring-standing-v2`: master had not claimed L-046, so F13's pre-allocated domain entry keeps that id unchanged and is the only addition on top of master's register — activeCount 36→37, nextId stays 67, archivedCount 24, 37,580 of 40,960 bytes."
+  "note": "Merge of origin/master (10ddc3fa, #597 in-repo bug registry) into `fix/F13-recurring-standing-v2`: master's register is the base — it had already renumbered #597's four entries to L-067…L-070 and archived L-029 to hold the byte cap — and this branch contributes only its pre-allocated domain entry L-046, an id master never claimed, so nothing was renumbered on either side. activeCount 39→40 (exactly at maxEntries; the next entry MUST archive one first), archivedCount 25, nextId 71 (max id 70 + 1), 40,478 of 40,960 bytes. Prior note: Merge of origin/master (22372911, #613) into feat/bug-registry: master had minted its own L-063/L-064/L-065/L-066 (imp-04 jest-split, imp-04 CSP, PR-4 imp-01 compiled workspace package, watchdog spec), so this branch's four #597 registry entries were renumbered above master's max — L-063→L-067, L-064→L-068, L-065→L-069, L-066→L-070 — and the seven code-map/bugs.mjs citations of L-063 were remapped with them; this branch's own L-061 (watchdog spec) was dropped as a duplicate of master's L-066, same text. L-029 archived (guard `orders.lifecycle-conservation.spec.ts` in place) to hold the byte cap."
 }

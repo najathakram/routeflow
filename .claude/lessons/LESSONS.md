@@ -109,6 +109,22 @@
 - **Guard:** stash messages here carry the worktree name (`rf-F13: …`); no hook — HANDOFF and the
   fleet-state memory carry the rule.
 
+### L-069 · 2026-09-04 · process · #597
+
+- **Symptom:** claiming a batch made the dispatcher offer the batch touching the same files to a
+  second agent; a copied claim grammar freed another script's leases.
+- **Root cause:** the scheduler removed in-flight work from the candidate list before building the
+  conflict graph, so taking a batch DELETED its edges; and a protocol restated by eye drifted on
+  three details, each toward the permissive read.
+- **Lesson:** **Excluding an entity from a constraint problem deletes its constraints — model
+  in-progress work as an OCCUPANT that holds capacity and keeps its edges, never as a deletion. A
+  protocol restated in a second file drifts toward whatever is permissive: extract the reading as a
+  pure function, test it against the other side's exact payloads, and make both files say they
+  change together.**
+- **Guard:** busy batches pre-coloured into wave 1, `CONFLICTING` includes `in-flight`; `readClaims`
+  is pure and asserted against the three comment sets that broke it; both files carry the
+  paired-change warning.
+
 ## tooling
 
 ### L-065 · 2026-09-03 · tooling · PR-4 `imp-01`
@@ -263,6 +279,54 @@
   `inputs` name those files — a `<workspace>#<task>` override is one spec away from forbidden; a
   GENERIC task with explicit inputs survives.
 - **Guard:** `turbo.json` `test:repo-truth`; `apps/api/src/common/turbo-inputs.spec.ts`.
+
+### L-067 · 2026-09-04 · tooling · #597
+
+- **Symptom:** eight defects from one script: "updated" edits that changed nothing, mangled authored
+  text, a regex parsed as a comment, a record claiming a proof it never held.
+- **Root cause:** each write and derivation trusted something other than its own result — a STRING
+  `replace` expands `$1`/`$&` out of the CALLER's text; an anchored replace that misses returns the
+  subject unchanged; a regex routed through a script's template literal loses a backslash layer; a
+  derived field read a proxy, not the field it names.
+- **Lesson:** **A write must prove its own effect; a derived field comes from the field it
+  represents, never a correlate. Function replacement for authored text; compare before/after and
+  fail when equal ("wrote" ≠ "changed"); `proof` from `row.proof`, "event recorded" from the
+  append's return; write regex/escape-heavy edits directly, never through an intermediate script's
+  string layer; EXECUTE the function you patched — `node -c` proves it parses, not that it runs.**
+- **Guard:** `bugs self-test` (step 6 of `npm run verify`): `$`-safety, one `## History` per record,
+  ledger id-uniqueness, real `cmds.render` on a fixture, sync done→queued→done, reopen leaves the
+  proof clear.
+
+### L-068 · 2026-09-04 · tooling · #597
+
+- **Symptom:** a proven ledger row silently back to `queued`; a live lock stolen, admitting three
+  writers; a refused `move` destroying the authoritative row — every gate green.
+- **Root cause:** an unlocked read-modify-write (stale data enters at the READ, and a
+  read-back-assert re-reads the row that survived); staleness measured as AGE, so a waiter stole a
+  LIVE lock and release deleted the lock PATH unconditionally; and the durable record of intent was
+  written BEFORE the step that could still fail.
+- **Lesson:** **Hold an exclusive lock across the READ as well as the write wherever two processes
+  may touch one file — a read-back-assert can never see the write yours erased. Break a lock on
+  LIVENESS (owner pid/token, ESRCH), never on age; release only the lock you own; fix break and
+  release together; when two constants work in only one order, test the order. Order writes so any
+  failure leaves the safest reachable state: additive write first, verify it landed, irreversible
+  step last.**
+- **Guard:** `withShardLock`/`withCatalogueLock` (atomic `mkdir` lockdir, `owner.json` {pid, token},
+  released from an `exit` handler); `BUGS_TEST_STALL_MS` widens the race; planted failures
+  (cross-shard duplicate, real `EISDIR`, corrupted record mid-loop) assert the PRE-failure state
+  survives.
+
+### L-070 · 2026-09-05 · tooling · #597
+
+- **Symptom:** the registry self-test's dead-holder lock cases failed on CI's Linux runner and
+  passed on Windows; the waiter never broke a dead owner's lock and every later case inherited it.
+- **Root cause:** `process.kill(pid, 0)` succeeds for a POSIX zombie — a killed child its parent
+  never reaped — and a synchronous parent (`Atomics.wait`, `spawnSync`) never reaps.
+- **Lesson:** **Signal 0 proves a pid exists, not that it lives. A POSIX liveness check must also
+  read `/proc/<pid>/stat` state `Z` (negative-only: unreadable means alive); a fixture that kills
+  a child must assert it was observed gone before the code under test runs.**
+- **Guard:** self-test `liveness:` checks (a2) and the dead-holder `observed gone` assertion, run on
+  both platforms; CI run 33938718344 is the red that proved it.
 
 ## testing
 
@@ -473,28 +537,6 @@ build` forces production — so that branch was dead in every Docker image, not 
   reachable (a SKIPPED stop on a COMPLETED run), ship the refusal for it in the same PR ([[L-030]]).
 - **Guard:** `REG-B129 (T5 path: cancel → un-cancel → re-dispatch)`, `REG-B211 (T12 path:
 complete-with-skipped → reopen refused)`; mutation probes in the F11 PR body.
-
-### L-029 · 2026-09-01 · domain · #588
-
-- **Symptom:** cancelling an order destroyed value three ways at once — it voided the invoice for
-  goods already delivered, never returned the creation-time stock decrement, and its sibling
-  `deleteOrder` skipped the regulated-ledger reversal both other invoice-destruction paths
-  performed. All three had shipped green.
-- **Root cause:** the conservation rules were built for the **edit** path and the **teardown**
-  paths were simply never enrolled in them. Every signal each fix needed already sat in the same
-  file — the delivered-qty clamp, the reversal call — and was not consulted. Nothing failed
-  loudly, because a conservation law has no natural test: stock is only wrong much later, and
-  nowhere near the cancel that caused it.
-- **Lesson:** **When a codebase establishes an invariant on one path, enumerate every OTHER path
-  that reaches the same state and enroll it explicitly — an invariant with a known exception is a
-  bug with a scheduled date.** Search by the STATE being mutated (who else deletes an invoice, who
-  else writes `order.status`), never by the feature name: the violating paths are the ones that
-  never mention it.
-- **Guard:** `orders.lifecycle-conservation.spec.ts` + its pins spec, 9 mutation probes. The same
-  search immediately found two more instances, recorded not fixed: `routes.service.ts` has **five**
-  `order.status` writers and only one runs the invoicing side effects (→ F11), and the customer
-  purge is a **fourth** `reverseInvoiceEntries`-skipped hard delete — at four instances the answer
-  is a shared guard, not a fourth point-fix. See [[L-008]] for why they stayed out of scope.
 
 ### L-030 · 2026-09-01 · domain · #588
 
