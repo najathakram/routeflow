@@ -19,31 +19,17 @@ import {
   type VendorBill,
   type VendorBillStatus,
 } from "../../../lib/api/vendor-bills";
+import { vendorBillPillFor as billPill } from "../../../lib/vendor-bill-logic";
 import { fmtCalendarDate } from "../../../lib/format-date";
 
 const FILTERS = [
   { id: "ALL", label: "All" },
   { id: "RECEIVED", label: "Unpaid" },
-  { id: "FULL", label: "Paid" },
+  { id: "PAID", label: "Paid" },
   { id: "DRAFT", label: "Draft" },
 ] as const;
 
 type FilterId = (typeof FILTERS)[number]["id"];
-
-function billPill(status: VendorBillStatus) {
-  switch (status) {
-    case "DRAFT":
-      return { variant: "gray" as const, label: "Draft" };
-    case "RECEIVED":
-      return { variant: "orange" as const, label: "Received" };
-    case "PARTIAL":
-      return { variant: "orange" as const, label: "Partial" };
-    case "FULL":
-      return { variant: "green" as const, label: "Paid" };
-    case "VOID":
-      return { variant: "gray" as const, label: "Void" };
-  }
-}
 
 function formatCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);

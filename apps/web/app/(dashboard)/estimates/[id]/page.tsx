@@ -210,7 +210,9 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
   };
 
   const canConvert = status === "DRAFT" || status === "SENT" || status === "ACCEPTED";
-  const isReadOnly = status === "DECLINED" || status === "EXPIRED";
+  // Wave E / imp-10b, L-072 (sibling-sweep find): dropped a comparison against a
+  // phantom "EXPIRED" EstimateStatus value the schema has never had.
+  const isReadOnly = status === "DECLINED";
 
   return (
     <div className="space-y-5 p-6">

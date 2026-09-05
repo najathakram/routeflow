@@ -94,7 +94,7 @@ services:
   # ─── DB migrations (one-shot) ────────────────────────────────────────────────
   # Applies committed Prisma migrations before the API starts, mirroring prod
   # (`railway run npx prisma migrate deploy`). Reuses the built API image, which
-  # ships prisma/schema.prisma + prisma/migrations + the Prisma CLI. Exits 0 when
+  # ships prisma/schema/ + prisma/migrations + the Prisma CLI. Exits 0 when
   # the schema is up to date; `api` waits for it via service_completed_successfully.
   migrate:
     build: *api-build

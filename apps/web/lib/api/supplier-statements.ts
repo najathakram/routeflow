@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { StatementAiError, StatementAiErrorCode } from "@routeflow/types";
+export type { StatementAiError, StatementAiErrorCode } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 // PR-F WP4 — the web client for the AI supplier-statement reconciliation
@@ -210,17 +212,6 @@ export function useApplyStatement(scanId: string) {
 // Reproduced verbatim from `SupplierStatementsService.scanStatement`'s own
 // catch/parse branches (it duplicates, rather than imports, the invoice
 // scanner's contract — the four codes and their conditions are identical).
-
-export type StatementAiErrorCode =
-  | "AI_KEY_INVALID"
-  | "AI_SCAN_REJECTED"
-  | "AI_UNAVAILABLE"
-  | "AI_PARSE_FAILED";
-
-export interface StatementAiError {
-  code: StatementAiErrorCode | null;
-  message: string;
-}
 
 const KNOWN_CODES: StatementAiErrorCode[] = [
   "AI_KEY_INVALID",

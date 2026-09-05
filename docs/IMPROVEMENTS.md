@@ -35,7 +35,7 @@ Two items were explicitly requested by the product owner and are called out inli
 | 7   | P1   | **Local full-stack hosting via Docker (pre-PR)**             | M      | 🟡   | shipped (#606; gaps closed #608 + wave D)                                     |
 | 8   | P2   | Retire the repo public/private flip; run CI private          | S      | 🟡   | docs-only (wave D; retirement blocked on billing)                             |
 | 9   | P2   | Constrain the `SKIP_VERIFY` bypass; split the CI job         | S      | 🟡   | shipped (wave B′)                                                             |
-| 10  | P3   | Split `schema.prisma`; share DTOs via `@routeflow/types`     | M      | ⚪   | open                                                                          |
+| 10  | P3   | Split `schema.prisma`; share DTOs via `@routeflow/types`     | M      | ⚪   | shipped (wave E: 10a + 10b)                                                   |
 | 11  | P3   | Rewrite the stale README; slim `CLAUDE.md`; drop dead deps   | S      | 🟡   | shipped (wave D)                                                              |
 
 ---
@@ -321,14 +321,50 @@ so a failing type-check no longer hides a failing lint/test in the same run.
 
 ### 10. Split `schema.prisma`; share DTOs via `@routeflow/types` · M · ⚪
 
+> **SHIPPED — both halves (Wave E, `fix/imp-wave-e-structure`): 10b 2026-09-03, 10a 2026-09-04.**
+
 - One **4,438-line** `schema.prisma` with **125 models** (verified). Prisma 7 supports multi-file
-  schemas — split into `prisma/schema/*.prisma` by domain (tenancy, sales, inventory, finance,
-  compliance) for navigability.
+  schemas. **10a shipped:** it is now `apps/api/prisma/schema/{_base,tenancy,catalog,sales,finance,platform,compliance}.prisma`
+  — 207 top-level blocks (125 models, 80 enums, datasource+generator). The split is performed and
+  re-verified by a committed script, `apps/api/scripts/split-prisma-schema.mjs`, driven by an
+  explicit `MODEL_DOMAIN` map (an unmapped model is a hard error — no misc bucket). `--check`
+  **always** enforces the structural invariants with no original needed (file set, `_base`
+  holds only datasource+generator, every other file ≥1 model, unique names, every model where the
+  map says, every enum in a domain file that itself holds a referencing model) — the last is
+  membership rather than strict "first referencing model": that literal ordering isn't
+  reconstructable from the folder alone, since domains interleave in the pre-split file in ways a
+  split doesn't preserve. Only with an explicit `--from <path>` or `--from-ref <git-ref>` does
+  `--check` additionally re-derive the concatenation and prove the folder **block-identical** to
+  that original — the retired single file is never read implicitly. The one-time lossless proof
+  was recorded at split time against `e39bf9db` (207 blocks) and is re-derivable on demand
+  (`--check --from-ref e39bf9db`); the standing lossless guard going forward is the drift gate, not
+  a repeated diff against a file that no longer exists in the tree. `prisma.config.ts` now points
+  `schema` at the folder with an explicit `migrations.path`; `Dockerfile`, `schema-drift.mjs`
+  (`--to-schema prisma/schema`), `scan-signatures.mjs` (which now FAILS LOUDLY on a missing schema
+  instead of silently scanning nothing) and the `db-migrations.yml` `paths:` filter were updated
+  with it. Lossless proof: `prisma validate` clean, `prisma format` a no-op, the PR-1 drift gate
+  reports NO DRIFT against the compose DB (23 migrations, up to date) and **no migration was
+  generated**.
 - Contracts are hand-copied: **48** API-client modules in web, **35** in mobile, while
-  `@routeflow/types` is imported by only **27** source files across all apps (verified). Push shared
-  request/response shapes into `@routeflow/types` (or generate them) instead of duplicating.
+  `@routeflow/types` is imported by only **27** source files across all apps (verified). **10b
+  shipped:** the DTO-duplication sweep found 134 cross-app duplicate names (49 identical, 46
+  near-identical, 39 divergent); the 84 DTO names (plus 40 enum mirrors in `enums.ts`) now live in
+  `packages/types/api/{orders,customers,products,finance,returns,regulated,routes,buyer,misc}.ts`,
+  imported by both apps via `scripts/codemods/shared-dto-rewrite.mjs`. Every Prisma enum a client
+  mirrors (40 found) now derives from one const-array union per enum in
+  `packages/types/api/enums.ts`, pinned set-equal to `@prisma/client` by
+  `apps/api/src/common/enum-parity.spec.ts` — this caught and fixed **four real drifts**: mobile
+  `VendorBillStatus` had an invented `"FULL"` value and both apps omitted `OVERDUE`; mobile
+  `POStatus` used `"PARTIALLY_RECEIVED"` where the schema says `PARTIAL` (a real functional bug —
+  it silently hid the mobile "Receive" action on any partially-received PO); mobile
+  `BuyerPromotion.type` omitted `"BUY_N_GET_M"` (masked by a compensating cast, now removed); both
+  apps' `EstimateStatus` carried a phantom `"EXPIRED"` value the schema has never had (dead code,
+  sibling-sweep find). See lesson L-072.
+  **Follow-on:** ~25 Prisma enums are still hand-mirrored at ~56 client sites without a parity row
+  (web `OrderStatus` omits `PARTIALLY_DELIVERED`); tracked as the next structure item.
 - The **React 18 vs 19** split (mobile pulls 19, web needs 18, force-pinned at the image root in
-  [`apps/web/Dockerfile`](../apps/web/Dockerfile)) is a hoisting hack worth revisiting.
+  [`apps/web/Dockerfile`](../apps/web/Dockerfile)) is a hoisting hack worth revisiting. **Kept as
+  is for 10b** — revisit with a Next 15 upgrade, not before.
 
 ### 11. Rewrite the stale README; slim `CLAUDE.md`; drop dead deps · S · 🟡
 

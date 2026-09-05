@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { TobaccoOverview } from "@routeflow/types";
+export type { TobaccoOverview } from "@routeflow/types";
 
 // ─── Tenant addons (feature flags) ────────────────────────────────────────────
 
@@ -21,14 +23,6 @@ export function useHasAddon(key: string): boolean {
 export const TOBACCO_ADDON = "tobacco_dealer";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-export interface TobaccoOverview {
-  period: { from: string; to: string };
-  flaggedProductCount: number;
-  inventory: { totalQty: number; totalValue: number };
-  purchases: { count: number; totalQty: number; totalValue: number };
-  sales: { count: number; totalQty: number; totalValue: number; totalTax: number };
-}
 
 export interface TobaccoInventoryItem {
   id: string;

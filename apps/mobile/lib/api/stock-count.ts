@@ -2,6 +2,16 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { CommitStockCountItem } from "../stock-count-logic";
 import type {
+  CommitStockCountPayload,
+  CommitStockCountResponse,
+  CommitStockCountSessionResponse,
+} from "@routeflow/types";
+export type {
+  CommitStockCountPayload,
+  CommitStockCountResponse,
+  CommitStockCountSessionResponse,
+} from "@routeflow/types";
+import type {
   StartStockCountResult,
   StockCountSessionDetail,
   StockCountSessionLine,
@@ -14,21 +24,6 @@ import type {
 // so a count can be paused, resumed on another device, and carries per-line
 // attribution + history. See lib/stock-count-autosave.ts for the debounced
 // per-line write queue that drives the PUT .../lines calls.
-
-export interface CommitStockCountPayload {
-  sessionId: string;
-  items: CommitStockCountItem[];
-  notes?: string;
-  effectiveDate?: string;
-}
-
-export interface CommitStockCountResponse {
-  sessionId: string;
-  reference: string;
-  applied: number;
-  skipped: number;
-  movementIds: string[];
-}
 
 export function useCommitStockCount() {
   const qc = useQueryClient();
@@ -126,16 +121,6 @@ export function useRemoveStockCountLine(sessionId: string | null | undefined) {
         .then((r) => r.data),
     onSuccess: () => invalidateStockCountQueries(qc, sessionId ?? undefined),
   });
-}
-
-export interface CommitStockCountSessionResponse {
-  sessionId: string;
-  reference: string;
-  applied: number;
-  skipped: number;
-  movementIds: string[];
-  costMovementIds?: string[];
-  alreadyCommitted?: boolean;
 }
 
 export function useCommitStockCountSession(sessionId: string | null | undefined) {

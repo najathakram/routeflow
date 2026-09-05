@@ -55,10 +55,12 @@ export function bogoBannerText(promo: Pick<BuyerPromotion, "bannerText">): strin
  * only the cart/order line's `freeUnits` count depends on qty). Ties broken
  * by id, same as `applyBestPromotion`, when more than one BOGO promo matches.
  *
- * `BuyerPromotion.type` is a narrower API-response union that predates this
- * promo type (`lib/api/buyer.ts`) — the cast to `PromotionType` just widens it
- * back to the shared pricing union so the literal comparison below type-checks;
- * it does not change what value `p.type` actually holds at runtime.
+ * Wave E / imp-10b, L-072: `BuyerPromotion.type` now derives from the shared,
+ * schema-pinned `PromotionType` (`@routeflow/types`), so the literal comparison
+ * below type-checks natively — no widening cast needed any more (this used to
+ * carry an `as PromotionType` cast to work around `BuyerPromotion.type`
+ * omitting `"BUY_N_GET_M"`; that value never changed at runtime, only the type
+ * hole did).
  */
 export function matchingBogoPromo(
   promos: BuyerPromotion[] | undefined,
@@ -67,7 +69,7 @@ export function matchingBogoPromo(
   const scopeCtx: PromoContext = { ...ctx, qtyPieces: 0, qtyUnits: 0 };
   let best: BuyerPromotion | null = null;
   for (const p of promos ?? []) {
-    if ((p.type as PromotionType) !== "BUY_N_GET_M") continue;
+    if (p.type !== "BUY_N_GET_M") continue;
     if (!promotionMatchesProduct(p, scopeCtx)) continue;
     if (best == null || p.id < best.id) best = p;
   }

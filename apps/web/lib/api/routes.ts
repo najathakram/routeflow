@@ -1,5 +1,19 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type {
+  RouteAnalysisResult,
+  RouteSettings,
+  TripEligibilityRow,
+  TripOrigin,
+} from "@routeflow/types";
+export type {
+  RouteAnalysisResult,
+  RouteSettings,
+  StopETA,
+  TripEligibilityRow,
+  TripIneligibleReason,
+  TripOrigin,
+} from "@routeflow/types";
 
 export interface RouteTemplateStop {
   id: string;
@@ -498,29 +512,6 @@ export function useOptimizeTemplate() {
 
 // ─── Trips (ad-hoc) ────────────────────────────────────────────────────────────
 
-export type TripIneligibleReason =
-  | "SHIP_FULFILLMENT"
-  | "INELIGIBLE_STATUS"
-  | "ON_ACTIVE_RUN"
-  | "PREVIOUSLY_DISPATCHED"
-  | "NO_ADDRESS"
-  | "NOT_FOUND";
-
-export interface TripEligibilityRow {
-  orderId: string;
-  orderNumber: string | null;
-  customerId: string | null;
-  customerName: string | null;
-  eligible: boolean;
-  reason?: TripIneligibleReason;
-  detail?: string;
-}
-
-export type TripOrigin =
-  | { type: "TENANT" }
-  | { type: "DRIVER"; driverId: string }
-  | { type: "ADDRESS"; line1: string; city?: string; state?: string; zip?: string };
-
 /** Eligibility check for a candidate set of orders — feeds the trip builder's
  *  stop preview and skipped-orders panel. Enabled only while orders are selected. */
 export function useTripEligibility(orderIds: string[]) {
@@ -658,30 +649,6 @@ export function useApplyRouteVariant() {
 
 // ─── Route Analysis (AI + ETAs) ───────────────────────────────────────────────
 
-export interface StopETA {
-  stopId: string;
-  stopNumber: number;
-  customerName: string;
-  arrivalTime: string;
-  departureTime: string;
-  travelTimeMinutes: number;
-  deliveryWindowStart?: string | null;
-  deliveryWindowEnd?: string | null;
-  withinWindow: boolean | null;
-}
-
-export interface RouteAnalysisResult {
-  configured: boolean;
-  summary?: string;
-  stops?: Array<{
-    stopNumber: number;
-    status: "ok" | "warning" | "critical";
-    message: string;
-  }>;
-  suggestions?: string[];
-  etas: StopETA[];
-}
-
 export function useAnalyzeRoute() {
   return useMutation<RouteAnalysisResult, Error, { routeId: string; startTime?: string }>({
     mutationFn: ({ routeId, startTime }) =>
@@ -701,15 +668,6 @@ export function useAnalyzeRouteRun() {
 }
 
 // ─── Route Settings ───────────────────────────────────────────────────────────
-
-export interface RouteSettings {
-  averageSpeedKmh: number;
-  serviceTimeMinutes: number;
-  defaultStartTime: string;
-  depotLat: number | null;
-  depotLng: number | null;
-  depotAddress: string;
-}
 
 export function useRouteSettings() {
   return useQuery<RouteSettings>({

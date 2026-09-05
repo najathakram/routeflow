@@ -37,7 +37,7 @@ function statusPill(status: POStatus): {
       return { variant: "gray", label: "Draft" };
     case "SENT":
       return { variant: "orange", label: "Sent" };
-    case "PARTIALLY_RECEIVED":
+    case "PARTIAL":
       return { variant: "brand", label: "Partial" };
     case "RECEIVED":
       return { variant: "green", label: "Received" };

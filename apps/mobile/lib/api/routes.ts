@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { invalidateOrderCaches } from "./orders";
+import type { RouteAnalysisResult, RouteSettings, StopETA } from "@routeflow/types";
+export type { RouteAnalysisResult, RouteSettings, StopETA } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -615,26 +617,6 @@ export function useOptimizeRouteRun() {
 
 // ─── Route Analysis (ETAs + delivery windows) ────────────────────────────────
 
-export interface StopETA {
-  stopId: string;
-  stopNumber: number;
-  customerName: string;
-  arrivalTime: string;
-  departureTime: string;
-  travelTimeMinutes: number;
-  deliveryWindowStart?: string | null;
-  deliveryWindowEnd?: string | null;
-  withinWindow: boolean | null;
-}
-
-export interface RouteAnalysisResult {
-  configured: boolean;
-  summary?: string;
-  stops?: Array<{ stopNumber: number; status: "ok" | "warning" | "critical"; message: string }>;
-  suggestions?: string[];
-  etas: StopETA[];
-}
-
 export function useAnalyzeRoute() {
   return useMutation<RouteAnalysisResult, Error, { routeId: string; startTime?: string }>({
     mutationFn: ({ routeId, startTime }) =>
@@ -650,15 +632,6 @@ export function useAnalyzeRouteRun() {
 }
 
 // ─── Route Settings (depot + service time) ───────────────────────────────────
-
-export interface RouteSettings {
-  averageSpeedKmh: number;
-  serviceTimeMinutes: number;
-  defaultStartTime: string;
-  depotLat: number | null;
-  depotLng: number | null;
-  depotAddress: string;
-}
 
 export function useRouteSettings() {
   return useQuery<RouteSettings>({

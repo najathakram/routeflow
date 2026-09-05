@@ -6,6 +6,37 @@ import { getStoredActiveSeller } from "@/lib/buyer-auth";
 import type { ExpiringAuthorization } from "./authorizations";
 import type { PromotionRule } from "@routeflow/pricing";
 import type { ChangeRequest } from "@/lib/change-requests";
+import type {
+  BuyerAnalytics,
+  BuyerAuthorizationRow,
+  BuyerCreateChangeRequestInput,
+  BuyerPayment,
+  BuyerPromotion,
+  BuyerRemittance,
+  BuyerStatement,
+  BuyerStockAlerts,
+  LockedCategory,
+  ReplenishmentEstimate,
+  ShelfResponse,
+  SubmitBuyerAuthorizationInput,
+} from "@routeflow/types";
+export type {
+  BuyerAnalytics,
+  BuyerAuthorizationRow,
+  BuyerCreateChangeRequestInput,
+  BuyerPayment,
+  BuyerPromotion,
+  BuyerRemittance,
+  BuyerStatement,
+  BuyerStatementTransaction,
+  BuyerStockAlerts,
+  LockedCategory,
+  ReplenishmentEstimate,
+  ShelfActiveOrder,
+  ShelfEstimate,
+  ShelfResponse,
+  SubmitBuyerAuthorizationInput,
+} from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -150,7 +181,10 @@ export interface DashboardData {
   }>;
 }
 
-export interface OrderTemplate {
+/** Wave E / imp-10b R2: renamed from `OrderTemplate` — collided in name (but not
+ *  shape) with `./order-templates.ts`'s divergent `OrderTemplate` within this same
+ *  app; disambiguated rather than shared, since the two shapes are unrelated. */
+export interface BuyerOrderTemplate {
   id: string;
   name: string;
   isActive: boolean;
@@ -170,13 +204,6 @@ export interface OrderTemplate {
 interface Paginated<T> {
   data: T[];
   meta: { total: number; page: number; limit: number; totalPages: number };
-}
-
-/** A regulated category hidden from this buyer pending license verification (W7b). */
-export interface LockedCategory {
-  id: string;
-  name: string;
-  status: "NONE" | "PENDING_REVIEW" | "EXPIRED" | "REJECTED";
 }
 
 export interface BuyerCatalogResult extends Paginated<BuyerProduct> {
@@ -249,22 +276,6 @@ export function useBuyerCatalogCounts() {
 
 // ─── Replenishment (P5-05) ───────────────────────────────────────────────────
 
-export interface ReplenishmentEstimate {
-  productId: string;
-  name: string;
-  unit: string;
-  unitsPerBox: number | null;
-  imageKey: string | null;
-  lastOrderedAt: string;
-  orderCount: number;
-  cadenceDays: number | null;
-  daysSinceLast: number;
-  estDaysLeft: number | null;
-  typicalQty: number;
-  suggestedQty: number;
-  state: "low" | "due-soon" | "ok";
-}
-
 export function useBuyerReplenishment() {
   return useQuery<ReplenishmentEstimate[]>({
     queryKey: ["buyer", "replenishment"],
@@ -274,26 +285,6 @@ export function useBuyerReplenishment() {
 }
 
 // ─── Your Shelf (P5-06/07) ───────────────────────────────────────────────────
-
-/** A replenishment estimate overlaid with snooze state (GET /buyer/shelf). */
-export interface ShelfEstimate extends ReplenishmentEstimate {
-  /** Presigned URL for `imageKey`, renderable by <img>; null when no image. */
-  imageUrl: string | null;
-  snoozed: boolean;
-  snoozedUntil: string | null;
-}
-
-export interface ShelfActiveOrder {
-  id: string;
-  orderNumber: string | null;
-  itemCount: number;
-  total: number;
-}
-
-export interface ShelfResponse {
-  estimates: ShelfEstimate[];
-  activeOrder: ShelfActiveOrder | null;
-}
 
 /**
  * THE single data source for Your Shelf, the shop running-low strip and the
@@ -354,22 +345,9 @@ export function useAddAllLow() {
 
 // ─── Promotions (P5-04) ─────────────────────────────────────────────────────────
 
-/** Active promotion rule for the current seller (GET /buyer/promotions). Shape
- * matches PromotionsService.activeForCatalog + the `PromotionRule` the shared
- * `applyBestPromotion` (lib/pricing) evaluator consumes. */
-export interface BuyerPromotion {
-  id: string;
-  name: string;
-  bannerText: string | null;
-  type: "PERCENT" | "FIXED" | "QTY_BREAK" | "BUY_N_GET_M";
-  value: number;
-  minQty: number | null;
-  scope: "ALL" | "CATEGORY" | "PRODUCTS";
-  category: string | null;
-  startsAt: string;
-  endsAt: string;
-  productIds: string[];
-}
+// `BuyerPromotion` now imported from @routeflow/types (wave E / imp-10b) —
+// shape matches PromotionsService.activeForCatalog + the `PromotionRule` the
+// shared `applyBestPromotion` (lib/pricing) evaluator consumes.
 
 export function useBuyerPromotions() {
   return useQuery<BuyerPromotion[]>({
@@ -488,18 +466,6 @@ export function useBuyerCancelOrder() {
   });
 }
 
-export interface BuyerCreateChangeRequestInput {
-  orderId: string;
-  type: "ADD_ITEM" | "CHANGE_QTY" | "REMOVE_ITEM" | "NOTE";
-  /** ADD_ITEM: the catalog product to add. */
-  productId?: string;
-  /** CHANGE_QTY / REMOVE_ITEM: the target order line. */
-  orderItemId?: string;
-  /** ADD_ITEM: qty to add. CHANGE_QTY: the NEW absolute qty (not a delta). */
-  qty?: number;
-  note?: string;
-}
-
 /**
  * P5-10: file a post-dispatch change request against an order. Only valid once
  * the order's run has dispatched — the server 409s EDIT_WINDOW_OPEN while
@@ -586,7 +552,7 @@ export function useBuyerDashboard(frequentWindow?: "30d" | "90d" | "all") {
 // ─── Templates ────────────────────────────────────────────────────────────────
 
 export function useBuyerTemplates() {
-  return useQuery<{ data: OrderTemplate[]; meta: { total: number } }>({
+  return useQuery<{ data: BuyerOrderTemplate[]; meta: { total: number } }>({
     queryKey: ["buyer", "templates"],
     queryFn: () => buyerApiClient.get("/buyer/templates").then((r) => r.data),
     // A5: seller-scoped — a call without X-Tenant-Slug 400s (see useBuyerShelf).
@@ -656,11 +622,6 @@ export function useBuyerRemoveFavorite() {
 
 // ─── Stock Alerts / Notify-me (P5-03) ─────────────────────────────────────────
 
-export interface BuyerStockAlerts {
-  /** Product ids the buyer has a PENDING restock alert on. */
-  productIds: string[];
-}
-
 export function useBuyerStockAlerts() {
   return useQuery<BuyerStockAlerts>({
     queryKey: ["buyer", "stock-alerts"],
@@ -697,19 +658,6 @@ export function useUnsubscribeStockAlert() {
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
 
-export interface BuyerAnalytics {
-  monthlySpend: Array<{ month: string; spend: number; orderCount: number }>;
-  summary: {
-    totalOrders: number;
-    totalSpend: number;
-    avgOrderValue: number;
-    unpaidInvoiceCount: number;
-    unpaidInvoiceTotal: number;
-  };
-  invoiceBreakdown: { paid: number; unpaid: number; overdue: number };
-  recentPayments: Array<{ date: string; amount: number; method: string; invoiceNumber: string }>;
-}
-
 export function useBuyerAnalytics() {
   return useQuery<BuyerAnalytics>({
     queryKey: ["buyer", "analytics"],
@@ -718,36 +666,6 @@ export function useBuyerAnalytics() {
 }
 
 // ─── Account Statement / Store Credit wallet (P5-13) ──────────────────────────
-
-/**
- * One row in the buyer's statement transaction ledger. `runningBalance` is the
- * open/remaining amount for that row (e.g. for a CREDIT_NOTE it's the remaining
- * balance `amount - amountUsed`, not the original amount — mirrors the API's
- * canonical open-credit predicate so a partially-applied credit never looks
- * bigger than what's actually left in the wallet).
- */
-export interface BuyerStatementTransaction {
-  type: "INVOICE" | "CREDIT_NOTE" | "ADVANCE_PAYMENT";
-  id: string;
-  description: string;
-  date: string;
-  amount: number;
-  runningBalance: number;
-  status: string;
-  /** CREDIT_NOTE only: optional expiry — a computed filter, never a status flip. */
-  expiresAt?: string | null;
-}
-
-export interface BuyerStatement {
-  outstandingAmount: number;
-  overdueAmount: number;
-  /** Wallet balance: Σ roundMoney(amount − amountUsed) over open, non-expired,
-   *  non-VOID credit notes. Never nets AdvancePayment in. */
-  availableCredit: number;
-  advanceBalance: number;
-  pendingOrdersAmount: number;
-  transactions: BuyerStatementTransaction[];
-}
 
 export function useBuyerStatement() {
   return useQuery<BuyerStatement>({
@@ -759,40 +677,11 @@ export function useBuyerStatement() {
 
 // ─── Payments & Remittance (P5-14) ────────────────────────────────────────────
 
-/** One payment row across the buyer's invoices (GET /buyer/payments). Amounts
- *  are stored values read back verbatim — never recomputed here. */
-export interface BuyerPayment {
-  id: string;
-  invoiceId: string;
-  invoiceNumber: string;
-  amount: number;
-  method: string;
-  status: "DRAFT" | "PAID" | "VOID";
-  checkStatus: "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED" | null;
-  nsfFeeAmount: number | null;
-  paidAt: string;
-}
-
 export function useBuyerPayments(params?: { page?: number; limit?: number }) {
   return useQuery<Paginated<BuyerPayment>>({
     queryKey: ["buyer", "payments", params],
     queryFn: () => buyerApiClient.get("/buyer/payments", { params }).then((r) => r.data),
   });
-}
-
-/** Seller's remit-to / how-to-pay instructions (GET /buyer/remittance). Buyer-
- *  visible by design — same data a seller would print on an invoice. */
-export interface BuyerRemittance {
-  payToName?: string;
-  bankName?: string;
-  accountName?: string;
-  accountNumber?: string;
-  routingNumber?: string;
-  achInstructions?: string;
-  wireInstructions?: string;
-  checkInstructions?: string;
-  mailingAddress?: string;
-  notes?: string;
 }
 
 export function useBuyerRemittance() {
@@ -820,26 +709,6 @@ export async function fetchStatementPdfUrl(month: string): Promise<string> {
 }
 
 // ─── Licenses & Authorizations (W6b — buyer self-serve) ──────────────────────────
-
-export interface BuyerAuthorizationRow {
-  trackedCategoryId: string;
-  categoryName: string;
-  status: "NONE" | "PENDING_REVIEW" | "VERIFIED" | "EXPIRED" | "REJECTED";
-  source: "RETAILER_SUBMITTED" | "WHOLESALER_ADDED" | null;
-  licenseNumber: string | null;
-  expiresAt: string | null;
-  documentKey: string | null;
-  submittedAt: string | null;
-  verifiedAt: string | null;
-}
-
-export interface SubmitBuyerAuthorizationInput {
-  trackedCategoryId: string;
-  licenseNumber: string;
-  expiresAt: string; // ISO 8601
-  documentKey?: string;
-  shareConsent: boolean;
-}
 
 /** License-required categories at the active seller, each with the buyer's status. */
 export function useBuyerAuthorizations() {

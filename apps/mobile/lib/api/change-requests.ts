@@ -1,8 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { ChangeRequestStatus, ChangeRequestType } from "@routeflow/types";
 
-export type ChangeRequestType = "ADD_ITEM" | "CHANGE_QTY" | "REMOVE_ITEM" | "NOTE";
-export type ChangeRequestStatus = "PENDING" | "APPROVED" | "DECLINED";
+export type { ChangeRequestStatus, ChangeRequestType };
 export type ChangeRequestResolution = "MERGED_AT_STOP" | "NEXT_DELIVERY" | "DECLINED";
 
 /**

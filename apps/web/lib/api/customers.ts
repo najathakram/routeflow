@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { SelectablePaymentMethod } from "../payment-methods";
+import type { CustomerComment, CustomerDocument } from "@routeflow/types";
+export type { CustomerComment, CustomerDocument } from "@routeflow/types";
 
 export interface Customer {
   id: string;
@@ -62,14 +64,6 @@ export interface CustomerTag {
   id: string;
   name: string;
   color: string;
-  createdAt: string;
-}
-
-export interface CustomerComment {
-  id: string;
-  customerId: string;
-  userId: string;
-  content: string;
   createdAt: string;
 }
 
@@ -429,16 +423,6 @@ export function useRestoreCustomer() {
       qc.invalidateQueries({ queryKey: ["customers", vars.id] });
     },
   });
-}
-
-export interface CustomerDocument {
-  id: string;
-  docType: string;
-  originalName: string;
-  mimeType: string;
-  sizeBytes: number;
-  createdAt: string;
-  url: string;
 }
 
 export function useCustomerDocuments(customerId: string) {

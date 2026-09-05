@@ -42,6 +42,9 @@ RUN npm ci
 # This is deliberately still `npm install` (npm ci cannot add packages):
 # the registry exposure is two exact-pinned, immutable versions, and --force
 # is required to override the React-19 peer ranges hoisted from the lock.
+# Decision (2026-09-03, wave E / imp-10b review): KEPT as-is — this hoisting
+# hack is tied to Next 14 requiring React 18; revisit only alongside a Next 15
+# upgrade (which supports React 19 natively), not standalone.
 RUN npm install --force --no-save react@18.3.1 react-dom@18.3.1
 
 # ── Copy full source ──

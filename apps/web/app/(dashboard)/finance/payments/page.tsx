@@ -26,6 +26,7 @@ import {
   ALL_PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS as METHOD_LABELS,
   PAYMENT_METHOD_COLORS as METHOD_COLORS,
+  type SelectablePaymentMethod,
 } from "@/lib/payment-methods";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -68,7 +69,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const [bankCharges, setBankCharges] = React.useState("");
   const [paidAt, setPaidAt] = React.useState(new Date().toISOString().split("T")[0]);
   const [settledAt, setSettledAt] = React.useState("");
-  const [method, setMethod] = React.useState("CASH");
+  const [method, setMethod] = React.useState<SelectablePaymentMethod>("CASH");
   const [reference, setReference] = React.useState("");
   const [notes, setNotes] = React.useState("");
   const [allocations, setAllocations] = React.useState<Allocation[]>([]);
@@ -137,10 +138,14 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
       return;
     }
     const validAllocs = allocations.filter((a) => a.amount && parseFloat(a.amount) > 0);
-    const dto: StandalonePaymentDto = {
+    // X1: bind TMethod to web's enterable subset at the use site — `method`
+    // is now typed `SelectablePaymentMethod` above, so this compiles without
+    // the `as any` the loosened (generic, `TMethod = string`) shared DTO used
+    // to force here.
+    const dto: StandalonePaymentDto<SelectablePaymentMethod> = {
       customerId,
       totalAmount: total,
-      method: method as any,
+      method,
       paidAt,
       settledAt: settledAt || undefined,
       bankCharges: bankCharges ? parseFloat(bankCharges) : undefined,
@@ -257,7 +262,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
               <label className="mb-1.5 block text-sm font-medium text-navy">Payment Mode *</label>
               <select
                 value={method}
-                onChange={(e) => setMethod(e.target.value)}
+                onChange={(e) => setMethod(e.target.value as SelectablePaymentMethod)}
                 className={fieldCls}
               >
                 {SELECTABLE_PAYMENT_METHODS.map((m) => (

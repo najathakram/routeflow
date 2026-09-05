@@ -1,10 +1,23 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ChangeRequest, ChangeRequestResolveAction } from "@/lib/change-requests";
+import type {
+  ActiveOrderSummary,
+  CancelImpact,
+  CustomerPriceHistory,
+  PriceType,
+} from "@routeflow/types";
 
 export type { ChangeRequest } from "@/lib/change-requests";
 
-export type PriceType = "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL" | "PROMO";
+// `PriceType` re-exported from @routeflow/types (wave E / imp-10b R2: was
+// declared identically here AND in `invoices.ts` — collapsed to one import).
+export type {
+  ActiveOrderSummary,
+  CancelImpact,
+  CustomerPriceHistory,
+  PriceType,
+} from "@routeflow/types";
 
 export interface Order {
   id: string;
@@ -153,15 +166,6 @@ export interface OrderItem {
   deliveredQty?: number;
 }
 
-export interface ActiveOrderSummary {
-  id: string;
-  orderNumber: string | null;
-  status: "DRAFT" | "PENDING";
-  itemCount: number;
-  total: number;
-  createdAt: string;
-}
-
 interface PaginatedResponse<T> {
   data: T[];
   meta: { total: number; page: number; limit: number; totalPages: number };
@@ -195,19 +199,6 @@ export function useOrder(id: string) {
     queryFn: () => apiClient.get(`/orders/${id}`).then((r) => r.data),
     enabled: !!id,
   });
-}
-
-/** What cancelling this order would do to its invoices and applied credits. */
-export interface CancelImpact {
-  orderId: string;
-  orderNumber: string;
-  alreadyCancelled: boolean;
-  invoicesToVoid: Array<{ id: string; invoiceNumber: string; status: string; total: number }>;
-  creditsToRestore: Array<{ creditNoteId: string; creditNoteNumber: string; amount: number }>;
-  advanceToRestore: number;
-  blockingPayments: Array<{ invoiceNumber: string; amount: number }>;
-  canCancel: boolean;
-  deliveredUnits: number;
 }
 
 /**
@@ -358,13 +349,6 @@ export function useActiveOrderForCustomer(customerId: string | null | undefined)
     queryFn: () => apiClient.get("/orders/active", { params: { customerId } }).then((r) => r.data),
     enabled: !!customerId,
   });
-}
-
-export interface CustomerPriceHistory {
-  [productId: string]: {
-    lastPrice: number;
-    listPriceAtTime: number;
-  };
 }
 
 /**

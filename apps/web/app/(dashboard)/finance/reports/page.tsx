@@ -1053,7 +1053,9 @@ function EstimateDetailsReport({ from, to }: { from?: string; to?: string }) {
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-1.5 px-4 pt-4">
-        {["", "DRAFT", "SENT", "ACCEPTED", "DECLINED", "EXPIRED"].map((s) => (
+        {/* Wave E / imp-10b, L-072 (sibling-sweep find): dropped "EXPIRED" — a
+            phantom EstimateStatus value the schema has never had. */}
+        {["", "DRAFT", "SENT", "ACCEPTED", "DECLINED"].map((s) => (
           <button
             key={s}
             onClick={() => setStatusFilter(s)}

@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ChangeRequest } from "./change-requests";
+import type { ActiveOrderSummary, CancelImpact, CustomerPriceHistory } from "@routeflow/types";
+export type { ActiveOrderSummary, CancelImpact, CustomerPriceHistory } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -212,15 +214,6 @@ export interface CreateOrderAsDriverDto {
   idempotencyKey?: string;
 }
 
-export interface ActiveOrderSummary {
-  id: string;
-  orderNumber: string | null;
-  status: "DRAFT" | "PENDING";
-  itemCount: number;
-  total: number;
-  createdAt: string;
-}
-
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
 export function useMyOrders(params?: { status?: string; page?: number; limit?: number }) {
@@ -237,21 +230,6 @@ export function useOrder(id: string) {
     queryFn: () => apiClient.get(`/orders/${id}`).then((r) => r.data),
     enabled: !!id,
   });
-}
-
-/** What cancelling this order would do to its invoices and applied credits.
- *  Mirrors web's `useCancelImpact` — same endpoint, same shape. */
-export interface CancelImpact {
-  orderId: string;
-  orderNumber: string;
-  alreadyCancelled: boolean;
-  invoicesToVoid: Array<{ id: string; invoiceNumber: string; status: string; total: number }>;
-  creditsToRestore: Array<{ creditNoteId: string; creditNoteNumber: string; amount: number }>;
-  advanceToRestore: number;
-  blockingPayments: Array<{ invoiceNumber: string; amount: number }>;
-  /** B56: units already delivered on this order — > 0 refuses the cancel. */
-  deliveredUnits: number;
-  canCancel: boolean;
 }
 
 /**
@@ -574,13 +552,6 @@ export function useActiveOrderForCustomer(customerId: string | null | undefined)
     queryFn: () => apiClient.get("/orders/active", { params: { customerId } }).then((r) => r.data),
     enabled: !!customerId,
   });
-}
-
-export interface CustomerPriceHistory {
-  [productId: string]: {
-    lastPrice: number;
-    listPriceAtTime: number;
-  };
 }
 
 /**

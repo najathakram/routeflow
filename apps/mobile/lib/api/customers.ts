@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { SelectablePaymentMethod } from "../payment-methods";
+import type { CustomerComment, CustomerDocument } from "@routeflow/types";
+export type { CustomerComment, CustomerDocument } from "@routeflow/types";
 
 export interface CustomerSummary {
   id: string;
@@ -454,17 +456,6 @@ export function useDeleteCustomerAddress() {
 
 // ─── Documents ────────────────────────────────────────────────────────────────
 
-export interface CustomerDocument {
-  id: string;
-  docType: string;
-  originalName: string;
-  mimeType: string;
-  sizeBytes: number;
-  createdAt: string;
-  /** Freshly presigned on every list call — safe to open directly, no auth header needed. */
-  url: string;
-}
-
 /** Same vocabulary as web's Documents tab. `docType` is a free string server-side. */
 export const CUSTOMER_DOC_TYPES = [
   "Tax Exempt Certificate",
@@ -585,14 +576,6 @@ export function useDeleteContactPerson(customerId: string) {
 }
 
 // ─── Comments ────────────────────────────────────────────────────────────────
-
-/** NOTE: the server does NOT include the author relation — there is no name to
- *  render (web falls back to "User" too). Distinct from `Customer.notes`. */
-export interface CustomerComment {
-  id: string;
-  content: string;
-  createdAt: string;
-}
 
 const commentsKey = (customerId: string) => ["customers", customerId, "comments"] as const;
 

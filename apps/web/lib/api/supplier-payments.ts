@@ -3,6 +3,28 @@ import { apiClient } from "../api-client";
 import { roundMoney } from "@routeflow/pricing";
 import type { SelectablePaymentMethod } from "../payment-methods";
 import type { VendorBillStatus } from "./vendor-bills";
+import type {
+  RecordSupplierPaymentDto,
+  RecordSupplierPaymentResult,
+  SupplierStatement,
+} from "@routeflow/types";
+// X1: the payment DTO below is re-exported bare — its `TMethod` stays
+// generic in `packages/types/api/finance.ts` on purpose. Do NOT bind that
+// parameter with a same-named local alias in this file (the T1 sweep's "no
+// local re-declaration in lib/api" guards — the shared-dto inventory spec and
+// the shared-dto-rewrite codemod's `--check` — read this file's raw text and
+// can't tell a narrowing alias apart from a forked duplicate). Bind the
+// narrow union at each USE site instead: see `useRecordSupplierPayment`
+// below and `RecordSupplierPaymentModal.tsx`, both of which apply the
+// `SelectablePaymentMethod` type argument where they type the payload.
+export type {
+  RecordSupplierPaymentDto,
+  RecordSupplierPaymentResult,
+  SupplierAllocationLine,
+  SupplierStatement,
+  SupplierStatementRow,
+  SupplierStatementRowType,
+} from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 // PR-E WP4 — the AP mirror of `useRecordPaymentStandalone`/`StandalonePaymentDto`
@@ -17,21 +39,6 @@ import type { VendorBillStatus } from "./vendor-bills";
  *  credit), never an operator-chosen input. */
 export type SupplierPaymentMethod = SelectablePaymentMethod;
 
-export interface SupplierAllocationLine {
-  vendorBillId: string;
-  amount: number;
-}
-
-export interface RecordSupplierPaymentDto {
-  supplierId: string;
-  totalAmount: number;
-  method: SupplierPaymentMethod;
-  paidAt?: string;
-  reference?: string;
-  notes?: string;
-  allocations: SupplierAllocationLine[];
-}
-
 export interface SupplierBillPaymentResult {
   id: string;
   vendorBillId: string;
@@ -43,15 +50,6 @@ export interface SupplierBillPaymentResult {
   paymentGroupId?: string | null;
 }
 
-export interface RecordSupplierPaymentResult {
-  paymentGroupId: string;
-  payments: SupplierBillPaymentResult[];
-  /** Overpayment that landed on the supplier's account as a SupplierCredit
-   *  rather than being rejected — never an error. */
-  excess: number;
-  bills: { id: string; status: VendorBillStatus; totalPaid: number }[];
-}
-
 /**
  * Record one lump-sum supplier payment across N bills — the AP mirror of
  * `useRecordPaymentStandalone`. A remainder beyond what's allocated becomes
@@ -59,7 +57,12 @@ export interface RecordSupplierPaymentResult {
  */
 export function useRecordSupplierPayment() {
   const qc = useQueryClient();
-  return useMutation<RecordSupplierPaymentResult, Error, RecordSupplierPaymentDto>({
+  return useMutation<
+    RecordSupplierPaymentResult,
+    Error,
+    // X1: bind TMethod to web's enterable subset at the use site.
+    RecordSupplierPaymentDto<SelectablePaymentMethod>
+  >({
     mutationFn: (dto) => apiClient.post("/vendor-bills/payments/record", dto).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["suppliers"] });
@@ -79,31 +82,6 @@ export function useRecordSupplierPayment() {
 // draw-down against a bill is folded into that bill's own totalPaid and
 // deliberately excluded from the timeline as its own row (it isn't new
 // money), so PAYMENT rows here are real cash movements only.
-
-export type SupplierStatementRowType = "BILL" | "PAYMENT" | "CREDIT";
-
-export interface SupplierStatementRow {
-  id: string;
-  type: SupplierStatementRowType;
-  date: string;
-  description: string;
-  billId?: string;
-  billNumber?: string;
-  paymentGroupId?: string | null;
-  /** Signed: a BILL increases what's owed (+); a PAYMENT/CREDIT decreases it (-). */
-  amount: number;
-  /** Running balance (total outstanding) after this row. */
-  balance: number;
-}
-
-export interface SupplierStatement {
-  supplierId: string;
-  timeline: SupplierStatementRow[];
-  totalOwed: number;
-  totalPaid: number;
-  outstanding: number;
-  creditBalance: number;
-}
 
 export function useSupplierStatement(supplierId: string) {
   return useQuery<SupplierStatement>({

@@ -23,7 +23,6 @@ const FILTERS = [
   { id: "SENT", label: "Sent" },
   { id: "ACCEPTED", label: "Accepted" },
   { id: "DECLINED", label: "Declined" },
-  { id: "EXPIRED", label: "Expired" },
 ] as const;
 
 type FilterId = (typeof FILTERS)[number]["id"];
