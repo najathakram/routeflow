@@ -792,8 +792,13 @@ now contributes alongside api/mobile).
   two `react` instances paired with one `react-dom`, crashing any Radix render with "Cannot read
   properties of undefined (reading 'ReactCurrentDispatcher')". Test-infra-only fix; the underlying
   `^18` vs `~19.2.2` range drift is a real dependency bug, flagged separately (see the wave-D
-  README "Findings for later"), not fixed here.
-- **`jest.setup.ts`** — one line, `import "@testing-library/jest-dom"`.
+  README "Findings for later"), not fixed here. **`testTimeout: 30_000`** (2026-09-05): RTL suites
+  mount the real providers and pay a cold SWC compile on each file's first test; under pre-push /
+  CI load on a slow host that overran Jest's 5 s default twice (portal-switch T10, buyer-portal
+  connect-seller) as a _timeout_, not an assertion — the ceiling is raised, green tests are no slower.
+- **`jest.setup.ts`** — `import "@testing-library/jest-dom"` plus RTL
+  `configure({ asyncUtilTimeout: 10_000 })` (findBy*/waitFor headroom on slow hosts; pairs with
+  `testTimeout` above).
 - **`test-utils/render.tsx`** — `renderWithProviders(ui, opts)` (re-exports RTL +
   `createTestQueryClient()`: retries off, no caching). Wraps `QueryClientProvider` →
   `ToastProvider` → `I18nProvider` → `BuyerAuthProvider` → `AuthProvider` — the REAL context
