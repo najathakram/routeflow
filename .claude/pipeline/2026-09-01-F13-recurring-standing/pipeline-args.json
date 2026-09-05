@@ -1,0 +1,262 @@
+{
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F13/.claude/pipeline/2026-09-01-F13-recurring-standing/build-plan.md",
+  "discoveryPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F13/.claude/pipeline/2026-09-01-F13-recurring-standing/discovery.md",
+  "specPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F13/.claude/pipeline/2026-09-01-F13-recurring-standing/spec.md",
+  "uxSpecPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F13/.claude/pipeline/2026-09-01-F13-recurring-standing/ux-spec.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F13/.claude/pipeline/2026-09-01-F13-recurring-standing/test-plan.md",
+  "designSystemPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F13/.claude/pipeline/design-system.md",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F13/.claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-02T19:00:58Z",
+  "scale": "major",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F13",
+  "context": "F13 — recurring invoices + standing orders (B46 B48 B106 Critical/T1; B09 B92 T2). Lead rulings apply (SEQUENCE.md R5/R6): e2e spec number 30, lesson L-046, order-templates.controller.ts and apps/api/src/routes/** untouched, orders.service.ts diff = exactly the two modifier lines (F11 is live in another region of that file). Never run Playwright locally, not even --list.",
+  "formatCommand": "npx prettier --write",
+  "testPackages": [
+    {
+      "id": "TP-API-RI",
+      "title": "recurring-invoices specs — schedule/outcome + validated PATCH DTO",
+      "files": [
+        "apps/api/src/recurring-invoices/recurring-invoices.schedule-outcome.spec.ts",
+        "apps/api/src/recurring-invoices/dto/update-recurring-invoice.dto.spec.ts",
+        "apps/api/src/recurring-invoices/recurring-invoices.service.spec.ts"
+      ],
+      "brief": "Author the red set T1, T2, T3, T5, T6, T7, T17, T18, T19, T29, T31 (titles start with REG-B46 / REG-B106 / REG-B92) in the two NEW spec files, and the pins T4, T8, T20 in the EXISTING recurring-invoices.service.spec.ts, exactly per test-plan §2 (table), §2.1, §6 and build-plan 'TP-API-RI'. Copy the provider block of recurring-invoices.service.spec.ts:150-167 (createMockPrisma, TenantContextService, InvoicesService mock). Pins carry NO REG token and stay outside the red gate. Each red test must fail on its OWN expected value from the plan (e.g. `expected 7 received 6`), never merely on undefined.",
+      "provenBy": [
+        "T1",
+        "T2",
+        "T3",
+        "T5",
+        "T6",
+        "T7",
+        "T17",
+        "T18",
+        "T19",
+        "T29",
+        "T31",
+        "T4",
+        "T8",
+        "T20"
+      ]
+    },
+    {
+      "id": "TP-API-OT",
+      "title": "order-templates specs — pricing via the shared resolver + items on PATCH",
+      "files": [
+        "apps/api/src/order-templates/order-templates.pricing-and-items.spec.ts",
+        "apps/api/src/order-templates/dto/update-order-template.dto.spec.ts",
+        "apps/api/src/order-templates/order-templates.service.spec.ts"
+      ],
+      "brief": "Author the red set T9–T15, T23, T25, T26 (titles start with REG-B48 / REG-B09) in the two NEW files and the pins T16, T27 (existing spec, append) and T24 (NEW dto spec, no token), exactly per test-plan §2/§2.1/§6 and build-plan 'TP-API-OT'. Harness per test-plan §2.1: the OrdersService mock exposes mergeAllPendingForCustomer, loadActivePromotions, getCustomerPriceHistory as jest mocks and resolveBuyerLinePrice delegating to the real prototype. NOTE: order-templates.service.ts anchors moved +8 after :244 since the plan was written (createOrderFromTemplate is now :317) — cite behaviour, not line numbers. Each red test fails on its own expected value (`expected unitPrice 8 received 10`, `promoFreeUnits 1 received undefined`, `tenantTransaction … 0 calls`).",
+      "provenBy": [
+        "T9",
+        "T10",
+        "T11",
+        "T12",
+        "T13",
+        "T14",
+        "T15",
+        "T23",
+        "T25",
+        "T26",
+        "T16",
+        "T27",
+        "T24"
+      ]
+    },
+    {
+      "id": "TP-MOBILE",
+      "title": "mobile lastRunOutcome helper spec (REG-B106)",
+      "files": ["apps/mobile/__tests__/recurring-invoices-helpers.test.ts"],
+      "brief": "Append `describe(\"REG-B106 lastRunOutcome\", …)` with the three `it`s of T22 to the EXISTING file, per build-plan 'TP-MOBILE': `import * as logic from \"../lib/recurring-invoices-logic\"; const fn = (logic as any).lastRunOutcome;` and per case `expect(fn ? fn(input) : undefined).toEqual(expected)` with the three expected objects from test-plan T22. Must fail with `expected {variant:\"red\", …} received undefined`. This worktree has its own node_modules install — run only this file.",
+      "provenBy": ["T22"]
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "cd apps/api && npx jest src/recurring-invoices/recurring-invoices.schedule-outcome.spec.ts src/recurring-invoices/dto/update-recurring-invoice.dto.spec.ts src/order-templates/order-templates.pricing-and-items.spec.ts src/order-templates/dto/update-order-template.dto.spec.ts -t \"REG-B\" --silent",
+      "cd apps/mobile && npx jest --config jest.config.js __tests__/recurring-invoices-helpers.test.ts -t \"REG-B106\" --silent"
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "WP-ORDERS",
+      "title": "share the buyer pricing resolver (two modifiers)",
+      "files": ["apps/api/src/orders/orders.service.ts"],
+      "brief": "Exactly two edits and nothing else in this 5.5k-line file (F11 is live in another region of it — keep the diff to these lines plus the comment lines the plan specifies): at :115 change `private async loadActivePromotions(` to `async loadActivePromotions(`; at :137 change `private resolveBuyerLinePrice(` to `resolveBuyerLinePrice(`. Per build-plan 'WP-ORDERS'.",
+      "satisfies": ["R5"],
+      "provenBy": ["T9"],
+      "effort": "low"
+    },
+    {
+      "id": "WP-API-RI",
+      "title": "recurring invoices — month advance, outcome record + rollback, validated PATCH",
+      "files": [
+        "apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+        "apps/api/src/recurring-invoices/recurring-invoices.controller.ts",
+        "apps/api/src/recurring-invoices/dto/update-recurring-invoice.dto.ts"
+      ],
+      "brief": "Per build-plan 'WP-API-RI' and its exact code: (1) rewrite ONLY the MONTHLY branch of calcNextRunAt (decision made from `from` itself; place it before the weekly `d`; weekly/biweekly code byte-identical — T8 pins it); (2) rewrite generateInvoiceFromTemplate with the claim → provisional FAILED → create → link → SUCCESS/null sequence and the catch that restores nextRunAt, records FAILED + message, keeps lastRunAt and rethrows; (3) NEW UpdateRecurringInvoiceDto (whitelisted, nested items validated, rejects isActive), controller PATCH typed on it, transactional update() replacing items inside one tenantTransaction. Money path: use the plan's exact code where given.",
+      "satisfies": ["R1", "R2", "R3", "R4", "R12", "R13", "R14", "R15", "R18", "R19", "R24", "R25"],
+      "provenBy": [
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "T6",
+        "T7",
+        "T8",
+        "T17",
+        "T18",
+        "T19",
+        "T20",
+        "T21",
+        "T29",
+        "T30",
+        "T31"
+      ],
+      "effort": "high"
+    },
+    {
+      "id": "WP-API-OT",
+      "title": "standing orders — real pricing on generation, items on PATCH",
+      "files": [
+        "apps/api/src/order-templates/order-templates.service.ts",
+        "apps/api/src/order-templates/dto/update-order-template.dto.ts",
+        "apps/api/src/order-templates/dto/create-order-template.dto.ts"
+      ],
+      "brief": "Per build-plan 'WP-API-OT' and its exact code: (1) `export` OrderTemplateItemDto in create-order-template.dto.ts (:26); (2) optional validated `items` on UpdateOrderTemplateDto (ArrayMinSize 1, int qty ≥ 1, no unitPrice); (3) createOrderFromTemplate prices every line through OrdersService.loadActivePromotions(CUSTOMER) + resolveBuyerLinePrice with the per-product CustomerPrice tier, and computeLineSubtotal with freeUnits — never Number(product.pricePerUnit); (4) update() replaces items in ONE tenantTransaction stamping tenantId, products checked before any write, and writes no items when the body has none. Anchors moved +8 after :244 since the plan (createOrderFromTemplate is :317, @Cron :259, generateDailyOrders :260); update() :166 unchanged. order-templates.controller.ts stays UNTOUCHED (F14 lane).",
+      "satisfies": ["R5", "R6", "R7", "R8", "R9", "R10", "R11", "R20", "R21", "R23"],
+      "provenBy": [
+        "T9",
+        "T10",
+        "T11",
+        "T12",
+        "T13",
+        "T14",
+        "T15",
+        "T16",
+        "T23",
+        "T24",
+        "T25",
+        "T26",
+        "T27"
+      ],
+      "dependsOn": ["WP-ORDERS"],
+      "effort": "high"
+    },
+    {
+      "id": "WP-WEB-RECURRING",
+      "title": "web — outcome pill + Edit on the recurring card; edit route over a shared form",
+      "files": [
+        "apps/web/lib/api/invoices.ts",
+        "apps/web/app/(dashboard)/invoices/recurring/page.tsx",
+        "apps/web/app/(dashboard)/invoices/recurring/new/page.tsx",
+        "apps/web/app/(dashboard)/invoices/recurring/_components/RecurringInvoiceForm.tsx",
+        "apps/web/app/(dashboard)/invoices/recurring/[id]/edit/page.tsx"
+      ],
+      "brief": "Per build-plan 'WP-WEB-RECURRING' and its exact code: add lastRunStatus/lastError to the RecurringInvoice type (and fix the stale PATCH comment at invoices.ts:835-837); the list card shows Succeeded/Failed pills and an Edit button to /invoices/recurring/<id>/edit; extract ONE RecurringInvoiceForm used by both new/ and the NEW [id]/edit route (loads, pre-fills, saves via PATCH, toasts, returns to the list). Reuse the derived design system (tokens, existing pill/button components, full state set: loading/empty/error).",
+      "satisfies": ["R16", "R26", "R27", "R28"],
+      "provenBy": ["T32", "T33"]
+    },
+    {
+      "id": "WP-WEB-STANDING",
+      "title": "web — the Edit Standing Order modal saves its items",
+      "files": [
+        "apps/web/lib/api/order-templates.ts",
+        "apps/web/app/(dashboard)/customers/[id]/StandingOrderModal.tsx"
+      ],
+      "brief": "Per build-plan 'WP-WEB-STANDING' and its exact code: extend useUpdateOrderTemplate's variables with optional `items` ({productId, qty, notes?}[]); LineItem gains notes; the prefill copies notes; the edit branch sends the FULL item list (adds, removes, qty changes) carrying notes unchanged.",
+      "satisfies": ["R22"],
+      "provenBy": ["T28"]
+    },
+    {
+      "id": "WP-WEB-E2E",
+      "title": "deployed-only Playwright spec 30 + its playwright.config.ts project entry",
+      "files": ["apps/web/e2e/30-recurring-standing.spec.ts", "apps/web/playwright.config.ts"],
+      "brief": "Spec number is 30 (allocated by the lead). Author T28, T32, T33 exactly per test-plan §2/§8 in the shape of 27-cancelled-edit-banner.spec.ts (header doc block explaining T2 / proven-pending-deploy, BASE, apiHeaders, hydration wait, throwaway `E2E B09 …`/`E2E B92 …` fixtures on the approved seed tenant, nextRunAt in 2099, deactivate + void in a finally). Add the `recurring-standing` project entry from the plan's exact code with testMatch /30-recurring-standing\\.spec\\.ts/ and dependencies [\"setup\"] — WITHOUT THE ENTRY THE SPEC NEVER RUNS. This spec is NOT in the red gate and must NEVER be run locally (not even `--list`): it overwrites .campaign/runs/web-e2e.json. Deliverable only; it proves R16/R22/R26/R27 post-deploy.",
+      "satisfies": ["R16", "R22", "R26", "R27"],
+      "provenBy": ["T28", "T32", "T33"]
+    },
+    {
+      "id": "WP-MOBILE",
+      "title": "mobile — outcome on the recurring detail screen",
+      "files": [
+        "apps/mobile/lib/api/recurring-invoices.ts",
+        "apps/mobile/lib/recurring-invoices-logic.ts",
+        "apps/mobile/app/(operator)/recurring-invoices/[id].tsx"
+      ],
+      "brief": "Per build-plan 'WP-MOBILE' and its exact code: add lastRunStatus/lastError to the mobile RecurringInvoice interface; add the exported lastRunOutcome helper (LastRunStatus, LastRunOutcome { variant, label }) to the logic module; in [id].tsx compute the outcome and render the one detail line the plan specifies. Mobile mirrors web — same API fields, only the UI differs. This worktree has its own install; run only the named jest file.",
+      "satisfies": ["R17"],
+      "provenBy": ["T22"]
+    },
+    {
+      "id": "WP-D4",
+      "title": "integrity-report checks for B48 (predicate, positive control, gate state)",
+      "files": ["scripts/data-integrity-report.mjs"],
+      "brief": "Per build-plan 'WP-D4' and its exact code: insert the three CHECKS entries (`template-order-list-price-vs-tier`, its positive control, `f13-gate-state`) immediately after the `recurring-stalled` entry (~:412-421), keeping the file's conventions (`${t}` tenant clause, outer alias, ids/amounts only). Report-only: no writes anywhere. `node --check scripts/data-integrity-report.mjs` must pass.",
+      "satisfies": ["R29"],
+      "provenBy": ["T34"],
+      "effort": "low"
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+      "cd apps/web && npx tsc --noEmit"
+    ],
+    "final": [
+      "cd apps/api && npx jest src/recurring-invoices src/order-templates --silent",
+      "cd apps/api && npx eslint src/recurring-invoices src/order-templates src/orders/orders.service.ts",
+      "cd apps/web && npm run lint",
+      "node --check scripts/data-integrity-report.mjs",
+      "cd apps/mobile && npx jest --config jest.config.js __tests__/recurring-invoices-helpers.test.ts --silent",
+      "cd apps/mobile && npx tsc --noEmit"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+        "behavior": "MONTHLY next run is strictly after `from` and advances by whole months (T1, T5, T6)",
+        "test": "cd apps/api && npx jest src/recurring-invoices/recurring-invoices.schedule-outcome.spec.ts -t \"REG-B46\" --silent"
+      },
+      {
+        "file": "apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+        "behavior": "a create failure restores nextRunAt and records FAILED + message before rethrowing (T17)",
+        "test": "cd apps/api && npx jest src/recurring-invoices/recurring-invoices.schedule-outcome.spec.ts -t \"REG-B106\" --silent"
+      },
+      {
+        "file": "apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+        "behavior": "SUCCESS is recorded only AFTER the invoice is linked (T18)",
+        "test": "cd apps/api && npx jest src/recurring-invoices/recurring-invoices.schedule-outcome.spec.ts -t \"REG-B106\" --silent"
+      },
+      {
+        "file": "apps/api/src/order-templates/order-templates.service.ts",
+        "behavior": "template lines are priced by the shared resolver with the per-product CustomerPrice tier, never Number(product.pricePerUnit) (T9, T10, T14)",
+        "test": "cd apps/api && npx jest src/order-templates/order-templates.pricing-and-items.spec.ts -t \"REG-B48\" --silent"
+      },
+      {
+        "file": "apps/api/src/order-templates/order-templates.service.ts",
+        "behavior": "promotions load for the CUSTOMER role on every trigger (T12, T13)",
+        "test": "cd apps/api && npx jest src/order-templates/order-templates.pricing-and-items.spec.ts -t \"REG-B48\" --silent"
+      },
+      {
+        "file": "apps/api/src/order-templates/order-templates.service.ts",
+        "behavior": "BOGO free units reduce the subtotal through computeLineSubtotal.freeUnits (T13)",
+        "test": "cd apps/api && npx jest src/order-templates/order-templates.pricing-and-items.spec.ts -t \"REG-B48\" --silent"
+      },
+      {
+        "file": "apps/api/src/order-templates/order-templates.service.ts",
+        "behavior": "item replacement on PATCH is ONE tenantTransaction and stamps tenantId (T25)",
+        "test": "cd apps/api && npx jest src/order-templates/order-templates.pricing-and-items.spec.ts -t \"REG-B09\" --silent"
+      },
+      {
+        "file": "apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+        "behavior": "recurring item replacement on PATCH is ONE transaction (T31)",
+        "test": "cd apps/api && npx jest src/recurring-invoices -t \"REG-B92\" --silent"
+      }
+    ]
+  }
+}

@@ -1043,7 +1043,10 @@ describe("AnalyticsService — invoiced-sales readers", () => {
 
       await service.getRoutePerformance(undefined, "2026-06-30");
       const toOnly = prisma.routeRun.findMany.mock.calls[1][0].where.scheduledDate;
-      expect(toOnly.gte).toEqual(new Date(new Date().getFullYear(), 0, 1));
+      // UTC-anchored, not `new Date(year, 0, 1)`: the two-argument constructor reads
+      // HOST-LOCAL components, so on a host west of UTC the window opened hours after
+      // UTC midnight and the gte filter dropped every row dated January 1 (F25).
+      expect(toOnly.gte).toEqual(new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1)));
       expect(toOnly.lte.toISOString()).toBe("2026-06-30T23:59:59.999Z");
     });
 

@@ -88,14 +88,29 @@ function currentBranch() {
 
 // ── comment helpers ────────────────────────────────────────────────────────
 
+// `--paginate --slurp` returns an ARRAY OF PAGES, so flatten it. Without
+// --paginate gh returns page 1 only — the OLDEST 100 comments — while a claim
+// is by construction the NEWEST comment, so on a busy issue every lease became
+// invisible and `claim` handed out a batch someone already held. The identical
+// change landed in scripts/campaign/bugs.mjs's liveClaim in the same commit;
+// see the shared-grammar warning below. (`--slurp` cannot be combined with
+// `--jq` — gh rejects the pair — so no projection is possible here.)
 function comments(n) {
-  return api(`issues/${n}/comments?per_page=100`) ?? [];
+  return (api(`issues/${n}/comments?per_page=100`, ["--paginate", "--slurp"]) ?? []).flat();
 }
 
 function post(n, body) {
   return ghJson(["api", `repos/${repo()}/issues/${n}/comments`, "-f", `body=${MARKER}\n${body}`]);
 }
 
+// ⚠️ THE CLAIM GRAMMAR IS READ IN TWO PLACES. `scripts/campaign/bugs.mjs`
+// (`readClaims`) reads these same comments so `next`/`waves` can honour a lease
+// with no per-batch network round-trip. There is nothing to import — this file
+// is a CLI — so the two readings MUST CHANGE TOGETHER, IN ONE COMMIT.
+// The three rules below are the contract: the marker filter (`isAgent`) runs
+// BEFORE any parse; `^claim:` / `^release:` are anchored with /m and permit NO
+// leading whitespace; and both run per COMMENT, never over a flattened stream
+// of lines. Loosening any of them over there frees leases this file still holds.
 const isAgent = (c) => (c.body ?? "").startsWith(MARKER);
 const isHuman = (c) => !isAgent(c);
 
@@ -122,7 +137,9 @@ function liveClaims(n) {
 }
 
 function label(n, name, add = true) {
-  gh(["issue", "edit", String(n), add ? "--add-label" : "--remove-label", name], { allowFail: true });
+  gh(["issue", "edit", String(n), add ? "--add-label" : "--remove-label", name], {
+    allowFail: true,
+  });
 }
 
 // ── output ─────────────────────────────────────────────────────────────────
@@ -163,8 +180,14 @@ const cmds = {};
 function prIndex() {
   const prs =
     ghJson([
-      "pr", "list", "--state", "open", "--limit", "100",
-      "--json", "number,title,body,headRefName,isDraft,reviewDecision,statusCheckRollup",
+      "pr",
+      "list",
+      "--state",
+      "open",
+      "--limit",
+      "100",
+      "--json",
+      "number,title,body,headRefName,isDraft,reviewDecision,statusCheckRollup",
     ]) ?? [];
 
   const byIssue = new Map();
@@ -180,17 +203,31 @@ function checkState(pr) {
   const rollup = pr.statusCheckRollup ?? [];
   if (!rollup.length) return "pending";
   const norm = (c) => (c.conclusion || c.state || c.status || "").toUpperCase();
-  if (rollup.some((c) => ["FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED"].includes(norm(c))))
+  if (
+    rollup.some((c) =>
+      ["FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED"].includes(norm(c)),
+    )
+  )
     return "failing";
-  if (rollup.some((c) => ["PENDING", "IN_PROGRESS", "QUEUED", "WAITING", "EXPECTED", ""].includes(norm(c))))
+  if (
+    rollup.some((c) =>
+      ["PENDING", "IN_PROGRESS", "QUEUED", "WAITING", "EXPECTED", ""].includes(norm(c)),
+    )
+  )
     return "pending";
   return "green";
 }
 
 cmds.board = () => {
   const issues = ghJson([
-    "issue", "list", "--state", "open", "--limit", "100",
-    "--json", "number,title,labels,updatedAt",
+    "issue",
+    "list",
+    "--state",
+    "open",
+    "--limit",
+    "100",
+    "--json",
+    "number,title,labels,updatedAt",
   ]);
   if (!issues?.length) {
     console.log(C.dim("\n  board empty — no open issues.\n"));
@@ -226,13 +263,24 @@ cmds.board = () => {
   };
 
   const lanes = [
-    "Needs you", "CI failing", "Review comments",
-    "Ready to merge", "In review", "In progress", "Ready", "Backlog",
+    "Needs you",
+    "CI failing",
+    "Review comments",
+    "Ready to merge",
+    "In review",
+    "In progress",
+    "Ready",
+    "Backlog",
   ];
   const tint = {
-    "Needs you": C.r, "CI failing": C.r, "Review comments": C.y,
-    "Ready to merge": C.g, "In review": C.y, "In progress": C.c,
-    Ready: C.c, Backlog: C.dim,
+    "Needs you": C.r,
+    "CI failing": C.r,
+    "Review comments": C.y,
+    "Ready to merge": C.g,
+    "In review": C.y,
+    "In progress": C.c,
+    Ready: C.c,
+    Backlog: C.dim,
   };
 
   console.log(C.b(`\n  ${repo()} — team board`));
@@ -262,7 +310,9 @@ cmds.board = () => {
   const blocked = issues.filter((i) => lane(i) === "Needs you").length;
   if (blocked) {
     console.log(C.r(`  ${blocked} issue(s) waiting on you.`));
-    console.log(C.dim("  Reply to the question comment on GitHub (web or the mobile app) to unblock.\n"));
+    console.log(
+      C.dim("  Reply to the question comment on GitHub (web or the mobile app) to unblock.\n"),
+    );
   }
 };
 
@@ -290,7 +340,16 @@ cmds.epic = (args) => {
     "_Epic. Child tasks link back here. Verbatim client wording stays in `local-assets/`, never in this issue._",
   ].join("\n");
 
-  const url = gh(["issue", "create", "--title", title, "--body", body, "--label", labels.join(",")]);
+  const url = gh([
+    "issue",
+    "create",
+    "--title",
+    title,
+    "--body",
+    body,
+    "--label",
+    labels.join(","),
+  ]);
   console.log(C.g(`✓ epic created  ${url}`));
   console.log(C.dim(`  next: node scripts/team/team.mjs task <this#> "<first task>" --area api`));
 };
@@ -298,7 +357,8 @@ cmds.epic = (args) => {
 cmds.task = (args) => {
   const parent = args[0];
   const title = args[1];
-  if (!parent || !title) fail('usage: task <parent#> "<title>" [--area api|web|mobile] [--kind bug]');
+  if (!parent || !title)
+    fail('usage: task <parent#> "<title>" [--area api|web|mobile] [--kind bug]');
   const labels = [`kind:${flag(args, "kind", "feature")}`, "ready"];
   const area = flag(args, "area");
   if (area) labels.push(`area:${area}`);
@@ -315,7 +375,16 @@ cmds.task = (args) => {
     "_Plan file, if any, goes in `.claude/pipeline/plans/`._",
   ].join("\n");
 
-  const url = gh(["issue", "create", "--title", title, "--body", body, "--label", labels.join(",")]);
+  const url = gh([
+    "issue",
+    "create",
+    "--title",
+    title,
+    "--body",
+    body,
+    "--label",
+    labels.join(","),
+  ]);
   console.log(C.g(`✓ task created  ${url}`));
 };
 
@@ -328,7 +397,11 @@ cmds.claim = async (args) => {
 
   const existing = liveClaims(n);
   if (existing.length && existing[0].id !== id) {
-    console.log(C.y(`✗ #${n} is held by ${C.b(existing[0].id)} until ${existing[0].leaseUntil.toISOString()}`));
+    console.log(
+      C.y(
+        `✗ #${n} is held by ${C.b(existing[0].id)} until ${existing[0].leaseUntil.toISOString()}`,
+      ),
+    );
     process.exit(3);
   }
 
@@ -369,7 +442,16 @@ cmds.ask = (args) => {
   const n = args[0];
   const q = args.slice(1).join(" ");
   if (!n || !q) fail('usage: ask <issue#> "<question for the owner>"');
-  post(n, [`question: id=${claimId()}`, "", `### ❓ ${q}`, "", "_Reply on this issue — any plain comment unblocks me._"].join("\n"));
+  post(
+    n,
+    [
+      `question: id=${claimId()}`,
+      "",
+      `### ❓ ${q}`,
+      "",
+      "_Reply on this issue — any plain comment unblocks me._",
+    ].join("\n"),
+  );
   label(n, "blocked:owner");
   console.log(C.g(`✓ asked on #${n} — issue labelled blocked:owner`));
   console.log(C.dim("  now send a PushNotification so it reaches the phone, then stop."));
@@ -409,7 +491,8 @@ cmds.done = (args) => {
 };
 
 cmds.reap = () => {
-  const issues = ghJson(["issue", "list", "--state", "open", "--limit", "100", "--json", "number,title"]) ?? [];
+  const issues =
+    ghJson(["issue", "list", "--state", "open", "--limit", "100", "--json", "number,title"]) ?? [];
   let n = 0;
   for (const i of issues) {
     const cs = comments(i.number).filter(isAgent);
@@ -423,7 +506,9 @@ cmds.reap = () => {
     const stale = claims.filter((c) => !released.has(c.id) && c.leaseUntil <= new Date());
     for (const s of stale) {
       post(i.number, `release: id=${s.id} reason=lease-expired`);
-      console.log(C.y(`↺ reclaimed #${i.number} from ${s.id} (lease expired ${s.leaseUntil.toISOString()})`));
+      console.log(
+        C.y(`↺ reclaimed #${i.number} from ${s.id} (lease expired ${s.leaseUntil.toISOString()})`),
+      );
       n++;
     }
   }
@@ -449,11 +534,17 @@ cmds.setup = () => {
     ["prio:P3", "c2e0c6", ""],
   ];
   for (const [name, color, desc] of defs) {
-    const r = gh(["label", "create", name, "--color", color, "--description", desc, "--force"], { allowFail: true });
+    const r = gh(["label", "create", name, "--color", color, "--description", desc, "--force"], {
+      allowFail: true,
+    });
     console.log(r === null ? C.y(`· ${name} (skipped)`) : C.g(`✓ ${name}`));
   }
   console.log(C.dim("\nClient labels are created on demand — use --client cN on `epic`."));
-  console.log(C.dim("Keep client codes OPAQUE: the map belongs in local-assets/client-codes.json (gitignored)."));
+  console.log(
+    C.dim(
+      "Keep client codes OPAQUE: the map belongs in local-assets/client-codes.json (gitignored).",
+    ),
+  );
 };
 
 // ── dispatch ───────────────────────────────────────────────────────────────

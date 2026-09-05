@@ -31,6 +31,8 @@ import { useBuyerNotifications, type BuyerNotification } from "@/lib/hooks/useBu
 import { useBuyerExpiringAuthorizations } from "@/lib/api/buyer";
 import type { ExpiringAuthorization } from "@/lib/api/authorizations";
 import type { BuyerSeller } from "@/lib/buyer-auth";
+import { PortalSwitchLink } from "@/components/PortalSwitchLink";
+import { setLastPortalCookie } from "@/lib/presence-cookies";
 
 function buyerExpiryLabel(a: ExpiringAuthorization): string {
   if (a.expired) return "Expired";
@@ -153,10 +155,15 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
   // Only buyerAccessToken / buyerRefreshToken are used in this portal — operator tokens
   // stored under "accessToken" are never read here (RF-220 token isolation).
   React.useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
+    if (isLoading) return;
+    if (!isAuthenticated) {
       const redirect = encodeURIComponent(window.location.pathname + window.location.search);
       router.push(`/buyer/login?redirect=${redirect}`);
+      return;
     }
+    // "/" opens the portal used last when both a buyer and an operator session
+    // are live (lib/portal-routing.ts) — record that this one rendered.
+    setLastPortalCookie("buyer");
   }, [isLoading, isAuthenticated, router]);
 
   if (isLoading) {
@@ -433,6 +440,11 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
             <p className="text-xs font-medium text-buyer-100 truncate">{buyer.name}</p>
             <p className="text-xs text-buyer-300/70 truncate">{buyer.email}</p>
           </div>
+          <PortalSwitchLink
+            to="op"
+            className="mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-buyer-300/70 transition-colors hover:bg-white/10 hover:text-buyer-100"
+            iconClassName="h-4 w-4"
+          />
           <button
             type="button"
             onClick={logout}

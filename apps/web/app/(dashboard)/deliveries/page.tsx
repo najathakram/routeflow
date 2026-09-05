@@ -13,6 +13,7 @@ import {
   useToast,
   type BadgeVariant,
 } from "@routeflow/ui/web";
+import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useRoutes, useDeleteRoute, type Route } from "@/lib/api/routes";
 
@@ -71,8 +72,15 @@ function useDeliveryColumns(
         header: "Date",
         cell: ({ row }) => {
           const run = row.original.runs?.[0];
-          const date = run?.scheduledDate ?? row.original.createdAt;
-          return <span className="text-navy/70">{new Date(date).toLocaleDateString()}</span>;
+          // run.scheduledDate is a UTC-midnight CALENDAR date (fmtCalendarDate,
+          // B91); the createdAt fallback is a real timestamp, so it stays on
+          // the LOCAL formatter — but `fmtDate`, its date-only variant, not a
+          // bare toLocaleDateString(): one column must render one style, or a
+          // mixed list stacks "Jun 10, 2026" against "6/10/2026".
+          const label = run?.scheduledDate
+            ? fmtCalendarDate(run.scheduledDate)
+            : fmtDate(row.original.createdAt);
+          return <span className="text-navy/70">{label}</span>;
         },
       },
       {

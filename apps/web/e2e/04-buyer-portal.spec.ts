@@ -296,6 +296,24 @@ test.describe("Buyer Portal", () => {
     await expect(page.getByText(BUYER_EMAIL)).toBeVisible({ timeout: 10_000 });
   });
 
+  // ── Portal switcher (T28; spec R7, R11) ───────────────────────────────────
+
+  test("BY-15 sidebar offers the seller dashboard, and the portal records rf-last-portal=buyer", async ({
+    page,
+    context,
+  }) => {
+    await loginAsBuyer(page, BUYER_EMAIL, BUYER_PASS);
+    await page.waitForURL("**/buyer/portal", { timeout: 35_000 });
+
+    // This buyer has no operator session, so it is the sign-in variant.
+    const link = page.getByRole("link", { name: "Seller dashboard sign-in" });
+    await expect(link).toBeVisible({ timeout: 15_000 });
+    await expect(link).toHaveAttribute("href", "/login");
+
+    const cookies = await context.cookies();
+    expect(cookies.find((c) => c.name === "rf-last-portal")?.value).toBe("buyer");
+  });
+
   // ── Logout ────────────────────────────────────────────────────────────────
 
   test("BY-13 buyer logout → redirect to /buyer/login", async ({ page }) => {

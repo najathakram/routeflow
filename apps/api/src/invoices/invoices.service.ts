@@ -47,6 +47,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
+import { startOfCalendarDay } from "../common/calendar-date";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -55,38 +56,6 @@ const TERM_DAYS: Record<string, number> = {
   "Net 45": 45,
   "Net 60": 60,
 };
-
-/**
- * The tenant's CURRENT calendar day, as the UTC-midnight instant of that day.
- *
- * `Invoice.issueDate`/`dueDate` are CALENDAR dates and every consumer (list, detail,
- * PDF, email) formats them with `timeZone: "UTC"` — so a stored value must be UTC
- * midnight of the intended day or it prints one day off. A raw `new Date()` breaks
- * that: a sale keyed at 8:10pm America/New_York is already 00:10Z the NEXT day and
- * would print (and fall due) one day late. Backdated orders already arrive as UTC
- * midnight; this gives same-day sales the identical shape.
- */
-export function startOfCalendarDay(timeZone?: string | null, now: Date = new Date()): Date {
-  let y: string, m: string, d: string;
-  try {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: timeZone || "UTC",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).formatToParts(now);
-    const at = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
-    [y, m, d] = [at("year"), at("month"), at("day")];
-  } catch {
-    // Unknown/invalid IANA zone stored on TenantConfig — fall back to UTC, never throw.
-    [y, m, d] = [
-      String(now.getUTCFullYear()),
-      String(now.getUTCMonth() + 1).padStart(2, "0"),
-      String(now.getUTCDate()).padStart(2, "0"),
-    ];
-  }
-  return new Date(`${y}-${m}-${d}T00:00:00.000Z`);
-}
 
 /**
  * Payment-term arithmetic on a calendar date, in UTC. `setDate`/`getDate` read LOCAL
@@ -486,7 +455,7 @@ export class InvoicesService {
             dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
             issueDate: dto.issueDate
               ? new Date(dto.issueDate)
-              : startOfCalendarDay(tenantDefaults.timezone),
+              : startOfCalendarDay(new Date(), tenantDefaults.timezone),
             notes: dto.notes ?? tenantDefaults.notes,
             terms: dto.terms ?? tenantDefaults.terms,
             paymentTermsLabel: dto.paymentTermsLabel ?? null,
@@ -625,7 +594,7 @@ export class InvoicesService {
     const tenantDefaults = await this.resolveTenantInvoiceDefaults();
     // A backdated order bills on its business date, and the payment term runs from
     // that date — not from when the invoice happened to be generated.
-    const issueDate = order.orderDate ?? startOfCalendarDay(tenantDefaults.timezone);
+    const issueDate = order.orderDate ?? startOfCalendarDay(new Date(), tenantDefaults.timezone);
     let dueDate: Date;
     if (overrides?.dueDate) {
       dueDate = new Date(overrides.dueDate);
@@ -2409,7 +2378,7 @@ export class InvoicesService {
 
     // A backdated order bills on its business date, and the payment term runs from
     // that date — not from when the invoice happened to be generated.
-    const issueDate = order.orderDate ?? startOfCalendarDay(tenantTimezone);
+    const issueDate = order.orderDate ?? startOfCalendarDay(new Date(), tenantTimezone);
     let dueDate: Date;
     if (overrides?.dueDate) {
       dueDate = new Date(overrides.dueDate);
@@ -2634,7 +2603,7 @@ export class InvoicesService {
     const tenantDefaults = await this.resolveTenantInvoiceDefaults();
     // A backdated order bills on its business date, and the payment term runs from
     // that date — not from when the invoice happened to be generated.
-    const issueDate = order.orderDate ?? startOfCalendarDay(tenantDefaults.timezone);
+    const issueDate = order.orderDate ?? startOfCalendarDay(new Date(), tenantDefaults.timezone);
     let dueDate: Date;
     if (dto.dueDate) {
       dueDate = new Date(dto.dueDate);

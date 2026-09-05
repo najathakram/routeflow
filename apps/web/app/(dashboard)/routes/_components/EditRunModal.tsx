@@ -5,6 +5,7 @@ import { Loader2, Save, X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { useUpdateRouteRun } from "@/lib/api/routes";
 import { useDrivers, useDriver } from "@/lib/api/drivers";
+import { readCalendarInput, buildRunPatchBody } from "./edit-run-modal.logic";
 
 export interface EditableRun {
   id: string;
@@ -14,14 +15,6 @@ export interface EditableRun {
   status?: "SCHEDULED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
 }
 
-function formatLocalDate(value: string): string {
-  const d = new Date(value);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
 export function EditRunModal({ run, onClose }: { run: EditableRun; onClose: () => void }) {
   const { toast } = useToast();
   const { data: activeDriversData } = useDrivers({ status: "ACTIVE", limit: 100 });
@@ -29,8 +22,10 @@ export function EditRunModal({ run, onClose }: { run: EditableRun; onClose: () =
   const { data: assignedDriver } = useDriver(initialDriverId);
   const updateRun = useUpdateRouteRun();
 
+  const initialDate = readCalendarInput(run.scheduledDate);
+
   const [driverId, setDriverId] = React.useState(initialDriverId);
-  const [date, setDate] = React.useState(formatLocalDate(run.scheduledDate));
+  const [date, setDate] = React.useState(initialDate);
   const [notes, setNotes] = React.useState(run.notes ?? "");
 
   const activeDrivers = activeDriversData?.data ?? [];
@@ -48,12 +43,15 @@ export function EditRunModal({ run, onClose }: { run: EditableRun; onClose: () =
   const isInProgress = run.status === "IN_PROGRESS";
 
   const handleSave = () => {
-    const body: { id: string; driverId?: string | null; scheduledDate?: string; notes?: string } = {
+    const body = buildRunPatchBody({
       id: run.id,
+      driverId,
+      initialDriverId,
+      date,
+      initialDate,
       notes,
-    };
-    if (driverId !== initialDriverId) body.driverId = driverId || null;
-    if (!isInProgress) body.scheduledDate = date;
+      isInProgress,
+    });
     updateRun.mutate(body, {
       onSuccess: () => {
         toast({ title: "Run updated", variant: "success" });

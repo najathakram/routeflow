@@ -8,6 +8,50 @@ local Docker stack **up and healthy** (postgres, redis, api :3000, web :3001, 13
 
 ---
 
+## §0.0 In flight now — bug campaign, 2026-09-05
+
+- **Recount off the shards** (`.claude/campaign/status/F##.jsonl`, verified by
+  `node scripts/campaign-check.mjs`): **194 rows — 76 terminal (39.2 %): 74 `done` + 2
+  `already-fixed`; 5 `proven-pending-deploy`; 113 `queued`.** **4 open Criticals: B53 + B128
+  (F08), B58 (F18), B59 (F25).** Recount off the shards every time — prose counts in this file
+  have been wrong three times running.
+- **F13 (#612) and F25 (#617) are deployed and PART-discharged.** Both Railway services SUCCESS at
+  commit `1f6483ec` (api `99bff5cc-b318-4dad-b980-59ca155b28ff`, web
+  `ec51533f-0af6-4dad-8c3e-5b0565e7bd67`, 2026-09-05 06:24:29 -05:00); `post-deploy-check` 9/9
+  green against prod. Six rows flipped to `done` — **B09 B46 B48 B106** (F13, #612) and **B90
+  B118** (F25, #617). **Three did not.** In E2E run `33963335473` (job `E2E (Playwright)`: step 8
+  "Wait for the deployed app to match this commit" = success, step 9 "Run Playwright tests" =
+  failure; 155 total — 125 passed, 3 failed, 27 skipped):
+  - **REG-B92** failed all three attempts — `strict mode violation: getByRole("heading",
+{name:"Edit Recurring Template"}) resolved to 2 elements` (an `<h1>` and an `<h2>` on the edit
+    page carry the same text). Harness, not product — but it cascaded REG-B106's web leg, which
+    only reported "the REG-B92 test did not leave a shared template id".
+  - **REG-B59** failed all three attempts — `POST /drivers response carried no id`; the test's own
+    driver-creation setup never returned one, so the assertion never ran.
+  - **REG-B91** was SKIPPED: REG-B59 runs first in the same serial spec file (spec 34) and its
+    failure short-circuits the rest of the file.
+    A failing or skipped test is not a discharge (**L-041**) — those three rows stay
+    `proven-pending-deploy` and need a REG re-run, not a state edit.
+- **Wave A still owes F08 (after F09) and F18.** F08 carries the B53/B128 Criticals and must land
+  behind F09 (worktree `rf-F09`, `fix/F09-credit-notes-wallet`); **F18 is blocked on the B58
+  ruling**. F25 **Run B (B185)** is still `queued`.
+- **E2E reseed state** — spec 31 (`31-impersonation-signout`, REG-B138) and spec 32
+  (`32-active-sessions`, 3 × REG-B155) did **not execute** in run `33963335473`: they are
+  super-admin-gated projects and were skipped alongside SA-01..12 and CC-05/CC-10. Nothing in this
+  run says they pass post-reseed, so both F14 rows stay `proven-pending-deploy`.
+- **Registry PR #597 LANDED** (`10ddc3fa`) — `.claude/campaign/bugs/B###.md` (212 records) and
+  `scripts/campaign/bugs.mjs` are on master, so the main checkout no longer carries the stale
+  `bug-registry` skill. §6's "only open PR" note is superseded.
+- **Mis-authored commit `f28705c3`** on `fix/e2e-freshness-guard-fail-open` (worktree
+  `rf-bug-e2e`) — author _and_ committer are `Self Test <self-test@routeflow.local>`, not the
+  owner. Correct the authorship before that branch goes up for review.
+- **Lessons caps ruling is in force and nearly spent.** PR #594 (`maxBytes` 25600 → 40960) is
+  merged; the register now stands at **39/40 entries, 38.0/40.0 KB, `nextId` 71** — the binding
+  cap is the **entry count, with exactly one slot left**. The next fix that records a lesson must
+  compact an entry to `ARCHIVE.md` in the same commit.
+
+---
+
 ## §0 Read in this order at session start
 
 1. `C:\Users\nakram\.claude\plans\plan-on-implementing-all-zany-parasol.md` — **THE spec.** Every
@@ -209,12 +253,15 @@ Artifact tool with `url` = `https://claude.ai/code/artifact/f6717514-1725-4e34-a
 
 ## §6 Other open threads (verified against `gh`/`git`, 2026-09-03)
 
-- **PR #597 — `feat/bug-registry`, OPEN** (the only open PR). In-repo bug registry:
-  `.claude/campaign/bugs/B###.md` + `scripts/campaign/bugs.mjs`. Worktree `rf-registry` — **do not
-  touch it.** Until it merges, the main checkout carries the STALE `bug-registry` skill.
-- **Bug campaign Wave A is not finished** — 70/194 ledger rows terminal; **6 open Criticals**
-  (B46 B48 B53 B58 B59 B128) across F13 → F25 → F08 (after F09) → F18. Separate program; see memory
-  `project_fleet_state_2026-09-01`. `rf-F09 rf-F13 rf-F14 rf-F25` are its worktrees.
+- **PR #597 — `feat/bug-registry`, MERGED 2026-09-05 (`10ddc3fa`).** In-repo bug registry:
+  `.claude/campaign/bugs/B###.md` (212 records) + `scripts/campaign/bugs.mjs` are on master, so the
+  main checkout no longer carries the STALE `bug-registry` skill. Worktree `rf-registry` — **do not
+  touch it.**
+- **Bug campaign Wave A is not finished** — recounted 2026-09-05 off the shards: **76/194 ledger
+  rows terminal (39.2 %)**, 5 `proven-pending-deploy`, 113 `queued`; **4 open Criticals** (B53 B128
+  in F08, B58 in F18, B59 in F25) across F08 (after F09) → F18, plus the three undischarged F13/F25
+  REG rows. **See §0.0 for the current state — it supersedes this bullet.** Separate program; see
+  memory `project_fleet_state_2026-09-01`. `rf-F09 rf-F13 rf-F14 rf-F25` are its worktrees.
 - **EAS `versionCode` seeding — OWNER ACTION, blocks the next Android build.** PR #583 (the
   Google Sign-In / SDK-55 fix) is **MERGED**, but `eas build:version:set -p android` takes its value
   only from an interactive stdin prompt and the remote counter is **UNSEEDED** — a build before

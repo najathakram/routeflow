@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { tenantSlugFromHostname } from "@/lib/tenant-host";
+import {
+  BUYER_PRESENCE_COOKIE,
+  LAST_PORTAL_COOKIE,
+  OP_PRESENCE_COOKIE,
+} from "@/lib/presence-cookies";
+import { resolveLandingTarget, resolveOperatorPathGuard } from "@/lib/portal-routing";
 
 // Platform-level subdomains and hosting-provider base domains live in
 // `@/lib/tenant-host` so the login page derives the workspace with exactly these
@@ -55,18 +61,23 @@ export function middleware(request: NextRequest) {
   }
 
   // Signed-in users skip the landing page: operators → dashboard, buyers →
-  // buyer portal. Keyed on the presence cookies, which now track the live
-  // session (3-day sliding window re-set on every token refresh, cleared on
-  // refresh failure — see lib/presence-cookies.ts). Deliberately scoped to
-  // exactly "/": every other marketing page stays reachable while signed in.
-  // Runs AFTER the mobile-UA proxy so phones land in the mobile-web build,
-  // which does its own role-based routing. Operator wins when both cookies
-  // are present (consistent with the buyer guard below). 307 (never 308) so
-  // nothing is cached if the user signs out.
+  // buyer portal; when both sessions are live the portal used last wins
+  // (rf-last-portal, written by each portal's authenticated layout) and the
+  // seller dashboard is the default. Keyed on the presence cookies, which track
+  // the live session (30-day sliding window re-set on every token refresh,
+  // cleared on refresh failure — see lib/presence-cookies.ts). Deliberately
+  // scoped to exactly "/": every other marketing page stays reachable while
+  // signed in. Runs AFTER the mobile-UA proxy so phones land in the mobile-web
+  // build, which does its own role-based routing. 307 (never 308) so nothing is
+  // cached if the user signs out. Decisions live in lib/portal-routing.ts.
+  const opAuthed = request.cookies.get(OP_PRESENCE_COOKIE)?.value === "1";
+  const buyerAuthed = request.cookies.get(BUYER_PRESENCE_COOKIE)?.value === "1";
   if (pathname === "/") {
-    const opAuthed = request.cookies.get("rf-op-auth")?.value === "1";
-    const buyerAuthed = request.cookies.get("rf-buyer-auth")?.value === "1";
-    const target = opAuthed ? "/dashboard" : buyerAuthed ? "/buyer/portal" : null;
+    const target = resolveLandingTarget({
+      opAuthed,
+      buyerAuthed,
+      lastPortal: request.cookies.get(LAST_PORTAL_COOKIE)?.value,
+    });
     if (target) {
       const dest = url.clone();
       dest.pathname = target;
@@ -85,40 +96,24 @@ export function middleware(request: NextRequest) {
     }
   }
 
-  // Buyer-only guard: signed-in buyers without an operator session must not be
-  // able to reach operator surfaces — bounce them back to the buyer portal.
-  const OPERATOR_PATH_PREFIXES = [
-    "/dashboard",
-    "/settings",
-    "/invoices",
-    "/customers",
-    "/products",
-    "/routes",
-    "/orders",
-    "/finance",
-    "/credit-notes",
-    "/estimates",
-    "/inventory",
-    "/suppliers",
-    "/purchases",
-    "/vendor-bills",
-    "/returns",
-    "/analytics",
-    "/bookkeeping",
-    "/drivers",
-  ];
-  const isOperatorPath = OPERATOR_PATH_PREFIXES.some(
-    (p) => pathname === p || pathname.startsWith(`${p}/`),
-  );
-  if (isOperatorPath) {
-    const buyerCookie = request.cookies.get("rf-buyer-auth")?.value;
-    const opCookie = request.cookies.get("rf-op-auth")?.value;
-    if (buyerCookie && !opCookie) {
-      const target = url.clone();
-      target.pathname = "/buyer/portal";
-      target.search = "";
-      return NextResponse.redirect(target);
-    }
+  // Buyer-only guard: a signed-in buyer with no operator session who asks for an
+  // operator surface goes to the operator sign-in with the destination kept, so
+  // a person who is both a buyer and a seller can open the second session (the
+  // sign-in page offers "Go to buyer portal" to everyone else). The operator
+  // path list lives in lib/portal-routing.ts, shared with that page's redirect
+  // validation so the two can never drift.
+  const guardTarget = resolveOperatorPathGuard({
+    pathname,
+    search: url.search,
+    opAuthed,
+    buyerAuthed,
+  });
+  if (guardTarget) {
+    const parsed = new URL(guardTarget, url.origin);
+    const dest = url.clone();
+    dest.pathname = parsed.pathname;
+    dest.search = parsed.search;
+    return NextResponse.redirect(dest, 307);
   }
 
   // Remember the desktop opt-out so subsequent nav on the phone stays here.

@@ -28,6 +28,8 @@ export interface RecurringInvoice {
   terms?: string;
   nextRunAt: string;
   lastRunAt?: string;
+  lastRunStatus?: "SUCCESS" | "FAILED" | null;
+  lastError?: string | null;
   items: RecurringInvoiceItem[];
   createdAt: string;
 }

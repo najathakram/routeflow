@@ -28,7 +28,10 @@ describe("BuyerPortalPage — Connect to a Seller", () => {
 
     // Empty-state CTA opens the modal (BuyerAuthProvider starts with no
     // stored session -> sellers stays []).
-    await user.click(await screen.findByRole("button", { name: /connect to a seller/i }));
+    // First test in the file pays the cold module-compile cost; a 5 s default times out on slow CI/Windows hosts.
+    await user.click(
+      await screen.findByRole("button", { name: /connect to a seller/i }, { timeout: 15_000 }),
+    );
     await user.click(screen.getByRole("button", { name: /send request/i }));
 
     expect(await screen.findByText("Seller company code is required")).toBeInTheDocument();

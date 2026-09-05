@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Plus, Loader2, Play, Pause, Zap } from "lucide-react";
+import { Plus, Loader2, Play, Pause, Zap, Pencil } from "lucide-react";
 import { Button, Card, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
@@ -10,6 +10,7 @@ import {
   useDeactivateRecurringInvoice,
   useActivateRecurringInvoice,
   useRunRecurringInvoice,
+  isRetryableRunFailure,
   type RecurringInvoice,
 } from "@/lib/api/invoices";
 import { useRouter } from "next/navigation";
@@ -163,10 +164,33 @@ export default function RecurringInvoicesPage() {
                 {ri.lastRunAt && (
                   <div className="flex justify-between">
                     <span>Last run</span>
-                    <span>{fmtDate(ri.lastRunAt)}</span>
+                    <span>
+                      {fmtDate(ri.lastRunAt)}
+                      {ri.lastRunStatus === "SUCCESS" && (
+                        <span className="ml-1.5 shrink-0 rounded-full px-2 py-0.5 text-xs font-medium bg-success-bg text-success">
+                          Succeeded
+                        </span>
+                      )}
+                      {ri.lastRunStatus === "FAILED" && (
+                        <span className="ml-1.5 shrink-0 rounded-full px-2 py-0.5 text-xs font-medium bg-danger-bg text-danger">
+                          Failed
+                        </span>
+                      )}
+                    </span>
                   </div>
                 )}
               </div>
+
+              {ri.lastRunStatus === "FAILED" && ri.lastError && (
+                <p className="mt-1 truncate text-xs text-danger" title={ri.lastError}>
+                  {/* REG-B106: the retry hint appears ONLY when the cycle produced no
+                      invoice. A cycle that billed and then failed to finalize is already
+                      invoiced — re-running it would bill the customer twice. */}
+                  {isRetryableRunFailure(ri.lastError)
+                    ? `${ri.lastError} — use Run Now to retry.`
+                    : ri.lastError}
+                </p>
+              )}
 
               <div className="mt-4 flex items-center gap-2">
                 <Button
@@ -178,6 +202,14 @@ export default function RecurringInvoicesPage() {
                   className="flex-1"
                 >
                   Run Now
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<Pencil className="h-3.5 w-3.5" />}
+                  href={`/invoices/recurring/${ri.id}/edit`}
+                >
+                  Edit
                 </Button>
                 <button
                   onClick={() => handleToggleActive(ri)}

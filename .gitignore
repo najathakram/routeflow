@@ -108,6 +108,13 @@ local-assets/
 #     scripts/campaign-check.mjs; regenerated per run, never committed) ───────
 .campaign/
 
+# ─── Bug-registry lock directories (scripts/campaign/bugs.mjs) ────────────────
+#     Ephemeral mkdir-based locks under the TRACKED .claude/campaign/ tree
+#     (shards + the catalogue live there and ARE committed) — a lockdir left
+#     behind by a crash must never end up in a commit.
+.claude/campaign/**/*.lock/
+.claude/campaign/bugs.jsonl.lock/
+
 # ─── dev-pipeline mutation-probe scratch (throwaway jest config + probe spec) ──
 #     Written by a probe run, never part of the suite; without this a `git add -A`
 #     from any session commits another session's throwaway probes.

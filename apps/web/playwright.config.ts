@@ -417,6 +417,25 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── Recurring-template edit + standing-order item edit (F13, spec 30) ──────
+    // REG-B92: /invoices/recurring/[id]/edit exists and persists a schedule/notes
+    // change; every list card links to it. REG-B09: the Edit Standing Order modal
+    // persists item adds and qty changes through PATCH `items`. REG-B106 web leg:
+    // after Run Now the card shows the recorded "Succeeded" outcome (the API write
+    // is jest-proven in apps/api). Mutating but self-contained: throwaway
+    // `E2E B09 …` / `E2E B92 …` fixtures on the approved seed tenant; the recurring
+    // template is created with nextRunAt in 2099 and deactivated in a `finally` so a
+    // leaked row can never fire the midnight cron, and the Run Now invoice is voided
+    // there too. NOT part of F13's red gate; runs only against the DEPLOYED site and
+    // is expected red until F13 ships.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's header.
+    {
+      name: "recurring-standing",
+      testMatch: /30-recurring-standing\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // Un-quarantined 2026-09-03 (L-050, #598/#607): only spec 32 (active-sessions) needed a
     // dedicated seeded user — it logs in fresh as e2e_sessions_op and only ever revokes ITS OWN
     // sessions, so it must never consume the shared admin/e2e_admin every storageState:
@@ -451,6 +470,28 @@ export default defineConfig({
       name: "active-sessions",
       testMatch: /32-active-sessions\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
+    },
+
+    // ── Calendar-date correctness (F25, spec 34) ───────────────────────────────
+    // REG-B59 / REG-B91: a stored UTC-midnight calendar date (a run's
+    // scheduledDate, a customer license's expiresAt) rendered and round-tripped
+    // a day early for any viewer west of UTC. `timezoneId` pins the browser to
+    // America/Los_Angeles so the regression is actually observable — under the
+    // suite's default (unset) timezone the bug never disagrees with the stored
+    // day and this project would pass a broken build. Deploy-only proof, not
+    // part of the jest red gate (T1/T2 are proven directly there); this project
+    // resolving via `npx playwright test --list` is what discharges the pre-merge
+    // check, the deploy-signal e2e run discharges B59/B91 themselves.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "calendar-dates",
+      testMatch: /34-calendar-dates\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+        timezoneId: "America/Los_Angeles",
+      },
     },
   ],
 });

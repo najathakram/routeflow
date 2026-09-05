@@ -1,10 +1,10 @@
 {
-  "nextId": 68,
-  "activeCount": 37,
-  "archivedCount": 24,
+  "nextId": 72,
+  "activeCount": 40,
+  "archivedCount": 27,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-05T04:11:54.000Z",
+  "updatedAt": "2026-09-05T00:00:00.000Z",
   "schemaVersion": 1,
-  "note": "Merge of origin/master (22372911, #613) into fix/ocr-gate-observe-first: this branch's L-062 (domain, OCR add-on gate observe-first) renumbered to L-067 (next free id after master's nextId of 67, no Symptom collision found in master's domain section). nextId bumped to 68, activeCount 36→37. Prior master note: merge of origin/master (e07aa0b5, #611) into refactor/imp-01-pricing-package renumbered a colliding L-061 to L-066; nextId bumped to 67, activeCount 35→36."
+  "note": "Merge of origin/master (8f136b9a, #618) into fix/ocr-gate-observe-first: master's register is the base — this branch's L-067 (domain, OCR add-on gate observe-first) renumbered to L-071 (master's nextId of 71, no Symptom collision found in master's domain section). nextId bumped to 72, activeCount 39→40. Prior master note: merge of origin/master (d7dcf393, #612 F13 recurring invoices + standing orders) into fix/F25-calendar-date-correctness renumbered/compacted per L-039; nextId 71, activeCount 39, archivedCount 27."
 }

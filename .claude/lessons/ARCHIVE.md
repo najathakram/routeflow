@@ -318,3 +318,77 @@ L-032, which asserts the 400 rejection end-to-end._
 
 _Archived: guarded by a merged mechanical check — `customers.purge-ledger.spec.ts` exists in the
 tree and covers all three sites with the reversal-before-delete ordering pinned._
+
+## Archived 2026-09-04 — guard in place, cap discipline (#597)
+
+### L-029 · 2026-09-01 · domain · #588
+
+- **Symptom:** cancelling an order destroyed value three ways at once — it voided the invoice for
+  goods already delivered, never returned the creation-time stock decrement, and its sibling
+  `deleteOrder` skipped the regulated-ledger reversal both other invoice-destruction paths
+  performed. All three had shipped green.
+- **Root cause:** the conservation rules were built for the **edit** path and the **teardown**
+  paths were simply never enrolled in them. Every signal each fix needed already sat in the same
+  file — the delivered-qty clamp, the reversal call — and was not consulted. Nothing failed
+  loudly, because a conservation law has no natural test: stock is only wrong much later, and
+  nowhere near the cancel that caused it.
+- **Lesson:** **When a codebase establishes an invariant on one path, enumerate every OTHER path
+  that reaches the same state and enroll it explicitly — an invariant with a known exception is a
+  bug with a scheduled date.** Search by the STATE being mutated (who else deletes an invoice, who
+  else writes `order.status`), never by the feature name: the violating paths are the ones that
+  never mention it.
+- **Guard:** `orders.lifecycle-conservation.spec.ts` + its pins spec, 9 mutation probes. The same
+  search immediately found two more instances, recorded not fixed: `routes.service.ts` has **five**
+  `order.status` writers and only one runs the invoicing side effects (→ F11), and the customer
+  purge is a **fourth** `reverseInvoiceEntries`-skipped hard delete — at four instances the answer
+  is a shared guard, not a fourth point-fix. See [[L-008]] for why they stayed out of scope.
+
+## Archived 2026-09-05 — cap discipline on the F25 merge (post-#612)
+
+Merging `fix/F25-calendar-date-correctness` (L-047) onto master's register — already at 40 of
+40 entries and 40,478 of 40,960 bytes — put the active file over BOTH caps. Two entries moved
+here verbatim: L-036, whose guard (`REG-B72 (T22)`) is landed and turns red when disabled, and
+L-028, whose rule now lives at its call site in `.claude/code-map/api.md` beside the root
+`overrides` pin it argues for. Two rather than one so the register lands with real headroom —
+[[L-039]]: a cap reached with ~0 margin is a tripwire for the next unrelated branch.
+
+### L-036 · 2026-09-01 · testing · #TBD
+
+- **Symptom:** a transition deny-list whose every (from,to) pair was verified correct — by unit
+  assertions AND by adversarial refuters — was defeated by two individually-legal PATCHes:
+  `COMPLETED → IN_PROGRESS` (a documented allowance) then `IN_PROGRESS → SCHEDULED` (never
+  denied) re-scheduled a completed run, the exact state the matrix's contract forbids.
+- **Root cause:** the matrix is EDGE-wise, and so was every oracle pointed at it. Verifying each
+  edge in isolation is structurally incapable of finding a composite path; no amount of care
+  inside the matrix would have caught it.
+- **Lesson:** **When the artefact under test is a state machine, the oracle must walk PATHS, not
+  edges.** Ask which multi-step sequences compose into a forbidden state, and guard on durable
+  evidence outside the transition (here `completedAt`, which the endpoint only ever sets) rather
+  than on the current status.
+- **Guard:** `REG-B72 (T22)` walks the two-step path and pins that a never-completed run still
+  schedules normally; disabling the guard turns it red.
+
+### L-028 · 2026-09-01 · tooling
+
+- **Symptom:** a grouped dependency bump advertised a security update for a file-upload library. The
+  PR title, changelog and lockfile diff all showed the new version — and every upload path kept
+  running the old one, advisories intact.
+- **Root cause:** a framework package declared that library at an **exact** version, so the hoisted
+  copy stayed pinned there; the bump installed the new version only nested under one workspace,
+  which nothing imports from. A version appearing in the lockfile says it was installed, never that
+  it is what resolves at a call site.
+- **Lesson:** **A dependency bump is proven by what RESOLVES at the call sites, not by the lockfile
+  diff — for any security bump, check whether a parent's exact pin holds the hoisted copy, or the
+  merge closes the ticket without closing the hole.**
+- **Guard:** none yet — inspect the hoisted entry (and any parent's exact pin) before believing a
+  security bump. The check that settles it is the **resolution**, which holds whatever the install
+  state is:
+  `node -e "console.log(require.resolve('<lib>',{paths:[require('path').dirname(require.resolve('<parent>/package.json'))]}))"`.
+  ⚠️ A version string read out of `node_modules` is **not** independent confirmation: a tree that
+  predates the bump's install reads the old version for the trivial reason that nothing installed
+  the new one. Both this entry's author and its first reader made exactly that substitution within
+  hours of filing it — **having written a rule makes you quicker, not slower, to accept a reading
+  that confirms it.** Note the fix for this class is a root `overrides` pin, which [[L-012]]
+  otherwise forbids: `overrides` is the only mechanism that beats a parent's exact pin on a
+  **runtime** transitive, so state the exception in the PR or the next reader reverts it as a
+  violation.

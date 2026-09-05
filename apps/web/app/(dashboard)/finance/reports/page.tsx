@@ -1231,7 +1231,12 @@ function ReceivableSummaryReport({ from, to }: { from?: string; to?: string }) {
               className="hover:bg-surface-raised/50"
             >
               <td className="px-4 py-2.5 font-medium text-brand-600">{r.customerName}</td>
-              <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.date)}</td>
+              <td className="px-4 py-2.5 text-navy/70">
+                {/* r.date is invoice.issueDate (UTC-midnight CALENDAR date) for INVOICE
+                    rows and creditNote.createdAt (a real timestamp) otherwise — only
+                    the former needs the UTC-anchored formatter (B91). */}
+                {r.type === "INVOICE" ? fmtCalendarDate(r.date) : fmtDate(r.date)}
+              </td>
               <td className="px-4 py-2.5 font-medium text-navy">{r.transactionNumber}</td>
               <td className="px-4 py-2.5">
                 <StatusBadge status={r.type} />

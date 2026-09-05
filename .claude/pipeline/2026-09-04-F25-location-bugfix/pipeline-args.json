@@ -1,0 +1,132 @@
+{
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-04-F25-location-bugfix/build-plan.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-04-F25-location-bugfix/bug-test-plan.md",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-04T13:20:00Z",
+  "mode": "bugfix",
+  "scale": "small",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25",
+  "context": "F25 location batch B — B185 Low/hardening-adjacent; iOS -1 sentinel 400s the whole GPS ping; api deploys before any mobile OTA",
+  "formatCommand": "git ls-files -mo --exclude-standard | grep -E '\\.(ts|tsx|js|jsx|json|md)$' | grep -v '^\\.claude/pipeline/' | xargs -r npx prettier --write",
+
+  "radiusFiles": [
+    "apps/mobile/lib/location-tracker.native.ts",
+    "apps/mobile/lib/location-payload.ts",
+    "apps/api/src/drivers/dto/post-location.dto.ts",
+    "apps/api/src/drivers/drivers.service.ts",
+    "apps/api/src/drivers/drivers.service.spec.ts",
+    "apps/api/src/routes/routes.service.ts",
+    "apps/api/src/main.ts"
+  ],
+
+  "siblingPatterns": [
+    {
+      "pattern": "coords\\.(heading|speed|course)",
+      "note": "platform sentinel forwarded without a < 0 guard"
+    },
+    {
+      "pattern": "@Min\\(0\\)",
+      "note": "in apps/api/src/drivers/dto — a field a client may legitimately not know",
+      "pathHint": "apps/api/src/drivers/dto"
+    }
+  ],
+
+  "testPackages": [
+    {
+      "id": "TP-LOC",
+      "title": "seam extraction + REG/pin tests",
+      "files": [
+        "apps/mobile/lib/location-payload.ts",
+        "apps/mobile/__tests__/location-payload.test.ts",
+        "apps/api/src/drivers/dto/post-location.dto.spec.ts"
+      ],
+      "tests": ["T1", "T2", "T3", "T4", "T5"],
+      "brief": "Extract location-tracker.native.ts's current unmapped heading/speed construction verbatim into a named seam module both call sites call (behaviour-preserving). T1/T2 test the seam; T3/T4 test PostLocationDto's validation with the new accuracy field (whitelist violation pre-fix, Min(0) violation post-fix for a negative value); T5 pins every existing DTO case. Exact setup/oracle in bug-test-plan.md, including T4's dual-assertion construction."
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "cd apps/mobile && npx jest location-payload.test -t \"REG-B185\"",
+      "cd apps/api && npx jest src/drivers/dto/post-location.dto.spec.ts -t \"REG-B185\" --runInBand"
+    ],
+    "expect": "fail"
+  },
+
+  "packages": [
+    {
+      "id": "WP-MOB-LOC",
+      "title": "mobile sentinel mapping",
+      "files": [
+        "apps/mobile/lib/location-payload.ts",
+        "apps/mobile/lib/location-tracker.native.ts"
+      ],
+      "brief": "buildLocationPayload's body maps negative-or-null heading/speed to null, converts valid speed m/s->km/h, passes accuracy through when >= 0 else omits it. Both duplicate call sites in location-tracker.native.ts spread its return alongside their existing lat/lng/runId fields.",
+      "satisfies": ["R1"],
+      "provenBy": ["T1", "T2"],
+      "dependsOn": ["TP-LOC"]
+    },
+    {
+      "id": "WP-API-LOC",
+      "title": "DTO + persistence",
+      "files": [
+        "apps/api/src/drivers/dto/post-location.dto.ts",
+        "apps/api/src/drivers/drivers.service.ts"
+      ],
+      "brief": "Add @IsOptional() @Type(()=>Number) @IsNumber() @Min(0) accuracy?: number to PostLocationDto (no @Max). recordLocation's create() call gains accuracy: dto.accuracy. heading/speedKph's existing @Min(0)/@Max decorators are unchanged.",
+      "satisfies": ["R2", "R3", "R4"],
+      "provenBy": ["T3", "T4", "T5"],
+      "dependsOn": ["TP-LOC"],
+      "effort": "high"
+    },
+    {
+      "id": "WP-DOCS-LOC",
+      "title": "close-out bookkeeping",
+      "files": [
+        ".claude/campaign/status/F25.jsonl",
+        ".claude/code-map/api.md",
+        ".claude/code-map/mobile.md",
+        ".claude/code-map/_meta.json",
+        ".claude/code-map/CHANGELOG.md",
+        ".claude/lessons/LESSONS.md",
+        ".claude/lessons/_meta.json"
+      ],
+      "brief": "F25.jsonl: B185 -> proven. Code-map surgical entries for the 3 touched/new files + _meta.json + CHANGELOG bullet. LESSONS.md is NOT appended again (L-047 already covers B185 via Run A); _meta.json gets updatedAt bumped only. Precondition: Run A's WP-DOCS must already have landed.",
+      "satisfies": [],
+      "provenBy": [],
+      "dependsOn": ["WP-MOB-LOC", "WP-API-LOC"],
+      "effort": "low"
+    }
+  ],
+
+  "verifyCommands": {
+    "perRound": [
+      "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+      "cd apps/api && npx jest src/drivers --runInBand",
+      "cd apps/mobile && npx tsc --noEmit",
+      "cd apps/mobile && npx jest location-payload.test"
+    ],
+    "final": [
+      "cd apps/api && npx jest --silent",
+      "cd apps/mobile && npx jest --silent",
+      "node scripts/campaign-check.mjs",
+      "node scripts/validate-lessons.mjs"
+    ]
+  },
+
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/mobile/lib/location-payload.ts",
+        "revertFix": true,
+        "behavior": "negative/null heading and speed sentinels map to null",
+        "test": "REG-B185"
+      },
+      {
+        "file": "apps/api/src/drivers/dto/post-location.dto.ts",
+        "revertFix": true,
+        "behavior": "accuracy is optional, >= 0, and does not relax heading/speedKph bounds",
+        "test": "REG-B185"
+      }
+    ]
+  }
+}
