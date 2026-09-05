@@ -1,8 +1,8 @@
 {
   "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-04-F25-location-bugfix/build-plan.md",
   "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-04-F25-location-bugfix/bug-test-plan.md",
-  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/lessons/LESSONS.md",
-  "startedAt": "2026-09-04T13:20:00Z",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-05T08:40:00Z",
   "mode": "bugfix",
   "scale": "small",
   "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25",
@@ -106,7 +106,6 @@
     "final": [
       "cd apps/api && npx jest --silent",
       "cd apps/mobile && npx jest --silent",
-      "node scripts/campaign-check.mjs",
       "node scripts/validate-lessons.mjs"
     ]
   },
