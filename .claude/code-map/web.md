@@ -1176,4 +1176,8 @@ layout and the enum-parity guard. Key entries:
   DEACTIVATE, not a row delete** (unlike `/order-templates/:id`), so the second test's `finally`
   voids the Run Now invoice and leaves an inert, deactivated template behind. ⚠️ Never run this
   file locally with `npx playwright test` — not even `--list`; it clobbers
-  `.campaign/runs/web-e2e.json`.
+  `.campaign/runs/web-e2e.json`. Both toast assertions ("Standing order updated", "Recurring
+  template updated") are scoped through
+  `getByRole("region", { name: /notifications/i }).getByRole("listitem")` — a bare
+  `page.getByText(...)` hits 2 elements (the toast + Radix's aria-live announcer mirror);
+  see [[L-076]].

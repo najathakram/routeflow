@@ -502,3 +502,30 @@ cap.
 - **Guard:** none — `campaign-check` reads the ledger, the mirror has no equivalent. Count from
   `.claude/campaign/status/*.jsonl` (last state per row id) before repeating any figure. Same
   family as [[L-034]].
+
+## Archived 2026-09-05 — headroom for L-076 (fix/e2e-recurring-toast-locator)
+
+The register sat at 40 of 40 active entries; adding L-076 (testing, the toast/aria-live
+strict-mode fix) would have pushed it to 41. Of the entries still active, L-037 is the oldest
+whose guard is a real, landed, automated check rather than a procedure or a memory note: every
+2026-08-* entry and every 2026-09-01 entry with a lower id (`L-025`, `L-026`, `L-027`, `L-035`)
+carries "Guard: none" or "none — judgment". L-037's `REG-B55 (T21)` is a landed regression test
+(F11 close-out, confirmed present in the tree) that runs on every `npm run test`/CI pass — not a
+checklist, doc pointer, or "Guard: none". One entry archived, per [[L-039]]: land with real
+headroom on the byte cap, not at it.
+
+### L-037 · 2026-09-01 · domain · #TBD
+
+- **Symptom:** the fix for a reopen that wrongly credited stock still left the reopen billing the
+  delivery it had just undone — `OrderItem.deliveredQty` survived the reversal, and the
+  delivered-basis invoice reconcile bills exactly that field.
+- **Root cause:** the reversal was corrected for the field the bug report named and no other. The
+  forward path wrote `deliveredQty` unconditionally (whether or not money changed hands) while the
+  reversal reset only `status`.
+- **Lesson:** **A reversal must enumerate every field the forward operation wrote, not just the
+  one the bug report named** — and state, per write, whether it is undone by REVERSAL or covered
+  by REFUSAL (blocking the operation while that state stands). Those are different strategies and
+  the mix must be deliberate. ⚠️ Note the coupling: the new refusal guard is what made the
+  reversal gap REACHABLE, so a fix can open the path to a latent bug.
+- **Guard:** `REG-B55 (T21)`; the write-by-write enumeration is recorded in F11's fix card so the
+  next batch on this path starts from it rather than rebuilding it.

@@ -174,7 +174,21 @@ test.describe("Recurring template edit + standing-order item edit (F13)", () => 
       await boltLine.getByRole("button", { name: "+", exact: true }).click();
 
       await modal.getByRole("button", { name: "Save Changes" }).click();
-      await expect(page.getByText("Standing order updated")).toBeVisible({ timeout: 15_000 });
+      // Wait for the modal itself to close before asserting the toast (mirrors
+      // 21-destructive-guards.spec.ts:146-147's confirmDialog pattern) — otherwise
+      // a still-mounted "Edit Standing Order" dialog can race the toast's own
+      // mount/unmount and flake the region lookup below.
+      await expect(modal).toHaveCount(0, { timeout: 10_000 });
+      // Scoped through the toast region, not a bare getByText: Radix's aria-live
+      // announcer mirrors the same title text at <body> level (see
+      // 21-destructive-guards.spec.ts), so an unscoped lookup resolves to 2
+      // elements.
+      const standingOrderToast = page
+        .getByRole("region", { name: /notifications/i })
+        .getByRole("listitem")
+        .filter({ hasText: "Standing order updated" })
+        .first();
+      await expect(standingOrderToast).toBeVisible({ timeout: 15_000 });
 
       // ── The API is the oracle for what persisted (order-free match by productId).
       const verifyRes = await request.get(`${api}/api/v1/order-templates/${template.id}`, {
@@ -276,7 +290,17 @@ test.describe("Recurring template edit + standing-order item edit (F13)", () => 
     await notesField.fill("E2E B92 edited");
 
     await page.getByRole("button", { name: "Save Changes" }).click();
-    await expect(page.getByText("Recurring template updated")).toBeVisible({ timeout: 15_000 });
+    // Scoped through the toast region, not a bare getByText: strict mode hit 2
+    // elements here — the visible toast (RadixToast.Title) and Radix's aria-live
+    // announcer mirror of the same copy, portaled to <body>
+    // (21-destructive-guards.spec.ts documents why scoping through the region
+    // excludes the announcer).
+    const templateUpdatedToast = page
+      .getByRole("region", { name: /notifications/i })
+      .getByRole("listitem")
+      .filter({ hasText: "Recurring template updated" })
+      .first();
+    await expect(templateUpdatedToast).toBeVisible({ timeout: 15_000 });
     await expect(page).toHaveURL(/\/invoices\/recurring$/, { timeout: 15_000 });
 
     const verifyRes = await request.get(`${api}/api/v1/recurring-invoices/${template.id}`, {
