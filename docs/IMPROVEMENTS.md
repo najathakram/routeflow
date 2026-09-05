@@ -510,6 +510,23 @@ A balanced review should say what not to touch:
   3. The `CreditNote` is a duplicate-numbered orphan — writing its Customer-derived tenant would
      violate `@@unique([tenantId, creditNoteNumber])`. Renumbering is a business decision, so it
      stays refused pending a human ruling.
+
+  **Full picture (prod, 2026-09-05, read-only):** 112 tables carry a `tenantId` column; 16 hold
+  NULL rows (12,357 rows total), in two classes. Structural, by design, no user impact:
+  `RefreshToken` 1952/1952 (auth uses the raw client; the writer sets no `tenantId`),
+  `VendorBillItem` 2043/2043 and `PurchaseOrderItem` 3/3 (nested-create children read only via
+  `include`), `PaymentCounter` 1/6 (no read path), `AuditLog` 8275/25370 (platform-scoped),
+  `ExpenseCategory` 60/566 (global defaults, list uses an explicit `OR tenantId/null`), `User`
+  6/556 (3 super-admins by design + 3 April-2026 tenant-admin leftovers that would 401 at login).
+  Scattered April-2026 legacy orphans, hidden by tenant-scoped reads (pre-existing, not caused by
+  #613): `Expense` 1, `CreditNote` 1, `Return` 1 (+`ReturnItem` 1), `RecurringInvoice` 1 (+item
+  1), `RouteRun` 2, `RouteRunStop` 5, `StockLot` 4 (skipped in FIFO/LIFO costing → COGS falls back
+  to average; all 4 derivable from `Product.tenantId` — candidate next rule for the tool). A code
+  trace confirmed #613's fail-closed `findUniqueOrThrow` changes behaviour for none of the 16 (its
+  only site among them, `routes.service` `completeStop`/`completeWithPayment`, is pre-gated by
+  scoped 404s). The structural class is a tenancy-model decision (owner-scoped project), not a
+  backfill.
+
 - **The DB backup pipeline** (`apps/db-backup`) is well-designed: 2-hourly `pg_dump` → Cloudflare R2
   (S3-compatible, zero egress fees), 30-day prune, **monthly restore-verify**, and a healthchecks.io
   dead-man's switch. R2 is object storage, not a backup tool — this is a sound, cheap choice.
