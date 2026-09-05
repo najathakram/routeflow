@@ -30,7 +30,20 @@ interface LineItem {
   productName: string;
   unit: string;
   qty: number;
+  notes?: string;
 }
+
+/**
+ * Order-free canonical form of an item list: the modal's own rows and the loaded
+ * template's items compare equal when they carry the same products, quantities and
+ * notes, whatever order they are in (a remove + re-add of the same product is not a
+ * change). Used to decide whether the edit PATCH needs to carry `items` at all.
+ */
+const itemSignature = (items: { productId: string; qty: number; notes?: string }[]) =>
+  items
+    .map((i) => `${i.productId}:${i.qty}:${i.notes ?? ""}`)
+    .sort()
+    .join("|");
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -99,6 +112,7 @@ export function StandingOrderModal({
             productName: item.product?.name ?? item.productId,
             unit: item.product?.unit ?? "each",
             qty: item.qty,
+            notes: item.notes,
           })),
         );
       } else {
@@ -177,13 +191,34 @@ export function StandingOrderModal({
     if (hasErrors) return;
 
     if (isEditing && template) {
-      // Edit: only update template fields (not items in this flow — items managed separately)
+      // REG-B09: the modal shows the full item list in edit mode, so it saves the full
+      // list — adds, removes and qty changes included (PATCH replaces items). Item notes
+      // are not editable here and are carried through unchanged.
+      // `items` is sent ONLY when the list actually differs from the loaded template, for
+      // two reasons: (1) an edit that did not touch the items must not churn their rows
+      // (the API replaces items by delete + re-create, minting new item ids); (2) a
+      // name/day/notes-only edit then stays a scalar-only PATCH, which is exactly the
+      // shape the pre-F13 API accepts — the global ValidationPipe runs
+      // `forbidNonWhitelisted`, so an unknown `items` key is a 400, not an ignored field,
+      // and api/web deploy as independent Railway services. An item change still needs
+      // the new API (irreducible — that is the feature), but every other edit keeps
+      // working through the deploy window and behind a rollback.
+      const itemsChanged = itemSignature(lineItems) !== itemSignature(template.items);
       updateTemplate.mutate(
         {
           id: template.id,
           name: name.trim(),
           daysOfWeek: selectedDays,
           notes: notes.trim() || undefined,
+          ...(itemsChanged
+            ? {
+                items: lineItems.map((li) => ({
+                  productId: li.productId,
+                  qty: li.qty,
+                  notes: li.notes,
+                })),
+              }
+            : {}),
         },
         {
           onSuccess: () => {

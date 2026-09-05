@@ -12,6 +12,7 @@ import {
 } from "../../../lib/api/recurring-invoices";
 import {
   freqLabel,
+  lastRunOutcome,
   recurringActionFlags,
   recurringPillFor,
 } from "../../../lib/recurring-invoices-logic";
@@ -48,6 +49,7 @@ export default function RecurringInvoiceDetailScreen() {
 
   const s = recurringPillFor(template.isActive);
   const flags = recurringActionFlags(template.isActive);
+  const outcome = lastRunOutcome(template);
   // lastRunAt is a real timestamp (has a meaningful time-of-day) — kept in the
   // viewer's local time, unlike nextRunAt below which is a UTC-midnight
   // calendar date routed through the shared fmtCalendarDate helper.
@@ -124,6 +126,14 @@ export default function RecurringInvoiceDetailScreen() {
               {template.lastRunAt ? ` · Last run ${fmtDate(template.lastRunAt)}` : ""}
               {template.autoSend ? " · Auto-send" : ""}
             </Text>
+            {outcome ? (
+              <View style={{ marginTop: 6, gap: 4 }}>
+                <Pill variant={outcome.variant} dot>
+                  {outcome.label}
+                </Pill>
+                {outcome.detail ? <Text style={styles.dates}>{outcome.detail}</Text> : null}
+              </View>
+            ) : null}
           </View>
 
           {/* Actions — Generate now (always), Pause (active) / Resume (paused) */}

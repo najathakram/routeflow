@@ -15,6 +15,7 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { RecurringInvoicesService } from "./recurring-invoices.service";
 import { CreateRecurringInvoiceDto } from "./dto/create-recurring-invoice.dto";
+import { UpdateRecurringInvoiceDto } from "./dto/update-recurring-invoice.dto";
 
 @Controller("recurring-invoices")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -38,7 +39,7 @@ export class RecurringInvoicesController {
   }
 
   @Patch(":id")
-  update(@Param("id") id: string, @Body() dto: Partial<CreateRecurringInvoiceDto>) {
+  update(@Param("id") id: string, @Body() dto: UpdateRecurringInvoiceDto) {
     return this.recurringInvoicesService.update(id, dto);
   }
 
@@ -48,8 +49,8 @@ export class RecurringInvoicesController {
   }
 
   // Resume a paused template. A dedicated endpoint (mirrors DELETE=deactivate)
-  // — the PATCH path can't carry `isActive` (whitelist ValidationPipe + required
-  // CreateRecurringInvoiceDto fields reject a `{ isActive }` partial body).
+  // — the PATCH path can't carry `isActive` (UpdateRecurringInvoiceDto deliberately
+  // omits it, and the whitelist ValidationPipe rejects it as a non-whitelisted key).
   @Post(":id/activate")
   activate(@Param("id") id: string) {
     return this.recurringInvoicesService.activate(id);

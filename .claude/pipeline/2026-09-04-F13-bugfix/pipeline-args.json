@@ -1,0 +1,224 @@
+{
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F13/.claude/pipeline/2026-09-04-F13-bugfix/build-plan.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F13/.claude/pipeline/2026-09-04-F13-bugfix/bug-test-plan.md",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-04T00:00:00Z",
+
+  "mode": "bugfix",
+  "scale": "major",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F13",
+  "context": "F13 close-out on the already-committed v1 snapshot, now merged with master (42804677, post master-merge; v1 fixes were originally committed at 9e5ce526 pre-merge): B106 CAS rollback + retry-hint fix, B46 T7 date-freeze pin, B92/B09 controller-binding pins, spec-30 comment, bookkeeping. B46/B48/B09/B92 production code is untouched (S2 already confirmed fixes-the-cause). Line anchors below have been re-anchored against 42804677 (confirmed 2026-09-04); the api scoped suite (order-templates + recurring-invoices) is green at 72/72 on this tree (master added three tests since 9e5ce526), and the web workspace's Jest runner covers 19 test files.",
+
+  "radiusFiles": [
+    ".claude/code-map/_meta.json",
+    ".claude/lessons/LESSONS.md",
+    ".claude/lessons/_meta.json",
+    ".claude/pipeline/2026-09-01-F13-recurring-standing/RESUME.md",
+    ".claude/pipeline/2026-09-01-F13-recurring-standing/build-plan.md",
+    ".claude/pipeline/2026-09-01-F13-recurring-standing/discovery.md",
+    ".claude/pipeline/2026-09-01-F13-recurring-standing/pipeline-args.json",
+    ".claude/pipeline/2026-09-01-F13-recurring-standing/result.json",
+    ".claude/pipeline/2026-09-01-F13-recurring-standing/spec.md",
+    ".claude/pipeline/2026-09-01-F13-recurring-standing/test-plan.md",
+    ".claude/pipeline/2026-09-01-F13-recurring-standing/ux-spec.md",
+    "apps/api/src/order-templates/dto/create-order-template.dto.ts",
+    "apps/api/src/order-templates/dto/update-order-template.dto.spec.ts",
+    "apps/api/src/order-templates/dto/update-order-template.dto.ts",
+    "apps/api/src/order-templates/order-templates.pricing-and-items.spec.ts",
+    "apps/api/src/order-templates/order-templates.service.spec.ts",
+    "apps/api/src/order-templates/order-templates.service.ts",
+    "apps/api/src/orders/orders.service.ts",
+    "apps/api/src/recurring-invoices/dto/update-recurring-invoice.dto.spec.ts",
+    "apps/api/src/recurring-invoices/dto/update-recurring-invoice.dto.ts",
+    "apps/api/src/recurring-invoices/recurring-invoices.controller.ts",
+    "apps/api/src/recurring-invoices/recurring-invoices.schedule-outcome.spec.ts",
+    "apps/api/src/recurring-invoices/recurring-invoices.service.spec.ts",
+    "apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+    "apps/mobile/__tests__/recurring-invoices-helpers.test.ts",
+    "apps/mobile/app/(operator)/recurring-invoices/[id].tsx",
+    "apps/mobile/lib/api/recurring-invoices.ts",
+    "apps/mobile/lib/recurring-invoices-logic.ts",
+    "apps/web/app/(dashboard)/customers/[id]/StandingOrderModal.tsx",
+    "apps/web/app/(dashboard)/invoices/recurring/[id]/edit/page.tsx",
+    "apps/web/app/(dashboard)/invoices/recurring/_components/RecurringInvoiceForm.tsx",
+    "apps/web/app/(dashboard)/invoices/recurring/new/page.tsx",
+    "apps/web/app/(dashboard)/invoices/recurring/page.tsx",
+    "apps/web/e2e/30-recurring-standing.spec.ts",
+    "apps/web/lib/api/invoices.ts",
+    "apps/web/lib/api/order-templates.ts",
+    "apps/web/playwright.config.ts",
+    "scripts/data-integrity-report.mjs",
+    "apps/api/src/invoices/invoices.service.ts",
+    "apps/api/src/testing/prisma-mock.ts"
+  ],
+
+  "siblingPatterns": [
+    {
+      "pattern": "update\\(\\{\\s*where:\\s*\\{\\s*id",
+      "note": "an unconditional restore/write within ~30 lines after an updateMany({...nextRunAt...}) CAS claim — B106's own shape (a claim guarded by compare-and-set, undone by a plain update). Known structural twins already reported by S2, out of this run's scope: billing-cron.service.ts:284-289 (rollCycles, confirmed unchanged at 42804677) and order-templates.service.ts:321-331 (the 06:00 cron's read-then-create dedupe, no CAS/unique constraint/advisory lock; shifted from :321-330 at 9e5ce526 by one unrelated line inserted earlier in the file by the master merge). File as registry candidates on a hit; do not fix in this run."
+    },
+    {
+      "pattern": "@Body\\(\\)\\s+\\w+:\\s*Partial<",
+      "note": "a mapped-type @Body() the global ValidationPipe skips whole (erases to Object in design:paramtypes) — B92's exact shape. Known hit: apps/api/src/invoices/invoices.controller.ts:156 (S2 confirms this is the only other Partial<...Dto> body in the API). Judge as a confirmed defect and file as a registry candidate; do NOT fix here."
+    },
+    {
+      "pattern": "@Body\\(\\)\\s+\\w+:\\s*any\\b",
+      "note": "same validation-skip class as the Partial<> pattern, broader. Report only — several hits (customers.controller.ts money endpoints, estimates.controller.ts, inventory.controller.ts, returns.controller.ts) may be deliberate; do not flag as defects without a separate review."
+    }
+  ],
+
+  "testPackages": [
+    {
+      "id": "TP-API",
+      "title": "API jest: rollback CAS, controller-binding pins, harness repair",
+      "files": [
+        "apps/api/src/recurring-invoices/recurring-invoices.schedule-outcome.spec.ts",
+        "apps/api/src/recurring-invoices/recurring-invoices.controller.spec.ts",
+        "apps/api/src/order-templates/order-templates.controller.roles.spec.ts",
+        "apps/api/src/order-templates/order-templates.service.spec.ts"
+      ],
+      "tests": ["T17", "T17c", "T7", "T34", "T35"],
+      "brief": "T17 (rewrite): the create-failure rollback calls recurringInvoice.updateMany (not .update) with where:{id, nextRunAt: <advanced value the claim wrote>} and data.nextRunAt: <pre-claim value>. T17c (new): a {count:0} rollback result writes nothing further to the row and still rethrows the original error. T7 (rewrite): freeze the system clock (jest.useFakeTimers().setSystemTime or an injected fixed now) so the claim-is-strictly-future assertion is deterministic on every calendar day. T34 (new file): Reflect.getMetadata('design:paramtypes', RecurringInvoicesController.prototype, 'update')[1] is UpdateRecurringInvoiceDto. T35 (new test in the existing roles spec): the same pin for OrderTemplatesController.prototype.update -> UpdateOrderTemplateDto. Harness repair (no new test id): widen the two one-method OrdersService doubles in order-templates.service.spec.ts (:238, :452 -- re-anchored from ~:186/~:400 at 9e5ce526) to the same four methods (mergeAllPendingForCustomer, loadActivePromotions, getCustomerPriceHistory, resolveBuyerLinePrice) every other suite in this batch already carries. Exact expected values and setups are in bug-test-plan.md — do not invent them."
+    },
+    {
+      "id": "TP-WEB",
+      "title": "web jest: retry-hint fix",
+      "files": ["apps/web/lib/api/invoices.test.ts"],
+      "tests": ["T36"],
+      "brief": "New file. isRetryableRunFailure(RUN_INTERRUPTED_ERROR) is false; a terminal create-failure message string is true; null/undefined stay false (pin)."
+    }
+  ],
+
+  "redGate": {
+    "commands": [
+      "cd apps/api && npx jest src/recurring-invoices/recurring-invoices.schedule-outcome.spec.ts -t \"REG-B106 T17\" --runInBand",
+      "cd apps/web && npx jest invoices.test -t \"REG-B106\""
+    ],
+    "expect": "fail"
+  },
+
+  "packages": [
+    {
+      "id": "WP-API-B106",
+      "title": "CAS rollback",
+      "files": ["apps/api/src/recurring-invoices/recurring-invoices.service.ts"],
+      "brief": "Replace the plain update in the create-failure catch block (recurring-invoices.service.ts:263-268, confirmed unchanged at 42804677) with a compare-and-set updateMany keyed on the nextRunAt value the claim (:224-232) itself wrote; data restores nextRunAt to the pre-claim value. On {count:0}, log a warn naming both values and write nothing further to the row; always rethrow the original error either way. Do not touch the claim, the unfinalized/link/SUCCESS block, or lastRunAt behavior on this path. Exact code is in build-plan.md's WP-API-B106 section.",
+      "satisfies": ["cause-ruling-B106-a"],
+      "provenBy": ["T17", "T17c"],
+      "effort": "high"
+    },
+    {
+      "id": "WP-WEB-B106",
+      "title": "retry-hint fix",
+      "files": [
+        "apps/web/lib/api/invoices.ts",
+        "apps/web/app/(dashboard)/invoices/recurring/page.tsx"
+      ],
+      "brief": "isRetryableRunFailure (invoices.ts:785, next to RUN_UNFINALIZED_PREFIX at :782; confirmed at 42804677) returns true only for a terminal create-failure message, never for RUN_INTERRUPTED_ERROR or a RUN_UNFINALIZED_PREFIX-prefixed message. recurring/page.tsx's pill/hint region (:184-193, confirmed at 42804677) renders three states: SUCCESS unchanged; terminal FAILED unchanged (red pill + retry hint); provisional FAILED (lastError === RUN_INTERRUPTED_ERROR) as informational copy with no CTA styling. Do not change RUN_UNFINALIZED_ERROR/RUN_UNFINALIZED_PREFIX text or the mobile mirror (accepted asymmetry, mobile has no retry button on this screen).",
+      "dependsOn": [],
+      "satisfies": ["cause-ruling-B106-b"],
+      "provenBy": ["T36"]
+    },
+    {
+      "id": "WP-E2E-COMMENT",
+      "title": "spec 30 comment correction",
+      "files": ["apps/web/e2e/30-recurring-standing.spec.ts"],
+      "brief": "Header + finally-block comment only: the template is DEACTIVATED (DELETE is deactivate), not hard-deleted. No assertion, fixture, or ordering change.",
+      "dependsOn": [],
+      "satisfies": ["cause-ruling-spec-30-comment"],
+      "provenBy": [],
+      "effort": "low"
+    },
+    {
+      "id": "WP-DOCS",
+      "title": "F13 close-out bookkeeping",
+      "files": [
+        ".claude/campaign/status/F13.jsonl",
+        ".claude/code-map/api.md",
+        ".claude/code-map/web.md",
+        ".claude/code-map/mobile.md",
+        ".claude/code-map/_meta.json",
+        ".claude/code-map/CHANGELOG.md",
+        ".claude/lessons/LESSONS.md",
+        ".claude/lessons/_meta.json"
+      ],
+      "dependsOn": ["WP-API-B106", "WP-WEB-B106", "WP-E2E-COMMENT"],
+      "brief": "F13.jsonl: B46/B48/B106 -> state proven (proof names REG- tokens + T ids, including this run's T17/T17c for B106); B09/B92 -> state proven-pending-deploy (unchanged, T2/spec 30). pr: null for all five. Code-map surgical entries (signatures not bodies) for every file in the 38-file diff (git diff --name-only d0769701 9e5ce526) plus this run's own touched files; _meta.json mappedSha/generatedAt updated, notes REPLACED (never accumulated) with a CHANGELOG pointer. CHANGELOG.md: one dated bullet atop the list. LESSONS.md: append L-046 verbatim under ## domain (exact text in build-plan.md's WP-DOCS section; L-046 is pre-allocated to F13 per .claude/pipeline/2026-09-02-wave-a-completion/SEQUENCE.md -- nextId stays untouched, it is 58 on master). Note: a stray l046-draft.md already sitting in this pipeline directory (dated 2026-09-03, category testing, unrelated mutation-probe content) is NOT this run's L-046 and must not be used. _meta.json activeCount +1, updatedAt bumped, nextId untouched.",
+      "satisfies": [],
+      "provenBy": []
+    }
+  ],
+
+  "verifyCommands": {
+    "perRound": [
+      "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+      "cd apps/api && npx jest src/order-templates src/recurring-invoices --runInBand",
+      "cd apps/mobile && npx tsc --noEmit",
+      "cd apps/mobile && npx jest __tests__/recurring-invoices-helpers.test.ts",
+      "cd apps/web && npx jest invoices.test",
+      "cd apps/web && npx tsc --noEmit"
+    ],
+    "final": [
+      "cd apps/api && npx jest --silent",
+      "cd apps/mobile && npx jest --silent",
+      "node scripts/campaign-check.mjs",
+      "node scripts/validate-lessons.mjs",
+      "cd apps/web && npx playwright test --list --reporter=list"
+    ]
+  },
+
+  "formatCommand": "git ls-files -mo --exclude-standard | grep -E '\\.(ts|tsx|js|jsx|json|md)$' | grep -v '^\\.claude/pipeline/' | xargs -r npx prettier --write",
+
+  "uiVerify": {
+    "url": "http://localhost:3001/invoices/recurring",
+    "startCommand": "",
+    "flows": [
+      "A card with lastRunStatus FAILED and lastError === RUN_INTERRUPTED_ERROR shows informational copy with no CTA styling",
+      "A card with lastRunStatus FAILED and a terminal message shows the unchanged red pill + 'use Run Now to retry' hint",
+      "A card with lastRunStatus SUCCESS is visually unchanged"
+    ],
+    "viewports": ["desktop"],
+    "checks": ["console-errors", "network-failures"]
+  },
+
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+        "behavior": "the rollback is compare-and-set on the advanced nextRunAt and writes nothing on a miss",
+        "test": "REG-B106 T17, REG-B106 T17c",
+        "revertFix": false
+      },
+      {
+        "file": "apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+        "behavior": "the MONTHLY advance lands strictly after the base date, with the dom clamp",
+        "test": "REG-B46 T1, REG-B46 T1b",
+        "revertFix": false
+      },
+      {
+        "file": "apps/api/src/order-templates/order-templates.service.ts",
+        "behavior": "generated lines price through resolveBuyerLinePrice, never list price times qty",
+        "test": "REG-B48 T9, REG-B48 T10, REG-B48 T11, REG-B48 T12, REG-B48 T13, REG-B48 T14, REG-B48 T15, REG-B48 T16",
+        "revertFix": false
+      },
+      {
+        "file": "apps/api/src/order-templates/order-templates.service.ts",
+        "behavior": "a PATCH carrying items replaces the template's items atomically",
+        "test": "REG-B09 T25, REG-B09 T26",
+        "revertFix": false
+      },
+      {
+        "file": "apps/api/src/recurring-invoices/recurring-invoices.controller.ts",
+        "behavior": "the PATCH binds UpdateRecurringInvoiceDto, not a Partial mapped type",
+        "test": "REG-B92 T34",
+        "revertFix": false
+      },
+      {
+        "file": "apps/web/lib/api/invoices.ts",
+        "behavior": "RUN_INTERRUPTED_ERROR is not a retryable failure",
+        "test": "REG-B106 T36",
+        "revertFix": false
+      }
+    ]
+  }
+}

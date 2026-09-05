@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { UserRole } from "@prisma/client";
 import { Cron } from "@nestjs/schedule";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -166,20 +167,54 @@ export class OrderTemplatesService {
 
   async update(id: string, dto: UpdateOrderTemplateDto) {
     await this.findOne(id);
-    return this.prisma.forTenant().orderTemplate.update({
-      where: { id },
-      data: {
-        ...(dto.name !== undefined ? { name: dto.name } : {}),
-        ...(dto.daysOfWeek !== undefined ? { daysOfWeek: dto.daysOfWeek } : {}),
-        ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
-        ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
-      },
-      include: {
-        items: {
-          include: { product: { select: { id: true, name: true, unit: true } } },
+    const include = {
+      items: { include: { product: { select: { id: true, name: true, unit: true } } } },
+      customer: { select: { id: true, businessName: true } },
+    };
+    const scalar = {
+      ...(dto.name !== undefined ? { name: dto.name } : {}),
+      ...(dto.daysOfWeek !== undefined ? { daysOfWeek: dto.daysOfWeek } : {}),
+      ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+      ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
+    };
+    // `items: null` clears @IsOptional() at the pipe (class-validator skips every
+    // validator for null), so it arrives here typed as an array but isn't one —
+    // treat it as absent instead of mapping over it, exactly as the sibling guard in
+    // recurring-invoices.service.update() does. `items: []` is still a 400 (ArrayMinSize).
+    if (!dto.items) {
+      return this.prisma.forTenant().orderTemplate.update({ where: { id }, data: scalar, include });
+    }
+    // REG-B09: an edit that carries `items` REPLACES the template's items — the web modal
+    // sends the full list it displays, so what the operator sees is what saves. Every
+    // productId must exist in this tenant (mirrors create()) BEFORE any write, and the
+    // delete + re-create run in ONE transaction so a failure can never leave a template
+    // with no items.
+    const items = dto.items;
+    const productIds = [...new Set(items.map((i) => i.productId))];
+    const products = await this.prisma
+      .forTenant()
+      .product.findMany({ where: { id: { in: productIds } }, select: { id: true } });
+    if (products.length !== productIds.length) {
+      throw new BadRequestException("One or more products not found");
+    }
+    const tenantId = this.prisma.getTenantId();
+    return this.prisma.tenantTransaction(async (tx) => {
+      await tx.orderTemplateItem.deleteMany({ where: { templateId: id } });
+      return tx.orderTemplate.update({
+        where: { id },
+        data: {
+          ...scalar,
+          items: {
+            create: items.map((item) => ({
+              productId: item.productId,
+              qty: item.qty,
+              notes: item.notes,
+              tenantId, // nested creates bypass forTenant() extension
+            })),
+          },
         },
-        customer: { select: { id: true, businessName: true } },
-      },
+        include,
+      });
     });
   }
 
@@ -353,27 +388,66 @@ export class OrderTemplatesService {
     // there is nothing to order. Callers treat null as "skipped".
     if (allowedItems.length === 0) return null;
 
+    // REG-B48: a standing order is the CUSTOMER's order whoever triggers it (06:00 cron,
+    // operator "Generate now", buyer "Reorder"), so every line is priced exactly as the
+    // buyer's own checkout in orders.service.create: per-product CustomerPrice tier >
+    // customer default tier > list, then the best active CUSTOMER promotion (incl.
+    // BUY_N_GET_M free units), with the remembered above-list price (sticky upsell)
+    // honoured — all through the ONE shared resolver. Previously every line billed raw
+    // product.pricePerUnit.
+    const customerRecord = await this.prisma.forTenant().customer.findUnique({
+      where: { id: template.customerId },
+      select: { pricingTier: true },
+    });
+    const defaultTier = customerRecord?.pricingTier ?? 1;
+    const customerPrices = await this.prisma.forTenant().customerPrice.findMany({
+      where: { customerId: template.customerId, productId: { in: productIds } },
+    });
+    // An MSRP-only CustomerPrice row has pricingTier null — `??` below falls through it.
+    const cpTier = new Map(customerPrices.map((cp) => [cp.productId, cp.pricingTier]));
+    const activePromos = await this.ordersService.loadActivePromotions(UserRole.CUSTOMER);
+    const priceHistory = await this.ordersService.getCustomerPriceHistory(template.customerId);
+
     const tenantId = this.prisma.getTenantId();
     let subtotal = 0;
     const lineItemsData = allowedItems.map((item) => {
       const product = productMap.get(item.productId);
       if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
-      const unitPrice = Number(product.pricePerUnit);
-      // A template qty is a SELLING-UNIT count (a box for boxed products), so the
-      // line subtotal is unitPrice × qty — but go through the shared helper (which
-      // rounds) rather than raw float math, so totals never carry sub-cent drift.
-      const itemSubtotal = computeLineSubtotal({ unitPrice, qty: item.qty });
+      const tierForProduct = cpTier.get(item.productId) ?? defaultTier;
+      // A template qty is a SELLING-UNIT count (a box for boxed products) and is never
+      // split into boxes/pieces here — the same "box-unaware boxed line" the interactive
+      // path handles: unitPrice is the box price, qty bills as whole units, and the promo
+      // context sees the true piece count so QTY_BREAK thresholds are measured in pieces.
+      const upb = Number(product.unitsPerBox ?? 0);
+      const qtyUnits = item.qty;
+      const qtyPieces = upb > 1 ? item.qty * upb : item.qty;
+      const resolved = this.ordersService.resolveBuyerLinePrice(
+        product,
+        tierForProduct,
+        activePromos,
+        qtyPieces,
+        qtyUnits,
+        priceHistory[item.productId]?.lastPrice ?? null,
+        { boxes: null, pieces: null, unitsPerBox: upb },
+      );
+      // BUY_N_GET_M subtracts whole free selling units BEFORE pricing (exact, never a
+      // rounded net unit price); every other line reduces to unitPrice × qty, rounded.
+      const itemSubtotal = computeLineSubtotal({
+        unitPrice: resolved.unitPrice,
+        qty: item.qty,
+        freeUnits: resolved.freeUnits,
+      });
       subtotal = roundMoney(subtotal + itemSubtotal);
       return {
         productId: item.productId,
         qty: item.qty,
-        unitPrice,
+        unitPrice: resolved.unitPrice,
+        priceType: resolved.priceType,
+        originalPrice: resolved.originalPrice,
+        promoFreeUnits: resolved.freeUnits > 0 ? resolved.freeUnits : null,
         subtotal: itemSubtotal,
         notes: item.notes ?? undefined,
-        // W4/W6b: snapshot the product's regulated category at sale time so
-        // invoice generation splits by it and the ledger is written — same as the
-        // interactive create path (orders.service.create). Without this an allowed
-        // regulated standing-order line would invoice as standard.
+        // W4/W6b: snapshot the product's regulated category at sale time (unchanged).
         trackedCategoryId: product.trackedCategoryId ?? null,
         categoryTaxAmount: 0,
         tenantId, // nested creates bypass forTenant() extension
