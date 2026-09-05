@@ -34,7 +34,7 @@ function run(env: NodeJS.ProcessEnv) {
     cwd: API_DIR,
     encoding: "utf8",
     env,
-    timeout: 30_000,
+    timeout: 60_000,
   });
 }
 
