@@ -150,6 +150,7 @@
   `migrate diff` on the output).
 - **Guard:** `split-prisma-schema.mjs --check` proves block-identity + `MODEL_DOMAIN` placement;
   `npm run local:drift` is the output-side oracle — both cheap/re-runnable, unlike a `.d.ts` diff.
+  Its comment stripper treats a quote left unterminated on its line as regex text, never a string opener.
 
 ### L-039 · 2026-09-01 · tooling
 

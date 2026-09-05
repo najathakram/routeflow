@@ -118,6 +118,18 @@ function candidateFiles(): string[] {
  * a `//`/`/* *\/` comment it skips straight to the terminator character-by-character, so an
  * apostrophe or quote INSIDE that comment is simply consumed as comment text and never
  * re-enters "am I opening a string?" logic — that question only gets asked outside a comment.
+ *
+ * One construct is still not lexed: a REGEX literal. `/["']/g` and
+ * `/<strong>Verifier's note:<\/strong>/` carry an unpaired quote, and telling a regex from a
+ * division needs the previous significant token. Rather than guess, the scanner uses a fact
+ * that costs nothing: a `'`/`"` literal may not contain a raw newline (only a `\`-continuation
+ * crosses one, and that is an escape pair the look-ahead already consumes). So a quote whose
+ * partner does not arrive before the end of its line was never a string opener — it is emitted
+ * as ordinary text and scanning continues on the same line. Without that rule an apostrophe in
+ * a regex swallowed everything up to the next stray quote anywhere later in the file, leaving
+ * the `//` comments in between un-stripped: that is exactly how the prose in
+ * `scripts/campaign/bugs.mjs` ("…routes.service.ts 29, <the retired name> 28.", a `//` comment)
+ * reached the offender list.
  */
 function stripCLikeComments(text: string): string {
   let out = "";
@@ -137,21 +149,35 @@ function stripCLikeComments(text: string): string {
       continue;
     }
     if (ch === '"' || ch === "'" || ch === "`") {
-      out += ch;
-      i++;
-      while (i < n && text[i] !== ch) {
-        if (text[i] === "\\" && i + 1 < n) {
-          out += text[i] + text[i + 1];
-          i += 2;
+      // Look ahead for the closing quote BEFORE committing to "this opens a string". A
+      // `'`/`"` literal may not contain a raw newline in JS (a `\`-line-continuation is an
+      // escape pair, so it keeps scanning), which makes an unterminated one proof that this
+      // quote never opened a string at all — it is a quote inside a REGEX literal, the one
+      // construct left that this scanner cannot lex (`/<strong>Verifier's note:<\/strong>/`,
+      // `/["']/g`). Emitting it as ordinary text and carrying on is the conservative move:
+      // the alternative — the pre-fix behaviour — swallowed every line up to the next stray
+      // quote anywhere later in the file, un-stripping the real `//` comments in between.
+      let j = i + 1;
+      let closed = false;
+      while (j < n) {
+        if (text[j] === "\\" && j + 1 < n) {
+          j += 2; // escape pair, including a `\`-newline line continuation
           continue;
         }
-        out += text[i];
-        i++;
+        if (text[j] === ch) {
+          closed = true;
+          break;
+        }
+        if (ch !== "`" && text[j] === "\n") break; // template literals span lines; strings don't
+        j++;
       }
-      if (i < n) {
-        out += text[i]; // closing quote
-        i++;
+      if (closed) {
+        out += text.slice(i, j + 1); // the literal verbatim — a `//` INSIDE it is not a comment
+        i = j + 1;
+        continue;
       }
+      out += ch; // not a string opener after all
+      i++;
       continue;
     }
     out += ch;
@@ -221,6 +247,36 @@ describe("no single schema path references outside the allow-list (wave E / imp-
     const snippet = `const u = "https://x.dev"; const p = "${schemaPath}";`;
     const stripped = stripComments(snippet, "example.ts");
     expect(stripped).toContain('"https://x.dev"');
+    expect(stripped).toContain(`"${schemaPath}"`);
+    expect(SINGLE_SCHEMA_PATH_RE.test(stripped)).toBe(true);
+  });
+
+  it("stripComments treats a quote inside a regex literal as text — a following // comment is still stripped", () => {
+    // The construct that broke this scanner in the wild: an apostrophe inside a regex literal
+    // (`scripts/campaign/bugs.mjs`, the `Verifier's note` picker). Read as a string opener it
+    // swallowed ~200 lines up to the next stray quote, un-stripping the `//` comments in
+    // between — including the prose line that then showed up as a bogus offender. Built by
+    // concatenation for the same reason as the case above: this spec is itself scanned.
+    const schemaPath = "schema" + ".prisma";
+    const snippet = [
+      `const rx = /<strong>Verifier's note:<\\/strong>/;`,
+      `// prose: the retired ${schemaPath} was mentioned here, in a comment`,
+      `const keep = 1;`,
+    ].join("\n");
+    const stripped = stripComments(snippet, "example.mjs");
+    expect(stripped).toContain("const keep = 1;");
+    expect(SINGLE_SCHEMA_PATH_RE.test(stripped)).toBe(false);
+  });
+
+  it("stripComments still flags a REAL reference that follows an apostrophe-bearing regex literal", () => {
+    // The other half of the pair: recovering from the regex must not turn into skipping code.
+    const schemaPath = "schema" + ".prisma";
+    const snippet = [
+      `const rx = /<strong>Verifier's note:<\\/strong>/;`,
+      `// prose only — no path on this line`,
+      `const p = "${schemaPath}";`,
+    ].join("\n");
+    const stripped = stripComments(snippet, "example.mjs");
     expect(stripped).toContain(`"${schemaPath}"`);
     expect(SINGLE_SCHEMA_PATH_RE.test(stripped)).toBe(true);
   });

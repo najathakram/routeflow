@@ -394,7 +394,10 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   The scanner instead skips `//`/`/* */` spans character-by-character to their terminator without
   ever re-entering quote-detection inside them, and separately preserves real `"…"`/`'…'`/`` `…` ``
   string literals verbatim (so a same-line `"https://x.dev"` doesn't let its `//` swallow a later
-  `"schema.prisma"` reference — unit-tested directly against the helper) — and asserts none of the
+  `"schema.prisma"` reference — unit-tested directly against the helper). A quote with no closing
+  partner before end-of-line (an apostrophe inside a regex literal, e.g. `scripts/campaign/bugs.mjs`)
+  is emitted as text rather than opened as a string, since a `'`/`"` literal cannot span a raw
+  newline — and asserts none of the
   ≥400 candidates (real walk ~817; floor raised from the original vacuous-guard value of 30) still
   names the retired `prisma/schema.prisma` path outside comments; allow-lists (each asserted in its
   own case) `split-prisma-schema.mjs` (names that path by design via `--from`/`--from-ref`) and

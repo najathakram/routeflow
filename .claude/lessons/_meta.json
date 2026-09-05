@@ -4,7 +4,7 @@
   "archivedCount": 29,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-05T16:30:00.000Z",
+  "updatedAt": "2026-09-05T16:20:00.000Z",
   "schemaVersion": 1,
   "note": "Final rebase of fix/imp-wave-e-structure onto origin/master 7281e4d7 (#616 observe-first add-on gates): master's register is the base and every master entry is kept verbatim, including its new L-071 (domain, OCR add-on gate observe-first). #616 claimed L-071 while wave E's prior rebase (onto 8f136b9a) had just taken L-071/L-072, so wave E's two entries shifted up one more id: L-071 (imp-10b, enum-parity mirrors) -> L-072 and L-072 (imp-10a, schema-folder split) -> L-073. 32 citation occurrences across 23 files were repointed (CLAUDE.md, docs/IMPROVEMENTS.md, .claude/code-map/{api,mobile,packages}.md, the wave-E bullets in code-map/CHANGELOG.md, and the wave-E source comments in packages/types, apps/api, apps/web, apps/mobile); master's own L-071 heading and the L-071 mention in this file's prior note were deliberately left pointing at #616's entry. The union is 40 entries / 40,055 of 40,960 bytes (905 headroom) — inside BOTH caps, so no further compaction was needed on this rebase. Wave E's earlier compaction stands: L-016 (deploy, #475: entitlement gate with no way to grant it; guard = feature-plan P4 gate checklist + legacy-key->SKU bridge) and L-024 (security: one Maps key cannot serve three call origins; guard = the three-key model recorded in memory and docs/plans) remain in ARCHIVE.md verbatim under their dated section, both being the oldest entries whose guard has landed and neither cited by any [[L-0xx]] ([[L-039]]). activeCount 40, archivedCount 29, nextId 73->74 (max id 73 across both files, +1)."
 }
