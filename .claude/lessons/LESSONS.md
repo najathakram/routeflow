@@ -127,6 +127,17 @@
 
 ## tooling
 
+### L-072 · 2026-09-05 · tooling
+
+- **Symptom:** a prod-capable seed run through `railway run --service postgres` wrote to the LOCAL
+  dev database.
+- **Root cause:** the script defaulted `DATABASE_URL` to a localhost URL and the postgres service
+  exposes only discrete POSTGRES_*/TCP-proxy vars.
+- **Lesson:** **a script that can target production never has a silent local default: resolve the
+  target from the variables the runner actually injects, print the resolved host before
+  connecting, and treat "nothing set" as a loud fallback.**
+- **Guard:** `resolveDatabaseUrl` + its spec; the seed logs its target host.
+
 ### L-065 · 2026-09-03 · tooling · PR-4 `imp-01`
 
 - **Symptom:** the review counted "four copies", the first plan promised a source-direct package

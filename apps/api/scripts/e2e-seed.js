@@ -13,8 +13,15 @@
  * left in the operator's dock (see 08-create-order-escape.spec.ts).
  *
  * Usage (from repo root):
- *   Local:   node apps/api/scripts/e2e-seed.js
- *   Railway: DATABASE_URL="postgresql://..." node apps/api/scripts/e2e-seed.js
+ *   Local:                  node apps/api/scripts/e2e-seed.js
+ *   Railway (explicit URL): DATABASE_URL="postgresql://..." node apps/api/scripts/e2e-seed.js
+ *   Railway (via runner):   railway run --service postgres node apps/api/scripts/e2e-seed.js
+ *     (that service exposes only POSTGRES_USER/POSTGRES_PASSWORD/POSTGRES_DB/
+ *     RAILWAY_TCP_PROXY_DOMAIN/RAILWAY_TCP_PROXY_PORT, no DATABASE_URL — the target is
+ *     resolved from those via scripts/lib/railway-db-url.mjs, same helper prod-migrate.mjs
+ *     and schema-drift.mjs use. The resolved host is always logged before connecting,
+ *     the password never is; a run with neither DATABASE_URL nor the POSTGRES_* vars
+ *     loudly falls back to the local default instead of silently targeting it.)
  */
 
 const { PrismaClient } = require("../../../node_modules/@prisma/client");
@@ -23,11 +30,39 @@ const { Pool } = require("../../../node_modules/pg");
 const bcrypt = require("../../../node_modules/bcrypt");
 const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 
-const dbUrl = process.env.DATABASE_URL ?? "postgresql://user:pass@localhost:5432/routeflow_dev";
+const LOCAL_DEFAULT_DB_URL = "postgresql://user:pass@localhost:5432/routeflow_dev";
 
-const pool = new Pool({ connectionString: dbUrl });
-const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter });
+// Resolves the seed's DB target the same way prod-migrate.mjs/schema-drift.mjs do (Railway
+// proxy vars win over DATABASE_URL, since under `railway run` DATABASE_URL is the unreachable
+// *.railway.internal host) — imported dynamically because the shared helper is an ESM module
+// (`.mjs`) and CI still runs this script under Node 20, which cannot `require()` ESM.
+async function resolveTargetDbUrl() {
+  const { resolveDatabaseUrl } = await import("./lib/railway-db-url.mjs");
+  try {
+    return resolveDatabaseUrl(process.env, { requireProxy: false });
+  } catch {
+    console.log("e2e-seed: DATABASE_URL not set and no POSTGRES_* vars — using the local default");
+    return LOCAL_DEFAULT_DB_URL;
+  }
+}
+
+let dbUrl;
+let pool;
+let adapter;
+let prisma;
+
+// Resolves the DB target and logs it — host/port/db only, never the password — before
+// opening any connection, then wires up the Prisma client used by the rest of the script.
+async function bootstrap() {
+  dbUrl = await resolveTargetDbUrl();
+  const target = new URL(dbUrl);
+  console.log(
+    `e2e-seed: target host = ${target.hostname}:${target.port || "5432"}${target.pathname}`,
+  );
+  pool = new Pool({ connectionString: dbUrl });
+  adapter = new PrismaPg(pool);
+  prisma = new PrismaClient({ adapter });
+}
 
 const TENANT_SLUG = assertTestTenant("e2e-routeflow", "e2e-seed");
 const OPERATOR_USERNAME = "admin";
@@ -50,6 +85,11 @@ const SESSIONS_OP_PASSWORD = "Sessions1!";
 const DEVELOPER_MODE_ADDON = "developer_mode";
 const RECURRING_ROUTES_ADDON = "recurring_routes";
 const ORDER_DELIVERY_ADDON = "order_delivery";
+// REG-B91 (34-calendar-dates.spec.ts) needs one active TrackedCategory with
+// requiresLicense: true to build its customer-authorization fixture; without one the
+// spec self-skips ("No tracked category requires a license on this tenant") rather than
+// failing on an unrelated seed gap. Every other field is left at its schema default.
+const LICENSED_TRACKED_CATEGORY_NAME = "E2E Regulated License Category";
 
 // Idempotent upsert of an ACTIVE TenantAddon row for the given addon key. Row
 // shape matches what AddonService.hasAddon/getActiveAddons match on (see
@@ -67,6 +107,22 @@ async function ensureAddon(tenantId, addonKey) {
       active: true,
     },
     update: { active: true },
+  });
+}
+
+// Idempotent upsert of the one tracked category REG-B91 needs (TrackedCategory has a
+// @@unique([tenantId, name]) constraint). `update: { requiresLicense: true, active: true }`
+// (not `{}`) for the same determinism reason ensureAddon's update clause gives.
+async function ensureLicensedTrackedCategory(tenantId) {
+  await prisma.trackedCategory.upsert({
+    where: { tenantId_name: { tenantId, name: LICENSED_TRACKED_CATEGORY_NAME } },
+    create: {
+      tenantId,
+      name: LICENSED_TRACKED_CATEGORY_NAME,
+      requiresLicense: true,
+      active: true,
+    },
+    update: { requiresLicense: true, active: true },
   });
 }
 
@@ -178,6 +234,10 @@ async function main() {
     await ensureAddon(existing.id, RECURRING_ROUTES_ADDON);
     await ensureAddon(existing.id, ORDER_DELIVERY_ADDON);
     console.log(`  ✓ Developer mode, recurring routes, and order delivery addons active`);
+
+    // ── Licensed tracked category (REG-B91 precondition) ───────────────────────
+    await ensureLicensedTrackedCategory(existing.id);
+    console.log(`  ✓ Licensed tracked category "${LICENSED_TRACKED_CATEGORY_NAME}" active`);
 
     // ── Sweep stale parked drafts left by the web e2e suite ─────────────────────
     // 08-create-order-escape's ESC tests auto-park REAL drafts ("Order, <name>",
@@ -299,10 +359,15 @@ async function main() {
   await ensureAddon(tenant.id, ORDER_DELIVERY_ADDON);
   console.log(`  ✓ Developer mode, recurring routes, and order delivery addons active`);
 
+  // ── Licensed tracked category (REG-B91 precondition) ──────────────────────────
+  await ensureLicensedTrackedCategory(tenant.id);
+  console.log(`  ✓ Licensed tracked category "${LICENSED_TRACKED_CATEGORY_NAME}" created`);
+
   console.log("\n✅ E2E seed complete.\n");
 }
 
-main()
+bootstrap()
+  .then(main)
   .catch((e) => {
     // Print the WHOLE error: Prisma wraps connection failures in an
     // "Invalid invocation" whose .message can be empty, hiding the cause.
@@ -310,6 +375,6 @@ main()
     process.exit(1);
   })
   .finally(async () => {
-    await prisma.$disconnect();
-    await pool.end();
+    if (prisma) await prisma.$disconnect();
+    if (pool) await pool.end();
   });

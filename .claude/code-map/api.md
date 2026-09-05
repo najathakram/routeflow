@@ -101,7 +101,11 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   `schema-drift.mjs` (read-only) and must never reach a script that writes schema; it also prints
   `Target host: ${redactUrl(url)}` so the announced target is the URL actually migrated. Contract
   specs: `src/common/schema-drift-script.spec.ts`, `src/common/prod-migrate-script.spec.ts`
-  (spawn-level, stub `npx` on PATH, no database).
+  (spawn-level, stub `npx` on PATH, no database). **2026-09-05 (L-072):** `scripts/e2e-seed.js` is
+  now a third consumer — imported via dynamic `import()` (it's CJS, and CI's Node 20 can't
+  `require()` an `.mjs`), `requireProxy: false` like `schema-drift.mjs` (a read like this may fall
+  back to `DATABASE_URL`, unlike the writer `prod-migrate.mjs`). Contract: `src/common/e2e-seed-
+script.spec.ts`.
 - **`scripts/ci-audit-critical.mjs` (2026-09-04)** — CI advisory gate: wraps `npm audit
 --omit=dev --audit-level=<level> --json` in `spawnSync` (`shell:false`, up to 3 attempts,
   15s/45s backoff, 120s per-attempt timeout, 64 MiB `maxBuffer`) so an `npm` registry
@@ -540,7 +544,18 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   **2026-08-26:** the catch prints the WHOLE error (Prisma wraps connection failures in an
   "Invalid invocation" whose `.message` is empty — CI logged a blank cause for a week). In CI
   the seed only runs when the `E2E_SEED_DATABASE_URL` secret is set (see
-  `apps/web/e2e/setup/global.setup.ts` for the full seeding contract).
+  `apps/web/e2e/setup/global.setup.ts` for the full seeding contract). **2026-09-05 (tooling
+  lesson L-072):** the module-level `DATABASE_URL ?? <localhost>` fallback is gone — a
+  `resolveTargetDbUrl()`/`bootstrap()` pair now reuses `scripts/lib/railway-db-url.mjs`'s
+  `resolveDatabaseUrl` (see that entry above) so a `railway run --service postgres` invocation
+  (which exposes only `POSTGRES_*`/`RAILWAY_TCP_PROXY_*`, never `DATABASE_URL`) resolves the real
+  target instead of silently reseeding localhost; always prints `e2e-seed: target host =
+<host>:<port>/<db>` (never the password) before connecting, and a "nothing set" run prints a
+  loud fallback warning first. Also seeds one `TrackedCategory` (`ensureLicensedTrackedCategory`,
+  `requiresLicense: true`, upserted on the `@@unique([tenantId, name])` key, both branches) so
+  REG-B91 (`34-calendar-dates.spec.ts`) stops self-skipping for lack of a licensed category.
+  Contract: `src/common/e2e-seed-script.spec.ts` (spawn-level, three DATABASE_URL-resolution
+  cases, no real database reached in the first two).
 - **`scripts/demo-seed.js` + `demo-seed-images.js` + `demo-verify.js` + `lib/demo-ids.js`**
   (2026-08-20) — the standing sales-demo tenant `routeflow-demo` (on the test-tenant allow-list;
   operator `routeflow_demo`/`routeflow_demo`). `demo-seed.js` copies a catalog from the tenant
