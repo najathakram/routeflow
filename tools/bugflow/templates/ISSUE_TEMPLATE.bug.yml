@@ -1,0 +1,116 @@
+# Copy this file to .github/ISSUE_TEMPLATE/bug.yml at adoption time.
+#
+# Produces exactly the body sections tools/bugflow/docs/DATA-MODEL.md defines: Symptom, Expected,
+# Repro, Files, Analysis (five placeholder subsections, filled in later by `bugflow triage`).
+#
+# VERIFY before relying on this: GitHub renders each field below as an "### <label>" (H3) heading
+# in the created issue's body, not "## <label>" (H2) — a platform rendering rule, not a choice
+# made here. bugflow's own body parsers (triage/plan/check) must accept either heading level for
+# these section names; see DATA-MODEL.md's heading-level note.
+#
+# VERIFY also: this schema's `labels:` key defaults LABELS only. Whether the issue-form schema can
+# also default the first-class Issue *Type* field (Bug) is unconfirmed as of this writing — if it
+# cannot, an onboarding step (a repo Action on `issues: opened` for this template, or the first
+# `bugflow sync` pass) must run `gh issue edit <n> --type Bug` once, since a label is not a
+# substitute for the Type field GitHub Issues/Projects now expose natively.
+
+name: Bug report
+description: File a defect for bugflow to triage, batch, and route to a worker.
+title: ""
+labels:
+  - status:triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Describe what you observed — classification (agent-safe vs.
+        money/tenancy/migration), tier, severity and area happen next, at triage, by a person or
+        an agent. You don't need to fill those in yourself.
+
+  - type: textarea
+    id: symptom
+    attributes:
+      label: Symptom
+      description: What is observably wrong, in your own words.
+      placeholder: >-
+        e.g. "Searching a merged customer's orders by status returns orders from every status,
+        not just the one requested."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      description: What should happen instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Repro
+      description: >-
+        Steps to reproduce. If it's intermittent, say so and attach whatever evidence you have
+        (a log line, a screenshot, an order/invoice number using an acme-style placeholder — never
+        a real one).
+      placeholder: |
+        1. ...
+        2. ...
+        3. Observe: ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: files
+    attributes:
+      label: Files
+      description: >-
+        One repo-relative path per line, each starting with "- ", if you already know which files
+        are involved. Leave blank if you don't — triage fills this in before the bug becomes
+        takeable.
+      placeholder: |
+        - apps/api/src/orders/orders.service.ts
+        - apps/api/src/orders/orders.controller.ts
+    validations:
+      required: false
+
+  - type: textarea
+    id: analysis
+    attributes:
+      label: Analysis
+      description: >-
+        Leave as-is — filled in by triage, not by you. Do not edit below; `bugflow triage`
+        replaces each placeholder in place.
+      value: |
+        ### Purpose
+
+        _Not yet analysed._
+
+        ### Root cause
+
+        _Not yet analysed._
+
+        ### Impact
+
+        _Not yet analysed._
+
+        ### Fix approach & UX
+
+        _Not yet analysed._
+
+        ### Test plan
+
+        _Not yet analysed._
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: attestation
+    attributes:
+      label: Before you submit
+      options:
+        - label: >-
+            This report contains no live-client identifiers — no tenant slug, business or product
+            name, order/invoice number, or tenant UUID. Use acme-style placeholders instead.
+          required: true
