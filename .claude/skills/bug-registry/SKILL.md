@@ -339,6 +339,6 @@ What that means for you:
 - **Never name a live client** in a record — slug, business name, product, invoice or order number,
   tenant UUID. The repo goes public during CI windows and these files are tracked. Use `acme`-style
   placeholders.
-- **Money** goes through `pricing.ts`; move all three mirrors together.
+- **Money** goes through `@routeflow/pricing` (`packages/pricing`); there are no mirrors.
 - **Tenancy**: `forTenant()` or `tenantTransaction()`; a bare `$transaction` is not scoped.
 - Record the lesson after any fix — `.claude/lessons/LESSONS.md`, enforced by Gate 3.

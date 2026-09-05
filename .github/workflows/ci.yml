@@ -232,7 +232,13 @@ jobs:
       # THE gate: byte-for-byte the command `.husky/pre-push` runs.
       #   node scripts/validate-lock-edges.mjs
       #   && node .claude/skills/bug-hunt/scripts/scan-signatures.mjs
-      #   && turbo run check-types lint test
+      #   && turbo run check-types lint test --continue=dependencies-successful
+      #
+      # `--continue=dependencies-successful` (added with item 9) is why one red
+      # task no longer hides the other two: turbo still fails the run, but it
+      # keeps running every task whose own dependencies succeeded, so a single CI
+      # log shows the type, lint AND test verdicts together. It lives in the root
+      # `verify` script, not here, so the hook and this step stay byte-identical.
       #
       # No turbo cache here, deliberately — no TURBO_TOKEN/TURBO_TEAM and no
       # actions/cache of .turbo, so every task genuinely executes on a fresh
@@ -362,6 +368,14 @@ jobs:
     concurrency:
       group: ci-e2e-${{ github.event.deployment.sha || github.sha }}
       cancel-in-progress: true
+    env:
+      # TRANSITIONAL — accepts a /api/v1/health payload whose `commit` is
+      # null/absent (an API build that predates wave B′, a CLI `railway up`
+      # deploy, or RAILWAY_GIT_COMMIT_SHA unset in the container). Flip to
+      # "false" once the first post-wave-B′ GitHub deploy of the API serves
+      # `commit`; from then on a null `commit` means an API build of unknown
+      # provenance and must fail the readiness gate rather than downgrade it.
+      ALLOW_NULL_API_SHA: "true"
     steps:
       # A minimal, unconditional checkout — just `scripts/` — so the freshness
       # guard below has scripts/ci-freshness-guard.mjs to run. Cheap (one
@@ -456,9 +470,11 @@ jobs:
       # Every spec below runs against the DEPLOYED web app, so the gate has to
       # prove the deployed WEB build is the code this checkout asserts on.
       #
-      # WHAT THIS PROVES, using apps/web/app/api/health's `sha` (Railway injects
-      # RAILWAY_GIT_COMMIT_SHA into the running container):
-      #   1. the API answers 200, and
+      # WHAT THIS PROVES, using apps/web/app/api/health's `sha` and apps/api's
+      # /api/v1/health `commit` (Railway injects RAILWAY_GIT_COMMIT_SHA into each
+      # running container):
+      #   1. the API answers 200, and its deployed build is code-identical to
+      #      github.sha for api's OWN build inputs, and
       #   2. the web app answers 200, and
       #   3. the deployed web build is code-identical to github.sha for web's
       #      OWN build inputs.
@@ -473,11 +489,27 @@ jobs:
       # or a web app AHEAD of the checkout (the run-33263396288 case) — keeps
       # waiting and then FAILS the job. It never silently continues.
       #
-      # KNOWN LIMITATION, stated rather than papered over: the API is probed for
-      # REACHABILITY ONLY. apps/api/src/app.service.ts returns {status,timestamp}
-      # and exposes no commit SHA, so an api-only deploy still in flight is NOT
-      # detected here and a spec depending on new API behaviour can still race.
-      # Closing that gap means adding the same field to the API health payload.
+      # THE API CHECK (item 9 / P4-a, 2026-09-03) closes what used to be stated
+      # here as a KNOWN LIMITATION: the API was probed for REACHABILITY ONLY,
+      # because apps/api/src/app.service.ts returned {status,timestamp} and no
+      # commit SHA — so an api-only deploy still in flight went undetected and a
+      # spec depending on new API behaviour could race it. `healthCheck()` now
+      # returns `commit`/`branch` from RAILWAY_GIT_COMMIT_SHA/RAILWAY_GIT_BRANCH,
+      # and the loop below applies the SAME shape to it as to web: exact match on
+      # EXPECTED_SHA, else the tolerance branch `git diff --name-only <deployed>
+      # <expected> -- apps/api packages` being empty (api = watchPatterns
+      # apps/api/** + packages/**, so a web-only push legitimately leaves the api
+      # service on an older commit and must not false-red).
+      #
+      # RESIDUAL, stated rather than papered over: an API can answer 200 with no
+      # `commit` — a build predating that change, a CLI `railway up` force-deploy,
+      # or RAILWAY_GIT_COMMIT_SHA unset in the container. That case is governed by
+      # the job-level ALLOW_NULL_API_SHA flag, which is TRANSITIONAL and "true"
+      # only so the very deploy that ships the field can satisfy the gate. While
+      # it is true the API side of the run downgrades to reachability-only and
+      # says so as a `::warning::` on the run summary rather than buried in the
+      # log; once it is flipped to "false" a null `commit` keeps the gate waiting
+      # and then fails it, like any other build whose freshness is unproven.
       - name: Wait for the deployed app to match this commit
         if: steps.freshness.outputs.run == 'true'
         env:
@@ -533,13 +565,17 @@ jobs:
             exit 1
           fi
 
-          echo "Expecting the deployed web app to be $EXPECTED_SHA"
+          echo "Expecting the deployed web app and API to be $EXPECTED_SHA"
           # Outside the checkout on purpose - nothing this step writes should
           # end up as an untracked file in the tree Playwright then runs from.
           probe="${RUNNER_TEMP:-/tmp}/web-health.json"
+          api_probe="${RUNNER_TEMP:-/tmp}/api-health.json"
           deadline=$(( $(date +%s) + WAIT_SECONDS ))
           attempt=0
           api_ok=0
+          api_status="none"
+          api_sha=""
+          api_drift=""
           web_status="none"
           web_sha=""
           drift=""
@@ -552,14 +588,47 @@ jobs:
             drift=""
 
             if [ "$api_ok" -eq 0 ]; then
+              api_drift=""
               # `curl -w` already emits 000 on a connection failure, so a
               # `|| echo 000` would APPEND a second one and log "000000".
-              api_status=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
-                "$API_BASE/api/v1/health") || true
+              api_status=$(curl -s -o "$api_probe" -w '%{http_code}' --max-time 15 \
+                -H 'cache-control: no-cache' "$API_BASE/api/v1/health") || true
               api_status=${api_status:-000}
+              api_sha=""
               if [ "$api_status" = "200" ]; then
-                api_ok=1
-                echo "api : 200 (reachable; freshness NOT proven — see step comment)"
+                # node, not jq - same reason as the web probe below.
+                api_sha=$(node -e 'try{const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));if(typeof d.commit==="string")process.stdout.write(d.commit)}catch(e){}' "$api_probe" || true)
+              fi
+
+              if [ "$api_status" = "200" ] && [ -n "$api_sha" ]; then
+                if [ "$api_sha" = "$EXPECTED_SHA" ]; then
+                  api_ok=1
+                  echo "api : 200, commit $api_sha == expected - exactly the commit under test."
+                elif api_drift=$(git diff --name-only "$api_sha" "$EXPECTED_SHA" -- apps/api packages 2>/dev/null); then
+                  if [ -z "$api_drift" ]; then
+                    api_ok=1
+                    echo "api : 200, commit $api_sha (not $EXPECTED_SHA), but nothing under"
+                    echo "      apps/api/ or packages/ differs between them - Railway correctly"
+                    echo "      SKIPPED the api service for this push."
+                  else
+                    echo "api : 200, commit $api_sha - does not match ($(printf '%s\n' "$api_drift" | wc -l) api file(s) differ)."
+                  fi
+                else
+                  api_drift="__unresolved__"
+                  echo "api : 200, commit $api_sha - that commit is not in this checkout."
+                fi
+              elif [ "$api_status" = "200" ]; then
+                # No `commit` in the payload. A JSON null and an absent key are
+                # the same case here: app.service.ts returns `commit: null` when
+                # RAILWAY_GIT_COMMIT_SHA is unset, and the extractor above only
+                # emits a string, so both leave $api_sha empty. Governed by the
+                # job-level ALLOW_NULL_API_SHA flag - see the step comment.
+                if [ "$ALLOW_NULL_API_SHA" = "true" ]; then
+                  api_ok=1
+                  echo "::warning::api /api/v1/health carried no commit — API freshness NOT proven; treating as reachability-only (ALLOW_NULL_API_SHA=true)"
+                else
+                  echo "::error::api /api/v1/health carried no commit and ALLOW_NULL_API_SHA is false"
+                fi
               else
                 echo "api : $api_status"
               fi
@@ -615,10 +684,13 @@ jobs:
 
           echo "::error::Deploy-readiness gate TIMED OUT after ${WAIT_SECONDS}s - refusing to run E2E against a deployment that is not this commit."
           echo "  expected commit  : $EXPECTED_SHA"
-          if [ "$api_ok" -eq 1 ]; then
-            echo "  api /health      : 200"
-          else
-            echo "  api /health      : never returned 200"
+          echo "  api /v1/health   : status=$api_status commit=${api_sha:-none}"
+          if [ "$api_drift" = "__unresolved__" ]; then
+            echo "  The commit the API reports is not in this checkout - a 'railway up'"
+            echo "  force-deploy, or a rewritten history."
+          elif [ -n "$api_drift" ]; then
+            echo "  API files differing between the deployed build and this commit:"
+            printf '%s\n' "$api_drift" | head -40 | sed 's/^/    /'
           fi
           echo "  web /api/health  : status=$web_status sha=${web_sha:-none}"
           if [ "$drift" = "__unresolved__" ]; then
@@ -628,7 +700,7 @@ jobs:
             echo "  Web files differing between the deployed build and this commit:"
             printf '%s\n' "$drift" | head -40 | sed 's/^/    /'
           fi
-          echo "  Most likely the Railway web deploy failed or is still building. Fix or"
+          echo "  Most likely the Railway web or api deploy failed or is still building. Fix or"
           echo "  re-run the deploy, then re-dispatch this workflow."
           echo "  (Only master reaches this branch — a dispatch from any other ref took"
           echo "  the reachability-only path far above and never gets here.)"

@@ -14,7 +14,7 @@ import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { geocodeAddress, GeocodableAddress, GeocodeCoords } from "../common/geocode.util";
 import { StorageService } from "../storage/storage.service";

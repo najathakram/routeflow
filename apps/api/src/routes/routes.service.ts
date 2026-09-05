@@ -24,7 +24,7 @@ import {
   InvoiceStatus,
   ChangeRequestStatus,
 } from "@prisma/client";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 // F03/F05: the settlement cash basis stays pinned to the shared CONFIRMED
 // predicate rather than a literal `status: "PAID"`, so it can never silently
 // desync from every other confirmed-money read in the codebase.

@@ -19,7 +19,7 @@ export interface ProductFormValues {
   /**
    * Loose pieces per box. Leave blank for products sold individually.
    * When set (>1), `pricePerUnit` is treated as the BOX price; loose pieces
-   * are prorated as `pricePerUnit / unitsPerBox` (apps/api/src/common/pricing.ts).
+   * are prorated as `pricePerUnit / unitsPerBox` (`@routeflow/pricing`).
    */
   unitsPerBox: string;
   description: string;

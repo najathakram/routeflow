@@ -31,8 +31,7 @@ export function productSalesSummaryLine(summary: ProductSalesSummary): string {
 }
 
 export type ProductSaleRowTarget =
-  | { screen: "order"; id: string }
-  | { screen: "invoice"; id: string };
+  { screen: "order"; id: string } | { screen: "invoice"; id: string };
 
 /**
  * Where a Sales-card row navigates on tap. `orderId` is null for invoices cut

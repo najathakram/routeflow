@@ -1,10 +1,10 @@
 {
-  "nextId": 67,
-  "activeCount": 40,
-  "archivedCount": 17,
+  "nextId": 71,
+  "activeCount": 39,
+  "archivedCount": 25,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-05T03:21:24.828Z",
+  "updatedAt": "2026-09-05T04:11:50.000Z",
   "schemaVersion": 1,
-  "note": "Bookkeeping only — never accumulate prose here (see L-006). updatedAt bump = acknowledged lesson-free fix. L-044 (F14) landed here, taking the id SEQUENCE §4 pre-allocated for it — do NOT reuse 42/43 (reserved for other Wave A batches, gaps are reserved not abandoned); nextId jumped straight to 50 because L-042..L-049 are pre-allocated to Wave A batches landing out of numeric order. L-058 was taken 2026-09-04 by #610 (REG-E2EGUARD-403) out of that reserved block; L-059..L-060 stay reserved by #597's pending merge; L-061 taken 2026-09-04 by the watchdog-spec fix. L-063..L-065 compact the seven registry lessons #597 authored as L-051..L-057; L-062 reserved by the OCR gate fix. L-029 archived 2026-09-04 (guard in place: orders.lifecycle-conservation.spec.ts) for cap discipline. L-066 taken 2026-09-05 by the registry lock-liveness fix."
+  "note": "Merge of origin/master (22372911, #613) into feat/bug-registry: master had minted its own L-063/L-064/L-065/L-066 (imp-04 jest-split, imp-04 CSP, PR-4 imp-01 compiled workspace package, watchdog spec), so this branch's four #597 registry entries were renumbered above master's max — L-063→L-067, L-064→L-068, L-065→L-069, L-066→L-070 — and the seven code-map/bugs.mjs citations of L-063 were remapped with them; this branch's own L-061 (watchdog spec) was dropped as a duplicate of master's L-066, same text. L-029 archived (guard `orders.lifecycle-conservation.spec.ts` in place) to hold the byte cap. nextId 71, activeCount 39, archivedCount 25. Prior note: Merge of origin/master (e07aa0b5, #611) into refactor/imp-01-pricing-package: master's #611 minted a NEW `L-061 · testing · watchdog spec` entry that collided with this branch's own pre-existing L-061 (testing, wave B′ P4, Prisma client-extension catch-all) — master's entry renumbered to L-066 (next free id after this branch's nextId of 66); this branch's own L-061 kept its id unchanged. nextId bumped to 67, activeCount 35→36. Prior note: merge of origin/master (a5be8626, #610) renumbered this branch's colliding L-058 to L-065."
 }

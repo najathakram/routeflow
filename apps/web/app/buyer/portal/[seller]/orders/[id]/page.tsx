@@ -29,7 +29,7 @@ import {
   useBuyerCreateChangeRequest,
   type BuyerOrder,
 } from "@/lib/api/buyer";
-import { computeLineSubtotal, normalizeBoxesPieces } from "@/lib/pricing";
+import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import { describeChangeRequest, describeResolution } from "@/lib/change-requests";
 import { fmtCalendarDate } from "@/lib/formatting";
 

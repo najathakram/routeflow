@@ -45,7 +45,7 @@ gates green → merge → deploy → issue closes via `Closes #N`
 
 Run the two verifiers **in parallel** — independent review is the one place fan-out clearly wins.
 Run builders **one per file set**, and for anything touching money math or tenant scoping, one
-agent at a time. Parallel implementation is how three `pricing.ts` mirrors drift apart.
+agent at a time. Parallel implementation is how two agents editing the same DTO drift apart.
 
 ## Commands
 
@@ -180,8 +180,8 @@ verification to save tokens trades a small, predictable cost for a large, unpred
 ## House rules that outrank anything here
 
 - **Web is the golden reference.** Mobile mirrors its endpoints, DTOs and flows.
-- **Money** goes through `pricing.ts`; never re-derive `qty * unitPrice` on a boxed line; round every
-  monetary write; move all three mirrors together.
+- **Money** goes through `@routeflow/pricing` (`packages/pricing`); never re-derive
+  `qty * unitPrice` on a boxed line; round every monetary write; there are no mirrors.
 - **Tenancy**: `forTenant()` or `tenantTransaction()`. A bare `$transaction` is not scoped.
 - **Never test against a live client tenant.** Approved: `test`, `e2e-routeflow`, `routeflow-demo`,
   `qa-*`, `e2e-*`, `ux-audit-*`.

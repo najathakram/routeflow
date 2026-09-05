@@ -1,4 +1,4 @@
-import { roundMoney } from "./pricing";
+import { roundMoney } from "@routeflow/pricing";
 
 /** 0, negatives and non-numbers all mean "no MSRP" — never render those as $0.00. */
 const normalizeMsrp = (v: unknown): number | null => {

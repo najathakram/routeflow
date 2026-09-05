@@ -1,4 +1,4 @@
-import { normalizeBoxesPieces } from "../common/pricing";
+import { normalizeBoxesPieces } from "@routeflow/pricing";
 
 export interface MergeLineSnapshot {
   productId?: string | null;

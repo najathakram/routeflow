@@ -29,7 +29,6 @@ Context asymmetry is also a cost win: this role never receives the builder's rea
 it never pays for those tokens — and it is more likely to find the bug for exactly that reason.
 -->
 
-
 # Agent: QA Engineer (RouteFlow)
 
 You try to break what the builder made. You are given **the diff and the acceptance criteria —
@@ -69,8 +68,8 @@ If the diff touches any price, tax, total, discount, or box/piece quantity:
 
 - Does every monetary write go through `roundMoney`?
 - Is any boxed line re-deriving `qty * unitPrice`? That overcharges by `unitsPerBox`.
-- Did all three `pricing.ts` mirrors move together (`apps/api/src/common`, `apps/web/lib`,
-  `apps/mobile/lib`)? Compare their exported symbol sets, not just their text.
+- Does money math still go through `@routeflow/pricing` (`packages/pricing`) — no app-local copy of
+  a pricing helper reintroduced?
 - Test the boxed case explicitly: 3 boxes × 12 units at 18.75 must charge **675.00**, not 8100.00.
 - Test rounding at the half-cent, and a zero/negative quantity.
 

@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { randomUUID } from "crypto";
 import { PaymentMethod } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { normalizeInvoiceNumber } from "../import/duplicate-match.service";
 import {
   matchStatementLines,

@@ -17,7 +17,7 @@ import { CostingMethod, InvoiceStatus } from "@prisma/client";
  * `where.tenantId`, silently dropping every one of them. Same guard as
  * `analytics.service.ts getProductDemand` and `bookkeeping getSalesByItem`.
  *
- * Conventions (see common/pricing.ts):
+ * Conventions (see @routeflow/pricing):
  * - units = `Number(item.qty)` AS-IS — the same denomination order-create
  *   decrements `Product.currentStock` by; never re-derive from boxes/pieces.
  * - revenue = `Number(item.subtotal)` — NEVER `qty × unitPrice` (re-introduces

@@ -6,7 +6,7 @@
  * with the SAME raw line fields the builder footer passes, so the tray and the
  * footer cannot disagree by construction.
  */
-import { computeLineSubtotal, effectiveQty, normalizeBoxesPieces } from "./pricing";
+import { computeLineSubtotal, effectiveQty, normalizeBoxesPieces } from "@routeflow/pricing";
 import { displayProductName, type DisplayProductLike } from "./product-display";
 
 /** Line state as the sale builders hold it (mirrors NewOrderScreen's LineState). */

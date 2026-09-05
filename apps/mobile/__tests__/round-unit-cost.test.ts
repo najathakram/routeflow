@@ -1,16 +1,16 @@
 /**
- * roundUnitCost (web + mobile only — the api mirror has no 4dp cost rounder):
+ * roundUnitCost now lives once, in `@routeflow/pricing` — there is no sibling
+ * copy to keep in parity (it is the 4dp cost rounder, the twin of COST_DP = 4
+ * in apps/api/src/inventory/costing.ts). This spec pins the FP-victim cases:
  * the same EPSILON-no-op defect class as REG-B122's roundMoney, at the 4th
  * decimal. EPSILON is <= half a ULP for any scaled value above ~2e-4, so the
  * old nudge never did anything and FP-victim inputs (x*10000 landing at
  * .4999…) rounded DOWN against the documented half-away-from-zero intent.
  * Victims verified numerically: 0.00145*10000 = 14.499999999999998, etc.
  * Untokened deliberately: B122's register proof is roundMoney's pins; these
- * are the close-out hardening for the sibling copy, kept in parity across the
- * two files that carry it.
+ * are the close-out hardening for the 4dp rounder.
  */
-import { roundUnitCost as mobileRound } from "../lib/pricing";
-import { roundUnitCost as webRound } from "../../web/lib/pricing";
+import { roundUnitCost } from "@routeflow/pricing";
 
 const VICTIMS: Array<[number, number]> = [
   // [input, expected] — scaled value lands at .4999…, old body rounded down.
@@ -19,18 +19,15 @@ const VICTIMS: Array<[number, number]> = [
   [0.00565, 0.0057],
 ];
 
-describe.each([
-  ["mobile", mobileRound],
-  ["web", webRound],
-])("roundUnitCost (%s mirror)", (_name, fn) => {
+describe("roundUnitCost", () => {
   it.each(VICTIMS)("rounds the FP-victim %f half-up to %f", (input, expected) => {
-    expect(fn(input)).toBe(expected);
+    expect(roundUnitCost(input)).toBe(expected);
   });
 
   it("keeps ordinary values exact", () => {
-    expect(fn(0.4167)).toBe(0.4167);
-    expect(fn(10 / 24)).toBe(0.4167); // $10 case / 24 pieces
-    expect(fn(-0.00145)).toBe(-0.0015); // sign preserved, away from zero
-    expect(fn(NaN)).toBe(0);
+    expect(roundUnitCost(0.4167)).toBe(0.4167);
+    expect(roundUnitCost(10 / 24)).toBe(0.4167); // $10 case / 24 pieces
+    expect(roundUnitCost(-0.00145)).toBe(-0.0015); // sign preserved, away from zero
+    expect(roundUnitCost(NaN)).toBe(0);
   });
 });

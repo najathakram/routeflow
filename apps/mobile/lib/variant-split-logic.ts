@@ -9,7 +9,7 @@
  * (`newVariantName`), and its qty is expressed either as a plain `qty` or, for
  * a boxed parent, as `boxes`/`pieces` — never both at once on the wire.
  */
-import { normalizeBoxesPieces, roundUnitCost } from "./pricing";
+import { normalizeBoxesPieces, roundUnitCost } from "@routeflow/pricing";
 
 export interface SplitRow {
   /** Stable client-side row id — an existing variant's productId, or a generated key for a new-variant row. */

@@ -14,7 +14,7 @@ import {
   useRegulatedTemplates,
 } from "../lib/api/tracked-categories";
 import { sectionPickerOptions, subcategoryPickerOptions } from "../lib/regulated-format";
-import { cascadeTierPrices, perUnitPrice, type TierField } from "../lib/pricing";
+import { cascadeTierPrices, perUnitPrice, type TierField } from "@routeflow/pricing";
 import {
   buildProductPayload,
   emptyProductForm,

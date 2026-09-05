@@ -67,7 +67,7 @@ import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
-import { formatQtySplit } from "@/lib/pricing";
+import { formatQtySplit } from "@routeflow/pricing";
 import {
   SELECTABLE_PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,

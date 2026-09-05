@@ -148,8 +148,8 @@ rg -n "<Text[^>]*>\{action\}</Text>" apps/mobile
 **Caused:** B49, B50, B60 — and the scanner's current hits include the two still-open boxed-
 overcharge criticals in `orders.service.ts` (edit-items fresh add + substitute).
 
-Any `qty * unitPrice` (or `price * quantity`) arithmetic outside
-`apps/{api/src/common,web/lib,mobile/lib}/pricing.ts`. Boxed lines store per-piece proration, so
+Any `qty * unitPrice` (or `price * quantity`) arithmetic outside `packages/pricing`
+(`@routeflow/pricing`, imported by api, web and mobile). Boxed lines store per-piece proration, so
 the naive multiply overcharges by `unitsPerBox`. `roundMoney(qty * unitPrice)` is still wrong —
 rounding does not fix the wrong quantity basis.
 
@@ -441,7 +441,7 @@ where: { invoiceId, status: "PAID" }            // means what it says
 
 ## 23. `boxed-rederive` — Boxed-line re-derivation _(scanner: auto, HIGH-signal, CRITICAL)_
 
-The boxed twin of §6: `boxes * unitPrice` / `pieces * price` outside the `pricing.ts` mirrors.
+The boxed twin of §6: `boxes * unitPrice` / `pieces * price` outside `packages/pricing`.
 Boxed lines store per-piece proration, so multiplying a raw box count by the unit price skips
 `normalizeBoxesPieces` and overcharges by `unitsPerBox`.
 

@@ -24,7 +24,7 @@ import {
   findPlanDefinition,
   BILLING_EVENTS,
 } from "../billing/plan-catalog.constants";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AppConfig } from "../config/configuration";
 import type { JwtPayload } from "../auth/jwt-payload.interface";

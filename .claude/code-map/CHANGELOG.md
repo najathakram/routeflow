@@ -8,6 +8,53 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-04** — (worktree `rf-imp-04`, branch `refactor/imp-01-pricing-package`, merged with
+  master `e07aa0b5`, #611) — **watchdog-spec-host-speed fix folded into the merge.** Conflicts
+  were confined to `.claude/code-map/_meta.json`, `.claude/code-map/api.md`,
+  `.claude/lessons/LESSONS.md` and `.claude/lessons/_meta.json` — resolved by union, keeping
+  both branches' unique content and preferring master's more complete "8 cases" description of
+  `visibility-watchdog-script.spec.ts` (this branch's own copy of that file, carried over from
+  the prior #610 merge, already matched master's byte-for-byte, so it merged clean with no
+  conflict). Lesson L-061 (testing, `watchdog-spec-host-speed`) kept its id from master; no id
+  collision this time.
+- **2026-09-04** — (worktree `rf-imp-04`, branch `refactor/imp-01-pricing-package`) — **CSP
+  connect-src local-lane fix.** Root cause (proven by a Playwright trace): `next.config.mjs`'s
+  `headers()` gated the `connect-src` dev-localhost relaxation on
+  `isDev = NODE_ENV !== "production"`, which is always `false` in a **built** image (`next build`
+  forces production) — so the local Docker/E2E lane's browser login (`POST
+http://localhost:3000/api/v1/auth/login` from `http://localhost:3001`) was CSP-blocked with no
+  HTTP response at all (`status -1`), and the login page's no-response fallback rendered it as
+  "Invalid username or password." Fix: extracted the CSP construction into new
+  `apps/web/csp.mjs` (`apiConnectSources(apiUrl)` + `buildContentSecurityPolicy({ isDev, apiUrl })`)
+  and drive the http/ws relaxation off the **baked** `NEXT_PUBLIC_API_URL` instead of `NODE_ENV` —
+  an `http:` API origin now gets its concrete `http:`/`ws:` pair added to `connect-src` whenever
+  the bundle was actually built with one, regardless of `isDev`; a normal `https://` prod build is
+  byte-identical to before (pinned in `apps/web/lib/csp.test.ts`). Docs: `apps/web/e2e/LOCAL-LANE.md`.
+  Lesson L (see `.claude/lessons/LESSONS.md` — deploy category): never gate a build-time artifact
+  (CSP headers, routes manifest) on `NODE_ENV`; derive it from the build input it must match.
+- **2026-09-04** — (branch `refactor/imp-01-pricing-package`, rebased onto master `f60bd27c` — PR-2
+  - wave D — then merged with `feat/imp-wave-b-api-hardening`) — **PRICING PACKAGE (PR-4, imp-01)
+  - WAVE B′ API HARDENING, combined.** PR-4: consolidated the four `pricing.ts` copies (api
+    `common`+`utils`, web `lib`, mobile `lib`) into one compiled workspace package
+    `packages/pricing` (`@routeflow/pricing`, `dist`-built by a root `postinstall`, imported by
+    api/web/mobile as a bare specifier); bodies proven byte-identical by
+    `scripts/codemods/pricing-body-diff.mjs`; golden tests + money fixtures moved into the
+    package; the four legacy files and api's `pricing-parity.spec.ts`/`.fixtures.ts` deleted.
+    Lesson L-065 (tooling). Wave B′: Squawk destructive-migration lint (`apps/api/.squawk.toml`,
+    `scripts/lint-migrations.mjs`, `db-migrations.yml` step, root `lint:migrations`) replaces the
+    Atlas recommendation and fails CLOSED; `SKIP_VERIFY` bypass now audited
+    (`scripts/skip-verify-audit.mjs`, `.husky/pre-push`, requires `SKIP_VERIFY_REASON`) and root
+    `verify` gained `--continue=dependencies-successful`; `app.service.ts healthCheck()` returns
+    `commit`/`branch`, mirrored by `ci.yml`'s readiness-gate API-sha check; `app.module.ts`
+    APP_GUARD order pinned; cross-tenant `findUniqueOrThrow`/`findUnique` fail-closed pinned by
+    `src/prisma/tenant-findunique*.db.spec.ts`, fixed in both tenancy layers of `prisma.service.ts`
+    (lessons renumbered on this merge — see LESSONS.md); login-throttle limit/ttl made
+    env-configurable. Code map + `CLAUDE.md` updated for both. FOLLOW-UP (imp-04): `49097cf9`
+    dropped the `@routeflow/api#test` cache-inputs override to satisfy `package-shape.spec.ts`,
+    which left `docs-truth.spec.ts`/`no-dead-deps.spec.ts`'s outside-apps/api reads unhashed by any
+    turbo task; fixed with a GENERIC `test:repo-truth` turbo task (`jest.repo-truth.config.js`,
+    explicit `$TURBO_ROOT$/…` inputs, `apps/api/src/common/turbo-inputs.spec.ts` pins it). Lesson
+    L-062 (tooling).
 - **2026-09-04** — (`watchdog-spec-host-speed` fix, L-061) `visibility-watchdog-script.spec.ts`'s
   "defaults" test replaced its fixed 500 ms readiness wait with `awaitStartLine`, a capped poll on
   the script's own `" start "` log line (kills the child in `finally` on every path); added a
@@ -37,7 +84,7 @@ never accumulate history in `"notes"`.
 
 - **2026-09-02** — (branch `feat/bug-registry`, PR #597; mechanical fix pass against the 7-lens
   review of the bug registry — 10 commits, `scripts/campaign/bugs.mjs` and `.claude/hooks/stop.mjs`
-  only) — **THE REGISTER'S WRITE-VERIFIES-NOTHING FAMILY (L-063) CLOSED AT SIX MORE SITES.**
+  only) — **THE REGISTER'S WRITE-VERIFIES-NOTHING FAMILY (L-067) CLOSED AT SIX MORE SITES.**
   `index` used to rebuild `bugs.jsonl` from a fixed 9-key shape and permanently destroy every
   filed `symptom`/`filedAt` plus 61 register PR links; it now spreads derived keys ON TOP of the
   existing row instead of replacing it, and never recomputes `register` from the ledger-derived
@@ -77,10 +124,10 @@ never accumulate history in `"notes"`.
   unrelated sync); `file --files` seeds `deps`' file set immediately. USAGE header now lists all 21
   commands (was 5). Full findings + skip rationale for out-of-scope items (SKILL.md, package.json,
   the sync event-report reliability issues explicitly owned by another worker, the carve-out
-  classifier widening, the discharge evidence-pattern policy call) in the PR. Lesson **L-063**
+  classifier widening, the discharge evidence-pattern policy call) in the PR. Lesson **L-067**
   (escaping/round-trip pitfalls patching source via an intermediate script).
 
-- **2026-09-02** — (branch `feat/bug-registry`, PR #597; tooling + ledger/docs only, no app code) — **IN-REPO BUG REGISTRY.** `.claude/campaign/bugs/B###.md` (211 per-bug records: derived front matter incl. a `files` list, six analysis sections, a `## Reported evidence` block imported from the register HTML, append-only History) + `scripts/campaign/bugs.mjs` (`file` `brief` `prove` `discharge` `move` `enrich` `deps` `render` `next` `status` `show` `note` `sync` `self-test` …). All ledger writes go through replace-in-place `upsertLedgerRow`. `sync` derives history from the proof ledger + git log and runs as **Gate 4 of `stop.mjs`** (reports, never blocks) — ⚠️ the hook exists on this branch only until #597 merges. `classify()` is the owner carve-out (money / tenancy / migration → planned, never auto-fixed; parks 16 of 19 queued batches). `deps` computes the conflict graph — ⚠️ hub files (orders.service.ts ×36, invoices.service.ts ×30, schema.prisma ×27) must be excluded or nothing is ever parallel-safe, and the graph cannot see method-level collisions inside a god-file (missed B34/B146 until the analysis file sets were merged in). F11 analysed by a 21-agent pass: every diagnosis held, every suggested fix was refuted on fix-correctness; B32 → F20; B211 (new Critical) filed. `bugs self-test` is a verify step because five write-path defects shipped from this file in one session (L-063). Seven-lens review (Opus/Sonnet) found 7 blockers / 23 majors — fix pass pending; see the review record in the PR.
+- **2026-09-02** — (branch `feat/bug-registry`, PR #597; tooling + ledger/docs only, no app code) — **IN-REPO BUG REGISTRY.** `.claude/campaign/bugs/B###.md` (211 per-bug records: derived front matter incl. a `files` list, six analysis sections, a `## Reported evidence` block imported from the register HTML, append-only History) + `scripts/campaign/bugs.mjs` (`file` `brief` `prove` `discharge` `move` `enrich` `deps` `render` `next` `status` `show` `note` `sync` `self-test` …). All ledger writes go through replace-in-place `upsertLedgerRow`. `sync` derives history from the proof ledger + git log and runs as **Gate 4 of `stop.mjs`** (reports, never blocks) — ⚠️ the hook exists on this branch only until #597 merges. `classify()` is the owner carve-out (money / tenancy / migration → planned, never auto-fixed; parks 16 of 19 queued batches). `deps` computes the conflict graph — ⚠️ hub files (orders.service.ts ×36, invoices.service.ts ×30, schema.prisma ×27) must be excluded or nothing is ever parallel-safe, and the graph cannot see method-level collisions inside a god-file (missed B34/B146 until the analysis file sets were merged in). F11 analysed by a 21-agent pass: every diagnosis held, every suggested fix was refuted on fix-correctness; B32 → F20; B211 (new Critical) filed. `bugs self-test` is a verify step because five write-path defects shipped from this file in one session (L-067). Seven-lens review (Opus/Sonnet) found 7 blockers / 23 majors — fix pass pending; see the review record in the PR.
 
 - **2026-09-04** — (branch `fix/imp-02-order-merge-advisory-lock`, PR #609) VISIBILITY WATCHDOG:
   new `scripts/visibility-watchdog.mjs` arms the private flip on a detached, fixed 45-min
@@ -119,6 +166,8 @@ never accumulate history in `"notes"`.
   shipped (#606, unchanged), #8 docs-only (runbook written, flip itself still live pending
   billing). Lessons **L-055** (the Windows Jest rootDir-glob trap, tooling). Full detail:
   `.claude/pipeline/wave-D-web-e2e-docs/README.md` "Findings for later".
+- **2026-09-03** — (branch `refactor/imp-01-pricing-package`, off master `e39bf9db`) — **PRICING PACKAGE (PR-4, imp-01).** Consolidated the four `pricing.ts` copies (api `common`+`utils`, web `lib`, mobile `lib`) into one compiled workspace package `packages/pricing` (`@routeflow/pricing`, `dist`-built by a root `postinstall`, imported by api/web/mobile as a bare specifier); bodies proven byte-identical by `scripts/codemods/pricing-body-diff.mjs`. Golden tests + the money fixtures moved into the package; api's `pricing-parity.spec.ts`/`.fixtures.ts` and mobile's two parity test files deleted (nothing left to compare against). Code map + `CLAUDE.md` updated to point at the package; "3 mirrors" language corrected.
+- **2026-09-03** — (branch `feat/imp-wave-b-api-hardening`, off master, PR-5/9/11/P4 = wave B′ API hardening) — Squawk destructive-migration lint (`apps/api/.squawk.toml`, `scripts/lint-migrations.mjs`, `db-migrations.yml` step, root `lint:migrations`) replaces the Atlas recommendation (Pro-only since v0.38, no Prisma support) and fails CLOSED — an unresolvable `--base` range exits 2 instead of printing `no migrations in range`, and every path is repo-root-anchored so cwd cannot silence it; `SKIP_VERIFY` bypass now audited (`scripts/skip-verify-audit.mjs`, `.husky/pre-push`, requires `SKIP_VERIFY_REASON` for a code push) and root `verify` gained `--continue=dependencies-successful`; `app.service.ts healthCheck()` returns `commit`/`branch` from `RAILWAY_GIT_COMMIT_SHA`/`_BRANCH`, mirrored by `ci.yml`'s readiness-gate API-sha check; `app.module.ts` APP_GUARD order (`ThrottlerGuard`,`TenantStatusGuard`,`ImpersonationGuard`) pinned by a static + a behavioral spec; cross-tenant `findUniqueOrThrow` (throws Prisma `P2025`) fail-closed pinned by the DB-backed `src/prisma/tenant-findunique.db.spec.ts` (red-bar cases) and cross-tenant `findUnique` (returns `null`) plus the RLS session-variable hand-off by its sibling `src/prisma/tenant-findunique-pins.db.spec.ts` (already-green pins), both across `forTenant()` + `tenantTransaction()` — and `findUniqueOrThrow`, which that pin caught unscoped in both layers (it fell through to the raw client) resolving another tenant's row, is now post-filtered in BOTH tenancy layers of `prisma.service.ts` (L-055); login-throttle limit/ttl made env-configurable (`auth/login-throttle.config.ts`, prod defaults unchanged, generous local override in `docker-compose.yml`).
 - **2026-09-03** — (branch `fix/imp-03a-ddl-to-migrations-drift-gate`, off master `91c5333b`; no schema change, no migration) — **BOOT-TIME DDL RETIRED + DRIFT GATE (PR-1, imp-03a).** Deleted `runStartupMigration()` (main.ts) and the PlatformConfig/AiUsageEvent CREATE TABLE block (platform-config.service.ts); added `scripts/schema-drift.mjs` + `scripts/lib/railway-db-url.mjs` (shared Railway URL helper, used by prod-migrate.mjs with a post-deploy drift step); new `*.db.spec.ts` lane (`jest.db.config.js`, `src/common/testing/db-spec.ts`, `test:db`); `no-runtime-ddl.spec.ts` tripwire; db-migrations.yml drift + db-lane steps; F12-002 CLOSED.
 - **2026-09-03** — (branch `feat/local-hosting-docker`, off master `0cfad7ed`; no schema change, no migration) — **LOCAL FULL-STACK DOCKER HOSTING (ADR 0001).** Extends `docker-compose.yml` with an opt-in `app` profile (migrate/api/web from the prod Dockerfiles via an `x-api-build` anchor) so the whole system can be run from the same images we ship and a feature exercised against it before a PR; adds `local:*` npm scripts, `docs/adr/0001-local-hosting-environment.md` (first ADR, establishes the `docs/adr/` convention), and a "Local hosting environment" runbook in `CLAUDE.md`. **One app-code change**, hence this map edit: `apps/api/prisma/seed.ts` now enables the `order_delivery` + `recurring_routes` `TenantAddon`s for the seeded `test` tenant (mirroring the standing demo tenant) — without them the tenant's own seeded drivers/routes are 403'd by the `AddonGuard`, surfaced by the first local `post-deploy-check` run (Drivers list 403 → 200 after reseed). Everything else in the change is root/docs (compose, package.json scripts, ADR, CLAUDE.md), not app code, so the only `code-map/api.md` edit is the `seed.ts` entry. Empirically proven: all 4 services build + healthy, migrations apply, seed works, core `local:validate` (smoke 2/2 + post-deploy-check all green incl. Drivers 200). Known gap documented in the ADR (not fixed here, out of scope): `local:validate:features` needs a published billing plan catalog the minimal `test` seed doesn't create — no genesis catalog seed exists in-repo — so `POST /estimates/:id/convert-to-invoice` 404s locally until one is seeded.
 - **2026-09-02** — (branch `chore/F11-closeout`, off master `d0769701`; ledger/docs only, no app code) — **F11 FULLY DISCHARGED — B34 B129 B146 B211 `proven` → `done` on #603 (master `d0769701`).** api+web Railway deploys SUCCESS; post-deploy e2e run 33715496781 read at STEP level (step 7 deployed-app-matches-commit and step 8 Playwright both success, 116 passed / 22 skipped / 0 failed); full jest re-run on master after the merge (api 214 suites / 3572, mobile 107 / 1412) regenerated the run artifacts. Ledger: 68 done + 2 already-fixed of 194 = 70 terminal (36.1%), 6 open Criticals (B46 B48 B53 B58 B59 B128). Map changes: `web.md` spec-31/32 rows now carry the #602-corrected quarantine cause (a phase-1 WRITE against a phase-2 READ on the shared operator user) — that wording had been edited in the main checkout and never committed; `.claude/launch.json` gains a `bug-register` static-serve config (port 4700 over `local-assets/docs`) so the gitignored register HTML opens in the browser pane. Nothing else in the map moved. ⚠️ Git stashes are repo-global across worktrees: a bare `git stash pop` in the main checkout pulled rf-F13’s uncommitted v1 work (stash@{0}) instead of the intended entry — recovered from the dropped commit; pop by index or message.

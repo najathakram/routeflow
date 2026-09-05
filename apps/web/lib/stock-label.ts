@@ -1,10 +1,10 @@
-import { formatQtySplit, normalizeBoxesPieces } from "@/lib/pricing";
+import { formatQtySplit, normalizeBoxesPieces } from "@routeflow/pricing";
 
 /**
  * "1,240 pcs (51 boxes + 16 pcs)" for a boxed product, "45.5 kg" otherwise.
  *
  * `Product.currentStock` (and every other stock figure — StockMovement.quantity,
- * StockLot.qty) is stored in PIECES system-wide (see apps/api/src/common/pricing.ts).
+ * StockLot.qty) is stored in PIECES system-wide (see `@routeflow/pricing`).
  * For a BOXED product (`unitsPerBox > 1`) `product.unit` is the SELLING unit noun
  * ("case", "box") — never render a piece count next to it; the split is a display
  * re-grouping of the summed piece count, so the raw count stays primary and the

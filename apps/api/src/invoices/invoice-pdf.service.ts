@@ -7,7 +7,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { InvoicePdfTemplate } from "./invoice-pdf-template";
 import { deriveInvoiceVariant, type InvoicePdfVariant } from "./invoice-pdf-variant";
 import { invoiceItemCode } from "./invoice-item-code";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { sumConfirmed } from "./payment-predicates";
 
 import bwipjs from "bwip-js";

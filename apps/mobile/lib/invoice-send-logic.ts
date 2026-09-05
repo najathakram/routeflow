@@ -55,8 +55,7 @@ export function preferredPhone(mobile?: string | null, phone?: string | null): s
  *    the PDF wasn't attached.
  */
 export type WhatsAppSendPlan =
-  | { mode: "share-file"; text: string }
-  | { mode: "text-link"; url: string };
+  { mode: "share-file"; text: string } | { mode: "text-link"; url: string };
 
 export interface PlanWhatsAppSendInput {
   phone: string;

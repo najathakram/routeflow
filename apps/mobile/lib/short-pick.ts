@@ -6,7 +6,7 @@
  * builds the client-side delivery plan + a matching ESTIMATED total; it never
  * invents new server behavior. Pure — no RN/api-client import — Jest-testable.
  */
-import { prorateLineSubtotal, roundMoney } from "./pricing";
+import { prorateLineSubtotal, roundMoney } from "@routeflow/pricing";
 
 export type DeliveryType = "DELIVERED" | "PARTIAL" | "REFUSED";
 

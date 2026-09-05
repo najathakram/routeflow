@@ -224,6 +224,10 @@ function main() {
 
   const apiJsonPath = path.join(runsDir, "api.json");
   const mobileJsonPath = path.join(runsDir, "mobile.json");
+  // packages/pricing owns the money math (and its REG-B### regressions) since the
+  // three mirrors were folded into @routeflow/pricing — so it is a third jest
+  // proof source alongside api and mobile.
+  const pricingJsonPath = path.join(runsDir, "pricing.json");
   // Provisional name — F00 has not yet added a JSON reporter to
   // apps/web/playwright.config.ts (verified: reporter: [["list"], ["html", ...]]
   // only, no JSON entry, as of this writing). Once it does, this is where its
@@ -233,9 +237,10 @@ function main() {
   // file is NEVER read here or anywhere else; only web-e2e.json above is campaign evidence.
   const webE2eJsonPath = path.join(runsDir, "web-e2e.json");
 
-  let apiJson, mobileJson, webE2eJson;
+  let apiJson, mobileJson, pricingJson, webE2eJson;
   let apiJsonLoaded = false,
     mobileJsonLoaded = false,
+    pricingJsonLoaded = false,
     webE2eJsonLoaded = false;
 
   function getApiJson() {
@@ -251,6 +256,13 @@ function main() {
       mobileJsonLoaded = true;
     }
     return mobileJson;
+  }
+  function getPricingJson() {
+    if (!pricingJsonLoaded) {
+      pricingJson = loadJsonIfExists(pricingJsonPath);
+      pricingJsonLoaded = true;
+    }
+    return pricingJson;
   }
   function getWebE2eJson() {
     if (!webE2eJsonLoaded) {
@@ -358,19 +370,22 @@ function main() {
   if (t1Needed) {
     const api = getApiJson();
     const mobile = getMobileJson();
-    if (api === null && mobile === null) {
+    const pricing = getPricingJson();
+    if (api === null && mobile === null && pricing === null) {
       fail(
-        `at least one T1 obligation is claimed, but neither ${apiJsonPath} nor ` +
-          `${mobileJsonPath} exists — run the JSON-reporter jest passes first ` +
-          `(cd apps/api && npx jest --json --outputFile=${apiJsonPath}, ` +
-          `cd apps/mobile && npx jest --json --outputFile=${mobileJsonPath})`,
+        `at least one T1 obligation is claimed, but none of ${apiJsonPath}, ` +
+          `${mobileJsonPath} or ${pricingJsonPath} exists — run the JSON-reporter jest ` +
+          `passes first (cd apps/api && npx jest --json --outputFile=${apiJsonPath}, ` +
+          `cd apps/mobile && npx jest --json --outputFile=${mobileJsonPath}, ` +
+          `cd packages/pricing && npx jest --json --outputFile=${pricingJsonPath})`,
       );
-    } else if (api === "PARSE_ERROR" || mobile === "PARSE_ERROR") {
-      fail(`a jest JSON report exists but failed to parse (api or mobile) — re-run it`);
+    } else if (api === "PARSE_ERROR" || mobile === "PARSE_ERROR" || pricing === "PARSE_ERROR") {
+      fail(`a jest JSON report exists but failed to parse (api, mobile or pricing) — re-run it`);
     } else {
       jestIndex = mergeIndexes(
         indexAssertions(jestAssertions(api), "api"),
         indexAssertions(jestAssertions(mobile), "mobile"),
+        indexAssertions(jestAssertions(pricing), "pricing"),
       );
     }
   }

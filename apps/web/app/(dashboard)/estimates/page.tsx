@@ -24,9 +24,8 @@ import {
 } from "@/lib/api/estimates";
 import { useCustomers, useCustomerPrices } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
-import { computeLineSubtotal } from "@/lib/pricing";
+import { computeLineSubtotal, getTierPrice } from "@routeflow/pricing";
 import { apiClient } from "@/lib/api-client";
-import { getTierPrice } from "@/lib/pricing";
 import { useTierLabels } from "@/lib/api/tier-labels";
 import { tierLabel } from "@/lib/tier-label";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
