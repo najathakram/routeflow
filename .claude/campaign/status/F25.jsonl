@@ -1,5 +1,5 @@
-{"id":"B59","batch":"F25","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"e5b0af8e"}
-{"id":"B90","batch":"F25","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"e5b0af8e"}
-{"id":"B91","batch":"F25","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"e5b0af8e"}
-{"id":"B118","batch":"F25","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0cd59277"}
+{"id":"B59","batch":"F25","tier":"T2","state":"proven-pending-deploy","pr":null,"proof":"apps/web/e2e/34-calendar-dates.spec.ts","evidence":"spec 34 flow 1 (calendar-dates project entry) + T1/T2 (edit-run-modal.logic.test.ts) + EditRunModal.test.tsx (RTL, wired component)","roundSha":"e5b0af8e"}
+{"id":"B90","batch":"F25","tier":"T1","state":"proven","pr":null,"proof":"apps/mobile/__tests__/run-lateness.test.ts","evidence":"T3/T4","roundSha":"e5b0af8e"}
+{"id":"B91","batch":"F25","tier":"T2","state":"proven-pending-deploy","pr":null,"proof":"apps/web/e2e/34-calendar-dates.spec.ts","evidence":"spec 34 flow 2 (calendar-dates project entry) + T6 (authorizations-expiry.logic.test.ts, wired via renderLicenceExpiry); writer half proven by T5 (apps/mobile/__tests__/licence-expiry-iso.test.ts)","roundSha":"e5b0af8e"}
+{"id":"B118","batch":"F25","tier":"T1","state":"proven","pr":null,"proof":"apps/api/src/analytics/analytics.service.calendar.spec.ts","evidence":"T7-T9","roundSha":"0cd59277"}
 {"id":"B185","batch":"F25","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}

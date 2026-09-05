@@ -14,6 +14,7 @@ import {
   type BuyerPayment,
 } from "../../lib/api/buyer";
 import { checkBadgeFor } from "../../lib/check-badge";
+import { fmtCalendarDate } from "../../lib/calendar-date";
 import {
   activeCreditRows,
   formatPaymentMethod,
@@ -142,7 +143,7 @@ export default function BuyerPaymentsScreen() {
                     </Text>
                     <Text style={styles.creditSub}>
                       {fmtDate(c.date)}
-                      {c.expiresAt ? ` · expires ${fmtDate(c.expiresAt)}` : ""}
+                      {c.expiresAt ? ` · expires ${fmtCalendarDate(c.expiresAt, "short")}` : ""}
                     </Text>
                   </View>
                   <Text style={styles.creditAmount}>{money(c.runningBalance)}</Text>

@@ -8,6 +8,27 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-04** — (F25 calendar/date correctness batch A, B59 Critical + B90/B91/B118 Medium) new
+  shared `calendar-date.ts` helper mirrored verbatim in `apps/api/src/common`, `apps/web/lib`, and
+  `apps/mobile/lib` (UTC-midnight round-trip + tenant-timezone day boundaries — no more local
+  getters/`toLocaleDateString`/`setHours` on a date-only field). `analytics.service.ts` on-time-%
+  now calls `endOfCalendarDay(run.scheduledDate, cfg?.timezone ?? null)` via its own
+  `resolveCurrentTenantTimezone` (which passes `cfg?.timezone ?? null` straight through and leans on
+  `endOfCalendarDay`'s own UTC fallback — no `America/New_York` default exists in the helper), so an
+  unconfigured tenant keeps the UTC day-end; two host-local siblings in the same service were swept
+  with it (`getRevenueTrend`'s month key and `dateRange`'s default `fromDate`, both now UTC); the
+  licence-expiry writer (`apps/mobile/app/(operator)/customers/[id]/licenses.logic.ts#buildExpiresAtIso`)
+  stores UTC midnight instead of a local `T23:59:59` instant (was drifting B91's stored value a day
+  off) — `invoices.service.ts` only lost its private `startOfCalendarDay` to `common/calendar-date.ts`
+  (argument order now date-first); the web run-edit modal (`EditRunModal.tsx`) routes through
+  `edit-run-modal.logic.ts` -> `lib/calendar-date.ts`, and mobile's licence-renewal form
+  round-trips the same way; new `scripts/report-f25-licence-dates.mjs` +
+  `repair-f25-licence-dates.mjs` D6 pair for the resulting data cleanup; e2e spec 34
+  (`34-calendar-dates.spec.ts`, deploy-only). `api.md`/`web.md`/`mobile.md` gain entries; lesson
+  L-047 (domain). Drive-by outside the F25 packages:
+  `apps/api/src/common/visibility-watchdog-script.spec.ts` replaces its fixed 500 ms sleep with a
+  50 ms poll to a 10 s deadline (20 s jest timeout) — the api gate's one flaky suite; the watchdog
+  script itself is unchanged.
 - **2026-09-04** — (branch `fix/imp-02-order-merge-advisory-lock`, PR #609) VISIBILITY WATCHDOG:
   new `scripts/visibility-watchdog.mjs` arms the private flip on a detached, fixed 45-min
   deadline BEFORE any public-repo CI window — the fix for the killed-session incident where

@@ -374,6 +374,27 @@
 
 ## domain
 
+### L-047 · 2026-09-04 · domain · F25
+
+- **Symptom:** run dates, licence expiries and dashboard dates shifted a day for viewers west of
+  UTC; on-time % was judged against the UTC day-end for tenants in New York; a driver location
+  POST was rejected on a platform sentinel `-1`.
+- **Root cause:** calendar dates stored as UTC midnight were read with local getters or
+  `toLocaleDateString`; one writer stored local `23:59:59`; analytics never read
+  `TenantConfig.timezone`; a sentinel reached a `@Min(0)` DTO unmapped.
+- **Lesson:** **A calendar date is a string, not an instant: store it as UTC midnight, render and
+  edit it only through the shared calendar-date helper (web/mobile mirrors), and evaluate day
+  boundaries in the TENANT's timezone through the one api helper — never `setHours`, local
+  getters or `toLocaleDateString` on a date-only field.**
+  A test for any of this must take the zone as DATA: under `TZ=UTC` — CI and the API image —
+  host-local and UTC components are identical, so a host-clock oracle is green on the buggy
+  body, and an in-file `process.env.TZ` pin is inert under jest (the sandbox gets a copy of
+  `process.env`).
+- **Guard:** REG-B59 e2e under `timezoneId`; REG-B118 tenant-tz jest with a DST fixture;
+  REG-B90/B91 mobile helper tests + the mirror-identity pin; the revenue-trend pin uses a Date
+  whose local getters disagree with its ISO view; REG-B185 DTO spec ([[L-026]] client sentinels
+  never reach a validator unmapped).
+
 ### L-054 · 2026-09-03 · domain · PR-2 `imp-02-order-merge-advisory-lock`
 
 - **Symptom:** a money-critical read-fold-write (order merge) was serialized by an in-process

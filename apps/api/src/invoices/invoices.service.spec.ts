@@ -19,7 +19,8 @@ jest.mock("../storage/compress.util", () => ({
 
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
-import { InvoicesService, startOfCalendarDay, addCalendarDays } from "./invoices.service";
+import { InvoicesService, addCalendarDays } from "./invoices.service";
+import { startOfCalendarDay } from "../common/calendar-date";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -7038,15 +7039,15 @@ describe("calendar-date helpers", () => {
     // 8:10pm America/New_York on Aug 22 is already Aug 23 in UTC. Storing raw
     // new Date() would print the invoice as Aug 23 — a day after the sale happened.
     const at810pmEdt = new Date("2026-08-23T00:10:00.000Z");
-    expect(startOfCalendarDay("America/New_York", at810pmEdt).toISOString()).toBe(
+    expect(startOfCalendarDay(at810pmEdt, "America/New_York").toISOString()).toBe(
       "2026-08-22T00:00:00.000Z",
     );
   });
 
   it("falls back to the UTC day when the tenant timezone is missing or invalid", () => {
     const now = new Date("2026-08-23T00:10:00.000Z");
-    expect(startOfCalendarDay(null, now).toISOString()).toBe("2026-08-23T00:00:00.000Z");
-    expect(startOfCalendarDay("Not/AZone", now).toISOString()).toBe("2026-08-23T00:00:00.000Z");
+    expect(startOfCalendarDay(now, null).toISOString()).toBe("2026-08-23T00:00:00.000Z");
+    expect(startOfCalendarDay(now, "Not/AZone").toISOString()).toBe("2026-08-23T00:00:00.000Z");
   });
 
   it("adds payment terms in UTC so the due date never drifts across a DST change", () => {
@@ -7072,15 +7073,15 @@ describe("calendar-date helpers", () => {
     // 8:10pm America/New_York on Aug 22 is already Aug 23 in UTC. Storing raw
     // new Date() would print the invoice as Aug 23 — a day after the sale happened.
     const at810pmEdt = new Date("2026-08-23T00:10:00.000Z");
-    expect(startOfCalendarDay("America/New_York", at810pmEdt).toISOString()).toBe(
+    expect(startOfCalendarDay(at810pmEdt, "America/New_York").toISOString()).toBe(
       "2026-08-22T00:00:00.000Z",
     );
   });
 
   it("falls back to the UTC day when the tenant timezone is missing or invalid", () => {
     const now = new Date("2026-08-23T00:10:00.000Z");
-    expect(startOfCalendarDay(null, now).toISOString()).toBe("2026-08-23T00:00:00.000Z");
-    expect(startOfCalendarDay("Not/AZone", now).toISOString()).toBe("2026-08-23T00:00:00.000Z");
+    expect(startOfCalendarDay(now, null).toISOString()).toBe("2026-08-23T00:00:00.000Z");
+    expect(startOfCalendarDay(now, "Not/AZone").toISOString()).toBe("2026-08-23T00:00:00.000Z");
   });
 
   it("adds payment terms in UTC so the due date never drifts across a DST change", () => {

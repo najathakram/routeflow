@@ -23,6 +23,7 @@ import {
 import { StatCard, Badge, Table, Button, Card, cn, EmptyState } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
+import { fmtCalendarDate } from "@/lib/formatting";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import { useOrders, type Order } from "@/lib/api/orders";
@@ -83,7 +84,7 @@ const routeColumns: ColumnDef<RouteRun, unknown>[] = [
               minute: "2-digit",
             })
           : row.original.scheduledDate
-            ? new Date(row.original.scheduledDate).toLocaleDateString()
+            ? fmtCalendarDate(row.original.scheduledDate)
             : "—"}
       </span>
     ),

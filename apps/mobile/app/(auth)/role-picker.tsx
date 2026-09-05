@@ -9,6 +9,7 @@ import { useAuthStore } from "../../lib/auth-store";
 import { useTenantStore } from "../../lib/tenant-store";
 import { useScheduledRouteRuns } from "../../lib/api/routes";
 import { useDeveloperMode } from "../../lib/api/addons";
+import { fmtCalendarDate } from "../../lib/calendar-date";
 
 // This screen has no in-app entry point today — nothing navigates here. The
 // gate below is defense in depth: if it ever does get reached for a non-dev
@@ -100,10 +101,7 @@ export default function RolePickerScreen() {
                   {nextRun.scheduledDate ? (
                     <HeroStat
                       label="Date"
-                      value={new Date(nextRun.scheduledDate).toLocaleDateString(undefined, {
-                        month: "short",
-                        day: "numeric",
-                      })}
+                      value={fmtCalendarDate(nextRun.scheduledDate, "monthDay")}
                     />
                   ) : null}
                 </View>

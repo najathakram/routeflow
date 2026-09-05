@@ -145,20 +145,27 @@ describe("visibility-watchdog.mjs contract", () => {
       env: fakeEnv("success", logFile),
     });
     return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      // Poll for the start line rather than assuming a fixed boot time: a loaded machine
+      // needs well over half a second to spawn node and flush the first log write, and a
+      // fixed sleep made this the only flaky suite in the api gate.
+      const deadline = Date.now() + 10_000;
+      const poll = setInterval(() => {
+        const log = readLog(logFile);
+        const done = log.includes("minutes=45 repo=najathakram/routeflow");
+        if (!done && Date.now() < deadline) return;
+        clearInterval(poll);
         child.kill();
         try {
-          const log = readLog(logFile);
           expect(log).toContain("minutes=45 repo=najathakram/routeflow");
           resolve();
         } catch (e) {
           reject(e);
         }
-      }, 500);
+      }, 50);
       child.on("error", (err: Error) => {
-        clearTimeout(timer);
+        clearInterval(poll);
         reject(err);
       });
     });
-  });
+  }, 20_000);
 });

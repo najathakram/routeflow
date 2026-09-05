@@ -16,6 +16,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import { useDriveMode } from "@/lib/drive-mode";
 import { useRouteRuns, type RouteRun, type RouteRunStop } from "@/lib/api/routes";
+import { fmtCalendarDateWithWeekday } from "@/lib/calendar-date";
 
 type RunStatus = "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "SCHEDULED";
 
@@ -48,13 +49,10 @@ function CardShell({ title, children }: { title: string; children: React.ReactNo
 function RunRow({ run, driveMode }: { run: RouteRun; driveMode: boolean }) {
   const routeName = run.route?.name ?? "Route";
   const total = run._count?.stops ?? run.stops?.length ?? 0;
-  const dateLabel = run.scheduledDate
-    ? new Date(run.scheduledDate).toLocaleDateString(undefined, {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-      })
-    : "—";
+  // scheduledDate is a UTC-midnight CALENDAR date — render its UTC calendar
+  // components directly (fmtCalendarDate's own convention), never the
+  // viewer's local timezone, which shows the previous day west of UTC (B91).
+  const dateLabel = fmtCalendarDateWithWeekday(run.scheduledDate, "short");
   return (
     <li
       className={
