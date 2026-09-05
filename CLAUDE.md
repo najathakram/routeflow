@@ -10,7 +10,7 @@ Next.js web dashboard, and an Expo (React Native) multi-role mobile app, deploye
 
 - **Monorepo**: npm workspaces (`apps/*`, `packages/*`) orchestrated by **Turbo**. Package manager **npm 10.8** (Node ≥ 18, CI pins 20).
 - **API** (`apps/api`): NestJS 11, Prisma 7 + PostgreSQL, Redis (Socket.io), Passport JWT auth. Tests: **Jest** (`*.spec.ts`).
-- **Web** (`apps/web`): Next.js 14 App Router — the **golden reference** for flows/DTOs. Radix + Tailwind, TanStack Query, Zustand, react-hook-form + zod. Tests: **Playwright** (`e2e/*.spec.ts`).
+- **Web** (`apps/web`): Next.js 14 App Router — the **golden reference** for flows/DTOs. Radix + Tailwind, TanStack Query, react-hook-form + zod. Tests: **Jest + RTL** (`*.test.tsx`, `npm test -w apps/web`) + **Playwright E2E** (`e2e/*.spec.ts`).
 - **Mobile** (`apps/mobile`): Expo 55 / RN 0.83, expo-router, multi-role (`(auth)`,`(customer)`,`(driver)`,`(operator)`,`(tenant)`). Tests: **Jest** (`__tests__/*.test.ts`, pure-logic only).
 - **Shared** (`packages/*`): `types`, `ui`, `eslint-config`, `config`, `typescript-config`.
 - **Lint/format**: ESLint **flat config** (per-workspace) + **Prettier** (root `prettier.config.js`).
@@ -24,7 +24,7 @@ Next.js web dashboard, and an Expo (React Native) multi-role mobile app, deploye
 | `npm run build`           | `turbo run build`                                      |
 | `npm run lint`            | `turbo run lint` — eslint **per workspace**            |
 | `npm run check-types`     | `turbo run check-types` — `tsc --noEmit` per workspace |
-| `npm run test`            | `turbo run test` — Jest (api, mobile)                  |
+| `npm run test`            | `turbo run test` — Jest (api, web, mobile)             |
 | `npm run test:e2e`        | `turbo run test:e2e` — Playwright (web)                |
 | `npm run format`          | Prettier write across the repo                         |
 | `npm run db:up` / `:down` | docker-compose Postgres + Redis for local dev          |
@@ -57,6 +57,7 @@ decision + rationale is [`docs/adr/0001-local-hosting-environment.md`](docs/adr/
 npm run local:up          # build images + start postgres, redis, migrate, api, web
 npm run local:seed        # seed `test` tenant (operator admin / Admin@123) + publish genesis plan catalog
 npm run local:validate    # smoke + post-deploy-check + local:drift @ localhost:3000 (the core gate)
+npm run local:e2e         # third gate tier, UI changes: allow-listed Playwright projects, ≤ 10 min
 ```
 
 `local:validate` is the dependable pre-PR gate: `smoke` (health + unauth routes) then
@@ -79,6 +80,11 @@ http://localhost:3000/api/docs · **Health** http://localhost:3000/api/v1/health
 Added a Prisma migration mid-session? Re-run `npm run local:migrate` before re-validating.
 `npm run local:drift` runs the read-only schema-drift gate against the compose DB.
 `npm run local:test:db` runs the `*.db.spec.ts` lane (DB-backed specs) against it.
+`npm run local:e2e` is the third gate tier, for UI changes — a pre-PR Playwright pass against
+this stack (allow-listed money/guard projects, ≤ 10 min; `npm run local:e2e:all` runs every
+project as a report, not a gate). Hosted staging is still deferred, so E2E remains
+authoritative only post-deploy against prod; this lane catches a UI regression before that.
+See `apps/web/e2e/LOCAL-LANE.md`.
 
 ### Guardrails
 
@@ -122,8 +128,9 @@ The rules this project has already paid for live at
   bump `_meta.json`. **Gate 3 of `.claude/hooks/stop.mjs` blocks the turn otherwise** on
   `fix/*` branches and on `fix:` commits that landed since the register last changed. A fix with
   no transferable lesson bumps `_meta.json.updatedAt` alone — never invent a junk entry.
-- Caps: ≤ 40 active entries / ~25 KB, overflow to `ARCHIVE.md`. Entries are generalizable rules,
-  not incident diaries, and carry **no client identifiers** (this repo goes public for CI).
+- Caps: ≤ 40 active entries / 40,960 bytes (enforced by `scripts/validate-lessons.mjs`), overflow
+  to `ARCHIVE.md`. Entries are generalizable rules, not incident diaries, and carry **no client
+  identifiers** (this repo goes public for CI).
 
 ## Money discipline
 
@@ -140,6 +147,8 @@ unregistered key a red `npm run verify`. The sibling `@RequirePlanFlag` gate has
 a new plan flag ships inside `DARK_PLAN_FLAGS` (`apps/api/src/billing/plan-flag.guard.ts`) until
 the same blast-radius evidence exists, and `DARK_PLAN_FLAGS` / `PLAN_FLAG_ENFORCEMENT` may be
 removed only after a registry equivalent for plan flags lands.
+
+Customer-level order merges (staff `create()` auto-merge, buyer `createOrder`, `mergeAllPendingForCustomer`, `forceConsolidateCustomer`) serialize through `withAdvisoryLock` in `apps/api/src/common/db-locks.ts` — a customer-keyed Postgres advisory lock that is cross-replica safe. **Never add a second in-process lock** on top of it, and never thread a transaction into `updateOrderItems`.
 
 ## Conventions
 
@@ -203,81 +212,29 @@ apps/api/scripts/schema-drift.mjs` — and requires exit 0. Its `SCHEMA_DRIFT_PR
   sets the override (and prints a WARNING when it is); `NODE_ENV` is deliberately not part of the
   guard (CI's db-migrations job sets `NODE_ENV: test`). It is ignored — loudly — anywhere else, so
   a stray export can never make the gate report NO DRIFT from a stub.
+- CI's `npm audit` steps run through `scripts/ci-audit-critical.mjs`: the advisory gate fails on
+  critical findings, never on registry unavailability (warning + skip; Dependabot is the standing
+  net).
 
 ### Canonical deploy flow: **public → push/CI → merge → private** (deploy continues private)
 
-> **UPDATE 2026-08-31 (#545 / F00):** CI is now ONE `verify` job on PRs (there is deliberately NO
-> `push:` trigger — the revert recipe lives in ci.yml's `on:` block), and the Playwright E2E suite
-> starts **automatically from Railway's deploy signal** (`on: deployment_status` — proven live on
-> the first post-merge deploy: run 33348165462, suite green in 5m52s; zero secrets, zero
-> Railway-side setup). Do NOT watch for or dispatch E2E manually after a merge — it fires itself,
-> and its freshness guard discards Railway's duplicate stale-`success` events. The public window
-> now exists ONLY because GitHub Actions **billing is still broken for private minutes** (private
-> runs die as 0-step failures in ~3s; owner fix pending in Settings → Billing). Until that is
-> fixed, PR CI still needs the flip routine below; once billing works, PR CI runs private
-> (~2,076 min/mo central projection against the 2,000 cap — verify the first real month) and the
-> flip routine RETIRES. A post-merge E2E run failing with 0 steps while private is a billing
-> block, not a suite failure.
-
-The repo is **private by default** (commercial source). CI (public repos = free Actions) needs it
-public; Railway's GitHub deploy does **not** (the Railway GitHub App clones private repos fine —
-proven on #244/#245 and every batch since, incl. #318 which shipped fully private). The public
-window exists ONLY to run CI, so keep it to minutes.
+Full rationale, failure modes, and the retirement checklist:
+[`docs/runbooks/deploy-visibility-flip.md`](docs/runbooks/deploy-visibility-flip.md).
 
 > **Owner authorization (2026-07-31):** the assistant IS authorized to perform the visibility
-> flips as part of this routine — a brief public window for CI is an accepted trade-off. Two hard
-> rules: (1) **never leave the repo public** — flip back to private even if CI fails, the merge
-> fails, or anything else goes wrong (treat the private flip as a `finally`); (2) keep the public
-> window minimal.
->
-> **CORRECTED 2026-08-20 — do NOT flip private in the same breath as the merge.** The previous
-> instruction here ("flip private immediately after the merge, never wait for the Railway deploy")
-> caused **five consecutive failed deploys** (#367, #369, #371 and the two before them). Verified
-> root cause, read from the Railway dashboard's deployment **Details** panel — which the CLI hides,
-> `railway logs --build` only ever prints `scheduling build`:
->
-> ```
-> Deployment failed during the initialization process
-> Initialization › Snapshot code            (00:02)
->   [ERROR] ##NOT-FOUND## repository not found
-> ```
->
-> It is **not** a permissions problem: the Railway GitHub App is installed on `najathakram` with
-> **"All repositories"** access (verified in the GitHub UI 2026-08-20), which covers current and
-> future private repos — and #318 deployed fine while fully private. It is a **race**: Railway's
-> webhook starts snapshotting ~2s after the merge, and the back-to-back private flip lands inside
-> that window, invalidating the installation token mid-clone.
->
-> **So: merge → WAIT until the deploy reaches `BUILDING` → THEN flip private.** That costs about a
-> minute of extra public window and removes the failed-deploy + `railway up` recovery cycle
-> entirely. The private flip is still a `finally` — it must happen even if the deploy fails.
->
-> ⚠️ **Wait for `BUILDING` specifically. `INITIALIZING` IS the snapshot window** — flipping during
-> it fails exactly as before (verified the hard way on #376: flipped at `INITIALIZING`, both
-> services FAILED, recovered with `railway up`). Use:
->
-> ```bash
-> until railway deployment list --service @routeflow/api | sed -n '2p' | grep -qE 'BUILDING|DEPLOYING|SUCCESS'; do sleep 10; done
-> ```
->
-> Do NOT include `FAILED` in that pattern — a failure is precisely the case where you must not
-> conclude the snapshot succeeded.
->
-> **Also verify the flip landed.** `gh repo edit` can fail with a network error and leave the repo
-> PUBLIC while printing nothing useful (seen on #374). Always read visibility back in a retry loop
-> and confirm `PRIVATE` before moving on.
+> flips as part of this routine — a brief public window for CI is an accepted trade-off.
 
-1. **(schema change only)** apply the prod migration FIRST — fresh backup, then
-   `railway run --service postgres node apps/api/scripts/prod-migrate.mjs` (must precede the app deploy).
-2. **Make it public** — `gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`
-3. **Push + CI green + merge the PR to master** (squash). The master push triggers Railway's auto-deploy.
-4. **Wait for Railway to finish snapshotting the code (~60s), THEN make it private again** —
-   `gh repo edit najathakram/routeflow --visibility private --accept-visibility-change-consequences`.
-   Do this even if CI failed or the merge was aborted. Flipping in the same breath as the merge is
-   what caused five consecutive `repository not found` deploy failures — see the corrected note above.
-5. **Watch the deploy** (`railway deployment list --service @routeflow/{api,web,mobile}`) until
-   SUCCESS, then `npm run post-deploy-check`. E2E runs by itself off the deploy signal — read its
-   result on the Actions tab; do not dispatch it.
+1. **(schema change only)** apply the prod migration first — fresh backup, then
+   `railway run --service postgres node apps/api/scripts/prod-migrate.mjs`.
+2. **Start `scripts/visibility-watchdog.mjs` detached first** (45 min; see the runbook's
+   "Watchdog (mandatory)" section), **then** make it public — `gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`
+3. **Push + CI green + merge the PR to master** (squash) — Railway auto-deploys from the push.
+4. **Wait until the deploy reaches `BUILDING`** (never `INITIALIZING`), **then flip private as a
+   `finally`** — even if CI or the merge failed — and read visibility back to confirm `PRIVATE`.
+5. **Watch the deploy to SUCCESS**, then `npm run post-deploy-check` — E2E fires itself off the
+   deploy signal; do not dispatch it. The deploy-triggered E2E's freshness guard
+   (`scripts/ci-freshness-guard.mjs`) fails OPEN on any API error and needs `deployments: read`
+   on the `e2e` job.
 
 > ⚠️ Don't `railway up` an UNMERGED branch when master will later auto-deploy: a subsequent master
 > push auto-deploys master-without-your-branch and can briefly regress it (hit + fixed on

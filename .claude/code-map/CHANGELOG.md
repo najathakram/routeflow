@@ -9,6 +9,59 @@ below, and set `_meta.json` `"notes"` to that same note plus the pointer to this
 never accumulate history in `"notes"`.
 
 - **2026-09-04** — (branch `fix/ocr-gate-observe-first`, off master `e39bf9db`; no schema change, no migration) — **OCR ADD-ON GATE OBSERVE-FIRST (OCR-1/OCR-2) — SALVAGED CLOSE-OUT.** Bug-pipeline run `wf_eece6302-2d5` (session routeflow-cb) built the fix and died before its own S7 close-out; the tree was complete and green (23 suites / 358 tests on the touched suites) and sat un-pushed for ~15h as snapshot commit `403bc488`. Salvaged and merged by hand by routeflow-44 per the owner rule "merge done work, don't rebuild" — this entry is that close-out, not a new fix. **The fix itself:** new `apps/api/src/billing/addon-gate-registry.ts` (per-key `{state, added, routes, grantPath, backfill, reviewBy}`; `ocr` ships `dark`, reviewBy `2026-10-15`) + `AddonGuard.canActivate` now allows-and-warns when every key in a failed any-of match is registered `dark`, still denies (with a structured `ADDON_GATE` body) for any mixed/enforced set, throttled to one deny-warn per tenant+key-set per 60s; unregistered keys fall closed to `enforced`. `ScanInvoiceModal.tsx`'s single-scan toast now surfaces the server's own message instead of a generic "check the file" hint (REG-OCR-2, e2e OP-17g). New read-only `apps/api/scripts/report-addon-gate-blast-radius.mjs` is the owner-run flip precondition. Root cause: #475 (2026-08-29) added `@RequireAddon("ocr")` to four live routes with no backfill or grant, 403ing every affected tenant for five days before it was reported — cited verbatim from the session's own cause refutation. Specs: `addon.guard.spec.ts` REG-OCR-1 T1–T8, `addon-gate-registry.spec.ts` P1a–P1h, `report-addon-gate-blast-radius-script.spec.ts` P3a–P3c. Lesson **L-062** (domain): a new entitlement gate on an existing route ships observe-first or it is an outage. `result.json` beside `.claude/pipeline/2026-09-04-ocr-gate-observe-first/RESUME.md` records the salvage provenance (no engine return value exists; reconstructed from the worktree and the RESUME card).
+
+- **2026-09-04** — (`watchdog-spec-host-speed` fix, L-061) `visibility-watchdog-script.spec.ts`'s
+  "defaults" test replaced its fixed 500 ms readiness wait with `awaitStartLine`, a capped poll on
+  the script's own `" start "` log line (kills the child in `finally` on every path); added a
+  deterministic slow-boot repro test (`REG-WATCHDOG-SLOWBOOT`, new fixture
+  `src/common/testing/slow-boot.cjs`) and a non-empty guard on the stdout-mirror test.
+  `scripts/visibility-watchdog.mjs` itself is unchanged.
+
+- **2026-09-04** — (branch `fix/e2e-freshness-guard-fail-open`, PR #610) REG-E2EGUARD-403: new
+  `scripts/ci-freshness-guard.mjs` replaces the e2e job's inline bash freshness guard — the old
+  `gh api … 2>/dev/null || true` capture treated a 4xx/5xx error body as a non-empty sha and
+  silently skipped every `deployment_status` E2E run once the token lost `deployments:read`
+  (green with zero test steps). The new script fails OPEN on any non-A/B decision-table outcome
+  and always exits 0; `.github/workflows/ci.yml`'s `e2e` job now declares
+  `permissions: {contents: read, deployments: read}`. `api.md` gains an entry; lesson L-058.
+
+- **2026-09-04** — (branch `fix/imp-02-order-merge-advisory-lock`, PR #609) VISIBILITY WATCHDOG:
+  new `scripts/visibility-watchdog.mjs` arms the private flip on a detached, fixed 45-min
+  deadline BEFORE any public-repo CI window — the fix for the killed-session incident where
+  the repo stayed public ~6.5h because the flip lived only in the (killed) session's control
+  flow. `docs/runbooks/deploy-visibility-flip.md`, `CLAUDE.md`, and the `rebuild` skill all now
+  require launching it first. Spec: `apps/api/src/common/visibility-watchdog-script.spec.ts`.
+  `api.md` gains an entry; lesson L-057 (deploy).
+- **2026-09-04** — (branch `fix/imp-02-order-merge-advisory-lock`, PR #609) CI ADVISORY-GATE
+  OUTAGE TOLERANCE: new `scripts/ci-audit-critical.mjs` replaces the two `npm audit` steps in
+  `.github/workflows/ci.yml` — fails on a real critical finding, warns and skips (bounded 3
+  retries, 15s/45s backoff) on an `npm` registry/transport outage (the observed cause: the
+  quick-audit endpoint's ongoing 500s, twice blowing the job's 20-min timeout), and the
+  `--report-only` (high-level) step now always exits 0 instead of `|| true`. Spec:
+  `apps/api/src/common/ci-audit-script.spec.ts`. `api.md` gains an entry; lesson L-056 (tooling).
+- **2026-09-03** — (branch `fix/imp-02-order-merge-advisory-lock`, off master `e39bf9db`) CROSS-REPLICA ORDER-MERGE LOCK (PR-2, imp-02): new `src/common/db-locks.ts` (`withAdvisoryLock` wait|try on a pinned pg connection, `connectionTimeoutMillis` 5 s, error listener, logger); staff `create()`, buyer `createOrder`, `mergeAllPendingForCustomer`/`forceConsolidateCustomer` wrapped; in-process `mergeLocksByOrder` deleted; `sweepAllPendingOrders` skips contended customers; specs T1–T4 + buyer.merge-lock.spec.
+- **2026-09-03** — (branch `test/imp-wave-d-web-e2e-docs`, worktree `.claude/worktrees/rf-imp-D`,
+  HEAD `e39bf9db` off master `91c5333b`; docs/code-map/lessons bookkeeping only — no app code
+  touched by this map update) — **WAVE D PACKAGE pD9a — CODE MAP + DOCS BOOKKEEPING (first half).**
+  Accounts for pD1–pD8's uncommitted working-tree changes (web Jest+RTL infra, local E2E lane,
+  ADR 0002, dead-dep removal, README/CLAUDE.md rewrite). `web.md` gains a "Unit tests (Jest + RTL)"
+  section — `apps/web` was E2E-only before; now 19 spec files (4 `lib/` suites + 15 component
+  specs) via `jest.config.js`/`jest.setup.ts`/`test-utils/render.tsx`, documenting the Windows
+  `<rootDir>`-glob backslash-escape trap (`testMatch` is a plain relative glob scoped by `roots`,
+  never rootDir-anchored — every worktree path contains a `\.claude` segment) and the single-React
+  `moduleNameMapper` pin (apps/web's own `^18` react range vs the hoisted React 19 the rest of the
+  tree runs, which otherwise crashes any Radix render). Also corrected a stale Zustand mention in
+  `app/providers.tsx`'s entry (removed, item 11, zero imports left, pinned by
+  `no-dead-deps.spec.ts`). `api.md` gains entries for the two new static tripwires
+  `src/common/{docs-truth,no-dead-deps}.spec.ts` (item 11 — README/CLAUDE.md stale-claim pins and
+  the zustand/`@nestjs/axios`/`passport-google-oauth20`/`@types/passport-google-oauth20` removal
+  proofs). `INDEX.md`: the web stack-shape row now says "Playwright e2e + Jest/RTL" instead of
+  implying E2E-only, drops the stale Zustand mention, and the `npm run test` row now lists web
+  alongside api/mobile; no row named the deleted `deploy-staging.yml` (checked, none did).
+  `docs/IMPROVEMENTS.md` Status column: #4 deferred (ADR 0002), #5/#11 shipped, #7 already
+  shipped (#606, unchanged), #8 docs-only (runbook written, flip itself still live pending
+  billing). Lessons **L-055** (the Windows Jest rootDir-glob trap, tooling). Full detail:
+  `.claude/pipeline/wave-D-web-e2e-docs/README.md` "Findings for later".
 - **2026-09-03** — (branch `fix/imp-03a-ddl-to-migrations-drift-gate`, off master `91c5333b`; no schema change, no migration) — **BOOT-TIME DDL RETIRED + DRIFT GATE (PR-1, imp-03a).** Deleted `runStartupMigration()` (main.ts) and the PlatformConfig/AiUsageEvent CREATE TABLE block (platform-config.service.ts); added `scripts/schema-drift.mjs` + `scripts/lib/railway-db-url.mjs` (shared Railway URL helper, used by prod-migrate.mjs with a post-deploy drift step); new `*.db.spec.ts` lane (`jest.db.config.js`, `src/common/testing/db-spec.ts`, `test:db`); `no-runtime-ddl.spec.ts` tripwire; db-migrations.yml drift + db-lane steps; F12-002 CLOSED.
 - **2026-09-03** — (branch `feat/local-hosting-docker`, off master `0cfad7ed`; no schema change, no migration) — **LOCAL FULL-STACK DOCKER HOSTING (ADR 0001).** Extends `docker-compose.yml` with an opt-in `app` profile (migrate/api/web from the prod Dockerfiles via an `x-api-build` anchor) so the whole system can be run from the same images we ship and a feature exercised against it before a PR; adds `local:*` npm scripts, `docs/adr/0001-local-hosting-environment.md` (first ADR, establishes the `docs/adr/` convention), and a "Local hosting environment" runbook in `CLAUDE.md`. **One app-code change**, hence this map edit: `apps/api/prisma/seed.ts` now enables the `order_delivery` + `recurring_routes` `TenantAddon`s for the seeded `test` tenant (mirroring the standing demo tenant) — without them the tenant's own seeded drivers/routes are 403'd by the `AddonGuard`, surfaced by the first local `post-deploy-check` run (Drivers list 403 → 200 after reseed). Everything else in the change is root/docs (compose, package.json scripts, ADR, CLAUDE.md), not app code, so the only `code-map/api.md` edit is the `seed.ts` entry. Empirically proven: all 4 services build + healthy, migrations apply, seed works, core `local:validate` (smoke 2/2 + post-deploy-check all green incl. Drivers 200). Known gap documented in the ADR (not fixed here, out of scope): `local:validate:features` needs a published billing plan catalog the minimal `test` seed doesn't create — no genesis catalog seed exists in-repo — so `POST /estimates/:id/convert-to-invoice` 404s locally until one is seeded.
 - **2026-09-02** — (branch `chore/F11-closeout`, off master `d0769701`; ledger/docs only, no app code) — **F11 FULLY DISCHARGED — B34 B129 B146 B211 `proven` → `done` on #603 (master `d0769701`).** api+web Railway deploys SUCCESS; post-deploy e2e run 33715496781 read at STEP level (step 7 deployed-app-matches-commit and step 8 Playwright both success, 116 passed / 22 skipped / 0 failed); full jest re-run on master after the merge (api 214 suites / 3572, mobile 107 / 1412) regenerated the run artifacts. Ledger: 68 done + 2 already-fixed of 194 = 70 terminal (36.1%), 6 open Criticals (B46 B48 B53 B58 B59 B128). Map changes: `web.md` spec-31/32 rows now carry the #602-corrected quarantine cause (a phase-1 WRITE against a phase-2 READ on the shared operator user) — that wording had been edited in the main checkout and never committed; `.claude/launch.json` gains a `bug-register` static-serve config (port 4700 over `local-assets/docs`) so the gitignored register HTML opens in the browser pane. Nothing else in the map moved. ⚠️ Git stashes are repo-global across worktrees: a bare `git stash pop` in the main checkout pulled rf-F13’s uncommitted v1 work (stash@{0}) instead of the intended entry — recovered from the dropped commit; pop by index or message.

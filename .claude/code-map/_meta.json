@@ -1,7 +1,7 @@
 {
-  "mappedSha": "e0bddf3f",
-  "generatedAt": "2026-09-04T00:00:00.000Z",
+  "mappedSha": "e07aa0b5",
+  "generatedAt": "2026-09-05T00:40:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
-  "fileCount": 931,
+  "fileCount": 937,
   "notes": "**2026-09-04** — (branch `fix/ocr-gate-observe-first`, off master `e39bf9db`; no schema change, no migration) — **OCR ADD-ON GATE OBSERVE-FIRST (OCR-1/OCR-2) — SALVAGED CLOSE-OUT.** Bug-pipeline run `wf_eece6302-2d5` died before its own S7 close-out; tree was complete and green (23 suites / 358 tests) and sat un-pushed ~15h as snapshot commit `403bc488`; salvaged and merged by hand by routeflow-44. New `apps/api/src/billing/addon-gate-registry.ts` (per-key `{state, added, routes, grantPath, backfill, reviewBy}`; `ocr` ships `dark`, reviewBy `2026-10-15`); `AddonGuard` allows-and-warns when every key in a failed any-of match is `dark`, still denies (structured `ADDON_GATE` body) for any mixed/enforced set, deny-log throttled per tenant+key-set/60s; unregistered keys fall closed to `enforced`. `ScanInvoiceModal.tsx` single-scan toast now surfaces the server's message (REG-OCR-2, e2e OP-17g). New read-only `apps/api/scripts/report-addon-gate-blast-radius.mjs` is the owner-run flip precondition. Root cause: #475 (2026-08-29) gated four live routes with no backfill, 403ing every affected tenant for five days before it was reported. Specs: `addon.guard.spec.ts` REG-OCR-1 T1–T8, `addon-gate-registry.spec.ts` P1a–P1h, `report-addon-gate-blast-radius-script.spec.ts` P3a–P3c. Lesson **L-062** (domain). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

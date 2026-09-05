@@ -24,19 +24,19 @@ Two items were explicitly requested by the product owner and are called out inli
 
 ## Summary
 
-| #   | Tier | Item                                                         | Effort | Risk | Status         |
-| --- | ---- | ------------------------------------------------------------ | ------ | ---- | -------------- |
-| 1   | P0   | Consolidate the 4 `pricing.ts` copies into one package       | M      | 🔴   | open           |
-| 2   | P0   | Enforce the single-replica invariant (or remove the need)    | M      | 🔴   | open           |
-| 3   | P0   | Schema-management tooling: retire boot-time DDL + drift gate | M      | 🔴   | shipped (PR-1) |
-| 4   | P1   | Add a staging environment before prod                        | M      | 🔴   | open           |
-| 5   | P1   | Add web component/unit tests; rebalance the test pyramid     | L      | 🟡   | open           |
-| 6   | P1   | Move E2E before prod; give specs dedicated users             | M      | 🟡   | open           |
-| 7   | P1   | **Local full-stack hosting via Docker (pre-PR)**             | M      | 🟡   | shipped (#606) |
-| 8   | P2   | Retire the repo public/private flip; run CI private          | S      | 🟡   | open           |
-| 9   | P2   | Constrain the `SKIP_VERIFY` bypass; split the CI job         | S      | 🟡   | open           |
-| 10  | P3   | Split `schema.prisma`; share DTOs via `@routeflow/types`     | M      | ⚪   | open           |
-| 11  | P3   | Rewrite the stale README; slim `CLAUDE.md`; drop dead deps   | S      | 🟡   | open           |
+| #   | Tier | Item                                                         | Effort | Risk | Status                                                                        |
+| --- | ---- | ------------------------------------------------------------ | ------ | ---- | ----------------------------------------------------------------------------- |
+| 1   | P0   | Consolidate the 4 `pricing.ts` copies into one package       | M      | 🔴   | open                                                                          |
+| 2   | P0   | Enforce the single-replica invariant (or remove the need)    | M      | 🔴   | shipped (PR-2)                                                                |
+| 3   | P0   | Schema-management tooling: retire boot-time DDL + drift gate | M      | 🔴   | shipped (PR-1, #608)                                                          |
+| 4   | P1   | Add a staging environment before prod                        | M      | 🔴   | deferred — ADR 0002 (wave D)                                                  |
+| 5   | P1   | Add web component/unit tests; rebalance the test pyramid     | L      | 🟡   | shipped (wave D)                                                              |
+| 6   | P1   | Move E2E before prod; give specs dedicated users             | M      | 🟡   | half (wave D: local lane + dedicated users; staging gate deferred — ADR 0002) |
+| 7   | P1   | **Local full-stack hosting via Docker (pre-PR)**             | M      | 🟡   | shipped (#606; gaps closed #608 + wave D)                                     |
+| 8   | P2   | Retire the repo public/private flip; run CI private          | S      | 🟡   | docs-only (wave D; retirement blocked on billing)                             |
+| 9   | P2   | Constrain the `SKIP_VERIFY` bypass; split the CI job         | S      | 🟡   | open                                                                          |
+| 10  | P3   | Split `schema.prisma`; share DTOs via `@routeflow/types`     | M      | ⚪   | open                                                                          |
+| 11  | P3   | Rewrite the stale README; slim `CLAUDE.md`; drop dead deps   | S      | 🟡   | shipped (wave D)                                                              |
 
 ---
 
@@ -64,20 +64,39 @@ merge immediately regardless of the cross-app work.
 
 ### 2. Enforce the single-replica invariant — or remove the need for it · M · 🔴
 
-The API **must run exactly one replica** or a cross-replica order-merge race corrupts order line
-items (`B199`). Today the only guard is a comment in
-[`apps/api/railway.toml`](../apps/api/railway.toml); nothing detects a second replica, and Railway
-injects no replica-count env var, so the process can't self-check **(inferred)**.
+**Shipped (PR-2).** Order merges no longer need the single-replica cap; scheduled jobs still do until
+2b: order merges now serialise per customer on a **Postgres advisory lock**, held on a dedicated
+connection rather than in-process (`apps/api/src/common/db-locks.ts`, `withAdvisoryLock`) —
+`pg_advisory_lock(hashtext('order-merge'), hashtext(customerId))` in `wait` mode, `SET lock_timeout`
+bounding the wait, on its own small `pg.Pool` kept separate from Prisma's pool. Because the lock lives
+on a Postgres session rather than in a process's memory, it coordinates correctly across replicas —
+the cross-replica order-merge race (`B199`) that motivated the one-replica cap is closed, and the
+comment in [`apps/api/railway.toml`](../apps/api/railway.toml) now guards the crons (single replica
+until the cron leader lock, 2b) and stays until that PR lands.
 
-**Proposed change (pick one):**
+Four call sites take the lock, keyed by `customerId`: staff order `create()` (auto-merge into an
+existing pending order), buyer `createOrder`, `mergeAllPendingForCustomer`, and
+`forceConsolidateCustomer`. In every case the lock is acquired **before any write** — a contended
+lock therefore always fails a request cleanly, never mid-write — and is reported to the client as
+HTTP 409 `{ code: "MERGE_IN_PROGRESS" }` (another merge for this customer is already running) or 503
+`{ code: "LOCK_UNAVAILABLE" }` (the dedicated lock connection couldn't be obtained), both safe to
+retry. A merge's own post-commit consolidation step, if it can't acquire the lock, is deferred with a
+warning log rather than blocking the request that triggered it. The old in-process guard
+(`withOrderMergeLock`, a `Map` keyed by order id) is deleted — it never protected against a second
+replica in the first place.
 
-- **Remove the constraint (preferred):** replace the in-process lock in `withOrderMergeLock` with a
-  **Postgres advisory lock** (`pg_advisory_xact_lock`), which coordinates correctly across replicas.
-  The one-replica cap then disappears and the service can scale horizontally.
-- **Or make it fail-loud:** assert a replica-count signal at boot and refuse to start if `> 1`, so a
-  mis-scale is a crash, not silent money corruption.
+The one-shot backfill script ([`apps/api/scripts/merge-pending-orders.js`](../apps/api/scripts/merge-pending-orders.js))
+takes the same lock, transaction-scoped: each customer's merge transaction opens with
+`pg_advisory_xact_lock(hashtext('order-merge'), hashtext(customerId))`, the same key pair as the
+API's session-level lock, so a manual backfill run and a live API instance serialise against each
+other instead of racing.
 
-**Payoff.** Turns an undocumented footgun into either a non-issue (scalable) or a safe failure.
+**Remaining work.** A **cron leader lock** (guarding scheduled jobs that must run on exactly one
+replica, distinct from the per-customer order-merge lock above) is tracked separately as its own PR
+and is not part of this item.
+
+**Payoff.** Turns an undocumented footgun into a non-issue: the service can now scale to multiple
+replicas without risking order-merge corruption.
 
 ### 3. Schema-management tooling for PostgreSQL + Prisma · M · 🔴 _(owner-requested)_
 
@@ -128,6 +147,11 @@ There is **no staging environment** — nothing in any `railway.toml` defines on
 **production** off Railway's `deployment_status` signal ([`ci.yml`](../.github/workflows/ci.yml)), so
 **production is the canary**.
 
+**Deferred (wave D) — design of record only.** [`docs/adr/0002-staging-environment.md`](adr/0002-staging-environment.md)
+records the full shape (topology, deploy mechanism, seeding, the E2E-gates-on-staging decision) so
+the design doesn't have to be rediscovered when cost/priority allows building it — nothing below
+is implemented yet.
+
 **Proposed change.** Stand up a `staging` Railway environment (or project) mirroring prod services,
 fed by a `staging` branch or manual promotion, seeded only with approved test tenants
 (`e2e-*`, `qa-*`, `routeflow-demo` — per the `assertTestTenant` policy in
@@ -143,10 +167,14 @@ test dependency in `apps/web/package.json` is `@playwright/test`; scripts are al
 A dashboard this size with zero component/logic tests pushes every regression onto slow, flaky
 browser runs. Mobile is "pure-logic only" by policy, leaving its components untested too.
 
-**Proposed change.** Add **Jest + React Testing Library** to `apps/web` (Jest is already the
-sanctioned runner — respects the "no Vitest" rule) for components, hooks, and `lib/` logic. Target
-the high-value surfaces first: pricing/display, form validation (react-hook-form + zod), and the
-axios refresh/interceptor logic in [`apps/web/lib/api-client.ts`](../apps/web/lib/api-client.ts).
+**Shipped (wave D).** Added **Jest + React Testing Library** to `apps/web` — `jest.config.js` (built
+on `next/jest`), `jest.setup.ts`, and `test-utils/render.tsx` (`renderWithProviders`, real
+QueryClient/Toast/I18n/Auth context providers). 19 spec files: 4 `lib/` suites (`api-client`,
+`format`, `formatting`, `tenant-host`) and 15 component specs covering auth pages (login,
+forgot-password, buyer portal), settings, and the highest-traffic modals/cards (order/route/driver
+create, bookkeeping detail, sales-history, money input). Runs via `npm test -w apps/web` and now
+contributes to `npm run test` (Turbo). Detail: [`web`](../.claude/code-map/web.md) "Unit tests
+(Jest + RTL)".
 
 **Payoff.** Moves regression-catching down into fast tests; shrinks reliance on end-to-end runs.
 
@@ -163,6 +191,13 @@ Two coupling problems in the current E2E flow:
 **dedicated E2E user per spec/project** (not an ordering tweak) so no spec depends on another's
 session state. Re-enable the quarantined F14 projects on that basis.
 
+**Half-shipped (wave D).** The dedicated-user half landed — `e2e-seed.js` seeds
+`e2e_sessions_op`/`e2e_impersonated_admin` (L-050) and both quarantined F14 projects are
+re-enabled — plus a new pre-PR local lane (`apps/web/e2e/LOCAL-LANE.md`) that runs Playwright
+against the local Docker stack. The "gate the merge on staging E2E" half stays deferred pending
+hosted staging, with the residual risk this leaves — E2E still reports on production rather than
+gating it — recorded in [ADR 0002](adr/0002-staging-environment.md).
+
 **Payoff.** Deterministic E2E that gates the release instead of reporting on it.
 
 ### 7. Local full-stack hosting via Docker (pre-PR) · M · 🟡 _(owner-requested)_
@@ -174,7 +209,7 @@ are never run locally** — they're built only by Railway. So the first time the
 against a real database is **in production**. Combined with the absence of a staging env (#4), there
 is no integrated place to smoke-test a change before opening a PR.
 
-**Shipped (#606).** Added an `app` profile to the existing `docker-compose.yml` — no separate
+**Shipped (#606; gaps closed #608 + wave D).** Added an `app` profile to the existing `docker-compose.yml` — no separate
 overlay file — that builds and runs the **actual production Dockerfiles** wired to the existing
 Postgres/Redis services, a local prod-like surrogate:
 
@@ -190,6 +225,12 @@ dockerfile: apps/web/Dockerfile }`, `:3001`, `NEXT_PUBLIC_API_URL` pointed at th
   the runbook/ADR, plus a note in the PR checklist: run `npm run local:up` and `local:validate`
   and smoke-test the built images before pushing.
 
+**Gaps closed (#608 + wave D):** [ADR 0002](adr/0002-staging-environment.md) resolves the two
+supporting questions #606 left open — the `RUN_STARTUP_DDL`-style flag question is moot (boot-time
+DDL was deleted outright, PR-1/`imp-03a`, so there is no flag to gate a staging boot with), and the
+PR-template checklist line ("run `npm run local:up`/`local:validate` before pushing") landed in
+[`.github/PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md).
+
 This is deliberately **not** `npm run dev` (watch mode): the point is to exercise the same multi-stage
 Docker images, standalone Next build, non-root runtime, and startup path that Railway runs — catching
 Docker/build/runtime-config breakage that dev mode hides.
@@ -203,15 +244,24 @@ the fastest path toward the staging environment in #4 (same compose, hosted).
 
 ### 8. Retire the repo public/private flip; run CI private · S · 🟡
 
-`CLAUDE.md` documents flipping the **private** repo to **public** for each CI run and back — a
-workaround for GitHub Actions private-minute billing that (per the runbook) once caused **five
+`CLAUDE.md` documented flipping the **private** repo to **public** for each CI run and back inline —
+a workaround for GitHub Actions private-minute billing that (per the runbook) once caused **five
 consecutive failed deploys** via a snapshot race, and carries a standing hazard ("never leave the repo
-public"). The `ci.yml` header states this was retired 2026-08-30, but `CLAUDE.md` still prescribes it,
-so the instructions themselves now conflict.
+public").
 
-**Proposed change.** Resolve the billing issue directly — enable paid private Actions minutes or add a
-**self-hosted runner** — so CI runs on the private repo permanently. Delete the flip routine from
-`CLAUDE.md` and the SDLC docs.
+**Docs-only (wave D) — retirement itself is still blocked on billing.** The flip's failure modes,
+routine, and retirement conditions were extracted out of `CLAUDE.md` into a single source of truth,
+[`docs/runbooks/deploy-visibility-flip.md`](runbooks/deploy-visibility-flip.md); `CLAUDE.md`, the
+`rebuild` skill, and `ci.yml`'s header now all point there instead of restating it, closing the
+conflicting-instructions problem this item originally described. The runbook's own "Retirement
+checklist" section is unchanged and still gated on: (1) private-minute Actions billing fixed in
+GitHub Settings → Billing, (2) one full private PR run completing with `steps > 0` on every job,
+(3) a real month's private minutes checked against the 2,000/mo Free cap. **Nothing here does that
+billing fix** — the flip routine itself keeps running until an owner acts on it.
+
+**Proposed change (unshipped).** Resolve the billing issue directly — enable paid private Actions minutes or add a
+**self-hosted runner** — so CI runs on the private repo permanently, then apply the runbook's
+retirement checklist.
 
 **Payoff.** Removes a manual, error-prone, security-relevant ritual from every release.
 
@@ -246,15 +296,29 @@ CI stays cache-off by design).
 
 ### 11. Rewrite the stale README; slim `CLAUDE.md`; drop dead deps · S · 🟡
 
-- [`README.md`](../README.md) is **actively misleading**: it documents `main`/`develop` branches
-  (trunk is `master`) and a `deploy-staging.yml`/`deploy-production.yml` GHCR→Railway CI/CD table for
-  workflows that are **dormant**. Rewrite it to match reality (single `verify` job → Railway
-  auto-deploy → `deployment_status`-triggered E2E). It also lists the remote as `najathakram1` while
-  the actual origin is `najathakram/routeflow`.
-- `CLAUDE.md` has grown into a runbook + incident log + policy doc, corrected in place multiple times
-  (the deploy-flip saga). Move operational history to a CHANGELOG/runbook and keep the guide stable.
-- **Remove `zustand` from `apps/web`** — it's a dependency with **zero imports** in web source
-  (verified); web uses TanStack Query + context.
+**Shipped (wave D).**
+
+- [`README.md`](../README.md) had been **actively misleading**: it documented `main`/`develop`
+  branches (trunk is `master`) and a `deploy-staging.yml`/`deploy-production.yml` GHCR→Railway
+  CI/CD table for workflows that were **dormant**, and listed the remote as `najathakram1` instead
+  of the actual origin `najathakram/routeflow`. Rewritten to match reality (single `verify` job →
+  Railway auto-deploy → `deployment_status`-triggered E2E); `deploy-staging.yml` itself was deleted
+  outright (ADR 0002 records the staging design it was standing in for).
+- `CLAUDE.md` slimmed — the deploy-flip saga's incident-log prose (the five-consecutive-failures
+  postmortem, the `BUILDING`-vs-`INITIALIZING` corrections) moved out to
+  [`docs/runbooks/deploy-visibility-flip.md`](runbooks/deploy-visibility-flip.md) (item #8), leaving
+  the numbered routine plus a pointer.
+- **Removed `zustand` from `apps/web`** — it was a dependency with **zero imports** in web source
+  (verified); web state is TanStack Query + context. Swept `apps/api` for the same class at the same
+  time: `@nestjs/axios` and `passport-google-oauth20`/`@types/passport-google-oauth20` were also
+  zero-reference (outbound HTTP goes through vendor SDKs; Google OAuth is
+  `google-auth-library`'s `OAuth2Client`, not a Passport strategy) and removed too. Both manifest
+  removal and zero-remaining-import are pinned by
+  [`apps/api/src/common/no-dead-deps.spec.ts`](../apps/api/src/common/no-dead-deps.spec.ts); the
+  README/CLAUDE.md stale-claim fixes above are pinned by
+  [`apps/api/src/common/docs-truth.spec.ts`](../apps/api/src/common/docs-truth.spec.ts). Mobile's own
+  `zustand` (a real, used dependency) and its `react-test-renderer` pin were left untouched — proven
+  by a regression guard in the same spec file.
 
 ---
 
@@ -270,7 +334,7 @@ A balanced review should say what not to touch:
   dead-man's switch. R2 is object storage, not a backup tool — this is a sound, cheap choice.
 - **Redis + Postgres together is correct**, not redundant: Postgres is the durable system of record;
   Redis is ephemeral coordination (Socket.io fanout, rate-limit counters, BullMQ). (The Socket.io
-  Redis adapter specifically is unused at one replica — folded into #2.)
+  Redis adapter specifically is wired (`main.ts:98`) and idle at one replica — folded into #2.)
 - **The code map + lessons register** (`.claude/code-map`, `.claude/lessons`) and the "explain why"
   inline comments are better documentation than most codebases have.
 - **`campaign-check.mjs`** mechanically refusing an unproven "done" claim is a strong idea worth

@@ -7,6 +7,7 @@ import {
   Logger,
   NotFoundException,
   OnApplicationBootstrap,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { InjectQueue } from "@nestjs/bull";
@@ -25,6 +26,13 @@ import {
   type PromoContext,
   type CategoryTaxType,
 } from "../common/pricing";
+import { withAdvisoryLock, type LockMode } from "../common/db-locks";
+import {
+  LOCK_UNAVAILABLE,
+  LOCK_UNAVAILABLE_MESSAGE,
+  isMergeContention,
+  mapLockError,
+} from "./merge-contention";
 import {
   OrderStatus,
   UserRole,
@@ -810,604 +818,673 @@ export class OrdersService implements OnApplicationBootstrap {
    * units none of the contributing lines had — the buyer splitting one cart in two
    * must not lose the promo the combined quantity qualifies for. Left false for the
    * hourly sweep and every staff path so operator/driver pricing stays untouched.
+   *
+   * `opts.lockMode`: `"wait"` (the default) blocks up to 20 s for the customer's merge lock —
+   * right for the sweep/force paths, which have no client attached. Every POST-COMMIT caller on
+   * a request path passes `"try"` instead: their row has already committed, so their only use
+   * for the lock is opportunistic consolidation, and waiting would spend a request's remaining
+   * budget (and pin one of the 8 lock-pool slots) on work that is already deferrable. In `try`
+   * mode a held lock returns `{ acquired: false }` → the coded 503 below → `isMergeContention`
+   * → the caller's "deferred" warning, with the hourly sweep folding the leftover.
    */
-  async mergeAllPendingForCustomer(customerId: string, options: { buyerInitiated?: boolean } = {}) {
-    const pendingOrders = await this.prisma.forTenant().order.findMany({
-      where: {
-        customerId,
-        status: OrderStatus.PENDING,
-        routeRunId: null,
-        routeRunStopId: null,
-        transaction: { is: null },
-        invoices: { none: {} },
-        returns: { none: {} },
-        skipAutoMerge: false,
-      },
-      include: {
-        lineItems: {
-          where: { status: { not: ItemStatus.CANCELLED } },
+  async mergeAllPendingForCustomer(
+    customerId: string,
+    options: { buyerInitiated?: boolean } = {},
+    opts?: { lockMode?: LockMode },
+  ) {
+    try {
+      const result = await withAdvisoryLock(
+        {
+          family: "order-merge",
+          key: customerId,
+          mode: opts?.lockMode ?? "wait",
+          // Inert under `try` (pg_try_advisory_lock never blocks); it is the 20 s budget the
+          // sweep/force paths wait on.
+          waitMs: 20_000,
         },
-      },
-      orderBy: { updatedAt: "desc" },
-    });
-
-    if (pendingOrders.length <= 1) {
-      return pendingOrders[0] ?? null;
-    }
-
-    const [winner, ...losers] = pendingOrders;
-    const winnerProductIds = new Set(winner.lineItems.map((li) => li.productId));
-
-    // Collect each loser catalog line's raw fields per product so boxed lines
-    // can be re-prorated by piece count (see mergeBoxedContributions), not a
-    // naive qty sum. Iteration is updatedAt DESC so the first occurrence wins on
-    // price/metadata.
-    const loserContribsByProduct = new Map<
-      string,
-      Array<{
-        qty: unknown;
-        boxes: number | null;
-        pieces: number | null;
-        // BUY_N_GET_M snapshot so the merged line re-derives its free units.
-        promoFreeUnits: number | null;
-        // Whether the contribution is buyer-priced — gates earning NEW free units.
-        priceType: PriceType;
-        overriddenBy: string | null;
-      }>
-    >();
-    const newItemMetaByProduct = new Map<
-      string,
-      {
-        unitPrice: number;
-        priceType: PriceType;
-        originalPrice: number | null;
-        overrideReason: string | null;
-        overriddenBy: string | null;
-        notes: string | null;
-        trackedCategoryId: string | null;
-      }
-    >();
-    // Unlisted (catalog-free) loser lines can't be keyed by product — each is
-    // appended to the winner as its own new line (never boxed).
-    const unlistedNewItems: Array<{
-      name: string | null;
-      qty: number;
-      unitPrice: number;
-      priceType: PriceType;
-      originalPrice: number | null;
-      overrideReason: string | null;
-      overriddenBy: string | null;
-      notes: string | null;
-    }> = [];
-
-    for (const loser of losers) {
-      for (const li of loser.lineItems) {
-        if (!li.productId) {
-          unlistedNewItems.push({
-            name: li.name,
-            qty: Number(li.qty),
-            unitPrice: Number(li.unitPrice),
-            priceType: li.priceType,
-            originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
-            overrideReason: li.overrideReason,
-            overriddenBy: li.overriddenBy,
-            notes: li.notes,
-          });
-          continue;
-        }
-        const contribs = loserContribsByProduct.get(li.productId) ?? [];
-        contribs.push({
-          qty: li.qty,
-          boxes: li.boxes,
-          pieces: li.pieces,
-          promoFreeUnits: (li as any).promoFreeUnits ?? null,
-          priceType: li.priceType,
-          overriddenBy: li.overriddenBy,
-        });
-        loserContribsByProduct.set(li.productId, contribs);
-        if (!winnerProductIds.has(li.productId) && !newItemMetaByProduct.has(li.productId)) {
-          newItemMetaByProduct.set(li.productId, {
-            unitPrice: Number(li.unitPrice),
-            priceType: li.priceType,
-            originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
-            overrideReason: li.overrideReason,
-            overriddenBy: li.overriddenBy,
-            notes: li.notes,
-            // Carry the loser line's sale-time regulated-category snapshot so the
-            // new winner line keeps it (invoice split + ledger depend on it).
-            trackedCategoryId: li.trackedCategoryId ?? null,
-          });
-        }
-      }
-    }
-
-    // unitsPerBox for every product involved so boxed lines prorate by the box.
-    const contributingLines = [...winner.lineItems, ...losers.flatMap((l) => l.lineItems)];
-    const involvedProductIds = [
-      ...new Set(contributingLines.map((li) => li.productId).filter((id): id is string => !!id)),
-    ];
-    const upbByProduct = new Map<string, number>();
-    // Category feeds scope=CATEGORY matching when a merged line's BUY_N_GET_M
-    // free units are re-derived below.
-    const catByProduct = new Map<string, string | null>();
-    if (involvedProductIds.length > 0) {
-      const prods = await this.prisma.forTenant().product.findMany({
-        where: { id: { in: involvedProductIds } },
-        select: { id: true, unitsPerBox: true, category: true },
-      });
-      for (const p of prods) {
-        upbByProduct.set(p.id, Number(p.unitsPerBox ?? 0));
-        catByProduct.set(p.id, p.category ?? null);
-      }
-    }
-
-    const taxRate = await this.getTaxRate();
-    // BUY_N_GET_M: a merged line earns its own free units for the COMBINED
-    // quantity, so the live rule is re-run below. Loaded on a separate pooled
-    // connection before the tx (pool-starvation guard) and ONLY when a
-    // contributing line carries a free-unit snapshot, or the BUYER drove this
-    // merge and a buyer-priced line could newly earn one (split carts) — every
-    // other merge issues no extra query and is byte-for-byte unchanged.
-    const bogoPromos =
-      contributingLines.some((li: any) => Number(li.promoFreeUnits ?? 0) > 0) ||
-      (options.buyerInitiated === true &&
-        contributingLines.some((li) => this.isBuyerPricedLine(li)))
-        ? await this.loadActivePromotions(UserRole.CUSTOMER)
-        : [];
-
-    await this.prisma.tenantTransaction(async (tx) => {
-      // 1. Bump winner catalog lines that overlap losers — re-prorate boxed lines
-      //    from the combined piece count (never a naive newQty * unitPrice).
-      for (const li of winner.lineItems) {
-        if (!li.productId) continue;
-        const loserContribs = loserContribsByProduct.get(li.productId);
-        if (!loserContribs || loserContribs.length === 0) continue;
-        const merged = this.mergeBoxedContributions(
-          [
-            {
-              qty: li.qty,
-              boxes: li.boxes,
-              pieces: li.pieces,
-              promoFreeUnits: (li as any).promoFreeUnits ?? null,
-              priceType: li.priceType,
-              overriddenBy: li.overriddenBy,
+        async () => {
+          const pendingOrders = await this.prisma.forTenant().order.findMany({
+            where: {
+              customerId,
+              status: OrderStatus.PENDING,
+              routeRunId: null,
+              routeRunStopId: null,
+              transaction: { is: null },
+              invoices: { none: {} },
+              returns: { none: {} },
+              skipAutoMerge: false,
             },
-            ...loserContribs,
-          ],
-          Number(li.unitPrice),
-          upbByProduct.get(li.productId),
-          {
-            promos: bogoPromos,
-            productId: li.productId,
-            category: catByProduct.get(li.productId) ?? null,
-            canEarnNew: options.buyerInitiated === true,
-            // The winner line's unitPrice survives the merge — if it is already
-            // price-promo discounted, free units must not stack on top of it.
-            pricePromoApplied: li.priceType === PriceType.PROMO && li.originalPrice != null,
-          },
-        );
-        await tx.orderItem.update({
-          where: { id: li.id },
-          data: {
-            qty: merged.qty,
-            boxes: merged.boxes,
-            pieces: merged.pieces,
-            subtotal: merged.subtotal,
-            // Keep the snapshot and the money consistent — a merged line that no
-            // longer earns free units must not keep a stale count. Untouched when
-            // no contribution carried one, so non-BOGO merges write exactly as before.
-            ...(merged.freeUnits > 0 || merged.storedFreeUnits > 0
-              ? { promoFreeUnits: merged.freeUnits > 0 ? merged.freeUnits : null }
-              : {}),
-          },
-        });
-      }
+            include: {
+              lineItems: {
+                where: { status: { not: ItemStatus.CANCELLED } },
+              },
+            },
+            orderBy: { updatedAt: "desc" },
+          });
 
-      // 2. Create winner items for productIds that were only on losers.
-      for (const [productId, meta] of newItemMetaByProduct.entries()) {
-        const merged = this.mergeBoxedContributions(
-          loserContribsByProduct.get(productId) ?? [],
-          meta.unitPrice,
-          upbByProduct.get(productId),
-          {
-            promos: bogoPromos,
-            productId,
-            category: catByProduct.get(productId) ?? null,
-            canEarnNew: options.buyerInitiated === true,
-            // The new line is created at meta.unitPrice with meta.originalPrice —
-            // an already price-discounted PROMO line must not also earn free units.
-            pricePromoApplied: meta.priceType === PriceType.PROMO && meta.originalPrice != null,
-          },
-        );
-        await tx.orderItem.create({
-          data: {
-            orderId: winner.id,
-            productId,
-            qty: merged.qty,
-            boxes: merged.boxes,
-            pieces: merged.pieces,
-            unitPrice: meta.unitPrice,
-            subtotal: merged.subtotal,
-            // Carry the loser line's BUY_N_GET_M discount onto the new winner
-            // line, re-derived for the merged quantity (was dropped entirely).
-            promoFreeUnits: merged.freeUnits > 0 ? merged.freeUnits : null,
-            status: ItemStatus.PENDING,
-            priceType: meta.priceType,
-            originalPrice: meta.originalPrice,
-            overrideReason: meta.overrideReason,
-            overriddenBy: meta.overriddenBy,
-            notes: meta.notes,
-            // Preserve the regulated-category snapshot through the merge (was
-            // dropped, so a merged regulated line invoiced as standard).
-            trackedCategoryId: meta.trackedCategoryId,
-          },
-        });
-      }
+          if (pendingOrders.length <= 1) {
+            return pendingOrders[0] ?? null;
+          }
 
-      // 2b. Append unlisted loser lines as fresh winner lines.
-      for (const data of unlistedNewItems) {
-        await tx.orderItem.create({
-          data: {
-            orderId: winner.id,
-            productId: null,
-            name: data.name,
-            qty: data.qty,
-            unitPrice: data.unitPrice,
-            // scan-ok: money-rederive — custom line (productId: null), never boxed, so there's no unitsPerBox proration to lose; per-piece price x qty (Decimal(10,3) — the order-edit path allows fractional qty), rounded on write.
-            subtotal: roundMoney(data.qty * data.unitPrice),
-            status: ItemStatus.PENDING,
-            priceType: data.priceType,
-            originalPrice: data.originalPrice,
-            overrideReason: data.overrideReason,
-            overriddenBy: data.overriddenBy,
-            notes: data.notes,
-          },
-        });
-      }
+          const [winner, ...losers] = pendingOrders;
+          const winnerProductIds = new Set(winner.lineItems.map((li) => li.productId));
 
-      // 3. Drop loser orders and their items — carrying a loser's Idempotency-
-      //    Key onto the winner FIRST when the winner's slot is free (R6): the
-      //    loser's cart just landed in the winner, so a still-queued retry of
-      //    that request must replay onto the winner, not re-create a deleted
-      //    order. Single-column storage means only one carried key can survive
-      //    a multi-loser sweep — the ELDEST loser's (they merge updatedAt DESC,
-      //    so iterate from the tail); the residual (two keyed losers, one slot)
-      //    is a recorded Low limitation, bounded further by R4's content check.
-      const winnerRow = await tx.order.findUnique({
-        where: { id: winner.id },
-        select: { idempotencyKey: true },
-      });
-      let slotFree = winnerRow?.idempotencyKey == null;
-      for (const loser of [...losers].reverse()) {
-        const loserKey = (loser as { idempotencyKey?: string | null }).idempotencyKey;
-        if (slotFree && loserKey) {
-          // Free the unique before re-pointing it at the winner.
-          await tx.order.update({ where: { id: loser.id }, data: { idempotencyKey: null } });
-          await tx.order.update({ where: { id: winner.id }, data: { idempotencyKey: loserKey } });
-          slotFree = false;
-        }
-      }
-      for (const loser of losers) {
-        await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
-        await tx.order.delete({ where: { id: loser.id } });
-      }
+          // Collect each loser catalog line's raw fields per product so boxed lines
+          // can be re-prorated by piece count (see mergeBoxedContributions), not a
+          // naive qty sum. Iteration is updatedAt DESC so the first occurrence wins on
+          // price/metadata.
+          const loserContribsByProduct = new Map<
+            string,
+            Array<{
+              qty: unknown;
+              boxes: number | null;
+              pieces: number | null;
+              // BUY_N_GET_M snapshot so the merged line re-derives its free units.
+              promoFreeUnits: number | null;
+              // Whether the contribution is buyer-priced — gates earning NEW free units.
+              priceType: PriceType;
+              overriddenBy: string | null;
+            }>
+          >();
+          const newItemMetaByProduct = new Map<
+            string,
+            {
+              unitPrice: number;
+              priceType: PriceType;
+              originalPrice: number | null;
+              overrideReason: string | null;
+              overriddenBy: string | null;
+              notes: string | null;
+              trackedCategoryId: string | null;
+            }
+          >();
+          // Unlisted (catalog-free) loser lines can't be keyed by product — each is
+          // appended to the winner as its own new line (never boxed).
+          const unlistedNewItems: Array<{
+            name: string | null;
+            qty: number;
+            unitPrice: number;
+            priceType: PriceType;
+            originalPrice: number | null;
+            overrideReason: string | null;
+            overriddenBy: string | null;
+            notes: string | null;
+          }> = [];
 
-      // 4. Recompute winner totals.
-      const activeItems = await tx.orderItem.findMany({
-        where: { orderId: winner.id, status: { not: ItemStatus.CANCELLED } },
-      });
-      const subtotal = roundMoney(
-        activeItems.reduce((s: number, li: any) => s + Number(li.subtotal), 0),
+          for (const loser of losers) {
+            for (const li of loser.lineItems) {
+              if (!li.productId) {
+                unlistedNewItems.push({
+                  name: li.name,
+                  qty: Number(li.qty),
+                  unitPrice: Number(li.unitPrice),
+                  priceType: li.priceType,
+                  originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
+                  overrideReason: li.overrideReason,
+                  overriddenBy: li.overriddenBy,
+                  notes: li.notes,
+                });
+                continue;
+              }
+              const contribs = loserContribsByProduct.get(li.productId) ?? [];
+              contribs.push({
+                qty: li.qty,
+                boxes: li.boxes,
+                pieces: li.pieces,
+                promoFreeUnits: (li as any).promoFreeUnits ?? null,
+                priceType: li.priceType,
+                overriddenBy: li.overriddenBy,
+              });
+              loserContribsByProduct.set(li.productId, contribs);
+              if (!winnerProductIds.has(li.productId) && !newItemMetaByProduct.has(li.productId)) {
+                newItemMetaByProduct.set(li.productId, {
+                  unitPrice: Number(li.unitPrice),
+                  priceType: li.priceType,
+                  originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
+                  overrideReason: li.overrideReason,
+                  overriddenBy: li.overriddenBy,
+                  notes: li.notes,
+                  // Carry the loser line's sale-time regulated-category snapshot so the
+                  // new winner line keeps it (invoice split + ledger depend on it).
+                  trackedCategoryId: li.trackedCategoryId ?? null,
+                });
+              }
+            }
+          }
+
+          // unitsPerBox for every product involved so boxed lines prorate by the box.
+          const contributingLines = [...winner.lineItems, ...losers.flatMap((l) => l.lineItems)];
+          const involvedProductIds = [
+            ...new Set(
+              contributingLines.map((li) => li.productId).filter((id): id is string => !!id),
+            ),
+          ];
+          const upbByProduct = new Map<string, number>();
+          // Category feeds scope=CATEGORY matching when a merged line's BUY_N_GET_M
+          // free units are re-derived below.
+          const catByProduct = new Map<string, string | null>();
+          if (involvedProductIds.length > 0) {
+            const prods = await this.prisma.forTenant().product.findMany({
+              where: { id: { in: involvedProductIds } },
+              select: { id: true, unitsPerBox: true, category: true },
+            });
+            for (const p of prods) {
+              upbByProduct.set(p.id, Number(p.unitsPerBox ?? 0));
+              catByProduct.set(p.id, p.category ?? null);
+            }
+          }
+
+          const taxRate = await this.getTaxRate();
+          // BUY_N_GET_M: a merged line earns its own free units for the COMBINED
+          // quantity, so the live rule is re-run below. Loaded on a separate pooled
+          // connection before the tx (pool-starvation guard) and ONLY when a
+          // contributing line carries a free-unit snapshot, or the BUYER drove this
+          // merge and a buyer-priced line could newly earn one (split carts) — every
+          // other merge issues no extra query and is byte-for-byte unchanged.
+          const bogoPromos =
+            contributingLines.some((li: any) => Number(li.promoFreeUnits ?? 0) > 0) ||
+            (options.buyerInitiated === true &&
+              contributingLines.some((li) => this.isBuyerPricedLine(li)))
+              ? await this.loadActivePromotions(UserRole.CUSTOMER)
+              : [];
+
+          await this.prisma.tenantTransaction(async (tx) => {
+            // 1. Bump winner catalog lines that overlap losers — re-prorate boxed lines
+            //    from the combined piece count (never a naive newQty * unitPrice).
+            for (const li of winner.lineItems) {
+              if (!li.productId) continue;
+              const loserContribs = loserContribsByProduct.get(li.productId);
+              if (!loserContribs || loserContribs.length === 0) continue;
+              const merged = this.mergeBoxedContributions(
+                [
+                  {
+                    qty: li.qty,
+                    boxes: li.boxes,
+                    pieces: li.pieces,
+                    promoFreeUnits: (li as any).promoFreeUnits ?? null,
+                    priceType: li.priceType,
+                    overriddenBy: li.overriddenBy,
+                  },
+                  ...loserContribs,
+                ],
+                Number(li.unitPrice),
+                upbByProduct.get(li.productId),
+                {
+                  promos: bogoPromos,
+                  productId: li.productId,
+                  category: catByProduct.get(li.productId) ?? null,
+                  canEarnNew: options.buyerInitiated === true,
+                  // The winner line's unitPrice survives the merge — if it is already
+                  // price-promo discounted, free units must not stack on top of it.
+                  pricePromoApplied: li.priceType === PriceType.PROMO && li.originalPrice != null,
+                },
+              );
+              await tx.orderItem.update({
+                where: { id: li.id },
+                data: {
+                  qty: merged.qty,
+                  boxes: merged.boxes,
+                  pieces: merged.pieces,
+                  subtotal: merged.subtotal,
+                  // Keep the snapshot and the money consistent — a merged line that no
+                  // longer earns free units must not keep a stale count. Untouched when
+                  // no contribution carried one, so non-BOGO merges write exactly as before.
+                  ...(merged.freeUnits > 0 || merged.storedFreeUnits > 0
+                    ? { promoFreeUnits: merged.freeUnits > 0 ? merged.freeUnits : null }
+                    : {}),
+                },
+              });
+            }
+
+            // 2. Create winner items for productIds that were only on losers.
+            for (const [productId, meta] of newItemMetaByProduct.entries()) {
+              const merged = this.mergeBoxedContributions(
+                loserContribsByProduct.get(productId) ?? [],
+                meta.unitPrice,
+                upbByProduct.get(productId),
+                {
+                  promos: bogoPromos,
+                  productId,
+                  category: catByProduct.get(productId) ?? null,
+                  canEarnNew: options.buyerInitiated === true,
+                  // The new line is created at meta.unitPrice with meta.originalPrice —
+                  // an already price-discounted PROMO line must not also earn free units.
+                  pricePromoApplied:
+                    meta.priceType === PriceType.PROMO && meta.originalPrice != null,
+                },
+              );
+              await tx.orderItem.create({
+                data: {
+                  orderId: winner.id,
+                  productId,
+                  qty: merged.qty,
+                  boxes: merged.boxes,
+                  pieces: merged.pieces,
+                  unitPrice: meta.unitPrice,
+                  subtotal: merged.subtotal,
+                  // Carry the loser line's BUY_N_GET_M discount onto the new winner
+                  // line, re-derived for the merged quantity (was dropped entirely).
+                  promoFreeUnits: merged.freeUnits > 0 ? merged.freeUnits : null,
+                  status: ItemStatus.PENDING,
+                  priceType: meta.priceType,
+                  originalPrice: meta.originalPrice,
+                  overrideReason: meta.overrideReason,
+                  overriddenBy: meta.overriddenBy,
+                  notes: meta.notes,
+                  // Preserve the regulated-category snapshot through the merge (was
+                  // dropped, so a merged regulated line invoiced as standard).
+                  trackedCategoryId: meta.trackedCategoryId,
+                },
+              });
+            }
+
+            // 2b. Append unlisted loser lines as fresh winner lines.
+            for (const data of unlistedNewItems) {
+              await tx.orderItem.create({
+                data: {
+                  orderId: winner.id,
+                  productId: null,
+                  name: data.name,
+                  qty: data.qty,
+                  unitPrice: data.unitPrice,
+                  // scan-ok: money-rederive — custom line (productId: null), never boxed, so there's no unitsPerBox proration to lose; per-piece price x qty (Decimal(10,3) — the order-edit path allows fractional qty), rounded on write.
+                  subtotal: roundMoney(data.qty * data.unitPrice),
+                  status: ItemStatus.PENDING,
+                  priceType: data.priceType,
+                  originalPrice: data.originalPrice,
+                  overrideReason: data.overrideReason,
+                  overriddenBy: data.overriddenBy,
+                  notes: data.notes,
+                },
+              });
+            }
+
+            // 3. Drop loser orders and their items — carrying a loser's Idempotency-
+            //    Key onto the winner FIRST when the winner's slot is free (R6): the
+            //    loser's cart just landed in the winner, so a still-queued retry of
+            //    that request must replay onto the winner, not re-create a deleted
+            //    order. Single-column storage means only one carried key can survive
+            //    a multi-loser sweep — the ELDEST loser's (they merge updatedAt DESC,
+            //    so iterate from the tail); the residual (two keyed losers, one slot)
+            //    is a recorded Low limitation, bounded further by R4's content check.
+            const winnerRow = await tx.order.findUnique({
+              where: { id: winner.id },
+              select: { idempotencyKey: true },
+            });
+            let slotFree = winnerRow?.idempotencyKey == null;
+            for (const loser of [...losers].reverse()) {
+              const loserKey = (loser as { idempotencyKey?: string | null }).idempotencyKey;
+              if (slotFree && loserKey) {
+                // Free the unique before re-pointing it at the winner.
+                await tx.order.update({ where: { id: loser.id }, data: { idempotencyKey: null } });
+                await tx.order.update({
+                  where: { id: winner.id },
+                  data: { idempotencyKey: loserKey },
+                });
+                slotFree = false;
+              }
+            }
+            for (const loser of losers) {
+              await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
+              await tx.order.delete({ where: { id: loser.id } });
+            }
+
+            // 4. Recompute winner totals.
+            const activeItems = await tx.orderItem.findMany({
+              where: { orderId: winner.id, status: { not: ItemStatus.CANCELLED } },
+            });
+            const subtotal = roundMoney(
+              activeItems.reduce((s: number, li: any) => s + Number(li.subtotal), 0),
+            );
+            const tax = roundMoney(subtotal * taxRate);
+            // RF-4: re-derive + persist each line's category tax from the merged set,
+            // and fold Σ into the total (a merged-in regulated line keeps its levy).
+            const categoryTax = await this.recomputeLineCategoryTaxes(tx, activeItems);
+            await tx.order.update({
+              where: { id: winner.id },
+              data: {
+                subtotal,
+                tax,
+                // Winner keeps ITS OWN stored fee; loser fees drop with the losers (the merged
+                // order is one delivery → one fee). Same asymmetry as discountAmount.
+                total: roundMoney(subtotal + tax + categoryTax + Number(winner.shippingFee ?? 0)),
+                // A merged-in regulated line flips the denormalized flag on.
+                hasRegulated: activeItems.some((li: any) => li.trackedCategoryId != null),
+              },
+            });
+          });
+
+          this.logger.log(
+            `Merged ${losers.length} PENDING order(s) into ${winner.id} for customer ${customerId}`,
+          );
+
+          return this.prisma.forTenant().order.findUnique({
+            where: { id: winner.id },
+            include: {
+              customer: { select: { id: true, businessName: true } },
+              lineItems: {
+                include: { product: { select: { id: true, name: true, unit: true } } },
+              },
+            },
+          });
+        },
       );
-      const tax = roundMoney(subtotal * taxRate);
-      // RF-4: re-derive + persist each line's category tax from the merged set,
-      // and fold Σ into the total (a merged-in regulated line keeps its levy).
-      const categoryTax = await this.recomputeLineCategoryTaxes(tx, activeItems);
-      await tx.order.update({
-        where: { id: winner.id },
-        data: {
-          subtotal,
-          tax,
-          // Winner keeps ITS OWN stored fee; loser fees drop with the losers (the merged
-          // order is one delivery → one fee). Same asymmetry as discountAmount.
-          total: roundMoney(subtotal + tax + categoryTax + Number(winner.shippingFee ?? 0)),
-          // A merged-in regulated line flips the denormalized flag on.
-          hasRegulated: activeItems.some((li: any) => li.trackedCategoryId != null),
-        },
-      });
-    });
-
-    this.logger.log(
-      `Merged ${losers.length} PENDING order(s) into ${winner.id} for customer ${customerId}`,
-    );
-
-    return this.prisma.forTenant().order.findUnique({
-      where: { id: winner.id },
-      include: {
-        customer: { select: { id: true, businessName: true } },
-        lineItems: {
-          include: { product: { select: { id: true, name: true, unit: true } } },
-        },
-      },
-    });
+      // Under `try` this is the NORMAL "someone else holds this customer's lock" outcome; under
+      // `wait` it is defensive only (that mode either acquires or throws). Either way it carries
+      // the same coded body as mapLockError's 503, so `isMergeContention` (the sweep, every
+      // post-commit caller) recognises it identically and defers.
+      if (!result.acquired) {
+        throw new ServiceUnavailableException({
+          code: LOCK_UNAVAILABLE,
+          message: LOCK_UNAVAILABLE_MESSAGE,
+        });
+      }
+      return result.value;
+    } catch (e) {
+      mapLockError(e);
+    }
   }
 
   async forceConsolidateCustomer(customerId: string) {
-    const orders = await this.prisma.forTenant().order.findMany({
-      where: { customerId, status: OrderStatus.PENDING },
-      include: { lineItems: { where: { status: { not: ItemStatus.CANCELLED } } } },
-      orderBy: { updatedAt: "desc" },
-    });
-    if (orders.length <= 1) return orders[0] ?? null;
-
-    const [winner, ...losers] = orders;
-
-    // If winner has no route assignment but losers do, promote the first loser's assignment.
-    const routeAssignment =
-      winner.routeRunId == null ? (losers.find((o) => o.routeRunId != null) ?? null) : null;
-
-    const winnerProductIds = new Set(winner.lineItems.map((li) => li.productId));
-    const loserContribsByProduct = new Map<
-      string,
-      Array<{
-        qty: unknown;
-        boxes: number | null;
-        pieces: number | null;
-        // BUY_N_GET_M snapshot so the merged line re-derives its free units.
-        promoFreeUnits: number | null;
-      }>
-    >();
-    const newItemMetaByProduct = new Map<
-      string,
-      {
-        unitPrice: number;
-        priceType: PriceType;
-        originalPrice: number | null;
-        overrideReason: string | null;
-        overriddenBy: string | null;
-        notes: string | null;
-        trackedCategoryId: string | null;
-      }
-    >();
-    // Unlisted (catalog-free) loser lines are appended as their own winner lines.
-    const unlistedNewItems: Array<{
-      name: string | null;
-      qty: number;
-      unitPrice: number;
-      priceType: PriceType;
-      originalPrice: number | null;
-      overrideReason: string | null;
-      overriddenBy: string | null;
-      notes: string | null;
-    }> = [];
-
-    for (const loser of losers) {
-      for (const li of loser.lineItems) {
-        if (!li.productId) {
-          unlistedNewItems.push({
-            name: li.name,
-            qty: Number(li.qty),
-            unitPrice: Number(li.unitPrice),
-            priceType: li.priceType,
-            originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
-            overrideReason: li.overrideReason,
-            overriddenBy: li.overriddenBy,
-            notes: li.notes,
+    try {
+      const result = await withAdvisoryLock(
+        { family: "order-merge", key: customerId, mode: "wait", waitMs: 20_000 },
+        async () => {
+          const orders = await this.prisma.forTenant().order.findMany({
+            where: { customerId, status: OrderStatus.PENDING },
+            include: { lineItems: { where: { status: { not: ItemStatus.CANCELLED } } } },
+            orderBy: { updatedAt: "desc" },
           });
-          continue;
-        }
-        const contribs = loserContribsByProduct.get(li.productId) ?? [];
-        contribs.push({
-          qty: li.qty,
-          boxes: li.boxes,
-          pieces: li.pieces,
-          promoFreeUnits: (li as any).promoFreeUnits ?? null,
-        });
-        loserContribsByProduct.set(li.productId, contribs);
-        if (!winnerProductIds.has(li.productId) && !newItemMetaByProduct.has(li.productId)) {
-          newItemMetaByProduct.set(li.productId, {
-            unitPrice: Number(li.unitPrice),
-            priceType: li.priceType,
-            originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
-            overrideReason: li.overrideReason,
-            overriddenBy: li.overriddenBy,
-            notes: li.notes,
-            // Carry the loser line's sale-time regulated-category snapshot so the
-            // new winner line keeps it (invoice split + ledger depend on it).
-            trackedCategoryId: li.trackedCategoryId ?? null,
-          });
-        }
-      }
-    }
+          if (orders.length <= 1) return orders[0] ?? null;
 
-    // unitsPerBox for every product involved so boxed lines prorate by the box.
-    const involvedProductIds = [
-      ...new Set(
-        [...winner.lineItems, ...losers.flatMap((l) => l.lineItems)]
-          .map((li) => li.productId)
-          .filter((id): id is string => !!id),
-      ),
-    ];
-    const upbByProduct = new Map<string, number>();
-    // Category feeds scope=CATEGORY matching when a merged line's BUY_N_GET_M
-    // free units are re-derived below.
-    const catByProduct = new Map<string, string | null>();
-    if (involvedProductIds.length > 0) {
-      const prods = await this.prisma.forTenant().product.findMany({
-        where: { id: { in: involvedProductIds } },
-        select: { id: true, unitsPerBox: true, category: true },
-      });
-      for (const p of prods) {
-        upbByProduct.set(p.id, Number(p.unitsPerBox ?? 0));
-        catByProduct.set(p.id, p.category ?? null);
-      }
-    }
+          const [winner, ...losers] = orders;
 
-    const taxRate = await this.getTaxRate();
-    // BUY_N_GET_M: a merged line earns its own free units for the COMBINED
-    // quantity, so the live rule is re-run below. Loaded on a separate pooled
-    // connection before the tx (pool-starvation guard) and ONLY when a
-    // contributing line actually carries a free-unit snapshot — every non-BOGO
-    // merge issues no extra query and is byte-for-byte unchanged.
-    const bogoPromos = [...winner.lineItems, ...losers.flatMap((l) => l.lineItems)].some(
-      (li: any) => Number(li.promoFreeUnits ?? 0) > 0,
-    )
-      ? await this.loadActivePromotions(UserRole.CUSTOMER)
-      : [];
+          // If winner has no route assignment but losers do, promote the first loser's assignment.
+          const routeAssignment =
+            winner.routeRunId == null ? (losers.find((o) => o.routeRunId != null) ?? null) : null;
 
-    await this.prisma.tenantTransaction(async (tx) => {
-      for (const li of winner.lineItems) {
-        if (!li.productId) continue;
-        const loserContribs = loserContribsByProduct.get(li.productId);
-        if (!loserContribs || loserContribs.length === 0) continue;
-        const merged = this.mergeBoxedContributions(
-          [
+          const winnerProductIds = new Set(winner.lineItems.map((li) => li.productId));
+          const loserContribsByProduct = new Map<
+            string,
+            Array<{
+              qty: unknown;
+              boxes: number | null;
+              pieces: number | null;
+              // BUY_N_GET_M snapshot so the merged line re-derives its free units.
+              promoFreeUnits: number | null;
+            }>
+          >();
+          const newItemMetaByProduct = new Map<
+            string,
             {
-              qty: li.qty,
-              boxes: li.boxes,
-              pieces: li.pieces,
-              promoFreeUnits: (li as any).promoFreeUnits ?? null,
-            },
-            ...loserContribs,
-          ],
-          Number(li.unitPrice),
-          upbByProduct.get(li.productId),
-          {
-            promos: bogoPromos,
-            productId: li.productId,
-            category: catByProduct.get(li.productId) ?? null,
-            // Non-stacking: a price-discounted winner line keeps its discount
-            // for the merged qty but never adds free units on top.
-            pricePromoApplied: li.priceType === PriceType.PROMO && li.originalPrice != null,
-          },
-        );
-        await tx.orderItem.update({
-          where: { id: li.id },
-          data: {
-            qty: merged.qty,
-            boxes: merged.boxes,
-            pieces: merged.pieces,
-            subtotal: merged.subtotal,
-            // Keep the snapshot and the money consistent — a merged line that no
-            // longer earns free units must not keep a stale count. Untouched when
-            // no contribution carried one, so non-BOGO merges write exactly as before.
-            ...(merged.freeUnits > 0 || merged.storedFreeUnits > 0
-              ? { promoFreeUnits: merged.freeUnits > 0 ? merged.freeUnits : null }
-              : {}),
-          },
-        });
-      }
-      for (const [productId, meta] of newItemMetaByProduct.entries()) {
-        const merged = this.mergeBoxedContributions(
-          loserContribsByProduct.get(productId) ?? [],
-          meta.unitPrice,
-          upbByProduct.get(productId),
-          {
-            promos: bogoPromos,
-            productId,
-            category: catByProduct.get(productId) ?? null,
-            // Non-stacking: the new line keeps meta's price discount only.
-            pricePromoApplied: meta.priceType === PriceType.PROMO && meta.originalPrice != null,
-          },
-        );
-        await tx.orderItem.create({
-          data: {
-            orderId: winner.id,
-            productId,
-            qty: merged.qty,
-            boxes: merged.boxes,
-            pieces: merged.pieces,
-            unitPrice: meta.unitPrice,
-            subtotal: merged.subtotal,
-            // Carry the loser line's BUY_N_GET_M discount onto the new winner
-            // line, re-derived for the merged quantity (was dropped entirely).
-            promoFreeUnits: merged.freeUnits > 0 ? merged.freeUnits : null,
-            status: ItemStatus.PENDING,
-            priceType: meta.priceType,
-            originalPrice: meta.originalPrice,
-            overrideReason: meta.overrideReason,
-            overriddenBy: meta.overriddenBy,
-            notes: meta.notes,
-            // Preserve the regulated-category snapshot through the merge (was
-            // dropped, so a merged regulated line invoiced as standard).
-            trackedCategoryId: meta.trackedCategoryId,
-          },
-        });
-      }
-      for (const data of unlistedNewItems) {
-        await tx.orderItem.create({
-          data: {
-            orderId: winner.id,
-            productId: null,
-            name: data.name,
-            qty: data.qty,
-            unitPrice: data.unitPrice,
-            // scan-ok: money-rederive — custom line (productId: null), never boxed, so there's no unitsPerBox proration to lose; per-piece price x qty (Decimal(10,3) — the order-edit path allows fractional qty), rounded on write.
-            subtotal: roundMoney(data.qty * data.unitPrice),
-            status: ItemStatus.PENDING,
-            priceType: data.priceType,
-            originalPrice: data.originalPrice,
-            overrideReason: data.overrideReason,
-            overriddenBy: data.overriddenBy,
-            notes: data.notes,
-          },
-        });
-      }
-      for (const loser of losers) {
-        // Remove a loser's pending mirror draft (and its items) before deleting
-        // the order so the Invoice→Order FK doesn't block. A SENT invoice on a
-        // loser is a real bill — leave it, so order.delete FK-fails rather than
-        // silently dropping a billed order (preserves prior safety).
-        const loserDraft = await this.invoicesService.findOpenOrderDraft(loser.id, tx);
-        if (loserDraft) {
-          await tx.invoiceItem.deleteMany({ where: { invoiceId: loserDraft.id } });
-          await tx.invoice.delete({ where: { id: loserDraft.id } });
-        }
-        await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
-        await tx.order.delete({ where: { id: loser.id } });
-      }
-      const activeItems = await tx.orderItem.findMany({
-        where: { orderId: winner.id, status: { not: ItemStatus.CANCELLED } },
-      });
-      const subtotal = roundMoney(
-        activeItems.reduce((s: number, li: any) => s + Number(li.subtotal), 0),
-      );
-      const tax = roundMoney(subtotal * taxRate);
-      // RF-4: re-derive + persist each line's category tax from the merged set,
-      // and fold Σ into the total (a merged-in regulated line keeps its levy).
-      const categoryTax = await this.recomputeLineCategoryTaxes(tx, activeItems);
-      const routeUpdate = routeAssignment
-        ? { routeRunId: routeAssignment.routeRunId, routeRunStopId: routeAssignment.routeRunStopId }
-        : {};
-      await tx.order.update({
-        where: { id: winner.id },
-        data: {
-          subtotal,
-          tax,
-          // Winner keeps ITS OWN stored fee; loser fees drop with the losers (the merged
-          // order is one delivery → one fee). Same asymmetry as discountAmount.
-          total: roundMoney(subtotal + tax + categoryTax + Number(winner.shippingFee ?? 0)),
-          // A merged-in regulated line flips the denormalized flag on.
-          hasRegulated: activeItems.some((li: any) => li.trackedCategoryId != null),
-          ...routeUpdate,
-        },
-      });
-      // If the winner carries a pending mirror draft, re-sync it to the merged lines.
-      await this.invoicesService.reconcileOrderDraftInvoice(winner.id, { basis: "order", tx });
-    });
+              unitPrice: number;
+              priceType: PriceType;
+              originalPrice: number | null;
+              overrideReason: string | null;
+              overriddenBy: string | null;
+              notes: string | null;
+              trackedCategoryId: string | null;
+            }
+          >();
+          // Unlisted (catalog-free) loser lines are appended as their own winner lines.
+          const unlistedNewItems: Array<{
+            name: string | null;
+            qty: number;
+            unitPrice: number;
+            priceType: PriceType;
+            originalPrice: number | null;
+            overrideReason: string | null;
+            overriddenBy: string | null;
+            notes: string | null;
+          }> = [];
 
-    this.logger.log(
-      `forceConsolidateCustomer: merged ${losers.length} order(s) into ${winner.id} for customer ${customerId}`,
-    );
-    return this.prisma.forTenant().order.findUnique({
-      where: { id: winner.id },
-      include: {
-        customer: { select: { id: true, businessName: true } },
-        lineItems: {
-          include: { product: { select: { id: true, name: true, unit: true } } },
+          for (const loser of losers) {
+            for (const li of loser.lineItems) {
+              if (!li.productId) {
+                unlistedNewItems.push({
+                  name: li.name,
+                  qty: Number(li.qty),
+                  unitPrice: Number(li.unitPrice),
+                  priceType: li.priceType,
+                  originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
+                  overrideReason: li.overrideReason,
+                  overriddenBy: li.overriddenBy,
+                  notes: li.notes,
+                });
+                continue;
+              }
+              const contribs = loserContribsByProduct.get(li.productId) ?? [];
+              contribs.push({
+                qty: li.qty,
+                boxes: li.boxes,
+                pieces: li.pieces,
+                promoFreeUnits: (li as any).promoFreeUnits ?? null,
+              });
+              loserContribsByProduct.set(li.productId, contribs);
+              if (!winnerProductIds.has(li.productId) && !newItemMetaByProduct.has(li.productId)) {
+                newItemMetaByProduct.set(li.productId, {
+                  unitPrice: Number(li.unitPrice),
+                  priceType: li.priceType,
+                  originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
+                  overrideReason: li.overrideReason,
+                  overriddenBy: li.overriddenBy,
+                  notes: li.notes,
+                  // Carry the loser line's sale-time regulated-category snapshot so the
+                  // new winner line keeps it (invoice split + ledger depend on it).
+                  trackedCategoryId: li.trackedCategoryId ?? null,
+                });
+              }
+            }
+          }
+
+          // unitsPerBox for every product involved so boxed lines prorate by the box.
+          const involvedProductIds = [
+            ...new Set(
+              [...winner.lineItems, ...losers.flatMap((l) => l.lineItems)]
+                .map((li) => li.productId)
+                .filter((id): id is string => !!id),
+            ),
+          ];
+          const upbByProduct = new Map<string, number>();
+          // Category feeds scope=CATEGORY matching when a merged line's BUY_N_GET_M
+          // free units are re-derived below.
+          const catByProduct = new Map<string, string | null>();
+          if (involvedProductIds.length > 0) {
+            const prods = await this.prisma.forTenant().product.findMany({
+              where: { id: { in: involvedProductIds } },
+              select: { id: true, unitsPerBox: true, category: true },
+            });
+            for (const p of prods) {
+              upbByProduct.set(p.id, Number(p.unitsPerBox ?? 0));
+              catByProduct.set(p.id, p.category ?? null);
+            }
+          }
+
+          const taxRate = await this.getTaxRate();
+          // BUY_N_GET_M: a merged line earns its own free units for the COMBINED
+          // quantity, so the live rule is re-run below. Loaded on a separate pooled
+          // connection before the tx (pool-starvation guard) and ONLY when a
+          // contributing line actually carries a free-unit snapshot — every non-BOGO
+          // merge issues no extra query and is byte-for-byte unchanged.
+          const bogoPromos = [...winner.lineItems, ...losers.flatMap((l) => l.lineItems)].some(
+            (li: any) => Number(li.promoFreeUnits ?? 0) > 0,
+          )
+            ? await this.loadActivePromotions(UserRole.CUSTOMER)
+            : [];
+
+          await this.prisma.tenantTransaction(async (tx) => {
+            for (const li of winner.lineItems) {
+              if (!li.productId) continue;
+              const loserContribs = loserContribsByProduct.get(li.productId);
+              if (!loserContribs || loserContribs.length === 0) continue;
+              const merged = this.mergeBoxedContributions(
+                [
+                  {
+                    qty: li.qty,
+                    boxes: li.boxes,
+                    pieces: li.pieces,
+                    promoFreeUnits: (li as any).promoFreeUnits ?? null,
+                  },
+                  ...loserContribs,
+                ],
+                Number(li.unitPrice),
+                upbByProduct.get(li.productId),
+                {
+                  promos: bogoPromos,
+                  productId: li.productId,
+                  category: catByProduct.get(li.productId) ?? null,
+                  // Non-stacking: a price-discounted winner line keeps its discount
+                  // for the merged qty but never adds free units on top.
+                  pricePromoApplied: li.priceType === PriceType.PROMO && li.originalPrice != null,
+                },
+              );
+              await tx.orderItem.update({
+                where: { id: li.id },
+                data: {
+                  qty: merged.qty,
+                  boxes: merged.boxes,
+                  pieces: merged.pieces,
+                  subtotal: merged.subtotal,
+                  // Keep the snapshot and the money consistent — a merged line that no
+                  // longer earns free units must not keep a stale count. Untouched when
+                  // no contribution carried one, so non-BOGO merges write exactly as before.
+                  ...(merged.freeUnits > 0 || merged.storedFreeUnits > 0
+                    ? { promoFreeUnits: merged.freeUnits > 0 ? merged.freeUnits : null }
+                    : {}),
+                },
+              });
+            }
+            for (const [productId, meta] of newItemMetaByProduct.entries()) {
+              const merged = this.mergeBoxedContributions(
+                loserContribsByProduct.get(productId) ?? [],
+                meta.unitPrice,
+                upbByProduct.get(productId),
+                {
+                  promos: bogoPromos,
+                  productId,
+                  category: catByProduct.get(productId) ?? null,
+                  // Non-stacking: the new line keeps meta's price discount only.
+                  pricePromoApplied:
+                    meta.priceType === PriceType.PROMO && meta.originalPrice != null,
+                },
+              );
+              await tx.orderItem.create({
+                data: {
+                  orderId: winner.id,
+                  productId,
+                  qty: merged.qty,
+                  boxes: merged.boxes,
+                  pieces: merged.pieces,
+                  unitPrice: meta.unitPrice,
+                  subtotal: merged.subtotal,
+                  // Carry the loser line's BUY_N_GET_M discount onto the new winner
+                  // line, re-derived for the merged quantity (was dropped entirely).
+                  promoFreeUnits: merged.freeUnits > 0 ? merged.freeUnits : null,
+                  status: ItemStatus.PENDING,
+                  priceType: meta.priceType,
+                  originalPrice: meta.originalPrice,
+                  overrideReason: meta.overrideReason,
+                  overriddenBy: meta.overriddenBy,
+                  notes: meta.notes,
+                  // Preserve the regulated-category snapshot through the merge (was
+                  // dropped, so a merged regulated line invoiced as standard).
+                  trackedCategoryId: meta.trackedCategoryId,
+                },
+              });
+            }
+            for (const data of unlistedNewItems) {
+              await tx.orderItem.create({
+                data: {
+                  orderId: winner.id,
+                  productId: null,
+                  name: data.name,
+                  qty: data.qty,
+                  unitPrice: data.unitPrice,
+                  // scan-ok: money-rederive — custom line (productId: null), never boxed, so there's no unitsPerBox proration to lose; per-piece price x qty (Decimal(10,3) — the order-edit path allows fractional qty), rounded on write.
+                  subtotal: roundMoney(data.qty * data.unitPrice),
+                  status: ItemStatus.PENDING,
+                  priceType: data.priceType,
+                  originalPrice: data.originalPrice,
+                  overrideReason: data.overrideReason,
+                  overriddenBy: data.overriddenBy,
+                  notes: data.notes,
+                },
+              });
+            }
+            for (const loser of losers) {
+              // Remove a loser's pending mirror draft (and its items) before deleting
+              // the order so the Invoice→Order FK doesn't block. A SENT invoice on a
+              // loser is a real bill — leave it, so order.delete FK-fails rather than
+              // silently dropping a billed order (preserves prior safety).
+              const loserDraft = await this.invoicesService.findOpenOrderDraft(loser.id, tx);
+              if (loserDraft) {
+                await tx.invoiceItem.deleteMany({ where: { invoiceId: loserDraft.id } });
+                await tx.invoice.delete({ where: { id: loserDraft.id } });
+              }
+              await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
+              await tx.order.delete({ where: { id: loser.id } });
+            }
+            const activeItems = await tx.orderItem.findMany({
+              where: { orderId: winner.id, status: { not: ItemStatus.CANCELLED } },
+            });
+            const subtotal = roundMoney(
+              activeItems.reduce((s: number, li: any) => s + Number(li.subtotal), 0),
+            );
+            const tax = roundMoney(subtotal * taxRate);
+            // RF-4: re-derive + persist each line's category tax from the merged set,
+            // and fold Σ into the total (a merged-in regulated line keeps its levy).
+            const categoryTax = await this.recomputeLineCategoryTaxes(tx, activeItems);
+            const routeUpdate = routeAssignment
+              ? {
+                  routeRunId: routeAssignment.routeRunId,
+                  routeRunStopId: routeAssignment.routeRunStopId,
+                }
+              : {};
+            await tx.order.update({
+              where: { id: winner.id },
+              data: {
+                subtotal,
+                tax,
+                // Winner keeps ITS OWN stored fee; loser fees drop with the losers (the merged
+                // order is one delivery → one fee). Same asymmetry as discountAmount.
+                total: roundMoney(subtotal + tax + categoryTax + Number(winner.shippingFee ?? 0)),
+                // A merged-in regulated line flips the denormalized flag on.
+                hasRegulated: activeItems.some((li: any) => li.trackedCategoryId != null),
+                ...routeUpdate,
+              },
+            });
+            // If the winner carries a pending mirror draft, re-sync it to the merged lines.
+            await this.invoicesService.reconcileOrderDraftInvoice(winner.id, {
+              basis: "order",
+              tx,
+            });
+          });
+
+          this.logger.log(
+            `forceConsolidateCustomer: merged ${losers.length} order(s) into ${winner.id} for customer ${customerId}`,
+          );
+          return this.prisma.forTenant().order.findUnique({
+            where: { id: winner.id },
+            include: {
+              customer: { select: { id: true, businessName: true } },
+              lineItems: {
+                include: { product: { select: { id: true, name: true, unit: true } } },
+              },
+            },
+          });
         },
-      },
-    });
+      );
+      // Defensive: see mergeAllPendingForCustomer — same coded 503 body.
+      if (!result.acquired) {
+        throw new ServiceUnavailableException({
+          code: LOCK_UNAVAILABLE,
+          message: LOCK_UNAVAILABLE_MESSAGE,
+        });
+      }
+      return result.value;
+    } catch (e) {
+      mapLockError(e);
+    }
   }
 
   async sweepAllPendingOrders(): Promise<{ customers: number; merged: number }> {
@@ -1428,8 +1505,23 @@ export class OrdersService implements OnApplicationBootstrap {
 
     let merged = 0;
     for (const g of groups) {
-      const winner = await this.mergeAllPendingForCustomer(g.customerId);
-      if (winner) merged++;
+      try {
+        const winner = await this.mergeAllPendingForCustomer(g.customerId);
+        if (winner) merged++;
+      } catch (e) {
+        // Skip by CAUSE, not by exception type: only the two coded lock-contention errors mean
+        // "someone else holds this customer's lock, try again next hour". A 409/503 raised for
+        // any OTHER reason inside the merge (a credit-limit conflict, a genuinely dead
+        // dependency) is a real fault and must still stop the sweep — swallowing it by type
+        // would hide a broken merge behind an hourly "skipped" line forever.
+        if (isMergeContention(e)) {
+          this.logger.warn(
+            `sweepAllPendingOrders: skipped customer ${g.customerId} — ${(e as Error)?.message ?? e}`,
+          );
+          continue;
+        }
+        throw e;
+      }
     }
     this.logger.log(
       `sweepAllPendingOrders: swept ${groups.length} customer(s), merged into ${merged} winner(s)`,
@@ -1559,7 +1651,9 @@ export class OrdersService implements OnApplicationBootstrap {
       // First key wins (R1): an order can absorb several queued requests (auto-
       // merge waves); the EARLIEST key is the one a stuck client will retry
       // with, so never let a later wave clobber it — the later request's own
-      // replay is answered by content comparison against the same order anyway.
+      // replay is answered by content comparison against the same order anyway,
+      // for `create()`; the merge path's replay is a bare key lookup, so a key
+      // that was already set leaves that fold unguarded (campaign candidate).
       await this.prisma.forTenant().order.updateMany({
         where: { id: orderId, idempotencyKey: null },
         data: { idempotencyKey },
