@@ -87,8 +87,10 @@ test.describe("Calendar-date correctness (F25 / B59, B91)", () => {
       },
     });
     expect(driverRes.ok(), `POST /drivers returned ${driverRes.status()}`).toBe(true);
-    const driver: { id: string } = await driverRes.json();
-    expect(driver?.id, "POST /drivers response carried no id").toBeTruthy();
+    // DriversService.create() returns { driver, tempPassword } (mirrored by the web
+    // client's useCreateDriver in apps/web/lib/api/drivers.ts) — the id is nested.
+    const { driver }: { driver: { id: string } } = await driverRes.json();
+    expect(driver?.id, "POST /drivers returned no driver id").toBeTruthy();
 
     const routeRes = await request.post(`${api}/api/v1/routes`, {
       headers,
