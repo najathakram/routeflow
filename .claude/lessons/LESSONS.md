@@ -127,6 +127,17 @@
 
 ## tooling
 
+### L-074 · 2026-09-05 · tooling
+
+- **Symptom:** a prod-capable seed run through `railway run --service postgres` wrote to the LOCAL
+  dev database.
+- **Root cause:** the script defaulted `DATABASE_URL` to a localhost URL and the postgres service
+  exposes only discrete POSTGRES_*/TCP-proxy vars.
+- **Lesson:** **a script that can target production never has a silent local default: resolve the
+  target from the variables the runner actually injects, print the resolved host before
+  connecting, and treat "nothing set" as a loud fallback.**
+- **Guard:** `resolveDatabaseUrl` + its spec; the seed logs its target host.
+
 ### L-065 · 2026-09-03 · tooling · PR-4 `imp-01`
 
 - **Symptom:** the review counted "four copies", the first plan promised a source-direct package
@@ -541,21 +552,6 @@ build` forces production — so that branch was dead in every Docker image, not 
   reachable (a SKIPPED stop on a COMPLETED run), ship the refusal for it in the same PR ([[L-030]]).
 - **Guard:** `REG-B129 (T5 path: cancel → un-cancel → re-dispatch)`, `REG-B211 (T12 path:
 complete-with-skipped → reopen refused)`; mutation probes in the F11 PR body.
-
-### L-030 · 2026-09-01 · domain · #588
-
-- **Symptom:** the fix for the above introduced a NEW conservation bug. A DRAFT cancel correctly
-  credited no stock (a draft never decremented) but still marked its line items CANCELLED, and
-  `reopenOrder` re-decremented every marked line — so a draft's cancel→reopen round trip
-  understated stock by the full order quantity.
-- **Root cause:** the marker recording "this cancel gave stock back" was written unconditionally
-  while the give-back itself was conditional. Two halves of one decision, written as two
-  independent statements that happened to agree in the common case.
-- **Lesson:** **When one write is the RECORD of another write having happened, bind both to a
-  single named condition — not to two conditions that agree today.** A reader (and a reviewer) can
-  check one boolean; they cannot check that two predicates are equivalent in every state.
-- **Guard:** `REG-B64 (T7)` asserts a DRAFT cancel neither credits stock nor marks its lines;
-  mutation probe 3 (make the mark unconditional) turns it red.
 
 ## security
 
