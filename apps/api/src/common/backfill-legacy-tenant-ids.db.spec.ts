@@ -9,6 +9,10 @@
  * `--live` actually writes the derived tenant, that a second `--live` is a no-op, and that a
  * mismatched confirmation writes nothing. Those only exist against a database.
  *
+ * D7 covers the shape production actually has (2026-09-05): the stop's parent `RouteRun` is
+ * ITSELF NULL-tenant, so the run is repaired from its `Route` first and its stops follow in the
+ * same transaction — with the `--dry-run` listing proving the parent statement really comes first.
+ *
  * Collected only by `jest.db.config.js` (`.db.spec.ts$`) — run it through
  * `npm run local:test:db`, which points DATABASE_URL at the compose Postgres and sets
  * RUN_DB_SPECS. `requireLocalDatabaseUrl()` refuses any non-local host.
@@ -46,6 +50,12 @@ const STOP_A = `${ID_PREFIX}stop-a`;
 const STOP_B = `${ID_PREFIX}stop-b`;
 const RUN_STOP_A = `${ID_PREFIX}runstop-a`;
 const RUN_STOP_B = `${ID_PREFIX}runstop-b`;
+// D7's own graph: a SECOND run that is itself NULL-tenant, hanging off the same tenanted Route.
+const RUN_2_ID = `${ID_PREFIX}run-2`;
+const STOP_C = `${ID_PREFIX}stop-c`;
+const STOP_D = `${ID_PREFIX}stop-d`;
+const RUN_STOP_C = `${ID_PREFIX}runstop-c`;
+const RUN_STOP_D = `${ID_PREFIX}runstop-d`;
 
 const ATTESTATION = "spec";
 
@@ -94,12 +104,31 @@ describeDb("backfill-legacy-tenant-ids.mjs — real Postgres (report / dry-run /
     return rows[0].tenantId;
   }
 
-  async function seedNullRunStop(id: string, routeStopId: string, stopNumber: number) {
+  async function runTenantIdOf(runId: string): Promise<string | null> {
+    const { rows } = await db.query('SELECT "tenantId" FROM "RouteRun" WHERE "id" = $1', [runId]);
+    expect(rows).toHaveLength(1);
+    return rows[0].tenantId;
+  }
+
+  async function seedNullRunStop(
+    id: string,
+    routeStopId: string,
+    stopNumber: number,
+    routeRunId: string = RUN_ID,
+  ) {
     await db.query(
       `INSERT INTO "RouteRunStop"
          ("id","routeRunId","routeStopId","stopNumber","podPhotoUrls","createdAt","updatedAt","tenantId")
        VALUES ($1,$2,$3,$4,'{}'::text[], now(), now(), NULL)`,
-      [id, RUN_ID, routeStopId, stopNumber],
+      [id, routeRunId, routeStopId, stopNumber],
+    );
+  }
+
+  async function seedTenantedRouteStop(id: string, stopNumber: number) {
+    await db.query(
+      `INSERT INTO "RouteStop" ("id","routeId","stopNumber","createdAt","updatedAt","tenantId")
+       VALUES ($1,$2,$3, now(), now(), $4)`,
+      [id, ROUTE_ID, stopNumber, TENANT_ID],
     );
   }
 
@@ -119,16 +148,8 @@ describeDb("backfill-legacy-tenant-ids.mjs — real Postgres (report / dry-run /
        VALUES ($1,$2, now(), now(), $3)`,
       [ROUTE_ID, `Backfill spec route ${RUN_SUFFIX}`, TENANT_ID],
     );
-    for (const [id, stopNumber] of [
-      [STOP_A, 1],
-      [STOP_B, 2],
-    ] as const) {
-      await db.query(
-        `INSERT INTO "RouteStop" ("id","routeId","stopNumber","createdAt","updatedAt","tenantId")
-         VALUES ($1,$2,$3, now(), now(), $4)`,
-        [id, ROUTE_ID, stopNumber, TENANT_ID],
-      );
-    }
+    await seedTenantedRouteStop(STOP_A, 1);
+    await seedTenantedRouteStop(STOP_B, 2);
     await db.query(
       `INSERT INTO "RouteRun" ("id","routeId","scheduledDate","createdAt","updatedAt","tenantId")
        VALUES ($1,$2, now(), now(), now(), $3)`,
@@ -223,5 +244,67 @@ describeDb("backfill-legacy-tenant-ids.mjs — real Postgres (report / dry-run /
     expect(res.status).toBe(3);
     expect(res.stderr).toContain("interactive TTY");
     expect(await tenantIdOf(RUN_STOP_B)).toBeNull();
+  });
+
+  it("D7 --live: a NULL-tenant RouteRun is repaired from its Route first, then its own stops", async () => {
+    // D5/D6 deliberately left RUN_STOP_B NULL to prove the refusal paths. Repair it by hand so
+    // the ok set below is exactly D7's own three rows and the confirmation count is pinnable.
+    await db.query('UPDATE "RouteRunStop" SET "tenantId" = $1 WHERE "id" = $2', [
+      TENANT_ID,
+      RUN_STOP_B,
+    ]);
+
+    // The production shape (2026-09-05): the Route carries the tenant and the RouteStops agree,
+    // but the RUN was never backfilled — so before the cascade every stop under it was
+    // `refuse: parent missing` on account of its own parent, and could never be repaired.
+    await seedTenantedRouteStop(STOP_C, 3);
+    await seedTenantedRouteStop(STOP_D, 4);
+    await db.query(
+      `INSERT INTO "RouteRun" ("id","routeId","scheduledDate","createdAt","updatedAt","tenantId")
+       VALUES ($1,$2, now(), now(), now(), NULL)`,
+      [RUN_2_ID, ROUTE_ID],
+    );
+    await seedNullRunStop(RUN_STOP_C, STOP_C, 1, RUN_2_ID);
+    await seedNullRunStop(RUN_STOP_D, STOP_D, 2, RUN_2_ID);
+
+    expectOnlyOurOkRows([RUN_2_ID, RUN_STOP_C, RUN_STOP_D]);
+
+    const report = runCli([]);
+    expect(report.status).toBe(0);
+    expect(report.stdout).toContain(`RouteRun  id=${RUN_2_ID}`);
+    expect(report.stdout).toContain("stopCount=2");
+    expect(report.stdout).toContain(`RouteRunStop  id=${RUN_STOP_C}`);
+    // the stops are ok only BECAUSE this same batch repairs their run — and say so
+    expect(report.stdout).toContain("(via run repaired in this batch)");
+    // padEnd(16) sets the column width, so match the summary loosely rather than on spaces
+    expect(report.stdout).toMatch(/RouteRun\s+ok=1 refused=0/);
+    expect(report.stdout).toMatch(/RouteRunStop\s+ok=2 refused=0/);
+    expect(await runTenantIdOf(RUN_2_ID)).toBeNull();
+
+    // Parent before child, proven on the real listing rather than only in the unit spec.
+    const dry = runCli(["--dry-run"]);
+    expect(dry.status).toBe(0);
+    expect(dry.stdout).toContain("the 3 statement(s) --live would execute");
+    expect(dry.stdout).toContain(`[1] UPDATE "RouteRun" SET "tenantId"`);
+    expect(dry.stdout).toContain(`[2] UPDATE "RouteRunStop" SET "tenantId"`);
+    expect(await runTenantIdOf(RUN_2_ID)).toBeNull();
+
+    const res = runCli(["--live", "--backup-attested", ATTESTATION], {
+      BACKFILL_CONFIRM_TOKEN: "BACKFILL 3 ROWS",
+    });
+
+    expect(res.status).toBe(0);
+    expect(res.stdout).toContain("=== APPLIED ===");
+    expect(await runTenantIdOf(RUN_2_ID)).toBe(TENANT_ID);
+    expect(await tenantIdOf(RUN_STOP_C)).toBe(TENANT_ID);
+    expect(await tenantIdOf(RUN_STOP_D)).toBe(TENANT_ID);
+
+    // re-runnable: the whole cascade is now a no-op
+    expectOnlyOurOkRows([]);
+    const again = runCli(["--live", "--backup-attested", ATTESTATION], {
+      BACKFILL_CONFIRM_TOKEN: "BACKFILL 0 ROWS",
+    });
+    expect(again.status).toBe(0);
+    expect(again.stdout).toContain("nothing to do");
   });
 });

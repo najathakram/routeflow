@@ -13,6 +13,16 @@
  * The tenancy guard stays fail-closed; the rows are the defect, so they get repaired as DATA.
  * Counts on production, 2026-09-05: RouteRunStop 5, PaymentCounter 1, CreditNote 1.
  *
+ * ONE CASCADE LEVEL. The read-only report of 2026-09-05 refused all five stops for a single
+ * reason: their parent `RouteRun` rows are THEMSELVES NULL-tenant — two runs, one carrying 1 stop
+ * and one carrying 4 — even though every stop's `RouteStop` and the run's `Route` name the same
+ * tenant. So a NULL-tenant `RouteRun` is now repaired FIRST, from its `Route`, and only when every
+ * `RouteStop` reached through that run agrees with it; its stops are then classified against that
+ * not-yet-written tenant (reported as `(via run repaired in this batch)`). Nothing else is
+ * relaxed — a stop still needs its own `RouteStop` and `Route` to equal that tenant, and a stop
+ * whose run was refused stays refused. In `--live` the `RouteRun` updates execute before the stop
+ * updates inside the SAME single transaction, so the batch is still all-or-nothing.
+ *
  * MODES
  *   (default)     report — read-only. Lists every NULL-tenant row with its parents, the tenant
  *                 this tool would derive, and a verdict. Exit 0.
@@ -67,6 +77,7 @@ import {
   buildUpdates,
   classifyCreditNote,
   classifyPaymentCounter,
+  classifyRouteRun,
   classifyRouteRunStop,
   VERDICT_OK,
 } from "./lib/legacy-tenant-backfill.mjs";
@@ -83,7 +94,9 @@ Modes:
   --json      print the report as JSON instead of prose
   --help      print this help and exit 0
 
-Tables: RouteRunStop, PaymentCounter, CreditNote.
+Tables, in write order: RouteRun, RouteRunStop, PaymentCounter, CreditNote. A NULL-tenant RouteRun
+is repaired from its Route first, and its NULL-tenant stops are then derived from that tenant —
+one cascade level, in the same transaction, parents before children.
 
 Verdicts:
   ok                            tenant derived unambiguously from the parent row(s)
@@ -165,12 +178,58 @@ const target = (() => {
   }
 })();
 
-// ─── the three listings (identifiers verbatim; this schema has no @@map) ──────────────────────
+// ─── the four listings, in cascade order (identifiers verbatim; this schema has no @@map) ─────
 
 const TABLES = [
   {
+    // FIRST, and that ordering is load-bearing: a NULL-tenant RouteRun classified here feeds
+    // `ctx.repairedRunTenants`, which the RouteRunStop listing below reads as the tenant its own
+    // NULL-tenant stops are judged against. (The TRANSACTION order is decided independently by
+    // `buildUpdates`, from BACKFILL_TABLES — this ordering is about the report and the map.)
+    table: "RouteRun",
+    classify: classifyRouteRun,
+    onOk: (row, tenantId, ctx) => ctx.repairedRunTenants.set(row.id, tenantId),
+    // `stopTenantIds` is the DISTINCT set of non-NULL RouteStop tenants reached through this
+    // run's stops: a check on the Route-derived tenant, never a source for it. `array_agg` over
+    // zero rows yields NULL rather than an empty array, which classifyRouteRun normalises.
+    // `stopCount` is printed so the owner can see how much a single run repair unblocks.
+    sql: `SELECT rr."id", rr."createdAt", rr."routeId",
+                 r."id" AS "routeRowId", r."tenantId" AS "routeTenantId",
+                 (SELECT count(*)::int FROM "RouteRunStop" s
+                   WHERE s."routeRunId" = rr."id") AS "stopCount",
+                 (SELECT array_agg(DISTINCT rs."tenantId")
+                    FROM "RouteRunStop" s
+                    JOIN "RouteStop" rs ON rs."id" = s."routeStopId"
+                   WHERE s."routeRunId" = rr."id"
+                     AND rs."tenantId" IS NOT NULL) AS "stopTenantIds"
+            FROM "RouteRun" rr
+            LEFT JOIN "Route" r ON r."id" = rr."routeId"
+           WHERE rr."tenantId" IS NULL
+           ORDER BY rr."createdAt"`,
+    describe: (row) => ({
+      routeId: row.routeId,
+      routeRowId: row.routeRowId,
+      routeTenantId: row.routeTenantId,
+      stopCount: row.stopCount,
+      stopTenantIds: row.stopTenantIds ?? [],
+    }),
+  },
+  {
     table: "RouteRunStop",
-    classify: classifyRouteRunStop,
+    classify: (row, ctx) =>
+      classifyRouteRunStop({
+        ...row,
+        // Supplied ONLY for a stop whose run is itself NULL-tenant, and only from runs whose own
+        // verdict was `ok` — `onOk` above is the only writer of this map. A stop under a REFUSED
+        // run therefore sees nothing here and stays `refuse: parent missing`.
+        effectiveRunTenantId: row.runTenantId
+          ? null
+          : (ctx.repairedRunTenants.get(row.routeRunId) ?? null),
+      }),
+    noteFor: (row, verdict, ctx) =>
+      !row.runTenantId && verdict === VERDICT_OK && ctx.repairedRunTenants.has(row.routeRunId)
+        ? "(via run repaired in this batch)"
+        : null,
     // `stopNumber` is selected for the owner's own eyeballing of the raw result if they ever run
     // this SQL by hand; it is deliberately NOT printed (numeric business data stays out of logs).
     sql: `SELECT s."id", s."createdAt", s."stopNumber", s."status", s."routeRunId",
@@ -245,7 +304,10 @@ function reportLine(report) {
     .join(" ");
   return (
     `${report.table}  id=${show(report.id)}  createdAt=${show(report.createdAt)}  ` +
-    `${parents}  -> tenantId=${show(report.tenantId)}  [${report.verdict}] ${report.reason}`
+    `${parents}  -> tenantId=${show(report.tenantId)}  [${report.verdict}] ${report.reason}` +
+    // e.g. "(via run repaired in this batch)" — the stop's own RouteRun is NULL-tenant and the
+    // tenant above is the one this same batch will write to it.
+    (report.note ? ` ${report.note}` : "")
   );
 }
 
@@ -307,11 +369,17 @@ async function main() {
 
   const reports = [];
   const perTable = [];
+  // Threaded through the listings in TABLES order. RouteRun is listed and classified first, so by
+  // the time the RouteRunStop listing runs this map already holds the tenant every `ok` run will
+  // be given — which is what lets a stop under a NULL-tenant run be derived in the same batch.
+  const ctx = { repairedRunTenants: new Map() };
   for (const spec of TABLES) {
     const { rows } = await client.query(spec.sql);
     let ok = 0;
     for (const row of rows) {
-      const { verdict, tenantId, reason } = spec.classify(row);
+      const { verdict, tenantId, reason } = spec.classify(row, ctx);
+      if (verdict === VERDICT_OK) spec.onOk?.(row, tenantId, ctx);
+      const note = spec.noteFor?.(row, verdict, ctx) ?? null;
       const report = {
         table: spec.table,
         id: row.id,
@@ -320,6 +388,7 @@ async function main() {
         verdict,
         tenantId,
         reason,
+        ...(note ? { note } : {}),
         ...(spec.table === "CreditNote" ? { creditNoteNumber: row.creditNoteNumber } : {}),
       };
       if (verdict === VERDICT_OK) ok++;
@@ -403,6 +472,9 @@ async function main() {
       await client.query("SET default_transaction_read_only = off");
       await client.query("BEGIN");
       try {
+        // `buildUpdates` already ordered these by BACKFILL_TABLES, so every RouteRun repair
+        // precedes the stop repairs that depend on it — inside this ONE transaction, so a stop
+        // that changed under us rolls the parent run back with it.
         for (const update of updates) {
           const res = await client.query(update.sql, update.params);
           if (res.rows.length !== 1) {

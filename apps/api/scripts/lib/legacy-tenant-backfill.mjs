@@ -14,11 +14,24 @@
  *
  * The refusals are deliberately conservative: this repairs invisible rows in a production
  * database, so "I am not sure" must always mean "do nothing", never "pick one".
+ *
+ * ONE CASCADE LEVEL, AND ONLY ONE. A NULL-tenant `RouteRunStop` in practice hangs off a
+ * NULL-tenant `RouteRun` — that is exactly what production showed on 2026-09-05: all five stops,
+ * across two runs, were refused because their runs were themselves NULL-tenant. Classifying a
+ * stop against its run's OWN `tenantId` therefore refuses every real row. `classifyRouteRun`
+ * closes that by deriving the run's tenant from its `Route`, and `classifyRouteRunStop` accepts
+ * that not-yet-written value as `effectiveRunTenantId`. The cascade stops there: a run is
+ * repaired only from a `Route` that names a tenant AND agrees with every `RouteStop` its stops
+ * instantiate, and the stop rule is otherwise untouched — `RouteStop` and `Route` must still
+ * equal the run tenant, whether that tenant is stored or about to be.
  */
 
-/** The only tables this tool may ever write. `buildUpdates` interpolates the table name into
- *  SQL, so it must come from THIS list — never from a row, a report field or argv. */
-export const BACKFILL_TABLES = ["RouteRunStop", "PaymentCounter", "CreditNote"];
+/** The only tables this tool may ever write, in the order `buildUpdates` emits them. The order is
+ *  load-bearing, not cosmetic: `RouteRun` precedes `RouteRunStop` so a run repaired in this batch
+ *  already carries its tenant by the time its stops are written. `buildUpdates` also interpolates
+ *  the table name into SQL, so it must come from THIS list — never from a row, a report field or
+ *  argv. */
+export const BACKFILL_TABLES = ["RouteRun", "RouteRunStop", "PaymentCounter", "CreditNote"];
 
 export const VERDICT_OK = "ok";
 export const VERDICT_PARENT_MISSING = "refuse: parent missing";
@@ -43,6 +56,49 @@ const accept = (tenantId, reason) => ({ verdict: VERDICT_OK, tenantId, reason })
 const refuse = (verdict, reason) => ({ verdict, tenantId: null, reason });
 
 /**
+ * RouteRun — the cascade level above RouteRunStop, and the one production actually needs: every
+ * NULL-tenant stop found on 2026-09-05 belonged to a run that was itself NULL-tenant, so the
+ * stops could never be classified until their runs could be.
+ *
+ * A run's only required parent is its `Route`, so that is where its tenant comes from. The stops
+ * are not a source but a CHECK: `stopTenantIds` is the distinct set of non-NULL
+ * `RouteStop.tenantId` values reached through this run's `RouteRunStop`s, and every one of them
+ * must equal the Route's tenant. An empty set (no stops, or none whose RouteStop carries a
+ * tenant) is fine — there is simply nothing to contradict the Route. Anything else is a graph
+ * that spans two tenants, which a human decides, not this script.
+ *
+ * @param {{ routeRowId?: string|null, routeTenantId?: string|null,
+ *           stopTenantIds?: (string|null)[]|null, stopCount?: number }} row
+ */
+export function classifyRouteRun(row) {
+  const { routeRowId, routeTenantId, stopTenantIds } = row ?? {};
+  if (!routeRowId) {
+    return refuse(VERDICT_PARENT_MISSING, "routeId points at a Route row that does not exist");
+  }
+  if (!routeTenantId) {
+    return refuse(
+      VERDICT_PARENT_MISSING,
+      "the parent Route has a NULL tenantId — it is itself an unrepaired legacy row",
+    );
+  }
+  // `array_agg` over zero rows is NULL, not an empty array — normalise before comparing.
+  const stopTenants = Array.isArray(stopTenantIds) ? stopTenantIds.filter(Boolean) : [];
+  const disagreeing = stopTenants.filter((tenantId) => tenantId !== routeTenantId);
+  if (disagreeing.length > 0) {
+    return refuse(
+      VERDICT_PARENTS_DISAGREE,
+      `${disagreeing.length} RouteStop tenant(s) under this run differ from Route.tenantId`,
+    );
+  }
+  return accept(
+    routeTenantId,
+    stopTenants.length > 0
+      ? "Route names the tenant and every RouteStop under this run agrees"
+      : "Route names the tenant; no RouteStop under this run carries one to contradict it",
+  );
+}
+
+/**
  * RouteRunStop — the row shape that actually hurts today: a NULL-tenant stop still renders on
  * the run card through a nested include, but every tenant-scoped write (complete / skip)
  * cannot see it, so the run auto-completes with the stop stuck PENDING.
@@ -51,10 +107,22 @@ const refuse = (verdict, reason) => ({ verdict, tenantId: null, reason });
  * the RouteStop it instantiates, and the Route that owns both. Two of three agreeing is not
  * enough — a disagreement means the graph itself is inconsistent and a human must look.
  *
- * @param {{ runTenantId?: string|null, routeStopTenantId?: string|null, routeTenantId?: string|null }} row
+ * `effectiveRunTenantId` is the one concession to reality: when the run's own `tenantId` is NULL
+ * the caller may pass the tenant THIS BATCH will write to that run — and only when the run's own
+ * verdict is `ok`, which is the CLI's job to enforce (it feeds the value from the RouteRun
+ * listing, which is classified and printed first). Nothing else changes: the value stands in for
+ * the run's tenant in the very same three-way comparison, so a stop whose RouteStop or Route
+ * disagrees with it is refused exactly as before, and a stop whose run was refused sees no
+ * effective tenant at all and stays `refuse: parent missing`.
+ *
+ * @param {{ runTenantId?: string|null, routeStopTenantId?: string|null, routeTenantId?: string|null,
+ *           effectiveRunTenantId?: string|null }} row
  */
 export function classifyRouteRunStop(row) {
-  const { runTenantId, routeStopTenantId, routeTenantId } = row ?? {};
+  const { routeStopTenantId, routeTenantId, effectiveRunTenantId } = row ?? {};
+  const ownRunTenantId = row?.runTenantId ?? null;
+  const runTenantId = ownRunTenantId ?? effectiveRunTenantId ?? null;
+  const viaRun = !ownRunTenantId && Boolean(runTenantId);
   const missing = [];
   if (!runTenantId) missing.push("RouteRun");
   if (!routeStopTenantId) missing.push("RouteStop");
@@ -72,7 +140,12 @@ export function classifyRouteRunStop(row) {
       `RouteRun/RouteStop/Route name ${distinct.size} different tenants`,
     );
   }
-  return accept(runTenantId, "RouteRun, RouteStop and Route all name the same tenant");
+  return accept(
+    runTenantId,
+    viaRun
+      ? "RouteStop and Route agree with the tenant this batch will set on the RouteRun"
+      : "RouteRun, RouteStop and Route all name the same tenant",
+  );
 }
 
 /**
@@ -155,19 +228,25 @@ export function classifyCreditNote(row) {
  * refusal. There is deliberately no blanket `WHERE "tenantId" IS NULL` form: every statement
  * pins one id that appeared in the report the owner just read.
  *
+ * ORDER IS `BACKFILL_TABLES`, not the order the reports arrived in, so a caller can never make
+ * the batch write a child before its parent by listing the rows the other way round: every
+ * `RouteRun` update is emitted before every `RouteRunStop` update. Within one table the report
+ * order is preserved.
+ *
  * Throws rather than returning a half-safe list when a report is malformed (unknown table, no
  * proposed tenant) or when two `ok` CreditNote rows would claim the same
  * `(tenantId, creditNoteNumber)` — the per-row `pairCollision` flag cannot see that case,
- * because both siblings still have a NULL tenantId and so match neither's EXISTS subquery.
+ * because both siblings still have a NULL tenantId and so match neither's EXISTS subquery. The
+ * validation pass runs over EVERY ok report first, so a malformed one still throws even though
+ * the emit pass walks the whitelist rather than the reports.
  *
  * @param {Array<{ table: string, id: string, verdict: string, tenantId: string|null, creditNoteNumber?: string }>} reports
  * @returns {Array<{ table: string, id: string, tenantId: string, sql: string, params: [string, string] }>}
  */
 export function buildUpdates(reports) {
-  const updates = [];
+  const okReports = (reports ?? []).filter((report) => report && report.verdict === VERDICT_OK);
   const creditNotePairs = new Set();
-  for (const report of reports ?? []) {
-    if (!report || report.verdict !== VERDICT_OK) continue;
+  for (const report of okReports) {
     if (!BACKFILL_TABLES.includes(report.table)) {
       throw new Error(`legacy-tenant-backfill: unknown table "${report.table}" in report`);
     }
@@ -186,13 +265,19 @@ export function buildUpdates(reports) {
       }
       creditNotePairs.add(pair);
     }
-    updates.push({
-      table: report.table,
-      id: report.id,
-      tenantId: report.tenantId,
-      sql: updateSql(report.table),
-      params: [report.tenantId, report.id],
-    });
+  }
+  const updates = [];
+  for (const table of BACKFILL_TABLES) {
+    for (const report of okReports) {
+      if (report.table !== table) continue;
+      updates.push({
+        table,
+        id: report.id,
+        tenantId: report.tenantId,
+        sql: updateSql(table),
+        params: [report.tenantId, report.id],
+      });
+    }
   }
   return updates;
 }

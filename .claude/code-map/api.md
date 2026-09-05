@@ -124,8 +124,8 @@ default_transaction_read_only = on` is set at connect in EVERY mode and lifted o
   confirmation. Exit **0** ok · **1** error · **2** argument refusal _before connecting_ · **3**
   confirmation refused (non-TTY or mismatched text) · **4** rolled back (a guarded UPDATE returned
   no row). Pure decision layer `lib/legacy-tenant-backfill.mjs` (no I/O):
-  `classifyRouteRunStop`/`classifyPaymentCounter`/`classifyCreditNote(row) → {verdict, tenantId,
-reason}` over verdicts `ok` | `refuse: parent missing` | `refuse: parents disagree` |
+  `classifyRouteRun`/`classifyRouteRunStop`/`classifyPaymentCounter`/`classifyCreditNote(row) →
+{verdict, tenantId, reason}` over verdicts `ok` | `refuse: parent missing` | `refuse: parents disagree` |
   `refuse: singleton` | `refuse: unique-pair collision`, plus `updateSql(table)` (table names come
   from the `BACKFILL_TABLES` whitelist, never from a row) and `buildUpdates(reports)` (also throws
   when two `ok` CreditNote rows would claim one `(tenantId, creditNoteNumber)` — the per-row
@@ -151,6 +151,28 @@ reason}` over verdicts `ok` | `refuse: parent missing` | `refuse: parents disagr
   with no token exits 3 — over a throwaway `e2e-backfill-*` tenant whose rows all carry an
   `e2e-backfill-` id prefix, with an ok-set assertion before every `--live` so a compose database
   holding someone else's NULL-tenant rows fails the spec instead of repairing them.
+  **ONE CASCADE LEVEL (2026-09-05, after the prod report):** the read-only run refused all five
+  `RouteRunStop`s for one reason — their parent `RouteRun` rows are THEMSELVES NULL-tenant (two
+  runs, 1 stop and 4 stops), even though each stop's `RouteStop` and the run's `Route` agree. So
+  `RouteRun` is now a fourth listed/writable table and the FIRST one: `classifyRouteRun({routeRowId,
+routeTenantId, stopTenantIds, stopCount})` derives the run's tenant from its `Route` (`refuse:
+parent missing` when the Route row or its tenant is absent) and treats the DISTINCT non-NULL
+  `RouteStop.tenantId` values reached through the run's stops as a CHECK, never a source —
+  any disagreement is `refuse: parents disagree`, an empty set (`array_agg` over zero rows is NULL)
+  is fine. `classifyRouteRunStop` gains `effectiveRunTenantId`: when the stop's run is NULL-tenant
+  the CLI passes the tenant THIS batch will write to it (only for runs whose own verdict is `ok` —
+  `ctx.repairedRunTenants`, populated by the RouteRun listing, which is why it is first in
+  `TABLES`), and the unchanged three-way rule then applies, so a stop under a refused run stays
+  refused and a disagreeing `RouteStop` is still refused. Report lines for such a stop carry
+  `(via run repaired in this batch)`. `BACKFILL_TABLES` is now
+  `["RouteRun","RouteRunStop","PaymentCounter","CreditNote"]` and that array IS the write order:
+  `buildUpdates` validates every `ok` report first, then emits grouped by the whitelist, so a
+  caller cannot make the batch write a child before its parent by reordering the reports; `--live`
+  runs both in the SAME single transaction. Coverage: B0a–B0e (`classifyRouteRun`), B1e–B1g (the
+  effective tenant relaxes nothing), B4f (ordering), B5h (CLI source pins for the listing and the
+  note), and DB-lane **D7** — a second NULL-tenant `RouteRun` with two NULL-tenant stops is
+  reported `ok` + `ok (via run)`, `--dry-run` shows `[1]` as the `RouteRun` statement of 3, `--live`
+  repairs all three in one transaction, and the re-run is "nothing to do".
 - **`scripts/ci-audit-critical.mjs` (2026-09-04)** — CI advisory gate: wraps `npm audit
 --omit=dev --audit-level=<level> --json` in `spawnSync` (`shell:false`, up to 3 attempts,
   15s/45s backoff, 120s per-attempt timeout, 64 MiB `maxBuffer`) so an `npm` registry

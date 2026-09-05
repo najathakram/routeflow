@@ -17,8 +17,11 @@ import { pathToFileURL } from "node:url";
  *     `report-addon-gate-blast-radius-script.spec.ts` and `prod-migrate-script.spec.ts` do.
  *
  * What must never regress: a refusal proposes NO tenant, `buildUpdates` emits one id-pinned,
- * still-NULL-guarded UPDATE per `ok` row and nothing for a refused one, and `--live` without an
- * attested backup dies before it can reach a database.
+ * still-NULL-guarded UPDATE per `ok` row and nothing for a refused one, `RouteRun` repairs are
+ * emitted before the `RouteRunStop` repairs that depend on them whatever order the reports
+ * arrive in, the one cascade level relaxes nothing else (a stop under a refused run stays
+ * refused; a disagreeing RouteStop is still refused), and `--live` without an attested backup
+ * dies before it can reach a database.
  */
 
 const API_DIR = path.resolve(__dirname, "../..");
@@ -42,6 +45,7 @@ import * as lib from "${LIB_HREF}";
 const cases = JSON.parse(process.env.LTB_CASES);
 const out = cases.map((c) => {
   try {
+    if (c.kind === "routeRun") return { ok: true, value: lib.classifyRouteRun(c.row) };
     if (c.kind === "routeRunStop") return { ok: true, value: lib.classifyRouteRunStop(c.row) };
     if (c.kind === "paymentCounter") return { ok: true, value: lib.classifyPaymentCounter(c.row) };
     if (c.kind === "creditNote") return { ok: true, value: lib.classifyCreditNote(c.row) };
@@ -68,6 +72,7 @@ function evaluate(cases: unknown[]): Outcome[] {
   return JSON.parse(res.stdout.trim());
 }
 
+const routeRun = (row: Record<string, unknown>) => ({ kind: "routeRun", row });
 const routeRunStop = (row: Record<string, unknown>) => ({ kind: "routeRunStop", row });
 const paymentCounter = (row: Record<string, unknown>) => ({ kind: "paymentCounter", row });
 const creditNote = (row: Record<string, unknown>) => ({ kind: "creditNote", row });
@@ -175,6 +180,45 @@ const CASES = [
     { table: "CreditNote", id: ROW_1, verdict: "ok", tenantId: TENANT_A, creditNoteNumber: "CN-9" },
     { table: "CreditNote", id: ROW_2, verdict: "ok", tenantId: TENANT_A, creditNoteNumber: "CN-9" },
   ]),
+  // ─── the RouteRun cascade level (2026-09-05 prod report: every NULL stop hung off a NULL run) ──
+  // classifyRouteRun — 21..25
+  routeRun({ routeRowId: ROW_1, routeTenantId: TENANT_A, stopTenantIds: [TENANT_A], stopCount: 4 }),
+  // `array_agg` over zero rows is NULL, not []: a run with no stop carrying a RouteStop tenant
+  // has nothing to contradict the Route and is still ok.
+  routeRun({ routeRowId: ROW_1, routeTenantId: TENANT_A, stopTenantIds: null, stopCount: 0 }),
+  routeRun({ routeRowId: null, routeTenantId: null, stopTenantIds: null, stopCount: 1 }),
+  routeRun({ routeRowId: ROW_1, routeTenantId: null, stopTenantIds: [TENANT_A], stopCount: 1 }),
+  routeRun({
+    routeRowId: ROW_1,
+    routeTenantId: TENANT_A,
+    stopTenantIds: [TENANT_A, TENANT_B],
+    stopCount: 2,
+  }),
+  // classifyRouteRunStop with the effective (about-to-be-written) run tenant — 26..28
+  routeRunStop({
+    runTenantId: null,
+    effectiveRunTenantId: TENANT_A,
+    routeStopTenantId: TENANT_A,
+    routeTenantId: TENANT_A,
+  }),
+  // the run was REFUSED, so the CLI supplies no effective tenant and the stop stays refused
+  routeRunStop({
+    runTenantId: null,
+    effectiveRunTenantId: null,
+    routeStopTenantId: TENANT_A,
+    routeTenantId: TENANT_A,
+  }),
+  routeRunStop({
+    runTenantId: null,
+    effectiveRunTenantId: TENANT_A,
+    routeStopTenantId: TENANT_B,
+    routeTenantId: TENANT_A,
+  }),
+  // buildUpdates parent-before-child ordering, with the reports deliberately the wrong way round — 29
+  buildUpdates([
+    { table: "RouteRunStop", id: ROW_2, verdict: "ok", tenantId: TENANT_A },
+    { table: "RouteRun", id: ROW_1, verdict: "ok", tenantId: TENANT_A },
+  ]),
 ];
 
 const RESULTS = evaluate(CASES);
@@ -191,6 +235,42 @@ function verdictOf(index: number) {
   expect(result.ok).toBe(true);
   return result.value as { verdict: string; tenantId: string | null; reason: string };
 }
+
+describe("legacy-tenant-backfill: classifyRouteRun", () => {
+  it("B0a: ok — the Route names a tenant and every RouteStop under the run agrees", () => {
+    const v = verdictOf(21);
+    expect(v.verdict).toBe("ok");
+    expect(v.tenantId).toBe(TENANT_A);
+  });
+
+  it("B0b: ok — a run whose stops carry no RouteStop tenant has nothing to contradict the Route", () => {
+    // `array_agg` over zero rows returns NULL, not an empty array: the classifier must not read
+    // that as "no Route tenant" and must not throw on it either.
+    const v = verdictOf(22);
+    expect(v.verdict).toBe("ok");
+    expect(v.tenantId).toBe(TENANT_A);
+  });
+
+  it("B0c: refuse: parent missing — routeId points at a Route row that does not exist", () => {
+    const v = verdictOf(23);
+    expect(v.verdict).toBe("refuse: parent missing");
+    expect(v.tenantId).toBeNull();
+    expect(v.reason).toMatch(/does not exist/);
+  });
+
+  it("B0d: refuse: parent missing — the parent Route is itself an unrepaired NULL-tenant row", () => {
+    const v = verdictOf(24);
+    expect(v.verdict).toBe("refuse: parent missing");
+    expect(v.tenantId).toBeNull();
+    expect(v.reason).toMatch(/NULL tenantId/);
+  });
+
+  it("B0e: refuse: parents disagree — one stop's RouteStop names a different tenant", () => {
+    const v = verdictOf(25);
+    expect(v.verdict).toBe("refuse: parents disagree");
+    expect(v.tenantId).toBeNull();
+  });
+});
 
 describe("legacy-tenant-backfill: classifyRouteRunStop", () => {
   it("B1a: ok — RouteRun, RouteStop and Route all name the same tenant", () => {
@@ -216,6 +296,28 @@ describe("legacy-tenant-backfill: classifyRouteRunStop", () => {
 
   it("B1d: refuse: parents disagree — two of three agreeing is NOT enough", () => {
     const v = verdictOf(3);
+    expect(v.verdict).toBe("refuse: parents disagree");
+    expect(v.tenantId).toBeNull();
+  });
+
+  it("B1e: ok via the run this batch repairs — the effective tenant stands in for a NULL run", () => {
+    // The production shape: the stop's own RouteRun is NULL-tenant, but the CLI has already
+    // classified that run `ok` off its Route and passes the tenant it is about to write.
+    const v = verdictOf(26);
+    expect(v.verdict).toBe("ok");
+    expect(v.tenantId).toBe(TENANT_A);
+    expect(v.reason).toMatch(/this batch will set/);
+  });
+
+  it("B1f: a stop under a REFUSED run gets no effective tenant and stays refused", () => {
+    const v = verdictOf(27);
+    expect(v.verdict).toBe("refuse: parent missing");
+    expect(v.tenantId).toBeNull();
+    expect(v.reason).toContain("RouteRun");
+  });
+
+  it("B1g: the effective tenant relaxes nothing — a disagreeing RouteStop is still refused", () => {
+    const v = verdictOf(28);
     expect(v.verdict).toBe("refuse: parents disagree");
     expect(v.tenantId).toBeNull();
   });
@@ -336,7 +438,7 @@ describe("legacy-tenant-backfill: buildUpdates", () => {
     expect(result.value).toEqual([]);
   });
 
-  it("B4c: refuses a table outside the three-table whitelist (no identifier from a report)", () => {
+  it("B4c: refuses a table outside the BACKFILL_TABLES whitelist (no identifier from a report)", () => {
     const result = outcome(18);
     expect(result.ok).toBe(false);
     expect(result.message).toContain("Tenant");
@@ -354,6 +456,20 @@ describe("legacy-tenant-backfill: buildUpdates", () => {
     const result = outcome(20);
     expect(result.ok).toBe(false);
     expect(result.message).toContain("creditNoteNumber");
+  });
+
+  it("B4f: RouteRun updates precede RouteRunStop updates whatever order the reports arrive in", () => {
+    // Parent before child, decided by BACKFILL_TABLES rather than by the caller: a stop repaired
+    // before its run would be written against a tenant its own parent does not yet carry.
+    const result = outcome(29);
+    expect(result.ok).toBe(true);
+    const updates = result.value as Array<{ table: string; id: string; sql: string }>;
+
+    expect(updates.map((u) => `${u.table}:${u.id}`)).toEqual([
+      `RouteRun:${ROW_1}`,
+      `RouteRunStop:${ROW_2}`,
+    ]);
+    expect(updates[0].sql).toBe(GUARDED_UPDATE("RouteRun"));
   });
 });
 
@@ -426,6 +542,19 @@ describe("backfill-legacy-tenant-ids.mjs CLI contract", () => {
     // The classifier's missing-parent branches are unreachable without it: `invoiceTenantId`
     // alone reads NULL for "no invoice", "invoice gone" and "invoice itself NULL-tenant".
     expect(cliCodeLines()).toContain('i."id" AS "invoiceRowId"');
+  });
+
+  it("B5h: the RouteRun listing exists and feeds the stops the tenant it will write", () => {
+    const code = cliCodeLines();
+
+    // The cascade is only real if the CLI actually lists NULL-tenant runs...
+    expect(code).toContain('FROM "RouteRun" rr');
+    expect(code).toContain('WHERE rr."tenantId" IS NULL');
+    // ...checks them against the RouteStops underneath...
+    expect(code).toContain('array_agg(DISTINCT rs."tenantId")');
+    // ...and hands the not-yet-written tenant to the stop classifier, flagged in the report.
+    expect(code).toContain("effectiveRunTenantId");
+    expect(code).toContain('"(via run repaired in this batch)"');
   });
 
   it("B5g: BACKFILL_CONFIRM_TOKEN is gated on JEST_WORKER_ID and never relaxes the attestation", () => {

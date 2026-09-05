@@ -495,6 +495,21 @@ A balanced review should say what not to touch:
   [`apps/api/scripts/backfill-legacy-tenant-ids.mjs`](../apps/api/scripts/backfill-legacy-tenant-ids.mjs)
   (read-only report → `--dry-run` → `--live`, which needs both `--backup-attested` and a typed
   confirmation), owner-run after a fresh backup. It is a data repair, never a migration.
+  **What the first read-only prod report actually returned (2026-09-05):** all seven rows were
+  REFUSED, and for three different reasons.
+  1. The five `RouteRunStop`s were refused because their parent `RouteRun` rows are THEMSELVES
+     NULL-tenant (two runs, one carrying 1 stop and one carrying 4) — each stop's `RouteStop` and
+     the run's `Route` already agree on one tenant, so only the run in the middle was missing. The
+     tool therefore learned ONE cascade level: a NULL-tenant `RouteRun` whose `Route` names a
+     tenant and whose stops' `RouteStop`s all agree is repaired FIRST, and its stops are then
+     derived from that tenant, both inside the same single transaction (`RouteRun` updates before
+     `RouteRunStop` updates). Nothing else was relaxed — a stop under a refused run stays refused.
+  2. The `PaymentCounter` row is the literal `singleton` id, the pre-multi-tenant global counter.
+     It is left alone **by design**: giving it a tenant would hand that tenant a counter whose
+     `next` was advanced by every other tenant's payments.
+  3. The `CreditNote` is a duplicate-numbered orphan — writing its Customer-derived tenant would
+     violate `@@unique([tenantId, creditNoteNumber])`. Renumbering is a business decision, so it
+     stays refused pending a human ruling.
 - **The DB backup pipeline** (`apps/db-backup`) is well-designed: 2-hourly `pg_dump` → Cloudflare R2
   (S3-compatible, zero egress fees), 30-day prune, **monthly restore-verify**, and a healthchecks.io
   dead-man's switch. R2 is object storage, not a backup tool — this is a sound, cheap choice.
