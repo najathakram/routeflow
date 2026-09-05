@@ -573,4 +573,3 @@ complete-with-skipped → reopen refused)`; mutation probes in the F11 PR body.
   so `req.user` is never set there).**
 - **Guard:** `REG-B132` (the inverted test) and `REG-B165` (`impersonation.guard.spec.ts` header
   case with `req.user` undefined); mutation probes in the F14 PR body.
-
