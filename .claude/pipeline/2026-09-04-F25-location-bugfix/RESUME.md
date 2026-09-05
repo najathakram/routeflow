@@ -136,4 +136,10 @@ Trust the resumed run's own `phaseReport`. Do NOT reconstruct progress from WIP 
   bumps `.claude/lessons/_meta.json.updatedAt` only.
 - PR body must state the deploy-ordering constraint (API merges/deploys before any mobile OTA) as a release
   note, not just a code comment — this is an operational hazard, not only a documentation nicety.
+- PR body must ALSO state the **directional rollback** rule (same hazard, reverse direction): the API's
+  optional `accuracy` DTO field is additive and must NOT be reverted while any shipped mobile build sends
+  it — `forbidNonWhitelisted: true` (`apps/api/src/main.ts`) would then reject 100% of pings on both
+  platforms and the tracker's empty catch would swallow every one, strictly worse than B185. Roll back
+  mobile first (revert the seam / ship an OTA without `accuracy`), then optionally the API; or leave the DTO
+  field in place and revert only the mobile side. No schema/migration is involved either way.
 - No data repair owed (§6: rejected pings were never stored).

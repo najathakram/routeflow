@@ -132,7 +132,10 @@ cd apps/mobile && npx jest location-payload.test -t "REG-B185" && cd ../api && n
 
 - **files:** `apps/api/src/drivers/dto/post-location.dto.ts`, `apps/api/src/drivers/drivers.service.ts`.
 - **satisfies:** R2, R3, R4
-- **provenBy:** T3, T4, T5
+- **provenBy:** T3, T4, T5 (R2, R3); T6 (R4) — T3-T5 are DTO-level `validate()` calls and never reach
+  `drivers.service.ts`, so R4 is proven by T6, the `describe("recordLocation")` block added to
+  `apps/api/src/drivers/drivers.service.spec.ts` in fix round 1 (`driverLocation` added to the shared
+  Prisma mock's `allModels()` to enable it).
 - **dependsOn:** none (same reason as WP-MOB-LOC — TP-LOC is a test package, not a valid WP dependency)
 - **effort:** high (touches the driver-tracking write path that feeds the live operator map — reviewed at
   full depth per the project's "money/tenancy/auth only" default-medium rule's caution extension to
@@ -174,15 +177,15 @@ cd apps/mobile && npx jest location-payload.test -t "REG-B185" && cd ../api && n
 
 ### Package map
 
-| WP          | satisfies  | provenBy   | dependsOn                                   | Wave           |
-| ----------- | ---------- | ---------- | ------------------------------------------- | -------------- |
-| TP-LOC      | —          | T1-T5      | —                                           | 0 (test-first) |
-| WP-MOB-LOC  | R1         | T1, T2     | — (TP-LOC via phase order, not `dependsOn`) | 1              |
-| WP-API-LOC  | R2, R3, R4 | T3, T4, T5 | — (TP-LOC via phase order, not `dependsOn`) | 1              |
-| WP-DOCS-LOC | —          | —          | WP-MOB-LOC, WP-API-LOC                      | 2              |
+| WP          | satisfies  | provenBy  | dependsOn                                   | Wave           |
+| ----------- | ---------- | --------- | ------------------------------------------- | -------------- |
+| TP-LOC      | —          | T1-T5     | —                                           | 0 (test-first) |
+| WP-MOB-LOC  | R1         | T1, T2    | — (TP-LOC via phase order, not `dependsOn`) | 1              |
+| WP-API-LOC  | R2, R3, R4 | T3-T5, T6 | — (TP-LOC via phase order, not `dependsOn`) | 1              |
+| WP-DOCS-LOC | —          | —         | WP-MOB-LOC, WP-API-LOC                      | 2              |
 
-Cross-check: R1-R4 all appear in some package's `satisfies:`. T1-T5 all appear in some package's
-`provenBy:`.
+Cross-check: R1-R4 all appear in some package's `satisfies:`. T1-T5 (and T6, added in fix round 1) all
+appear in some package's `provenBy:`.
 
 ---
 
@@ -215,11 +218,17 @@ cd apps/mobile && npx jest location-payload.test
 Final:
 
 ```bash
-cd apps/api && npx jest --silent
+cd apps/api && npx jest src/drivers --silent
 cd apps/mobile && npx jest --silent
 node scripts/campaign-check.mjs
 node scripts/validate-lessons.mjs
 ```
+
+Note: narrowed to `src/drivers` (the batch's radius — `post-location.dto.spec.ts` and
+`drivers.service.spec.ts`, including the new T6 cases from #1) because the full api suite carries
+one pre-existing red unrelated to this batch — `src/common/ci-freshness-guard-script.spec.ts:201`
+(`outputs.run` received `undefined`) — which cannot gate until it is fixed on master. Tracked as a
+follow-up, not fixed here.
 
 ---
 
@@ -236,9 +245,15 @@ pipeline args.
 | ------------------------------------------------------------------------------------------------------ | -------------------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Mobile OTA ships `accuracy` in the payload before the API's DTO deploys                                | medium (mobile and api deploy independently) | Every ping 400s on both platforms until the API catches up — strictly worse than today | PR body states the ordering constraint explicitly; API PR merges and deploys FIRST; mobile OTA follows only after confirming the API deploy is live |
 | `WP-DOCS-LOC` races Run A's `WP-DOCS` on the same `_meta.json`/`F25.jsonl` files                       | low if sequencing is followed                | Lost update / merge conflict on shared bookkeeping files                               | `RESUME.md`'s explicit sequencing rule: Run B launches only after Run A's close-out commit lands                                                    |
-| `driverLocation` missing from the shared Prisma mock surfaces later when a service-level spec is added | low (this run's tests don't hit it)          | A future spec throws on `undefined.create` instead of a clean assertion failure        | Flagged in `bug-test-plan.md`'s harness notes as a backlog candidate, not fixed here (scope fence)                                                  |
+| `driverLocation` missing from the shared Prisma mock surfaces later when a service-level spec is added | low (this run's tests don't hit it)          | A future spec throws on `undefined.create` instead of a clean assertion failure        | CLOSED in fix round 1: `driverLocation` added to `allModels()` and exercised by T6's `recordLocation` spec                                          |
+| API reverted alone after the mobile OTA ships `accuracy`                                               | low                                          | Total silent loss of live tracking on both platforms                                   | The directional-rollback rule below — repeated verbatim in the PR body: roll mobile back first, never the API alone                                 |
 
-- **Rollback:** revert the diff; no schema/migration involved (the `accuracy` column already exists,
+- **Rollback (DIRECTIONAL — not a plain "revert the diff"):** the API's optional `accuracy` DTO field is
+  additive and must **NOT** be reverted while any shipped mobile build sends it. `forbidNonWhitelisted: true`
+  (`apps/api/src/main.ts`) would then reject 100% of pings on both platforms, and the tracker's empty catch
+  would swallow every one — strictly worse than B185's intermittent, iOS-only gap. Roll back **mobile first**
+  (revert the seam / ship an OTA without `accuracy`), then optionally the API; or leave the DTO field in
+  place and revert only the mobile side. No schema/migration involved (the `accuracy` column already exists,
   pre-provisioned by a prior batch).
 - **Migration reversibility:** N/A.
 - **Feature flag:** none.
@@ -310,7 +325,7 @@ pipeline args.
       files: ['apps/api/src/drivers/dto/post-location.dto.ts', 'apps/api/src/drivers/drivers.service.ts'],
       brief: 'Add @IsOptional() @Type(()=>Number) @IsNumber() @Min(0) accuracy?: number to PostLocationDto (no @Max). recordLocation\'s create() call gains accuracy: dto.accuracy. heading/speedKph\'s existing @Min(0)/@Max decorators are unchanged.',
       satisfies: ['R2', 'R3', 'R4'],
-      provenBy: ['T3', 'T4', 'T5'],
+      provenBy: ['T3', 'T4', 'T5', 'T6'],
       effort: 'high'
     },
     {
@@ -336,7 +351,10 @@ pipeline args.
       'cd apps/mobile && npx jest location-payload.test'
     ],
     final: [
-      'cd apps/api && npx jest --silent',
+      // Narrowed from `npx jest --silent` — the full api suite carries one pre-existing red
+      // unrelated to this batch, src/common/ci-freshness-guard-script.spec.ts:201
+      // (`outputs.run` received undefined); tracked as a follow-up, not fixed here.
+      'cd apps/api && npx jest src/drivers --silent',
       'cd apps/mobile && npx jest --silent',
       'node scripts/campaign-check.mjs',
       'node scripts/validate-lessons.mjs'
