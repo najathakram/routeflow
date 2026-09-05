@@ -23,3 +23,7 @@
 # (_meta.json is deliberately NOT unioned — union on JSON breaks it. Rebase rule: take
 # master's _meta.json, then re-set only its "notes" field to your session's bullet.)
 .claude/code-map/CHANGELOG.md merge=union
+
+# The pipeline cost ledger is append-only JSONL (one run per line); every concurrent merge
+# tonight conflicted on it. Union keeps both sides' rows; order of rows is irrelevant.
+.claude/pipeline/cost-ledger.jsonl merge=union
