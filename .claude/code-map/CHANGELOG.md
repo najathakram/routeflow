@@ -33,6 +33,21 @@ never accumulate history in `"notes"`.
   outcome pill via `lastRunOutcome`. New e2e spec 30 + its `recurring-standing` project.
   `scripts/data-integrity-report.mjs` gains three B48 checks (candidate set, positive control, gate
   state). Lesson **L-046** (domain).
+- **2026-09-04** — (`watchdog-spec-host-speed` fix, L-061) `visibility-watchdog-script.spec.ts`'s
+  "defaults" test replaced its fixed 500 ms readiness wait with `awaitStartLine`, a capped poll on
+  the script's own `" start "` log line (kills the child in `finally` on every path); added a
+  deterministic slow-boot repro test (`REG-WATCHDOG-SLOWBOOT`, new fixture
+  `src/common/testing/slow-boot.cjs`) and a non-empty guard on the stdout-mirror test.
+  `scripts/visibility-watchdog.mjs` itself is unchanged.
+
+- **2026-09-04** — (branch `fix/e2e-freshness-guard-fail-open`, PR #610) REG-E2EGUARD-403: new
+  `scripts/ci-freshness-guard.mjs` replaces the e2e job's inline bash freshness guard — the old
+  `gh api … 2>/dev/null || true` capture treated a 4xx/5xx error body as a non-empty sha and
+  silently skipped every `deployment_status` E2E run once the token lost `deployments:read`
+  (green with zero test steps). The new script fails OPEN on any non-A/B decision-table outcome
+  and always exits 0; `.github/workflows/ci.yml`'s `e2e` job now declares
+  `permissions: {contents: read, deployments: read}`. `api.md` gains an entry; lesson L-058.
+
 - **2026-09-04** — (branch `fix/imp-02-order-merge-advisory-lock`, PR #609) VISIBILITY WATCHDOG:
   new `scripts/visibility-watchdog.mjs` arms the private flip on a detached, fixed 45-min
   deadline BEFORE any public-repo CI window — the fix for the killed-session incident where

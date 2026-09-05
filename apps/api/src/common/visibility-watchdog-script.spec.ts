@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -81,6 +81,111 @@ function readLog(logFile: string): string {
   return fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8") : "";
 }
 
+// Forward-slash path required for NODE_OPTIONS=--require on Windows — a Git-Bash POSIX-style
+// path (/c/Users/...) fails the child's preload with MODULE_NOT_FOUND.
+const SLOW_BOOT_PATH = path.resolve(__dirname, "testing/slow-boot.cjs").replace(/\\/g, "/");
+
+// Poll/cap/kill design. Spawns the child, then polls `readLog(logFile)` every `intervalMs`
+// until it contains the exact " start " tag `log()` writes at
+// scripts/visibility-watchdog.mjs:137-144, resolving `{ child, log }`. If `capMs` elapses
+// first, rejects with a message naming the cap and the log's last 300 chars — never a fixed
+// wait, so the test proves the script's own behavior rather than how fast the host booted
+// Node. stdout/stderr are drained into buffers so nothing can block on a full pipe, and if the
+// child exits before the start line appears (a spawn that fails fast, e.g. a bad NODE_OPTIONS
+// preload or a syntax error in the script) the helper rejects immediately with the exit code
+// and the captured stderr tail instead of waiting out the full cap — unless the final log read
+// on exit shows the start line already landed, in which case it still resolves. The child is
+// always killed in `finally` (resolve, cap-reject, and the child's "error" event all funnel
+// through it), and its exit is awaited (up to 2s) before returning.
+async function awaitStartLine({
+  argv = [SCRIPT],
+  env,
+  logFile,
+  capMs = 30_000,
+  intervalMs = 50,
+  onSpawn,
+}: {
+  argv?: string[];
+  env: NodeJS.ProcessEnv;
+  logFile: string;
+  capMs?: number;
+  intervalMs?: number;
+  // Test-only hook so a caller can capture the child handle even on the reject path (the
+  // resolve-only `{ child, log }` return value is unreachable there) — used by the T3
+  // cap-rejection pin to confirm the child is dead afterward.
+  onSpawn?: (child: ReturnType<typeof spawn>) => void;
+}): Promise<{ child: ReturnType<typeof spawn>; log: string }> {
+  const child = spawn(process.execPath, argv, { env, stdio: ["ignore", "pipe", "pipe"] });
+  onSpawn?.(child);
+  let stdoutBuf = "";
+  let stderrBuf = "";
+  child.stdout?.on("data", (chunk: Buffer) => {
+    stdoutBuf += chunk.toString();
+  });
+  child.stderr?.on("data", (chunk: Buffer) => {
+    stderrBuf += chunk.toString();
+  });
+  const start = Date.now();
+  let settled = false;
+  try {
+    return await new Promise((resolve, reject) => {
+      const poll = () => {
+        if (settled) return;
+        const log = readLog(logFile);
+        if (log.includes(" start ")) {
+          settled = true;
+          resolve({ child, log });
+          return;
+        }
+        if (Date.now() - start >= capMs) {
+          settled = true;
+          reject(
+            new Error(
+              `start line not seen within ${capMs}ms; stderr=${stderrBuf.slice(-300)}; log=${readLog(logFile).slice(-300)}`,
+            ),
+          );
+          return;
+        }
+        setTimeout(poll, intervalMs);
+      };
+      child.on("error", (err: Error) => {
+        if (settled) return;
+        settled = true;
+        reject(err);
+      });
+      child.once("exit", (code, signal) => {
+        if (settled) return;
+        const log = readLog(logFile);
+        if (log.includes(" start ")) {
+          settled = true;
+          resolve({ child, log });
+          return;
+        }
+        settled = true;
+        reject(
+          new Error(
+            `child exited before start line (code=${code} signal=${signal}); stderr=${stderrBuf.slice(-300)}; log=${log.slice(-300)}`,
+          ),
+        );
+      });
+      poll();
+    });
+  } finally {
+    child.kill();
+    await new Promise<void>((resolveExit) => {
+      if (child.exitCode !== null || child.signalCode !== null) {
+        resolveExit();
+        return;
+      }
+      const timer = setTimeout(resolveExit, 2_000);
+      child.once("exit", () => {
+        clearTimeout(timer);
+        resolveExit();
+      });
+    });
+  }
+}
+
 describe("visibility-watchdog.mjs contract", () => {
   it("success: edit succeeds, view confirms PRIVATE — exit 0 with start/flip/verified logged", () => {
     const logFile = newLogPath("success");
@@ -131,34 +236,98 @@ describe("visibility-watchdog.mjs contract", () => {
     const logFile = newLogPath("stdout-mirror");
     const res = run(["--minutes", "0.01", "--repo", "acme/test"], fakeEnv("success", logFile));
 
+    // T4 (pin): guard against a vacuous pass on an empty log — the loop below asserts nothing
+    // at all if `log.trim()` is "", so an empty log must fail here first, not silently succeed.
     const log = readLog(logFile);
+    expect(log.trim().length).toBeGreaterThan(0);
     for (const line of log.trim().split("\n")) {
       expect(res.stdout).toContain(line);
     }
   });
 
-  it("defaults --minutes to 45 and --repo to najathakram/routeflow when omitted", () => {
+  // T2 (pin, converted): same defaults assertion as before, now driven through the seam-extracted
+  // awaitStartLine helper instead of an inline fixed-delay Promise. Explicit 35_000ms timeout —
+  // above both the helper's internal wait and Jest's undeclared 5000ms default for this lane —
+  // so the helper's own behavior decides pass/fail, never Jest's timer.
+  it("defaults --minutes to 45 and --repo to najathakram/routeflow when omitted", async () => {
     const logFile = newLogPath("defaults");
-    // Real sleep isn't exercised here (45 real minutes) — the process is left running
-    // briefly, then killed once the "start" line proves the defaults were applied.
-    const child = require("node:child_process").spawn(process.execPath, [SCRIPT], {
+    // Real sleep isn't exercised here (45 real minutes) — the child is killed by
+    // awaitStartLine once the "start" line proves the defaults were applied.
+    const { log } = await awaitStartLine({
       env: fakeEnv("success", logFile),
+      logFile,
     });
-    return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        child.kill();
-        try {
-          const log = readLog(logFile);
-          expect(log).toContain("minutes=45 repo=najathakram/routeflow");
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      }, 500);
-      child.on("error", (err: Error) => {
-        clearTimeout(timer);
-        reject(err);
-      });
+    expect(log).toContain("minutes=45 repo=najathakram/routeflow");
+  }, 35_000);
+
+  // T1 — REG-WATCHDOG-SLOWBOOT — applies the defaults even when the child boots slowly
+  // (NODE_OPTIONS preload sleeps 1.5s). Deterministic repro for the host-speed race:
+  // awaitStartLine's capped poll on the " start " log line still sees the defaults line
+  // regardless of how slowly the host boots Node; a fixed-delay read would observe an empty
+  // log here.
+  it("REG-WATCHDOG-SLOWBOOT applies the defaults even when the child boots slowly (NODE_OPTIONS preload sleeps 1.5s)", async () => {
+    const logFile = newLogPath("slow-boot");
+    const { log } = await awaitStartLine({
+      env: fakeEnv("success", logFile, { NODE_OPTIONS: `--require ${SLOW_BOOT_PATH}` }),
+      logFile,
     });
-  });
+    expect(log).toContain("minutes=45 repo=najathakram/routeflow");
+  }, 35_000);
+
+  // T3 (pin): awaitStartLine rejects once capMs elapses with no " start " line and leaves no
+  // orphaned child (kills it and awaits exit). The child here never writes the log, so the cap
+  // is the only exit path.
+  it("awaitStartLine rejects once its cap elapses with no start line, and kills the child", async () => {
+    const logFile = newLogPath("never-starts");
+    let capturedChild: ReturnType<typeof spawn> | undefined;
+    await expect(
+      awaitStartLine({
+        argv: ["-e", "setInterval(() => {}, 1000)"],
+        env: fakeEnv("success", logFile),
+        logFile,
+        capMs: 300,
+        onSpawn: (child) => {
+          capturedChild = child;
+        },
+      }),
+    ).rejects.toThrow(/start line not seen within 300 ?ms/);
+
+    // The rejection path must still leave the child dead — poll briefly since kill() is
+    // asynchronous (SIGTERM delivery isn't instantaneous).
+    const deadline = Date.now() + 2_000;
+    while (
+      capturedChild &&
+      capturedChild.exitCode === null &&
+      capturedChild.signalCode === null &&
+      Date.now() < deadline
+    ) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(capturedChild).toBeDefined();
+    expect(capturedChild!.exitCode !== null || capturedChild!.signalCode !== null).toBe(true);
+  }, 35_000);
+
+  // T5 (pin): awaitStartLine rejects promptly — well before the cap — with the exit code and
+  // captured stderr when the child dies before ever writing the start line, instead of burning
+  // the full cap on a silent, diagnosis-free empty log.
+  it("awaitStartLine rejects promptly with the exit code and stderr when the child dies before the start line", async () => {
+    const logFile = newLogPath("dies-before-start");
+    let capturedChild: ReturnType<typeof spawn> | undefined;
+    const startedAt = Date.now();
+    await expect(
+      awaitStartLine({
+        argv: ["-e", "process.stderr.write('boom-diag'); process.exit(3)"],
+        env: fakeEnv("success", logFile),
+        logFile,
+        capMs: 10_000,
+        onSpawn: (child) => {
+          capturedChild = child;
+        },
+      }),
+    ).rejects.toThrow(/code=3.*boom-diag/s);
+
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+    expect(capturedChild).toBeDefined();
+    expect(capturedChild!.exitCode).not.toBeNull();
+  }, 35_000);
 });

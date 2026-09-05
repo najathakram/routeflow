@@ -82,6 +82,23 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
     `Fail on critical production advisories` / `Report high-severity advisories` steps. Contract
     spec: `src/common/ci-audit-script.spec.ts` (spawn-level, fake npm-audit driver written to an
     mkdtemp'd dir, `FAKE_MODE` critical/clean/outage/unknown, counter file proves retry count).
+- **`scripts/ci-freshness-guard.mjs` (2026-09-04, REG-E2EGUARD-403)** — replaces the e2e job's
+  old inline bash freshness guard (`gh api … --jq … 2>/dev/null || true`), which treated a 4xx/5xx
+  error body as a non-empty "sha" and silently emitted `run=false` on every call once the run
+  token lost `deployments:read` — every `deployment_status` E2E run reported green with zero
+  test steps for days. `spawnSync("gh", ["api", "repos/<repo>/deployments?per_page=1"],
+{shell:false})`, decision table: (A) exit 0 + JSON array with `[0].sha` → compare to
+  `DEPLOY_SHA`, match=`run=true`/`::notice::`, mismatch=`run=false`/`::notice::` (genuinely
+  superseded); (B) exit 0 + empty array → `run=true`; (C) anything else — non-zero exit,
+  unparseable/non-array body, timeout, missing `DEPLOY_SHA`/`GITHUB_REPOSITORY` — **fails open**
+  (`run=true`, `::warning::`, ≤200 chars of the body/stderr, never the token). Always exits 0 — a
+  red guard step would hide the suite exactly like a wrongful skip does. Test-only
+  `CI_FRESHNESS_GH_CMD` (JSON argv array, swaps in a fake `gh`) and `CI_FRESHNESS_GH_TIMEOUT_MS`
+  (default 30000ms). Called from `.github/workflows/ci.yml`'s `e2e` job `freshness` step, which
+  now also declares job-level `permissions: {contents: read, deployments: read}` (the job was
+  previously on the restricted org default with no `deployments:read`). Contract spec:
+  `src/common/ci-freshness-guard-script.spec.ts` (spawn-level fake `gh` on PATH, plus a T1 that
+  runs the workflow's own step command via `js-yaml`).
 - **`scripts/visibility-watchdog.mjs` (2026-09-04, killed-session incident)** — a detached
   safety net for the public-repo CI window in the canonical deploy flow (`CLAUDE.md`,
   `docs/runbooks/deploy-visibility-flip.md`): launched BEFORE `gh repo edit … public`, it
@@ -95,8 +112,22 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   rerun. Test-only env: `VISIBILITY_WATCHDOG_GH_CMD` (JSON argv, swaps in a fake `gh` — no
   network), `VISIBILITY_WATCHDOG_LOG_FILE` (scratch log path), `VISIBILITY_WATCHDOG_VERIFY_INTERVAL_MS`
   (collapses the 10s poll for fast specs). Contract spec:
-  `src/common/visibility-watchdog-script.spec.ts` (spawn-level, fake `gh` driver, 5 cases:
-  success, never-verifies, edit-fails, stdout mirrors log, arg defaults).
+  `src/common/visibility-watchdog-script.spec.ts` (spawn-level, fake `gh` driver, 8 cases:
+  success, never-verifies, edit-fails, stdout mirrors log (now guarded non-empty), arg
+  defaults, slow-boot repro, awaitStartLine cap-rejection + kill pin, awaitStartLine
+  prompt-reject (exit code + stderr) when the child dies before the start line). The "arg
+  defaults" and slow-boot cases share
+  `awaitStartLine({ argv = [SCRIPT], env, logFile, capMs = 30_000, intervalMs = 50, onSpawn })`
+  (`logFile` required — the poll reads it; `onSpawn` is a test-only hook handing back the child
+  handle on the reject path) (2026-09-04,
+  `watchdog-spec-host-speed` fix, L-061): spawns the child and polls `readLog(logFile)` every
+  `intervalMs` for the script's own `" start "` log line instead of a fixed 500 ms wait —
+  resolves `{ child, log }` on match, rejects with a cap-exceeded message at `capMs`, and
+  always kills the child + awaits its exit in a `finally`. All four async tests carry an explicit
+  `35_000` ms third-arg Jest timeout so the poll cap fires first. New fixture
+  `src/common/testing/slow-boot.cjs` — a synchronous `Atomics.wait(..., 1500)` preload used via
+  `NODE_OPTIONS=--require` to deterministically prove the poll survives a slow child boot
+  (`REG-WATCHDOG-SLOWBOOT`), independent of host speed.
 - **`src/common/testing/db-spec.ts` + `db-lane.db.spec.ts`, `jest.db.config.js` (PR-1, `imp-03a`,
   2026-09-03)** — the new `*.db.spec.ts` lane for specs that need a real Postgres. `db-spec.ts`:
   `requireLocalDatabaseUrl(env)` throws unless `DATABASE_URL`'s host is local

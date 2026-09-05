@@ -1,0 +1,104 @@
+{
+  "runId": "wf_c8b07b1f-a0a",
+  "mode": "bugfix",
+  "scale": "small",
+  "startedAt": "2026-09-04T20:15:05Z",
+  "finishedAt": "2026-09-04T21:47:20Z",
+  "estimatedCostUsd": 7.37,
+  "agents": 28,
+  "subagentTokens": 2592687,
+  "toolUses": 284,
+  "clean": true,
+  "gate": { "pass": true },
+  "verify": null,
+  "redGate": {
+    "properlyRed": true,
+    "structurallyRed": true,
+    "behaviorallyRed": true,
+    "attempts": 1,
+    "command": "cd apps/api && npx jest src/common/visibility-watchdog-script.spec.ts -t \"boots slowly\" --runInBand",
+    "failureSummary": "expect(log).toContain(\"minutes=45 repo=najathakram/routeflow\") -- Received string: \"\"",
+    "baselineNote": "Baseline gate: this same spec command FAILED at baseline under load (the bug reproduced -- Received string \"\") and the baseline runner flagged it a \"bad command\". Fable's fix-planning review disputed that classification: it is the bug's own behavioral red bar, not a broken command, and it was kept in the decision."
+  },
+  "finalGate": {
+    "pass": true,
+    "commands": [
+      {
+        "command": "cd apps/api && npx jest src/common/visibility-watchdog-script.spec.ts --runInBand",
+        "pass": true,
+        "summary": "PASS src/common/visibility-watchdog-script.spec.ts: 8 tests passed"
+      },
+      {
+        "command": "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+        "pass": true,
+        "summary": "TypeScript type checking passed with no errors"
+      },
+      {
+        "command": "cd apps/api && npx jest src/common --runInBand",
+        "pass": true,
+        "summary": "Test Suites: 31 passed, 31 total | Tests: 463 passed, 463 total"
+      },
+      {
+        "command": "node scripts/validate-lessons.mjs",
+        "pass": true,
+        "summary": "✔ .claude/lessons: register is self-consistent. 36/40 entries · 36.3/40.0 KB · archived 16 · nextId 62 (max L-061)"
+      }
+    ]
+  },
+  "fixRounds": 2,
+  "fixRoundDetail": [
+    {
+      "round": 1,
+      "actions": 5,
+      "summary": "awaitStartLine now also rejects promptly when the child exits before the start line, carrying exit code + stderr tail, pinned by a new T5; two stale comment blocks (TP1/WP1-era, describing the pre-fix state as current) rewritten present-tense; code-map awaitStartLine signature corrected to include logFile and onSpawn; build-plan close-out command changed from a scoped jest run to the unscoped `apps/api` jest run so the campaign reporter's artifact is complete."
+    },
+    {
+      "round": 2,
+      "actions": 1,
+      "summary": "mechanical code-map fix: api.md's watchdog spec entry said '6 cases' / 'Both async tests' -- corrected to '8 cases' (enumerating the cap-rejection and die-before-start pins) and 'All four async tests'."
+    }
+  ],
+  "remainingFindings": [],
+  "siblingSweep": {
+    "patterns": 2,
+    "hits": 2,
+    "verdicts": { "guarded": 1, "unrelated": 1, "defect": 0 },
+    "detail": [
+      {
+        "pattern": "setTimeout\\([^)]*,\\s*\\d{2,4}\\s*\\)",
+        "file": "apps/api/src/common/visibility-watchdog-script.spec.ts",
+        "line": 277,
+        "verdict": "unrelated",
+        "note": "20ms sleep is the poll step of a loop bounded by the observable exit signal + a 2s deadline, not a stand-in for readiness."
+      },
+      {
+        "pattern": "\\bspawn\\(",
+        "file": "apps/api/src/common/visibility-watchdog-script.spec.ts",
+        "line": 113,
+        "verdict": "same-class-but-guarded",
+        "note": "This is the fixed awaitStartLine helper itself: capped poll on the start line, error listener, and a finally that kills the child and awaits its exit on every path."
+      }
+    ]
+  },
+  "harnessCheck": { "issues": [] },
+  "deviations": [
+    "TP1 test authoring added a `logFile` param and an `onSpawn` hook to awaitStartLine beyond the build-plan's exact-code sketch, adapting to the file's existing seam signature rather than a byte-for-byte pattern match (explicitly allowed by the plan).",
+    "Baseline's 'bad command' classification was disputed by Fable's fix planning -- this is the bug's own behavioral red bar, not a broken command -- and kept in the decision instead of excluded.",
+    "pipeline-args.json as launched carried relative planPath/testPlanPath and siblingPatterns as plain description strings rather than {pattern, note} objects; corrected on-disk as part of this close-out."
+  ],
+  "phaseReport": [
+    {
+      "phase": "Bugfix pipeline (aggregate -- single Workflow run, no per-phase token/cost split captured)",
+      "ran": true,
+      "agents": 28,
+      "rawFindings": null,
+      "tokens": 2592687,
+      "estUsd": 7.37,
+      "effort": null,
+      "model": null,
+      "overlappedWith": null,
+      "note": "28 agents, 284 tool uses, ~81 min wall-clock across cause-brief -> refutation -> cause-ruling -> bug-test-plan -> build-plan -> red gate -> WP1 -> WP-DOCS -> lenses (correctness, test-quality) -> sibling sweep -> fix rounds 1-2 -> final recheck -> final gate. See provenance."
+    }
+  ],
+  "provenance": "RECONSTRUCTED from the Workflow journal (transcript dir wf_c8b07b1f-a0a/journal.jsonl, 56 entries / 28 agent 'started'+'result' rows) plus facts supplied at close-out time; the engine's own overall return value was truncated by the harness and is not available verbatim. During close-out, the agent count (28) and the four final-gate command summaries above were re-confirmed directly against journal.jsonl. Aggregate cost/token/tool-use/wall-clock figures (estimatedCostUsd, subagentTokens, toolUses) were supplied at close-out time and were NOT independently re-summed from the 28 per-agent transcript files (agent-*.jsonl) in this pass."
+}

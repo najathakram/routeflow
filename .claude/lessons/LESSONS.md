@@ -303,6 +303,26 @@
 
 ## testing
 
+### L-061 · 2026-09-04 · testing · watchdog spec
+
+- **Symptom:** a spec green on CI failed on every loaded dev box, pushing people to skip the pre-push gate.
+- **Root cause:** a fixed 500 ms `setTimeout` stood in for "the spawned child has booted"; bare Node boot here is 0.6–6 s. A poll alone still fails: the api lane's undeclared Jest cap is 5 s.
+- **Lesson:** **A fixed delay is never a readiness signal. Wait on the observable (log line, exit, stream) with a capped poll, kill the child in `finally`, and give the async test its own timeout above the cap.**
+- **Guard:** `visibility-watchdog-script.spec.ts` slow-boot repro (`NODE_OPTIONS=--require slow-boot.cjs`, 1.5 s) stays green.
+
+### L-058 · 2026-09-04 · testing · REG-E2EGUARD-403
+
+- **Symptom:** the deploy-triggered E2E job reported success for days with every test step
+  skipped.
+- **Root cause:** the freshness guard's `latest=$(gh api … --jq '.[0].sha' 2>/dev/null || true)`
+  treated a 403 error body as the newest sha — non-empty, so the emptiness check never fired — and
+  the run token never had `deployments:read` (it worked only while the repo was public).
+- **Lesson:** **A guard that skips work must decide on the command's exit status and the payload's
+  shape, never on string emptiness, and must fail OPEN; declare every permission a job's API call
+  needs at job level.** A job whose steps are all skipped is not a passing run ([[L-041]]).
+- **Guard:** `ci-freshness-guard-script.spec.ts` T1 executes the workflow's own step under a fake
+  `gh`.
+
 ### L-050 · 2026-09-02 · testing · #598
 
 - **Symptom:** two new e2e specs went red post-deploy AND dragged an unrelated, previously-green
