@@ -112,8 +112,22 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   rerun. Test-only env: `VISIBILITY_WATCHDOG_GH_CMD` (JSON argv, swaps in a fake `gh` — no
   network), `VISIBILITY_WATCHDOG_LOG_FILE` (scratch log path), `VISIBILITY_WATCHDOG_VERIFY_INTERVAL_MS`
   (collapses the 10s poll for fast specs). Contract spec:
-  `src/common/visibility-watchdog-script.spec.ts` (spawn-level, fake `gh` driver, 5 cases:
-  success, never-verifies, edit-fails, stdout mirrors log, arg defaults).
+  `src/common/visibility-watchdog-script.spec.ts` (spawn-level, fake `gh` driver, 8 cases:
+  success, never-verifies, edit-fails, stdout mirrors log (now guarded non-empty), arg
+  defaults, slow-boot repro, awaitStartLine cap-rejection + kill pin, awaitStartLine
+  prompt-reject (exit code + stderr) when the child dies before the start line). The "arg
+  defaults" and slow-boot cases share
+  `awaitStartLine({ argv = [SCRIPT], env, logFile, capMs = 30_000, intervalMs = 50, onSpawn })`
+  (`logFile` required — the poll reads it; `onSpawn` is a test-only hook handing back the child
+  handle on the reject path) (2026-09-04,
+  `watchdog-spec-host-speed` fix, L-061): spawns the child and polls `readLog(logFile)` every
+  `intervalMs` for the script's own `" start "` log line instead of a fixed 500 ms wait —
+  resolves `{ child, log }` on match, rejects with a cap-exceeded message at `capMs`, and
+  always kills the child + awaits its exit in a `finally`. All four async tests carry an explicit
+  `35_000` ms third-arg Jest timeout so the poll cap fires first. New fixture
+  `src/common/testing/slow-boot.cjs` — a synchronous `Atomics.wait(..., 1500)` preload used via
+  `NODE_OPTIONS=--require` to deterministically prove the poll survives a slow child boot
+  (`REG-WATCHDOG-SLOWBOOT`), independent of host speed.
 - **`src/common/testing/db-spec.ts` + `db-lane.db.spec.ts`, `jest.db.config.js` (PR-1, `imp-03a`,
   2026-09-03)** — the new `*.db.spec.ts` lane for specs that need a real Postgres. `db-spec.ts`:
   `requireLocalDatabaseUrl(env)` throws unless `DATABASE_URL`'s host is local
