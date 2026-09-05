@@ -294,9 +294,9 @@ function BuyerRegisterInner() {
 
         <div className="mt-6 text-center">
           <p className="text-xs text-navy/70">
-            Staff member?{" "}
+            Selling on RouteFlow?{" "}
             <a href="/login" className="text-buyer-600 hover:underline">
-              Sign in to Staff Portal
+              Sign in to the seller dashboard
             </a>
           </p>
         </div>

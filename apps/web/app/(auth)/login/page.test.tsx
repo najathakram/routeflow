@@ -25,6 +25,7 @@ describe("LoginPage (operator)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     window.localStorage.clear();
+    window.history.replaceState(null, "", "/login");
   });
 
   it("shows the zod validation message and never calls the API when a required field is empty", async () => {
@@ -69,5 +70,76 @@ describe("LoginPage (operator)", () => {
       });
     });
     await waitFor(() => expect(push).toHaveBeenCalledWith("/dashboard"));
+  });
+
+  // T11 (R4) — regression pin, deliberately outside the red gate: passes
+  // today too (the redirect param is currently ignored) because a forced
+  // password change always wins.
+  it("T11: pushes /change-password when forcePasswordChange is true, even with a redirect param", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/login?redirect=" + encodeURIComponent("/orders/abc?tab=1"),
+    );
+    (apiClient.post as jest.Mock).mockResolvedValueOnce({
+      data: {
+        accessToken: "access-token",
+        refreshToken: "refresh-token",
+        user: {
+          id: "u1",
+          username: "operator1",
+          role: "OPERATOR",
+          status: "ACTIVE",
+          forcePasswordChange: true,
+          tenantSlug: "acme",
+        },
+      },
+    });
+
+    const user = userEvent.setup();
+    renderWithProviders(<LoginPage />);
+
+    await user.type(screen.getByLabelText("Workspace"), "acme");
+    await user.type(screen.getByLabelText("Username or email"), "operator1");
+    await user.type(screen.getByLabelText("Password"), "s3cret-pw");
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/change-password"));
+  });
+
+  // T12 (R5) — negative regression pin, deliberately outside the red gate:
+  // passes today too (the redirect param is currently ignored) because an
+  // off-origin redirect must never reach the router.
+  it("T12: never pushes an off-origin redirect target", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/login?redirect=" + encodeURIComponent("https://evil.com/x"),
+    );
+    (apiClient.post as jest.Mock).mockResolvedValueOnce({
+      data: {
+        accessToken: "access-token",
+        refreshToken: "refresh-token",
+        user: {
+          id: "u1",
+          username: "operator1",
+          role: "OPERATOR",
+          status: "ACTIVE",
+          forcePasswordChange: false,
+          tenantSlug: "acme",
+        },
+      },
+    });
+
+    const user = userEvent.setup();
+    renderWithProviders(<LoginPage />);
+
+    await user.type(screen.getByLabelText("Workspace"), "acme");
+    await user.type(screen.getByLabelText("Username or email"), "operator1");
+    await user.type(screen.getByLabelText("Password"), "s3cret-pw");
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/dashboard"));
+    expect(push).not.toHaveBeenCalledWith(expect.stringContaining("evil.com"));
   });
 });

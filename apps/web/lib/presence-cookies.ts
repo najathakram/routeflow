@@ -48,3 +48,34 @@ export function setBuyerPresenceCookie(): void {
 export function clearBuyerPresenceCookie(): void {
   clearPresenceCookie(BUYER_PRESENCE_COOKIE);
 }
+
+export type Portal = "op" | "buyer";
+
+/**
+ * Which portal's authenticated layout rendered last. The landing page ("/")
+ * prefers it when BOTH presence cookies are set; it never overrides a missing
+ * session (lib/portal-routing.ts). Same lifetime/attributes as the presence
+ * cookies; written client-side by the two portal layouts.
+ */
+export const LAST_PORTAL_COOKIE = "rf-last-portal";
+
+function readCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
+  return match ? match[1] : null;
+}
+
+/** True only when the operator presence cookie is present with value "1". */
+export function hasOpPresence(): boolean {
+  return readCookie(OP_PRESENCE_COOKIE) === "1";
+}
+
+/** True only when the buyer presence cookie is present with value "1". */
+export function hasBuyerPresence(): boolean {
+  return readCookie(BUYER_PRESENCE_COOKIE) === "1";
+}
+
+export function setLastPortalCookie(portal: Portal): void {
+  if (typeof document === "undefined") return;
+  document.cookie = `${LAST_PORTAL_COOKIE}=${portal}; path=/; max-age=${PRESENCE_COOKIE_MAX_AGE}; samesite=lax`;
+}
