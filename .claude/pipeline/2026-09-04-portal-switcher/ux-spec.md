@@ -1,6 +1,6 @@
 # UX Spec: buyer ⇄ seller portal switcher
 
-> Authored by Fable 5.1 on 2026-09-04. Status: APPROVED
+> Authored by Fable 5.1 on 2026-09-04. Status: IMPLEMENTED
 > This file is the ONLY context the implementation, review, and UI-verification agents
 > receive about the UI. It stands alone. Companion cache: `.claude/pipeline/design-system.md`
 > (derived 2026-08-31) — cited, not repeated. Requirements served: `R#` ids from

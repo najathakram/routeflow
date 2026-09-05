@@ -8,6 +8,19 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-04** — (branch `feat/portal-switcher`) BUYER ⇄ SELLER PORTAL SWITCHER: new pure
+  `lib/portal-routing.ts` (`resolveOperatorPathGuard`, `resolveLandingTarget`,
+  `safeOperatorRedirect`, `portalSwitchTarget`) shared by `middleware.ts` (buyer-only guard now
+  bounces to `/login?redirect=<encoded path+search>` instead of a silent `/buyer/portal` sweep;
+  landing `/` prefers the new `rf-last-portal` cookie when both sessions are live) and the
+  operator sign-in page (`?redirect=` honoured post-login, open-redirect guarded). New
+  `lib/hooks/usePortalPresence.ts` + `components/PortalSwitchLink.tsx` (presence-aware switch
+  affordance, hydration-safe) wired into the dashboard avatar menu and the buyer sidebar footer;
+  `lib/presence-cookies.ts` gains `hasOpPresence`/`hasBuyerPresence`/`setLastPortalCookie`.
+  Sign-in notices + footer cross-links on `/login`, `/buyer/login`, `/buyer/register`. Two new
+  i18n keys (`menu.switchToBuyerPortal`, `menu.buyerPortalSignIn`). E2E: CC-16…CC-21 in
+  `05-cross-cutting.spec.ts`, OP-23 in `02-operator.spec.ts`, BY-15 in `04-buyer-portal.spec.ts`.
+
 - **2026-09-04** — (worktree `rf-imp-04`, branch `refactor/imp-01-pricing-package`, merged with
   master `e07aa0b5`, #611) — **watchdog-spec-host-speed fix folded into the merge.** Conflicts
   were confined to `.claude/code-map/_meta.json`, `.claude/code-map/api.md`,

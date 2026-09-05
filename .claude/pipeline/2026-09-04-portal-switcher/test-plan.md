@@ -1,6 +1,6 @@
 # Test plan: buyer ⇄ seller portal switcher
 
-> **Stage S4 — "how we'll know".** Authored by Fable 5.1 on 2026-09-04. Status: APPROVED
+> **Stage S4 — "how we'll know".** Authored by Fable 5.1 on 2026-09-04. Status: IMPLEMENTED
 > Written BEFORE the build plan and before any implementation code exists. This file is the
 > ONLY context the test-authoring, red-gate, UI-verification and review agents receive; it
 > stands alone. `R#` ids come from [spec.md](./spec.md); `T#` ids defined here are referenced

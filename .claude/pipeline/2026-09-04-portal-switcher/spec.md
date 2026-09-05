@@ -1,6 +1,6 @@
 # Spec — what the buyer ⇄ seller portal switcher must do
 
-**Status:** `APPROVED` (DRAFT | APPROVED | IMPLEMENTED | CLOSED)
+**Status:** `IMPLEMENTED` (DRAFT | APPROVED | IMPLEMENTED | CLOSED)
 **Stage:** S2 — Spec (what) · **Author:** Fable 5.1 · **Date:** 2026-09-04
 **Lives at:** `.claude/pipeline/2026-09-04-portal-switcher/spec.md`
 **Prev:** [discovery.md](./discovery.md) · **Next:** [ux-spec.md](./ux-spec.md) then [test-plan.md](./test-plan.md)

@@ -1,6 +1,6 @@
 # Discovery — why a portal switcher between the buyer portal and the seller dashboard
 
-**Status:** `APPROVED` (DRAFT | APPROVED | IMPLEMENTED | CLOSED)
+**Status:** `IMPLEMENTED` (DRAFT | APPROVED | IMPLEMENTED | CLOSED)
 **Stage:** S1 — Discovery (why) · **Author:** Fable 5.1 · **Date:** 2026-09-04
 **Lives at:** `.claude/pipeline/2026-09-04-portal-switcher/discovery.md`
 **Next:** [spec.md](./spec.md)

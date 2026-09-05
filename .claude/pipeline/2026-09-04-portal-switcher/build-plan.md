@@ -1,6 +1,6 @@
 # Build plan: buyer ⇄ seller portal switcher
 
-> **Stage S5 — "how".** Authored by Fable 5.1 on 2026-09-04. Status: APPROVED
+> **Stage S5 — "how".** Authored by Fable 5.1 on 2026-09-04. Status: IMPLEMENTED
 > Written AFTER [test-plan.md](./test-plan.md). This file is the ONLY context the
 > implementation and review agents receive; it stands alone.
 > Inputs: [discovery.md](./discovery.md) (why), [spec.md](./spec.md) (`R#`),
