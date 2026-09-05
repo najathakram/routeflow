@@ -130,7 +130,7 @@
 - **Guard:** stash messages here carry the worktree name (`rf-F13: …`); no hook — HANDOFF and the
   fleet-state memory carry the rule.
 
-### L-060 · 2026-09-04 · process · #597
+### L-065 · 2026-09-04 · process · #597
 
 - **Symptom:** claiming a batch made the dispatcher offer the batch touching the same files to a
   second agent; a copied claim grammar freed another script's leases.
@@ -317,7 +317,7 @@
   detection, `::warning::…SKIPPED` + exit 0 on outage, fail-closed otherwise); contract spec
   `apps/api/src/common/ci-audit-script.spec.ts`.
 
-### L-058 · 2026-09-04 · tooling · #597
+### L-063 · 2026-09-04 · tooling · #597
 
 - **Symptom:** eight defects from one script: "updated" edits that changed nothing, mangled authored
   text, a regex parsed as a comment, a record claiming a proof it never held.
@@ -334,7 +334,7 @@
   ledger id-uniqueness, real `cmds.render` on a fixture, sync done→queued→done, reopen leaves the
   proof clear.
 
-### L-059 · 2026-09-04 · tooling · #597
+### L-064 · 2026-09-04 · tooling · #597
 
 - **Symptom:** a proven ledger row silently back to `queued`; a live lock stolen, admitting three
   writers; a refused `move` destroying the authoritative row — every gate green.
@@ -354,6 +354,26 @@
   survives.
 
 ## testing
+
+### L-061 · 2026-09-04 · testing · watchdog spec
+
+- **Symptom:** a spec green on CI failed on every loaded dev box, pushing people to skip the pre-push gate.
+- **Root cause:** a fixed 500 ms `setTimeout` stood in for "the spawned child has booted"; bare Node boot here is 0.6–6 s. A poll alone still fails: the api lane's undeclared Jest cap is 5 s.
+- **Lesson:** **A fixed delay is never a readiness signal. Wait on the observable (log line, exit, stream) with a capped poll, kill the child in `finally`, and give the async test its own timeout above the cap.**
+- **Guard:** `visibility-watchdog-script.spec.ts` slow-boot repro (`NODE_OPTIONS=--require slow-boot.cjs`, 1.5 s) stays green.
+
+### L-058 · 2026-09-04 · testing · REG-E2EGUARD-403
+
+- **Symptom:** the deploy-triggered E2E job reported success for days with every test step
+  skipped.
+- **Root cause:** the freshness guard's `latest=$(gh api … --jq '.[0].sha' 2>/dev/null || true)`
+  treated a 403 error body as the newest sha — non-empty, so the emptiness check never fired — and
+  the run token never had `deployments:read` (it worked only while the repo was public).
+- **Lesson:** **A guard that skips work must decide on the command's exit status and the payload's
+  shape, never on string emptiness, and must fail OPEN; declare every permission a job's API call
+  needs at job level.** A job whose steps are all skipped is not a passing run ([[L-041]]).
+- **Guard:** `ci-freshness-guard-script.spec.ts` T1 executes the workflow's own step under a fake
+  `gh`.
 
 ### L-050 · 2026-09-02 · testing · #598
 
@@ -471,28 +491,6 @@
   reachable (a SKIPPED stop on a COMPLETED run), ship the refusal for it in the same PR ([[L-030]]).
 - **Guard:** `REG-B129 (T5 path: cancel → un-cancel → re-dispatch)`, `REG-B211 (T12 path:
 complete-with-skipped → reopen refused)`; mutation probes in the F11 PR body.
-
-### L-029 · 2026-09-01 · domain · #588
-
-- **Symptom:** cancelling an order destroyed value three ways at once — it voided the invoice for
-  goods already delivered, never returned the creation-time stock decrement, and its sibling
-  `deleteOrder` skipped the regulated-ledger reversal both other invoice-destruction paths
-  performed. All three had shipped green.
-- **Root cause:** the conservation rules were built for the **edit** path and the **teardown**
-  paths were simply never enrolled in them. Every signal each fix needed already sat in the same
-  file — the delivered-qty clamp, the reversal call — and was not consulted. Nothing failed
-  loudly, because a conservation law has no natural test: stock is only wrong much later, and
-  nowhere near the cancel that caused it.
-- **Lesson:** **When a codebase establishes an invariant on one path, enumerate every OTHER path
-  that reaches the same state and enroll it explicitly — an invariant with a known exception is a
-  bug with a scheduled date.** Search by the STATE being mutated (who else deletes an invoice, who
-  else writes `order.status`), never by the feature name: the violating paths are the ones that
-  never mention it.
-- **Guard:** `orders.lifecycle-conservation.spec.ts` + its pins spec, 9 mutation probes. The same
-  search immediately found two more instances, recorded not fixed: `routes.service.ts` has **five**
-  `order.status` writers and only one runs the invoicing side effects (→ F11), and the customer
-  purge is a **fourth** `reverseInvoiceEntries`-skipped hard delete — at four instances the answer
-  is a shared guard, not a fourth point-fix. See [[L-008]] for why they stayed out of scope.
 
 ### L-030 · 2026-09-01 · domain · #588
 

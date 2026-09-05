@@ -1,7 +1,7 @@
 {
-  "mappedSha": "f60bd27c",
-  "generatedAt": "2026-09-04T18:59:39.036Z",
+  "mappedSha": "e07aa0b5",
+  "generatedAt": "2026-09-05T00:36:28.000Z",
   "areas": ["api", "web", "mobile", "packages"],
-  "fileCount": 935,
+  "fileCount": 937,
   "notes": "**2026-09-03 (catalogue-lock coverage/order + lock liveness residuals + grammar/id/error-guard mop-up — the second refuter's 14 remaining items)** — (branch `feat/bug-registry`, PR #597; `scripts/campaign/bugs.mjs` + `scripts/campaign-check.mjs` + `scripts/campaign/reg-token.mjs` + `.gitignore` + SKILL.md, 14 fix commits, one per item; self-test 204 → 270 checks) — catalogue lock now covers `move`/`import`/`index`/`discharge` (was: `file` only), one-way order (catalogue outermost) enforced by a static source scan plus a runtime race; lock liveness closes PID-reuse-across-reboot (`bootAt` stamp) and a stolen lock now exits non-zero; `BUG_ID_RE` (1-4 digits) shared from `reg-token.mjs` so campaign-check's row-id grammar matches the token grammar; `status`/`brief` routed through `boardIssue()`; `discharge` rollback now restores records, not just the shard; `--build-plan` containment resolves symlinks/junctions via `realpathSync.native`; the grandfathered shared-evidence set is a hard-coded 3-id allowlist, not an open-ended warn; campaign-check.mjs gained bugs.mjs's own top-level error-guard shape, and `cmds` is `Object.create(null)` so an inherited Object.prototype name can no longer silently exit 0. Every fix mutation-probed (reverted, confirmed red, restored) before commit. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
