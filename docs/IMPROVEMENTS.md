@@ -58,7 +58,7 @@ api, web and mobile all import it, and the four legacy files above are gone. It 
 CJS** under `dist/`, built by the root `postinstall` — not a source-direct package "exactly like
 `@routeflow/types`" as first proposed here: `nest build` emits `require()` verbatim, so
 `node dist/main.js` cannot load a `.ts` file, and a workspace package the API imports at runtime
-must therefore ship built JS (L-058). `scripts/codemods/pricing-import-rewrite.mjs` rewrote all 147
+must therefore ship built JS (L-065). `scripts/codemods/pricing-import-rewrite.mjs` rewrote all 147
 importers across the three apps onto `@routeflow/pricing`; `scripts/codemods/pricing-body-diff.mjs`
 proved every moved function byte-identical to its pre-move source before the four copies were
 deleted. The package's own golden money table (`packages/pricing/src/golden.fixtures.ts` +

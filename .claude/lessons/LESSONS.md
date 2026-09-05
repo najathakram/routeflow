@@ -111,7 +111,7 @@
 
 ## tooling
 
-### L-058 · 2026-09-03 · tooling · PR-4 `imp-01`
+### L-065 · 2026-09-03 · tooling · PR-4 `imp-01`
 
 - **Symptom:** the review counted "four copies", the first plan promised a source-direct package
   "exactly like `@routeflow/types`", and the repo's own comments already said that shape crashes
@@ -312,6 +312,19 @@
   report, never a spec to ship as-is — and "we only add tests" is not a reason to leave one red.
 - **Guard:** the RED BAR block now asserts `code: "P2025"` (Prisma's own not-found shape), so a
   regression that returns the row — or throws something else — fails the DB lane.
+
+### L-058 · 2026-09-04 · testing · REG-E2EGUARD-403
+
+- **Symptom:** the deploy-triggered E2E job reported success for days with every test step
+  skipped.
+- **Root cause:** the freshness guard's `latest=$(gh api … --jq '.[0].sha' 2>/dev/null || true)`
+  treated a 403 error body as the newest sha — non-empty, so the emptiness check never fired — and
+  the run token never had `deployments:read` (it worked only while the repo was public).
+- **Lesson:** **A guard that skips work must decide on the command's exit status and the payload's
+  shape, never on string emptiness, and must fail OPEN; declare every permission a job's API call
+  needs at job level.** A job whose steps are all skipped is not a passing run ([[L-041]]).
+- **Guard:** `ci-freshness-guard-script.spec.ts` T1 executes the workflow's own step under a fake
+  `gh`.
 
 ### L-050 · 2026-09-02 · testing · #598
 

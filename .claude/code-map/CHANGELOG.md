@@ -31,7 +31,7 @@ http://localhost:3000/api/v1/auth/login` from `http://localhost:3001`) was CSP-b
     api/web/mobile as a bare specifier); bodies proven byte-identical by
     `scripts/codemods/pricing-body-diff.mjs`; golden tests + money fixtures moved into the
     package; the four legacy files and api's `pricing-parity.spec.ts`/`.fixtures.ts` deleted.
-    Lesson L-058 (tooling). Wave B′: Squawk destructive-migration lint (`apps/api/.squawk.toml`,
+    Lesson L-065 (tooling). Wave B′: Squawk destructive-migration lint (`apps/api/.squawk.toml`,
     `scripts/lint-migrations.mjs`, `db-migrations.yml` step, root `lint:migrations`) replaces the
     Atlas recommendation and fails CLOSED; `SKIP_VERIFY` bypass now audited
     (`scripts/skip-verify-audit.mjs`, `.husky/pre-push`, requires `SKIP_VERIFY_REASON`) and root

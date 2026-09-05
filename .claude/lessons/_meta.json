@@ -1,10 +1,10 @@
 {
-  "nextId": 65,
-  "activeCount": 34,
+  "nextId": 66,
+  "activeCount": 35,
   "archivedCount": 24,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-04T20:00:00.000Z",
+  "updatedAt": "2026-09-04T21:00:00.000Z",
   "schemaVersion": 1,
-  "note": "L-064 added (imp-04, deploy category): CSP connect-src gated on NODE_ENV was dead in every built image (next build forces production); fix derives the http/ws relaxation from the baked NEXT_PUBLIC_API_URL instead, pinned byte-identical in apps/web/lib/csp.test.ts. Prior note: 2026-09-04 compaction (before PR-4 + B′ land) archived 8 entries to restore headroom — L-008, L-021 (aged pre-2026-08-15, zero citations); L-052, L-053, L-059, L-032, L-033, L-031 (each guarded by a merged mechanical spec/script verified present in the tree). Moved verbatim to ARCHIVE.md under '## Archived 2026-09-04 — compaction before PR-4 + B′ landing', one reason line each."
+  "note": "Merge of origin/master (a5be8626, #610) into refactor/imp-01-pricing-package: master's L-058 (testing, REG-E2EGUARD-403) landed as-is; this branch's own L-058 (tooling, PR-4 `imp-01`) collided and was renumbered to L-065 (next free id after this branch's own L-064) — cross-refs fixed in code-map/CHANGELOG.md and docs/IMPROVEMENTS.md. nextId bumped to 66. Prior note: L-064 added (imp-04, deploy category) CSP connect-src fix; 2026-09-04 compaction (before PR-4 + B′ land) archived 8 entries to restore headroom — L-008, L-021, L-052, L-053, L-059, L-032, L-033, L-031 — moved verbatim to ARCHIVE.md."
 }
