@@ -1,11 +1,11 @@
-import { cascadeTierPrices, getTierPrice } from "./pricing";
+import { cascadeTierPrices, getTierPrice } from "./tier-pricing";
 
 /**
  * Locks the tier ladder semantics — this 17-line function is the whole tier
- * pricing engine, and it had ZERO coverage while the web/mobile mirrors
- * diverged (missing `|| fallback` → $0.00 for DB-default-0 tier columns).
- * The web and mobile mirrors must match this behavior byte-for-byte; the
- * mobile mirror is locked by apps/mobile/__tests__/pricing.test.ts.
+ * pricing engine, and it had ZERO coverage back when api, web and mobile each
+ * kept their own copy and those copies diverged (missing `|| fallback` → $0.00
+ * for DB-default-0 tier columns). There is now one implementation —
+ * `@routeflow/pricing` — and this suite is the only thing locking it.
  */
 describe("getTierPrice", () => {
   const product = {

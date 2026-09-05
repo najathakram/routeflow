@@ -31,7 +31,7 @@ import {
   type CreateVendorBillItem,
 } from "@/lib/api/vendor-bills";
 import { fmt, fmtCalendarDate, todayIso } from "@/lib/formatting";
-import { roundMoney } from "@/lib/pricing";
+import { roundMoney } from "@routeflow/pricing";
 
 // ─── Client-computed sections ───────────────────────────────────────────────
 // Neither `SupplierStatementsService` nor `statement-matcher.ts` (WP2, as

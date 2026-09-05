@@ -9,7 +9,7 @@ import {
   type ScanResultEx,
   type SupplierRef,
 } from "../lib/vendor-bill-scan";
-import { roundMoney } from "../lib/pricing";
+import { roundMoney } from "@routeflow/pricing";
 
 /**
  * PR-5 additions to the scan-review pure logic: confirm-only learning

@@ -8,7 +8,7 @@
  * must never change the line's total money value.
  */
 import { toBillLine, type PieceSnapshot } from "../lib/scan-line-units";
-import { roundMoney } from "../lib/pricing";
+import { roundMoney } from "@routeflow/pricing";
 
 describe("toBillLine — pieces", () => {
   it("returns the piece form with packSize explicitly null", () => {

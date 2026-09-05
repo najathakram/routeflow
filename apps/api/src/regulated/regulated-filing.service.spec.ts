@@ -6,7 +6,7 @@ import { RegulatedReportService } from "./regulated-report.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AuditService } from "../audit/audit.service";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("RegulatedFilingService", () => {

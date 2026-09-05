@@ -13,6 +13,8 @@ import { useTenant } from "@/components/tenant-provider";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { GoogleIcon, startGoogleSignIn } from "@/lib/google-oauth";
 import { tenantSlugFromHostname } from "@/lib/tenant-host";
+import { safeOperatorRedirect } from "@/lib/portal-routing";
+import { usePortalPresence } from "@/lib/hooks/usePortalPresence";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -53,6 +55,7 @@ function getSubdomainWorkspace(): string | null {
 export default function LoginPage() {
   const router = useRouter();
   const { login: authLogin } = useAuth();
+  const presence = usePortalPresence();
   const { branding } = useTenant();
   const [isLoading, setIsLoading] = React.useState(false);
   const [apiError, setApiError] = React.useState<string | null>(null);
@@ -97,8 +100,12 @@ export default function LoginPage() {
     setTenantCookie(data.workspace);
     try {
       const user = await authLogin(data.username, data.password);
+      // Read at submit time (not via useSearchParams) so /login keeps prerendering its form — a Suspense boundary here would blank the whole page until hydration.
+      const redirectTarget = safeOperatorRedirect(
+        new URLSearchParams(window.location.search).get("redirect"),
+      );
       if (user.forcePasswordChange) router.push("/change-password");
-      else router.push("/dashboard");
+      else router.push(redirectTarget);
     } catch (err: unknown) {
       const errObj = err as {
         response?: {
@@ -352,6 +359,18 @@ export default function LoginPage() {
             }}
           >
             <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
+              {presence.buyer && (
+                <p
+                  role="status"
+                  className="rounded-lg border border-surface-border bg-surface-raised px-3 py-2 text-sm text-navy"
+                >
+                  You&apos;re signed in to the buyer portal.{" "}
+                  <a href="/buyer/portal" className="text-[#0B6E6B] hover:underline font-medium">
+                    Go to buyer portal
+                  </a>
+                </p>
+              )}
+
               {throttleSeconds && throttleSeconds > 0 ? (
                 <p className="rounded-lg bg-warning-bg px-3 py-2 text-sm text-warning">
                   Too many login attempts. Try again in {throttleSeconds}{" "}
@@ -459,9 +478,9 @@ export default function LoginPage() {
           {/* Footer links */}
           <div className="mt-6 space-y-2 text-center">
             <p className="text-xs text-navy/70">
-              Not a staff member?{" "}
+              Buying from a seller?{" "}
               <a href="/buyer/login" className="text-[#0B6E6B] hover:underline font-medium">
-                Sign in to retailer portal
+                Sign in to the buyer portal
               </a>
             </p>
             <p className="text-xs text-navy/70">

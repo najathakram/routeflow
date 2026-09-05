@@ -1,7 +1,7 @@
 {
-  "mappedSha": "f60bd27c",
-  "generatedAt": "2026-09-05T04:53:00.000Z",
+  "mappedSha": "16a486c2",
+  "generatedAt": "2026-09-05T06:10:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
-  "fileCount": 935,
+  "fileCount": 965,
   "notes": "**2026-09-04** — F25 calendar/date correctness batch A (B59 Critical, B90/B91/B118 Medium): new shared `calendar-date.ts` helper (api/web/mobile mirrors) — UTC-midnight round-trip + tenant-timezone day boundaries; `analytics.service.ts` on-time-% calls `endOfCalendarDay(run.scheduledDate, cfg?.timezone ?? null)` via its own `resolveCurrentTenantTimezone` (passes `cfg?.timezone ?? null` through to `endOfCalendarDay`'s own UTC fallback — the helper exports no America/New_York default), so an unconfigured tenant keeps the UTC day-end; two host-local siblings in the same service were swept with it (`getRevenueTrend`'s month key and `dateRange`'s default `fromDate`, both UTC now); the licence-expiry writer (`apps/mobile/app/(operator)/customers/[id]/licenses.logic.ts#buildExpiresAtIso`) stores UTC midnight instead of a local `T23:59:59` instant — `invoices.service.ts` only lost its private `startOfCalendarDay` to `common/calendar-date.ts` (argument order now date-first); the web run-edit modal (`EditRunModal.tsx`) routes through `edit-run-modal.logic.ts` -> `lib/calendar-date.ts`. New D6 report/repair script pair for the B91 writer-half data cleanup, e2e spec 34 (deploy-only). `api.md`/`web.md`/`mobile.md` gain entries; lesson L-047 (domain). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

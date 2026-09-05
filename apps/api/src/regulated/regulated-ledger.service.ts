@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { periodBucketOf } from "./period";
 
 /** Round a quantity to 3 decimals (matches the Decimal(12,3) ledger columns). */

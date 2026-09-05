@@ -75,7 +75,7 @@ import {
   getTierPrice,
   normalizeBoxesPieces,
   roundMoney,
-} from "@/lib/pricing";
+} from "@routeflow/pricing";
 import { useCustomer, useCustomerPrices } from "@/lib/api/customers";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";

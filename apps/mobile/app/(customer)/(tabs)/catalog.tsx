@@ -35,7 +35,7 @@ import {
 import { useCartStore } from "../../../store/cartStore";
 import { priceCart, promoRulesFrom } from "../../../lib/buyer-cart-pricing";
 import { QtyTextInput } from "../../../components/QtyStepper";
-import type { PromotionRule } from "../../../lib/pricing";
+import type { PromotionRule } from "@routeflow/pricing";
 import {
   alertIdSet,
   behaviorLabel,

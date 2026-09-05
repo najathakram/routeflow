@@ -13,7 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormTextInput } from "./FormSheet";
 import { useProduct } from "../lib/api/products";
-import { roundMoney } from "../lib/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import {
   toBillLine,
   type BillLineDenomination,

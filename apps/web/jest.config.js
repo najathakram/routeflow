@@ -14,6 +14,10 @@ const createJestConfig = nextJest({ dir: "./" });
 const customJestConfig = {
   setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"],
   testEnvironment: "jsdom",
+  // RTL suites mount the real Auth/BuyerAuth/i18n providers and pay a cold SWC compile on
+  // the first test of each file; under CI/pre-push load on slow hosts that exceeds Jest's
+  // 5 s default and fails as a timeout rather than an assertion. 30 s is a ceiling, not a wait.
+  testTimeout: 30_000,
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/$1",
     // Force a SINGLE `react` instance for the whole test run. apps/web's OWN

@@ -129,6 +129,11 @@ services:
       JWT_SECRET: local-dev-only-jwt-secret-change-me
       JWT_REFRESH_SECRET: local-dev-only-jwt-refresh-secret-change-me
       CORS_ORIGINS: http://localhost:3001,http://localhost:3000
+      # pB10 / RF-160: local throwaway override — the Playwright lane + retries +
+      # other local sessions all share 127.0.0.1, so the prod login-throttle
+      # default (10 / 5min) exhausts fast. Prod defaults (10 / 300000) unchanged.
+      AUTH_LOGIN_THROTTLE_LIMIT: "1000"
+      AUTH_LOGIN_THROTTLE_TTL_MS: "60000"
     ports:
       - "3000:3000"
     depends_on:

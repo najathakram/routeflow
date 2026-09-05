@@ -64,20 +64,23 @@ const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 const { DEMO_SLUG: DEMO_SLUG_RAW, stableId } = require("./lib/demo-ids");
 
 // The money helpers are the single source of truth for line math (CLAUDE.md
-// "Money discipline"). They live in TypeScript, so register a transpile-only
-// ts-node hook rather than re-implementing — a private copy would drift.
-require("ts-node").register({
-  transpileOnly: true,
-  skipProject: true,
-  compilerOptions: { module: "commonjs", moduleResolution: "node", target: "ES2022" },
-});
+// "Money discipline"). `@routeflow/pricing` ships compiled CommonJS (its dist is
+// built by the root postinstall on every npm install/ci), so it needs no hook.
 const {
   roundMoney,
   normalizeBoxesPieces,
   computeLineSubtotal,
   computeCategoryTax,
-} = require("../src/common/pricing.ts");
-const { getTierPrice } = require("../src/utils/pricing.ts");
+  getTierPrice,
+} = require("@routeflow/pricing");
+
+// The shared constants below still live in TypeScript, so register a
+// transpile-only ts-node hook rather than re-implementing — a copy would drift.
+require("ts-node").register({
+  transpileOnly: true,
+  skipProject: true,
+  compilerOptions: { module: "commonjs", moduleResolution: "node", target: "ES2022" },
+});
 const { IRS_SYSTEM_CATEGORIES } = require("../src/bookkeeping/irs-categories.constant.ts");
 const { periodBucketOf } = require("../src/regulated/period.ts");
 

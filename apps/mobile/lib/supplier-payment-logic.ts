@@ -1,4 +1,4 @@
-import { roundMoney } from "./pricing";
+import { roundMoney } from "@routeflow/pricing";
 
 /**
  * Pure AP allocation helpers — the payable mirror of `lib/payments-logic.ts`'s

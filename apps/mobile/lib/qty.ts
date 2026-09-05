@@ -7,7 +7,7 @@
  * totals downstream, so every qty/boxes/pieces TextInput in the create + edit
  * flows routes its `onChangeText` through {@link sanitizeIntInput}.
  *
- * Pairs with the backend `normalizeBoxesPieces` (apps/api/src/common/pricing.ts)
+ * Pairs with `normalizeBoxesPieces` (`@routeflow/pricing`)
  * which is authoritative — this just keeps what the operator SEES integer-clean.
  */
 

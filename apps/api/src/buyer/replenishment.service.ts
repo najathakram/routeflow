@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { normalizeBoxesPieces } from "../common/pricing";
+import { normalizeBoxesPieces } from "@routeflow/pricing";
 
 /** Where a product sits against its inferred reorder cadence. */
 export type ReplenishmentState = "low" | "due-soon" | "ok";

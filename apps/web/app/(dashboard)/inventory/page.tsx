@@ -26,7 +26,7 @@ import { archivedMessage, resolveProductByCode } from "@/lib/barcode-resolve";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
-import { normalizeBoxesPieces, roundUnitCost } from "@/lib/pricing";
+import { normalizeBoxesPieces, roundUnitCost } from "@routeflow/pricing";
 import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
 import {

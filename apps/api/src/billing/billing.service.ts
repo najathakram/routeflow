@@ -4,7 +4,7 @@ import { Prisma, TenantPlan } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { StripeService } from "./stripe.service";
 import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
@@ -179,9 +179,7 @@ export class BillingService {
     // fuller opts object (pre-existing callers pass successUrl/cancelUrl this way) —
     // one signature that satisfies both call shapes without touching either caller.
     intervalOrOpts?:
-      | "month"
-      | "year"
-      | { interval?: "month" | "year"; successUrl?: string; cancelUrl?: string },
+      "month" | "year" | { interval?: "month" | "year"; successUrl?: string; cancelUrl?: string },
   ): Promise<{ checkoutUrl: string; sessionId: string }> {
     const opts = typeof intervalOrOpts === "string" ? { interval: intervalOrOpts } : intervalOrOpts;
 

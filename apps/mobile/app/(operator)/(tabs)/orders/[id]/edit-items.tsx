@@ -34,7 +34,7 @@ import {
   perUnitPrice,
   priceForMarginFloor,
   roundMoney,
-} from "../../../../../lib/pricing";
+} from "@routeflow/pricing";
 import { editedLineFreeUnits } from "../../../../../lib/invoice-totals";
 import { freeUnitsLabel } from "../../../../../lib/buyer-cart-logic";
 import { incrementLine, incrementLinePiece, setLineUnits } from "../../../../../lib/sale-line";

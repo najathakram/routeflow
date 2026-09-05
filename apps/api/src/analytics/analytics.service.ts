@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { endOfCalendarDay } from "../common/calendar-date";
 import {
   REAL_INVOICE_STATUSES,
@@ -849,7 +849,7 @@ export class AnalyticsService {
         // with unitsPerBox 12 stores qty 27) — never re-derive it from boxes/pieces.
         units[idx] += Number(item.qty);
         // subtotal is authoritative. NEVER qty × unitPrice: that re-introduces the
-        // boxed-line overcharge by unitsPerBox that common/pricing.ts exists to prevent.
+        // boxed-line overcharge by unitsPerBox that @routeflow/pricing exists to prevent.
         revenue[idx] += Number(item.subtotal);
       }
     }

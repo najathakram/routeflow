@@ -36,7 +36,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { CheckStatus, InvoiceStatus, NotificationEvent } from "@prisma/client";
-import { computeLineSubtotal, roundMoney } from "../common/pricing";
+import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 
 const mockCompressDocument = compressDocument as jest.Mock;
 
@@ -2581,12 +2581,14 @@ describe("InvoicesService", () => {
   // customer ever owed for the entire line.
   //
   // Token note: the describe carries `REG-B50s` (NOT `REG-B50`) on purpose. The bare
-  // `REG-B50` token is already owned by apps/api/src/common/pricing-parity.spec.ts's
-  // three SHIPPED F04 parity tests, and a gate regex containing `REG-B50` selects
-  // those too — which would make F03's gate incapable of ever reporting "0 passed".
-  // The gate regex was corrected to match: `-t "REG-B(11|57|74|81|84|85|102|103)|REG-B50s"`
-  // (measured: 7 suites / 45 tests, vs 8 / 48 under the old one that pulled in
-  // pricing-parity.spec.ts).
+  // `REG-B50` token is owned by the SHIPPED F04 parity tests, which now live in
+  // packages/pricing/src/golden.spec.ts (the data-driven `prorateLineSubtotal —
+  // PRORATE_LINE_SUBTOTAL_FIXTURES (REG-B50)` describe) and in
+  // apps/mobile/__tests__/short-pick-prorate.test.ts. Both are separate Jest projects,
+  // so an `apps/api`-scoped `-t REG-B50` run no longer collides — but the `REG-B50s`
+  // token is kept so the F03 gate regex
+  // `-t "REG-B(11|57|74|81|84|85|102|103)|REG-B50s"` stays stable and unambiguous
+  // across projects.
   const B50S_LINE = {
     id: "oi-50",
     productId: "p-50",

@@ -25,9 +25,10 @@ npm run verify        # turbo: check-types + lint + test (api + mobile Jest, moc
 
 Critical regression specs that must stay green:
 
-- `apps/api/src/common/pricing.spec.ts` — money math (220 × 2 = 440, boxed proration, rounding).
+- `packages/pricing/src/pricing.spec.ts` — money math (220 × 2 = 440, boxed proration, rounding).
+  Its own Jest project: run it directly with `npm test -w @routeflow/pricing`, not from `apps/api`.
 - `apps/api/src/invoices/invoices.service.spec.ts` — invoice→order backward sync.
-- `apps/mobile/__tests__/qty.test.ts`, `pricing.test.ts` — integer qty + pricing mirror.
+- `apps/mobile/__tests__/qty.test.ts` — integer qty sanitizer.
 
 ## Layer 2 — Authenticated API smoke (after any deploy)
 

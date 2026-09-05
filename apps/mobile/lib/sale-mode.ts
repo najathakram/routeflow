@@ -1,5 +1,5 @@
 import { computeInvoiceTotals, type InvoiceTotalsLine } from "./invoice-totals";
-import { computeLineSubtotal, roundMoney } from "./pricing";
+import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 
 /**
  * Sale mode ("Delivered today?" in the invoice builder) submits through

@@ -15,17 +15,18 @@ import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
-  computeLineSubtotal,
-  computeCategoryTax,
-  roundMoney,
-  normalizeBoxesPieces,
   applyBestPromotion,
-  promotionMatchesProduct,
+  computeCategoryTax,
+  computeLineSubtotal,
   effectiveBuyerPrice,
-  type PromotionRule,
-  type PromoContext,
+  getTierPrice,
+  normalizeBoxesPieces,
+  promotionMatchesProduct,
+  roundMoney,
   type CategoryTaxType,
-} from "../common/pricing";
+  type PromoContext,
+  type PromotionRule,
+} from "@routeflow/pricing";
 import { withAdvisoryLock, type LockMode } from "../common/db-locks";
 import {
   LOCK_UNAVAILABLE,
@@ -62,7 +63,6 @@ import {
   type RegulatedDeliveryDb,
 } from "../common/regulated-delivery";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
-import { getTierPrice } from "../utils/pricing";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { taxRateFractionFrom } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";

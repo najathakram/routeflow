@@ -1,4 +1,4 @@
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "./pricing";
 
 export function getTierPrice(product: any, tier: number): number {
   const fallback = Number(product.pricePerUnit) || 0;

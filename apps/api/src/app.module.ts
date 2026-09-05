@@ -173,6 +173,16 @@ import { AppService } from "./app.service";
   controllers: [AppController],
   providers: [
     AppService,
+    // ─── Guard-order invariant (do not reorder without a security review) ─────
+    // These APP_GUARD providers are global and run on EVERY request, before
+    // JwtAuthGuard — which is applied per-route, by design, not globally. At
+    // this point in the pipeline any JWT claims are UNVERIFIED: a global guard
+    // may read them only to throttle or look up state (e.g. tenant status by
+    // an unverified tenantId), NEVER to authorize a request or grant access.
+    // Real authorization happens later, per-route, once JwtAuthGuard has
+    // verified the token. Changing this order, or adding a new global guard
+    // that authorizes based on unverified claims, is a security-sensitive
+    // change and must be reviewed as one.
     // Global throttle: 100 req / 60 s per IP on every endpoint
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     // Block SUSPENDED / CANCELLED tenants from making any API calls.

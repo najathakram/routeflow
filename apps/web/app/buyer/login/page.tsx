@@ -8,6 +8,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Input, Button, PasswordInput } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { GoogleIcon, startGoogleSignIn } from "@/lib/google-oauth";
+import { usePortalPresence } from "@/lib/hooks/usePortalPresence";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,7 @@ function BuyerLoginInner() {
   const router = useRouter();
   const params = useSearchParams();
   const { login, isAuthenticated } = useBuyerAuth();
+  const presence = usePortalPresence();
   const [isLoading, setIsLoading] = React.useState(false);
   const [apiError, setApiError] = React.useState<string | null>(null);
   const [googleLoading, setGoogleLoading] = React.useState(false);
@@ -164,6 +166,18 @@ function BuyerLoginInner() {
           {/* Card */}
           <div className="rounded-xl bg-white p-6 shadow-card">
             <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
+              {presence.op && (
+                <p
+                  role="status"
+                  className="rounded-lg border border-surface-border bg-surface-raised px-3 py-2 text-sm text-navy"
+                >
+                  You&apos;re signed in to a seller dashboard.{" "}
+                  <a href="/dashboard" className="text-buyer-600 hover:underline font-medium">
+                    Go to seller dashboard
+                  </a>
+                </p>
+              )}
+
               {apiError && (
                 <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">{apiError}</p>
               )}
@@ -256,9 +270,9 @@ function BuyerLoginInner() {
 
           <div className="mt-6 text-center">
             <p className="text-xs text-navy/70">
-              Staff member?{" "}
+              Selling on RouteFlow?{" "}
               <a href="/login" className="text-buyer-600 hover:underline">
-                Sign in to Staff Portal
+                Sign in to the seller dashboard
               </a>
             </p>
           </div>

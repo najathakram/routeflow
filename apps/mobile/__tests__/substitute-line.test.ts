@@ -13,7 +13,7 @@ import {
   type DiffCatalogLine,
   type OriginalLine,
 } from "../lib/order-item-diff";
-import { computeLineSubtotal, effectiveQty } from "../lib/pricing";
+import { computeLineSubtotal, effectiveQty } from "@routeflow/pricing";
 
 /** The editor's draft row: what buildSubstituteLine returns, plus modal edits. */
 type DraftRow = SubstitutedLine & { overrideReason?: string };

@@ -356,7 +356,7 @@ The repo runs a structured **bug-register burn-down campaign** with:
 - **Domain business logic depth.** 125 models and ~50 API modules; money math, invoice↔order sync, commissions, route optimization, imports, and compliance ledgers are inventoried with pointers (see [`.claude/code-map/INDEX.md`](../.claude/code-map/INDEX.md)) but not line-traced.
 - **Runtime confirmation.** This is a static, read-only analysis — nothing was built or executed. No claims are marked "observed at runtime."
 - **Railway dashboard state.** Replica counts, env-var values, volume config, and custom domains are asserted from `railway.toml` + code comments; the live Railway project settings were not inspected.
-- **The API `/api/v1/health` payload exposes no commit SHA** (unlike web's `/api/health`), so an api-only deploy still in flight is not detected by the E2E readiness gate — a known limitation stated in [`ci.yml`](../.github/workflows/ci.yml).
+- **The API `/api/v1/health` payload now returns `commit`/`branch`** (from `RAILWAY_GIT_COMMIT_SHA`/`RAILWAY_GIT_BRANCH`, wave B′ 2026-09-03; `null` when unset) and [`ci.yml`](../.github/workflows/ci.yml)'s readiness gate checks the API sha with the same tolerance shape as the web check — closing what this section previously recorded as a known limitation. Residual: a `null` `commit` (a CLI `railway up` deploy, or the env var unset in the container) degrades that run's API side to reachability-only, logged loudly in the gate output.
 
 ## Appendix: reference index
 

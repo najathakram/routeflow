@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { monthRange, periodBucketOf } from "../regulated/period";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { CONFIRMED_PAYMENT, sumConfirmed } from "../invoices/payment-predicates";
 
 /** Strict "YYYY-MM" — anything else is a 400 before any query runs. */

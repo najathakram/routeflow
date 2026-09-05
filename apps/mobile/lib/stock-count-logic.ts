@@ -8,7 +8,7 @@
  * Mode per row: REPLACE = "set on-hand TO the counted number" (server delta =
  * counted − before); ADD = "add the counted number to on-hand" (delta = counted).
  */
-import { roundMoney } from "./pricing";
+import { roundMoney } from "@routeflow/pricing";
 
 export type StockCountMode = "REPLACE" | "ADD";
 

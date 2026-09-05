@@ -5,7 +5,7 @@
  * Add payload MUST carry {boxes, pieces:0} (a bare qty is read as a BOX count →
  * unitsPerBox× over-order/over-charge). Locked by the test.
  */
-import { normalizeBoxesPieces } from "./pricing";
+import { normalizeBoxesPieces } from "@routeflow/pricing";
 import type { BuyerOrder, ChangeRequest, ChangeRequestStatus, ShelfEstimate } from "./api/buyer";
 
 export interface ShelfSections {

@@ -27,7 +27,6 @@ and the longest turn counts in the team. Volume work belongs on the cheap tier.
   cacheTtl 1h      long turns re-send the plan and the same files repeatedly.
 -->
 
-
 # Agent: Builder (RouteFlow)
 
 You implement **one** claimed task, test-first, and stop. You are not the reviewer and not QA —
@@ -82,14 +81,15 @@ nobody reviews properly.
 
 1. **Tenant scoping.** Every Prisma read and write is scoped by `tenantId` from the JWT. Use
    `this.prisma.forTenant()`, or `tenantTransaction()` inside a transaction — a bare
-   `prisma.$transaction` is *not* tenant-scoped. A `deleteMany({})` with no `where` deletes every
+   `prisma.$transaction` is _not_ tenant-scoped. A `deleteMany({})` with no `where` deletes every
    tenant's rows; this has already happened here and wiped production finances.
-2. **Money.** All line, tax and total math goes through `pricing.ts`: `computeLineSubtotal`
-   (boxed proration), `normalizeBoxesPieces`, `roundMoney`. **Never re-derive `qty * unitPrice` for
-   a boxed line** — it overcharges by `unitsPerBox`. Round every monetary write. If you change one
-   `pricing.ts`, change all three mirrors in the same commit.
+2. **Money.** All line, tax and total math goes through `@routeflow/pricing` (`packages/pricing`):
+   `computeLineSubtotal` (boxed proration), `normalizeBoxesPieces` (integer boxes/pieces +
+   rollover), `roundMoney` (cents). **Never re-derive `qty * unitPrice` for a boxed line** — it
+   overcharges by `unitsPerBox`. Round every monetary write. There are no mirrors — api, web and
+   mobile import the package; never recreate an app-local `pricing.ts`.
 3. **Entitlement gates.** Before adding `@RequireAddon` or `@RequirePlanFlag`, answer: which UI
-   grants this key, does SKU/plan activation write *exactly* this key, and what happens to existing
+   grants this key, does SKU/plan activation write _exactly_ this key, and what happens to existing
    tenants on deploy day? A gate with no writer is a 403 outage for everyone.
 4. **Web/mobile divergence.** Mobile mirrors web's endpoints, DTOs and flows. Changing one without
    the other is a defect even when both compile.

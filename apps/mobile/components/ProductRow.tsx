@@ -1,7 +1,7 @@
 import * as React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { ios } from "@routeflow/ui/tokens";
-import { perUnitPrice } from "../lib/pricing";
+import { perUnitPrice } from "@routeflow/pricing";
 import { QtyStepper } from "./QtyStepper";
 
 export interface ProductRowProps {

@@ -96,27 +96,6 @@
   denial explicitly permits — that is redirection, not circumvention.
 - **Guard:** none — judgment.
 
-### L-008 · 2026-07 · process
-
-- **Symptom:** production login broke after a commit titled as API-only security work.
-- **Root cause:** a web-middleware change rode along in a commit scoped and reviewed as API-only.
-- **Lesson:** **Never edit a layer outside the batch's stated scope — surface it and ask; a
-  commit title must name every layer it touches.**
-- **Guard:** none — judgment.
-
-### L-052 · 2026-09-03 · process · PR-1 `imp-03a`
-
-- **Symptom:** the documented boot-time DDL (`main.ts`) had an undocumented twin
-  (`platform-config.service.ts` creating two tables and an index on every boot, ungated).
-- **Root cause:** "retire the DDL" was scoped to the site the docs named, not to every raw-DDL
-  call site.
-- **Lesson:** Retiring a runtime schema writer means grepping every raw-execution shape —
-  `$executeRaw*`, `$queryRaw*`, AND bare driver calls like `pool.query(…)` — across `src` and
-  `scripts`, proving the live DB already matches the datamodel (`migrate diff --exit-code` → 0)
-  before deleting, then deleting: a default-off flag leaves the contradiction in place.
-- **Guard:** `apps/api/src/common/no-runtime-ddl.spec.ts` (static tripwire) + the drift gate in
-  `db-migrations.yml` and `prod-migrate.mjs`.
-
 ### L-051 · 2026-09-02 · process · #603 close-out
 
 - **Symptom:** `git stash pop` in the main checkout applied 19 files of ANOTHER worktree's
@@ -131,6 +110,17 @@
   fleet-state memory carry the rule.
 
 ## tooling
+
+### L-065 · 2026-09-03 · tooling · PR-4 `imp-01`
+
+- **Symptom:** the review counted "four copies", the first plan promised a source-direct package
+  "exactly like `@routeflow/types`", and the repo's own comments already said that shape crashes
+  `node dist/main.js`.
+- **Lesson:** a workspace package the API imports at runtime must ship compiled JS — `nest build`
+  emits `require()` verbatim; source-direct packages are a client-only convenience. Build it on
+  `postinstall` so every `npm ci` (CI, Docker, dev) produces `dist` before anything typechecks.
+- **Guard:** `no-runtime-workspace-imports.spec.ts` (PR-1's engine already seeded the idea; this PR
+  makes it assert every `@routeflow/*` the API imports has a built `main`).
 
 ### L-039 · 2026-09-01 · tooling
 
@@ -180,29 +170,6 @@
 - **Guard:** force execution (`turbo run test --force` or direct `npx jest`), then assert the
   artifact's mtime post-dates the change, before reading any gate that consumes it. Freshness is
   verified, never inferred from a green summary.
-
-### L-032 · 2026-09-01 · tooling
-
-- **Symptom:** forcing a transitive past a parent's exact pin failed twice, each time silently.
-  First: adding the root `overrides` pin and regenerating with `--package-lock-only` left the
-  hoisted entry on the OLD version — a no-op fix for a no-op fix. Then: deleting just that one lock
-  entry and regenerating DID move it, and **broke every file upload in the process**, with no error
-  anywhere — requests returned 201 and the file was simply absent.
-- **Root cause:** two distinct properties of npm, both invisible in a green build. (1) An override
-  applies only when npm **resolves** an edge; `--package-lock-only` keeps pre-existing subtrees that
-  predate the pin. (2) Deleting a package's lock entry without its `node_modules/<pkg>/node_modules/*`
-  children orphans them: the nested `type-is` survived, its nested `media-typer@0.3.0` did not, so
-  `type-is` silently fell through to an incompatible root-hoisted `media-typer@1.1.0`, stopped
-  recognising `multipart/form-data`, and multer skipped every request without complaint.
-- **Lesson:** **Adding an override is not applying it, and pruning a lock entry prunes a subtree.
-  Remove the WHOLE `node_modules/<pkg>(/…)*` family, run a real `npm install` (never
-  `--package-lock-only`, which builds an ideal tree it never has to make work), then assert three
-  things separately: the hoisted version moved, `validate-lock` reports `skew 0 new`, and the
-  library still does its job.**
-- **Guard:** `multer-field-limits.security.spec.ts` — it resolves multer from
-  `@nestjs/platform-express`'s own directory and asserts >= 2.3.0, and it exercises a real
-  multipart request end-to-end, which is what actually caught the orphan. `validate-lock` names the
-  skew directly (`media-typer: found 1.1.0, wanted 0.3.0`), so it is a gate failure, not a mystery.
 
 ### L-028 · 2026-09-01 · tooling
 
@@ -258,19 +225,6 @@
   proves nothing about the change; rerun first.**
 - **Guard:** none — judgment.
 
-### L-053 · 2026-09-03 · tooling · PR-1 `imp-03a`
-
-- **Symptom:** every `local:*` npm script that set an env var failed on Windows with "'DATABASE_URL'
-  is not recognized as an internal or external command", although a runbook said they were
-  verified green that day.
-- **Root cause:** npm runs package scripts through cmd.exe on Windows (no `script-shell`), and the
-  scripts used POSIX `VAR=val sh -c '…'` prefixes; the "verified" claim came from a POSIX shell.
-- **Lesson:** an npm script that must set environment is not cross-platform until the environment
-  is set by a node shim (`scripts/local-env.mjs`) — never by a `VAR=val` prefix or `sh -c`; a
-  runbook's "verified working" is true only for the shell it named.
-- **Guard:** `apps/api/src/common/local-env-script.spec.ts` + the `local:*` scripts all routed
-  through the shim.
-
 ### L-055 · 2026-09-03 · tooling · wave D imp-05
 
 - **Symptom:** Jest matched **zero tests** in this worktree with the documented
@@ -301,7 +255,83 @@
   detection, `::warning::…SKIPPED` + exit 0 on outage, fail-closed otherwise); contract spec
   `apps/api/src/common/ci-audit-script.spec.ts`.
 
+### L-062 · 2026-09-04 · tooling · imp-04
+
+- **Symptom:** dropping `@routeflow/api#test` (forbidden by package-shape.spec.ts) left
+  docs-truth.spec.ts/no-dead-deps.spec.ts's outside-workspace reads unhashed by any turbo task.
+- **Lesson:** a tripwire spec reaching outside its own workspace must own a turbo task whose
+  `inputs` name those files — a `<workspace>#<task>` override is one spec away from forbidden; a
+  GENERIC task with explicit inputs survives.
+- **Guard:** `turbo.json` `test:repo-truth`; `apps/api/src/common/turbo-inputs.spec.ts`.
+
 ## testing
+
+### L-066 · 2026-09-04 · testing · watchdog spec
+
+- **Symptom:** a spec green on CI failed on every loaded dev box, pushing people to skip the pre-push gate.
+- **Root cause:** a fixed 500 ms `setTimeout` stood in for "the spawned child has booted"; bare Node boot here is 0.6–6 s. A poll alone still fails: the api lane's undeclared Jest cap is 5 s.
+- **Lesson:** **A fixed delay is never a readiness signal. Wait on the observable (log line, exit, stream) with a capped poll, kill the child in `finally`, and give the async test its own timeout above the cap.**
+- **Guard:** `visibility-watchdog-script.spec.ts` slow-boot repro (`NODE_OPTIONS=--require slow-boot.cjs`, 1.5 s) stays green.
+
+### L-063 · 2026-09-04 · testing · imp-04
+
+- **Symptom:** after apps/api's suite was split into two `npx jest` invocations,
+  `scripts/campaign-check.mjs` reported 17 undischarged bug-registry claims that the first run
+  had already proven.
+- **Root cause:** apps/api's jest config wires a campaign reporter that OVERWRITES
+  `.campaign/runs/api.json` on every invocation (no merge), and non-anchored substring filters
+  (`auth` without a trailing slash) also ran `src/authorizations/**` in both partitions (239
+  suites/3686 tests vs the true 233/3632).
+- **Lesson:** **never split a jest invocation whose config wires a campaign/artifact reporter —
+  run apps/api's full suite in one `npx jest --maxWorkers=2` (~270 s) before `campaign-check`; if
+  partitioning is ever required, merge the reporter outputs and anchor patterns with a trailing
+  slash.**
+- **Guard:** `apps/api/package.json` `jest.reporters` (campaign reporter) +
+  `scripts/campaign-check.mjs`; the pre-push hook runs the suite unsplit.
+
+### L-061 · 2026-09-04 · testing · wave B′ P4
+
+- **Symptom:** a fail-closed `default:` added beside Prisma's named `$allModels` handlers threw on
+  every scoped query. Only the DB lane caught it — a unit test calling the handler directly stayed
+  green.
+- **Root cause:** Prisma composes `$allModels.$allOperations` WITH the named per-operation handlers
+  rather than choosing the most specific one: a named handler's `query()` runs the catch-all next.
+- **Lesson:** **A client-extension catch-all cannot coexist with a named map — write ONE
+  `$allOperations` switch with an explicit default. And a spec that calls an extension handler
+  directly proves nothing about how the framework COMPOSES it: exercise the composed chain (a real
+  client, or the DB lane).**
+- **Guard:** `prisma-isolation.spec.ts` drives the real `_tenantExtension`; `local:test:db` runs on
+  `apps/api/src/prisma/**` PRs (`db-migrations.yml` paths).
+
+### L-060 · 2026-09-03 · testing · wave B′ P4
+
+- **Symptom:** a spec commissioned as a "pin" (`tenant-findunique.db.spec.ts`) shipped 8/17 RED. Its
+  own header said the block was red "before the fix", but the package was scoped test-only, so no
+  fix was written and the branch's `npm run local:test:db` acceptance could not pass.
+- **Root cause:** the brief asked for tests that _pin_ an invariant (cross-tenant
+  `findUniqueOrThrow` throws) without anyone first checking the invariant held. It did not:
+  `findUniqueOrThrow` was in neither tenancy layer of `prisma.service.ts` — absent from
+  `POST_FILTER_METHODS`/`SCOPED_METHODS` in `_wrapTxWithTenant` and from `_tenantExtension`'s
+  `$allModels` map — so it returned another tenant's row on `forTenant()` and inside
+  `tenantTransaction()`.
+- **Lesson:** **A "pin" brief must state the expected colour per test, and any test that comes out
+  red escalates the package from `test:` to `fix:` on the spot.** A red pin is a live defect
+  report, never a spec to ship as-is — and "we only add tests" is not a reason to leave one red.
+- **Guard:** the RED BAR block now asserts `code: "P2025"` (Prisma's own not-found shape), so a
+  regression that returns the row — or throws something else — fails the DB lane.
+
+### L-058 · 2026-09-04 · testing · REG-E2EGUARD-403
+
+- **Symptom:** the deploy-triggered E2E job reported success for days with every test step
+  skipped.
+- **Root cause:** the freshness guard's `latest=$(gh api … --jq '.[0].sha' 2>/dev/null || true)`
+  treated a 403 error body as the newest sha — non-empty, so the emptiness check never fired — and
+  the run token never had `deployments:read` (it worked only while the repo was public).
+- **Lesson:** **A guard that skips work must decide on the command's exit status and the payload's
+  shape, never on string emptiness, and must fail OPEN; declare every permission a job's API call
+  needs at job level.** A job whose steps are all skipped is not a passing run ([[L-041]]).
+- **Guard:** `ci-freshness-guard-script.spec.ts` T1 executes the workflow's own step under a fake
+  `gh`.
 
 ### L-050 · 2026-09-02 · testing · #598
 
@@ -349,6 +379,23 @@
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
 ## deploy
+
+### L-064 · 2026-09-04 · deploy · imp-04
+
+- **Symptom:** the local E2E lane's browser login against the Docker-built web image was
+  CSP-blocked with no HTTP response at all (`POST http://localhost:3000/api/v1/auth/login`
+  from `http://localhost:3001`, `status -1`); the login page's no-response fallback rendered
+  it as "Invalid username or password" even though API, CORS, seed, and throttle were all fine.
+- **Root cause:** `next.config.mjs`'s CSP gated the `connect-src` localhost relaxation on
+  `isDev = NODE_ENV !== "production"`, which is always `false` in a **built** image — `next
+build` forces production — so that branch was dead in every Docker image, not just prod.
+- **Lesson:** **never gate a build-time artifact (a CSP header, a routes manifest) on
+  `NODE_ENV` — every built image reports `production` regardless of its actual deployment
+  target. Derive the decision from the build input it must actually match instead** (here,
+  whether the baked `NEXT_PUBLIC_API_URL` itself is `http:`), and pin the production output
+  byte-identical in a spec so the fix can't silently change what ships.
+- **Guard:** `apps/web/csp.mjs` (`apiConnectSources`) + `apps/web/lib/csp.test.ts` (prod-identity
+  case pins the exact production `Content-Security-Policy` string).
 
 ### L-057 · 2026-09-04 · deploy · #609
 
@@ -478,36 +525,6 @@ complete-with-skipped → reopen refused)`; mutation probes in the F11 PR body.
 - **Guard:** `REG-B64 (T7)` asserts a DRAFT cancel neither credits stock nor marks its lines;
   mutation probe 3 (make the mark unconditional) turns it red.
 
-### L-031 · 2026-09-01 · domain
-
-- **Symptom:** a bug report (written from a review lens's own finding) named `deleteCustomer` as
-  destroying invoices without reversing their regulated-ledger entries. Reading it on master, that
-  site cannot destroy an invoice at all — its hard-delete path is only reached when the pre-flight
-  counted ZERO invoices. Meanwhile two sibling paths in the same file, named nowhere in the report,
-  destroy invoices freely: one blocks only PAID/SENT (so it deletes DRAFTs), the other has no
-  invoice guard whatsoever.
-- **Root cause:** the finding was recorded by pattern-match — "invoice.deleteMany with no ledger
-  call nearby" — without evaluating the guard that decides whether the block is reachable. The
-  pattern was real; the location was wrong, and the two worse instances were missed because they
-  did not match the grep as cleanly.
-- **Lesson:** **A reported location is a hypothesis, not a finding. Before fixing, re-derive which
-  call sites can actually REACH the bad state, and sweep the whole file for siblings — the
-  reachable ones are often not the reported one.** Fixing the reported site alone would have
-  shipped a green test over an untouched leak.
-- **Guard:** `customers.purge-ledger.spec.ts` covers all three sites and pins the reversal-before-
-  delete ordering. Second-order fact worth keeping: **a DRAFT invoice already carries ledger rows**
-  (`createSplitInvoices` writes them in the transaction that creates the DRAFT), so "we only delete
-  drafts" never justifies skipping the reversal. Same family as [[L-029]].
-
-### L-021 · 2026-08-12 · domain · #335
-
-- **Symptom:** receiving a vendor bill 500'd (P2025) on real data despite green unit tests.
-- **Root cause:** nested-created child rows carry NULL `tenantId` (nested writes bypass the
-  tenant proxy's create-injection), so tenant-scoped child updates can never match them.
-- **Lesson:** **In tenant-scoped services, write child rows THROUGH the parent's update — and
-  audit any direct per-child write for the NULL-tenantId class.**
-- **Guard:** single-helper pattern (`lineInventoryDelta`); class flagged for review.
-
 ## security
 
 ### L-044 · 2026-09-02 · security
@@ -525,23 +542,6 @@ complete-with-skipped → reopen refused)`; mutation probes in the F11 PR body.
   so `req.user` is never set there).**
 - **Guard:** `REG-B132` (the inverted test) and `REG-B165` (`impersonation.guard.spec.ts` header
   case with `req.user` undefined); mutation probes in the F14 PR body.
-
-### L-033 · 2026-09-01 · security
-
-- **Symptom:** the version bump that "fixed" a High-severity DoS advisory left the vulnerability
-  fully exploitable on every endpoint, even once the upgrade genuinely landed.
-- **Root cause:** the upstream fix was a new **opt-in** option (`fieldArrayIndexLimit`), gated on
-  `hasOwnProperty` and defaulting to `Infinity`. Nothing changed for a caller who upgraded and
-  passed the same options as before. Two further layers had to be crossed before it worked at all:
-  the framework's own closed `limits` type had no such key (a fresh object literal would not
-  compile), and the framework's error mapper had never heard of the new error code, so the guard
-  firing produced a 500 and a monitoring capture per request instead of a 400.
-- **Lesson:** **Upgrading past a CVE is not mitigating it. Read the upstream fix and ask whether it
-  is a new DEFAULT or a new OPTION — and if it is an option, trace it the whole way: does it
-  typecheck, does the framework forward it, and what does the caller actually receive when it
-  fires?**
-- **Guard:** `multer-field-limits.security.spec.ts` asserts the rejection is a 400 end-to-end, and
-  proves the guard is load-bearing by showing the same request succeeds without it.
 
 ### L-024 · 2026-09-01 · security
 

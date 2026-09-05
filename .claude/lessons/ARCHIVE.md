@@ -170,3 +170,151 @@
   applied against the architecture is an outage; prod-gated flags demand prod-mode
   verification.**
 - **Guard:** non-httpOnly requirement documented at the cookie's writers/readers.
+
+## Archived 2026-09-04 — compaction before PR-4 + B′ landing
+
+> Register hit its cap (40/40 entries, 40,917/40,960 B). Compacted to restore headroom before the
+> next landings. Selection: aged (before 2026-08-15) with zero citations across
+> `.claude/code-map`, `docs`, `CLAUDE.md`, `apps`, `scripts`; or guarded by a mechanical
+> spec/script that has since merged and shipped, making the register entry no longer the only
+> thing standing between a session and the mistake. Ids are unchanged and remain citable.
+
+### L-008 · 2026-07 · process
+
+- **Symptom:** production login broke after a commit titled as API-only security work.
+- **Root cause:** a web-middleware change rode along in a commit scoped and reviewed as API-only.
+- **Lesson:** **Never edit a layer outside the batch's stated scope — surface it and ask; a
+  commit title must name every layer it touches.**
+- **Guard:** none — judgment.
+
+_Archived: aged (2026-07, before the 2026-08-15 cutoff), zero citations in code-map/docs/CLAUDE.md/apps/scripts._
+
+### L-021 · 2026-08-12 · domain · #335
+
+- **Symptom:** receiving a vendor bill 500'd (P2025) on real data despite green unit tests.
+- **Root cause:** nested-created child rows carry NULL `tenantId` (nested writes bypass the
+  tenant proxy's create-injection), so tenant-scoped child updates can never match them.
+- **Lesson:** **In tenant-scoped services, write child rows THROUGH the parent's update — and
+  audit any direct per-child write for the NULL-tenantId class.**
+- **Guard:** single-helper pattern (`lineInventoryDelta`); class flagged for review.
+
+_Archived: aged (2026-08-12, before the 2026-08-15 cutoff), zero citations in code-map/docs/CLAUDE.md/apps/scripts._
+
+### L-052 · 2026-09-03 · process · PR-1 `imp-03a`
+
+- **Symptom:** the documented boot-time DDL (`main.ts`) had an undocumented twin
+  (`platform-config.service.ts` creating two tables and an index on every boot, ungated).
+- **Root cause:** "retire the DDL" was scoped to the site the docs named, not to every raw-DDL
+  call site.
+- **Lesson:** Retiring a runtime schema writer means grepping every raw-execution shape —
+  `$executeRaw*`, `$queryRaw*`, AND bare driver calls like `pool.query(…)` — across `src` and
+  `scripts`, proving the live DB already matches the datamodel (`migrate diff --exit-code` → 0)
+  before deleting, then deleting: a default-off flag leaves the contradiction in place.
+- **Guard:** `apps/api/src/common/no-runtime-ddl.spec.ts` (static tripwire) + the drift gate in
+  `db-migrations.yml` and `prod-migrate.mjs`.
+
+_Archived: guarded by a merged mechanical check — `apps/api/src/common/no-runtime-ddl.spec.ts`
+exists in the tree, plus the `db-migrations.yml` drift gate and `prod-migrate.mjs`._
+
+### L-053 · 2026-09-03 · tooling · PR-1 `imp-03a`
+
+- **Symptom:** every `local:*` npm script that set an env var failed on Windows with "'DATABASE_URL'
+  is not recognized as an internal or external command", although a runbook said they were
+  verified green that day.
+- **Root cause:** npm runs package scripts through cmd.exe on Windows (no `script-shell`), and the
+  scripts used POSIX `VAR=val sh -c '…'` prefixes; the "verified" claim came from a POSIX shell.
+- **Lesson:** an npm script that must set environment is not cross-platform until the environment
+  is set by a node shim (`scripts/local-env.mjs`) — never by a `VAR=val` prefix or `sh -c`; a
+  runbook's "verified working" is true only for the shell it named.
+- **Guard:** `apps/api/src/common/local-env-script.spec.ts` + the `local:*` scripts all routed
+  through the shim.
+
+_Archived: guarded by a merged mechanical check — `apps/api/src/common/local-env-script.spec.ts`
+exists in the tree and the `local:*` scripts route through the shim._
+
+### L-059 · 2026-09-03 · tooling · wave B′
+
+- **Symptom:** the architecture review's Option B recommended Atlas for destructive-migration
+  linting; planning around it would have shipped a tool that can't do the job.
+- **Root cause:** Atlas's `migrate lint` went **Pro-only since v0.38**, and its `--dir-format`
+  flag never supported Prisma's migrations layout to begin with — neither fact was checked against
+  current docs before the recommendation was written down.
+- **Lesson:** **A tool recommendation in a review is a claim — verify licensing and format support
+  against current docs before planning around it.** (Atlas lint went Pro-only; its dir formats
+  never included Prisma.)
+- **Guard:** `docs/IMPROVEMENTS.md` item 3 now names Squawk (`squawk-cli`, free, Prisma-compatible)
+  with the refuted Atlas facts inline; `scripts/lint-migrations.mjs` + `apps/api/.squawk.toml`
+  ship the working substitute.
+
+_Archived: guarded by a merged mechanical check — `scripts/lint-migrations.mjs` and
+`apps/api/.squawk.toml` exist in the tree and ship the working substitute._
+
+### L-032 · 2026-09-01 · tooling
+
+- **Symptom:** forcing a transitive past a parent's exact pin failed twice, each time silently.
+  First: adding the root `overrides` pin and regenerating with `--package-lock-only` left the
+  hoisted entry on the OLD version — a no-op fix for a no-op fix. Then: deleting just that one lock
+  entry and regenerating DID move it, and **broke every file upload in the process**, with no error
+  anywhere — requests returned 201 and the file was simply absent.
+- **Root cause:** two distinct properties of npm, both invisible in a green build. (1) An override
+  applies only when npm **resolves** an edge; `--package-lock-only` keeps pre-existing subtrees that
+  predate the pin. (2) Deleting a package's lock entry without its `node_modules/<pkg>/node_modules/*`
+  children orphans them: the nested `type-is` survived, its nested `media-typer@0.3.0` did not, so
+  `type-is` silently fell through to an incompatible root-hoisted `media-typer@1.1.0`, stopped
+  recognising `multipart/form-data`, and multer skipped every request without complaint.
+- **Lesson:** **Adding an override is not applying it, and pruning a lock entry prunes a subtree.
+  Remove the WHOLE `node_modules/<pkg>(/…)*` family, run a real `npm install` (never
+  `--package-lock-only`, which builds an ideal tree it never has to make work), then assert three
+  things separately: the hoisted version moved, `validate-lock` reports `skew 0 new`, and the
+  library still does its job.**
+- **Guard:** `multer-field-limits.security.spec.ts` — it resolves multer from
+  `@nestjs/platform-express`'s own directory and asserts >= 2.3.0, and it exercises a real
+  multipart request end-to-end, which is what actually caught the orphan. `validate-lock` names the
+  skew directly (`media-typer: found 1.1.0, wanted 0.3.0`), so it is a gate failure, not a mystery.
+
+_Archived: guarded by a merged mechanical check — `multer-field-limits.security.spec.ts` exists in
+the tree and exercises a real multipart request end-to-end._
+
+### L-033 · 2026-09-01 · security
+
+- **Symptom:** the version bump that "fixed" a High-severity DoS advisory left the vulnerability
+  fully exploitable on every endpoint, even once the upgrade genuinely landed.
+- **Root cause:** the upstream fix was a new **opt-in** option (`fieldArrayIndexLimit`), gated on
+  `hasOwnProperty` and defaulting to `Infinity`. Nothing changed for a caller who upgraded and
+  passed the same options as before. Two further layers had to be crossed before it worked at all:
+  the framework's own closed `limits` type had no such key (a fresh object literal would not
+  compile), and the framework's error mapper had never heard of the new error code, so the guard
+  firing produced a 500 and a monitoring capture per request instead of a 400.
+- **Lesson:** **Upgrading past a CVE is not mitigating it. Read the upstream fix and ask whether it
+  is a new DEFAULT or a new OPTION — and if it is an option, trace it the whole way: does it
+  typecheck, does the framework forward it, and what does the caller actually receive when it
+  fires?**
+- **Guard:** `multer-field-limits.security.spec.ts` asserts the rejection is a 400 end-to-end, and
+  proves the guard is load-bearing by showing the same request succeeds without it.
+
+_Archived: guarded by a merged mechanical check — same `multer-field-limits.security.spec.ts` as
+L-032, which asserts the 400 rejection end-to-end._
+
+### L-031 · 2026-09-01 · domain
+
+- **Symptom:** a bug report (written from a review lens's own finding) named `deleteCustomer` as
+  destroying invoices without reversing their regulated-ledger entries. Reading it on master, that
+  site cannot destroy an invoice at all — its hard-delete path is only reached when the pre-flight
+  counted ZERO invoices. Meanwhile two sibling paths in the same file, named nowhere in the report,
+  destroy invoices freely: one blocks only PAID/SENT (so it deletes DRAFTs), the other has no
+  invoice guard whatsoever.
+- **Root cause:** the finding was recorded by pattern-match — "invoice.deleteMany with no ledger
+  call nearby" — without evaluating the guard that decides whether the block is reachable. The
+  pattern was real; the location was wrong, and the two worse instances were missed because they
+  did not match the grep as cleanly.
+- **Lesson:** **A reported location is a hypothesis, not a finding. Before fixing, re-derive which
+  call sites can actually REACH the bad state, and sweep the whole file for siblings — the
+  reachable ones are often not the reported one.** Fixing the reported site alone would have
+  shipped a green test over an untouched leak.
+- **Guard:** `customers.purge-ledger.spec.ts` covers all three sites and pins the reversal-before-
+  delete ordering. Second-order fact worth keeping: **a DRAFT invoice already carries ledger rows**
+  (`createSplitInvoices` writes them in the transaction that creates the DRAFT), so "we only delete
+  drafts" never justifies skipping the reversal. Same family as [[L-029]].
+
+_Archived: guarded by a merged mechanical check — `customers.purge-ledger.spec.ts` exists in the
+tree and covers all three sites with the reversal-before-delete ordering pinned._

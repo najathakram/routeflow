@@ -95,6 +95,9 @@ See `apps/web/e2e/LOCAL-LANE.md`.
 - Full image builds take minutes (cold cache) — that's fine for a pre-PR check; keep using
   `npm run dev` for line-by-line editing. `web`'s API URL is baked at build time, so
   changing it needs a rebuild. Mobile (Expo) is out of scope — run `expo start` against `:3000`.
+- The `/auth/login` throttle (`AUTH_LOGIN_THROTTLE_LIMIT` / `AUTH_LOGIN_THROTTLE_TTL_MS`, prod
+  default 10/300000 unchanged) is set to a generous local-only value in `docker-compose.yml`'s
+  `api` environment so repeated local Playwright logins from `127.0.0.1` don't exhaust it.
 
 ## Architecture (API feature modules → `apps/api/src/*`)
 
@@ -114,7 +117,7 @@ skill). **Use it instead of re-reading the repo.**
   exports/signatures, cross-refs) and bump `_meta.json` (`mappedSha`, `generatedAt`). A small code
   change is a few-line map edit.
 - Trust the code over the map when they disagree, and fix the map. Money math lives in
-  `apps/{api/src/common,web/lib,mobile/lib}/pricing.ts` — keep all three mirrors in sync.
+  `packages/pricing` (`@routeflow/pricing`) — api, web and mobile import it; there are no mirrors.
 
 ## Lessons learned routine
 
@@ -134,10 +137,12 @@ The rules this project has already paid for live at
 
 ## Money discipline
 
-All line/tax/total math goes through `pricing.ts` helpers: `computeLineSubtotal` (boxed proration),
+All line/tax/total math lives in `packages/pricing` (`@routeflow/pricing`) — api, web and mobile
+import it; there are no mirrors — every consumer, including root scripts, imports
+`@routeflow/pricing`. Key helpers: `computeLineSubtotal` (boxed proration),
 `normalizeBoxesPieces` (integer boxes/pieces + rollover), and `roundMoney` (cents). **Round every
 monetary write**; never re-derive `qty * unitPrice` for a boxed line (over-charges by `unitsPerBox`).
-Regression specs: `apps/api/src/common/pricing.spec.ts`. Run `npm run verify` before pushing.
+Regression specs: `packages/pricing/src/pricing.spec.ts`. Run `npm run verify` before pushing.
 
 Customer-level order merges (staff `create()` auto-merge, buyer `createOrder`, `mergeAllPendingForCustomer`, `forceConsolidateCustomer`) serialize through `withAdvisoryLock` in `apps/api/src/common/db-locks.ts` — a customer-keyed Postgres advisory lock that is cross-replica safe. **Never add a second in-process lock** on top of it, and never thread a transaction into `updateOrderItems`.
 
@@ -190,6 +195,8 @@ Names only — see each app's example file. Never commit values.
 - Docker `CMD` is **only** `node dist/main.js` — **never** auto-migrate on deploy.
 - Schema changes apply to prod **only** via `railway run npx prisma migrate deploy`; locally `npx prisma migrate dev` against docker-compose.
 - **Never** `--force-reset`; **never** run the destructive scripts listed in `CLAUDE_SESSION_PREAMBLE.md`; seed additively.
+- Destructive migrations are blocked in CI by Squawk (`npm run lint:migrations`); whitelist a
+  statement with `-- reason:` + `-- squawk-ignore <rule>`.
 - Boot-time DDL is gone (PR-1, `imp-03a`) — `main.ts` and `platform-config.service.ts` no longer
   run any boot-time DDL — `main.ts` issued it through a raw `pg` `Pool.query`,
   `platform-config.service.ts` through `$executeRaw` tagged templates; a grep for runtime DDL
@@ -223,7 +230,9 @@ Full rationale, failure modes, and the retirement checklist:
 4. **Wait until the deploy reaches `BUILDING`** (never `INITIALIZING`), **then flip private as a
    `finally`** — even if CI or the merge failed — and read visibility back to confirm `PRIVATE`.
 5. **Watch the deploy to SUCCESS**, then `npm run post-deploy-check` — E2E fires itself off the
-   deploy signal; do not dispatch it.
+   deploy signal; do not dispatch it. The deploy-triggered E2E's freshness guard
+   (`scripts/ci-freshness-guard.mjs`) fails OPEN on any API error and needs `deployments: read`
+   on the `e2e` job.
 
 > ⚠️ Don't `railway up` an UNMERGED branch when master will later auto-deploy: a subsequent master
 > push auto-deploys master-without-your-branch and can briefly regress it (hit + fixed on
@@ -257,3 +266,8 @@ git status && git log --oneline -5
 npm run check-types
 npx jest --selectProjects api --listTests >/dev/null 2>&1 || true  # confirm Jest resolves
 ```
+
+`npm run verify` runs `check-types`/`lint`/`test` with `--continue=dependencies-successful`, so a
+failing task no longer hides the others. `SKIP_VERIFY=1` (the pre-push escape hatch) now requires
+`SKIP_VERIFY_REASON="<why>"` for any push touching code (`apps/`, `packages/`, `scripts/`,
+`.github/`) and writes an audit line to `.git/skip-verify.log`; docs-only pushes are exempt.

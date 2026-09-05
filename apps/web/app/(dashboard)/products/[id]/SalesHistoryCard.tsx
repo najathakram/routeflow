@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { Skeleton } from "@routeflow/ui/web";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
-import { formatQtySplit } from "@/lib/pricing";
+import { formatQtySplit } from "@routeflow/pricing";
 import { SortableTh } from "@/components/SortableTh";
 import { useSortableData } from "@/lib/use-sortable-data";
 import { useProductSales, type ProductSaleLine } from "@/lib/api/product-sales";

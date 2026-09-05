@@ -21,7 +21,7 @@ import {
   type PromoScopeProduct,
   type PromotionRule,
   type ZeroPriceImpact,
-} from "@/lib/pricing";
+} from "@routeflow/pricing";
 import {
   usePromotions,
   useCreatePromotion,

@@ -1,108 +1,28 @@
-interface TierPriceable {
-  pricePerUnit?: number | string | null;
-  priceTier2?: number | string | null;
-  priceTier3?: number | string | null;
-  priceTier4?: number | string | null;
-  priceTier5?: number | string | null;
-}
-
 /**
- * Mobile mirror of `apps/api/src/utils/pricing.ts#getTierPrice` — keep in sync.
- * The `|| fallback` guard matters: tier columns default to 0 in the DB, and an
- * unset (0) tier means "inherit the list price", never "$0.00". Behavior locked
- * by `apps/api/src/utils/pricing.spec.ts` + `apps/mobile/__tests__/pricing.test.ts`.
+ * Shared line-item subtotal calculation + money helpers.
+ *
+ * `pricePerUnit` on a Product is the canonical SELLING-UNIT price the operator
+ * entered. For products with `unitsPerBox > 1` the canonical selling unit is
+ * one BOX (because operators almost always quote and price by the case);
+ * issuing loose pieces is prorated as `pricePerUnit / unitsPerBox`.
+ *
+ * Historically the codebase computed `subtotal = pricePerUnit * qty` where
+ * `qty` was already expanded to total pieces (boxes × unitsPerBox + pieces).
+ * That over-charged boxed items by a factor of `unitsPerBox` (a single $43.75
+ * box of 6 came out as $262.50). This helper centralises the correct formula
+ * so orders, invoices, estimates, vendor bills and the buyer cart all agree.
+ *
+ * MONEY DISCIPLINE: every monetary result returned from here is rounded to
+ * cents via {@link roundMoney}. Callers MUST also wrap their own aggregations
+ * (sum of lines, tax, grand total) in {@link roundMoney} so floating-point
+ * drift never reaches the database. This package (`@routeflow/pricing`) is the
+ * single source imported by api, web and mobile — there are no mirrors.
  */
-export function getTierPrice(product: TierPriceable, tier: number): number {
-  const fallback = Number(product.pricePerUnit) || 0;
-  switch (tier) {
-    case 1:
-      return fallback;
-    case 2:
-      return Number(product.priceTier2 ?? product.pricePerUnit) || fallback;
-    case 3:
-      return Number(product.priceTier3 ?? product.pricePerUnit) || fallback;
-    case 4:
-      return Number(product.priceTier4 ?? product.pricePerUnit) || fallback;
-    case 5:
-      return Number(product.priceTier5 ?? product.pricePerUnit) || fallback;
-    default:
-      return fallback;
-  }
-}
-
-/** The five tier price columns in ladder order. Index 0 (`pricePerUnit`) is Tier 1 / list. */
-export type TierField = "pricePerUnit" | "priceTier2" | "priceTier3" | "priceTier4" | "priceTier5";
-export const TIER_FIELDS: readonly TierField[] = [
-  "pricePerUnit",
-  "priceTier2",
-  "priceTier3",
-  "priceTier4",
-  "priceTier5",
-];
 
 /**
- * Tier-edit cascade: COMMITTING a new price on tier N copies it down to every lower tier
- * (N+1..5) unconditionally, so an operator can walk the ladder setting each break once.
- * Returns ONLY the cascaded fields, as 2-dp decimal strings (ready for a form draft or a
- * PATCH payload); the edited field itself stays the caller's own write.
- *
- * Returns {} for tier 5 (nothing below it), negative, or non-finite input.
- *
- * NOT used for Tier 1 / `pricePerUnit` — the list price keeps its existing "smart" behavior
- * (only tiers that still matched the OLD list price follow it), which preserves a
- * deliberately customized ladder when the list price is re-priced.
- *
- * Committing 0 cascades an explicit "0.00", which under getTierPrice's `|| fallback` guard
- * means "these tiers inherit the list price again" — that is intended.
- *
- * Change detection ("the user focused and typed but did not actually change anything")
- * belongs to the caller's commit mechanism, never to this function.
- *
- * REG-B122: the cent rounding MUST go through {@link roundMoney} — never re-inline a
- * rounding expression here. An inlined `+ Number.EPSILON` nudge round-DOWNS every
- * half-cent value (2.135 -> "2.13"), which is a tier price a cent below what the same
- * number becomes on every other money path.
- */
-export function cascadeTierPrices(
-  field: TierField,
-  value: number,
-): Partial<Record<TierField, string>> {
-  const idx = TIER_FIELDS.indexOf(field);
-  if (idx < 1 || !Number.isFinite(value) || value < 0) return {};
-  const v = roundMoney(Math.abs(value)).toFixed(2);
-  const patch: Partial<Record<TierField, string>> = {};
-  for (let i = idx + 1; i < TIER_FIELDS.length; i++) patch[TIER_FIELDS[i]] = v;
-  return patch;
-}
-
-/**
- * Mobile mirror of `apps/api/src/common/pricing.ts#computeLineSubtotal` and
- * `apps/web/lib/pricing.ts#computeLineSubtotal`. Keep these three in sync —
- * the server is authoritative on what gets stored, but the client uses this
- * for live "Line total" + cart totals so the operator sees the same number
- * the server will compute on submit.
- *
- * For boxed products (`unitsPerBox > 1`) `unitPrice` is the BOX price.
- * Loose pieces below a full box are prorated as `unitPrice / unitsPerBox`.
- * Non-boxed products keep the per-piece semantics unchanged.
- */
-export interface LineSubtotalInput {
-  unitPrice: number;
-  qty: number;
-  boxes?: number | null;
-  pieces?: number | null;
-  unitsPerBox?: number | null;
-  /**
-   * Whole SELLING units made free by a BUY_N_GET_M promo — subtracted before
-   * pricing so the saving is EXACT, never a rounded net-unit-price. Clamped so
-   * the line can never go negative. Default 0: existing call sites unaffected.
-   */
-  freeUnits?: number;
-}
-
-/**
- * Round a monetary amount to cents — single rounding policy mirrored from
- * `apps/api/src/common/pricing.ts#roundMoney`. Keep all three in sync.
+ * Round a monetary amount to 2 decimal places (cents), guarding against binary
+ * floating-point drift (e.g. `0.1 + 0.2`). This is the single rounding policy
+ * for the whole money pipeline — half-away-from-zero at the cent.
  *
  * REG-B122: the previous nudge (`+ Number.EPSILON` before scaling and
  * rounding) added only ~2.22e-16 — far below one half-ULP of any double
@@ -124,34 +44,25 @@ export function roundMoney(n: number): number {
   return (sign * cents) / 100;
 }
 
-/**
- * Round a per-unit cost to 4 decimal places — the client mirror of
- * `COST_DP = 4` in `apps/api/src/inventory/costing.ts` (deliberately NOT
- * that codebase's own `apps/api/src/common/pricing.ts`, which only ever
- * rounds to cents via `roundMoney`). A per-piece cost derived by dividing a
- * case cost by piecesPerBox needs the extra precision so scanned-line
- * boxes<->pieces conversions (`scan-line-units.ts#toBillLine`) round-trip
- * exactly; `roundMoney` still owns the final 2dp money total. Purely
- * additive — does not alter `roundMoney` or any other existing helper.
- */
-export function roundUnitCost(n: number): number {
-  if (!Number.isFinite(n)) return 0;
-  const sign = n < 0 ? -1 : 1;
-  // Same decimal-string path as roundMoney (REG-B122): EPSILON is <= half a ULP
-  // for any |n| above ~2e-4 once scaled by 1e4, so the old nudge was a no-op and
-  // half-at-the-4th-decimal values rounded DOWN against the documented intent.
-  return (sign * Math.round(Number((Math.abs(n) * 10000).toFixed(4)))) / 10000;
-}
-
 export interface NormalizedQty {
+  /** Whole boxes (null for non-boxed products / no split). */
   boxes: number | null;
+  /** Loose pieces below a full box (null for non-boxed products / no split). */
   pieces: number | null;
+  /** Total quantity in pieces — always an integer. */
   qty: number;
 }
 
 /**
- * Force INTEGER boxes/pieces/qty and roll loose pieces >= unitsPerBox into boxes.
- * Mirror of `apps/api/src/common/pricing.ts#normalizeBoxesPieces`.
+ * Force INTEGER boxes/pieces/qty and roll any loose pieces that reach a full
+ * box up into the box count. Single source of truth for quantity hygiene so the
+ * UI can never persist fractional units or a stale `pieces >= unitsPerBox`.
+ *
+ * - Boxed product (`unitsPerBox > 1`): derives a canonical `{boxes, pieces}`
+ *   from whichever the caller supplied — an explicit boxes/pieces split OR a
+ *   raw piece `qty` — and guarantees `pieces < unitsPerBox`.
+ * - Non-boxed product: returns `{boxes: null, pieces: null, qty}` with `qty`
+ *   coerced to a non-negative integer.
  */
 export function normalizeBoxesPieces(input: {
   boxes?: number | null;
@@ -160,54 +71,61 @@ export function normalizeBoxesPieces(input: {
   unitsPerBox?: number | null;
 }): NormalizedQty {
   const upb = Math.trunc(Number(input.unitsPerBox ?? 0));
-  if (upb > 1) {
+  const hasBoxPackaging = upb > 1;
+
+  if (hasBoxPackaging) {
     const splitProvided = input.boxes != null || input.pieces != null;
     const totalPieces = splitProvided
       ? Math.trunc(Number(input.boxes ?? 0)) * upb + Math.trunc(Number(input.pieces ?? 0))
       : Math.trunc(Number(input.qty ?? 0));
     const safeTotal = Math.max(0, totalPieces);
-    return { boxes: Math.floor(safeTotal / upb), pieces: safeTotal % upb, qty: safeTotal };
+    return {
+      boxes: Math.floor(safeTotal / upb),
+      pieces: safeTotal % upb,
+      qty: safeTotal,
+    };
   }
-  return { boxes: null, pieces: null, qty: Math.max(0, Math.trunc(Number(input.qty ?? 0))) };
+
+  const qty = Math.max(0, Math.trunc(Number(input.qty ?? 0)));
+  return { boxes: null, pieces: null, qty };
 }
 
-export function computeLineSubtotal({
-  unitPrice,
-  qty,
-  boxes,
-  pieces,
-  unitsPerBox,
-  freeUnits = 0,
-}: LineSubtotalInput): number {
+export interface LineSubtotalInput {
+  unitPrice: number;
+  /** Total qty in pieces — kept for backward compat & non-boxed products. */
+  qty: number;
+  /** Number of full boxes (only meaningful when unitsPerBox > 1). */
+  boxes?: number | null;
+  /** Loose pieces below a full box. */
+  pieces?: number | null;
+  /** Box size; null/1 means the product is sold as individual pieces. */
+  unitsPerBox?: number | null;
+  /**
+   * Whole SELLING units made free by a BUY_N_GET_M promo (boxes for a boxed
+   * line, pieces otherwise) — subtracted before pricing so the saving is
+   * EXACT, never a rounded net-unit-price. Clamped so the line can never go
+   * negative. Default 0: every existing call site is unaffected.
+   */
+  freeUnits?: number;
+}
+
+export function computeLineSubtotal(input: LineSubtotalInput): number {
+  const { unitPrice, qty, boxes, pieces, unitsPerBox, freeUnits = 0 } = input;
   const free = Math.max(0, Math.trunc(Number(freeUnits) || 0));
   const upb = Number(unitsPerBox ?? 0);
   const hasBoxPackaging = upb > 1;
   const boxesPiecesProvided = boxes != null || pieces != null;
 
   if (hasBoxPackaging && boxesPiecesProvided) {
+    // unitPrice is the BOX price. One box = unitPrice; loose pieces are prorated.
     const b = Number(boxes ?? 0);
     const p = Number(pieces ?? 0);
     const boxEquivalent = Math.max(0, b - free) + p / upb;
     return roundMoney(unitPrice * boxEquivalent);
   }
-  return roundMoney(unitPrice * Math.max(0, qty - free));
-}
 
-/**
- * DISPLAY-ONLY derived per-unit price for a case-packed product: case price ÷ units-per-case,
- * rounded to cents. Returns null when the product is sold as single units (unitsPerBox
- * null/0/1) or the input is not a finite number.
- *
- * NEVER persist this, never submit it, never feed it back into line math. Lines always carry
- * the CASE price plus boxes/pieces and are priced by computeLineSubtotal, whose proration is
- * computed before rounding — so `perUnitPrice(p, upb) * pieces` can differ from the true line
- * subtotal by a cent. computeLineSubtotal is authoritative; this is a shopper-facing hint.
- */
-export function perUnitPrice(unitPrice: number, unitsPerBox?: number | null): number | null {
-  const upb = Number(unitsPerBox ?? 0);
-  const price = Number(unitPrice);
-  if (!(upb > 1) || !Number.isFinite(price)) return null;
-  return roundMoney(price / upb);
+  // Non-boxed product (or caller didn't split): unitPrice is per piece, qty in pieces.
+  return roundMoney(unitPrice * Math.max(0, qty - free));
 }
 
 /**
@@ -230,11 +148,15 @@ export function perUnitPrice(unitPrice: number, unitsPerBox?: number | null): nu
  * was stored WITH a box/piece split and that box size is known, and 1 otherwise
  * (selling-unit lines, where the axes already coincide). Feeding a boxes-axis
  * `freeUnits` alongside a pieces-axis `orderQty` at the default `freeUnitSize`
- * under-bills a partial by up to one box, so a box-split caller MUST pass it
- * (`short-pick.ts`'s `ShortPickLine.freeUnitSize` carries it here).
+ * under-bills a partial by up to one box, so a box-split caller MUST pass it.
  * At `freeUnits = 0` this reduces to the plain linear formula
  * `storedSubtotal * deliveredQty / orderQty` — REG-B50's bug was exactly that
  * linear formula applied unconditionally, even when the line HAD free units.
+ *
+ * `storedSubtotal` accepts `number | null | undefined` — mobile's contract,
+ * kept here to match callers whose stored subtotal type is itself nullable
+ * (e.g. `short-pick.ts`'s `ShortPickLine.subtotal` is `number | null`) and
+ * passes it straight through; the body already coerces via `Number(x) || 0`.
  *
  * The general case is the reference oracle's PAID-BASIS floored cumulative
  * telescope: a free unit is a whole unit while a subtotal prorated over the
@@ -243,12 +165,6 @@ export function perUnitPrice(unitPrice: number, unitsPerBox?: number | null): nu
  * PAID quantity instead (`orderQty - freeUnits * freeUnitSize`). That keeps the
  * stored subtotal equal to `computeLineSubtotal(..., freeUnits)` and makes a
  * full delivery (`deliveredQty === orderQty`) copy it back verbatim.
- *
- * Mobile mirror of `apps/api/src/common/pricing.ts#prorateLineSubtotal` and
- * `apps/web/lib/pricing.ts#prorateLineSubtotal`. Keep all three in sync.
- * `storedSubtotal` stays nullable here (unlike the other two mirrors) to
- * match this file's existing typing frame — `short-pick.ts`'s
- * `ShortPickLine.subtotal` is `number | null` and passes it straight through.
  */
 export function prorateLineSubtotal(
   storedSubtotal: number | null | undefined,
@@ -292,24 +208,27 @@ export function prorateLineSubtotal(
 }
 
 /**
- * Effective qty in pieces, derived from boxes/pieces when present, otherwise
- * the explicit `qty` field. Mirrors the server-side recomputation in
- * `apps/api/src/orders/orders.service.ts`.
+ * DISPLAY-ONLY derived per-unit price for a case-packed product: case price ÷ units-per-case,
+ * rounded to cents. Returns null when the product is sold as single units (unitsPerBox
+ * null/0/1) or the input is not a finite number.
+ *
+ * NEVER persist this, never submit it, never feed it back into line math. Lines always carry
+ * the CASE price plus boxes/pieces and are priced by computeLineSubtotal, whose proration is
+ * computed before rounding — so `perUnitPrice(p, upb) * pieces` can differ from the true line
+ * subtotal by a cent. computeLineSubtotal is authoritative; this is a shopper-facing hint.
  */
-export function effectiveQty(
-  line: { qty?: number; boxes?: number | null; pieces?: number | null },
-  unitsPerBox?: number | null,
-): number {
-  if (line.boxes != null || line.pieces != null) {
-    const upb = Number(unitsPerBox ?? 0);
-    return (line.boxes ?? 0) * upb + (line.pieces ?? 0);
-  }
-  return line.qty ?? 0;
+export function perUnitPrice(unitPrice: number, unitsPerBox?: number | null): number | null {
+  const upb = Number(unitsPerBox ?? 0);
+  const price = Number(unitPrice);
+  if (!(upb > 1) || !Number.isFinite(price)) return null;
+  return roundMoney(price / upb);
 }
 
 // ─── Margin: the "negotiation floor" (pos-cost-roles-spec §1) ─────────────────
-// Mirror of `apps/api/src/common/pricing.ts`. `unitCost` (Product.averageCost) is
-// per PIECE; `unitPrice` is per SELLING UNIT (a BOX when unitsPerBox > 1). Keep in sync.
+// `unitCost` (Product.averageCost) is per PIECE. `unitPrice` is per SELLING UNIT
+// (a BOX when unitsPerBox > 1, else a piece). Bring cost onto the selling-unit
+// basis before comparing, or margins are wrong by a factor of unitsPerBox — the
+// same class of bug the box-proration fix guards.
 
 /** Cost of one selling unit: piece cost × unitsPerBox for boxed products, else the piece cost. */
 export function costPerSellingUnit(unitCost: number, unitsPerBox?: number | null): number {
@@ -337,7 +256,7 @@ export function priceForMarginFloor(
   unitsPerBox?: number | null,
 ): number {
   const cost = costPerSellingUnit(Number(unitCost), unitsPerBox);
-  const f = Math.min(Math.max(Number(floor) || 0, 0), 0.99);
+  const f = Math.min(Math.max(Number(floor) || 0, 0), 0.99); // margin must stay < 1
   return roundMoney(cost / (1 - f));
 }
 
@@ -346,6 +265,7 @@ export type MarginClass = "ok" | "warn" | "belowFloor" | "belowCost";
 /**
  * Classify a margin fraction against a floor:
  * `belowCost` (< 0) · `belowFloor` (< floor) · `warn` (within 5 points above floor) · `ok`.
+ * Returns null when margin is unknown (no cost).
  */
 export function classifyMargin(margin: number | null, floor: number): MarginClass | null {
   if (margin == null) return null;
@@ -359,7 +279,7 @@ export function classifyMargin(margin: number | null, floor: number): MarginClas
 // A per-category levy that is a SEPARATE dimension from boxed-line price
 // proration: per-unit taxes apply to the PIECE count (never the boxed subtotal),
 // so they compose with computeLineSubtotal without re-introducing the unitsPerBox
-// over-charge. Keep all three mirrors in sync.
+// over-charge.
 
 export type CategoryTaxType =
   "EXCISE_PER_UNIT" | "PERCENT_OF_SALE" | "PER_VOLUME" | "DEPOSIT_PER_CONTAINER" | "NONE";
@@ -433,8 +353,6 @@ export function computeCategoryTax(input: CategoryTaxInput): number {
 // computeLineSubtotal, which subtracts whole units before pricing. This keeps the
 // saving EXACT — never a rounded net-unit-price (e.g. $35 × 5/6 = $29.1667 would
 // drift cents when multiplied back).
-//
-// This block is byte-identical in the web + mobile mirrors — change all three.
 
 export type PromotionType = "PERCENT" | "FIXED" | "QTY_BREAK" | "BUY_N_GET_M";
 export type PromotionScope = "ALL" | "CATEGORY" | "PRODUCTS";
@@ -677,7 +595,6 @@ export function applyBestPromotion(
 // put 699 of a tenant's 1,767 products on the portal at $0.00 with a -100% chip).
 // These pure helpers compute that blast radius from the catalog so the promotion
 // editor can warn and the API can refuse the write unless it is confirmed.
-// Keep all three mirrors in sync.
 
 /** How many product names a scan carries back for the operator-facing warning. */
 export const ZERO_PRICE_EXAMPLE_LIMIT = 5;
@@ -789,7 +706,7 @@ export function zeroPriceWarning(impact: ZeroPriceImpact): string {
 // originalPrice (the discount convention above). The DIRECTION is derived, not
 // stored: an UPSELL sells ABOVE the base, a DISCOUNT below. Scoped to MANUAL so a
 // premium tier (SPECIAL, where originalPrice = list < unitPrice = tier) is never
-// mistaken for an upsell. Keep all three mirrors in sync.
+// mistaken for an upsell.
 
 export interface PriceOverrideLine {
   priceType?: string | null;
@@ -826,7 +743,7 @@ export function effectiveBuyerPrice(
 // A boxed line stores its denomination (boxes/pieces/unitsPerBox snapshots) on
 // the order AND invoice line, but read surfaces used to render only the raw
 // piece count. One shared formatter so "2 boxes + 3 pcs" reads identically on
-// the order detail, invoice detail, and PDF. Keep all three mirrors in sync.
+// the order detail, invoice detail, and PDF.
 //
 // DOCUMENT wording stays "boxes + pcs" deliberately (2026-07-30): it is shorter,
 // scans better in the narrow PDF qty column, and matches how wholesale paperwork
@@ -859,4 +776,42 @@ export function formatQtySplit({ qty, boxes, pieces, unitLabel }: QtySplitInput)
   if (b > 0) parts.push(`${b} ${b === 1 ? "box" : "boxes"}`);
   if (p > 0) parts.push(`${p} ${label}`);
   return parts.length > 0 ? parts.join(" + ") : "0";
+}
+
+// ─── Per-unit cost rounding ───────────────────────────────────────────────────
+
+/**
+ * Round a per-unit cost to 4 decimal places — the twin of `COST_DP = 4` in
+ * `apps/api/src/inventory/costing.ts` (deliberately NOT `roundMoney` in this
+ * same file, which only ever rounds to cents). A per-piece cost derived by
+ * dividing a case cost by piecesPerBox needs the extra precision so scanned-line
+ * boxes<->pieces conversions (`scan-line-units.ts#toBillLine`) round-trip
+ * exactly; `roundMoney` still owns the final 2dp money total. Purely
+ * additive — does not alter `roundMoney` or any other existing helper.
+ */
+export function roundUnitCost(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  const sign = n < 0 ? -1 : 1;
+  // Same decimal-string path as roundMoney (REG-B122): EPSILON is <= half a ULP
+  // for any |n| above ~2e-4 once scaled by 1e4, so the old nudge was a no-op and
+  // half-at-the-4th-decimal values rounded DOWN against the documented intent.
+  return (sign * Math.round(Number((Math.abs(n) * 10000).toFixed(4)))) / 10000;
+}
+
+// ─── Effective qty ────────────────────────────────────────────────────────────
+
+/**
+ * Effective qty in pieces, derived from boxes/pieces when present, otherwise
+ * the explicit `qty` field. Mirrors the server-side recomputation in
+ * `apps/api/src/orders/orders.service.ts`.
+ */
+export function effectiveQty(
+  line: { qty?: number; boxes?: number | null; pieces?: number | null },
+  unitsPerBox?: number | null,
+): number {
+  if (line.boxes != null || line.pieces != null) {
+    const upb = Number(unitsPerBox ?? 0);
+    return (line.boxes ?? 0) * upb + (line.pieces ?? 0);
+  }
+  return line.qty ?? 0;
 }

@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { X, ArrowRightLeft, Search, CheckCircle2, AlertCircle } from "lucide-react";
 import { Button, useToast, cn } from "@routeflow/ui/web";
-import { normalizeBoxesPieces, roundUnitCost } from "@/lib/pricing";
+import { normalizeBoxesPieces, roundUnitCost } from "@routeflow/pricing";
 import { useProduct, type CostingMethod } from "@/lib/api/products";
 import {
   useAssignToVariants,

@@ -16,7 +16,7 @@ import {
   roundMoney,
   normalizeBoxesPieces,
   type CategoryTaxType,
-} from "../common/pricing";
+} from "@routeflow/pricing";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { CONFIRMED_PAYMENT, sumConfirmed } from "./payment-predicates";
 import { clampLimit } from "../common/pagination";

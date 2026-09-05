@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { buyerApiClient } from "@/lib/buyer-api-client";
 import { getStoredActiveSeller } from "@/lib/buyer-auth";
 import type { ExpiringAuthorization } from "./authorizations";
-import type { PromotionRule } from "@/lib/pricing";
+import type { PromotionRule } from "@routeflow/pricing";
 import type { ChangeRequest } from "@/lib/change-requests";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
