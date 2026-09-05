@@ -1689,17 +1689,39 @@ const bootStamp = () => Math.round(Date.now() - uptime() * 1000);
 // smaller than any real reboot gap, which is measured in minutes at least.
 const BOOT_STAMP_SLOP_MS = 5000;
 
-// true = alive, false = definitely gone (ESRCH) OR its owner pid predates
-// this boot (so it cannot possibly be the process that wrote the lock), null
-// = cannot tell. EPERM means the pid exists and belongs to someone else —
-// alive, not free, UNLESS the boot stamp already proved it can't be ours.
+// A pid that `process.kill(pid, 0)` accepts can still be DEAD on POSIX: a child
+// that exited (or was SIGKILLed) stays a ZOMBIE — pid allocated, signal 0
+// accepted, no ESRCH — until its parent reaps it, and a parent blocked in a
+// synchronous `sleepSync` loop never does. That is exactly what CI's ubuntu
+// runner showed: the self-test's dead holder was never "gone", so its lock was
+// never broken and every later case inherited it. Linux exposes the state as
+// the "Z" field of /proc/<pid>/stat; treat that as gone. Windows has no zombie
+// state (the pid check fails the moment the process ends), and a host without
+// /proc simply keeps the signal-0 answer.
+const zombieOnLinux = (pid) => {
+  if (process.platform !== "linux") return false;
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    // "<pid> (<comm>) <state> …" — comm may itself contain spaces or ")", so
+    // the state is the first field after the LAST ")".
+    const close = stat.lastIndexOf(")");
+    return close !== -1 && stat.charAt(close + 2) === "Z";
+  } catch {
+    return false;
+  }
+};
+
+// true = alive, false = definitely gone (ESRCH, or a Linux zombie) OR its owner
+// pid predates this boot (so it cannot possibly be the process that wrote the
+// lock), null = cannot tell. EPERM means the pid exists and belongs to someone
+// else — alive, not free, UNLESS the boot stamp already proved it can't be ours.
 const pidAlive = (pid, ownerBootAt) => {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   if (typeof ownerBootAt === "number" && Math.abs(ownerBootAt - bootStamp()) > BOOT_STAMP_SLOP_MS)
     return false;
   try {
     process.kill(pid, 0);
-    return true;
+    return zombieOnLinux(pid) ? false : true;
   } catch (e) {
     return e.code === "ESRCH" ? false : true;
   }
@@ -5459,18 +5481,55 @@ cmds["self-test"] = () => {
           stdio,
         });
 
+      // (a2) The liveness predicate itself, platform-independent. A child that
+      // was SIGKILLed while its parent never turns the event loop is a POSIX
+      // ZOMBIE: its pid stays allocated and `process.kill(pid, 0)` keeps
+      // succeeding until the parent reaps it — which this synchronous suite
+      // never does. `pidAlive` must still answer "gone" (Linux: /proc state Z);
+      // win32 answers ESRCH outright. Before the fix this was red on CI's
+      // ubuntu runner and green on Windows, and every dead-holder assertion
+      // below cascaded from it. Paired with a live-child control so the check
+      // cannot be satisfied by a predicate that simply answers "gone" always.
+      const livingChild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+        stdio: "ignore",
+      });
+      const doomedChild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+        stdio: "ignore",
+      });
+      for (let i = 0; i < 80 && pidAlive(livingChild.pid) !== true; i++) sleepSync(25);
+      check("liveness: a live child reads as alive", pidAlive(livingChild.pid), true);
+      doomedChild.kill("SIGKILL");
+      let doomedGone = false;
+      for (let i = 0; i < 120 && !doomedGone; i++) {
+        sleepSync(25);
+        doomedGone = pidAlive(doomedChild.pid) === false;
+      }
+      check(
+        "liveness: a killed, unreaped child reads as gone (no event-loop turn)",
+        doomedGone,
+        true,
+      );
+      livingChild.kill("SIGKILL");
+
       // (b) A holder killed OUTRIGHT leaves its lockdir behind, and the very
       // next waiter must break it within ONE invocation — on the owner pid
-      // being gone, which `process.kill(pid, 0)` answers on win32 too. Before
-      // the fix the waiter's 2s deadline expired long before the 5s age
-      // threshold it was waiting for, so it exited 1 blaming "another bugs.mjs
-      // process is writing F01.jsonl" when nothing was running at all.
+      // being gone. `process.kill(pid, 0)` answers that on win32; on Linux the
+      // killed child is a zombie until reaped and `pidAlive` reads /proc for it
+      // (see (a2)). Before the fix the waiter's 2s deadline expired long before
+      // the 5s age threshold it was waiting for, so it exited 1 blaming
+      // "another bugs.mjs process is writing F01.jsonl" when nothing was
+      // running at all.
       const victim = holder("B5", "20000", "ignore");
       const heldByVictim = awaitHold();
       victim.kill("SIGKILL");
-      awaitExit(victim, 3000);
+      const victimGone = awaitExit(victim, 3000);
       const rescued = runCli(["tier", "B5", "T2", "--why", "dead-holder fixture"], tmp);
       check("dead holder: it really held the lock when it was killed", heldByVictim, true);
+      check(
+        "dead holder: the killed holder is observed gone before the waiter runs",
+        victimGone,
+        true,
+      );
       check("dead holder: the NEXT waiter succeeds in one invocation", rescued.code, 0);
       check(
         "dead holder: breaking a dead owner's lock is reported, never silent",
