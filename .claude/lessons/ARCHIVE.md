@@ -423,3 +423,31 @@ L-028, whose rule now lives at its call site in `.claude/code-map/api.md` beside
   restriction at all until the callers are split.**
 - **Guard:** three-key model recorded in memory `project_maps_key_architecture_2026-09-01`;
   `docs/plans/maps-key-split-note.md` is STALE and must not be followed verbatim.
+
+## Archived 2026-09-05 — headroom for L-071 (fix/e2e-spec-locators-and-seed-target)
+
+The register sat at 40 of 40 entries after L-071 landed. Of the entries still active, L-030 is
+the oldest (by introducing commit, `7dcf390c`, 2026-09-01T14:29:49 — ahead of every other
+domain/process/tooling entry still in `LESSONS.md`, most of which carry "Guard: none —
+judgment") whose guard is a real, landed, automated check rather than a procedure or a memory
+note: `REG-B64 (T7)` and mutation probe 3 live in `apps/api/src/orders/orders.lifecycle-
+conservation.spec.ts` (confirmed present in the tree) and run on every `npm run test`/CI pass —
+not a checklist, doc pointer, or "Guard: none". It also sits beside the already-archived L-029
+(same guard file, the complementary conservation invariant for the same #588 batch), so this
+keeps the two together. One entry archived, per [[L-039]]: land with real headroom, not at the
+cap.
+
+### L-030 · 2026-09-01 · domain · #588
+
+- **Symptom:** the fix for the above introduced a NEW conservation bug. A DRAFT cancel correctly
+  credited no stock (a draft never decremented) but still marked its line items CANCELLED, and
+  `reopenOrder` re-decremented every marked line — so a draft's cancel→reopen round trip
+  understated stock by the full order quantity.
+- **Root cause:** the marker recording "this cancel gave stock back" was written unconditionally
+  while the give-back itself was conditional. Two halves of one decision, written as two
+  independent statements that happened to agree in the common case.
+- **Lesson:** **When one write is the RECORD of another write having happened, bind both to a
+  single named condition — not to two conditions that agree today.** A reader (and a reviewer) can
+  check one boolean; they cannot check that two predicates are equivalent in every state.
+- **Guard:** `REG-B64 (T7)` asserts a DRAFT cancel neither credits stock nor marks its lines;
+  mutation probe 3 (make the mark unconditional) turns it red.

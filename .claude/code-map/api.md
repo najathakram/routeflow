@@ -104,8 +104,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   (spawn-level, stub `npx` on PATH, no database). **2026-09-05 (L-072):** `scripts/e2e-seed.js` is
   now a third consumer — imported via dynamic `import()` (it's CJS, and CI's Node 20 can't
   `require()` an `.mjs`), `requireProxy: false` like `schema-drift.mjs` (a read like this may fall
-  back to `DATABASE_URL`, unlike the writer `prod-migrate.mjs`). Contract: `src/common/e2e-seed-
-script.spec.ts`.
+  back to `DATABASE_URL`, unlike the writer `prod-migrate.mjs`). Contract: `src/common/e2e-seed-script.spec.ts`.
 - **`scripts/ci-audit-critical.mjs` (2026-09-04)** — CI advisory gate: wraps `npm audit
 --omit=dev --audit-level=<level> --json` in `spawnSync` (`shell:false`, up to 3 attempts,
   15s/45s backoff, 120s per-attempt timeout, 64 MiB `maxBuffer`) so an `npm` registry
@@ -549,13 +548,17 @@ script.spec.ts`.
   `resolveTargetDbUrl()`/`bootstrap()` pair now reuses `scripts/lib/railway-db-url.mjs`'s
   `resolveDatabaseUrl` (see that entry above) so a `railway run --service postgres` invocation
   (which exposes only `POSTGRES_*`/`RAILWAY_TCP_PROXY_*`, never `DATABASE_URL`) resolves the real
-  target instead of silently reseeding localhost; always prints `e2e-seed: target host =
-<host>:<port>/<db>` (never the password) before connecting, and a "nothing set" run prints a
-  loud fallback warning first. Also seeds one `TrackedCategory` (`ensureLicensedTrackedCategory`,
-  `requiresLicense: true`, upserted on the `@@unique([tenantId, name])` key, both branches) so
-  REG-B91 (`34-calendar-dates.spec.ts`) stops self-skipping for lack of a licensed category.
-  Contract: `src/common/e2e-seed-script.spec.ts` (spawn-level, three DATABASE_URL-resolution
-  cases, no real database reached in the first two).
+  target instead of silently reseeding localhost; always prints `e2e-seed: target host = <host>:<port>/<db>` (never the password) before connecting, and a "nothing set" run prints a
+  loud fallback warning first. **2026-09-05:** `--print-target` (parsed from `process.argv`,
+  checked in `bootstrap()` right after that target-host line is printed) exits 0 before any
+  `new Pool`/`new PrismaClient` — a dry check that resolves and prints the target without ever
+  connecting; `railway run --service postgres node apps/api/scripts/e2e-seed.js --print-target`
+  is the safe way to confirm where a real reseed would land. Also seeds one `TrackedCategory`
+  (`ensureLicensedTrackedCategory`, `requiresLicense: true`, upserted on the
+  `@@unique([tenantId, name])` key, both branches) so REG-B91 (`34-calendar-dates.spec.ts`) stops
+  self-skipping for lack of a licensed category. Contract: `src/common/e2e-seed-script.spec.ts`
+  (spawn-level, three DATABASE_URL-resolution cases, all driven with `--print-target` so none
+  ever reaches a database).
 - **`scripts/demo-seed.js` + `demo-seed-images.js` + `demo-verify.js` + `lib/demo-ids.js`**
   (2026-08-20) — the standing sales-demo tenant `routeflow-demo` (on the test-tenant allow-list;
   operator `routeflow_demo`/`routeflow_demo`). `demo-seed.js` copies a catalog from the tenant

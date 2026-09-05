@@ -9,19 +9,15 @@ import path from "node:path";
 // seeded the LOCAL dev database instead of the intended target. It now resolves its target
 // through the shared apps/api/scripts/lib/railway-db-url.mjs helper (same one prod-migrate.mjs
 // and schema-drift.mjs use) and always logs the resolved host — never the password — before
-// connecting. These cases drive the real script via spawnSync and assert what it prints
-// BEFORE it ever issues a query, which is deterministic regardless of whether a reachable
-// Postgres happens to sit behind the resolved address in this environment.
+// connecting. These cases drive the real script via spawnSync with `--print-target` and
+// assert what it prints, which is deterministic and never touches a database.
 //
-// Unlike prod-migrate.mjs (which shells out to a stubbable `prisma` CLI child process),
-// e2e-seed.js talks to Postgres in-process via Prisma, so there is no seam to stub out a
-// live connection attempt black-box. Cases (a)/(b) point the resolved target at addresses
-// that reliably refuse or fail to resolve in any sandboxed environment (a closed high port
-// on loopback, a non-routable TLD), so the script fails fast after printing the lines under
-// test — no real database is ever reached. Case (c) cannot make that same guarantee (its
-// target is the script's own hardcoded local-dev default, which a developer's machine may
-// legitimately have running via `npm run db:up`), so it asserts only the pre-connection
-// output, not the final exit status.
+// `--print-target` makes the script exit 0 right after logging its resolved target, before
+// opening any Pool/PrismaClient connection — so this spec never needs a reachable (or
+// deliberately unreachable) Postgres behind the resolved address. That matters most for case
+// (c): without the flag it would run the real script against its hardcoded local-dev default
+// (localhost:5432/routeflow_dev), which a developer's machine may legitimately have live via
+// `npm run db:up` — a Jest spec must never touch a database, seeded or otherwise.
 
 const SCRIPT = path.resolve(__dirname, "../../scripts/e2e-seed.js");
 
@@ -37,7 +33,7 @@ function scrubbedEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
 }
 
 function run(env: NodeJS.ProcessEnv) {
-  return spawnSync(process.execPath, [SCRIPT], {
+  return spawnSync(process.execPath, [SCRIPT, "--print-target"], {
     encoding: "utf8",
     env,
     timeout: 20_000,
@@ -52,8 +48,8 @@ describe("e2e-seed.js DATABASE_URL resolution (tooling lesson: railway-run-targe
     expect(combined).not.toContain("Cannot find module");
     expect(res.stdout).toContain("e2e-seed: target host = 127.0.0.1:65533/testdb");
     expect(res.stdout).not.toContain("using the local default");
-    // Unreachable target: the script must fail closed rather than silently succeed.
-    expect(res.status).not.toBe(0);
+    // --print-target exits 0 right after printing — no connection is ever attempted.
+    expect(res.status).toBe(0);
   });
 
   it("POSTGRES_* builds the resolved URL (encoded password, wins over an incomplete/other DATABASE_URL)", () => {
@@ -80,7 +76,8 @@ describe("e2e-seed.js DATABASE_URL resolution (tooling lesson: railway-run-targe
     expect(combined).not.toContain("example.invalid");
     expect(combined).not.toContain("p@ss:word");
     expect(combined).not.toContain(encodeURIComponent("p@ss:word"));
-    expect(res.status).not.toBe(0);
+    // --print-target exits 0 right after printing — no connection is ever attempted.
+    expect(res.status).toBe(0);
   });
 
   it("falls back to the local default — loudly — when neither DATABASE_URL nor POSTGRES_* are set", () => {
@@ -90,8 +87,8 @@ describe("e2e-seed.js DATABASE_URL resolution (tooling lesson: railway-run-targe
       "e2e-seed: DATABASE_URL not set and no POSTGRES_* vars — using the local default",
     );
     expect(res.stdout).toContain("e2e-seed: target host = localhost:5432/routeflow_dev");
-    // No exit-status assertion here: whether the connection that follows then succeeds
-    // depends on whether this machine happens to have a local dev Postgres up at that
-    // address (it may, via `npm run db:up`) — CI's job for this suite does not run one.
+    // --print-target exits before the script would otherwise connect to that local
+    // default — deterministic regardless of whether this box has `npm run db:up` live.
+    expect(res.status).toBe(0);
   });
 });

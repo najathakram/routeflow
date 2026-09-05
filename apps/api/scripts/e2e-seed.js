@@ -22,6 +22,9 @@
  *     and schema-drift.mjs use. The resolved host is always logged before connecting,
  *     the password never is; a run with neither DATABASE_URL nor the POSTGRES_* vars
  *     loudly falls back to the local default instead of silently targeting it.)
+ *   Dry check (no connection): railway run --service postgres node apps/api/scripts/e2e-seed.js --print-target
+ *     (prints the resolved target host/fallback line, then exits 0 before opening any
+ *     Pool/PrismaClient connection — run this first to confirm where a real reseed would land.)
  */
 
 const { PrismaClient } = require("../../../node_modules/@prisma/client");
@@ -59,6 +62,12 @@ async function bootstrap() {
   console.log(
     `e2e-seed: target host = ${target.hostname}:${target.port || "5432"}${target.pathname}`,
   );
+  // --print-target: a dry check that only resolves and prints where a real reseed would
+  // land — exit before opening any connection (no Pool, no PrismaClient). Lets a human/CI
+  // confirm the target host against a live DB without ever touching it.
+  if (process.argv.includes("--print-target")) {
+    process.exit(0);
+  }
   pool = new Pool({ connectionString: dbUrl });
   adapter = new PrismaPg(pool);
   prisma = new PrismaClient({ adapter });

@@ -1,10 +1,10 @@
 {
   "nextId": 75,
-  "activeCount": 41,
-  "archivedCount": 29,
+  "activeCount": 40,
+  "archivedCount": 30,
   "maxEntries": 40,
   "maxBytes": 40960,
   "updatedAt": "2026-09-05T18:45:00.000Z",
   "schemaVersion": 1,
-  "note": "[mid-rebase intermediate — superseded by this branch's final renumbering commit, see its note] Rebasing fix/e2e-spec-locators-and-seed-target onto origin/master (fde31283, wave E landings): master's register (40 active / 29 archived, nextId 74) is the base; this commit lands this branch's own tooling entry (e2e-seed.js DATABASE_URL fallback) on top, pushing activeCount to 41 pending this branch's later archival/renumbering commits, and nextId to 75 to stay clear of master's own reserved ids through 74."
+  "note": "[mid-rebase intermediate — superseded by this branch's final renumbering commit, see its note] Rebasing fix/e2e-spec-locators-and-seed-target onto origin/master (fde31283, wave E landings): master's register (40 active / 29 archived, nextId 74) is the base; this branch's tooling entry (e2e-seed.js DATABASE_URL fallback) landed on top (41 active), then this commit's L-030 archival (domain, #588 — oldest active entry with a landed automated guard: `REG-B64 (T7)` + mutation probe 3 in `orders.lifecycle-conservation.spec.ts`) restores headroom: activeCount 41→40, archivedCount 29→30. nextId stays 75 (archiving frees no id — ids are never reissued)."
 }

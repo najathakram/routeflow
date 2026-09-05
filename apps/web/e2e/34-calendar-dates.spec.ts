@@ -171,7 +171,8 @@ test.describe("Calendar-date correctness (F25 / B59, B91)", () => {
       },
     });
     expect(customerRes.ok(), `POST /customers returned ${customerRes.status()}`).toBe(true);
-    const customer: { id: string } = await customerRes.json();
+    // CustomersService.create() returns { customer, user, tempPassword } — the id is nested.
+    const { customer } = (await customerRes.json()) as { customer: { id: string } };
     expect(customer?.id, "POST /customers response carried no id").toBeTruthy();
 
     const licenseNumber = `E2E-B91-${suffix}`;

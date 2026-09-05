@@ -553,21 +553,6 @@ build` forces production — so that branch was dead in every Docker image, not 
 - **Guard:** `REG-B129 (T5 path: cancel → un-cancel → re-dispatch)`, `REG-B211 (T12 path:
 complete-with-skipped → reopen refused)`; mutation probes in the F11 PR body.
 
-### L-030 · 2026-09-01 · domain · #588
-
-- **Symptom:** the fix for the above introduced a NEW conservation bug. A DRAFT cancel correctly
-  credited no stock (a draft never decremented) but still marked its line items CANCELLED, and
-  `reopenOrder` re-decremented every marked line — so a draft's cancel→reopen round trip
-  understated stock by the full order quantity.
-- **Root cause:** the marker recording "this cancel gave stock back" was written unconditionally
-  while the give-back itself was conditional. Two halves of one decision, written as two
-  independent statements that happened to agree in the common case.
-- **Lesson:** **When one write is the RECORD of another write having happened, bind both to a
-  single named condition — not to two conditions that agree today.** A reader (and a reviewer) can
-  check one boolean; they cannot check that two predicates are equivalent in every state.
-- **Guard:** `REG-B64 (T7)` asserts a DRAFT cancel neither credits stock nor marks its lines;
-  mutation probe 3 (make the mark unconditional) turns it red.
-
 ## security
 
 ### L-044 · 2026-09-02 · security
