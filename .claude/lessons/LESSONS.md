@@ -127,7 +127,7 @@
 
 ## tooling
 
-### L-072 · 2026-09-05 · tooling
+### L-074 · 2026-09-05 · tooling
 
 - **Symptom:** a prod-capable seed run through `railway run --service postgres` wrote to the LOCAL
   dev database.

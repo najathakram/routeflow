@@ -101,7 +101,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   `schema-drift.mjs` (read-only) and must never reach a script that writes schema; it also prints
   `Target host: ${redactUrl(url)}` so the announced target is the URL actually migrated. Contract
   specs: `src/common/schema-drift-script.spec.ts`, `src/common/prod-migrate-script.spec.ts`
-  (spawn-level, stub `npx` on PATH, no database). **2026-09-05 (L-072):** `scripts/e2e-seed.js` is
+  (spawn-level, stub `npx` on PATH, no database). **2026-09-05 (L-074):** `scripts/e2e-seed.js` is
   now a third consumer — imported via dynamic `import()` (it's CJS, and CI's Node 20 can't
   `require()` an `.mjs`), `requireProxy: false` like `schema-drift.mjs` (a read like this may fall
   back to `DATABASE_URL`, unlike the writer `prod-migrate.mjs`). Contract: `src/common/e2e-seed-script.spec.ts`.
@@ -544,7 +544,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   "Invalid invocation" whose `.message` is empty — CI logged a blank cause for a week). In CI
   the seed only runs when the `E2E_SEED_DATABASE_URL` secret is set (see
   `apps/web/e2e/setup/global.setup.ts` for the full seeding contract). **2026-09-05 (tooling
-  lesson L-072):** the module-level `DATABASE_URL ?? <localhost>` fallback is gone — a
+  lesson L-074):** the module-level `DATABASE_URL ?? <localhost>` fallback is gone — a
   `resolveTargetDbUrl()`/`bootstrap()` pair now reuses `scripts/lib/railway-db-url.mjs`'s
   `resolveDatabaseUrl` (see that entry above) so a `railway run --service postgres` invocation
   (which exposes only `POSTGRES_*`/`RAILWAY_TCP_PROXY_*`, never `DATABASE_URL`) resolves the real
