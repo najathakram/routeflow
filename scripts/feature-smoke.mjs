@@ -30,6 +30,7 @@
  */
 
 import { assertTestTenant } from "./lib/test-tenants.cjs";
+import { roundMoney } from "@routeflow/pricing";
 
 const BASE = (process.env.SMOKE_BASE_URL || "http://localhost:3000").replace(/\/+$/, "");
 // Only approved test tenants may be smoke-tested — never a live client tenant.
@@ -62,17 +63,6 @@ function assert(cond, msg) {
     fail(msg);
     failures++;
   }
-}
-
-// Mirrors apps/api/src/common/pricing.ts#roundMoney — half-away-from-zero at the
-// cent. Kept as a tiny local copy so this script has zero project imports beyond
-// the test-tenant guard (same posture as post-deploy-check.mjs / smoke.mjs).
-// The `toFixed(4)` re-render (not a `+ Number.EPSILON` nudge) is what makes an
-// exact half-cent round UP — keep it identical to the API copy.
-function roundMoney(n) {
-  if (!Number.isFinite(n)) return 0;
-  const sign = n < 0 ? -1 : 1;
-  return (sign * Math.round(Number((Math.abs(n) * 100).toFixed(4)))) / 100;
 }
 
 function assertMoney(actual, expected, msg) {

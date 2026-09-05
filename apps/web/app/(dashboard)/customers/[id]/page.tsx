@@ -63,7 +63,7 @@ import { useApprovePortalRequest, useDeclinePortalRequest } from "@/lib/api/port
 import { CustomerFormModal } from "../_components/CustomerFormModal";
 import { AuthorizationsTab } from "../_components/AuthorizationsTab";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
-import { getTierPrice, computeMarginFraction, classifyMargin } from "@/lib/pricing";
+import { getTierPrice, computeMarginFraction, classifyMargin } from "@routeflow/pricing";
 import {
   SELECTABLE_PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,

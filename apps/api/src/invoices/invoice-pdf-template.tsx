@@ -1,7 +1,7 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/renderer";
 import { carrierLabel, getTrackingUrl } from "../common/shipping";
-import { formatQtySplit } from "../common/pricing";
+import { formatQtySplit } from "@routeflow/pricing";
 import { promoNote, showOriginalPrice } from "./invoice-pdf-item";
 
 type DecimalLike = { toNumber(): number } | number | string;

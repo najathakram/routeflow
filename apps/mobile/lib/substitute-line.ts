@@ -18,7 +18,7 @@
  *    the server and the line billed LIST. This also matches how an existing
  *    line loads into this editor (catalogPrice = the product's list price).
  */
-import { effectiveQty, normalizeBoxesPieces } from "./pricing";
+import { effectiveQty, normalizeBoxesPieces } from "@routeflow/pricing";
 
 /** The draft row being replaced (order-editor `DraftItem` shape, structurally). */
 export interface SubstitutedFromLine {

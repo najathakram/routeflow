@@ -51,7 +51,7 @@ import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../..
 import { useAuthStore } from "../../../../lib/auth-store";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
-import { computeLineSubtotal, effectiveQty, getTierPrice } from "../../../../lib/pricing";
+import { computeLineSubtotal, effectiveQty, getTierPrice } from "@routeflow/pricing";
 import { useCustomerPrices } from "../../../../lib/api/customers";
 import {
   computeInvoiceTotals,

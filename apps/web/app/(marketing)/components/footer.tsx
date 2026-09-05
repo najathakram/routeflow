@@ -26,7 +26,7 @@ const COLUMNS: Array<[string, Array<[string, string]>]> = [
     "Sign in",
     [
       ["Wholesaler portal", "/login"],
-      ["Retailer portal", "/buyer/login"],
+      ["Buyer portal", "/buyer/login"],
     ],
   ],
 ];

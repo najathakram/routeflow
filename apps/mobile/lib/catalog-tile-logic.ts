@@ -9,7 +9,7 @@ import {
   normalizeBoxesPieces,
   type PromotionRule,
   type PromoResult,
-} from "./pricing";
+} from "@routeflow/pricing";
 import { bogoBannerText, matchingBogoPromo, sellingUnits } from "./buyer-cart-logic";
 import type {
   BuyerProduct,

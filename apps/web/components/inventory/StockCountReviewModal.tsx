@@ -5,7 +5,7 @@ import { ChevronDown, ChevronRight, RefreshCw, Trash2, X } from "lucide-react";
 import { Button, cn } from "@routeflow/ui/web";
 import { DecimalInput } from "@/components/MoneyInput";
 import { fmt } from "@/lib/formatting";
-import { roundMoney } from "@/lib/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import {
   computeCountedAfter,
   computeQtyVariance,

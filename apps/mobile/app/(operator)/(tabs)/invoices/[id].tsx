@@ -52,7 +52,7 @@ import { isCreditOpenForApply, openCreditBalance } from "../../../../lib/credit-
 import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
 import { showToast } from "../../../../lib/toast";
 import { alertInfo, confirm, chooseAction } from "../../../../lib/confirm";
-import { formatQtySplit } from "../../../../lib/pricing";
+import { formatQtySplit } from "@routeflow/pricing";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
 import {

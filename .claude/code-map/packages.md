@@ -6,6 +6,7 @@ Shared workspace packages (types, UI, configs) consumed by apps via npm workspac
 
 | Need                                             | File → symbol                                                              |
 | ------------------------------------------------ | -------------------------------------------------------------------------- |
+| Money math (line totals, tax, promos, tiers)     | `packages/pricing/src/` → `pricing.ts`, `tier-pricing.ts`                  |
 | Enums (UserRole, OrderStatus, ...)               | `packages/types/index.ts` → `export enum X`                                |
 | Type interfaces (User, Order, PaginatedResponse) | `packages/types/index.ts` → `export interface X`                           |
 | Web components (Button, Table, Modal, ...)       | `packages/ui/src/web/` → `index.ts` barrel                                 |
@@ -50,7 +51,8 @@ Shared DTO/enum definitions. Entry: `index.ts` (no `src/`).
   `AVAILABLE_ADDONS`. **The exported VALUES are unchanged** — the 2026-08-28 edit to this file was
   doc comments only.
 
-- **`pack-size.ts` (2026-08-20) — the ONE shared pack-size name parser.** Exports `parsePackSizeDetailed(name)`, `suggestPackSize({name, unit, unitSku, unitsPerBox})` → `{packSize, counts, confidence, reason}`, and `formatCountList(counts)` (`"5 or 12"`, `"4, 8 or 16"` — shared so no surface hardcodes "two"; a name can state three counts) with `confidence: HIGH | MEDIUM | LOW | AMBIGUOUS | PIECE_UNIT | null`. Lives here — **NOT** mirrored into `apps/*/lib` — precisely because all three apps already consume `@routeflow/types`, and a parser whose value is its refusal rules is the worst possible thing to keep hand-synced copies of (contrast `pricing.ts`, which IS a deliberate triple mirror).
+- **`pack-size.ts` (2026-08-20) — the ONE shared pack-size name parser.** Exports `parsePackSizeDetailed(name)`, `suggestPackSize({name, unit, unitSku, unitsPerBox})` → `{packSize, counts, confidence, reason}`, and `formatCountList(counts)` (`"5 or 12"`, `"4, 8 or 16"` — shared so no surface hardcodes "two"; a name can state three counts) with `confidence: HIGH | MEDIUM | LOW | AMBIGUOUS | PIECE_UNIT | null`. Lives here — **NOT** mirrored into `apps/*/lib` — precisely because all three apps already consume `@routeflow/types`, and a parser whose value is its refusal rules is the worst possible thing to keep hand-synced copies of (contrast money math, which used to be a
+  deliberate triple mirror and is now the single compiled `@routeflow/pricing` package, above).
   - ⚠️ **It must keep REFUSING to guess.** `packSize` is returned only when exactly ONE distinct count survives; two or more ⇒ `null` + `AMBIGUOUS` ("…5CT - 12Pack" is 12 packs of 5 — guessing mis-prices every loose sale of that product forever, which is far worse than asking). A `PIECE_UNIT` unit (`pcs`/`each`/`bottle`/`can`/`stick`…) NEVER gets a proposal: the count in such a name describes the case the row was broken out of, and setting a pack size there divides a piece price by the pack and undercharges by that factor.
   - Parse order is load-bearing: `N/<measure>` (e.g. "12/1.93OZ") is read FIRST, then measurements are stripped so "5 HOUR"/"65MG" cannot read as counts, then `N CT|PK|PACK|COUNT|PCS`. Counts kept only when `> 1` and `<= 1000`.
   - **`packages/types` has no Jest runner** (its test script is `tsc --noEmit`), so the specs live at `apps/api/src/common/pack-size.spec.ts`. Put new cases there or they silently never run.
@@ -68,6 +70,42 @@ Shared DTO/enum definitions. Entry: `index.ts` (no `src/`).
   `apps/mobile/lib/trip-grouping.ts` (RN apps don't consume this package's TS source at the same
   build boundary), with its own Jest test on the mobile side. Only web imports it directly, via
   `transpilePackages`. Change all three copies together.
+
+### `@routeflow/pricing` (`packages/pricing`)
+
+**Compiled** workspace package — the ONE copy of RouteFlow money math, replacing the four
+`pricing.ts` copies (api `src/common` + `src/utils`, web `lib`, mobile `lib`). Entry `src/index.ts`
+→ `pricing.ts` (`computeLineSubtotal`, `normalizeBoxesPieces`, `roundMoney`, `prorateLineSubtotal`,
+`applyBestPromotion`/`promotionMatchesProduct`, the zero-price guard, BUY_N_GET_M helpers,
+`computeCategoryTax`, `roundUnitCost`, `effectiveQty`) + `tier-pricing.ts` (`getTierPrice`).
+**Ships `dist/` (CJS + `.d.ts`), not source** — `main`/`types` point at `dist`, `package.json`
+declares `"build": "tsc -p tsconfig.build.json"`. This is load-bearing, unlike `@routeflow/types`'
+raw-TS `main`: the API consumes it at runtime through `nest build`'s emitted `require()`, and a
+source-direct package there crashes `node dist/main.js` (`no-runtime-workspace-imports.spec.ts`
+now asserts every `@routeflow/*` the API imports resolves to a built `main`). The root
+`postinstall` runs `npm run build -w @routeflow/pricing` so every `npm ci` (CI, Docker, local dev)
+produces `dist` before anything typechecks. api/web/mobile all import the bare specifier
+`@routeflow/pricing` — no relative imports, no mirrors to keep in sync.
+
+- Golden tests live here: `src/pricing.spec.ts`, `src/tier-pricing.spec.ts`, `src/golden.spec.ts`
+  (+ `src/golden.fixtures.ts`, the hand-worked money table, moved from api's old
+  `pricing-parity.fixtures.ts`). `src/no-mirrors.spec.ts` and `src/package-shape.spec.ts` guard the
+  package shape itself. `apps/api/src/common/no-runtime-workspace-imports.spec.ts` is the API-side
+  runtime-import guard.
+- Function bodies are byte-identical to the four deleted mirrors — proven by
+  `scripts/codemods/pricing-body-diff.mjs` (per-symbol `identical`/`DIFFERS` diff; only
+  `prorateLineSubtotal`'s signature line differs, widened to `storedSubtotal: number | null |
+undefined`). `scripts/codemods/pricing-import-rewrite.mjs` is the codemod that rewrote every
+  importer to the bare specifier.
+- Jest-mapped in api (`apps/api/package.json`) and mobile (`apps/mobile/jest.config.js` +
+  `metro.config.js`) to `packages/pricing/src/index.ts` — source, on purpose, so tests do not
+  depend on whether `dist/` has been built; runtime resolution (node, `nest build`, `next`) goes
+  through `main` -> `dist`. Docker: `apps/api`, `apps/web` and `apps/mobile` Dockerfiles each COPY
+  the whole `packages/pricing/` and `packages/typescript-config/` directories before `RUN npm ci`,
+  because the root postinstall compiles the package during `npm ci` (a manifest-only copy would
+  leave `tsc` with no inputs). `turbo.json`'s old `@routeflow/api#test` mirror-inputs block is
+  replaced by a `@routeflow/pricing#test` entry whose inputs include the three apps the tripwire
+  walks; `check-types`/`dev` `dependsOn` `^build` so the package builds first.
 
 ### `@routeflow/ui` (`packages/ui`)
 

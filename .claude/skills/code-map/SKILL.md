@@ -50,5 +50,5 @@ shows the drift. Refresh the affected entries (or re-map an area if the drift is
 
 ## Money math note
 
-Money/line/tax math mirrors live in `apps/{api/src/common,web/lib,mobile/lib}/pricing.ts` — keep
-all three in sync (the map flags this).
+Money/line/tax math lives once in `packages/pricing` (`@routeflow/pricing`) — api, web and mobile
+import it; there are no mirrors to keep in sync (the map flags this).

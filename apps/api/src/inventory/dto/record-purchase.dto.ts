@@ -31,7 +31,7 @@ export class RecordPurchaseDto {
 
   /**
    * Cost per SELLING UNIT — a box when `boxes`/`pieces` is sent (mirrors the
-   * box-priced selling convention documented in common/pricing.ts), a piece
+   * box-priced selling convention documented in @routeflow/pricing), a piece
    * otherwise. InventoryService.recordPurchase converts to a per-piece cost
    * before AVCO math, since Product.averageCost is contractually per piece.
    */

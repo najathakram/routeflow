@@ -28,12 +28,19 @@ on:
     branches: [master]
     paths:
       - "apps/api/prisma/**"
+      # The tenancy engine itself. `prisma.service.ts` is what the DB-backed
+      # tenant-findunique pins below actually exercise, and the *OrThrow
+      # fail-closed fix (L-055) landed there — a PR that touches it must run
+      # this lane, not just the one that touches the spec files.
+      - "apps/api/src/prisma/**"
       - "apps/api/scripts/schema-drift.mjs"
       - "apps/api/scripts/lib/**"
       - "apps/api/jest.db.config.js"
       - "apps/api/package.json"
       - "apps/api/src/**/*.db.spec.ts"
       - "apps/api/src/common/testing/**"
+      - "apps/api/.squawk.toml"
+      - "scripts/lint-migrations.mjs"
       - ".github/workflows/db-migrations.yml"
   workflow_dispatch:
 
@@ -72,6 +79,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Full history, because the lint step below resolves a RANGE
+          # (<base>...HEAD) to find the migrations this PR actually adds. The
+          # default depth-1 clone contains neither the PR base commit nor an
+          # `origin/master` remote-tracking ref; fetch-depth: 0 is what makes the
+          # range resolvable. Without it the script exits 2 ("could not resolve
+          # range") and fails the job on purpose — it will never report a clean
+          # run off a range it could not compute.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v7
         with:
@@ -80,6 +96,25 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --engine-strict=false
+
+      # ── Destructive-migration gate (item 3B) ────────────────────────────────
+      # Squawk (squawk-cli, a root devDependency — hence AFTER the install) over
+      # the migration.sql files added in this PR's range. The rule set in
+      # apps/api/.squawk.toml is destructive-only: Prisma emits the lock-hygiene
+      # shapes (concurrent index creation, NOT VALID constraints, timestamp vs
+      # timestamptz) by design, so those rules are excluded as advisory and only
+      # the drop/rename/retype/required-column family fails the job. Whitelist a
+      # single statement with `-- reason: <why>` immediately above a
+      # `-- squawk-ignore <rule>` line; the reason line is enforced by the script.
+      #
+      # Before the replay on purpose: a destructive statement is a review
+      # decision, and there is no point spending three minutes replaying history
+      # to prove that a migration nobody should merge does apply.
+      #
+      # A step, not a job — see ci.yml's minutes budget: a second job here would
+      # mean a second checkout and a second `npm ci`.
+      - name: Destructive-migration lint (squawk)
+        run: node scripts/lint-migrations.mjs --base "${{ github.event.pull_request.base.sha || 'origin/master' }}"
 
       - name: Verify migrations apply to a fresh database
         working-directory: apps/api

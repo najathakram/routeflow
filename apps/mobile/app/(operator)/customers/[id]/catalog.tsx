@@ -23,7 +23,7 @@ import {
 } from "../../../../lib/api/customers";
 import { useAdminProducts, type AdminProduct } from "../../../../lib/api/admin";
 import { useTierLabels } from "../../../../lib/api/tier-labels";
-import { getTierPrice } from "../../../../lib/pricing";
+import { getTierPrice } from "@routeflow/pricing";
 import { tierLabel } from "../../../../lib/tier-label";
 import { showToast } from "../../../../lib/toast";
 import { confirm } from "../../../../lib/confirm";

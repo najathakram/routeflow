@@ -86,19 +86,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import { roundMoney } from "@routeflow/pricing";
 
 // ─── Money + status mirrors ──────────────────────────────────────────────────
-// Local copies so the script carries zero project imports (it runs from the postgres
-// service container, where apps/api is not built). Both MUST stay byte-equivalent to
-// their originals — this script WRITES what they compute.
-
-/** Mirrors apps/api/src/common/pricing.ts#roundMoney — half-away-from-zero at the cent. */
-const roundMoney = (n) => {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return 0;
-  const sign = v < 0 ? -1 : 1;
-  return (sign * Math.round(Number((Math.abs(v) * 100).toFixed(4)))) / 100;
-};
+// `roundMoney` now comes from `@routeflow/pricing` (built by root `postinstall`, so it
+// is present wherever this repo is checked out and installed — including the machine
+// that runs `railway run --service postgres node scripts/repair-f03.mjs`). The status
+// helper below is still a local copy: it MUST stay byte-equivalent to its original —
+// this script WRITES what it computes.
 
 /** Mirrors InvoicesService.recomputeStatus — DRAFT/VOID/WRITTEN_OFF are terminal. */
 function recomputeStatus(totalPaid, total, dueDate, currentStatus) {
@@ -570,7 +565,7 @@ export function createPgStore(client) {
     // ── stale category tax (B57) — detected here, applied by the app (see header) ──
     async listPercentOfSaleLines() {
       // `categoryTaxRate` is the EFFECTIVE multiplier: a price-inclusive category's levy is
-      // rate/(1+rate) of the line subtotal (apps/api/src/common/pricing.ts#computeCategoryTax).
+      // rate/(1+rate) of the line subtotal (@routeflow/pricing#computeCategoryTax).
       // Tax-exempt customers are excluded — their zeroes are correct and must be preserved.
       return q(`
         SELECT ii.id,

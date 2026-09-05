@@ -46,13 +46,15 @@ nightly 02:00 local (Claude Code app open)
 
 | File                                             | Layer | Purpose                                                |
 | ------------------------------------------------ | ----- | ------------------------------------------------------ |
-| `apps/api/src/common/pricing.spec.ts`            | Unit  | Money math: 220×2=440, boxed proration, rounding       |
+| `packages/pricing/src/pricing.spec.ts`           | Unit  | Money math: 220×2=440, boxed proration, rounding       |
 | `apps/api/src/invoices/invoices.service.spec.ts` | Unit  | Invoice→order backward sync                            |
-| `apps/mobile/__tests__/pricing.test.ts`          | Unit  | Pricing mirror parity (mobile = api)                   |
 | `apps/mobile/__tests__/qty.test.ts`              | Unit  | Integer qty sanitizer                                  |
 | `apps/web/e2e/06-critical-paths.spec.ts`         | E2E   | CP-01–10: float artifacts, $X.XX format, total=sub+tax |
 | `scripts/post-deploy-check.mjs`                  | Smoke | Auth + 5 endpoints + money field scan + invoice math   |
 | `scripts/smoke.mjs`                              | Smoke | Unauthenticated liveness only                          |
+
+> The money-math spec lives in the `@routeflow/pricing` package and runs in its own Jest project —
+> `npm test -w @routeflow/pricing`, not an `apps/api` jest invocation.
 
 ## Running locally
 
@@ -119,6 +121,7 @@ This makes every Railway deploy trigger `post-deploy.yml` automatically:
 
 When you fix a bug:
 
-1. Add a unit spec in `pricing.spec.ts` or the relevant `*.service.spec.ts` (locks the fix in Jest).
+1. Add a unit spec in `packages/pricing/src/pricing.spec.ts` (money) or the relevant
+   `*.service.spec.ts` (locks the fix in Jest).
 2. Add a CP-\* test to `06-critical-paths.spec.ts` if it's visible in the UI or API response.
 3. Update the code map: `_meta.json` + the relevant area file.

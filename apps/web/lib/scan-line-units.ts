@@ -14,7 +14,7 @@
  * together. Spec: `apps/mobile/__tests__/scan-line-units.test.ts` is the
  * executable contract for BOTH mirrors.
  */
-import { roundUnitCost } from "./pricing";
+import { roundUnitCost } from "@routeflow/pricing";
 
 export type ScanLineUnit = "pieces" | "boxes";
 

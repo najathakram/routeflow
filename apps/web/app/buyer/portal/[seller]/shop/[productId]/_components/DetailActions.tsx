@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus, Bell } from "lucide-react";
-import type { PromotionRule, PromoResult } from "@/lib/pricing";
+import type { PromotionRule, PromoResult } from "@routeflow/pricing";
 import type { BuyerProductDetail, BuyerPromotion } from "@/lib/api/buyer";
 import type { CartItem } from "@/lib/buyer-cart";
 import { bogoChipLabel, deriveTilePrice } from "../../_components/tile-pricing";

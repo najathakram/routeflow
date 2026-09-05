@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { RegulatedVisibilityService } from "./regulated-visibility.service";
-import { getTierPrice } from "../utils/pricing";
+import { getTierPrice } from "@routeflow/pricing";
 
 @Injectable()
 export class BuyerDashboardService {

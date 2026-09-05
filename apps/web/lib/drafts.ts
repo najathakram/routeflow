@@ -1,4 +1,4 @@
-import { computeLineSubtotal } from "@/lib/pricing";
+import { computeLineSubtotal } from "@routeflow/pricing";
 import type { SaleDraft } from "@/lib/api/drafts";
 
 /**

@@ -19,7 +19,12 @@ import { InlineCreateProductModal } from "@/components/InlineCreateProductModal"
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { displayProductName } from "@/lib/product-display";
-import { computeLineSubtotal, normalizeBoxesPieces, roundMoney, getTierPrice } from "@/lib/pricing";
+import {
+  computeLineSubtotal,
+  normalizeBoxesPieces,
+  roundMoney,
+  getTierPrice,
+} from "@routeflow/pricing";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

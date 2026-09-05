@@ -50,6 +50,8 @@ import {
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cn, Avatar, ToastProvider } from "@routeflow/ui/web";
 import { TenantLogo } from "@/components/TenantLogo";
+import { PortalSwitchLink } from "@/components/PortalSwitchLink";
+import { setLastPortalCookie } from "@/lib/presence-cookies";
 import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -357,7 +359,11 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     }
     if (user?.forcePasswordChange) {
       router.push("/change-password");
+      return;
     }
+    // "/" opens the portal used last when both a buyer and an operator session
+    // are live (lib/portal-routing.ts) — record that this one rendered.
+    setLastPortalCookie("op");
   }, [isAuthenticated, isLoading, user, router]);
 
   if (isLoading) {
@@ -916,7 +922,6 @@ function Header({
                 <UserIcon className="h-4 w-4 text-navy/70" />
                 {t("menu.profile")}
               </DropdownMenu.Item>
-
               {/* Drive mode — one tap toggle to the field run layout for admins/operators
                   who can act as a driver (canActAsDriver; capability enforced server-side
                   by RolesGuard). Turning it on swaps layout only — no logout, permission
@@ -937,7 +942,20 @@ function Header({
                   {driveMode && <Check className="h-4 w-4 text-accent-deep" />}
                 </DropdownMenu.Item>
               )}
-
+              {/* Buyer ⇄ seller portal switch — the two portals are separate
+                  sessions in one browser; this is the door between them
+                  (components/PortalSwitchLink.tsx). */}
+              <DropdownMenu.Item asChild>
+                <PortalSwitchLink
+                  to="buyer"
+                  className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
+                  iconClassName="h-4 w-4 text-navy/70"
+                  labels={{
+                    switch: t("menu.switchToBuyerPortal"),
+                    signIn: t("menu.buyerPortalSignIn"),
+                  }}
+                />
+              </DropdownMenu.Item>
               {/* Language / Idioma — per-user locale (unified/ux-standards.html) */}
               <DropdownMenu.Separator className="my-1 border-t border-surface-border" />
               <div className="flex items-center gap-2 px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wider text-navy/40">
@@ -954,7 +972,6 @@ function Header({
                   {locale === l && <Check className="h-4 w-4 text-accent-deep" />}
                 </DropdownMenu.Item>
               ))}
-
               <DropdownMenu.Separator className="my-1 border-t border-surface-border" />
               {imp ? (
                 <DropdownMenu.Item
