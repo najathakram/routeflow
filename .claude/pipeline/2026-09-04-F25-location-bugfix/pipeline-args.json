@@ -62,8 +62,7 @@
       ],
       "brief": "buildLocationPayload's body maps negative-or-null heading/speed to null, converts valid speed m/s->km/h, passes accuracy through when >= 0 else omits it. Both duplicate call sites in location-tracker.native.ts spread its return alongside their existing lat/lng/runId fields.",
       "satisfies": ["R1"],
-      "provenBy": ["T1", "T2"],
-      "dependsOn": ["TP-LOC"]
+      "provenBy": ["T1", "T2"]
     },
     {
       "id": "WP-API-LOC",
@@ -75,7 +74,6 @@
       "brief": "Add @IsOptional() @Type(()=>Number) @IsNumber() @Min(0) accuracy?: number to PostLocationDto (no @Max). recordLocation's create() call gains accuracy: dto.accuracy. heading/speedKph's existing @Min(0)/@Max decorators are unchanged.",
       "satisfies": ["R2", "R3", "R4"],
       "provenBy": ["T3", "T4", "T5"],
-      "dependsOn": ["TP-LOC"],
       "effort": "high"
     },
     {

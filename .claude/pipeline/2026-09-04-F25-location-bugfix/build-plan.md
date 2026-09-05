@@ -102,7 +102,8 @@ cd apps/mobile && npx jest location-payload.test -t "REG-B185" && cd ../api && n
   package only changes the payload module's body).
 - **satisfies:** R1
 - **provenBy:** T1, T2
-- **dependsOn:** TP-LOC
+- **dependsOn:** none (test packages run before the first implementation wave by phase order — TP/WP
+  ids resolve in separate `dependsOn` namespaces, so naming TP-LOC here would be a dropped, invalid edge)
 - **effort:** medium
 - **brief:** `buildLocationPayload`'s body becomes:
   ```ts
@@ -132,7 +133,7 @@ cd apps/mobile && npx jest location-payload.test -t "REG-B185" && cd ../api && n
 - **files:** `apps/api/src/drivers/dto/post-location.dto.ts`, `apps/api/src/drivers/drivers.service.ts`.
 - **satisfies:** R2, R3, R4
 - **provenBy:** T3, T4, T5
-- **dependsOn:** TP-LOC
+- **dependsOn:** none (same reason as WP-MOB-LOC — TP-LOC is a test package, not a valid WP dependency)
 - **effort:** high (touches the driver-tracking write path that feeds the live operator map — reviewed at
   full depth per the project's "money/tenancy/auth only" default-medium rule's caution extension to
   operationally load-bearing paths; the DTO's whitelist behavior affects every driver ping, not just B185's
@@ -173,12 +174,12 @@ cd apps/mobile && npx jest location-payload.test -t "REG-B185" && cd ../api && n
 
 ### Package map
 
-| WP          | satisfies  | provenBy   | dependsOn              | Wave           |
-| ----------- | ---------- | ---------- | ---------------------- | -------------- |
-| TP-LOC      | —          | T1-T5      | —                      | 0 (test-first) |
-| WP-MOB-LOC  | R1         | T1, T2     | TP-LOC                 | 1              |
-| WP-API-LOC  | R2, R3, R4 | T3, T4, T5 | TP-LOC                 | 1              |
-| WP-DOCS-LOC | —          | —          | WP-MOB-LOC, WP-API-LOC | 2              |
+| WP          | satisfies  | provenBy   | dependsOn                                   | Wave           |
+| ----------- | ---------- | ---------- | ------------------------------------------- | -------------- |
+| TP-LOC      | —          | T1-T5      | —                                           | 0 (test-first) |
+| WP-MOB-LOC  | R1         | T1, T2     | — (TP-LOC via phase order, not `dependsOn`) | 1              |
+| WP-API-LOC  | R2, R3, R4 | T3, T4, T5 | — (TP-LOC via phase order, not `dependsOn`) | 1              |
+| WP-DOCS-LOC | —          | —          | WP-MOB-LOC, WP-API-LOC                      | 2              |
 
 Cross-check: R1-R4 all appear in some package's `satisfies:`. T1-T5 all appear in some package's
 `provenBy:`.
@@ -302,8 +303,7 @@ pipeline args.
       files: ['apps/mobile/lib/location-payload.ts', 'apps/mobile/lib/location-tracker.native.ts'],
       brief: 'buildLocationPayload\'s body maps negative-or-null heading/speed to null, converts valid speed m/s->km/h, passes accuracy through when >= 0 else omits it. Both duplicate call sites in location-tracker.native.ts spread its return alongside their existing lat/lng/runId fields.',
       satisfies: ['R1'],
-      provenBy: ['T1', 'T2'],
-      dependsOn: ['TP-LOC']
+      provenBy: ['T1', 'T2']
     },
     {
       id: 'WP-API-LOC', title: 'DTO + persistence',
@@ -311,7 +311,6 @@ pipeline args.
       brief: 'Add @IsOptional() @Type(()=>Number) @IsNumber() @Min(0) accuracy?: number to PostLocationDto (no @Max). recordLocation\'s create() call gains accuracy: dto.accuracy. heading/speedKph\'s existing @Min(0)/@Max decorators are unchanged.',
       satisfies: ['R2', 'R3', 'R4'],
       provenBy: ['T3', 'T4', 'T5'],
-      dependsOn: ['TP-LOC'],
       effort: 'high'
     },
     {
