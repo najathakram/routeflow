@@ -503,9 +503,9 @@ cap.
   `.claude/campaign/status/*.jsonl` (last state per row id) before repeating any figure. Same
   family as [[L-034]].
 
-## Archived 2026-09-05 — headroom for L-075 (fix/e2e-recurring-toast-locator)
+## Archived 2026-09-05 — headroom for L-076 (fix/e2e-recurring-toast-locator)
 
-The register sat at 40 of 40 active entries; adding L-075 (testing, the toast/aria-live
+The register sat at 40 of 40 active entries; adding L-076 (testing, the toast/aria-live
 strict-mode fix) would have pushed it to 41. Of the entries still active, L-037 is the oldest
 whose guard is a real, landed, automated check rather than a procedure or a memory note: every
 2026-08-* entry and every 2026-09-01 entry with a lower id (`L-025`, `L-026`, `L-027`, `L-035`)

@@ -306,7 +306,7 @@
 
 ## testing
 
-### L-075 · 2026-09-05 · testing · F13
+### L-076 · 2026-09-05 · testing · F13
 
 - **Symptom:** an E2E toast assertion via bare `getByText` hit a strict-mode violation
   (2 elements) after the app gained an aria-live announcer that repeats toast copy.

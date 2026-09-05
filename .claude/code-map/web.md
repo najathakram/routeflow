@@ -1180,4 +1180,4 @@ layout and the enum-parity guard. Key entries:
   template updated") are scoped through
   `getByRole("region", { name: /notifications/i }).getByRole("listitem")` — a bare
   `page.getByText(...)` hits 2 elements (the toast + Radix's aria-live announcer mirror);
-  see [[L-075]].
+  see [[L-076]].
