@@ -432,6 +432,13 @@ complete-with-skipped → reopen refused)`; mutation probes in the F11 PR body.
   audit any direct per-child write for the NULL-tenantId class.**
 - **Guard:** single-helper pattern (`lineInventoryDelta`); class flagged for review.
 
+### L-062 · 2026-09-04 · domain · OCR gate
+
+- **Symptom:** every invoice scan returned 403 for days; the web modal said "check the file and try again", so it read as a bad file, not a missing entitlement.
+- **Root cause:** #475 put `@RequireAddon("ocr")` on live routes with no backfill and no plan bundling the add-on, and the web discarded the server's message.
+- **Lesson:** **A new entitlement gate on an existing route is an outage unless it ships observe-first: register the key with a review date, allow-and-log until the backfill exists, fail closed only for unregistered keys, and always surface the server's message.**
+- **Guard:** `ADDON_GATE_REGISTRY` pins P1a–P1h and REG-OCR-1 T1–T8; e2e OP-17g; the CLAUDE.md "Entitlement gates" rule and the PR-template line.
+
 ## security
 
 ### L-044 · 2026-09-02 · security

@@ -1,0 +1,9 @@
+{
+  "runId": "wf_eece6302-2d5",
+  "status": "died-before-close-out",
+  "salvagedBy": "routeflow-44",
+  "salvagedAt": "2026-09-04T18:30:00.000Z",
+  "touchedSuites": "23 suites / 358 tests green",
+  "typecheck": "api 0, web 0",
+  "provenance": "no engine return value exists; reconstructed from the worktree and the RESUME card"
+}

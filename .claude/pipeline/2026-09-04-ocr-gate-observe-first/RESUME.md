@@ -1,5 +1,10 @@
 # ocr-gate-observe-first — pipeline resume card (written BEFORE launch)
 
+**Status: SALVAGED — merged by hand.** The engine died before its own S7 close-out (see
+`result.json` beside this file); routeflow-44 salvaged the complete, green worktree by hand on
+2026-09-04 per the owner rule "merge done work, don't rebuild" and performed the close-out
+(code map, L-062, RUN-LOG) this card originally left owed below.
+
 Bug-pipeline run (engine `dev-pipeline/pipeline.js`, `mode: 'bugfix'`) for OCR-1/OCR-2 — registry-driven
 observe-first `AddonGuard` (`ocr` dark), coded 403 body, web single-scan toast fidelity, read-only
 blast-radius report, docs rule. Owner ask 2026-09-03/04: fix immediately without harming PR #475, adopt the
