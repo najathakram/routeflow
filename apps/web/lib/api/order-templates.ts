@@ -67,7 +67,14 @@ export function useUpdateOrderTemplate() {
   return useMutation<
     OrderTemplate,
     Error,
-    { id: string; name?: string; daysOfWeek?: number[]; isActive?: boolean; notes?: string }
+    {
+      id: string;
+      name?: string;
+      daysOfWeek?: number[];
+      isActive?: boolean;
+      notes?: string;
+      items?: { productId: string; qty: number; notes?: string }[];
+    }
   >({
     mutationFn: ({ id, ...dto }) =>
       apiClient.patch(`/order-templates/${id}`, dto).then((r) => r.data),

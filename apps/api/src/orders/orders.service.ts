@@ -119,8 +119,10 @@ export class OrdersService implements OnApplicationBootstrap {
    * P5-04: active promotions for the current tenant (window + isActive filtered).
    * Only loaded for the buyer (CUSTOMER) self-service path; empty for staff so
    * operator/driver order pricing is byte-for-byte unchanged.
+   * Shared with OrderTemplatesService (REG-B48): a standing order is priced as
+   * the customer's own buyer checkout, whoever triggers it.
    */
-  private async loadActivePromotions(role: UserRole): Promise<PromotionRule[]> {
+  async loadActivePromotions(role: UserRole): Promise<PromotionRule[]> {
     if (role !== UserRole.CUSTOMER) return [];
     const promos = await this.promotionsService.activeForCatalog();
     return promos.map((p) => ({
@@ -141,8 +143,10 @@ export class OrdersService implements OnApplicationBootstrap {
    * with the list price as the strikethrough, else STANDARD). Boxed proration is
    * left to computeLineSubtotal by the caller — this only sets the SELLING-UNIT
    * price. `promos` is empty for staff, so this is a no-op tier resolver there.
+   * Shared with OrderTemplatesService (REG-B48): a standing order is priced as
+   * the customer's own buyer checkout, whoever triggers it.
    */
-  private resolveBuyerLinePrice(
+  resolveBuyerLinePrice(
     product: { id: string; category: string | null; pricePerUnit: unknown },
     tierForProduct: number,
     promos: PromotionRule[],

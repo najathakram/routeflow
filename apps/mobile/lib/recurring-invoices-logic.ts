@@ -48,6 +48,32 @@ export function recurringScheduleFields(
   return { dayOfWeek: Math.min(6, Math.max(0, Math.floor(dayOfWeek))) };
 }
 
+export type LastRunStatus = "SUCCESS" | "FAILED";
+export interface LastRunOutcome {
+  variant: PillVariant;
+  label: string;
+  /** The recorded error, FAILED only. */
+  detail?: string;
+}
+
+/**
+ * REG-B106 (mobile mirror of the web list card): the outcome of the last cron / run-now
+ * cycle. null when there is nothing honest to show — no run yet, or a legacy row that ran
+ * before outcomes were recorded (status null): the date alone is shown and no claim of
+ * success is made.
+ */
+export function lastRunOutcome(t: {
+  lastRunAt?: string | null;
+  lastRunStatus?: LastRunStatus | null;
+  lastError?: string | null;
+}): LastRunOutcome | null {
+  if (!t.lastRunAt || !t.lastRunStatus) return null;
+  if (t.lastRunStatus === "FAILED") {
+    return { variant: "red", label: "Last run failed", detail: t.lastError ?? undefined };
+  }
+  return { variant: "green", label: "Last run succeeded" };
+}
+
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /** Human schedule label, e.g. "Weekly — Mon" / "Every 2 weeks — Wed" / "Monthly — day 15". */

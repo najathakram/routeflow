@@ -1126,3 +1126,48 @@ Each module exports TanStack Query hooks + TS types mirroring API DTOs. Key entr
 - **Sidebar casing (#305)** — `app/(dashboard)/layout.tsx` `NavGroupSection` header button: removed the `uppercase` Tailwind token so collapsible group labels render Title Case ("Orders"/"Finance"/…) consistent with the leaf links. Label strings were already Title Case; buyer portal + mobile drawer unchanged (they already reserve caps for section headers).
 - **Payment image (#309)** — `lib/api/invoices.ts` payment types gain `imageKey/imageOriginalName/imageMimeType`; `useRecordInvoicePayment` result gains `createdPaymentId`; new `useUploadPaymentImage`/`useDeletePaymentImage`/`useGetPaymentImageUrl` (FormData, cloned from `lib/api/finance.ts` receipt hooks). UI: `invoices/[id]/page.tsx` record + edit payment modals get an `accept="image/*"` attach control (deferred best-effort upload) + Payment History "View receipt"; `finance/payments/page.tsx` standalone modal + paperclip presence icon; `finance/payments/[id]/page.tsx` renders the image.
 - **Unit code (#310)** — `components/ProductCreateModal.tsx` + `products/[id]` detail/variant forms add the "Unit code" field (label pair "Case code"/"Unit code"); `lib/barcode-resolve.ts` exact-preference widened to `unitSku`. All other scan callers unchanged (server `findByBarcode` widening covers them).
+
+### 2026-09-04 — F13 recurring templates + standing-order items (B09 / B46 / B48 / B92 / B106)
+
+- **`lib/api/invoices.ts`** — `RecurringInvoice` gains `lastRunStatus?: "SUCCESS"|"FAILED"|null` and
+  `lastError?: string|null`. New exports **`RUN_UNFINALIZED_PREFIX`** (mirrors
+  `RUN_UNFINALIZED_ERROR` in `apps/api/src/recurring-invoices/recurring-invoices.service.ts` —
+  reword one and you must reword the other, they are coupled by a `startsWith`) and
+  **`isRetryableRunFailure(lastError?): boolean`** — false for an already-billed-but-unfinalized
+  cycle, so the UI never invites a Run Now that would bill the customer twice.
+  `useActivateRecurringInvoice`'s comment now records WHY resume is its own endpoint: the PATCH is
+  validated and whitelisted since `UpdateRecurringInvoiceDto`, which deliberately omits `isActive`.
+- **`lib/api/order-templates.ts`** — `useUpdateOrderTemplate` variables are typed explicitly
+  (`{id, name?, daysOfWeek?, isActive?, notes?, items?: {productId, qty, notes?}[]}`); `items` is
+  the REG-B09 replace-the-list field the API gained.
+- **`app/(dashboard)/invoices/recurring/page.tsx`** — the Last-run row renders the recorded outcome
+  (green "Succeeded" / red "Failed" pill) and, on failure, the error text; the "use Run Now to
+  retry" hint is appended ONLY when `isRetryableRunFailure(ri.lastError)` (REG-B106). Each card also
+  gains an **Edit** button linking to `/invoices/recurring/[id]/edit`.
+- **`app/(dashboard)/invoices/recurring/_components/RecurringInvoiceForm.tsx`** (new) — the whole
+  create form (customer search, schedule fields, line items, money totals) extracted out of
+  `new/page.tsx` verbatim so the new edit page reuses it; `new/page.tsx` is now a thin wrapper.
+  Takes an optional existing `RecurringInvoice` to seed edit mode.
+- **`app/(dashboard)/invoices/recurring/[id]/edit/page.tsx`** (new, REG-B92) — loads the template
+  with `useRecurringInvoice`, renders `RecurringInvoiceForm`, saves through
+  `useUpdateRecurringInvoice`. Before F13 there was no edit surface at all and the PATCH behind it
+  was unvalidated.
+- **`app/(dashboard)/customers/[id]/StandingOrderModal.tsx`** (REG-B09) — edit mode now saves the
+  item list it displays: rows carry `notes`, and the PATCH includes `items` **only when the list
+  actually differs** from the loaded template, compared by the new order-free
+  **`itemSignature(items)`** helper (`productId:qty:notes` sorted and joined). Two reasons, both
+  load-bearing: an untouched list must not be churned (the API replaces items by delete +
+  re-create, minting new ids), and a name/day/notes-only edit stays the scalar-only shape the
+  pre-F13 API accepts — api and web are independent Railway services, so that keeps every
+  non-item edit working through the deploy window and behind a rollback.
+- **`e2e/30-recurring-standing.spec.ts`** (new) + **`playwright.config.ts`** project
+  `recurring-standing` (`dependencies: ["setup"]`, operator storage state) — **without the project
+  entry the spec never runs.** Three tests: REG-B09 the Edit Standing Order modal persists item
+  adds and qty changes; REG-B92 the recurring edit page persists a schedule/notes change; REG-B106
+  the card shows "Succeeded" after Run Now. Mutating but self-contained — throwaway `E2E B09 …` /
+  `E2E B92 …` fixtures on the approved seed tenant, the recurring template created with `nextRunAt`
+  in 2099 so a leaked row can never fire the cron. ⚠️ **`DELETE /recurring-invoices/:id` is
+  DEACTIVATE, not a row delete** (unlike `/order-templates/:id`), so the second test's `finally`
+  voids the Run Now invoice and leaves an inert, deactivated template behind. ⚠️ Never run this
+  file locally with `npx playwright test` — not even `--list`; it clobbers
+  `.campaign/runs/web-e2e.json`.

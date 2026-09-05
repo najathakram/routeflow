@@ -417,6 +417,25 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── Recurring-template edit + standing-order item edit (F13, spec 30) ──────
+    // REG-B92: /invoices/recurring/[id]/edit exists and persists a schedule/notes
+    // change; every list card links to it. REG-B09: the Edit Standing Order modal
+    // persists item adds and qty changes through PATCH `items`. REG-B106 web leg:
+    // after Run Now the card shows the recorded "Succeeded" outcome (the API write
+    // is jest-proven in apps/api). Mutating but self-contained: throwaway
+    // `E2E B09 …` / `E2E B92 …` fixtures on the approved seed tenant; the recurring
+    // template is created with nextRunAt in 2099 and deactivated in a `finally` so a
+    // leaked row can never fire the midnight cron, and the Run Now invoice is voided
+    // there too. NOT part of F13's red gate; runs only against the DEPLOYED site and
+    // is expected red until F13 ships.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's header.
+    {
+      name: "recurring-standing",
+      testMatch: /30-recurring-standing\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // Un-quarantined 2026-09-03 (L-050, #598/#607): only spec 32 (active-sessions) needed a
     // dedicated seeded user — it logs in fresh as e2e_sessions_op and only ever revokes ITS OWN
     // sessions, so it must never consume the shared admin/e2e_admin every storageState:

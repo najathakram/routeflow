@@ -1235,3 +1235,20 @@ The owner-approved publish-readiness fix PR (HANDOFF.md banner 2026-09-01).
   local file it then discards, parallel worktrees can't see each other's counter, and Play
   rejects a reused versionCode outright. Safe because `runtimeVersion.policy` is `appVersion`
   (the documented remote-source incompatibility is `nativeVersion`).
+
+### 2026-09-04 — F13 recurring-invoice run outcome (REG-B106, operator parity)
+
+- **`lib/recurring-invoices-logic.ts`** — new `type LastRunStatus = "SUCCESS" | "FAILED"`,
+  `interface LastRunOutcome {variant: PillVariant; label: string; detail?: string}` and pure
+  **`lastRunOutcome(t): LastRunOutcome | null`** — the mobile mirror of web's recurring list card.
+  Returns `null` when there is nothing honest to show (no run yet, or a legacy row that ran before
+  outcomes were recorded, i.e. `lastRunStatus` null): the date alone is shown and no claim of
+  success is made. FAILED → red pill + the recorded `lastError` as detail; SUCCESS → green pill.
+- **`lib/api/recurring-invoices.ts`** — `RecurringInvoice` gains `lastRunStatus?: "SUCCESS"|"FAILED"|null`
+  and `lastError?: string|null` (mirrors web's `lib/api/invoices.ts`).
+- **`app/(operator)/recurring-invoices/[id].tsx`** — renders `lastRunOutcome(template)` as a `Pill`
+  plus the error detail line under the schedule text. **No retry button here** (there never was
+  one), so mobile needs no equivalent of web's `isRetryableRunFailure` gate — recorded as an
+  accepted API/mobile asymmetry, not a gap.
+- **`__tests__/recurring-invoices-helpers.test.ts`** — adds `describe("REG-B106 lastRunOutcome")`
+  with T22a (no run / status null → null), T22b (FAILED → red + detail), T22c (SUCCESS → green).

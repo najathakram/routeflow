@@ -1,10 +1,10 @@
 {
-  "nextId": 67,
-  "activeCount": 37,
-  "archivedCount": 24,
+  "nextId": 71,
+  "activeCount": 39,
+  "archivedCount": 27,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-05T06:10:00.000Z",
+  "updatedAt": "2026-09-05T11:20:00.000Z",
   "schemaVersion": 1,
-  "note": "Merge of origin/master (e07aa0b5, #611) into refactor/imp-01-pricing-package: master's #611 minted a NEW `L-061 · testing · watchdog spec` entry that collided with this branch's own pre-existing L-061 (testing, wave B′ P4, Prisma client-extension catch-all) — master's entry renumbered to L-066 (next free id after this branch's nextId of 66); this branch's own L-061 kept its id unchanged. nextId bumped to 67, activeCount 35→36. Prior note: merge of origin/master (a5be8626, #610) renumbered this branch's colliding L-058 to L-065. Merge of origin/master (16a486c2, #613/#614/#615) into fix/F25-calendar-date-correctness: master's renumbered L-058..L-066 and this branch's pre-allocated L-047 (domain, F25 calendar dates) do not collide, so both sides merged verbatim — activeCount 36→37, archivedCount 24 (unchanged), nextId stays 67."
+  "note": "Merge of origin/master (d7dcf393, #612 F13 recurring invoices + standing orders) into fix/F25-calendar-date-correctness: master's register is the base — it already carried L-046 (F13) and the renumbered L-067…L-070 (#597), and this branch contributes only its pre-allocated L-047 (domain, F25 calendar dates), an id master never claimed, so nothing was renumbered on either side. That union stood at 41 entries / 41,962 bytes, over BOTH caps, so two entries were compacted to ARCHIVE.md verbatim under a dated section: L-036 (testing — guard REG-B72 T22 is landed and red when disabled) and L-028 (tooling — its rule now lives at the call site in .claude/code-map/api.md beside the root `overrides` pin it argues for). Two rather than the one strictly required, per [[L-039]]: a cap reached with ~0 margin is a tripwire for the next unrelated branch. activeCount 40→39, archivedCount 25→27, 38,945 of 40,960 bytes (2,015 headroom), nextId stays 71 (max id 70 across both files, +1). Prior note: Merge of origin/master (10ddc3fa, #597 in-repo bug registry) into `fix/F13-recurring-standing-v2` — master's #597 entries had already been renumbered to L-067…L-070 and L-029 archived to hold the byte cap."
 }
