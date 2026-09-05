@@ -363,6 +363,31 @@ so a failing type-check no longer hides a failing lint/test in the same run.
 > (`tenantNotFound`) + a backfill migration
 > `UPDATE "PaymentCounter" SET "tenantId" = "id" WHERE "tenantId" IS NULL AND "id" IN (SELECT "id" FROM "Tenant")`,
 > preceded by a read-only prod count of such rows; the `forTenant()` layer already scopes it.
+>
+> **Follow-on (pg concurrent-query deprecation).** Observed in prod 2026-09-05, shortly after
+> #623: node-postgres logs a deprecation for a second query issued on a client that already has
+> one in flight. Diagnosed as **not** `db-locks.ts` — that module `await`s each of its three
+> statements in turn (`SET lock_timeout` at ~240, the lock call at ~248, the unlock at ~282), so
+> it never overlaps and needs no change. The real shape is `Promise.all` on a **pinned Prisma
+> interactive-transaction client**, where both branches share one connection:
+> [`sales-agents/commission-engine.service.ts`](../apps/api/src/sales-agents/commission-engine.service.ts)
+> ~222 (`runSync`'s `db` is a `tx` at every caller — `syncInvoiceCommissionSafe(id, tx)`),
+> [`common/msrp.ts`](../apps/api/src/common/msrp.ts) ~68 (`loadMsrpMap` is called with `tx` from
+> `estimates.service.ts` ~240 and with the tx-or-pool `db` from `invoices.service.ts` ~118),
+> [`drivers/drivers.service.ts`](../apps/api/src/drivers/drivers.service.ts) ~148 and
+> [`customers/customers.service.ts`](../apps/api/src/customers/customers.service.ts) ~1727 (both
+> plainly inside a `tenantTransaction`). Also audit — same `Promise.all` pair shape, but on a
+> pool-backed `forTenant()` client today, so each branch checks out its own connection:
+> `routes/routes.service.ts` ~1562 (pinned only when a caller threads `client`),
+> `buyer/statement.service.ts` ~57, `buyer/buyer.controller.ts` ~300, and
+> `messaging/messaging-config.service.ts` ~135/~141. A third statement can queue behind such a
+> pair without any code asking for it: Prisma's 5 s interactive-transaction timeout fires its own
+> `ROLLBACK` on the same pinned connection. **No correctness risk today** — `pg` 8 queues per
+> connection and runs them FIFO, so the pair still executes, in order, and only logs. It becomes
+> a hard failure on `pg@9`, which throws instead of queueing. Fix: serialize each pair into
+> sequential `await`s (the parallelism is illusory on a pinned client anyway — one connection,
+> one statement at a time) and pin it with a fake-tx spec whose mock records overlap, i.e. fails
+> if a second call starts before the first resolves.
 
 ---
 
