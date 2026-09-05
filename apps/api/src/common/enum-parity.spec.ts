@@ -143,8 +143,13 @@ function importsFromSharedPackage(filePath: string, typeName: string): boolean {
 }
 
 describe("regression: hand-typed web/mobile enum mirrors must not re-drift (L-072)", () => {
-  it("mobile VendorBillStatus (apps/mobile/lib/api/vendor-bills.ts) matches Prisma VendorBillStatus", () => {
-    const file = path.join(REPO_ROOT, "apps/mobile/lib/api/vendor-bills.ts");
+  it.each([
+    ["mobile", "apps/mobile/lib/api/vendor-bills.ts"],
+    // Close-out review (2026-09-05): web hand-typed the same union, also missing
+    // "OVERDUE" — pinned here the same way mobile was in wave E (L-072).
+    ["web", "apps/web/lib/api/vendor-bills.ts"],
+  ])("%s VendorBillStatus (%s) matches Prisma VendorBillStatus", (_app, relPath) => {
+    const file = path.join(REPO_ROOT, relPath);
     const local = extractLocalLiteralUnion(file, "VendorBillStatus");
     const expected = Object.values(PrismaEnums.VendorBillStatus);
     if (local) {

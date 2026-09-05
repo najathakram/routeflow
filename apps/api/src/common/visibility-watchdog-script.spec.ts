@@ -11,11 +11,14 @@ import path from "node:path";
 //
 // A fake `gh` driver (mode selected by FAKE_MODE) stands in for the real `gh repo edit`
 // / `gh repo view` invocations via VISIBILITY_WATCHDOG_GH_CMD, so every case here runs
-// with no network access and never touches the real repo's visibility.
-// VISIBILITY_WATCHDOG_LOG_FILE points the log at a scratch file instead of the real
-// `local-assets/visibility-watchdog.log`, and VISIBILITY_WATCHDOG_VERIFY_INTERVAL_MS
-// collapses the real 10s read-back poll to near-zero so the never-verifies case runs in
-// well under a second instead of ~40s.
+// with no network access and never touches the real repo's visibility. The driver
+// persists a small { visibility, editCalls } state object to FAKE_STATE_FILE across its
+// own process invocations (each `gh` call is a fresh child), so it can model a flip that
+// only actually lands after N failed attempts.
+// VISIBILITY_WATCHDOG_LOG_FILE and VISIBILITY_WATCHDOG_MARKER_FILE point the log and the
+// FAILED marker at scratch files instead of the real `local-assets/` paths, and
+// VISIBILITY_WATCHDOG_ATTEMPT_DELAYS_MS collapses the real 5s..240s backoff between flip
+// attempts to a few milliseconds so specs don't sleep for real minutes.
 
 const SCRIPT = path.resolve(__dirname, "../../../../scripts/visibility-watchdog.mjs");
 
@@ -28,18 +31,53 @@ beforeAll(() => {
   fs.writeFileSync(
     fakeGh,
     [
+      "import fs from 'node:fs';",
       "const mode = process.env.FAKE_MODE || 'success';",
+      "const stateFile = process.env.FAKE_STATE_FILE;",
+      "const failAttempts = Number(process.env.FAKE_FAIL_ATTEMPTS || '0');",
       "const args = process.argv.slice(2);",
       "",
+      "function readState() {",
+      "  try {",
+      "    return JSON.parse(fs.readFileSync(stateFile, 'utf8'));",
+      "  } catch {",
+      "    return { visibility: 'PUBLIC', editCalls: 0 };",
+      "  }",
+      "}",
+      "function writeState(state) {",
+      "  fs.writeFileSync(stateFile, JSON.stringify(state));",
+      "}",
+      "",
       "if (args[0] === 'repo' && args[1] === 'edit') {",
+      "  const state = readState();",
+      "  state.editCalls += 1;",
       "  if (mode === 'edit-fail') {",
+      "    writeState(state);",
       "    process.stderr.write('HTTP 403: Forbidden\\n');",
       "    process.exit(1);",
       "  }",
+      "  if (mode === 'public-forever') {",
+      "    // gh reports success but the visibility never actually lands PRIVATE.",
+      "    writeState(state);",
+      "    process.exit(0);",
+      "  }",
+      "  if (mode === 'retry-then-success') {",
+      "    if (state.editCalls <= failAttempts) {",
+      "      writeState(state);",
+      "      process.stderr.write(`HTTP 500: Internal Server Error (attempt ${state.editCalls})\\n`);",
+      "      process.exit(1);",
+      "    }",
+      "    state.visibility = 'PRIVATE';",
+      "    writeState(state);",
+      "    process.exit(0);",
+      "  }",
+      "  // 'success' (default)",
+      "  state.visibility = 'PRIVATE';",
+      "  writeState(state);",
       "  process.exit(0);",
       "} else if (args[0] === 'repo' && args[1] === 'view') {",
-      "  const visibility = mode === 'public-forever' ? 'PUBLIC' : 'PRIVATE';",
-      "  process.stdout.write(JSON.stringify({ visibility }));",
+      "  const state = readState();",
+      "  process.stdout.write(JSON.stringify({ visibility: state.visibility }));",
       "  process.exit(0);",
       "} else {",
       "  process.stderr.write(`fake-gh: unrecognized args ${args.join(' ')}\\n`);",
@@ -67,14 +105,21 @@ function fakeEnv(
     ...process.env,
     VISIBILITY_WATCHDOG_GH_CMD: JSON.stringify([process.execPath, fakeGh]),
     VISIBILITY_WATCHDOG_LOG_FILE: logFile,
-    VISIBILITY_WATCHDOG_VERIFY_INTERVAL_MS: "5",
+    VISIBILITY_WATCHDOG_MARKER_FILE: markerPathFor(logFile),
+    VISIBILITY_WATCHDOG_ATTEMPT_DELAYS_MS: "[5,5,5,5,5,5]",
     FAKE_MODE: mode,
+    FAKE_STATE_FILE: logFile.replace(/\.log$/, ".state.json"),
+    FAKE_FAIL_ATTEMPTS: "0",
     ...extra,
   };
 }
 
 function newLogPath(name: string): string {
   return path.join(dir, `${name}.log`);
+}
+
+function markerPathFor(logFile: string): string {
+  return logFile.replace(/\.log$/, ".FAILED");
 }
 
 function readLog(logFile: string): string {
@@ -86,17 +131,16 @@ function readLog(logFile: string): string {
 const SLOW_BOOT_PATH = path.resolve(__dirname, "testing/slow-boot.cjs").replace(/\\/g, "/");
 
 // Poll/cap/kill design. Spawns the child, then polls `readLog(logFile)` every `intervalMs`
-// until it contains the exact " start " tag `log()` writes at
-// scripts/visibility-watchdog.mjs:137-144, resolving `{ child, log }`. If `capMs` elapses
-// first, rejects with a message naming the cap and the log's last 300 chars — never a fixed
-// wait, so the test proves the script's own behavior rather than how fast the host booted
-// Node. stdout/stderr are drained into buffers so nothing can block on a full pipe, and if the
-// child exits before the start line appears (a spawn that fails fast, e.g. a bad NODE_OPTIONS
-// preload or a syntax error in the script) the helper rejects immediately with the exit code
-// and the captured stderr tail instead of waiting out the full cap — unless the final log read
-// on exit shows the start line already landed, in which case it still resolves. The child is
-// always killed in `finally` (resolve, cap-reject, and the child's "error" event all funnel
-// through it), and its exit is awaited (up to 2s) before returning.
+// until it contains the exact " start " tag `log()` writes, resolving `{ child, log }`. If
+// `capMs` elapses first, rejects with a message naming the cap and the log's last 300 chars —
+// never a fixed wait, so the test proves the script's own behavior rather than how fast the
+// host booted Node. stdout/stderr are drained into buffers so nothing can block on a full
+// pipe, and if the child exits before the start line appears (a spawn that fails fast, e.g. a
+// bad NODE_OPTIONS preload or a syntax error in the script) the helper rejects immediately with
+// the exit code and the captured stderr tail instead of waiting out the full cap — unless the
+// final log read on exit shows the start line already landed, in which case it still resolves.
+// The child is always killed in `finally` (resolve, cap-reject, and the child's "error" event
+// all funnel through it), and its exit is awaited (up to 2s) before returning.
 async function awaitStartLine({
   argv = [SCRIPT],
   env,
@@ -187,26 +231,58 @@ async function awaitStartLine({
 }
 
 describe("visibility-watchdog.mjs contract", () => {
-  it("success: edit succeeds, view confirms PRIVATE — exit 0 with start/flip/verified logged", () => {
+  it("success: edit succeeds, view confirms PRIVATE on the first attempt — exit 0 with start/attempt/verified logged, stale marker cleared", () => {
     const logFile = newLogPath("success");
+    const markerFile = markerPathFor(logFile);
+    // A stale marker from a previous failed run must not survive a clean success.
+    fs.mkdirSync(path.dirname(markerFile), { recursive: true });
+    fs.writeFileSync(markerFile, JSON.stringify({ time: "stale", repo: "acme/test" }));
+
     const res = run(["--minutes", "0.01", "--repo", "acme/test"], fakeEnv("success", logFile));
 
     expect(res.status).toBe(0);
     const log = readLog(logFile);
     expect(log).toContain(" start ");
-    expect(log).toContain(" flip ");
+    expect(log).toContain(" attempt ");
+    expect(log).toContain("n=1/6");
     expect(log).toContain(" verified ");
     expect(log).not.toContain(" error ");
     // one line per event, well-formed ISO timestamps leading each line
     const lines = log.trim().split("\n");
     expect(lines).toHaveLength(3);
     for (const line of lines) {
-      expect(line).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z (start|flip|verified) /);
+      expect(line).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z (start|attempt|verified) /,
+      );
     }
+    expect(fs.existsSync(markerFile)).toBe(false);
   });
 
-  it("never verifies: view keeps reporting PUBLIC — exit 1 with error logged", () => {
+  it("retries a failed flip: edit fails twice then succeeds — exit 0, verified on attempt 3, no error logged", () => {
+    const logFile = newLogPath("retry-then-success");
+    const res = run(
+      ["--minutes", "0.01", "--repo", "acme/test"],
+      fakeEnv("retry-then-success", logFile, { FAKE_FAIL_ATTEMPTS: "2" }),
+    );
+
+    expect(res.status).toBe(0);
+    const log = readLog(logFile);
+    expect(log).toContain(" start ");
+    expect(log).toContain("n=1/6");
+    expect(log).toContain("n=2/6");
+    expect(log).toContain("n=3/6");
+    expect(log).not.toContain("n=4/6");
+    expect(log).toContain(" verified ");
+    expect(log).toContain("attempt=3/6");
+    expect(log).not.toContain(" error ");
+    // the two failed attempts carry the stub's stderr first line
+    expect(log).toMatch(/HTTP 500: Internal Server Error \(attempt 1\)/);
+    expect(log).toMatch(/HTTP 500: Internal Server Error \(attempt 2\)/);
+  });
+
+  it("never verifies: gh edit reports success but visibility stays PUBLIC — exit 1, all 6 attempts logged, FAILED marker written", () => {
     const logFile = newLogPath("public-forever");
+    const markerFile = markerPathFor(logFile);
     const res = run(
       ["--minutes", "0.01", "--repo", "acme/test"],
       fakeEnv("public-forever", logFile),
@@ -215,21 +291,40 @@ describe("visibility-watchdog.mjs contract", () => {
     expect(res.status).toBe(1);
     const log = readLog(logFile);
     expect(log).toContain(" start ");
-    expect(log).toContain(" flip ");
+    for (let n = 1; n <= 6; n++) {
+      expect(log).toContain(`n=${n}/6`);
+    }
     expect(log).toContain(" error ");
     expect(log).not.toContain(" verified ");
+
+    expect(fs.existsSync(markerFile)).toBe(true);
+    const marker = JSON.parse(fs.readFileSync(markerFile, "utf8"));
+    expect(marker.repo).toBe("acme/test");
+    expect(typeof marker.time).toBe("string");
+    expect(marker.time).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(typeof marker.error).toBe("string");
+    expect(marker.error.length).toBeGreaterThan(0);
   });
 
-  it("edit itself fails: exit 1 with error logged, no flip/verified", () => {
+  it("edit itself fails every attempt: exit 1, no verified, FAILED marker written with the edit's stderr", () => {
     const logFile = newLogPath("edit-fail");
+    const markerFile = markerPathFor(logFile);
     const res = run(["--minutes", "0.01", "--repo", "acme/test"], fakeEnv("edit-fail", logFile));
 
     expect(res.status).toBe(1);
     const log = readLog(logFile);
     expect(log).toContain(" start ");
     expect(log).toContain(" error ");
-    expect(log).not.toContain(" flip ");
     expect(log).not.toContain(" verified ");
+    for (let n = 1; n <= 6; n++) {
+      expect(log).toContain(`n=${n}/6`);
+    }
+    expect(log).toMatch(/HTTP 403: Forbidden/);
+
+    expect(fs.existsSync(markerFile)).toBe(true);
+    const marker = JSON.parse(fs.readFileSync(markerFile, "utf8"));
+    expect(marker.repo).toBe("acme/test");
+    expect(marker.error).toMatch(/HTTP 403: Forbidden/);
   });
 
   it("prints the same lines to stdout that it appends to the log", () => {

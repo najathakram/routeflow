@@ -64,9 +64,11 @@ proved every moved function byte-identical to its pre-move source before the fou
 deleted. The package's own golden money table (`packages/pricing/src/golden.fixtures.ts` +
 `golden.spec.ts`) replaces the four hand-synced regression specs with one.
 
-**Follow-on.** `getTierPrice` now takes `any` for its `product` parameter (the api's original,
-looser signature) — web and mobile lost the compile-time `TierPriceable`-shape check their own
-mirrors gave the same call sites. Narrow the parameter type in a follow-on.
+**Follow-on.** The consolidation **widened** `getTierPrice`'s `product` parameter to `any` in
+[`packages/pricing/src/tier-pricing.ts`](../packages/pricing/src/tier-pricing.ts) (the api's
+original, looser signature won out) — web and mobile lost the compile-time `TierPriceable`-shape
+check their own mirrors gave the same call sites. Give it a real parameter type again in a
+follow-on.
 
 **Payoff.** Removed an entire class of money bugs; one source of truth, one test suite.
 
@@ -143,6 +145,12 @@ other instead of racing.
 **Remaining work.** A **cron leader lock** (guarding scheduled jobs that must run on exactly one
 replica, distinct from the per-customer order-merge lock above) is tracked separately as its own PR
 and is not part of this item.
+
+**Also outstanding (close-out review, 2026-09-05).** The item-edit path (`PATCH /orders/:id/items`
+and the buyer twin) still writes absolute line sets **outside** the customer advisory lock above —
+a concurrent merge can overwrite a concurrent edit (scenario: qty 10, edit → 12, merge folds
+10 + 5 = 15, correct is 17). Fix: take the same customer lock at those two controller entries;
+never thread a transaction into `updateOrderItems`.
 
 **Payoff.** Turns an undocumented footgun into a non-issue: the service can now scale to multiple
 replicas without risking order-merge corruption.
@@ -401,8 +409,12 @@ so a failing type-check no longer hides a failing lint/test in the same run.
   `BuyerPromotion.type` omitted `"BUY_N_GET_M"` (masked by a compensating cast, now removed); both
   apps' `EstimateStatus` carried a phantom `"EXPIRED"` value the schema has never had (dead code,
   sibling-sweep find). See lesson L-072.
-  **Follow-on:** ~25 Prisma enums are still hand-mirrored at ~56 client sites without a parity row
-  (web `OrderStatus` omits `PARTIALLY_DELIVERED`); tracked as the next structure item.
+  **Follow-on:** ~43 site-level declarations (not ~25) still hand-mirror a Prisma enum without a
+  parity row — e.g. web `OrderStatus` omits `PARTIALLY_DELIVERED`; `apps/web/lib/api/numbering.ts`'s
+  `DocumentNumberType` and `products.ts`'s `CostingMethod` also hand-type a local union outside the
+  shared table (harmless today — both still match the schema). Not counted in that ~43: mobile
+  `recurring-invoices-logic.ts`'s `LastRunStatus` — `lastRunStatus` is `String?` in Prisma, not an
+  enum, so there is no schema enum for it to drift from. Tracked as the next structure item.
 - The **React 18 vs 19** split (mobile pulls 19, web needs 18, force-pinned at the image root in
   [`apps/web/Dockerfile`](../apps/web/Dockerfile)) is a hoisting hack worth revisiting. **Kept as
   is for 10b** — revisit with a Next 15 upgrade, not before.
@@ -441,7 +453,14 @@ A balanced review should say what not to touch:
 
 - **Tenant isolation** is genuinely strong — three independent layers (Prisma `$extends`, a
   transaction Proxy, and Postgres RLS) in
-  [`apps/api/src/prisma/prisma.service.ts`](../apps/api/src/prisma/prisma.service.ts).
+  [`apps/api/src/prisma/prisma.service.ts`](../apps/api/src/prisma/prisma.service.ts). Two caveats
+  from the close-out review (2026-09-05, neither exploitable today): the tenancy post-filter is
+  blind to a `select` that omits `tenantId` — both layers gate on `!== undefined`, so a projection
+  that drops the column reads as "no tenant to check" rather than "unknown tenant"; fix is to
+  assert the projection kept `tenantId`. Separately, 81 of 125 models declare `tenantId String?`
+  with no backfill migration, and `findUniqueOrThrow`'s fail-closed check treats a NULL `tenantId`
+  as foreign (5 call sites: `estimates.service.ts` ~205, `routes.service.ts` ~2405/~2679,
+  `orders.service.ts` ~3925) — a backfill decision is pending prod counts.
 - **The DB backup pipeline** (`apps/db-backup`) is well-designed: 2-hourly `pg_dump` → Cloudflare R2
   (S3-compatible, zero egress fees), 30-day prune, **monthly restore-verify**, and a healthchecks.io
   dead-man's switch. R2 is object storage, not a backup tool — this is a sound, cheap choice.
