@@ -1005,6 +1005,25 @@ test.describe("Operator — Tenant Dashboard", () => {
     }
   });
 
+  // ── Portal switcher (T27; spec R6, R11) ───────────────────────────────────
+
+  test("OP-23 user menu offers the buyer portal, and /dashboard records rf-last-portal=op", async ({
+    page,
+    context,
+  }) => {
+    await page.getByRole("button", { name: "Open user menu" }).click();
+
+    // Radix renders the item with `asChild` over a next/link anchor, so it is
+    // reachable as either role — the accessible NAME is the contract. This
+    // operator has no buyer session, so it is the sign-in variant.
+    const item = page.getByRole("menuitem", { name: "Buyer portal sign-in" });
+    await expect(item).toBeVisible({ timeout: 10_000 });
+    await expect(item).toHaveAttribute("href", "/buyer/login");
+
+    const cookies = await context.cookies();
+    expect(cookies.find((c) => c.name === "rf-last-portal")?.value).toBe("op");
+  });
+
   // ── Logout ────────────────────────────────────────────────────────────────
 
   test("OP-22 logout → redirect to /login", async ({ page }) => {

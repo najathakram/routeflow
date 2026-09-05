@@ -221,19 +221,26 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
 // /dashboard, rf-buyer-auth → /buyer/portal, operator wins when both are set.
 // The raw-request tests pin the middleware contract; CC-15 covers the
 // stale-cookie journey that killed the earlier client-side redirect.
+// When BOTH cookies are set, the portal named by rf-last-portal ("op" |
+// "buyer") wins, and the seller dashboard is the default when that
+// preference is absent or invalid (CC-18..CC-20). A buyer-only session
+// requesting an operator path is sent to /login?redirect=<path> instead of
+// the buyer portal (CC-16/17).
 
 test.describe("Cross-cutting — Landing-page auto-redirect", () => {
   const BASE_URL =
     process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
 
+  // Accepts a bare name (value "1", the presence-cookie convention) or an
+  // explicit {name, value} pair — rf-last-portal carries "op"/"buyer", not "1".
   async function seedPresenceCookies(
     context: import("@playwright/test").BrowserContext,
-    names: string[],
+    names: Array<string | { name: string; value: string }>,
   ) {
     await context.addCookies(
-      names.map((name) => ({
-        name,
-        value: "1",
+      names.map((entry) => ({
+        name: typeof entry === "string" ? entry : entry.name,
+        value: typeof entry === "string" ? "1" : entry.value,
         domain: new URL(BASE_URL).hostname,
         path: "/",
       })),
@@ -286,5 +293,80 @@ test.describe("Cross-cutting — Landing-page auto-redirect", () => {
     // must render normally now (self-healing, marketing site never hidden).
     await page.goto("/");
     await expect(page).toHaveURL(`${BASE_URL.replace(/\/$/, "")}/`);
+  });
+
+  // ── Portal switcher: middleware contract (T20–T25, spec R1/R2/R3/R14) ──────
+  // A buyer-only visitor asking for an OPERATOR path must land on the operator
+  // sign-in carrying the encoded destination — never be swept to /buyer/portal.
+  // rf-last-portal breaks the tie only when BOTH sessions are present.
+
+  test("CC-16 buyer-only visitor on an operator path → /login with the encoded redirect", async ({
+    context,
+  }) => {
+    await seedPresenceCookies(context, ["rf-buyer-auth"]);
+    const resp = await context.request.get("/dashboard", { maxRedirects: 0 });
+    expect(resp.status()).toBe(307);
+    expect(resp.headers()["location"]).toContain("/login?redirect=%2Fdashboard");
+  });
+
+  test("CC-17 the redirect target carries the query and stays same-origin", async ({ context }) => {
+    await seedPresenceCookies(context, ["rf-buyer-auth"]);
+    const resp = await context.request.get("/orders/abc?tab=1", { maxRedirects: 0 });
+    expect(resp.status()).toBe(307);
+    const location = resp.headers()["location"] ?? "";
+    expect(location).toContain("/login?redirect=%2Forders%2Fabc%3Ftab%3D1");
+    // Same-origin only: strip our own origin, and nothing resembling another
+    // absolute URL may remain (an open redirect would show up right here).
+    const origin = new URL(BASE_URL).origin;
+    expect(location.startsWith(origin) || location.startsWith("/")).toBe(true);
+    expect(location.replace(origin, "")).not.toMatch(/https?:\/\//i);
+  });
+
+  test("CC-18 both sessions + rf-last-portal=buyer → landing goes to /buyer/portal", async ({
+    context,
+  }) => {
+    await seedPresenceCookies(context, [
+      "rf-op-auth",
+      "rf-buyer-auth",
+      { name: "rf-last-portal", value: "buyer" },
+    ]);
+    const resp = await context.request.get("/", { maxRedirects: 0 });
+    expect(resp.status()).toBe(307);
+    expect(resp.headers()["location"]).toContain("/buyer/portal");
+  });
+
+  test("CC-19 both sessions + rf-last-portal=op → landing goes to /dashboard", async ({
+    context,
+  }) => {
+    await seedPresenceCookies(context, [
+      "rf-op-auth",
+      "rf-buyer-auth",
+      { name: "rf-last-portal", value: "op" },
+    ]);
+    const resp = await context.request.get("/", { maxRedirects: 0 });
+    expect(resp.status()).toBe(307);
+    expect(resp.headers()["location"]).toContain("/dashboard");
+  });
+
+  test("CC-20 a preference never overrides a missing session", async ({ context }) => {
+    // Operator session only, but the last portal used was the buyer one — the
+    // preference must be ignored because that session no longer exists.
+    await seedPresenceCookies(context, ["rf-op-auth", { name: "rf-last-portal", value: "buyer" }]);
+    const resp = await context.request.get("/", { maxRedirects: 0 });
+    expect(resp.status()).toBe(307);
+    expect(resp.headers()["location"]).toContain("/dashboard");
+  });
+
+  test("CC-21 the operator-path guard never fires for an operator or off an operator path", async ({
+    context,
+  }) => {
+    await seedPresenceCookies(context, ["rf-op-auth", "rf-buyer-auth"]);
+    const opResp = await context.request.get("/dashboard", { maxRedirects: 0 });
+    expect(opResp.status()).not.toBe(307);
+
+    await context.clearCookies();
+    await seedPresenceCookies(context, ["rf-buyer-auth"]);
+    const loginResp = await context.request.get("/login", { maxRedirects: 0 });
+    expect(loginResp.status()).not.toBe(307);
   });
 });
