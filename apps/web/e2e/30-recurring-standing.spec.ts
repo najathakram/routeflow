@@ -46,10 +46,12 @@
  * fire the midnight cron; the B92/B106 pair below shares that one template
  * (edited by the first test, run by the second — this file runs its tests
  * serially in one worker per `playwright.config.ts`'s `fullyParallel: false`)
- * and the SECOND test's `finally` voids the Run Now invoice and deletes the
- * template, covering both. Net tenant state on a green run: an unused
- * customer + products left behind, the same residue tolerance specs
- * 21/22/24/27 already take.
+ * and the SECOND test's `finally` voids the Run Now invoice and DEACTIVATES
+ * the template, covering both — `DELETE /recurring-invoices/:id` is
+ * `deactivate()`, not a row delete (unlike `/order-templates/:id`, which
+ * really does delete). Net tenant state on a green run: an unused customer +
+ * products and one inert (deactivated, `nextRunAt` 2099) recurring template
+ * left behind, the same residue tolerance specs 21/22/24/27 already take.
  */
 
 import { test, expect, type Page } from "@playwright/test";
@@ -332,6 +334,8 @@ test.describe("Recurring template edit + standing-order item edit (F13)", () => 
           .post(`${api}/api/v1/invoices/${invoiceId}/void`, { headers: headers! })
           .catch(() => undefined);
       }
+      // DEACTIVATES the template (this DELETE maps to `deactivate()`); the row stays,
+      // inert — isActive false, and its nextRunAt is far in 2099 regardless.
       await request
         .delete(`${api}/api/v1/recurring-invoices/${templateId}`, { headers: headers! })
         .catch(() => undefined);

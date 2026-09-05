@@ -8,6 +8,31 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-04** — (branch `fix/F13-recurring-standing-v2`, F13 close-out; no schema change, no
+  migration) **RECURRING INVOICES + STANDING ORDERS (B46/B48/B106 T1, B09/B92 T2).** B46: the
+  MONTHLY branch of `calcNextRunAt` compared against a date it had already mutated (`setDate(1)`
+  before `getDate() > dom`), so no MONTHLY template ever advanced and the midnight cron re-selected
+  it nightly; the branch now derives the next occurrence from `from` itself, clamps `dayOfMonth`
+  1..31 (an unclamped 0 hung the cron in a non-terminating loop) and the claim advances from
+  `max(dueDate, now)` so a backlogged template is caught up by ONE make-up invoice. B48: a standing
+  order billed raw list price — `order-templates.service.generateOrder` now prices every line
+  through the shared buyer resolver (`OrdersService.loadActivePromotions` and
+  `resolveBuyerLinePrice` dropped `private` and are a contract now), so tier, `CustomerPrice`
+  override, promotions incl. BUY_N_GET_M, sticky-upsell memory and boxed selling units all apply.
+  B106: the cron advanced the schedule before it knew the outcome and never recorded one — the
+  claim now stamps a provisional FAILED, SUCCESS is written last (after the invoice is linked), the
+  billed-but-unfinalized path keeps the advanced date and rewrites `lastError` to
+  `RUN_UNFINALIZED_ERROR`, and the create-failure rollback is a **compare-and-set on the advanced
+  `nextRunAt` the claim wrote** — `count: 0` means a newer claimant owns the row, so it writes
+  nothing. B92: `PATCH /recurring-invoices/:id` had no DTO class (an inline mapped type erases to
+  `Object`, so the ValidationPipe skipped it entirely) — new `UpdateRecurringInvoiceDto`, plus a
+  real edit page (`invoices/recurring/[id]/edit`) over the form extracted from `new/page.tsx`.
+  B09: `UpdateOrderTemplateDto` gains `items`, `update()` replaces them in one transaction, and the
+  Edit Standing Order modal sends the list only when it changed (`itemSignature`). Web recurring
+  cards show the run outcome with a retry hint gated by `isRetryableRunFailure`; mobile mirrors the
+  outcome pill via `lastRunOutcome`. New e2e spec 30 + its `recurring-standing` project.
+  `scripts/data-integrity-report.mjs` gains three B48 checks (candidate set, positive control, gate
+  state). Lesson **L-046** (domain).
 - **2026-09-04** — (branch `fix/imp-02-order-merge-advisory-lock`, PR #609) VISIBILITY WATCHDOG:
   new `scripts/visibility-watchdog.mjs` arms the private flip on a detached, fixed 45-min
   deadline BEFORE any public-repo CI window — the fix for the killed-session incident where
