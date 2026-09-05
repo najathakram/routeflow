@@ -28,6 +28,10 @@ module.exports = {
   moduleDirectories: ["node_modules", "../../node_modules"],
   // Map packages that can't run in a plain Node environment
   moduleNameMapper: {
+    // Resolve the shared money-math package to its SOURCE (outside node_modules,
+    // so transformIgnorePatterns does not apply) — tests must not depend on
+    // whether `dist/` has been built.
+    "^@routeflow/pricing$": "<rootDir>/../../packages/pricing/src/index.ts",
     "^expo-secure-store$": "<rootDir>/__tests__/__mocks__/expo-secure-store.js",
     "^@routeflow/ui/(.*)$": "<rootDir>/__tests__/__mocks__/@routeflow/ui.js",
     "^@routeflow/types$": "<rootDir>/__tests__/__mocks__/@routeflow/types.js",

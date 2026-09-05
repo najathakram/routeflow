@@ -8,7 +8,7 @@
  * wiping the operator's price/note on a repeat scan or a +/- tap. Spreading
  * `...prev` fixes that and matches web's `{ ...li, qty: li.qty + 1 }`.
  */
-import { normalizeBoxesPieces } from "./pricing";
+import { normalizeBoxesPieces } from "@routeflow/pricing";
 
 export interface SaleLineQty {
   qty?: number;

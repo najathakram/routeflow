@@ -118,7 +118,8 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 - **`app/providers.tsx`** — QueryClient/TanStack Query, toast container. (Zustand was removed
   wave D/item 11 2026-09-03 — verified zero imports in web source; `no-dead-deps.spec.ts` in
   [`api`](api.md) pins it. Web state is TanStack Query + context.)
-- **`next.config.mjs`** — standalone output (Docker), CSP headers, X-Frame-Options DENY, image domains. **CSP `frame-src 'self' blob: https:`** (2026-08-21) — without it iframes fell back to `default-src 'self'` and every blob:/API-origin PDF preview (invoice scan, invoice builder, customer docs) rendered blank while `<img>` previews worked; `data:` deliberately excluded from frames. **`Permissions-Policy: camera=(self), geolocation=(self)`** — `camera=()` previously disabled the in-browser barcode/invoice scanner on Android Chrome ("access denied"; iOS Safari ignored it).
+- **`next.config.mjs`** — standalone output (Docker), CSP headers, X-Frame-Options DENY, image domains. **CSP `frame-src 'self' blob: https:`** (2026-08-21) — without it iframes fell back to `default-src 'self'` and every blob:/API-origin PDF preview (invoice scan, invoice builder, customer docs) rendered blank while `<img>` previews worked; `data:` deliberately excluded from frames. **`Permissions-Policy: camera=(self), geolocation=(self)`** — `camera=()` previously disabled the in-browser barcode/invoice scanner on Android Chrome ("access denied"; iOS Safari ignored it). The `headers()` CSP string itself is now built by `csp.mjs` (below) — `next.config.mjs` just computes `isDev` and calls `buildContentSecurityPolicy({ isDev, apiUrl: process.env.NEXT_PUBLIC_API_URL })`.
+- **`csp.mjs`** (2026-09-04) — `apiConnectSources(apiUrl)` + `buildContentSecurityPolicy({ isDev, apiUrl })`, extracted out of `next.config.mjs` so the policy is unit-testable (`lib/csp.test.ts`, pins the production string byte-identical). **Fixes a real bug**: `connect-src`'s dev-localhost relaxation was gated on `isDev = NODE_ENV !== "production"`, which is always `false` in a built image (`next build` forces production) — so the local Docker/E2E lane's browser could never reach `http://localhost:3000`, and login silently CSP-failed (no HTTP response, rendered as a bogus "Invalid username or password"). Fix: `apiConnectSources` adds the concrete `http:`/`ws:` origin pair to `connect-src` whenever the **baked** `NEXT_PUBLIC_API_URL` itself is `http:` (regardless of `isDev`); a normal `https://` prod build is unchanged. See `apps/web/e2e/LOCAL-LANE.md`.
 - **`lib/api-client.ts`** — axios instance, `getTenantSlugFromCookie()`, token+tenant interceptors, refresh queue. **`paramsSerializer: { indexes: null }`** (mirrors mobile's `buyerApiClient`) — array query params must go out as repeated keys (`?statuses=A&statuses=B`); axios's default `statuses[]=` survives Express's `simple` query parser as a literal `statuses[]` key and the global ValidationPipe (`forbidNonWhitelisted`) 400s it.
 - **`lib/auth.ts`** — operator auth types, login/refresh/logout, `onCrossTabTokenChange()`. ⚠️ The
   legacy bare `accessToken`/`refreshToken` keys are STILL written by the Google OAuth callbacks
@@ -173,7 +174,7 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   ("Aug 27, 2026", **LOCAL time — for UTC-midnight calendar dates use `lib/formatting.ts`
   `fmtCalendarDate` instead**, e.g. `RouteRun.scheduledDate` on routes/dispatch), `humanizeEnum`
   ("PARTIALLY_DELIVERED" → "Partially Delivered"). Display ONLY — money math stays in
-  `lib/pricing.ts`. Never inline `toFixed(2)`/`toLocaleDateString()` for user-visible money/dates.
+  `@routeflow/pricing`. Never inline `toFixed(2)`/`toLocaleDateString()` for user-visible money/dates.
   First adopters: orders/[id] (line/summary money, total qty), inventory (Stock Value KPI),
   orders list (status badge via label prop), routes templates Created. ⚠️ Near-duplicate of the
   older `lib/formatting.ts` (`fmt`/`fmtDate`/`fmtCalendarDate`) — consolidation queued for the
@@ -235,16 +236,18 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   `components/ScanInvoiceModal.tsx` — each had their own 4–5 option list and disagreed on the ACH
   label). **Never re-declare a method list — import from here**; mirror is
   `apps/mobile/lib/payment-methods.ts`, source of truth is the Prisma `PaymentMethod` enum.
-- **`lib/pricing.ts`** — `getTierPrice`, `computeLineSubtotal`, `normalizeBoxesPieces`, `roundMoney`,
+- **`@routeflow/pricing`** (was `lib/pricing.ts`, deleted — see `packages.md`) — `getTierPrice`,
+  `computeLineSubtotal`, `normalizeBoxesPieces`, `roundMoney`,
   **`prorateLineSubtotal(stored, delivered, ordered, freeUnits = 0, freeUnitSize = 1)`** (F04/REG-B50,
   2026-08-31 — partial-delivery money off the STORED subtotal; the paid-basis floored cumulative
   telescope of the oracle `invoices.service.ts#buildInvoiceItemData`, **never** a linear
-  `stored × delivered / ordered`. No web caller yet — it exists so the three mirrors stay identical and
-  the api parity spec can pin them),
+  `stored × delivered / ordered`. No web caller yet — it exists so api/web/mobile stay identical and
+  the package's golden tests pin them),
   the margin helpers `costPerSellingUnit`/`computeMarginFraction`/`priceForMarginFloor`/`classifyMargin`
   (box-vs-piece aware; the sale-builder "negotiation floor"), **`applyBestPromotion`/`promotionMatchesProduct`**
   (P5-04), and the zero-price guard `ruleCanZeroPrice`/`promotionZeroesProduct`/`scanPromotionZeroPrice`/
-  `zeroPriceWarning` (2026-08-21 — the promotions editor's live $0.00 blast-radius count). Mirror of `apps/api/src/common/pricing.ts` (+ `apps/mobile/lib/pricing.ts`) — keep all three in sync.
+  `zeroPriceWarning` (2026-08-21 — the promotions editor's live $0.00 blast-radius count). One copy —
+  api and mobile import the same package, there is no mirror to keep in sync.
 - **Your Shelf hooks (P5-06/07, WP3):** `lib/api/buyer.ts` += `ShelfEstimate`/`ShelfActiveOrder`/`ShelfResponse` types +
   `useBuyerShelf()` (`GET /buyer/shelf`, THE single source for the Shelf page, shop running-low strip, and dashboard
   chips — all three filter the same payload client-side so low lists/suggested qtys can't drift) +

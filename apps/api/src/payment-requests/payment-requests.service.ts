@@ -6,7 +6,7 @@ import { CONFIRMED_PAYMENT, sumConfirmed } from "../invoices/payment-predicates"
 import { StripeConnectService } from "../stripe-connect/stripe-connect.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import {
   PAYMENT_PROVIDER,
   type PaymentProvider,

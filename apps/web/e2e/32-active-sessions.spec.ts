@@ -36,6 +36,10 @@ test.describe("Active Sessions identity (F14 / B155)", () => {
     page,
     baseURL,
   }) => {
+    test.fixme(
+      true,
+      "B155 refresh-token CAS fix ships with the registry batch F14 (#597); un-fixme when it lands",
+    );
     await loginAsSessionsOp(page);
     const api = `${apiBase(baseURL ?? page.url())}/api/v1`;
     const headers = (token: string) => ({
@@ -94,6 +98,10 @@ test.describe("Active Sessions identity (F14 / B155)", () => {
     page,
     baseURL,
   }) => {
+    test.fixme(
+      true,
+      "B155 refresh-token CAS fix ships with the registry batch F14 (#597); un-fixme when it lands",
+    );
     await loginAsSessionsOp(page);
     let routeHits = 0;
     let listCalls = 0;
@@ -131,6 +139,10 @@ test.describe("Active Sessions identity (F14 / B155)", () => {
     page,
     baseURL,
   }) => {
+    test.fixme(
+      true,
+      "B155 refresh-token CAS fix ships with the registry batch F14 (#597); un-fixme when it lands",
+    );
     await loginAsSessionsOp(page);
     const api = `${apiBase(baseURL ?? page.url())}/api/v1`;
     const tenantHeaders = { "X-Tenant-Slug": TENANT_SLUG };

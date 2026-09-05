@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from "@nes
 import * as crypto from "crypto";
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { normalizeBoxesPieces, roundMoney } from "../common/pricing";
+import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
@@ -195,7 +195,7 @@ export class InventoryService {
 
     // dto.unitCost is quoted per SELLING UNIT — a box when the payload is
     // explicitly boxed (mirrors the box-priced selling convention in
-    // common/pricing.ts), a piece otherwise. Convert to per-piece before AVCO
+    // @routeflow/pricing), a piece otherwise. Convert to per-piece before AVCO
     // math, since Product.averageCost is contractually per piece.
     const rawUnitCost = costDecimal(dto.unitCost);
     const unitsPerBox = Number(product.unitsPerBox ?? 0);

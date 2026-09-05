@@ -5,7 +5,7 @@
  * qty*unitPrice on a boxed line).
  */
 import { estimateActionFlags, estimateLineAmount, estimatePillFor } from "../lib/estimates-logic";
-import { computeLineSubtotal } from "../lib/pricing";
+import { computeLineSubtotal } from "@routeflow/pricing";
 import type { EstimateStatus } from "../lib/api/estimates";
 
 describe("estimatePillFor", () => {

@@ -17,7 +17,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { CreateOrderTemplateDto } from "./dto/create-order-template.dto";
 import { UpdateOrderTemplateDto } from "./dto/update-order-template.dto";
 import { AddTemplateItemDto } from "./dto/add-template-item.dto";
-import { computeLineSubtotal, roundMoney } from "../common/pricing";
+import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 import { taxRateFractionFrom } from "../common/tax-rate";
 
 function startOfDay(date: Date): Date {

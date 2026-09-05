@@ -23,7 +23,7 @@ import {
   oldestBillsFirst,
   waterfallBillAllocations,
 } from "../lib/supplier-payment-logic";
-import { roundMoney } from "../lib/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { showToast } from "../lib/toast";
 import { fmtCalendarDate } from "../lib/format-date";
 import { SELECTABLE_METHOD_OPTIONS, type SelectablePaymentMethod } from "../lib/payment-methods";

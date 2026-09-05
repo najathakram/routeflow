@@ -51,7 +51,7 @@ import { SearchableProductPicker } from "./SearchableProductPicker";
 import { ProductCreateModal } from "./ProductCreateModal";
 import { displayProductName } from "@/lib/product-display";
 import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
-import { roundMoney } from "@/lib/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { apiClient } from "@/lib/api-client";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 

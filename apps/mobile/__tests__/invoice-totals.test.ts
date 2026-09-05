@@ -7,7 +7,7 @@
  * shape — the API's forbidNonWhitelisted pipe 400s on any stray key.
  */
 import { computeInvoiceTotals, editedLineFreeUnits, invoiceLineDto } from "../lib/invoice-totals";
-import { computeLineSubtotal, roundMoney } from "../lib/pricing";
+import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 
 describe("computeInvoiceTotals", () => {
   it("plain lines: subtotal = Σ qty × unitPrice, rounded", () => {

@@ -7,7 +7,7 @@ import {
 import type { AgentAssignment } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { CommissionEngineService } from "./commission-engine.service";
 import { COMMISSION_EPS } from "./commission-math";

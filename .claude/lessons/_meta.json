@@ -1,10 +1,10 @@
 {
-  "nextId": 63,
-  "activeCount": 38,
-  "archivedCount": 16,
+  "nextId": 68,
+  "activeCount": 37,
+  "archivedCount": 24,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-05T00:40:00.000Z",
+  "updatedAt": "2026-09-05T04:11:54.000Z",
   "schemaVersion": 1,
-  "note": "Bookkeeping only — never accumulate prose here (see L-006). updatedAt bump = acknowledged lesson-free fix. L-044 (F14) landed here, taking the id SEQUENCE §4 pre-allocated for it — do NOT reuse 42/43 (reserved for other Wave A batches, gaps are reserved not abandoned); nextId jumped straight to 50 because L-042..L-049 are pre-allocated to Wave A batches landing out of numeric order. L-058 was taken 2026-09-04 by #610 (REG-E2EGUARD-403) out of that reserved block; L-059..L-060 stay reserved by #597's pending merge; L-061 taken 2026-09-04 by the watchdog-spec fix. L-062 taken 2026-09-04 by the OCR add-on gate fix."
+  "note": "Merge of origin/master (22372911, #613) into fix/ocr-gate-observe-first: this branch's L-062 (domain, OCR add-on gate observe-first) renumbered to L-067 (next free id after master's nextId of 67, no Symptom collision found in master's domain section). nextId bumped to 68, activeCount 36→37. Prior master note: merge of origin/master (e07aa0b5, #611) into refactor/imp-01-pricing-package renumbered a colliding L-061 to L-066; nextId bumped to 67, activeCount 35→36."
 }

@@ -195,7 +195,7 @@ nonce}` so a re-scan re-flashes),
 - **At-door money is server-derived, never `qty × unitPrice` (F05, B49/B152).** `lib/run-money.ts`
   (pure, jest'd `__tests__/run-money.test.ts`) is the single source for every driver money figure:
   `lineItemSubtotal` prefers the server's `subtotal` (a Prisma Decimal — arrives as a STRING, so
-  it goes through `Number()`) and falls back to `computeLineSubtotal` from `lib/pricing.ts` for a
+  it goes through `Number()`) and falls back to `computeLineSubtotal` from `@routeflow/pricing` for a
   payload cached before F05; `sumOrderLineItems`/`sumStopOrders` reduce over it. It replaced four
   independent `qty * unitPrice` reducers — route total value (`route/index.tsx`), per-stop amount
   due (`stop/[stopId]/index.tsx`), at-door `fullOrderTotal` (`payment.tsx`) and the return screen's
@@ -288,7 +288,7 @@ nonce}` so a re-scan re-flashes),
 - `buyer-home-dashboard.test.ts` — guards undefined `lineItems`, falls back to `itemCount`.
 - `operator-create-forms.test.ts` — form validation (new customer/driver/product/order).
 - `qty.test.ts` — `sanitizeIntInput`/`parseIntQty` (integer qty: no decimals/leading zeros).
-- `pricing.test.ts` — money mirror (`computeLineSubtotal`/`roundMoney`/`normalizeBoxesPieces`) agrees with server.
+- `pricing.test.ts` — imports `@routeflow/pricing` (`computeLineSubtotal`/`roundMoney`/`normalizeBoxesPieces`); golden cases now live in `packages/pricing/src/pricing.spec.ts`.
 - **#225 mobile-parity waves:** `scan-loop.test.ts` (`gateScan` cooldown), `visible-cart.test.ts` (`withCartRows`), `order-item-diff.test.ts` (`buildOrderItemDiff` — 15 cases incl. zeroed-line auto-DELETE), `buyer-cart-pricing.test.ts` (`priceCart` promo lines/savings), `authorizations-logic.test.ts` (`parseRegulatedAuthError`/`overrideScope`), `invoice-actions.test.ts` (`canWriteOff`/`isPaymentEditable`), `invoice-send-helpers.test.ts` (wa.me/sms deep-link formats), `order-draft-gate.test.ts` (`orderSubmitGate`), `returns-logic.test.ts` (`returnPillFor`/`returnActionFlags`/`buildReturnItems`), `stock-count-logic.test.ts` (`addScanToRows`/`rowVariance`/`buildCommitItems`), `product-image.test.ts` (`productImageFile`/`mimeFromUri`), `buyer-finances-logic.test.ts` (breakdown %/bar math), `buyer-licenses-logic.test.ts` (status pill/CTA), `recurring-invoices-helpers.test.ts` (extended: `recurringScheduleFields`).
 - **P5-16b:** `shelf-logic.test.ts` (`groupShelfEstimates`, MONEY-guarded `buildShelfAddItem` box split + cent-parity, `qtyLabel`/`daysLeftFraction`/`daysLeftLabel`, `orderEditable`/`orderCancellable`/`canRequestChange` gates, `changeRequestChip`/`describeChangeRequest`/`describeResolution`).
 - **P5-16a:** `catalog-tile-logic.test.ts` (`tileCta`/`alertIdSet`/`deriveTilePrice` cent-parity w/ `priceCart`/`computeTileChip`/`behaviorLabel`/`stockLabel`).
@@ -570,7 +570,7 @@ status:"ISSUED"})` never runs unscoped; filters via `isCreditOpenForApply`; full
   as a muted `MSRP $X.XX/pc` under the `qty × price` line on `(operator)/(tabs)/invoices/[id].tsx`
   and `(customer)/invoices/[id].tsx`. Gated on `item.msrp != null`, not on the addon flag. **v1 is
   display-only on mobile** — no MSRP editing here (product form and the per-customer override stay
-  web-only); MSRP is per PIECE and never enters money math, so `lib/pricing.ts` is untouched.
+  web-only); MSRP is per PIECE and never enters money math, so `@routeflow/pricing` is untouched.
   Nullable-tier sweep (2026-08-22): `lib/api/customers.ts` `CustomerPrice.pricingTier` is
   `number | null`; the three cart cpMaps (`orders/[id]/edit-items.tsx`, `invoices/new.tsx`,
   `NewOrderScreen.tsx`) are `Map<string, number | null>` (consumption `?? customerTier ?? 1` was

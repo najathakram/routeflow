@@ -27,7 +27,7 @@ import * as React from "react";
 import { X } from "lucide-react";
 import { Button, cn } from "@routeflow/ui/web";
 import { formatCountList, suggestPackSize } from "@routeflow/types";
-import { perUnitPrice } from "@/lib/pricing";
+import { perUnitPrice } from "@routeflow/pricing";
 
 export interface PackSizePromptProps {
   /** Product name — the parser reads candidate counts out of this. */

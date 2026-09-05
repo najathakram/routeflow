@@ -7,7 +7,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "../../../components/FormSheet";
 import { OptionPickerSheet } from "../../../components/OptionPickerSheet";
 import { useCreatePO, useSuppliers } from "../../../lib/api/purchase-orders";
-import { normalizeBoxesPieces, roundUnitCost } from "../../../lib/pricing";
+import { normalizeBoxesPieces, roundUnitCost } from "@routeflow/pricing";
 import { useProductPickerStore, type PickedProduct } from "../../../store/productPickerStore";
 import { showToast } from "../../../lib/toast";
 

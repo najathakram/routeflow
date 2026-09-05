@@ -23,7 +23,7 @@ import {
   useBuyerPromotions,
   toPromotionRules,
 } from "@/lib/api/buyer";
-import { computeLineSubtotal, normalizeBoxesPieces, applyBestPromotion } from "@/lib/pricing";
+import { computeLineSubtotal, normalizeBoxesPieces, applyBestPromotion } from "@routeflow/pricing";
 import { objectPositionForUrl } from "@/lib/image-focal";
 
 function fmt(n: number) {

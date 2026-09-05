@@ -30,7 +30,7 @@ import {
   SELECTABLE_METHOD_OPTIONS,
   type SelectablePaymentMethod,
 } from "../../../lib/payment-methods";
-import { roundMoney } from "../../../lib/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { tierLabel } from "../../../lib/tier-label";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";

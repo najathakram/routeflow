@@ -10,7 +10,7 @@
  * all-untaxed invoice under a non-zero tenant rate must be ineligible.
  */
 import { predictSaleInvoiceTotals, saleModeGate, type SaleGateInput } from "../lib/sale-mode";
-import { computeLineSubtotal, roundMoney } from "../lib/pricing";
+import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 
 function baseInput(overrides: Partial<SaleGateInput> = {}): SaleGateInput {
   return {

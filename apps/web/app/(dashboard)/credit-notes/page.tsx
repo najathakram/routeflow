@@ -14,7 +14,7 @@ import {
 import { useCustomers } from "@/lib/api/customers";
 import { useInvoices, useInvoice } from "@/lib/api/invoices";
 import { fmt } from "@/lib/formatting";
-import { roundMoney } from "@/lib/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 

@@ -9,7 +9,7 @@ import {
   type TrayLine,
   type TrayProduct,
 } from "../lib/scan-tray";
-import { computeLineSubtotal } from "../lib/pricing";
+import { computeLineSubtotal } from "@routeflow/pricing";
 
 const CASE_OF_6: TrayProduct = { id: "case6", name: "Acme Cola", unitsPerBox: 6 };
 const SINGLE: TrayProduct = { id: "single", name: "Acme Chips", unitsPerBox: null };

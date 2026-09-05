@@ -23,6 +23,8 @@ schema at `apps/api/prisma/schema.prisma`, migrations in `apps/api/prisma/migrat
 - **Never** call the destructive scripts named in `CLAUDE_SESSION_PREAMBLE.md`
   (e.g. `DANGER-fresh-data-WIPES-ALL-DATA.js`, `nuke-db.js`, `reset-seed.js`, `clear-financial-data.js`, `cleanup-qa-data.js`).
 - **Multi-tenant**: new models/columns must carry/relate to `tenantId`; every query stays tenant-scoped.
+- Destructive migrations are blocked in CI by Squawk (`npm run lint:migrations`); whitelist a
+  statement with `-- reason:` + `-- squawk-ignore <rule>`.
 
 ## Local workflow
 

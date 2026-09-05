@@ -1,7 +1,7 @@
 import type { Ionicons } from "@expo/vector-icons";
 import type { PaymentMethod } from "./api/invoices";
 import type { PaymentStatus } from "./api/payments";
-import { roundMoney } from "./pricing";
+import { roundMoney } from "@routeflow/pricing";
 
 /**
  * Pure payments helpers — method/status → pill + icon, and void gating. Kept out

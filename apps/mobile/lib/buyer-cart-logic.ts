@@ -6,7 +6,7 @@
  * buyer cart + shop tile (web is golden) — display parity only; all pricing
  * math (the floor formula, the exact subtotal) stays in `lib/pricing.ts`.
  */
-import { promotionMatchesProduct, type PromoContext, type PromotionType } from "./pricing";
+import { promotionMatchesProduct, type PromoContext, type PromotionType } from "@routeflow/pricing";
 import type { BuyerPromotion } from "./api/buyer";
 
 export interface SellingUnitsInput {
