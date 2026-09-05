@@ -339,7 +339,7 @@ SIGNATURES.push({
     rel: "apps/web/app/(dashboard)/fixture.tsx",
   },
   run(ctx) {
-    // Server vocabulary: every SCREAMING_CASE token in schema.prisma + apps/api/src.
+    // Server vocabulary: every SCREAMING_CASE token in prisma/schema/*.prisma + apps/api/src.
     const server = new Set();
     const collect = (text) => {
       const re = /\b[A-Z][A-Z0-9_]{2,}\b/g;
@@ -371,7 +371,7 @@ SIGNATURES.push({
           hit(
             f,
             lineAt(f.text, m.index),
-            `"${m[2]}" not found anywhere in apps/api or schema.prisma`,
+            `"${m[2]}" not found anywhere in apps/api or prisma/schema/*.prisma`,
           ),
         );
       }
@@ -1627,10 +1627,29 @@ function main() {
   }
 
   const files = loadCorpus();
-  let schemaText = null;
+  // The Prisma datamodel is a FOLDER of *.prisma files (apps/api/prisma/schema — item 10a);
+  // read every one and concatenate. This read used to sit inside a silent `try {} catch {}`,
+  // which is precisely the failure the folder split would have caused: schemaText goes null,
+  // the enum-vocabulary signature finds no server vocabulary, and `npm run scan` stays green
+  // while checking nothing. A missing/empty schema folder is now a hard error naming the path.
+  const schemaDir = path.join(ROOT, "apps/api/prisma/schema");
+  let schemaFiles;
   try {
-    schemaText = fs.readFileSync(path.join(ROOT, "apps/api/prisma/schema.prisma"), "utf8");
-  } catch {}
+    schemaFiles = fs
+      .readdirSync(schemaDir)
+      .filter((f) => f.endsWith(".prisma"))
+      .sort();
+  } catch (e) {
+    throw new Error(`scan: cannot read the Prisma schema folder ${schemaDir} — ${e.message}`);
+  }
+  if (schemaFiles.length === 0) {
+    throw new Error(
+      `scan: no *.prisma files in ${schemaDir} — the Prisma schema folder moved or is empty`,
+    );
+  }
+  const schemaText = schemaFiles
+    .map((f) => fs.readFileSync(path.join(schemaDir, f), "utf8"))
+    .join("\n");
   const ctx = { files, schemaText };
   const baseline = loadBaseline();
 

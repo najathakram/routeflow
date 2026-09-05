@@ -59,7 +59,44 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   fake a NO DRIFT verdict. `prod-migrate.mjs` runs it after `migrate deploy`
   succeeds and fails the script on nonzero; `db-migrations.yml` runs it in CI after the same step.
   Root scripts `local:drift` / API script `db:drift` run it locally. Never touches
-  `apps/api/prisma/**`. ⚠️ `prod-migrate.mjs` keeps its own fail-closed `RAILWAY_PROXY_VARS`
+  `apps/api/prisma/**`. ⚠️ Since item 10a the diff argv is `--to-schema prisma/schema` — the
+  FOLDER. `prisma migrate diff --help` (7.10) documents the flag as "Path to a Prisma schema
+  file" and offers no folder form and no `--to-config-datamodel`; the folder nonetheless resolves
+  (verified: `--from-empty --to-schema prisma/schema --script` emits all 125 CREATE TABLEs).
+  `src/common/schema-drift-script.spec.ts` pins the exact argv string, so the flag can't regress
+  to the deleted single file silently.
+- **`scripts/split-prisma-schema.mjs` (item 10a, 2026-09-04; verdict semantics reworked
+  2026-09-04, wave E structure)** — the committed, repeatable operation behind the
+  schema-folder split, and its standing guard. Three explicit modes, no implicit original:
+  `--write --from <path> | --from-ref <git-ref>` splits a single-file schema into
+  `prisma/schema/*.prisma` (while `prisma/schema.prisma` still exists on disk neither flag is
+  required; once it's gone — the normal state — `--write` requires one and says so if
+  omitted); `--check [--from <path> | --from-ref <git-ref>]` **ALWAYS** runs the structural
+  invariants with **no original needed** — file set, no duplicate names, `_base` holds exactly
+  one datasource+generator and no model, every other domain file holds ≥1 model, every model in
+  the file `MODEL_DOMAIN` names (and no stale map entry), every enum sits in a domain file that
+  itself holds a model referencing it (membership, not strict "first" — see below) — printing a
+  distinct `structural invariants hold` line (never the word `block-identical`) and exiting 0.
+  Only when `--from`/`--from-ref` is ALSO given does it additionally re-derive the concatenation
+  and prove the folder **block-identical** to that original (multiset of whitespace-normalized
+  top-level blocks), printing `block-identical (N blocks)`. The retired single file itself is
+  NEVER read implicitly (no `git show HEAD:...` fallback) — the one-time lossless proof against
+  it was recorded at split time (`e39bf9db`, 207 blocks) and is re-derivable on demand with
+  `--check --from-ref e39bf9db`, not re-run on every invocation; `--print-map` dumps the map as
+  TSV. ⚠️ **Enum-ownership invariant is membership, not "first referencing model"**: literal
+  "first, in original file order" is NOT reconstructable from the folder alone — domains
+  interleave in the pre-split single file in ways a domain split does not preserve (verified:
+  `PaymentMethod`'s true first reference is `Payment`/finance at original line 1637, but a later
+  `CommissionPayout`/sales reference at line 4420 would be picked "first" by any folder-only
+  domain ordering, since sales precedes finance in every reconstructable order — a false failure
+  on a provably-correct placement). The check instead asserts the enum's file holds _some_
+  referencing model, which needs no ordering and still catches a genuinely misplaced enum; the
+  strict order-accurate proof lives in the `--from`/`--from-ref` block comparison. A block is the
+  text from the end of the previous block's `}` to its own, so preceding `///`/`//` comments and
+  blank lines travel with it and nothing between blocks is lost. Output is deterministic —
+  re-running `--write --from-ref e39bf9db` reproduces byte-identical output to what's checked in
+  (verified). Line-based parser: it hard-fails on any top-level construct not matching
+  `^(datasource|generator|model|enum|type|view) Name {` and on trailing text after the last block. ⚠️ `prod-migrate.mjs` keeps its own fail-closed `RAILWAY_PROXY_VARS`
   pre-check BEFORE calling `resolveDatabaseUrl` — the helper's `DATABASE_URL` fallback exists for
   `schema-drift.mjs` (read-only) and must never reach a script that writes schema; it also prints
   `Target host: ${redactUrl(url)}` so the announced target is the URL actually migrated. Contract
@@ -327,6 +364,45 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 - **`src/common/`** — `EncryptionService` (AES-256-GCM, refuses placeholder key writes in prod),
   `RedisThrottlerStorage` (cross-instance rate limit, fails closed), ThrottlerExceptionFilter,
   audit interceptor.
+  **`enum-parity.spec.ts` (2026-09-03, wave E / imp-10b)** — pins every `packages/types/api/enums.ts`
+  const-array union set-equal to `Object.values()` of the matching `@prisma/client` generated enum
+  (40 enums); the import is guarded (`require` in try/catch) so a missing/renamed export fails on
+  its own value, not a suite-crashing "Cannot find module". A second `describe` block reads the raw
+  source text of the specific web/mobile files that drifted (`VendorBillStatus`, `POStatus`→
+  `PurchaseOrderStatus`, `BuyerPromotion.type`→`PromotionType`, `EstimateStatus` on both apps) and
+  asserts they no longer hand-declare a conflicting literal union — the permanent regression guard
+  for L-072. **`schema-folder.spec.ts` (2026-09-04, wave E / imp-10a, T1; cases (g)/(h) reworked
+  wave E structure)** — pins `prisma/schema/` to exactly the 7 domain files, 125 model + 80 enum
+  blocks total, `_base.prisma` holding only datasource+generator, every model/enum name unique,
+  `prisma.config.ts` pointing `schema` at the folder with an explicit `migrations.path`. Case (g)
+  spawns `split-prisma-schema.mjs --check` with **no original given** — must exit 0, stdout
+  contains `structural invariants hold`, never `block-identical`. Case (h) spawns `--check
+--from-ref e39bf9db` — must exit 0, stdout contains `block-identical (207 blocks)`; it SKIPS
+  itself (stated reason in the test name) when `git cat-file -e e39bf9db:...schema.prisma` fails
+  (a shallow CI clone lacking that object), rather than failing on a clone-depth artifact unrelated
+  to the split's own correctness. Every oracle degrades to an empty/zero result (not a thrown
+  ENOENT) when the folder is absent, so each case fails on its own value pre-split.
+  **`no-single-schema-path.spec.ts`** (T2, same date/item; stripper rewritten wave E structure) —
+  walks `apps/api/{src,scripts}`, root `scripts/`, `.github/workflows/`,
+  `.claude/skills/**/scripts/`, plus the `Dockerfile`/`prisma.config.ts`/both `package.json`s/
+  `docker-compose.yml`, strips `//`/`#`/`/* */`/`<!-- -->` comment bodies via a **hand-rolled
+  character scanner** (`stripCLikeComments`) — not a single alternation regex, which is unsound:
+  prose inside a `//` comment routinely has an unescaped apostrophe ("it's", "repair-integrity
+  .mjs's default-read-only stance" — real text this file caught in `repair-f03.spec.ts`), and a
+  flat regex has no notion of "already inside a comment", so it reads that apostrophe as opening a
+  `'…'` string and greedily swallows everything up to the next raw `'` anywhere later in the file.
+  The scanner instead skips `//`/`/* */` spans character-by-character to their terminator without
+  ever re-entering quote-detection inside them, and separately preserves real `"…"`/`'…'`/`` `…` ``
+  string literals verbatim (so a same-line `"https://x.dev"` doesn't let its `//` swallow a later
+  `"schema.prisma"` reference — unit-tested directly against the helper). A quote with no closing
+  partner before end-of-line (an apostrophe inside a regex literal, e.g. `scripts/campaign/bugs.mjs`)
+  is emitted as text rather than opened as a string, since a `'`/`"` literal cannot span a raw
+  newline — and asserts none of the
+  ≥400 candidates (real walk ~817; floor raised from the original vacuous-guard value of 30) still
+  names the retired `prisma/schema.prisma` path outside comments; allow-lists (each asserted in its
+  own case) `split-prisma-schema.mjs` (names that path by design via `--from`/`--from-ref`) and
+  this spec's own T1 sibling (its negative-existence check (b) must name the retired path
+  literally) — `apps/api/prisma/migrations/**` is never scanned.
   **`msrp.ts` (NEW 2026-08-22, PR-B — ⚠️ IN FLIGHT on `feat/msrp-on-invoices`, NOT on master)** —
   suggested-retail resolution. `resolveMsrp({customerMsrp, segmentMsrp, productMsrp})` =
   customer override → \*\*segment (a deliberate STUB: present in the signature and every call
@@ -396,7 +472,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 - **`common/upload-limits.ts` (2026-09-01) — the ONE multipart `limits` factory; all 16 FileInterceptor/FilesInterceptor sites across 9 controllers call `uploadLimits(MB(n))`.** Carries the per-route `fileSize` plus **`fieldArrayIndexLimit: 100`** and **`fieldNestingDepth: 5`**. ⚠️ **`fieldArrayIndexLimit` is multer 2.3.0's fix for CVE-2026-82333 (event-loop DoS: `a[999999999]` materialises a sparse array) and it is OPT-IN — gated on `hasOwnProperty`, default `Infinity` — so upgrading multer alone mitigates NOTHING.** ⚠️ **Do not inline these as an object literal**: `MulterOptions.limits` is declared by @nestjs/platform-express itself (NOT @types/multer) as a closed 7-key literal with neither key, and `@types/multer@2.2.0` is the newest published — a fresh literal is a TS2353 excess-property error. Returning a pre-built object with an INFERRED return type is what compiles, with no cast and no `any`; annotating the return type re-breaks it. Runtime is safe: `FileInterceptor` does `multer({...options, ...localOptions})` with no key filtering. ⚠️ Values bound attackers, not callers — every RouteFlow client sends repeated plain field names (`focalX`), never bracket-indexed. Spec `uploads/multer-field-limits.security.spec.ts`. **The hoisted multer is forced to ^2.3.0 by a root `overrides` entry** — `@nestjs/platform-express@11.2.3` pins `multer` at an EXACT `2.2.0`, so without it the copy every interceptor resolves stays vulnerable while the lockfile shows 2.3.0 nested where nothing imports it (this is [[L-028]]; the override is the documented [[L-012]] exception).
 - **`common/tax-rate.ts` (2026-08-18) — money-critical unit contract.** `taxRateFractionFrom(stored: string|null): number` is the ONE parser of SystemConfig `settings.taxRate`. **The stored value is a PERCENT (0–100, string); the helper returns a FRACTION.** Every client (web + mobile) already divided by 100; `orders.service.getTaxRate()` alone treated the same string as an already-divided fraction, so a tenant storing `"5"` would have been taxed 500% the moment a save routed through `orders.create` (latent only because no taxed line existed in prod). Null/`""`/non-finite → 0; the value is **clamped to 0–100 before dividing**, which makes an already-stored out-of-range value (a QA tenant holds `"150"`) inert without any backfill. Readers: `orders.service.getTaxRate`, `order-templates.service.generateOrder` — nothing else may parse that key. Spec `common/tax-rate.spec.ts` pins `"10"→0.10`, `"0"/""/null/"abc"→0`, `"150"→1`, `"-5"→0`, `"0.5"→0.005`. Write side is validated in `settings.controller` (see `system-config/`).
 - **`common/transforms/strip-html.transform.ts`** — `StripHtml()` class-transformer decorator (RF-110) on ~14 free-text DTO fields (customer businessName, buyer profile businessName/displayName/notes, buyer-account name, order/invoice notes, order-item custom name, shipment carrier/tracking, variant name, stock-count name/notes, bill-payment/statement notes). Strips tags via sanitize-html then **entity-decodes the output** (`&lt; &gt; &quot; &#39;` then `&amp;` LAST — order prevents double-decode): sanitize-html re-encodes text nodes, which until 2026-08-23 stored "Smith & Sons" as "Smith &amp; Sons". Input is parsed as HTML, so pre-escaped input decodes once ("a &amp; b" → "a & b"). Spec `strip-html.transform.spec.ts`. **sanitize-html PINNED at exact 2.17.5 (+ dependabot ignore, 2026-08-28/#463): ≥2.17.6 swaps in ESM-only htmlparser2 12 (Jest's CJS loader can't import it — 9 API suites died at load) and requires Node ≥22.12 vs the node:20 prod containers; the sanitization behavior itself still round-trips every spec case (verified empirically on 2.17.7). Unpin only with a platform Node-22 bump. Skipped 2.17.6/2.17.7 CVEs need allowed svg/math/animation tags — moot under `allowedTags: []`.** Damage census: **`scripts/report-escaped-entities.mjs`** — READ-ONLY (deliberately no `--execute`; repair is a separate owner-approved task), counts rows containing each of the 5 entities per tenant per affected column (15 table.column targets; OrderItem tenancy via Order join; BuyerAccount global; skips tables absent from older DBs); `DATABASE_URL` or the railway proxy env, `REPORT_TENANT_SLUG` scopes. Repair sibling **`scripts/repair-escaped-entities.mjs`** (#427) — per-tenant in-place decode of the same 15 targets, dry-run default (`--execute --confirm-tenant=<slug>`, live tenants add `--live-tenant-override`); buyerAccount rows tenant-scope via `customerLinks: { some: { tenantId } }` (BuyerAccount has no tenantId — fixed 2026-08-24, was a nonexistent `customers` relation whose skip log printed Prisma's blank first error line; unqueryable targets now log the first non-empty trimmed line).
-- **Prisma `prisma/schema.prisma`** — models incl. Tenant, User, Customer, Driver, Product,
+- **Prisma schema — a FOLDER, `prisma/schema/*.prisma` (item 10a, 2026-09-04)**, not a single file. Prisma 7 multi-file: every `*.prisma` under the folder is one datamodel, concatenated in filename order. Seven files, 207 top-level blocks / 125 models / 80 enums total — `_base.prisma` (datasource + generator only), `tenancy.prisma` (15 models: Tenant/TenantConfig/TenantGoogleOAuth, User/UserPreference, RefreshToken/PasswordResetToken/DeviceToken, PlatformConfig, BuyerAccount and its 3 auth tokens, CustomerLink, BuyerMergeRequest), `catalog.prisma` (11: Product, Supplier, StockLot/StockMovement, PurchaseOrder(+Item), ProductMapping/ProductAlias, StockAlert, StockCountSession/Line), `sales.prisma` (39: Customer and its tag/address/document/comment/price satellites, ContactPerson, Driver(+Location), Route/RouteStop/RouteCustomer/RouteRun(+Stop), Order/OrderItem/OrderRevision/ChangeRequest, DeliveryMutation/DeliveryBatch, OrderTemplate(+Item), Return(+Item), Promotion(+Product), BuyerFavorite, ReplenishmentSnooze, SaleDraft, SalesAgent and the whole Commission* cluster), `finance.prisma` (28: Transaction(+Item)/Payment, Invoice(+Item)/InvoicePayment/PaymentCounter, Expense*/MileageRate, CreditNote(+Item)/OrderCreditNote, Estimate(+Item), VendorBill(+Item)/BillPayment, InvoiceScan/SupplierStatementScan, AdvancePayment/SupplierCredit, RecurringInvoice(+Item), TenantStripeConnect/StripeConnectEvent/BuyerPaymentRequest), `platform.prisma` (25: the SaaS-side billing — TenantSubscription/TenantAddon/PlanVersion/PlanDefinition/AddonSku/MeterUsage/BillingEvent/RfInvoice — plus SystemConfig, the Message*/Notification* cluster, AuditLog, NumberingSequence, Import*/Migration*, AiUsageEvent, IdempotencyKey), `compliance.prisma` (7: TobaccoReport, TrackedCategory(+Sub), CustomerAuthorization/AuthorizationOverride, RegulatedSalesLedger, RegulatedFiling). **Each enum sits beside the FIRST model that uses it** (derived from first use, not hand-placed); relations cross files freely, but every model/enum name must stay unique repo-wide. ⚠️ **Adding a model means TWO edits**: the domain file AND the `MODEL_DOMAIN` map in `scripts/split-prisma-schema.mjs` — an unmapped model hard-fails `--check` (there is no "misc" bucket). Consumers that read the datamodel as TEXT must read the FOLDER: `scripts/schema-drift.mjs` (`--to-schema prisma/schema`), `src/scripts/repair-f17.spec.ts`, `.claude/skills/bug-hunt/scripts/scan-signatures.mjs`. `prisma.config.ts` carries `schema: prisma/schema` plus an explicit `migrations.path: prisma/migrations`. ⚠️ The generated client `index.d.ts` is NOT byte-identical across the split — folder order changes declaration order ([[L-073]]); pin semantics (`split-prisma-schema --check`, the drift gate), never the generated bytes. Models incl. Tenant, User, Customer, Driver, Product,
   Route, RouteStop, RouteRun, RouteRunStop, Order, OrderItem, Invoice, InvoiceItem,
   InvoicePayment, Payment, CreditNote, Estimate, VendorBill(+Item), Return(+Item),
   AdvancePayment, Supplier, StockLot, StockMovement, OrderTemplate, OrderRevision (P5-08 append-only order edit history), PurchaseOrder,
@@ -554,7 +630,7 @@ homeAddress` (the driver-home origin), and orders inherit `fulfillPath` from the
   `add_vendor_bill_items`). `20260815000000_add_product_tenant_name_index` then adds the one
   index production was missing. Existing environments must run
   `prisma migrate resolve --applied 0_init` ONCE before any further `migrate deploy`, or
-  deploys block with P3009. `AiUsageEvent` + `IdempotencyKey` are modelled in schema.prisma
+  deploys block with P3009. `AiUsageEvent` + `IdempotencyKey` are modelled in the prisma/schema folder
   purely so Prisma stops treating the app's runtime-created tables as drift and DROPping them.
 - **`prisma/migrations/20260909000000_rls/migration.sql`** — Postgres row-level-security
   policies (defense-in-depth under the `forTenant` client-side scoping), applied by
@@ -1650,7 +1726,7 @@ buyerPaymentRequestId }` so the PI resolves the request); `checkout.session.comp
 - **module** — global. `broadcast{RouteUpdate,LocationUpdate,OrderUpdate}`, `notifyUser`. Redis adapter pub/sub to connected clients.
 - **buyer-connect emitters (2026-08-20)** — `emitBuyerConnectRequest(tenantId, {customerId, customerName, buyerName, buyerEmail, requestedAt})` → `buyer.connect.requested` and `emitBuyerAutoLinked(tenantId, {customerId, customerName, buyerName, buyerEmail})` → `buyer.connect.autolinked`, both to `tenantRoom(tenantId,"operators")` only (same shape as `emitUrgentOrder`). Called fire-and-forget from `buyer.service.requestSeller`; consumed by web `lib/hooks/useNotifications.ts` (requested also invalidates the pending-approvals query).
 
-## Reference — enums (directional; verify in `schema.prisma` / `packages/types`)
+## Reference — enums (directional; verify in `prisma/schema/*.prisma` / `packages/types`)
 
 UserRole(SUPER_ADMIN, TENANT_ADMIN, OPERATOR, DRIVER, CUSTOMER) · TenantStatus(TRIAL, ACTIVE,
 SUSPENDED, CANCELLED) · OrderStatus(DRAFT, PENDING, CONFIRMED, OUT_FOR_DELIVERY,

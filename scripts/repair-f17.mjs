@@ -719,7 +719,7 @@ export function createPgStore(client) {
           );
         }
         const payRes = await client.query(
-          // NOTE: InvoicePayment has NO "updatedAt" column (see apps/api/prisma/schema.prisma) —
+          // NOTE: InvoicePayment has NO "updatedAt" column (see apps/api/prisma/schema/finance.prisma) —
           // setting one here makes every write fail with 42703, which applyRepairs would report as
           // a harmless per-row skip. scripts/repair-integrity.mjs omits it for the same reason.
           `UPDATE "InvoicePayment"

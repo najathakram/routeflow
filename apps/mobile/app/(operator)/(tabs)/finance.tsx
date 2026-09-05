@@ -12,31 +12,13 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { KpiCard, NavBar, Pill } from "@routeflow/ui/mobile/ios";
-import {
-  useVendorBills,
-  type VendorBill,
-  type VendorBillStatus,
-} from "../../../lib/api/vendor-bills";
+import { useVendorBills, type VendorBill } from "../../../lib/api/vendor-bills";
+import { vendorBillPillFor as billPill } from "../../../lib/vendor-bill-logic";
 import { fmtCalendarDate } from "../../../lib/format-date";
 
 function formatCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
   return `$${(Number.isFinite(v) ? v : 0).toFixed(2)}`;
-}
-
-function billPill(status: VendorBillStatus) {
-  switch (status) {
-    case "DRAFT":
-      return { variant: "gray" as const, label: "Draft" };
-    case "RECEIVED":
-      return { variant: "orange" as const, label: "Received" };
-    case "PARTIAL":
-      return { variant: "orange" as const, label: "Partial" };
-    case "FULL":
-      return { variant: "green" as const, label: "Paid" };
-    case "VOID":
-      return { variant: "gray" as const, label: "Void" };
-  }
 }
 
 export default function FinanceScreen() {

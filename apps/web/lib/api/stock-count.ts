@@ -1,5 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type {
+  CommitStockCountPayload,
+  CommitStockCountResponse,
+  CommitStockCountSessionResponse,
+} from "@routeflow/types";
+export type {
+  CommitStockCountPayload,
+  CommitStockCountResponse,
+  CommitStockCountSessionResponse,
+} from "@routeflow/types";
 
 // ─── Shared types ───────────────────────────────────────────────────────────
 
@@ -14,21 +24,6 @@ export interface CommitStockCountItem {
   productId: string;
   quantity: number;
   mode: StockCountMode;
-}
-
-export interface CommitStockCountPayload {
-  sessionId: string;
-  items: CommitStockCountItem[];
-  notes?: string;
-  effectiveDate?: string;
-}
-
-export interface CommitStockCountResponse {
-  sessionId: string;
-  reference: string;
-  applied: number;
-  skipped: number;
-  movementIds: string[];
 }
 
 export function useCommitStockCount() {
@@ -212,16 +207,6 @@ export function useRemoveStockCountLine() {
         .delete(`/inventory/stock-counts/${sessionId}/lines/${productId}`)
         .then((r) => r.data as { removed: boolean }),
   });
-}
-
-export interface CommitStockCountSessionResponse {
-  sessionId: string;
-  reference: string | null;
-  applied: number;
-  skipped: number;
-  movementIds: string[];
-  costMovementIds?: string[];
-  alreadyCommitted?: boolean;
 }
 
 export function useCommitStockCountSession() {

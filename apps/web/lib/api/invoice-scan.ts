@@ -1,14 +1,6 @@
 import { apiClient } from "../api-client";
-
-/** A ranked "Did you mean…" suggestion for a line that didn't confidently match. */
-export interface ScanCandidate {
-  productId: string;
-  /** Composed display name (e.g. "Big Red Chewing Gum - Cinnamon"). */
-  name: string;
-  sku: string | null;
-  /** Weighted-overlap score, 0..1. */
-  score: number;
-}
+import type { ScanCandidate } from "@routeflow/types";
+export type { ScanCandidate } from "@routeflow/types";
 
 export interface ScannedItem {
   extractedName: string;

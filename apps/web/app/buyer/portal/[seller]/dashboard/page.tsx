@@ -21,7 +21,7 @@ import {
   useBuyerTemplates,
   useBuyerReorder,
   useBuyerShelf,
-  type OrderTemplate,
+  type BuyerOrderTemplate,
 } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
 import { objectPositionForUrl } from "@/lib/image-focal";
@@ -78,7 +78,7 @@ function StandingOrdersPanel({
   isLoading,
 }: {
   sellerSlug: string;
-  templates: OrderTemplate[];
+  templates: BuyerOrderTemplate[];
   isLoading: boolean;
 }) {
   const reorder = useBuyerReorder();
@@ -183,7 +183,7 @@ export default function BuyerDashboardPage() {
   const { data: templatesData, isLoading: templatesLoading } = useBuyerTemplates();
   const { data: shelf } = useBuyerShelf();
   const cart = useBuyerCart(buyer?.id, sellerSlug);
-  const templates: OrderTemplate[] = templatesData?.data ?? [];
+  const templates: BuyerOrderTemplate[] = templatesData?.data ?? [];
 
   // P5-07: chips read the SAME /buyer/shelf payload as Your Shelf and the shop
   // strip (state === "low" | "due-soon", not snoozed) — identical by construction.

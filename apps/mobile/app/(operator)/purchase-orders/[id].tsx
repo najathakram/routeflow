@@ -23,7 +23,7 @@ function statusPill(status: POStatus): {
       return { variant: "gray", label: "Draft" };
     case "SENT":
       return { variant: "orange", label: "Sent" };
-    case "PARTIALLY_RECEIVED":
+    case "PARTIAL":
       return { variant: "brand", label: "Partially Received" };
     case "RECEIVED":
       return { variant: "green", label: "Received" };
@@ -61,7 +61,10 @@ export default function PurchaseOrderDetailScreen() {
   }
 
   const s = statusPill(po.status);
-  const canReceive = po.status === "SENT" || po.status === "PARTIALLY_RECEIVED";
+  // Wave E / imp-10b, L-072: this used to compare against "PARTIALLY_RECEIVED",
+  // a value the server has never returned (schema value is "PARTIAL") — so once
+  // a PO went partial, the Receive action silently vanished from this screen.
+  const canReceive = po.status === "SENT" || po.status === "PARTIAL";
   const canSend = po.status === "DRAFT";
   const canClose = po.status === "RECEIVED";
 

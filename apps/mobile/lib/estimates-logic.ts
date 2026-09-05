@@ -20,8 +20,6 @@ export function estimatePillFor(status: EstimateStatus): { variant: PillVariant;
       return { variant: "green", label: "Accepted" };
     case "DECLINED":
       return { variant: "red", label: "Declined" };
-    case "EXPIRED":
-      return { variant: "orange", label: "Expired" };
     case "CONVERTED":
       return { variant: "purple", label: "Converted" };
     default:
@@ -41,14 +39,16 @@ export interface EstimateActionFlags {
  * than web on Convert: the API only converts ACCEPTED estimates
  * (`BadRequestException("Only ACCEPTED estimates can be converted")`), so we
  * gate Convert to ACCEPTED to avoid guaranteed error toasts. Void is rejected by
- * the server on CONVERTED, and DECLINED/EXPIRED are terminal read-only.
+ * the server on CONVERTED, and DECLINED is terminal read-only. (Wave E /
+ * imp-10b, L-072: this used to also exclude a phantom "EXPIRED" status the
+ * schema has never had — dropped along with the dead pill-mapping branch above.)
  */
 export function estimateActionFlags(status: EstimateStatus): EstimateActionFlags {
   return {
     canSend: status === "DRAFT",
     canAcceptDecline: status === "SENT",
     canConvert: status === "ACCEPTED",
-    canVoid: status !== "CONVERTED" && status !== "DECLINED" && status !== "EXPIRED",
+    canVoid: status !== "CONVERTED" && status !== "DECLINED",
   };
 }
 

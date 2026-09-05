@@ -83,7 +83,7 @@ rg -U -A6 "(confirm|Alert\.alert)\(" apps/mobile | rg -B3 "\(\) => router\."
 **Caused:** B10, B16, B18.
 
 UI comparing `.status`/`.type` against a SCREAMING_CASE string that appears **nowhere** in
-`apps/api` or `schema.prisma` — the server can never emit it, so the branch (badge color, filter,
+`apps/api` or `prisma/schema/*.prisma` — the server can never emit it, so the branch (badge color, filter,
 empty state) is dead.
 
 ```tsx
@@ -96,7 +96,7 @@ legitimate), and flags comparisons against tokens in neither set.
 
 ```bash
 rg -o '\.(status|type)\s*===?\s*"([A-Z_]+)"' -r '$2' apps/{web,mobile} | sort -u \
-  | while read v; do rg -q "\b$v\b" apps/api/prisma/schema.prisma apps/api/src || echo "IMPOSSIBLE: $v"; done
+  | while read v; do rg -q "\b$v\b" apps/api/prisma/schema apps/api/src || echo "IMPOSSIBLE: $v"; done
 ```
 
 ## 4. `inert-form` — Inert form _(scanner: auto, HIGH-signal)_

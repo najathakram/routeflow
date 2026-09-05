@@ -158,14 +158,14 @@ async function main() {
   // ── 5. Table inventory ────────────────────────────────────────────────────
   const tables = await q(`SELECT count(*) AS public_tables FROM information_schema.tables
                           WHERE table_schema='public' AND table_type='BASE TABLE'`);
-  console.log("5. TABLE COUNT (schema.prisma defines 106 models)");
+  console.log("5. TABLE COUNT (prisma/schema/*.prisma defines 106 models)");
   console.table(tables);
   const names = (
     await q(`SELECT table_name FROM information_schema.tables
                           WHERE table_schema='public' AND table_type='BASE TABLE'
                           ORDER BY table_name`)
   ).map((r) => r.table_name);
-  console.log("   table list (for offline diff vs schema.prisma):");
+  console.log("   table list (for offline diff vs prisma/schema/*.prisma):");
   console.log("   " + names.join(", ") + "\n");
 
   console.log("=== END — session was read-only; nothing was modified ===\n");

@@ -1,5 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { VariantAssignResult } from "@routeflow/types";
+export type { VariantAssignResult, VariantAssignResultItem } from "@routeflow/types";
 
 /**
  * One target in a `POST /inventory/variant-assign` call — either an existing
@@ -26,22 +28,6 @@ export interface VariantAssignRequest {
   parentProductId: string;
   assignments: VariantAssignmentInput[];
   notes?: string;
-}
-
-export interface VariantAssignResultItem {
-  productId: string;
-  variantName: string;
-  qty: number;
-  unitCost: number;
-  created: boolean;
-}
-
-export interface VariantAssignResult {
-  reference: string;
-  parentProductId: string;
-  parentRemaining: number;
-  assignments: VariantAssignResultItem[];
-  movementIds: string[];
 }
 
 /**

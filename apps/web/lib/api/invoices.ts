@@ -2,13 +2,52 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { fetchPdfBlob } from "../fetch-pdf-blob";
 import type { AnyPaymentMethod, SelectablePaymentMethod } from "../payment-methods";
+import type {
+  CreateInvoiceItem,
+  CreatePartialInvoiceDto,
+  CreateRecurringInvoiceDto,
+  PaymentListParams,
+  PaymentListResponse,
+  PriceType,
+  RecurringInvoice,
+  SendInvoiceEmailResult,
+  SetCheckStatusDto,
+  StandalonePaymentDto,
+} from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type InvoiceStatus =
   "DRAFT" | "SENT" | "VIEWED" | "PARTIAL" | "PAID" | "VOID" | "OVERDUE" | "WRITTEN_OFF";
 
-export type PriceType = "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL" | "PROMO";
+// `PriceType` re-exported from @routeflow/types (wave E / imp-10b R2: was
+// declared identically here AND in `orders.ts` — collapsed to one import).
+//
+// X1 note on the payment DTO below: its `TMethod` stays generic
+// (defaults to plain `string`) in `packages/types/api/finance.ts`, on
+// purpose, so each app can plug in its own hand-curated "enterable" method
+// union. Do NOT bind that parameter with a same-named local alias in this
+// file (i.e. a re-declaration of the identifier as a narrowed alias) — the
+// T1 sweep's "no local re-declaration in lib/api" guards (the shared-dto
+// inventory spec and the shared-dto-rewrite codemod's `--check`) read this
+// file's raw text and can't tell a narrowing alias apart from a forked
+// duplicate. Bind the narrow union at each USE site instead — see
+// `useRecordPaymentStandalone` below, which applies `<SelectablePaymentMethod>`
+// where it types the mutation payload.
+export type {
+  CreateInvoiceItem,
+  CreatePartialInvoiceDto,
+  CreatePartialInvoiceItem,
+  CreateRecurringInvoiceDto,
+  PaymentListParams,
+  PaymentListResponse,
+  PriceType,
+  RecurringInvoice,
+  RecurringInvoiceItem,
+  SendInvoiceEmailResult,
+  SetCheckStatusDto,
+  StandalonePaymentDto,
+} from "@routeflow/types";
 
 /** P5-12: lifecycle of a CHECK InvoicePayment. Always null/absent on non-check payments. */
 export type CheckStatus = "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED";
@@ -230,48 +269,14 @@ export interface AllPayment {
   };
 }
 
-export interface PaymentListParams {
-  page?: number;
-  limit?: number;
-  customerId?: string;
-  method?: string;
-  status?: string;
-  dateFrom?: string;
-  dateTo?: string;
-  search?: string;
-  sortBy?: string;
-  sortDir?: string;
-}
-
-export interface PaymentListResponse {
-  data: AllPayment[];
-  meta: { total: number; page: number; limit: number; totalPages: number };
-  summary: { totalReceived: number; count: number; advanceBalance: number };
-}
-
 export function useInvoicePayments(params?: PaymentListParams) {
-  return useQuery<PaymentListResponse>({
+  return useQuery<PaymentListResponse<AllPayment>>({
     queryKey: ["invoices", "payments", params],
     queryFn: () => apiClient.get("/invoices/payments", { params }).then((r) => r.data),
   });
 }
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
-
-export interface CreateInvoiceItem {
-  productId?: string;
-  description: string;
-  qty: number;
-  unitPrice: number;
-  taxRate?: number;
-  discount?: number;
-  boxes?: number;
-  pieces?: number;
-  /** BUY_N_GET_M free selling units carried from the order line — see InvoiceItem. */
-  promoFreeUnits?: number;
-  /** Per-line note (buyer-visible; prints on the PDF). */
-  notes?: string;
-}
 
 export interface CreateInvoiceDto {
   customerId: string;
@@ -393,21 +398,6 @@ export function deriveInvoiceVariant(inv: {
   if (inv.status !== "DRAFT") return "final";
   if (inv.order?.status === "DELIVERED") return "final";
   return "draft";
-}
-
-/** Shared by `send-email` and `send-reminder` — both disclose the SMTP fallback. */
-export interface SendInvoiceEmailResult {
-  success: boolean;
-  sentTo: string;
-  /**
-   * Non-blocking warning: the tenant's own SMTP failed but Resend (RouteFlow's
-   * platform mail service) rescued the send, so `success` is still true. Set by
-   * `email.service.ts#send()`'s `smtpFallbackReason` (mapped, human-readable —
-   * e.g. the STARTTLS-unavailable or M365 Authenticated-SMTP message).
-   */
-  warning?: string;
-  /** The platform address the email actually went out from when `warning` is set. */
-  fromAddress?: string;
 }
 
 export function useSendInvoiceEmail() {
@@ -644,26 +634,15 @@ export function useGetPaymentImageUrl() {
   });
 }
 
-export interface StandalonePaymentDto {
-  customerId: string;
-  totalAmount: number;
-  method: SelectablePaymentMethod;
-  paidAt?: string;
-  /** Bank landing date applied to every allocation row of the group. */
-  settledAt?: string | null;
-  bankCharges?: number;
-  reference?: string;
-  notes?: string;
-  status?: "DRAFT" | "PAID";
-  allocations: { invoiceId: string; amount: number }[];
-}
-
 export function useRecordPaymentStandalone() {
   const qc = useQueryClient();
   return useMutation<
     { payments: AllPayment[]; paymentGroupId: string; excess: number },
     Error,
-    StandalonePaymentDto
+    // X1: bind TMethod to web's enterable subset at the use site (not via a
+    // local re-declaration — see the comment above `StandalonePaymentDto`'s
+    // re-export).
+    StandalonePaymentDto<SelectablePaymentMethod>
   >({
     mutationFn: (dto) => apiClient.post("/invoices/payments/record", dto).then((r) => r.data),
     onSuccess: () => {
@@ -683,14 +662,6 @@ export function useVoidPayment() {
       qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
     },
   });
-}
-
-export interface SetCheckStatusDto {
-  invoiceId: string;
-  paymentId: string;
-  status: CheckStatus;
-  /** NSF fee to bill the customer when status = BOUNCED (omit or 0 = no fee). */
-  nsfFeeAmount?: number;
 }
 
 /**
@@ -742,36 +713,6 @@ export function usePaymentDetail(id: string) {
 
 // ─── Recurring invoices ───────────────────────────────────────────────────────
 
-export interface RecurringInvoiceItem {
-  description: string;
-  productId?: string;
-  qty: number;
-  unitPrice: number;
-  discount?: number;
-  taxRate?: number;
-}
-
-export interface RecurringInvoice {
-  id: string;
-  customerId: string;
-  customer?: { id: string; businessName: string };
-  frequency: "WEEKLY" | "BIWEEKLY" | "MONTHLY";
-  dayOfWeek?: number;
-  dayOfMonth?: number;
-  isActive: boolean;
-  autoSend: boolean;
-  notes?: string;
-  terms?: string;
-  discount?: number;
-  shippingFee?: number;
-  nextRunAt: string;
-  lastRunAt?: string;
-  lastRunStatus?: "SUCCESS" | "FAILED" | null;
-  lastError?: string | null;
-  items: RecurringInvoiceItem[];
-  createdAt: string;
-}
-
 /**
  * REG-B106: mirrors `RUN_UNFINALIZED_ERROR` in
  * `apps/api/src/recurring-invoices/recurring-invoices.service.ts`. A `lastError` starting
@@ -784,20 +725,6 @@ export const RUN_UNFINALIZED_PREFIX = "The invoice was created but the run could
 /** True when a FAILED cycle produced no invoice, so "Run Now" is a safe retry. */
 export function isRetryableRunFailure(lastError?: string | null): boolean {
   return !!lastError && !lastError.startsWith(RUN_UNFINALIZED_PREFIX);
-}
-
-export interface CreateRecurringInvoiceDto {
-  customerId: string;
-  frequency: "WEEKLY" | "BIWEEKLY" | "MONTHLY";
-  dayOfWeek?: number;
-  dayOfMonth?: number;
-  autoSend?: boolean;
-  notes?: string;
-  terms?: string;
-  discount?: number;
-  shippingFee?: number;
-  nextRunAt: string;
-  items: RecurringInvoiceItem[];
 }
 
 export function useRecurringInvoices(customerId?: string) {
@@ -916,23 +843,6 @@ export function useCreateInvoiceFromOrder() {
 }
 
 // ─── Split / partial invoice from order ───────────────────────────────────────
-
-export interface CreatePartialInvoiceItem {
-  orderItemId: string;
-  qty: number;
-}
-
-export interface CreatePartialInvoiceDto {
-  orderId: string;
-  items: CreatePartialInvoiceItem[];
-  dueDate?: string;
-  /** Long-form Terms & Conditions text — NEVER a "Net N" label. */
-  terms?: string;
-  /** Structured "Net N" label describing dueDate. */
-  paymentTermsLabel?: string;
-  notes?: string;
-  send?: boolean;
-}
 
 /**
  * Create one of N partial invoices from an order. Operator picks which order items

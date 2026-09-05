@@ -6,6 +6,8 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { TripEligibilityRow, TripOrigin } from "@routeflow/types";
+export type { TripEligibilityRow, TripIneligibleReason, TripOrigin } from "@routeflow/types";
 
 export interface PaginationMeta {
   total: number;
@@ -667,26 +669,6 @@ export function useAdminDrivers(
 // orderIds and must keep sweeping every eligible order for its stops) stays
 // byte-identical.
 
-export type TripIneligibleReason =
-  | "SHIP_FULFILLMENT"
-  | "INELIGIBLE_STATUS"
-  | "ON_ACTIVE_RUN"
-  | "PREVIOUSLY_DISPATCHED"
-  | "NO_ADDRESS"
-  | "NOT_FOUND";
-
-export interface TripEligibilityRow {
-  orderId: string;
-  orderNumber: string | null;
-  customerId: string | null;
-  customerName: string | null;
-  eligible: boolean;
-  reason?: TripIneligibleReason;
-  /** Human-readable detail from the server — prefer this over a locally
-   *  hard-coded label per `reason` when present. */
-  detail?: string;
-}
-
 /** GET /trips/eligibility?orderIds=a,b,c — enabled only once orders are picked. */
 export function useTripEligibility(orderIds: string[]) {
   return useQuery<TripEligibilityRow[]>({
@@ -698,12 +680,6 @@ export function useTripEligibility(orderIds: string[]) {
     enabled: orderIds.length > 0,
   });
 }
-
-/** The trip's start point — mirrors the API's `CreateTripDto.origin` union. */
-export type TripOrigin =
-  | { type: "TENANT" }
-  | { type: "DRIVER"; driverId: string }
-  | { type: "ADDRESS"; line1: string; city?: string; state?: string; zip?: string };
 
 export interface CreateTripDto {
   orderIds: string[];

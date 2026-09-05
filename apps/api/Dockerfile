@@ -21,9 +21,11 @@ COPY packages/types/package.json             packages/types/
 COPY packages/typescript-config/             packages/typescript-config/
 COPY packages/ui/package.json               packages/ui/
 
-# API workspace manifest + prisma schema (needed by postinstall `prisma generate`)
+# API workspace manifest + the multi-file prisma schema FOLDER and prisma.config.ts
+# (both needed by the postinstall `prisma generate` that runs inside `npm ci` below —
+# a missed edit here fails the image build at `npm ci`, not at runtime).
 COPY apps/api/package.json apps/api/
-COPY apps/api/prisma/schema.prisma apps/api/prisma/
+COPY apps/api/prisma/schema apps/api/prisma/schema
 COPY apps/api/prisma.config.ts apps/api/
 
 # Install all workspace dependencies (with scripts so @nestjs/core postinstall runs).

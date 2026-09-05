@@ -122,7 +122,8 @@ export function RecordSupplierPaymentModal({
       return;
     }
     const validAllocs = allocations.filter((a) => a.amount && parseFloat(a.amount) > 0);
-    const dto: RecordSupplierPaymentDto = {
+    // X1: bind TMethod to web's enterable subset at the use site.
+    const dto: RecordSupplierPaymentDto<SupplierPaymentMethod> = {
       supplierId,
       totalAmount: total,
       method,

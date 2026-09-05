@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { ExpenseCategory } from "@routeflow/types";
+export type { ExpenseCategory } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,13 +38,6 @@ export interface ArAgingBucket {
   balance: number;
   dueDate?: string;
   status: string;
-}
-
-export interface ExpenseCategory {
-  id: string;
-  name: string;
-  code: string;
-  isCustom: boolean;
 }
 
 export interface ExpenseLineItem {

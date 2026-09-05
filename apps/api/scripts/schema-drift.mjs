@@ -38,7 +38,7 @@ Test hook:
   whenever it is used. Anywhere else it is ignored and the real prisma CLI runs.
 
 Exit codes:
-  0   no drift — database matches prisma/schema.prisma
+  0   no drift — database matches the prisma/schema folder
   2   drift detected — the missing/extra SQL is printed
   1   error — missing env, or \`migrate diff\` could not complete (unreachable database
       or CLI error). A pending/diverged \`migrate status\` is informational, not fatal.
@@ -118,12 +118,18 @@ if (localOnly) {
 console.log(`schema-drift: target ${redactUrl(url)}`);
 
 const STATUS = ["migrate", "status"];
+// `--to-schema` takes the multi-file schema FOLDER (item 10a). `prisma migrate diff --help`
+// describes the flag as "Path to a Prisma schema file" and documents no folder form, but the
+// engine resolves a directory the same way `prisma.config.ts`'s `schema` does — verified on
+// Prisma 7.10: `migrate diff --from-empty --to-schema prisma/schema --script` emits all 125
+// CREATE TABLEs. There is no `--to-config-datamodel` flag in this CLI; the only `--to-*` forms
+// are `--to-empty`, `--to-schema`, `--to-migrations` and `--to-config-datasource`.
 const DIFF = [
   "migrate",
   "diff",
   "--from-config-datasource",
   "--to-schema",
-  "prisma/schema.prisma",
+  "prisma/schema",
   "--script",
   "--exit-code",
 ];
@@ -164,7 +170,7 @@ if (status.status !== 0) {
 
 const diff = run(DIFF);
 if (diff.status === 0) {
-  console.log("schema-drift: NO DRIFT — database matches prisma/schema.prisma");
+  console.log("schema-drift: NO DRIFT — database matches the prisma/schema folder");
   process.exit(0);
 }
 if (diff.status === 2) {

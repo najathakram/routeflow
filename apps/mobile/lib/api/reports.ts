@@ -32,14 +32,18 @@ export interface CashFlow {
   netCashFlow: number;
 }
 
-export interface SalesByCustomerRow {
+/** Wave E / imp-10b R2: renamed from `SalesByCustomerRow` — collided in name
+ *  (with a genuinely different field set) with `./admin.ts`'s report row of
+ *  the same name; disambiguated rather than shared. */
+export interface ReportSalesByCustomerRow {
   customerId: string;
   businessName: string;
   invoiceCount: number;
   salesAmount: number;
 }
 
-export interface SalesByItemRow {
+/** Wave E / imp-10b R2: renamed from `SalesByItemRow` — see `ReportSalesByCustomerRow`. */
+export interface ReportSalesByItemRow {
   productId: string | null;
   name: string;
   qty: number;
@@ -82,7 +86,7 @@ export function useCashFlow(from?: string, to?: string) {
 }
 
 export function useSalesByCustomer(from?: string, to?: string) {
-  return useQuery<{ data: SalesByCustomerRow[] }>({
+  return useQuery<{ data: ReportSalesByCustomerRow[] }>({
     queryKey: ["reports", "sales-by-customer", from, to],
     queryFn: () =>
       apiClient
@@ -92,7 +96,7 @@ export function useSalesByCustomer(from?: string, to?: string) {
 }
 
 export function useSalesByItem(from?: string, to?: string) {
-  return useQuery<{ data: SalesByItemRow[] }>({
+  return useQuery<{ data: ReportSalesByItemRow[] }>({
     queryKey: ["reports", "sales-by-item", from, to],
     queryFn: () =>
       apiClient

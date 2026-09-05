@@ -10,7 +10,7 @@
 // It builds a proxy DATABASE_URL (password URL-encoded) from the injected vars, prints
 // `migrate status`, runs `migrate deploy`, then spawns the read-only `schema-drift.mjs`
 // as a post-deploy check and fails closed (nonzero exit) if the live schema still
-// differs from prisma/schema.prisma. It never prints the password. This is a permanent
+// differs from the prisma/schema folder. It never prints the password. This is a permanent
 // release step (step 1 of the canonical deploy flow in CLAUDE.md) — not a one-off
 // script that is safe to delete after use.
 import { execSync, spawnSync } from "node:child_process";
@@ -73,7 +73,7 @@ const drift = spawnSync(process.execPath, [resolve(apiDir, "scripts", "schema-dr
 if (drift.status !== 0) {
   console.error(
     "\npost-deploy drift check FAILED — migrations were APPLIED successfully, but the live " +
-      "schema now differs from prisma/schema.prisma; investigate before deploying the app " +
+      "schema now differs from the prisma/schema folder; investigate before deploying the app " +
       "(see SQL above)",
   );
   process.exit(drift.status ?? 1);

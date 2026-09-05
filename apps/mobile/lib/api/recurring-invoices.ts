@@ -1,38 +1,16 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { CreateRecurringInvoiceDto, RecurringInvoice } from "@routeflow/types";
+export type {
+  CreateRecurringInvoiceDto,
+  CreateRecurringInvoiceItem,
+  RecurringInvoice,
+  RecurringInvoiceItem,
+} from "@routeflow/types";
 
 // ─── Types (mirror apps/web/lib/api/invoices.ts recurring hooks) ────────────────
 
 export type RecurringFrequency = "WEEKLY" | "BIWEEKLY" | "MONTHLY";
-
-export interface RecurringInvoiceItem {
-  id: string;
-  productId?: string;
-  description: string;
-  qty: number;
-  unitPrice: number;
-  discount?: number;
-  taxRate?: number;
-}
-
-export interface RecurringInvoice {
-  id: string;
-  customerId: string;
-  customer?: { id: string; businessName: string };
-  frequency: RecurringFrequency;
-  dayOfWeek?: number;
-  dayOfMonth?: number;
-  isActive: boolean; // state is a boolean, not a status enum
-  autoSend: boolean;
-  notes?: string;
-  terms?: string;
-  nextRunAt: string;
-  lastRunAt?: string;
-  lastRunStatus?: "SUCCESS" | "FAILED" | null;
-  lastError?: string | null;
-  items: RecurringInvoiceItem[];
-  createdAt: string;
-}
 
 // ─── Queries (list endpoint returns a BARE array, not paginated) ────────────────
 
@@ -56,33 +34,6 @@ export function useRecurringInvoice(id: string) {
 }
 
 // ─── Create ─────────────────────────────────────────────────────────────────
-
-/** A line on a NEW recurring template (no id; no boxes/pieces — the DTO rejects them). */
-export interface CreateRecurringInvoiceItem {
-  description: string;
-  productId?: string;
-  qty: number;
-  unitPrice: number;
-  discount?: number;
-  taxRate?: number;
-}
-
-export interface CreateRecurringInvoiceDto {
-  customerId: string;
-  frequency: RecurringFrequency;
-  /** 0–6, sent only for WEEKLY/BIWEEKLY. */
-  dayOfWeek?: number;
-  /** 1–28, sent only for MONTHLY. */
-  dayOfMonth?: number;
-  autoSend?: boolean;
-  notes?: string;
-  terms?: string;
-  discount?: number;
-  shippingFee?: number;
-  /** Full ISO datetime for the first run (NOT bare YYYY-MM-DD). */
-  nextRunAt: string;
-  items: CreateRecurringInvoiceItem[];
-}
 
 /** Create a recurring-invoice template (`POST /recurring-invoices`). */
 export function useCreateRecurringInvoice() {

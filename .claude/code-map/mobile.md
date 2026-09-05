@@ -4,6 +4,18 @@ Expo 55 / RN 0.83, expo-router multi-role app (`(auth)`, `(customer)`, `(driver)
 `(operator)`, `(tenant)`); mirrors web's API/DTOs/flows, UI-only differences; Socket.IO
 real-time sync; offline queue for driver route completions.
 
+**2026-09-03 (wave E / imp-10b):** `lib/api/*.ts` DTOs/enums the sweep found duplicated with web
+now import from `@routeflow/types` instead of hand-typing (see [`packages`](packages.md)). Fixed
+three real enum drifts this surfaced (L-072): `lib/api/vendor-bills.ts` `VendorBillStatus` had
+`"FULL"` (not a real value) and omitted `OVERDUE` — call sites `app/(operator)/(tabs)/finance.tsx`,
+`app/(operator)/vendor-bills/{index,[id]}.tsx`; `lib/api/purchase-orders.ts` `POStatus` had
+`"PARTIALLY_RECEIVED"` where the schema says `PARTIAL` — this silently hid the Receive action on
+`app/(operator)/purchase-orders/[id].tsx` once a PO went partial, and made the `status` list filter
+in `useOpenPurchaseOrders` always return zero rows for that leg; `lib/api/buyer.ts`
+`BuyerPromotion.type` omitted `"BUY_N_GET_M"` (masked by a compensating `as PromotionType` cast in
+`lib/buyer-cart-logic.ts` `matchingBogoPromo`, now removed). Sibling-sweep find: both apps'
+`EstimateStatus` carried a phantom `"EXPIRED"` — dead branch removed from `lib/estimates-logic.ts`.
+
 ## Where to find (this area)
 
 | Need | File → symbol |

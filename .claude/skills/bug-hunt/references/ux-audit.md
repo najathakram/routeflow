@@ -76,7 +76,7 @@ disagree with the API enum.
 **How to detect here:**
 
 - Diff every client `case "STATUS"` / filter-value literal against the enums in
-  `apps/api/prisma/schema.prisma`. Any literal not in the enum is a live bug, not a style nit.
+  `apps/api/prisma/schema/*.prisma`. Any literal not in the enum is a live bug, not a style nit.
 - Diff the shared mirrors: `apps/{web,mobile}/lib/payment-methods.ts`, `trip-grouping.ts` — and
   then diff the _screens that consume them_, which is where drift actually lives. Money math has
   no mirrors: `no-mirrors.spec.ts` gates import specifiers and the deleted legacy files; a

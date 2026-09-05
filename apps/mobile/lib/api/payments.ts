@@ -3,6 +3,27 @@ import { apiClient } from "../api-client";
 import type { PaymentMethod } from "./invoices"; // reuse the existing 8-value union
 import type { SelectablePaymentMethod } from "../payment-methods";
 import type { ImageUploadFile } from "../product-image";
+import type {
+  PaymentListParams,
+  PaymentListResponse,
+  SetCheckStatusDto,
+  StandalonePaymentDto,
+} from "@routeflow/types";
+// X1: the payment DTO below is re-exported bare — its `TMethod` stays
+// generic in `packages/types/api/finance.ts` on purpose. Do NOT bind that
+// parameter with a same-named local alias in this file (the T1 sweep's "no
+// local re-declaration in lib/api" guards — the shared-dto inventory spec and
+// the shared-dto-rewrite codemod's `--check` — read this file's raw text and
+// can't tell a narrowing alias apart from a forked duplicate). Bind the
+// narrow union at each USE site instead: see `useRecordPaymentStandalone`
+// below, which applies the `EditablePaymentMethod` type argument where it
+// types the mutation payload.
+export type {
+  PaymentListParams,
+  PaymentListResponse,
+  SetCheckStatusDto,
+  StandalonePaymentDto,
+} from "@routeflow/types";
 
 // ─── Types (mirror apps/web/lib/api/invoices.ts payment surface) ────────────────
 
@@ -45,29 +66,10 @@ export interface AllPayment {
   };
 }
 
-export interface PaymentListParams {
-  page?: number;
-  limit?: number;
-  customerId?: string;
-  method?: string;
-  status?: string;
-  dateFrom?: string;
-  dateTo?: string;
-  search?: string;
-  sortBy?: string;
-  sortDir?: "asc" | "desc";
-}
-
-export interface PaymentListResponse {
-  data: AllPayment[];
-  meta: { total: number; page: number; limit: number; totalPages: number };
-  summary: { totalReceived: number; count: number; advanceBalance: number };
-}
-
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
 export function useInvoicePayments(params?: PaymentListParams) {
-  return useQuery<PaymentListResponse>({
+  return useQuery<PaymentListResponse<AllPayment>>({
     queryKey: ["invoices", "payments", params],
     queryFn: () => apiClient.get("/invoices/payments", { params }).then((r) => r.data),
     staleTime: 60_000,
@@ -206,25 +208,6 @@ export interface StandalonePaymentAllocation {
   amount: number;
 }
 
-export interface StandalonePaymentDto {
-  customerId: string;
-  /** Cash actually received. Anything not covered by `allocations` (> 0.001)
-   *  becomes an AdvancePayment for the customer, server-side. */
-  totalAmount: number;
-  /** Hand-enterable methods only — Advance/Credit-Note draws have their own
-   *  dedicated apply actions. */
-  method: EditablePaymentMethod;
-  paidAt?: string;
-  /** Bank landing date, applied to every allocation row. */
-  settledAt?: string | null;
-  bankCharges?: number;
-  reference?: string;
-  notes?: string;
-  /** DRAFT records the rows without touching invoice statuses. */
-  status?: "DRAFT" | "PAID";
-  allocations: StandalonePaymentAllocation[];
-}
-
 /**
  * One check covering several invoices — `POST /invoices/payments/record`.
  * Returns every created row (shared paymentGroupId) + the unallocated excess
@@ -238,7 +221,10 @@ export function useRecordPaymentStandalone() {
   return useMutation<
     { payments: AllPayment[]; paymentGroupId: string; excess: number },
     Error,
-    StandalonePaymentDto
+    // X1: bind TMethod to mobile's enterable subset at the use site (not via
+    // a local re-declaration — see the comment above `StandalonePaymentDto`'s
+    // re-export).
+    StandalonePaymentDto<EditablePaymentMethod>
   >({
     mutationFn: (dto) => apiClient.post("/invoices/payments/record", dto).then((r) => r.data),
     onSuccess: () => {
@@ -253,18 +239,6 @@ export function useRecordPaymentStandalone() {
 }
 
 // ─── Check lifecycle (Wave 3) ────────────────────────────────────────────────
-
-export interface SetCheckStatusDto {
-  invoiceId: string;
-  paymentId: string;
-  status: "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED";
-  /** NSF fee billed onto the invoice when status = BOUNCED (omit/0 = no fee). */
-  nsfFeeAmount?: number;
-  /** True bank landing date — meaningful with CLEARED; sets clearedAt AND
-   *  settledAt. Web's DTO omits this; the server supports it and cash-basis
-   *  reporting windows on it, so mobile sends it. */
-  settledAt?: string;
-}
 
 /**
  * Advance a check through its lifecycle — `PATCH

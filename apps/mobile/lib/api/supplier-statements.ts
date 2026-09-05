@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { StatementAiError, StatementAiErrorCode } from "@routeflow/types";
+export type { StatementAiError, StatementAiErrorCode } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -77,24 +79,6 @@ function toScanSummary(raw: RawScanStatementResponse): SupplierStatementScanSumm
     appliedAt: raw.appliedAt ?? null,
     createdAt: raw.createdAt ?? new Date().toISOString(),
   };
-}
-
-/** One of the four typed codes the parse endpoint reproduces verbatim from the
- *  invoice scanner's error contract (see `supplier-statements.service.ts`).
- *  Names match the web client's `StatementAiError` 1:1 — same wire contract,
- *  same shape on both clients. */
-export type StatementAiErrorCode =
-  | "AI_KEY_INVALID"
-  | "AI_SCAN_REJECTED"
-  | "AI_UNAVAILABLE"
-  | "AI_PARSE_FAILED";
-
-export interface StatementAiError {
-  /** null covers both the no-API-key case (a plain, code-less
-   *  BadRequestException) and anything genuinely unexpected — callers must
-   *  still have a fallback branch, never assume one of the four. */
-  code: StatementAiErrorCode | null;
-  message: string;
 }
 
 const KNOWN_CODES: StatementAiErrorCode[] = [

@@ -33,6 +33,7 @@ on:
       # fail-closed fix (L-055) landed there — a PR that touches it must run
       # this lane, not just the one that touches the spec files.
       - "apps/api/src/prisma/**"
+      - "apps/api/prisma.config.ts"
       - "apps/api/scripts/schema-drift.mjs"
       - "apps/api/scripts/lib/**"
       - "apps/api/jest.db.config.js"
