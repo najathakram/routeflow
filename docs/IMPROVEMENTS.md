@@ -460,7 +460,9 @@ A balanced review should say what not to touch:
   assert the projection kept `tenantId`. Separately, 81 of 125 models declare `tenantId String?`
   with no backfill migration, and `findUniqueOrThrow`'s fail-closed check treats a NULL `tenantId`
   as foreign (5 call sites: `estimates.service.ts` ~205, `routes.service.ts` ~2405/~2679,
-  `orders.service.ts` ~3925). **Prod counts, 2026-09-05: `RouteRunStop` 5, `PaymentCounter` 1,
+  `orders.service.ts` ~3925, and `billing/plan-catalog.service.ts` ~243 — that fifth one is
+  inert, because `PlanVersion` is global reference data with no `tenantId` column at all, so the
+  guard short-circuits before it can compare anything). **Prod counts, 2026-09-05: `RouteRunStop` 5, `PaymentCounter` 1,
   `CreditNote` 1.** #613 is **not** the cause of those rows 404ing: both `routeRunStop` call sites
   are preceded by a tenant-scoped `findFirst` that already 404s a NULL-tenant row, `PaymentCounter`
   has no read path at all, and the `CreditNote` row was already invisible to every tenant-scoped

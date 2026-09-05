@@ -100,19 +100,37 @@ export function classifyPaymentCounter(row) {
 }
 
 /**
- * CreditNote takes its tenant from its Customer (the only required parent). Three refusals:
+ * CreditNote takes its tenant from its Customer (the only required parent). Four refusals:
  *   - no Customer tenant → nothing to derive from;
+ *   - a LINKED Invoice that is itself unusable — the row is gone, or its own `tenantId` is NULL.
+ *     `invoiceTenantId` alone cannot tell those apart from "no invoice linked at all": all three
+ *     read as NULL after the LEFT JOIN, and the first two silently degraded to "derive from the
+ *     Customer, no invoice to check" — accepting a row whose second parent was never inspected.
+ *     `invoiceRowId` (the joined `Invoice."id"`) is what separates them: `invoiceId` set with a
+ *     NULL `invoiceRowId` means the parent is missing; set with a NULL `invoiceTenantId` means
+ *     the parent is itself an unrepaired legacy row. Both are `refuse: parent missing`, so the
+ *     owner repairs the Invoice first and re-runs, rather than this tool guessing;
  *   - a linked Invoice whose tenant differs → the row straddles two tenants, a human decides;
  *   - `(tenantId, creditNoteNumber)` is `@@unique`, so writing the derived tenant would collide
  *     with a credit note that already holds that number for that tenant. Renumbering is a
  *     business decision, never a repair script's.
  *
- * @param {{ customerTenantId?: string|null, invoiceTenantId?: string|null, pairCollision?: boolean }} row
+ * @param {{ customerTenantId?: string|null, invoiceId?: string|null, invoiceRowId?: string|null,
+ *           invoiceTenantId?: string|null, pairCollision?: boolean }} row
  */
 export function classifyCreditNote(row) {
-  const { customerTenantId, invoiceTenantId, pairCollision } = row ?? {};
+  const { customerTenantId, invoiceId, invoiceRowId, invoiceTenantId, pairCollision } = row ?? {};
   if (!customerTenantId) {
     return refuse(VERDICT_PARENT_MISSING, "Customer row missing or its tenantId is NULL");
+  }
+  if (invoiceId && !invoiceRowId) {
+    return refuse(VERDICT_PARENT_MISSING, "invoiceId points at an Invoice row that does not exist");
+  }
+  if (invoiceId && !invoiceTenantId) {
+    return refuse(
+      VERDICT_PARENT_MISSING,
+      "the linked Invoice has a NULL tenantId — repair the Invoice first, then re-run",
+    );
   }
   if (invoiceTenantId && invoiceTenantId !== customerTenantId) {
     return refuse(VERDICT_PARENTS_DISAGREE, "Invoice.tenantId differs from Customer.tenantId");

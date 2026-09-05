@@ -101,14 +101,67 @@ const CASES = [
   paymentCounter({ id: "singleton", parentTenantId: null }),
   paymentCounter({ id: "singleton", parentTenantId: TENANT_A }),
   paymentCounter({ id: ROW_1, parentTenantId: null }),
-  // classifyCreditNote — 8..13
-  creditNote({ customerTenantId: TENANT_A, invoiceTenantId: null, pairCollision: false }),
-  creditNote({ customerTenantId: TENANT_A, invoiceTenantId: TENANT_A, pairCollision: false }),
-  creditNote({ customerTenantId: null, invoiceTenantId: TENANT_A, pairCollision: false }),
-  creditNote({ customerTenantId: TENANT_A, invoiceTenantId: TENANT_B, pairCollision: false }),
-  creditNote({ customerTenantId: TENANT_A, invoiceTenantId: null, pairCollision: true }),
-  creditNote({ customerTenantId: TENANT_A, invoiceTenantId: TENANT_B, pairCollision: true }),
-  // buildUpdates — 14..18
+  // classifyCreditNote — 8..15
+  // No invoice linked at all: `invoiceId` NULL, so the missing-parent checks do not apply.
+  creditNote({
+    customerTenantId: TENANT_A,
+    invoiceId: null,
+    invoiceRowId: null,
+    invoiceTenantId: null,
+    pairCollision: false,
+  }),
+  creditNote({
+    customerTenantId: TENANT_A,
+    invoiceId: ROW_1,
+    invoiceRowId: ROW_1,
+    invoiceTenantId: TENANT_A,
+    pairCollision: false,
+  }),
+  creditNote({
+    customerTenantId: null,
+    invoiceId: ROW_1,
+    invoiceRowId: ROW_1,
+    invoiceTenantId: TENANT_A,
+    pairCollision: false,
+  }),
+  creditNote({
+    customerTenantId: TENANT_A,
+    invoiceId: ROW_1,
+    invoiceRowId: ROW_1,
+    invoiceTenantId: TENANT_B,
+    pairCollision: false,
+  }),
+  creditNote({
+    customerTenantId: TENANT_A,
+    invoiceId: null,
+    invoiceRowId: null,
+    invoiceTenantId: null,
+    pairCollision: true,
+  }),
+  creditNote({
+    customerTenantId: TENANT_A,
+    invoiceId: ROW_1,
+    invoiceRowId: ROW_1,
+    invoiceTenantId: TENANT_B,
+    pairCollision: true,
+  }),
+  // 14: invoiceId points at a row that is GONE (LEFT JOIN produced no Invoice at all)
+  creditNote({
+    customerTenantId: TENANT_A,
+    invoiceId: ROW_2,
+    invoiceRowId: null,
+    invoiceTenantId: null,
+    pairCollision: false,
+  }),
+  // 15: the linked Invoice exists but is itself an unrepaired NULL-tenant legacy row
+  creditNote({
+    customerTenantId: TENANT_A,
+    invoiceId: ROW_2,
+    invoiceRowId: ROW_2,
+    invoiceTenantId: null,
+    pairCollision: false,
+  }),
+  // buildUpdates — 16..20
   buildUpdates([
     OK_REPORT,
     REFUSED_REPORT,
@@ -230,11 +283,28 @@ describe("legacy-tenant-backfill: classifyCreditNote", () => {
     expect(v.verdict).toBe("refuse: parents disagree");
     expect(v.tenantId).toBeNull();
   });
+
+  it("B3g: refuse: parent missing — invoiceId is set but the Invoice row does not exist", () => {
+    // Without `invoiceRowId` this is indistinguishable from "no invoice linked": both leave
+    // `invoiceTenantId` NULL, and the row would have been ACCEPTED off the Customer alone with
+    // one parent never inspected.
+    const v = verdictOf(14);
+    expect(v.verdict).toBe("refuse: parent missing");
+    expect(v.tenantId).toBeNull();
+    expect(v.reason).toMatch(/does not exist/);
+  });
+
+  it("B3h: refuse: parent missing — the linked Invoice exists but its own tenantId is NULL", () => {
+    const v = verdictOf(15);
+    expect(v.verdict).toBe("refuse: parent missing");
+    expect(v.tenantId).toBeNull();
+    expect(v.reason).toMatch(/NULL tenantId/);
+  });
 });
 
 describe("legacy-tenant-backfill: buildUpdates", () => {
   it("B4a: one id-pinned, still-NULL-guarded UPDATE per ok row and none for a refused row", () => {
-    const result = outcome(14);
+    const result = outcome(16);
     expect(result.ok).toBe(true);
     const updates = result.value as Array<{
       table: string;
@@ -261,19 +331,19 @@ describe("legacy-tenant-backfill: buildUpdates", () => {
   });
 
   it("B4b: a report with no ok row produces no statements at all", () => {
-    const result = outcome(15);
+    const result = outcome(17);
     expect(result.ok).toBe(true);
     expect(result.value).toEqual([]);
   });
 
   it("B4c: refuses a table outside the three-table whitelist (no identifier from a report)", () => {
-    const result = outcome(16);
+    const result = outcome(18);
     expect(result.ok).toBe(false);
     expect(result.message).toContain("Tenant");
   });
 
   it("B4d: refuses an ok row that proposes no tenantId", () => {
-    const result = outcome(17);
+    const result = outcome(19);
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/tenantId/);
   });
@@ -281,7 +351,7 @@ describe("legacy-tenant-backfill: buildUpdates", () => {
   it("B4e: refuses the batch when two ok CreditNote rows claim the same (tenantId, number)", () => {
     // Per-row `pairCollision` cannot see this: both siblings still have a NULL tenantId, so
     // neither matches the other's EXISTS subquery — the constraint would only bite mid-transaction.
-    const result = outcome(18);
+    const result = outcome(20);
     expect(result.ok).toBe(false);
     expect(result.message).toContain("creditNoteNumber");
   });
@@ -350,6 +420,22 @@ describe("backfill-legacy-tenant-ids.mjs CLI contract", () => {
     expect(res.stdout).toContain("--live");
     expect(res.stdout).toContain("--backup-attested");
     expect(res.stdout).toMatch(/Exit codes/i);
+  });
+
+  it("B5f: the CreditNote listing selects the joined Invoice id, not only its tenant", () => {
+    // The classifier's missing-parent branches are unreachable without it: `invoiceTenantId`
+    // alone reads NULL for "no invoice", "invoice gone" and "invoice itself NULL-tenant".
+    expect(cliCodeLines()).toContain('i."id" AS "invoiceRowId"');
+  });
+
+  it("B5g: BACKFILL_CONFIRM_TOKEN is gated on JEST_WORKER_ID and never relaxes the attestation", () => {
+    const code = cliCodeLines();
+    expect(code).toContain("process.env.JEST_WORKER_ID");
+    expect(code).toContain("WARNING: test override BACKFILL_CONFIRM_TOKEN active");
+    expect(code).toContain("is ignored outside test");
+    // --live still refuses without an attested backup, token or no token (B5a proves the exit)
+    const res = runCli(["--live"]);
+    expect(res.status).toBe(2);
   });
 
   it("B5e: the session is declared read-only in code, not merely promised in a comment", () => {

@@ -17,9 +17,23 @@ import path from "node:path";
 // only actually lands after N failed attempts.
 // VISIBILITY_WATCHDOG_LOG_FILE and VISIBILITY_WATCHDOG_MARKER_FILE point the log and the
 // FAILED marker at scratch files instead of the real `local-assets/` paths, and
-// VISIBILITY_WATCHDOG_ATTEMPT_DELAYS_MS collapses the real 5s..240s backoff between flip
+// VISIBILITY_WATCHDOG_ATTEMPT_DELAYS_MS collapses the real 5s..120s backoff between flip
 // attempts to a few milliseconds so specs don't sleep for real minutes.
+//
+// All four overrides are gated on JEST_WORKER_ID inside the script (the SCHEMA_DRIFT_PRISMA_CLI
+// pattern). These specs run INSIDE a jest worker and spawn the script with `...process.env`, so
+// the child inherits JEST_WORKER_ID and the overrides are honoured — that inheritance is what
+// makes this whole suite possible, and it is asserted directly below.
 
+const API_ROOT = path.resolve(__dirname, "../..");
+
+/** The four test-only overrides, all gated on JEST_WORKER_ID inside the script. */
+const OVERRIDE_NAMES = [
+  "VISIBILITY_WATCHDOG_GH_CMD",
+  "VISIBILITY_WATCHDOG_LOG_FILE",
+  "VISIBILITY_WATCHDOG_MARKER_FILE",
+  "VISIBILITY_WATCHDOG_ATTEMPT_DELAYS_MS",
+] as const;
 const SCRIPT = path.resolve(__dirname, "../../../../scripts/visibility-watchdog.mjs");
 
 let dir: string;
@@ -258,14 +272,24 @@ describe("visibility-watchdog.mjs contract", () => {
     expect(fs.existsSync(markerFile)).toBe(false);
   });
 
-  it("retries a failed flip: edit fails twice then succeeds — exit 0, verified on attempt 3, no error logged", () => {
+  it("retries a failed flip: edit fails twice then succeeds — exit 0, verified on attempt 3 after two real sleeps", () => {
     const logFile = newLogPath("retry-then-success");
+    // Five delays for six attempts (the script's real shape since the dead 240s entry was
+    // dropped), each 40ms: a 3-attempt success must therefore burn TWO of them. 80ms is the
+    // floor the sleeps alone impose — asserting it proves the backoff is actually awaited
+    // rather than skipped, without making the test hostage to how fast the host boots Node.
+    const startedAt = Date.now();
     const res = run(
       ["--minutes", "0.01", "--repo", "acme/test"],
-      fakeEnv("retry-then-success", logFile, { FAKE_FAIL_ATTEMPTS: "2" }),
+      fakeEnv("retry-then-success", logFile, {
+        FAKE_FAIL_ATTEMPTS: "2",
+        VISIBILITY_WATCHDOG_ATTEMPT_DELAYS_MS: "[40,40,40,40,40]",
+      }),
     );
+    const elapsedMs = Date.now() - startedAt;
 
     expect(res.status).toBe(0);
+    expect(elapsedMs).toBeGreaterThanOrEqual(80);
     const log = readLog(logFile);
     expect(log).toContain(" start ");
     expect(log).toContain("n=1/6");
@@ -275,10 +299,86 @@ describe("visibility-watchdog.mjs contract", () => {
     expect(log).toContain(" verified ");
     expect(log).toContain("attempt=3/6");
     expect(log).not.toContain(" error ");
+    // the delays actually in force are reported on the start line
+    expect(log).toContain("delays=[40,40,40,40,40]");
     // the two failed attempts carry the stub's stderr first line
     expect(log).toMatch(/HTTP 500: Internal Server Error \(attempt 1\)/);
     expect(log).toMatch(/HTTP 500: Internal Server Error \(attempt 2\)/);
   });
+
+  it("an invalid VISIBILITY_WATCHDOG_ATTEMPT_DELAYS_MS falls back to the five default delays", () => {
+    const logFile = newLogPath("bad-delays");
+    // `success` verifies on attempt 1, so the default 5s..120s list is reported but never slept.
+    const res = run(
+      ["--minutes", "0.01", "--repo", "acme/test"],
+      fakeEnv("success", logFile, { VISIBILITY_WATCHDOG_ATTEMPT_DELAYS_MS: "not json at all" }),
+    );
+
+    expect(res.status).toBe(0);
+    const log = readLog(logFile);
+    // Five entries for six attempts — the sixth attempt is never followed by a sleep, so a
+    // sixth delay would be unreachable (and would overstate the documented budget).
+    expect(log).toContain("delays=[5000,15000,30000,60000,120000]");
+  });
+
+  it("the four test-only overrides are gated on JEST_WORKER_ID and announced on stderr", () => {
+    const logFile = newLogPath("override-warnings");
+    const res = run(["--minutes", "0.01", "--repo", "acme/test"], fakeEnv("success", logFile));
+
+    expect(res.status).toBe(0);
+    for (const name of OVERRIDE_NAMES) {
+      expect(res.stderr).toContain(`WARNING: test override ${name} active`);
+      // exactly one line per variable, however many times the getter is called
+      expect(res.stderr.split(`WARNING: test override ${name} active`)).toHaveLength(2);
+    }
+  });
+
+  it("outside a jest worker every override is ignored LOUDLY — gated in code, not in a comment", () => {
+    // Deliberately NOT executed with JEST_WORKER_ID unset: without the overrides the script
+    // would call the real `gh` over the network and append to the real operational log under
+    // `local-assets/`. The guard is pinned at the source level instead — the same technique
+    // backfill-legacy-tenant-ids-script.spec.ts uses for its read-only pins.
+    const code = fs.readFileSync(SCRIPT, "utf8");
+
+    // one gate, derived from process.env.JEST_WORKER_ID, and every override read through it
+    expect(code).toContain("const UNDER_TEST = Boolean(process.env.JEST_WORKER_ID)");
+    expect(code).toContain("WARNING: test override ${name} active");
+    expect(code).toContain("is ignored outside test (JEST_WORKER_ID unset)");
+    for (const name of OVERRIDE_NAMES) {
+      expect(code).toContain(`testOverride("${name}")`);
+      // never read straight off process.env, which would bypass the gate
+      expect(code).not.toContain(`process.env.${name}`);
+    }
+  });
+
+  it("this suite really does run inside a jest worker, and the child inherits it", () => {
+    // The premise every other case rests on: the overrides above are only honoured because
+    // JEST_WORKER_ID is set here and `fakeEnv` spreads `process.env` into the child.
+    expect(process.env.JEST_WORKER_ID).toBeTruthy();
+    expect(fakeEnv("success", newLogPath("inherit")).JEST_WORKER_ID).toBe(
+      process.env.JEST_WORKER_ID,
+    );
+  });
+
+  it("the start line names the main-checkout root the marker and log are written under", async () => {
+    const logFile = newLogPath("root-line");
+    const { log } = await awaitStartLine({
+      env: fakeEnv("success", logFile),
+      logFile,
+    });
+    const gitCommonDir = spawnSync(
+      "git",
+      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+      { cwd: API_ROOT, encoding: "utf8" },
+    );
+    expect(log).toMatch(/ root=\S/);
+    if (gitCommonDir.status === 0) {
+      // The MAIN checkout, even when this spec runs from a linked worktree: the parent of the
+      // common git dir, never the worktree's own root.
+      const expected = path.dirname(path.resolve(gitCommonDir.stdout.trim()));
+      expect(log).toContain(`root=${expected}`);
+    }
+  }, 35_000);
 
   it("never verifies: gh edit reports success but visibility stays PUBLIC — exit 1, all 6 attempts logged, FAILED marker written", () => {
     const logFile = newLogPath("public-forever");

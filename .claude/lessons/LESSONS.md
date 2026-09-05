@@ -11,6 +11,19 @@
 
 ## process
 
+### L-077 · 2026-09-05 · process · close-out re-check
+
+- **Symptom:** `LESSONS.md` keeps merging CLEANLY into duplicate ids — L-054 four times, then
+  L-058, L-061, L-067 and L-074, each renumbered after the fact.
+- **Root cause:** two branches append under DIFFERENT `##` section headings, so git finds no
+  textual conflict; both derived the same next id from the base they branched off, and the union
+  keeps both entries with the same number.
+- **Lesson:** **After EVERY rebase or merge, run `node scripts/validate-lessons.mjs` before
+  appending: renumber your entries to the MERGED file's `nextId` and archive back to the cap
+  first. An id belongs to whichever branch LANDS first, never to whoever wrote it first.**
+- **Guard:** `validate-lessons` (DUPLICATE ID, COUNT MISMATCH, OVER CAP), step 2 of
+  `npm run verify` and re-run in CI; carry this as a line in the rebase checklist.
+
 ### L-041 · 2026-09-01 · process
 
 - **Symptom:** 13 rows sat in `proven` — merged, deployed, post-deploy run already green — while
@@ -147,22 +160,6 @@
 - **Guard:** `split-prisma-schema.mjs --check` proves block-identity + `MODEL_DOMAIN` placement;
   `npm run local:drift` is the output-side oracle — both cheap/re-runnable, unlike a `.d.ts` diff.
   Its comment stripper treats a quote left unterminated on its line as regex text, never a string opener.
-
-### L-039 · 2026-09-01 · tooling
-
-- **Symptom:** a green PR went red after a routine rebase, on a check unrelated to its contents —
-  and its author could not fix it: the failing number is a policy threshold only the owner may set.
-- **Root cause:** the gate shipped while the repo sat **71 bytes** under the cap it enforces.
-  Correct gate, zero margin — so the next branch to append to the capped file inherits a failure it
-  did not cause, and appending is exactly what the rules REQUIRE after a fix.
-- **Lesson:** **Land a gate only with headroom, and only when its threshold is a number you are
-  authorized to set.** At zero margin a gate is a tripwire for the next unrelated PR, not a guard;
-  if the threshold is an owner's call, land the ruling with it or the gate blocks the project on a
-  decision nobody scheduled.
-- **Guard:** `validate-lessons` prints `binding:` and the remaining headroom every run — treat
-  `~0 more` as unlanded work. Second-order cost: the run died at the gate, so everything its
-  success path owned went undone and the repo was left **public** — a private flip that lives
-  after a green CI is not a `finally`.
 
 ### L-038 · 2026-09-01 · tooling
 
@@ -417,6 +414,20 @@
 - **Guard:** `db-locks.spec.ts` (p) pins `keepAlive: true` / `keepAliveInitialDelayMillis: 30_000`
   on both lock pools, and their per-family `max`.
 
+### L-076 · 2026-09-05 · deploy · close-out re-check
+
+- **Symptom:** an unattended retry loop whose header promised "total <= ~8 min" had no upper
+  bound at all, and the marker it writes when it gives up landed where nobody looks.
+- **Root cause:** the budget counted only the sleeps between attempts — every external `gh` call
+  was unbounded, so ONE hung call outlives the whole public window; and the marker path resolved
+  against the LAUNCHING directory, so a watchdog armed from a worktree hid its failure there.
+- **Lesson:** **A retry loop is only as bounded as its slowest call — give every external call a
+  timeout and state the budget as (sum of sleeps + sum of timeouts). And a failure marker must
+  land where a reader actually looks: one fixed place, named in the runbook step that tells them
+  to check it.**
+- **Guard:** `runGh`'s 60s timeout + `visibility-watchdog-script.spec.ts` (reachable-delay list,
+  `root=` on the start line, gated overrides); the runbook names the marker path.
+
 ### L-064 · 2026-09-04 · deploy · imp-04
 
 - **Symptom:** the local E2E lane's browser login against the Docker-built web image was
@@ -508,22 +519,6 @@ build` forces production — so that branch was dead in every Docker image, not 
 - **Guard:** `apps/api/src/common/enum-parity.spec.ts` — a generic table (40 enums) against
   `packages/types/api/enums.ts`, plus a regression layer pinning the drifted files and the mobile
   jest stub that can't `require` the shared package directly.
-
-### L-037 · 2026-09-01 · domain · #TBD
-
-- **Symptom:** the fix for a reopen that wrongly credited stock still left the reopen billing the
-  delivery it had just undone — `OrderItem.deliveredQty` survived the reversal, and the
-  delivered-basis invoice reconcile bills exactly that field.
-- **Root cause:** the reversal was corrected for the field the bug report named and no other. The
-  forward path wrote `deliveredQty` unconditionally (whether or not money changed hands) while the
-  reversal reset only `status`.
-- **Lesson:** **A reversal must enumerate every field the forward operation wrote, not just the
-  one the bug report named** — and state, per write, whether it is undone by REVERSAL or covered
-  by REFUSAL (blocking the operation while that state stands). Those are different strategies and
-  the mix must be deliberate. ⚠️ Note the coupling: the new refusal guard is what made the
-  reversal gap REACHABLE, so a fix can open the path to a latent bug.
-- **Guard:** `REG-B55 (T21)`; the write-by-write enumeration is recorded in F11's fix card so the
-  next batch on this path starts from it rather than rebuilding it.
 
 ### L-045 · 2026-09-02 · domain · #TBD
 

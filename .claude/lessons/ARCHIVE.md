@@ -502,3 +502,47 @@ cap.
 - **Guard:** none — `campaign-check` reads the ledger, the mirror has no equivalent. Count from
   `.claude/campaign/status/*.jsonl` (last state per row id) before repeating any figure. Same
   family as [[L-034]].
+
+## Archived 2026-09-05 — headroom for L-076/L-077 (fix/imp-closeout-review)
+
+Master stood at 39 of 40 after #623's own double archive, so this branch's two additions
+would have re-pinned it at the cap. Two entries archived so they land with headroom instead,
+chosen oldest-first among entries whose guard is a landed automated check
+rather than a procedure, and which nothing outside a frozen `.claude/pipeline/` run record
+still cites: **L-037** (domain, 2026-09-01 — `REG-B55 (T21)` runs on every suite) and **L-039**
+(tooling, 2026-09-01 — `validate-lessons` now prints `binding:` and the remaining headroom on
+every run, which is the whole of what the entry asks a reader to remember). Program entries
+(`imp-*`/wave) and L-074 were excluded by rule. Ids stay retired: the `[[L-039]]` references
+already in this file still resolve.
+
+### L-037 · 2026-09-01 · domain · #TBD
+
+- **Symptom:** the fix for a reopen that wrongly credited stock still left the reopen billing the
+  delivery it had just undone — `OrderItem.deliveredQty` survived the reversal, and the
+  delivered-basis invoice reconcile bills exactly that field.
+- **Root cause:** the reversal was corrected for the field the bug report named and no other. The
+  forward path wrote `deliveredQty` unconditionally (whether or not money changed hands) while the
+  reversal reset only `status`.
+- **Lesson:** **A reversal must enumerate every field the forward operation wrote, not just the
+  one the bug report named** — and state, per write, whether it is undone by REVERSAL or covered
+  by REFUSAL (blocking the operation while that state stands). Those are different strategies and
+  the mix must be deliberate. ⚠️ Note the coupling: the new refusal guard is what made the
+  reversal gap REACHABLE, so a fix can open the path to a latent bug.
+- **Guard:** `REG-B55 (T21)`; the write-by-write enumeration is recorded in F11's fix card so the
+  next batch on this path starts from it rather than rebuilding it.
+
+### L-039 · 2026-09-01 · tooling
+
+- **Symptom:** a green PR went red after a routine rebase, on a check unrelated to its contents —
+  and its author could not fix it: the failing number is a policy threshold only the owner may set.
+- **Root cause:** the gate shipped while the repo sat **71 bytes** under the cap it enforces.
+  Correct gate, zero margin — so the next branch to append to the capped file inherits a failure it
+  did not cause, and appending is exactly what the rules REQUIRE after a fix.
+- **Lesson:** **Land a gate only with headroom, and only when its threshold is a number you are
+  authorized to set.** At zero margin a gate is a tripwire for the next unrelated PR, not a guard;
+  if the threshold is an owner's call, land the ruling with it or the gate blocks the project on a
+  decision nobody scheduled.
+- **Guard:** `validate-lessons` prints `binding:` and the remaining headroom every run — treat
+  `~0 more` as unlanded work. Second-order cost: the run died at the gate, so everything its
+  success path owned went undone and the repo was left **public** — a private flip that lives
+  after a green CI is not a `finally`.

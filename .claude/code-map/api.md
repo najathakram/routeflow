@@ -135,6 +135,22 @@ reason}` over verdicts `ok` | `refuse: parent missing` | `refuse: parents disagr
   `src/common/backfill-legacy-tenant-ids-script.spec.ts` (B1–B4 every classifier branch +
   `buildUpdates`, evaluated in one `node --input-type=module` shim like `railway-db-url.spec.ts`;
   B5 CLI argument refusal + read-only source pins at spawn level, no database).
+  **Close-out re-check (2026-09-05):** the CreditNote SELECT also reads `i."id" AS
+"invoiceRowId"`, because `invoiceTenantId` alone cannot tell "no invoice linked" from "the
+  linked Invoice is GONE" or "the linked Invoice is itself NULL-tenant" — all three read NULL
+  after the LEFT JOIN, and the last two used to be ACCEPTED off the Customer alone; both are now
+  `refuse: parent missing` (B3g/B3h). A `buildUpdates` throw no longer fails report **or**
+  `--dry-run`: the refusal prints to stdout as well as stderr and `--json` carries it as
+  `batchError` with `summary.blocked: true` (`summary.ok` unchanged); only `--live` throws.
+  Test-only `BACKFILL_CONFIRM_TOKEN` supplies the typed confirmation as a value, honoured ONLY
+  inside a jest worker (loud WARNING, same gate shape as the watchdog's four overrides) and never
+  relaxing `--backup-attested`. DB-lane spec `src/common/backfill-legacy-tenant-ids.db.spec.ts`
+  (`jest.db.config.js`, `npm run local:test:db`) executes the real paths against the compose
+  Postgres — D1 report and D2 `--dry-run` leave the row NULL, D3 `--live` writes the RouteRun's
+  tenant, D4 a second `--live` is "nothing to do", D5 a mismatched token exits 3, D6 a non-TTY
+  with no token exits 3 — over a throwaway `e2e-backfill-*` tenant whose rows all carry an
+  `e2e-backfill-` id prefix, with an ok-set assertion before every `--live` so a compose database
+  holding someone else's NULL-tenant rows fails the spec instead of repairing them.
 - **`scripts/ci-audit-critical.mjs` (2026-09-04)** — CI advisory gate: wraps `npm audit
 --omit=dev --audit-level=<level> --json` in `spawnSync` (`shell:false`, up to 3 attempts,
   15s/45s backoff, 120s per-attempt timeout, 64 MiB `maxBuffer`) so an `npm` registry
@@ -175,19 +191,37 @@ reason}` over verdicts `ok` | `refuse: parent missing` | `refuse: parents disagr
   safety net for the public-repo CI window in the canonical deploy flow (`CLAUDE.md`,
   `docs/runbooks/deploy-visibility-flip.md`): launched BEFORE `gh repo edit … public`, it
   `setTimeout`-sleeps `--minutes` (default 45, never a busy-wait, so signals still work),
-  then flips `--repo` (default `najathakram/routeflow`) private via `spawnSync("gh", …,
-{shell:false})` and read-back-verifies `gh repo view --json visibility` in a loop (≤5
-  tries, 10s apart) until `PRIVATE`. Appends one `<ISO> start|flip|verified|error <detail>`
-  line per event to `local-assets/visibility-watchdog.log` (gitignored) and mirrors it to
-  stdout; exits 0 once verified, 1 on an edit failure or an unconfirmed flip. A flip landing
-  mid-CI/mid-deploy is by design — a private-repo Action just fails on billing and gets
-  rerun. Test-only env: `VISIBILITY_WATCHDOG_GH_CMD` (JSON argv, swaps in a fake `gh` — no
-  network), `VISIBILITY_WATCHDOG_LOG_FILE` (scratch log path), `VISIBILITY_WATCHDOG_VERIFY_INTERVAL_MS`
-  (collapses the 10s poll for fast specs). Contract spec:
-  `src/common/visibility-watchdog-script.spec.ts` (spawn-level, fake `gh` driver, 8 cases:
-  success, never-verifies, edit-fails, stdout mirrors log (now guarded non-empty), arg
-  defaults, slow-boot repro, awaitStartLine cap-rejection + kill pin, awaitStartLine
-  prompt-reject (exit code + stderr) when the child dies before the start line). The "arg
+  then retries the flip itself: **up to 6 attempts**, each one `gh repo edit … --visibility
+private …` immediately followed by a `gh repo view --json visibility` read-back, stopping at
+  the first `PRIVATE`. **Bounded end to end (close-out re-check, 2026-09-05, L-076):** every
+  `gh` call carries `timeout: 60_000, killSignal: "SIGKILL"` (a hung call is otherwise an
+  unbounded public window), and the backoff list is FIVE long — `[5s,15s,30s,60s,120s]`, since
+  attempt 6 is never followed by a sleep — so the worst case is ≈3.8 min of sleeps plus
+  6 × 2 × 60 s of call timeouts. Appends one `<ISO> start|attempt|verified|error <detail>`
+  line per event to `local-assets/visibility-watchdog.log` (gitignored) and mirrors it to stdout;
+  `start` reports `root=` and `delays=`, an `attempt` reports `edit_exit=` (`spawn-error` for a
+  call that never returned) and `edit_stderr=` (prefixed with the spawn error's own `code`, e.g.
+  `ETIMEDOUT`). Exits 0 once verified (clearing any stale marker), 1 after 6 unconfirmed
+  attempts — then writing `local-assets/visibility-watchdog.FAILED`. ⚠️ **`local-assets/`
+  resolves against the MAIN checkout**, via `git rev-parse --path-format=absolute
+--git-common-dir` (10 s timeout, falling back to the `__dirname` repo root): a watchdog armed
+  from `.claude/worktrees/*` must not hide its marker there, and
+  `docs/runbooks/deploy-visibility-flip.md` names the path to check before and after every
+  window. A flip landing mid-CI/mid-deploy is by design — a private-repo Action just fails on
+  billing and gets rerun. **Four test-only env overrides, all routed through `testOverride()`
+  and honoured ONLY inside a jest worker** (`JEST_WORKER_ID` set), with one
+  `WARNING: test override <NAME> active` stderr line when honoured and one naming line when
+  ignored — the `SCHEMA_DRIFT_PRISMA_CLI` pattern from `scripts/schema-drift.mjs`:
+  `VISIBILITY_WATCHDOG_GH_CMD` (JSON argv, swaps in a fake `gh` — no network),
+  `…_LOG_FILE` / `…_MARKER_FILE` (scratch paths), `…_ATTEMPT_DELAYS_MS` (JSON array; malformed
+  input falls back to the default list). Contract spec:
+  `src/common/visibility-watchdog-script.spec.ts` (spawn-level, fake `gh` driver, 12 cases:
+  success, retry-then-success (40 ms delays, elapsed ≥ 80 ms for two real sleeps),
+  malformed-delays fallback, override WARNING lines, source pin that every override is read
+  through the `JEST_WORKER_ID` gate, jest-worker inheritance, `root=` line, never-verifies,
+  edit-fails, stdout mirrors log (guarded non-empty), arg defaults, slow-boot repro,
+  awaitStartLine cap-rejection + kill pin, awaitStartLine prompt-reject (exit code + stderr)
+  when the child dies before the start line). The "arg
   defaults" and slow-boot cases share
   `awaitStartLine({ argv = [SCRIPT], env, logFile, capMs = 30_000, intervalMs = 50, onSpawn })`
   (`logFile` required — the poll reads it; `onSpawn` is a test-only hook handing back the child
@@ -360,15 +394,20 @@ reason}` over verdicts `ok` | `refuse: parent missing` | `refuse: parents disagr
   would replay a stale green. `jest.repo-truth.config.js` extends the `package.json` `"jest"`
   config the same way `jest.db.config.js` does (`reporters: ["default"]` — never the campaign
   reporter, which would clobber `.campaign/runs/api.json`) with `testRegex:
-"(docs-truth|no-dead-deps)\\.spec\\.ts$"`; the main config's `testPathIgnorePatterns` excludes
-  both by name so `npm test` never double-runs them. New API script `test:repo-truth`; root
+"(docs-truth|no-dead-deps|no-single-schema-path)\\.spec\\.ts$"` (the third joined it
+  with wave E's schema-folder split); the main config's `testPathIgnorePatterns` excludes all three
+  by name so `npm test` never double-runs them. New API script `test:repo-truth`; root
   `verify` gained the `test:repo-truth` token on the `turbo run check-types lint test` list. A
   `@routeflow/api#test` workspace-task override was tried first and reverted —
   `packages/pricing/src/package-shape.spec.ts` forbids that exact key — so `turbo.json` instead
   carries a GENERIC `test:repo-truth` task (`dependsOn: ["^build"]`, outside paths as explicit
   `$TURBO_ROOT$/…` `inputs`, `outputs: []`); only apps/api declares the script, so turbo only
   ever executes it there. `turbo-inputs.spec.ts` pins the task's inputs list, the verify/script
-  wiring, and the jest-config split (Lesson L-062, tooling).
+  wiring, and the jest-config split (Lesson L-062, tooling). **Close-out re-check (2026-09-05):**
+  the inputs also carry `scripts/**`, `.github/workflows/**`, `.claude/skills/**`,
+  `apps/api/scripts/**`, `apps/api/Dockerfile`, `apps/api/prisma.config.ts`, `package.json` and
+  `docker-compose.yml` (no-single-schema-path's reach), and the spec pins ALL sixteen explicit
+  inputs plus the lane's exact three specs.
 - **`src/main.ts`** — ⚠️ NEVER `app.use(json())` here: it consumes the body before Nest captures `rawBody` and silently breaks EVERY Stripe webhook signature (#400 — the 2mb body limit goes through Nest's parser options). **Sentry (2026-08-26, DSN-optional):** `import "./instrument"` is the FIRST import (`src/instrument.ts` — `Sentry.init` with `enabled: !!process.env.SENTRY_DSN`, inert otherwise); global filters registered as `useGlobalFilters(new SentryExceptionFilter(httpAdapter), new ThrottlerExceptionFilter(), new MulterExceptionFilter())` — Nest reverses the array so the specific filters still win for their types; ⚠️ the catch-all Sentry filter MUST stay first or the narrow ones are never reached. `src/common/sentry-exception.filter.ts` captures ONLY ≥500s with `tenant`/user/path tags then defers to `super.catch`; `src/common/multer-exception.filter.ts` maps multer 2.3.0's newer codes (`LIMIT_FIELD_ARRAY_INDEX`, `INVALID_FIELD_NAME`, `STREAM_DESTROYED`) to 400 — @nestjs/platform-express's `transformException` switches on a frozen message list that predates them, so without it they arrive as raw `MulterError`s, score as 500, and capture one Sentry event per attacker probe. startup: `assertSecrets()` (JWT required in all envs; **`STORAGE_URL_SIGNING_SECRET` now FATAL in production too — F5-001 fail-closed**; `ENCRYPTION_KEY` still warn-only), **no boot-time DDL (PR-1, `imp-03a`, 2026-09-03)** — `runStartupMigration()` is deleted; schema drift is now caught read-only by `scripts/schema-drift.mjs`, not by a startup writer,
   helmet, trust proxy 2 (Railway CDN), CORS wildcard
   patterns, global `ValidationPipe` (whitelist/forbidNonWhitelisted/transform),

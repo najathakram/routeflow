@@ -111,7 +111,8 @@
         "$TURBO_ROOT$/apps/api/scripts/**",
         "$TURBO_ROOT$/apps/api/Dockerfile",
         "$TURBO_ROOT$/apps/api/prisma.config.ts",
-        "$TURBO_ROOT$/package.json"
+        "$TURBO_ROOT$/package.json",
+        "$TURBO_ROOT$/docker-compose.yml"
       ],
       "outputs": []
     },

@@ -23,6 +23,18 @@
  *   --json        print the report as JSON instead of prose (for the owner's records).
  *   --help        usage, exit 0.
  *
+ * A malformed batch (see `buildUpdates`) blocks report and `--dry-run` rather than failing them:
+ * the refusal is printed to BOTH stdout and stderr, `--json` carries it as `batchError` with
+ * `summary.blocked: true` (`summary.ok` still counts the ok rows), and the exit stays 0. `--live`
+ * lets it throw — there is nothing safe to run.
+ *
+ * TEST-ONLY HOOK
+ *   BACKFILL_CONFIRM_TOKEN — supplies the typed confirmation as a value instead of reading a
+ *   TTY, so `apps/api/src/common/backfill-legacy-tenant-ids.db.spec.ts` can execute the --live
+ *   path against the compose database. Honoured ONLY inside a jest worker (JEST_WORKER_ID set)
+ *   that also sets it, with a WARNING line; ignored — loudly — anywhere else. It does NOT relax
+ *   `--backup-attested`, and a value that does not match `BACKFILL <n> ROWS` is still exit 3.
+ *
  * EXIT CODES
  *   0  report / dry-run printed, or `--live` applied every ok row
  *   1  error — no database URL, connection or query failure, transaction error
@@ -196,7 +208,7 @@ const TABLES = [
     classify: classifyCreditNote,
     sql: `SELECT cn."id", cn."createdAt", cn."creditNoteNumber", cn."customerId",
                  c."tenantId" AS "customerTenantId", cn."invoiceId",
-                 i."tenantId" AS "invoiceTenantId",
+                 i."id" AS "invoiceRowId", i."tenantId" AS "invoiceTenantId",
                  EXISTS (SELECT 1 FROM "CreditNote" x
                           WHERE x."tenantId" = c."tenantId"
                             AND x."creditNoteNumber" = cn."creditNoteNumber") AS "pairCollision"
@@ -208,6 +220,10 @@ const TABLES = [
       creditNoteNumber: row.creditNoteNumber,
       customerId: row.customerId,
       invoiceId: row.invoiceId,
+      // `invoiceRowId` is the joined Invoice."id": NULL here with a non-NULL `invoiceId` means
+      // the parent row is GONE, which the tenant column alone cannot distinguish from "no
+      // invoice linked". classifyCreditNote refuses both.
+      invoiceRowId: row.invoiceRowId,
       customerTenantId: row.customerTenantId,
       invoiceTenantId: row.invoiceTenantId,
       pairCollision: row.pairCollision === true,
@@ -241,6 +257,29 @@ function connect(connectionString) {
   // `pg` is required lazily so argument validation above can never be preceded by a driver load.
   const { Client } = createRequire(import.meta.url)("pg");
   return new Client({ connectionString });
+}
+
+// Test-only: the typed confirmation, supplied as a value instead of read from a TTY, so the
+// DB-lane spec can execute the --live path end to end. Honoured ONLY inside a jest worker that
+// also sets it, announced loudly when honoured, and ignored — also loudly — anywhere else, the
+// same shape as SCHEMA_DRIFT_PRISMA_CLI in schema-drift.mjs and the four overrides in
+// scripts/visibility-watchdog.mjs. It never relaxes --backup-attested: an unattended --live
+// still has to name a backup.
+function confirmTokenOverride() {
+  const raw = process.env.BACKFILL_CONFIRM_TOKEN;
+  if (!raw) return undefined;
+  if (!process.env.JEST_WORKER_ID) {
+    console.error(
+      "backfill-legacy-tenant-ids: BACKFILL_CONFIRM_TOKEN is ignored outside test " +
+        "(JEST_WORKER_ID unset); the confirmation must be typed on a TTY",
+    );
+    return undefined;
+  }
+  console.error(
+    "backfill-legacy-tenant-ids: WARNING: test override BACKFILL_CONFIRM_TOKEN active — " +
+      "this is NOT an owner-typed confirmation",
+  );
+  return raw;
 }
 
 function ask(question) {
@@ -299,15 +338,21 @@ async function main() {
   for (const t of perTable) say(`  ${t.table.padEnd(16)} ok=${t.ok} refused=${t.refused}`);
   say(`  ${"TOTAL".padEnd(16)} ok=${okTotal} refused=${refusedTotal}\n`);
 
-  // A malformed batch (see buildUpdates) must not turn the READ-ONLY report — the thing the
-  // owner reads to decide — into a failure: report mode prints the refusal and still exits 0.
-  // `--dry-run`/`--live` let it throw, because there is no safe write list to show or run.
+  // A malformed batch (see buildUpdates) must not turn a READ-ONLY run — the thing the owner
+  // reads to decide — into a failure: report and --dry-run print the refusal and still exit 0
+  // with `summary.blocked: true`. Only --live lets it throw, because there is nothing safe to
+  // run. The refusal goes to stdout as well as stderr (and into --json as `batchError`): an
+  // owner who redirected the report to a file must not end up with a document that looks
+  // complete while the one line explaining why it is empty went somewhere else.
   let updates = [];
+  let batchError = null;
   try {
     updates = buildUpdates(reports);
   } catch (e) {
-    if (mode !== "report") throw e;
-    console.error(`backfill-legacy-tenant-ids: no write list could be built — ${e.message}`);
+    if (mode === "live") throw e;
+    batchError = `backfill-legacy-tenant-ids: no write list could be built — ${e.message}`;
+    console.error(batchError);
+    say(batchError);
   }
   const countsByTable = (list) =>
     Object.fromEntries(
@@ -315,7 +360,11 @@ async function main() {
     );
 
   if (mode === "dry-run") {
-    say(`=== DRY RUN — the ${updates.length} statement(s) --live would execute ===`);
+    say(
+      batchError
+        ? "=== DRY RUN — BLOCKED, no write list could be built; nothing to show ==="
+        : `=== DRY RUN — the ${updates.length} statement(s) --live would execute ===`,
+    );
     updates.forEach((update, index) => {
       say(`  [${index + 1}] ${update.sql}`);
       say(`        $1 = ${update.params[0]}`);
@@ -335,7 +384,8 @@ async function main() {
     if (updates.length === 0) {
       say("=== LIVE — no ok rows to repair; nothing to do ===\n");
     } else {
-      if (!process.stdin.isTTY) {
+      const injected = confirmTokenOverride();
+      if (injected === undefined && !process.stdin.isTTY) {
         console.error(
           "backfill-legacy-tenant-ids: refused — --live needs an interactive TTY for the typed " +
             "confirmation, and stdin is not one",
@@ -343,7 +393,7 @@ async function main() {
         return 3;
       }
       const phrase = `BACKFILL ${updates.length} ROWS`;
-      const answer = await ask(`Type "${phrase}" to proceed: `);
+      const answer = injected ?? (await ask(`Type "${phrase}" to proceed: `));
       if (answer.trim() !== phrase) {
         console.error("backfill-legacy-tenant-ids: refused — confirmation text did not match");
         return 3;
@@ -387,7 +437,12 @@ async function main() {
           backupAttested: opts.live ? opts.backupAttested : null,
           rows: reports.map((r) => ({ ...r, createdAt: r.createdAt?.toISOString?.() ?? null })),
           perTable,
-          summary: { ok: okTotal, refused: refusedTotal },
+          summary: {
+            ok: okTotal,
+            refused: refusedTotal,
+            ...(batchError ? { blocked: true } : {}),
+          },
+          ...(batchError ? { batchError } : {}),
           updates: mode === "report" ? null : updates,
           applied: mode === "live" ? applied : null,
         },
