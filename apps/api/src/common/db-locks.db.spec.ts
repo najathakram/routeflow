@@ -4,6 +4,12 @@
  * Runs only under `npm run local:test:db` (jest.db.config.js's `.db.spec.ts$` lane), against
  * the compose Postgres — never in the default `npm run test` red gate (test-plan.md T4).
  *
+ * WHY THE FAMILY IS `order-merge` AND NOT A TEST-ONLY ONE: `LOCK_FAMILIES` is a closed
+ * allow-list (PR-2b gave each family its own pool, so an unrecognised family would stand up a
+ * ninth-through-sixteenth connection nobody sized for) and `withAdvisoryLock` throws a TypeError
+ * on anything outside it. The keys below are test-only, which is what actually keeps these
+ * contention cases off any real lock.
+ *
  * House rule for tests of NEW modules: guarded `require` inside the test body, so the module's
  * absence fails on an assertion (`typeof mod.withAdvisoryLock` is `"undefined"`), never on an
  * unresolved import. See test-plan.md T4 and `testing/db-spec.spec.ts` for the pattern.
@@ -71,7 +77,7 @@ describeDb("db-locks — real-Postgres contention (T4, R1)", () => {
     const events: { start: number; end: number }[] = [];
     const run = () =>
       withAdvisoryLock(
-        { family: "t-lock", key: "same", mode: "wait", waitMs: 20_000 },
+        { family: "order-merge", key: "same", mode: "wait", waitMs: 20_000 },
         async () => {
           const start = Date.now();
           await sleep(300);
@@ -93,7 +99,7 @@ describeDb("db-locks — real-Postgres contention (T4, R1)", () => {
   it("(b) two concurrent wait locks on DIFFERENT keys run concurrently: their intervals overlap", async () => {
     const events: Record<string, { start: number; end: number }> = {};
     const run = (key: string) =>
-      withAdvisoryLock({ family: "t-lock", key, mode: "wait", waitMs: 20_000 }, async () => {
+      withAdvisoryLock({ family: "order-merge", key, mode: "wait", waitMs: 20_000 }, async () => {
         const start = Date.now();
         await sleep(300);
         const end = Date.now();
@@ -120,7 +126,7 @@ describeDb("db-locks — real-Postgres contention (T4, R1)", () => {
     });
 
     const holderPromise = withAdvisoryLock(
-      { family: "t-lock", key: "held", mode: "wait", waitMs: 20_000 },
+      { family: "order-merge", key: "held", mode: "wait", waitMs: 20_000 },
       async () => {
         signalHolderAcquired();
         await sleep(1500);
@@ -134,7 +140,7 @@ describeDb("db-locks — real-Postgres contention (T4, R1)", () => {
     let waiterError: any;
     try {
       await withAdvisoryLock(
-        { family: "t-lock", key: "held", mode: "wait", waitMs: 500 },
+        { family: "order-merge", key: "held", mode: "wait", waitMs: 500 },
         async () => {
           throw new Error(
             "T4(c) violated: the waiter's fn ran while the holder still held the lock",
@@ -165,7 +171,7 @@ describeDb("db-locks — real-Postgres contention (T4, R1)", () => {
     });
 
     const holderPromise = withAdvisoryLock(
-      { family: "t-lock", key: "trykey", mode: "wait", waitMs: 20_000 },
+      { family: "order-merge", key: "trykey", mode: "wait", waitMs: 20_000 },
       async () => {
         signalHolderAcquired();
         await holderMayRelease;
@@ -177,7 +183,7 @@ describeDb("db-locks — real-Postgres contention (T4, R1)", () => {
 
     let tryFnCalled = false;
     const tryWhileHeld = await withAdvisoryLock(
-      { family: "t-lock", key: "trykey", mode: "try" },
+      { family: "order-merge", key: "trykey", mode: "try" },
       async () => {
         tryFnCalled = true;
         return "should-not-run";
@@ -191,7 +197,7 @@ describeDb("db-locks — real-Postgres contention (T4, R1)", () => {
     await holderPromise;
 
     const tryAfterRelease = await withAdvisoryLock(
-      { family: "t-lock", key: "trykey", mode: "try" },
+      { family: "order-merge", key: "trykey", mode: "try" },
       async () => {
         return "after-release";
       },

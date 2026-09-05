@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { Cron } from "@nestjs/schedule";
+import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { EntitlementsService } from "../billing/entitlements.service";
@@ -26,7 +26,7 @@ export class CommissionReconciliationService {
     private readonly commissionEngine: CommissionEngineService,
   ) {}
 
-  @Cron("30 * * * *")
+  @LeaderCron("30 * * * *", "commission-reconciliation.reconcileCommissions")
   async reconcileCommissions() {
     // Cron has no HTTP request context so ALS is empty. Fetch all active
     // tenants and run each in its own ALS scope so forTenant() works.

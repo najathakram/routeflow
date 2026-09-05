@@ -210,6 +210,43 @@ http://localhost:3000/api/v1/auth/login` from `http://localhost:3001`) was CSP-b
   (escaping/round-trip pitfalls patching source via an intermediate script).
 
 - **2026-09-02** — (branch `feat/bug-registry`, PR #597; tooling + ledger/docs only, no app code) — **IN-REPO BUG REGISTRY.** `.claude/campaign/bugs/B###.md` (211 per-bug records: derived front matter incl. a `files` list, six analysis sections, a `## Reported evidence` block imported from the register HTML, append-only History) + `scripts/campaign/bugs.mjs` (`file` `brief` `prove` `discharge` `move` `enrich` `deps` `render` `next` `status` `show` `note` `sync` `self-test` …). All ledger writes go through replace-in-place `upsertLedgerRow`. `sync` derives history from the proof ledger + git log and runs as **Gate 4 of `stop.mjs`** (reports, never blocks) — ⚠️ the hook exists on this branch only until #597 merges. `classify()` is the owner carve-out (money / tenancy / migration → planned, never auto-fixed; parks 16 of 19 queued batches). `deps` computes the conflict graph — ⚠️ hub files (orders.service.ts ×36, invoices.service.ts ×30, schema.prisma ×27) must be excluded or nothing is ever parallel-safe, and the graph cannot see method-level collisions inside a god-file (missed B34/B146 until the analysis file sets were merged in). F11 analysed by a 21-agent pass: every diagnosis held, every suggested fix was refuted on fix-correctness; B32 → F20; B211 (new Critical) filed. `bugs self-test` is a verify step because five write-path defects shipped from this file in one session (L-067). Seven-lens review (Opus/Sonnet) found 7 blockers / 23 majors — fix pass pending; see the review record in the PR.
+- **2026-09-04 (2b, keepalive + spec hardening)** — `db-locks.ts`'s `lockPool(family)` now sizes
+  **per family** (`POOL_MAX`: `cron` **12** for the monthly 7-holder peak plus a straggling hourly
+  sweep, `order-merge` **8** unchanged) and sets `keepAlive: true` /
+  `keepAliveInitialDelayMillis: 30_000` on BOTH pools — a lock connection is socket-idle for the
+  whole hold (a cron tick's work runs on the Prisma pool), so an intermediate idle-reap would end
+  the session, release the advisory lock mid-tick and let a second replica win an election for a
+  running job (lesson L-075). `cron-lock.ts`'s header now states WHICH jobs self-repair a lost tick
+  and which two do NOT (`tobacco-report.generateMonthlyReports` = `now − 1 month` only,
+  `order-templates.generateDailyOrders` = today's weekday only; follow-on = catch-up windows), plus
+  the hung-tick residual (a hold cap is deliberately rejected — it cannot cancel the body, so it
+  would license two concurrent money ticks). Specs: `cron-lock.spec.ts` (f) now `fireOnTick()`s the
+  REGISTERED job and asserts it went through the lock; `no-bare-cron.spec.ts` adds an
+  import-specifier guard (spec files included — only `common/cron-lock.ts` may import the `Cron`
+  identifier from `@nestjs/schedule`); `db-locks.spec.ts` (p) pins the per-family `max` and the
+  keepalive options. `entitlements.service.ts`'s cache comment corrected: commission reconciliation
+  DOES gate a write on a cached `hasFlag`, so the claim is bounded staleness, not "no write
+  decision". `docs/IMPROVEMENTS.md` item 2/2b records both follow-ons.
+- **2026-09-04 (2b, follow-up)** — `apps/api/src/common/db-locks.ts` now keeps **one `pg.Pool`
+  per family** (`pools: Map<string, Pool>`, `lockPool(family)`, `max: 8` + 5s connect timeout
+  each); new export `LOCK_FAMILIES = ["order-merge","cron"] as const` (+ `LockFamily`) is a closed
+  allow-list `withAdvisoryLock` checks BEFORE connecting (`TypeError` otherwise), and
+  `_resetLockPoolForTests()` ends and clears every pool. Rationale: a `@LeaderCron` winner pins a
+  slot for its whole tick (≤ 7 at 02:00 UTC on the 1st), which out of one shared pool left order
+  merges 1–3 slots and 503s. `@LeaderCron`'s skip lines are now
+  `cron <name>: another instance holds the lock — tick skipped` (debug) and
+  `cron <name>: lock connection unavailable — tick skipped` (warn), pinned by
+  `cron-lock.spec.ts` (b)/(c); `db-locks.db.spec.ts` moved off its ad-hoc `t-lock` family onto
+  `order-merge` (test-only KEYS) now that the family list is closed.
+
+- **2026-09-04** — (branch `feat/imp-02b-cron-leader-lock`, improvements item 2b) CRON LEADER
+  LOCK: new `apps/api/src/common/cron-lock.ts` exports `LeaderCron(expr, name, options?)` — it
+  wraps the tick in `withAdvisoryLock({family:"cron", key:name, mode:"try"})` (PR-2's helper) and
+  THEN applies `@Cron(expr,{name})`, so `schedule.explorer` registers the WRAPPED method under a
+  stable name and only the lock winner runs a tick. All 13 `@Cron` sites across 9 files are now
+  `@LeaderCron` with 13 unique `<area>.<method>` names; the 5 specs that call a tick directly
+  mock `../common/db-locks` pass-through. `apps/api/railway.toml` no longer forbids replicas.
+  Specs: `cron-lock.spec.ts`, `no-bare-cron.spec.ts` (static tripwire), `cron-lock.db.spec.ts`.
 
 - **2026-09-04** — (branch `fix/imp-02-order-merge-advisory-lock`, PR #609) VISIBILITY WATCHDOG:
   new `scripts/visibility-watchdog.mjs` arms the private flip on a detached, fixed 45-min

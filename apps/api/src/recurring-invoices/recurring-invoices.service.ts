@@ -1,5 +1,6 @@
 import { Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { Cron, CronExpression } from "@nestjs/schedule";
+import { CronExpression } from "@nestjs/schedule";
+import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -353,7 +354,10 @@ export class RecurringInvoicesService {
 
   // ─── Scheduled cron ──────────────────────────────────────────────────────
 
-  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  @LeaderCron(
+    CronExpression.EVERY_DAY_AT_MIDNIGHT,
+    "recurring-invoices.generateDueRecurringInvoices",
+  )
   async generateDueRecurringInvoices() {
     // RF-008: cron has no HTTP request context so ALS is empty. Fetch all
     // active tenants and run each in its own ALS scope so forTenant() works.

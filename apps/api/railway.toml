@@ -10,8 +10,12 @@ watchPatterns = ["apps/api/**", "packages/**"]
 # mergeAllPendingForCustomer/forceConsolidateCustomer serialize on a customer-keyed
 # Postgres advisory lock (apps/api/src/common/db-locks.ts withAdvisoryLock). The old
 # in-process withOrderMergeLock Map is gone (PR-2, B199).
-# ⚠️ @Cron jobs still assume ONE replica until the cron leader lock (PR-3) lands —
-# do NOT set numReplicas here or raise replicas in the Railway dashboard before then.
+# Scheduled jobs are cross-replica safe too: every one is declared with @LeaderCron
+# (apps/api/src/common/cron-lock.ts), so a tick runs only on the instance that wins that
+# job's advisory lock. numReplicas may be raised. OrdersService.onApplicationBootstrap
+# still runs a pending-order sweep per process — a startup call, not a tick, so it stays
+# deliberately un-elected; it is safe on two replicas because it merges through
+# mergeAllPendingForCustomer, which takes the same customer-keyed lock as every other merge.
 healthcheckPath = "/api/v1/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"

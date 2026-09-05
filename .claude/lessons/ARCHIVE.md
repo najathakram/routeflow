@@ -451,3 +451,54 @@ cap.
   check one boolean; they cannot check that two predicates are equivalent in every state.
 - **Guard:** `REG-B64 (T7)` asserts a DRAFT cancel neither credits stock nor marks its lines;
   mutation probe 3 (make the mark unconditional) turns it red.
+
+## Archived 2026-09-05 — cap discipline on the imp-02b rebase (post-#622)
+
+> Moved verbatim to hold the 40-entry cap when `feat/imp-02b-cron-leader-lock` rebased onto
+> master `b1e3bed0` (#622 e2e spec locators + seed target): master's register was already FULL
+> at 40 entries and 2b contributes one (**L-075**), so the union is 41. **TWO** entries leave
+> rather than one, per [[L-039]] — land with real headroom, not at the cap — because the
+> previous landing left only 386 B of it.
+>
+> **L-013** is the OLDEST active entry by two weeks, is cited by no `[[L-0xx]]` and appears
+> nowhere in `.claude/`, `docs/`, `CLAUDE.md`, `apps/` or `packages/` outside its own
+> heading, and both halves of its rule now have a landed home: the registry-flake half is
+> mechanised by `scripts/ci-audit-critical.mjs` (the advisory gate warns-and-skips on registry
+> unavailability rather than failing — recorded in `CLAUDE.md`), and the 0-step-red half is
+> recorded in memory `project_killed_sessions_recovery_2026-08-30`.
+>
+> **L-040** is the next-oldest entry that NO file cites — `git grep -n "L-040"` over the whole
+> tree returns only its own heading — and the artifact it was written about is gone: the
+> hand-maintained HTML mirror was replaced by the in-repo `.claude/campaign/bugs/B###.md`
+> records (#597, 212 files), which `scripts/campaign/bugs.mjs sync` derives from the machine
+> ledger and which `npm run verify` checks through `bugs self-test` + `campaign-check.mjs`.
+> Its family rule survives in the active register: L-040 named [[L-034]] (a generated artifact
+> is evidence only when you can name the tool and the run that produced it), which stays.
+>
+> Every entry older than L-040 that is NOT archived here is cited somewhere and therefore stays:
+> L-004 (imp-08 flip-reconcile brief), L-010 and L-038 (the imp-01 pipeline build-plan and
+> discovery), L-011 (13 references), L-027 (5).
+
+### L-013 · 2026-08-17 · tooling
+
+- **Symptom:** three of four CI jobs red on a dependency error the change never introduced.
+- **Root cause:** the failure was at the _install_ step (registry flake), not the job's own
+  command; separately, 0-step ~3 s "failures" while private are Actions billing, not the suite.
+- **Lesson:** **Read which step failed before hunting a code fix — an install-step or 0-step red
+  proves nothing about the change; rerun first.**
+- **Guard:** none — judgment.
+
+### L-040 · 2026-09-01 · process
+
+- **Symptom:** three ledgers for one campaign, three answers — machine ledger 61 rows shipped,
+  hand-maintained HTML register 7 of those still open (one a Critical), prose summary 48.
+- **Root cause:** only the machine ledger is written by tooling and read by a gate. The mirror is
+  updated by hand at batch close-out — one batch did it, the next did not, and nothing compares
+  the two.
+- **Lesson:** **A status mirror that no gate checks is not a second source, it is a slower copy —
+  derive every count from the machine ledger instead of quoting a summary.** The drift has a
+  direction: it runs toward MORE open work, and nobody audits a number saying there is more left
+  to do, so the error survives every review.
+- **Guard:** none — `campaign-check` reads the ledger, the mirror has no equivalent. Count from
+  `.claude/campaign/status/*.jsonl` (last state per row id) before repeating any figure. Same
+  family as [[L-034]].

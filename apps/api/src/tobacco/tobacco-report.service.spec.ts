@@ -1,3 +1,16 @@
+// `@LeaderCron` wraps every cron tick in a Postgres advisory lock (common/cron-lock.ts).
+// These specs invoke the tick directly and have no database, so the lock is a PASS-THROUGH here:
+// it must still call the body — a mock that skipped it would make every assertion below measure
+// a tick that never ran.
+jest.mock("../common/db-locks", () => ({
+  withAdvisoryLock: async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  }),
+  LockTimeoutError: class extends Error {},
+  LockUnavailableError: class extends Error {},
+}));
+
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";

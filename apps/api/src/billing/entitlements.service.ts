@@ -47,7 +47,18 @@ interface CacheEntry {
   expiresAt: number;
 }
 
-/** Cache TTL: entitlement mutations (plan/addon changes) call {@link invalidate}. */
+/**
+ * Cache TTL: entitlement mutations (plan/addon changes) call {@link invalidate}.
+ *
+ * This cache is PER PROCESS, and {@link invalidate} only clears the process it runs in — so on
+ * more than one replica the TTL is the convergence window for the others. That is staleness, not
+ * divergence. Writes ARE gated on this cache in places — `commission-reconciliation` skips a
+ * tenant on `hasFlag("flag.sales_agents")` read from a cached snapshot — so a decision can act on
+ * a value up to the TTL out of date. What multiple replicas do NOT add is a longer or unbounded
+ * window: every process converges within the same 30 s, and the crons that mutate plans are
+ * single-elected by `@LeaderCron`, so the worst case stays "one replica gating on an entitlement
+ * up to 30 s out of date" — never two replicas disagreeing beyond that.
+ */
 const CACHE_TTL_MS = 30_000;
 
 /**

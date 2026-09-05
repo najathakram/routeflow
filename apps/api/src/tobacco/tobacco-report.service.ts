@@ -1,6 +1,6 @@
 import React from "react";
 import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { Cron } from "@nestjs/schedule";
+import { LeaderCron } from "../common/cron-lock";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -317,7 +317,7 @@ export class TobaccoReportService {
 
   // ─── Monthly cron — 02:00 UTC on the 1st, for the month just ended ─────────
 
-  @Cron("0 2 1 * *")
+  @LeaderCron("0 2 1 * *", "tobacco-report.generateMonthlyReports")
   async generateMonthlyReports() {
     // One query for all active tobacco_dealer addons, intersect active tenants
     const [activeTenants, tobaccoAddons] = await Promise.all([

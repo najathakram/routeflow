@@ -7,8 +7,9 @@
  * client out), and Prisma exposes no "pin this connection" API — an interactive transaction is
  * the only pinning primitive it offers, and the merge paths must NOT be wrapped in one (the
  * writes they guard run their own transactions with their own timeouts). So this module keeps
- * its own small `pg.Pool` (max 8) purely for lock sessions: connect → lock → run → unlock →
- * release. It never runs application queries, so it cannot deadlock against the Prisma pool.
+ * its own small `pg.Pool`s (one per family, sized below) purely for lock sessions: connect →
+ * lock → run → unlock → release. They never run application queries, so they cannot deadlock
+ * against the Prisma pool.
  *
  * WHY THE KEY IS (hashtext(family), hashtext(key)): `pg_advisory_lock` addresses a lock by two
  * 32-bit ints in ONE global namespace. Hashing the family into the first int and the key into
@@ -20,15 +21,52 @@
  * `LockTimeoutError`); `try` returns `{ acquired: false }` instead of waiting. `fn` never runs
  * without the lock held.
  *
- * RESIDUAL (known, bounded, not fixed here): a `wait` caller pins one pool slot for the WHOLE
- * time it waits, so contention on a single hot customer can occupy all 8 slots — and every other
- * customer's merge then fails `pool.connect()` on `connectionTimeoutMillis` and surfaces as
- * `LockUnavailableError` → 503, even though its own key was free. Contention on one key
- * degrading an unrelated key is the residual. It is bounded by the callers' wait budgets (the
- * staff controller waits 10s precisely to cap how long a slot can be held by a loser), and pool
- * sizing is deliberately left alone until PR-2b adds the cron leader lock — that PR changes the
- * demand on this pool, so `max` is re-derived once, there, against both workloads rather than
- * guessed at twice. A pinned client also carries its own `error` listener (added at checkout,
+ * WHY ONE POOL PER FAMILY (the sizing derivation): the two workloads have opposite hold
+ * profiles, so they must not share slots. An `order-merge` checkout is request-path and short;
+ * a `cron` checkout is a `@LeaderCron` tick (`./cron-lock.ts`, `mode: "try"`) whose LOSERS free
+ * their slot at once but whose WINNER pins one for the WHOLE tick — full-tenant sweeps that run
+ * for minutes. One shared pool therefore let the schedule starve the request path: 5 jobs share
+ * the top of every hour (4 × `EVERY_HOUR` + `orders.cronSweepPendingOrders`), rising to 7 at
+ * 02:00 UTC on the 1st (+ `billing-cron.applyScheduledDowngrades` +
+ * `tobacco-report.generateMonthlyReports`), which left 3 slots for merges hourly and 1 on the
+ * monthly peak — a merge finding none waits `connectionTimeoutMillis` and then 503s on a key
+ * nobody was holding.
+ *
+ * `pools` keys one pool per family instead, each sized for its OWN peak, so the peak above is
+ * bounded inside the family that causes it. `cron` gets `max: 12`: the monthly 7-holder peak plus
+ * a straggling hourly sweep still holding its slot when the next hour's five fire must not
+ * exhaust the pool, because a cron holder that cannot get a connection skips its tick outright.
+ * `order-merge` keeps `max: 8` — its checkouts are request-path and short, and its real bound is
+ * the callers' wait budgets, not the schedule. Worst case is therefore 12 + 8 = 20 lock
+ * connections; with Prisma's pool (default 10) that is 30 — far below Postgres's
+ * `max_connections`, so the split costs nothing it cannot pay for.
+ * Exhausting the CRON pool surfaces as `LockUnavailableError`, which `@LeaderCron` turns into a
+ * skipped tick plus a warn — never a request-path error. `LOCK_FAMILIES` is the closed
+ * allow-list of families (they are code literals, never derived from data), enforced before any
+ * connect, so a typo cannot silently stand up a THIRD pool whose holders serialize against
+ * nobody while reading as locked.
+ *
+ * WHY KEEPALIVE (`keepAlive: true`, `keepAliveInitialDelayMillis: 30_000`, on BOTH families —
+ * `pg` forwards both straight to the socket): a Postgres advisory lock lives with the SESSION,
+ * and a cron leader's lock connection is SOCKET-IDLE for the whole tick — the tick's actual work
+ * runs on the Prisma pool, so nothing is sent on the lock connection between
+ * `pg_try_advisory_lock` and the `pg_advisory_unlock` minutes later. Any intermediate idle-reap
+ * on that path (NAT table, load balancer, the platform's own network) would drop the session
+ * silently; Postgres then releases the lock while the tick is still running, and the next
+ * replica's election WINS a job that is already in flight — precisely the duplicate money run
+ * `@LeaderCron` exists to prevent. TCP keepalive probes every 30 s keep the session provably
+ * alive, so the lock is released only when the session really ends. `order-merge` gets the same
+ * setting: its holds are short, but a reaped socket strands a merge there the same way.
+ *
+ * RESIDUAL (known, bounded, not fixed here): a `wait` caller pins one slot of ITS family's pool
+ * for the WHOLE time it waits, so contention on a single hot customer can occupy all 8
+ * order-merge slots — and every other customer's merge then fails `pool.connect()` on
+ * `connectionTimeoutMillis` and surfaces as `LockUnavailableError` → 503, even though its own key
+ * was free. Contention on one key degrading an unrelated key is the residual; it is now confined
+ * to the family that caused it, and bounded by the callers' wait budgets (the staff controller
+ * waits 10s precisely to cap how long a slot can be held by a loser).
+ *
+ * A pinned client also carries its own `error` listener (added at checkout,
  * removed before release) so a socket failure mid-lock destroys the connection instead of
  * crashing the process the way an idle client's unhandled `error` event would.
  */
@@ -37,6 +75,13 @@ import { Logger } from "@nestjs/common";
 import { Pool, type PoolClient } from "pg";
 
 export type LockMode = "wait" | "try";
+/**
+ * Every advisory-lock family this module will open a pool for. Families are code literals, never
+ * derived from data, so the list is closed: `withAdvisoryLock` rejects anything else BEFORE it
+ * connects (see the header's "WHY ONE POOL PER FAMILY").
+ */
+export const LOCK_FAMILIES = ["order-merge", "cron"] as const;
+export type LockFamily = (typeof LOCK_FAMILIES)[number];
 export interface AdvisoryLockOptions {
   family: string;
   key: string;
@@ -64,8 +109,20 @@ export class LockUnavailableError extends Error {
 
 const logger = new Logger("db-locks");
 
-let pool: Pool | null = null;
-function lockPool(): Pool {
+// One pool per family, created on that family's first use. Sharing a pool across families let a
+// cron tick that pins a slot for minutes starve the request-path merges — see the header.
+const pools = new Map<string, Pool>();
+/**
+ * Per-family `max`, derived in the header's "WHY ONE POOL PER FAMILY": `cron` needs room for the
+ * monthly 7-holder peak PLUS a straggling hourly sweep (a cron holder that finds no slot skips
+ * its tick), while `order-merge` checkouts are short and request-path. Declared
+ * `number | undefined` so the fallback below is a real branch: `withAdvisoryLock` rejects an
+ * unknown family before `lockPool` is ever reached, so it is unreachable in practice.
+ */
+const POOL_MAX: Record<string, number | undefined> = { "order-merge": 8, cron: 12 };
+const DEFAULT_POOL_MAX = 8;
+function lockPool(family: string): Pool {
+  let pool = pools.get(family);
   if (!pool) {
     // `connectionTimeoutMillis` matters here because every checkout is pinned for the whole
     // critical section: without it `pool.connect()` queues with NO timer once `max` is reached
@@ -73,23 +130,30 @@ function lockPool(): Pool {
     // as LockUnavailableError → 503.
     pool = new Pool({
       connectionString: process.env.DATABASE_URL,
-      max: 8,
+      max: POOL_MAX[family] ?? DEFAULT_POOL_MAX,
       connectionTimeoutMillis: 5_000,
+      // A lock connection is idle at the SOCKET for the whole critical section — a cron leader's
+      // tick does its work on the Prisma pool — so an intermediate idle-reap would end the
+      // session and release the advisory lock mid-tick, letting another replica win an election
+      // for a job still running. See the header's "WHY KEEPALIVE".
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 30_000,
     });
     // pg-pool re-emits an idle client's socket error on the pool; with no listener an
     // EventEmitter "error" throws as an uncaught exception and takes the API process down.
     // The client is already removed from the pool by the time this runs — log and nothing else.
     pool.on("error", (err) =>
-      logger.error(`db-locks: idle lock connection error — ${err?.message ?? err}`),
+      logger.error(`db-locks: idle ${family} lock connection error — ${err?.message ?? err}`),
     );
+    pools.set(family, pool);
   }
   return pool;
 }
-/** Test hook: drop the lazily-created pool so a suite can start clean. */
+/** Test hook: end and drop EVERY lazily-created pool so a suite can start clean. */
 export async function _resetLockPoolForTests(): Promise<void> {
-  const p = pool;
-  pool = null;
-  if (p) await p.end();
+  const open = [...pools.values()];
+  pools.clear();
+  await Promise.all(open.map((p) => p.end()));
 }
 
 const LOCK_SQL = {
@@ -116,7 +180,7 @@ export async function withAdvisoryLock<T>(
   // Validate BEFORE taking a connection. `hashtext(NULL)` is NULL, so a missing key would
   // acquire a lock on (family, NULL) — a namespace every other bad caller shares — and the
   // critical section would run believing it was serialized. Failing loudly here also means a
-  // programming error never consumes one of the 8 pool slots.
+  // programming error never consumes one of its family's pool slots.
   if (
     typeof opts.family !== "string" ||
     opts.family.length === 0 ||
@@ -125,6 +189,15 @@ export async function withAdvisoryLock<T>(
   ) {
     throw new TypeError("withAdvisoryLock: family and key must be non-empty strings");
   }
+  // Closed allow-list, checked for the same reason and at the same point as the emptiness check
+  // above: an unknown family would lazily stand up a POOL OF ITS OWN (8 more pinned connections)
+  // whose holders serialize against nothing, so a typo would read as "locked" while running
+  // concurrently with the family it meant to join.
+  if (!(LOCK_FAMILIES as readonly string[]).includes(opts.family)) {
+    throw new TypeError(
+      `withAdvisoryLock: unknown lock family "${opts.family}" (expected one of ${LOCK_FAMILIES.join(", ")})`,
+    );
+  }
   // `SET lock_timeout` is a utility statement: it takes no bind parameters, so the value has to
   // be interpolated. Only a validated finite integer ever reaches the string.
   const waitMs = Number.isFinite(opts.waitMs)
@@ -132,7 +205,7 @@ export async function withAdvisoryLock<T>(
     : DEFAULT_WAIT_MS;
   let client: PoolClient;
   try {
-    client = await lockPool().connect();
+    client = await lockPool(opts.family).connect();
   } catch (e: any) {
     logger.error(`db-locks: could not obtain a lock connection — ${e?.message ?? e}`);
     throw new LockUnavailableError(e);
