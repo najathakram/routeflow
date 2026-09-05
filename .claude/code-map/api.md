@@ -215,7 +215,7 @@ parent missing` when the Route row or its tenant is absent) and treats the DISTI
   `setTimeout`-sleeps `--minutes` (default 45, never a busy-wait, so signals still work),
   then retries the flip itself: **up to 6 attempts**, each one `gh repo edit … --visibility
 private …` immediately followed by a `gh repo view --json visibility` read-back, stopping at
-  the first `PRIVATE`. **Bounded end to end (close-out re-check, 2026-09-05, L-076):** every
+  the first `PRIVATE`. **Bounded end to end (close-out re-check, 2026-09-05, L-077):** every
   `gh` call carries `timeout: 60_000, killSignal: "SIGKILL"` (a hung call is otherwise an
   unbounded public window), and the backoff list is FIVE long — `[5s,15s,30s,60s,120s]`, since
   attempt 6 is never followed by a sleep — so the worst case is ≈3.8 min of sleeps plus
@@ -1638,6 +1638,7 @@ flag OFF ⇒ the engine returns before touching a commission table and every rou
 
 - **controller** `uploads` — `@Get *path` (HMAC-verified presigned fetch); multipart upload. `RENDERABLE_INLINE_MIMES` (inline vs `attachment` Content-Disposition) = `image/jpeg`, `image/png`, `image/webp`, **`application/pdf`** (added 2026-07-30, WP15 — customer PDFs now render in the web iframe viewer instead of downloading; safe because customer-document uploads are MIME-allowlisted to jpeg/png/webp/pdf, the browser PDF viewer is sandboxed, and nosniff + the signed-URL gate are unchanged). SVG/HTML stay excluded — deliberate XSS control, do not widen further.
 - **service** — `uploadFile`, `generatePresignedUrl`, `verifyPresignedUrl`. side effects: file I/O to `/data/uploads` (Railway volume); HMAC via `STORAGE_URL_SIGNING_SECRET`.
+- **`upload-routes.security.spec.ts`** (branch `test/upload-routes-multipart-coverage`, 2026-09-05) — post-#590 multipart coverage: real `multipart/form-data` POSTs (supertest) against the 8 upload controllers that had none — `products` (`:id/images`), `customers` (`:id/tax-documents`, `:id/documents`), `vendor-bills` (`scan-invoice`), `supplier-statements` (`scan`), `import/batch` (`:id/scan`), `invoices` (`payments/:paymentId/image`), `bookkeeping` (`expenses/:id/receipt`), `import` (7 CSV/spreadsheet routes) — proving the service layer receives a real `Buffer` (name/mimetype/length intact), not `undefined`, so a repeat of #590's silent multer breakage fails loud instead of passing. `JwtAuthGuard`/`RolesGuard`/`AddonGuard`/`PlanFlagGuard` stubbed open via `overrideGuard` (unused ones on a given controller tolerated); RF-076/RF-157 MIME-allowlist rejections asserted too. 22 runner-visible tests (15 `it` + `it.each` over the 7 import routes).
 
 ### `system-config/` (settings)
 

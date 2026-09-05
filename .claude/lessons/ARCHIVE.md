@@ -503,17 +503,16 @@ cap.
   `.claude/campaign/status/*.jsonl` (last state per row id) before repeating any figure. Same
   family as [[L-034]].
 
-## Archived 2026-09-05 — headroom for L-076/L-077 (fix/imp-closeout-review)
+## Archived 2026-09-05 — headroom for L-076 (fix/e2e-recurring-toast-locator)
 
-Master stood at 39 of 40 after #623's own double archive, so this branch's two additions
-would have re-pinned it at the cap. Two entries archived so they land with headroom instead,
-chosen oldest-first among entries whose guard is a landed automated check
-rather than a procedure, and which nothing outside a frozen `.claude/pipeline/` run record
-still cites: **L-037** (domain, 2026-09-01 — `REG-B55 (T21)` runs on every suite) and **L-039**
-(tooling, 2026-09-01 — `validate-lessons` now prints `binding:` and the remaining headroom on
-every run, which is the whole of what the entry asks a reader to remember). Program entries
-(`imp-*`/wave) and L-074 were excluded by rule. Ids stay retired: the `[[L-039]]` references
-already in this file still resolve.
+The register sat at 40 of 40 active entries; adding L-076 (testing, the toast/aria-live
+strict-mode fix) would have pushed it to 41. Of the entries still active, L-037 is the oldest
+whose guard is a real, landed, automated check rather than a procedure or a memory note: every
+2026-08-* entry and every 2026-09-01 entry with a lower id (`L-025`, `L-026`, `L-027`, `L-035`)
+carries "Guard: none" or "none — judgment". L-037's `REG-B55 (T21)` is a landed regression test
+(F11 close-out, confirmed present in the tree) that runs on every `npm run test`/CI pass — not a
+checklist, doc pointer, or "Guard: none". One entry archived, per [[L-039]]: land with real
+headroom on the byte cap, not at it.
 
 ### L-037 · 2026-09-01 · domain · #TBD
 
@@ -530,6 +529,19 @@ already in this file still resolve.
   reversal gap REACHABLE, so a fix can open the path to a latent bug.
 - **Guard:** `REG-B55 (T21)`; the write-by-write enumeration is recorded in F11's fix card so the
   next batch on this path starts from it rather than rebuilding it.
+
+## Archived 2026-09-05 — headroom for L-077/L-078 (fix/imp-closeout-review)
+
+This branch planned a two-entry block — **L-037** and **L-039** — chosen oldest-first among
+entries whose guard is a landed automated check rather than a procedure, and which nothing
+outside a frozen `.claude/pipeline/` run record still cites. Merging master `d12203a3`
+(#624, #625) showed L-037 already archived directly above, by #625, on exactly that reasoning,
+so only **L-039** (tooling, 2026-09-01 — `validate-lessons` now prints `binding:` and the
+remaining headroom on every run, which is the whole of what the entry asks a reader to
+remember) moves here. Program entries (`imp-*`/wave) and L-074 were excluded by rule. Ids stay
+retired: the `[[L-039]]` references already in this file still resolve. The register lands at
+40 of 40 entries and 38.8 of 40.0 KB — at the entry cap, so the next branch to append must
+archive first ([[L-039]]'s own rule about landing with headroom).
 
 ### L-039 · 2026-09-01 · tooling
 

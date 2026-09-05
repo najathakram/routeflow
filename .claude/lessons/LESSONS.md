@@ -11,7 +11,7 @@
 
 ## process
 
-### L-077 · 2026-09-05 · process · close-out re-check
+### L-078 · 2026-09-05 · process · close-out re-check
 
 - **Symptom:** `LESSONS.md` keeps merging CLEANLY into duplicate ids — L-054 four times, then
   L-058, L-061, L-067 and L-074, each renumbered after the fact.
@@ -303,6 +303,20 @@
 
 ## testing
 
+### L-076 · 2026-09-05 · testing · F13
+
+- **Symptom:** an E2E toast assertion via bare `getByText` hit a strict-mode violation
+  (2 elements) after the app gained an aria-live announcer that repeats toast copy.
+- **Root cause:** the same string is rendered twice on purpose — the visible toast
+  (`RadixToast.Title`) and Radix's own aria-live status region, portaled to `<body>`, which
+  mirrors the same title text for screen readers.
+- **Lesson:** **assert toasts through the toast container, never a bare text lookup — any copy
+  that is also announced resolves to two elements.** Scope through
+  `getByRole("region", { name: /notifications/i }).getByRole("listitem")`, not `page.getByText`.
+- **Guard:** the `getByRole("region"…).getByRole("listitem")` scoping convention (documented in
+  `21-destructive-guards.spec.ts`; no shared toast-assertion helper exists yet — a gap this entry
+  flags) applied at `apps/web/e2e/30-recurring-standing.spec.ts` (REG-B09, REG-B92).
+
 ### L-066 · 2026-09-04 · testing · watchdog spec
 
 - **Symptom:** a spec green on CI failed on every loaded dev box, pushing people to skip the pre-push gate.
@@ -414,7 +428,7 @@
 - **Guard:** `db-locks.spec.ts` (p) pins `keepAlive: true` / `keepAliveInitialDelayMillis: 30_000`
   on both lock pools, and their per-family `max`.
 
-### L-076 · 2026-09-05 · deploy · close-out re-check
+### L-077 · 2026-09-05 · deploy · close-out re-check
 
 - **Symptom:** an unattended retry loop whose header promised "total <= ~8 min" had no upper
   bound at all, and the marker it writes when it gives up landed where nobody looks.
