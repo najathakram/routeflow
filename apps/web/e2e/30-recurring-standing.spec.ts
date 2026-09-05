@@ -174,6 +174,11 @@ test.describe("Recurring template edit + standing-order item edit (F13)", () => 
       await boltLine.getByRole("button", { name: "+", exact: true }).click();
 
       await modal.getByRole("button", { name: "Save Changes" }).click();
+      // Wait for the modal itself to close before asserting the toast (mirrors
+      // 21-destructive-guards.spec.ts:146-147's confirmDialog pattern) — otherwise
+      // a still-mounted "Edit Standing Order" dialog can race the toast's own
+      // mount/unmount and flake the region lookup below.
+      await expect(modal).toHaveCount(0, { timeout: 10_000 });
       // Scoped through the toast region, not a bare getByText: Radix's aria-live
       // announcer mirrors the same title text at <body> level (see
       // 21-destructive-guards.spec.ts), so an unscoped lookup resolves to 2
