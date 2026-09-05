@@ -1,10 +1,10 @@
 {
-  "nextId": 66,
-  "activeCount": 39,
+  "nextId": 67,
+  "activeCount": 40,
   "archivedCount": 17,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-05T00:35:26.000Z",
+  "updatedAt": "2026-09-05T03:21:24.828Z",
   "schemaVersion": 1,
-  "note": "Bookkeeping only — never accumulate prose here (see L-006). updatedAt bump = acknowledged lesson-free fix. L-044 (F14) landed here, taking the id SEQUENCE §4 pre-allocated for it — do NOT reuse 42/43 (reserved for other Wave A batches, gaps are reserved not abandoned); nextId jumped straight to 50 because L-042..L-049 are pre-allocated to Wave A batches landing out of numeric order. L-058 was taken 2026-09-04 by #610 (REG-E2EGUARD-403) out of that reserved block; L-059..L-060 stay reserved by #597's pending merge; L-061 taken 2026-09-04 by the watchdog-spec fix. L-063..L-065 compact the seven registry lessons #597 authored as L-051..L-057; L-062 reserved by the OCR gate fix. L-029 archived 2026-09-04 (guard in place: orders.lifecycle-conservation.spec.ts) for cap discipline."
+  "note": "Bookkeeping only — never accumulate prose here (see L-006). updatedAt bump = acknowledged lesson-free fix. L-044 (F14) landed here, taking the id SEQUENCE §4 pre-allocated for it — do NOT reuse 42/43 (reserved for other Wave A batches, gaps are reserved not abandoned); nextId jumped straight to 50 because L-042..L-049 are pre-allocated to Wave A batches landing out of numeric order. L-058 was taken 2026-09-04 by #610 (REG-E2EGUARD-403) out of that reserved block; L-059..L-060 stay reserved by #597's pending merge; L-061 taken 2026-09-04 by the watchdog-spec fix. L-063..L-065 compact the seven registry lessons #597 authored as L-051..L-057; L-062 reserved by the OCR gate fix. L-029 archived 2026-09-04 (guard in place: orders.lifecycle-conservation.spec.ts) for cap discipline. L-066 taken 2026-09-05 by the registry lock-liveness fix."
 }

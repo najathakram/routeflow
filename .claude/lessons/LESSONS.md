@@ -353,6 +353,18 @@
   (cross-shard duplicate, real `EISDIR`, corrupted record mid-loop) assert the PRE-failure state
   survives.
 
+### L-066 · 2026-09-05 · tooling · #597
+
+- **Symptom:** the registry self-test's dead-holder lock cases failed on CI's Linux runner and
+  passed on Windows; the waiter never broke a dead owner's lock and every later case inherited it.
+- **Root cause:** `process.kill(pid, 0)` succeeds for a POSIX zombie — a killed child its parent
+  never reaped — and a synchronous parent (`Atomics.wait`, `spawnSync`) never reaps.
+- **Lesson:** **Signal 0 proves a pid exists, not that it lives. A POSIX liveness check must also
+  read `/proc/<pid>/stat` state `Z` (negative-only: unreadable means alive); a fixture that kills
+  a child must assert it was observed gone before the code under test runs.**
+- **Guard:** self-test `liveness:` checks (a2) and the dead-holder `observed gone` assertion, run on
+  both platforms; CI run 33938718344 is the red that proved it.
+
 ## testing
 
 ### L-061 · 2026-09-04 · testing · watchdog spec
