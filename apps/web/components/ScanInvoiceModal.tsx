@@ -712,7 +712,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
           title: isApiKeyError ? "Anthropic API key not configured" : "Failed to scan invoice",
           description: isApiKeyError
             ? "Go to Settings → AI & Integrations to add your Claude API key."
-            : "Please check the file and try again.",
+            : msg || "Please check the file and try again.",
           variant: "error",
         });
         setStep("upload");

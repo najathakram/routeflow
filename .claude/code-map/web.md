@@ -1013,6 +1013,7 @@ total}`) — types live in `lib/api/vendor-bills.ts` as `PriorScanSummary`/`Scan
   cell a "per case of N" hint; quick-create from a case line passes PER-PIECE `initialCost`
   (box-price `initialPrice` unchanged — the boxed contract asymmetry; `ProductCreateModal`'s cost
   hint is pack-aware). e2e: OP-17f (one dup skipped, other posts, modal closes).
+- **`ScanInvoiceModal.tsx` single-scan error fidelity (2026-09-04, REG-OCR-2):** the single-scan failure toast now reads `msg || "Please check the file and try again."` — `msg` is the server's own `error?.response?.data?.message` — so a 403 `ADDON_GATE` denial (or any other server message) surfaces verbatim instead of the generic file hint; the generic copy is now a true fallback for when the server sends none. Mirrors the batch branch (`scanOne`), which already read the server message. e2e: `e2e/02-operator.spec.ts` OP-17g — mocks a 403 `ADDON_GATE` response on `**/vendor-bills/scan-invoice` and asserts the server's message is visible and the generic hint has zero matches.
 - **Partial receiving on `vendor-bills/[id]/page.tsx` (2026-08-12):** `ReceiveBillModal` — per-line
   qty inputs primed to outstanding (`lineRemaining(bill,item)` mirrors the server's legacy rule:
   receivedDate set + all `qtyReceived` null = fully received), invalid/over-remaining blocks

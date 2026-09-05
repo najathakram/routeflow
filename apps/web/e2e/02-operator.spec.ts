@@ -494,6 +494,38 @@ test.describe("Operator — Tenant Dashboard", () => {
     expect(billPosted).toBe(false);
   });
 
+  test("OP-17g REG-OCR-2 single scan surfaces the server's error message instead of the generic file hint", async ({
+    page,
+  }) => {
+    // The scan-invoice call is gated (403 ADDON_GATE) — the modal must surface
+    // the server's own message, not the generic "check the file" hint.
+    await page.route("**/vendor-bills/scan-invoice", (route) =>
+      route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({
+          statusCode: 403,
+          error: "Forbidden",
+          code: "ADDON_GATE",
+          addonKeys: ["ocr"],
+          message: 'This feature requires the "ocr" add-on.',
+        }),
+      }),
+    );
+
+    await mockSuppliers(page);
+    await page.goto("/inventory");
+    await page.getByRole("button", { name: /scan invoice/i }).click();
+    await page
+      .locator('input[type="file"]')
+      .setInputFiles({ name: "invoice.png", mimeType: "image/png", buffer: Buffer.from("fake") });
+
+    await expect(page.getByText('This feature requires the "ocr" add-on.')).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText("Please check the file and try again.")).toHaveCount(0);
+  });
+
   /**
    * The scan tests are fully self-contained: the e2e tenant has no seeded
    * suppliers, so the supplier dropdown is mocked alongside the write routes.

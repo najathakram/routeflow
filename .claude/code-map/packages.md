@@ -50,6 +50,10 @@ Shared DTO/enum definitions. Entry: `index.ts` (no `src/`).
   2026-08-28** — the `devMode || <feature>` OR was removed), and by `admin/tenants/[id]`
   `AVAILABLE_ADDONS`. **The exported VALUES are unchanged** — the 2026-08-28 edit to this file was
   doc comments only.
+  **`OCR_ADDON = "ocr"`** doc comment updated 2026-09-04 (value unchanged) to point at
+  `apps/api/src/billing/addon-gate-registry.ts` as the source of truth for the gate's rollout
+  state (currently `dark` — allow + would-deny warn, no 403 — until the owner runs the blast-radius
+  report and flips it).
 
 - **`pack-size.ts` (2026-08-20) — the ONE shared pack-size name parser.** Exports `parsePackSizeDetailed(name)`, `suggestPackSize({name, unit, unitSku, unitsPerBox})` → `{packSize, counts, confidence, reason}`, and `formatCountList(counts)` (`"5 or 12"`, `"4, 8 or 16"` — shared so no surface hardcodes "two"; a name can state three counts) with `confidence: HIGH | MEDIUM | LOW | AMBIGUOUS | PIECE_UNIT | null`. Lives here — **NOT** mirrored into `apps/*/lib` — precisely because all three apps already consume `@routeflow/types`, and a parser whose value is its refusal rules is the worst possible thing to keep hand-synced copies of (contrast money math, which used to be a
   deliberate triple mirror and is now the single compiled `@routeflow/pricing` package, above).
