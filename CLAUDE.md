@@ -113,9 +113,11 @@ skill). **Use it instead of re-reading the repo.**
 
 - **Before reading/changing code:** read `code-map/INDEX.md` → the relevant area file
   (`api`/`web`/`mobile`/`packages`.md) → open only the file it points to. Plan changes from the map.
-- **After _every_ change (surgical, not a regen):** update the touched entries (purpose,
-  exports/signatures, cross-refs) and bump `_meta.json` (`mappedSha`, `generatedAt`). A small code
-  change is a few-line map edit.
+- **After _every_ change (surgical, not a regen):** the map update lands in the docs-only
+  follow-up commit/PR the landing coordinator opens right after the code PR merges, citing the
+  merged sha (Bookkeeping Option B, owner ruling 2026-09-05) — the code PR's HEAD commit carries
+  a `Bookkeeping-Follow-Up: pending` trailer, which Gate 2 of `.claude/hooks/stop.mjs` accepts in
+  place of an updated entry.
 - Trust the code over the map when they disagree, and fix the map. Money math lives in
   `packages/pricing` (`@routeflow/pricing`) — api, web and mobile import it; there are no mirrors.
 
@@ -127,10 +129,14 @@ The rules this project has already paid for live at
 - **Before any major task, implementation, or bug fix:** read it alongside the code map and
   carry the relevant **Lesson** lines into the plan — cite entry ids (`L-016`) when one changes
   the approach.
-- **After _every_ bug fix:** append an entry (Symptom / Root cause / **Lesson** / Guard) and
-  bump `_meta.json`. **Gate 3 of `.claude/hooks/stop.mjs` blocks the turn otherwise** on
-  `fix/*` branches and on `fix:` commits that landed since the register last changed. A fix with
-  no transferable lesson bumps `_meta.json.updatedAt` alone — never invent a junk entry.
+- **After _every_ bug fix:** the lesson still gets written — an entry (Symptom / Root cause /
+  **Lesson** / Guard) plus the `_meta.json` bump — but it lands in the docs-only follow-up
+  commit/PR the landing coordinator opens right after the code PR merges (Bookkeeping Option B,
+  owner ruling 2026-09-05), not in the code PR itself. **Gate 3 of `.claude/hooks/stop.mjs`
+  blocks the turn otherwise** on `fix/*` branches and on `fix:` commits that landed since the
+  register last changed, unless the code PR's HEAD commit carries a `Bookkeeping-Follow-Up:
+pending` trailer, which Gate 3 accepts in place of an updated entry. A fix with no transferable
+  lesson bumps `_meta.json.updatedAt` alone — never invent a junk entry.
 - Caps: ≤ 40 active entries / 40,960 bytes (enforced by `scripts/validate-lessons.mjs`), overflow
   to `ARCHIVE.md`. Entries are generalizable rules, not incident diaries, and carry **no client
   identifiers** (this repo goes public for CI).
@@ -261,6 +267,8 @@ Full rationale, failure modes, and the retirement checklist:
 2. **Start `scripts/visibility-watchdog.mjs` detached first** (45 min; see the runbook's
    "Watchdog (mandatory)" section), **then** make it public — `gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`
 3. **Push + CI green + merge the PR to master** (squash) — Railway auto-deploys from the push.
+   Right after the merge, the coordinator opens the follow-up bookkeeping PR in the same public
+   window (docs-only; audited `SKIP_VERIFY` allowed per the owner 2026-09-05).
 4. **Wait until the deploy reaches `BUILDING`** (never `INITIALIZING`), **then flip private as a
    `finally`** — even if CI or the merge failed — and read visibility back to confirm `PRIVATE`.
 5. **Watch the deploy to SUCCESS**, then `npm run post-deploy-check` — E2E fires itself off the

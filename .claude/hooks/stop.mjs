@@ -50,6 +50,14 @@ function sh(cmd) {
   }
 }
 
+// Bookkeeping Option B (owner ruling 2026-09-05): a code PR may defer the
+// code-map/lessons update to a docs-only follow-up PR opened right after
+// merge, by carrying this trailer on its HEAD commit. Gates 2 and 3 both
+// treat the trailer as a satisfying condition instead of blocking.
+const bookkeepingDeferred = /^Bookkeeping-Follow-Up:\s*pending/im.test(
+  sh("git log -1 --format=%B").out,
+);
+
 let changed = [];
 try {
   // --diff-filter=d drops DELETED paths: prettier errors out with "No files
@@ -97,9 +105,13 @@ const HOW_TO_FIX =
   "api/web/mobile/packages.md) and bump _meta.json (mappedSha + generatedAt). " +
   "If the map's content is genuinely unaffected, bump generatedAt to acknowledge the review.";
 
+if (hasMap && bookkeepingDeferred) {
+  console.log("Gate 2: bookkeeping deferred to the follow-up PR (trailer present)");
+}
+
 // (a) session-local: code changed in the working tree, map untouched
 const uncommittedCode = changed.filter(isCode);
-if (hasMap && uncommittedCode.length > 0 && !changed.some(isMap)) {
+if (hasMap && uncommittedCode.length > 0 && !changed.some(isMap) && !bookkeepingDeferred) {
   const list = uncommittedCode.slice(0, 10).join("\n  ");
   process.stderr.write(
     `Stop gate: code changed but .claude/code-map/ was not updated (CLAUDE.md code-map routine).\n` +
@@ -113,7 +125,7 @@ if (hasMap && uncommittedCode.length > 0 && !changed.some(isMap)) {
 // fixing commit touches .claude/code-map/ and becomes the new anchor, and a
 // commit carrying code + map together is always clean. An uncommitted
 // code-map change counts as the fix in progress — don't re-block.
-if (hasMap && !changed.some(isMap)) {
+if (hasMap && !changed.some(isMap) && !bookkeepingDeferred) {
   const lastMap = sh("git log -1 --format=%H -- .claude/code-map").out.trim();
   if (/^[0-9a-f]{40}$/i.test(lastMap)) {
     const codeDrift = sh(`git diff --name-only ${lastMap} HEAD -- apps packages scripts`)
@@ -137,7 +149,11 @@ if (hasMap && !changed.some(isMap)) {
 const isLesson = (f) => norm(f).startsWith(".claude/lessons/");
 const hasLessons = existsSync(".claude/lessons/LESSONS.md");
 
-if (hasLessons && !changed.some(isLesson)) {
+if (hasLessons && !changed.some(isLesson) && bookkeepingDeferred) {
+  console.log("Gate 3: bookkeeping deferred to the follow-up PR (trailer present)");
+}
+
+if (hasLessons && !changed.some(isLesson) && !bookkeepingDeferred) {
   const LESSON_FIX =
     "Append an entry to .claude/lessons/LESSONS.md (Symptom / Root cause / Lesson / Guard) " +
     "and bump _meta.json (nextId, activeCount, updatedAt). If this fix genuinely carries no " +
