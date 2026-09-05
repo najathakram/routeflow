@@ -187,31 +187,6 @@
   artifact's mtime post-dates the change, before reading any gate that consumes it. Freshness is
   verified, never inferred from a green summary.
 
-### L-028 · 2026-09-01 · tooling
-
-- **Symptom:** a grouped dependency bump advertised a security update for a file-upload library. The
-  PR title, changelog and lockfile diff all showed the new version — and every upload path kept
-  running the old one, advisories intact.
-- **Root cause:** a framework package declared that library at an **exact** version, so the hoisted
-  copy stayed pinned there; the bump installed the new version only nested under one workspace,
-  which nothing imports from. A version appearing in the lockfile says it was installed, never that
-  it is what resolves at a call site.
-- **Lesson:** **A dependency bump is proven by what RESOLVES at the call sites, not by the lockfile
-  diff — for any security bump, check whether a parent's exact pin holds the hoisted copy, or the
-  merge closes the ticket without closing the hole.**
-- **Guard:** none yet — inspect the hoisted entry (and any parent's exact pin) before believing a
-  security bump. The check that settles it is the **resolution**, which holds whatever the install
-  state is:
-  `node -e "console.log(require.resolve('<lib>',{paths:[require('path').dirname(require.resolve('<parent>/package.json'))]}))"`.
-  ⚠️ A version string read out of `node_modules` is **not** independent confirmation: a tree that
-  predates the bump's install reads the old version for the trivial reason that nothing installed
-  the new one. Both this entry's author and its first reader made exactly that substitution within
-  hours of filing it — **having written a rule makes you quicker, not slower, to accept a reading
-  that confirms it.** Note the fix for this class is a root `overrides` pin, which [[L-012]]
-  otherwise forbids: `overrides` is the only mechanism that beats a parent's exact pin on a
-  **runtime** transitive, so state the exception in the PR or the next reader reverts it as a
-  violation.
-
 ### L-010 · 2026-08-29 · tooling
 
 - **Symptom:** one workspace's tests "failed" under verify while the same code passed everywhere
@@ -413,22 +388,6 @@
 - **Guard:** none yet — the two project entries are commented out (not deleted) with the diagnosis
   inline, so re-enabling is a seed change plus uncommenting. A skip is not a discharge ([[L-041]]).
 
-### L-036 · 2026-09-01 · testing · #TBD
-
-- **Symptom:** a transition deny-list whose every (from,to) pair was verified correct — by unit
-  assertions AND by adversarial refuters — was defeated by two individually-legal PATCHes:
-  `COMPLETED → IN_PROGRESS` (a documented allowance) then `IN_PROGRESS → SCHEDULED` (never
-  denied) re-scheduled a completed run, the exact state the matrix's contract forbids.
-- **Root cause:** the matrix is EDGE-wise, and so was every oracle pointed at it. Verifying each
-  edge in isolation is structurally incapable of finding a composite path; no amount of care
-  inside the matrix would have caught it.
-- **Lesson:** **When the artefact under test is a state machine, the oracle must walk PATHS, not
-  edges.** Ask which multi-step sequences compose into a forbidden state, and guard on durable
-  evidence outside the transition (here `completedAt`, which the endpoint only ever sets) rather
-  than on the current status.
-- **Guard:** `REG-B72 (T22)` walks the two-step path and pins that a never-completed run still
-  schedules normally; disabling the guard turns it red.
-
 ### L-025 · 2026-09-01 · testing
 
 - **Symptom:** native Google Sign-In had been dead the whole time — the callback destructured a
@@ -491,6 +450,27 @@ build` forces production — so that branch was dead in every Docker image, not 
 - **Root cause:** a month-advance compared against a mutated date; a second writer priced lines outside the one buyer resolver; the cron advanced the schedule before it knew the outcome and never recorded it; the restore after failure was not conditioned on the claim that made it.
 - **Lesson:** **Every path that materialises an order or invoice from a saved shape is a pricing writer and a schedule writer: price through the shared resolver, record the outcome on the row you advanced, and undo a claim only by compare-and-set on the value the claim wrote — a miss means someone newer owns the row, so write nothing.**
 - **Guard:** REG-B48 T9–T16 through the real resolver; REG-B46 T1–T7b; REG-B106 T17/T17b/T17c/T18/T19 ([[L-030]]: a write and its record share one condition; [[L-045]]: release on the forward-path marker).
+
+### L-047 · 2026-09-04 · domain · F25
+
+- **Symptom:** run dates, licence expiries and dashboard dates shifted a day for viewers west of
+  UTC; on-time % was judged against the UTC day-end for tenants in New York; a driver location
+  POST was rejected on a platform sentinel `-1`.
+- **Root cause:** calendar dates stored as UTC midnight were read with local getters or
+  `toLocaleDateString`; one writer stored local `23:59:59`; analytics never read
+  `TenantConfig.timezone`; a sentinel reached a `@Min(0)` DTO unmapped.
+- **Lesson:** **A calendar date is a string, not an instant: store it as UTC midnight, render and
+  edit it only through the shared calendar-date helper (web/mobile mirrors), and evaluate day
+  boundaries in the TENANT's timezone through the one api helper — never `setHours`, local
+  getters or `toLocaleDateString` on a date-only field.**
+  A test for any of this must take the zone as DATA: under `TZ=UTC` — CI and the API image —
+  host-local and UTC components are identical, so a host-clock oracle is green on the buggy
+  body, and an in-file `process.env.TZ` pin is inert under jest (the sandbox gets a copy of
+  `process.env`).
+- **Guard:** REG-B59 e2e under `timezoneId`; REG-B118 tenant-tz jest with a DST fixture;
+  REG-B90/B91 mobile helper tests + the mirror-identity pin; the revenue-trend pin uses a Date
+  whose local getters disagree with its ISO view; REG-B185 DTO spec ([[L-026]] client sentinels
+  never reach a validator unmapped).
 
 ### L-054 · 2026-09-03 · domain · PR-2 `imp-02-order-merge-advisory-lock`
 

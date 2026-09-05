@@ -64,6 +64,32 @@ export function fmtCalendarDate(d?: string | null): string {
   });
 }
 
+/**
+ * Format a CALENDAR date with its weekday, e.g. "Mon, Jun 10" (short) or
+ * "Wednesday, June 10" (long). Returns "—" for null/invalid — same
+ * empty-input handling as `fmtCalendarDate`.
+ *
+ * Same UTC-anchoring rationale as `fmtCalendarDate`: the stored value is a
+ * UTC-midnight calendar date, so its UTC calendar components are rendered
+ * directly rather than the viewer's local timezone. Locale is left to the
+ * viewer's browser (`undefined`), matching `toLocaleDateString`'s prior
+ * behavior before the UTC-anchoring fix.
+ */
+export function fmtCalendarDateWithWeekday(
+  d: string | null | undefined,
+  weekday: "short" | "long",
+): string {
+  if (!d) return "—";
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return "—";
+  return dt.toLocaleDateString(undefined, {
+    timeZone: "UTC",
+    weekday,
+    month: weekday === "long" ? "long" : "short",
+    day: "numeric",
+  });
+}
+
 /** Today's date in YYYY-MM-DD format */
 export function todayIso(): string {
   return new Date().toISOString().slice(0, 10);

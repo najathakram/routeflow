@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { roundMoney } from "@routeflow/pricing";
+import { endOfCalendarDay } from "../common/calendar-date";
 import {
   REAL_INVOICE_STATUSES,
   estimateCogs,
@@ -169,8 +170,17 @@ export class AnalyticsService {
     return portion;
   }
 
+  /**
+   * The default `fromDate` is UTC-anchored (`Date.UTC(...getUTCFullYear(), 0, 1)`),
+   * NOT `new Date(year, 0, 1)` — the two-argument constructor reads HOST-LOCAL
+   * calendar components, so on any host west of UTC the window opened hours
+   * after UTC midnight of January 1 and the `gte` filter silently dropped every
+   * invoice dated January 1 (they are stored at UTC midnight — see
+   * `common/calendar-date.ts`). Same defect class as the `getRevenueTrend`
+   * month key below; pinned in `analytics.service.calendar.spec.ts`.
+   */
   private dateRange(from?: string, to?: string) {
-    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
+    const fromDate = from ? new Date(from) : new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1));
     const toDate = to
       ? (() => {
           const d = new Date(to);
@@ -209,7 +219,7 @@ export class AnalyticsService {
     for (const inv of invoices) {
       const key =
         groupBy === "month"
-          ? `${inv.issueDate.getFullYear()}-${String(inv.issueDate.getMonth() + 1).padStart(2, "0")}`
+          ? inv.issueDate.toISOString().slice(0, 7)
           : inv.issueDate.toISOString().split("T")[0];
       // Invoice-level discount/shippingFee stay attributed to the remainder
       const total = excludeTobacco
@@ -322,19 +332,23 @@ export class AnalyticsService {
    * "On-time" definition: RouteRunStop carries no promised ETA (the schema has
    * no eta / time-window field anywhere), so a completed stop counts as
    * on-time when its completedAt falls on or before the END of its run's
-   * scheduledDate calendar day (UTC). Completing early is on-time; anything
-   * after the scheduled day is late. Stops never completed are not "late" —
-   * they're incomplete, which completionRate already captures — so they stay
-   * out of the on-time denominator entirely.
+   * scheduledDate calendar day, in the tenant's configured timezone (falling
+   * back to UTC when unset). Completing early is on-time; anything after the
+   * scheduled day is late. Stops never completed are not "late" — they're
+   * incomplete, which completionRate already captures — so they stay out of
+   * the on-time denominator entirely.
    *
    * Duration metrics admit only runs with a positive startedAt→completedAt
    * span; runs missing either stamp (or with a non-positive span) are excluded
    * from BOTH the stops-per-hour numerator and denominator so they can't
    * poison the averages.
    */
-  private accumulateRunMetrics(agg: RunMetricAgg, run: RunMetricSource) {
-    const dayEnd = new Date(run.scheduledDate);
-    dayEnd.setUTCHours(23, 59, 59, 999);
+  private accumulateRunMetrics(
+    agg: RunMetricAgg,
+    run: RunMetricSource,
+    tenantTimezone: string | null,
+  ) {
+    const dayEnd = endOfCalendarDay(run.scheduledDate, tenantTimezone);
     let runCompletedStops = 0;
     for (const stop of run.stops) {
       if (!stop.completedAt) continue;
@@ -350,6 +364,23 @@ export class AnalyticsService {
         agg.validRunStops += runCompletedStops;
       }
     }
+  }
+
+  /**
+   * Resolves the current tenant's configured timezone ONCE per call (not per
+   * row) for the on-time day-end check above. It passes `cfg?.timezone ?? null`
+   * straight through and relies on `endOfCalendarDay`'s own UTC fallback: an
+   * unconfigured tenant (no `TenantConfig` row) must keep today's exact UTC
+   * day-end boundary, never a silently-substituted America/New_York default.
+   */
+  private async resolveCurrentTenantTimezone(): Promise<string | null> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return null;
+    const cfg = await this.prisma.tenantConfig.findUnique({
+      where: { tenantId },
+      select: { timezone: true },
+    });
+    return cfg?.timezone ?? null;
   }
 
   /** Ratios from the accumulator — null (never 0 or NaN) when a window has no data. */
@@ -374,6 +405,7 @@ export class AnalyticsService {
    * runDateFilter; omitted ⇒ all history.
    */
   async getRoutePerformance(from?: string, to?: string) {
+    const tenantTimezone = await this.resolveCurrentTenantTimezone();
     const runs = await this.prisma.forTenant().routeRun.findMany({
       where: this.runDateFilter(from, to),
       include: {
@@ -397,7 +429,7 @@ export class AnalyticsService {
         };
       map[id].totalRuns += 1;
       if (run.status === "COMPLETED") map[id].completedRuns += 1;
-      this.accumulateRunMetrics(map[id].metrics, run);
+      this.accumulateRunMetrics(map[id].metrics, run, tenantTimezone);
     }
     return Object.entries(map).map(([id, v]) => ({
       id,
@@ -415,6 +447,7 @@ export class AnalyticsService {
    * RouteRun.scheduledDate via runDateFilter; omitted ⇒ all history.
    */
   async getDriverPerformance(from?: string, to?: string) {
+    const tenantTimezone = await this.resolveCurrentTenantTimezone();
     const runs = await this.prisma.forTenant().routeRun.findMany({
       where: { driverId: { not: null }, ...this.runDateFilter(from, to) },
       include: {
@@ -444,7 +477,7 @@ export class AnalyticsService {
         };
       map[id].totalDeliveries += run.orders.length;
       if (run.status === "COMPLETED") map[id].completedDeliveries += run.orders.length;
-      this.accumulateRunMetrics(map[id].metrics, run);
+      this.accumulateRunMetrics(map[id].metrics, run, tenantTimezone);
     }
     return Object.entries(map).map(([id, v]) => ({
       id,

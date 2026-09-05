@@ -3,10 +3,11 @@
  *
  * UTC-based throughout, like `regulated/period.ts` — a bucket boundary must not drift
  * with the server's local timezone, or the same invoice lands in different buckets on
- * a developer laptop and in CI. `analytics.service.ts getRevenueTrend` is the cautionary
- * tale: it keys months from `getFullYear()/getMonth()` (LOCAL) but days from
- * `toISOString()` (UTC), so on a UTC-5 host one invoice at 2026-01-01T02:00Z buckets
- * into month "2025-12" and day "2026-01-01" simultaneously. Do not copy that.
+ * a developer laptop and in CI. `analytics.service.ts getRevenueTrend` was the cautionary
+ * tale: it keyed months from `getFullYear()/getMonth()` (LOCAL) but days from
+ * `toISOString()` (UTC), so on a UTC-5 host one invoice at 2026-01-01T02:00Z bucketed
+ * into month "2025-12" and day "2026-01-01" simultaneously. Both branches are UTC now
+ * (see `analytics.service.calendar.spec.ts`) — do not reintroduce a local-time key.
  *
  * Known trade-off: an operator invoicing at 7pm CT on the 31st books into the next UTC
  * day. Every other analytics surface (revenue, sales-by-category, tobacco monthly)

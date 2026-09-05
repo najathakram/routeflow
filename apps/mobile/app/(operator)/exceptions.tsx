@@ -15,6 +15,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { IosEmptyState, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import { useAdminOrders, useAdminReturns } from "../../lib/api/admin";
 import { useOperatorRouteRuns } from "../../lib/api/routes";
+import { isRunPastDue } from "../../lib/run-lateness";
 
 type ExceptionSeverity = "urgent" | "warning" | "info";
 
@@ -39,8 +40,6 @@ export default function ExceptionsScreen() {
 
   const exceptions = useMemo<ExceptionItem[]>(() => {
     const items: ExceptionItem[] = [];
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
 
     // Urgent pending orders
     for (const o of urgentOrdersQ.data?.data ?? []) {
@@ -57,9 +56,7 @@ export default function ExceptionsScreen() {
 
     // Late routes — IN_PROGRESS but scheduled date is before today
     for (const run of activeRunsQ.data?.data ?? []) {
-      const scheduled = new Date(run.scheduledDate);
-      scheduled.setHours(0, 0, 0, 0);
-      if (scheduled < today) {
+      if (isRunPastDue(run.scheduledDate, new Date())) {
         const stopsLeft = (run.stops ?? []).filter(
           (s) => s.status === "PENDING" || s.status === "IN_PROGRESS",
         ).length;

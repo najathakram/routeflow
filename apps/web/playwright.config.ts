@@ -471,5 +471,27 @@ export default defineConfig({
       testMatch: /32-active-sessions\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
     },
+
+    // ── Calendar-date correctness (F25, spec 34) ───────────────────────────────
+    // REG-B59 / REG-B91: a stored UTC-midnight calendar date (a run's
+    // scheduledDate, a customer license's expiresAt) rendered and round-tripped
+    // a day early for any viewer west of UTC. `timezoneId` pins the browser to
+    // America/Los_Angeles so the regression is actually observable — under the
+    // suite's default (unset) timezone the bug never disagrees with the stored
+    // day and this project would pass a broken build. Deploy-only proof, not
+    // part of the jest red gate (T1/T2 are proven directly there); this project
+    // resolving via `npx playwright test --list` is what discharges the pre-merge
+    // check, the deploy-signal e2e run discharges B59/B91 themselves.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "calendar-dates",
+      testMatch: /34-calendar-dates\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+        timezoneId: "America/Los_Angeles",
+      },
+    },
   ],
 });

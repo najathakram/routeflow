@@ -1,10 +1,10 @@
 {
   "nextId": 71,
-  "activeCount": 40,
-  "archivedCount": 25,
+  "activeCount": 39,
+  "archivedCount": 27,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-05T09:39:38.000Z",
+  "updatedAt": "2026-09-05T11:20:00.000Z",
   "schemaVersion": 1,
-  "note": "Merge of origin/master (10ddc3fa, #597 in-repo bug registry) into `fix/F13-recurring-standing-v2`: master's register is the base — it had already renumbered #597's four entries to L-067…L-070 and archived L-029 to hold the byte cap — and this branch contributes only its pre-allocated domain entry L-046, an id master never claimed, so nothing was renumbered on either side. activeCount 39→40 (exactly at maxEntries; the next entry MUST archive one first), archivedCount 25, nextId 71 (max id 70 + 1), 40,478 of 40,960 bytes. Prior note: Merge of origin/master (22372911, #613) into feat/bug-registry: master had minted its own L-063/L-064/L-065/L-066 (imp-04 jest-split, imp-04 CSP, PR-4 imp-01 compiled workspace package, watchdog spec), so this branch's four #597 registry entries were renumbered above master's max — L-063→L-067, L-064→L-068, L-065→L-069, L-066→L-070 — and the seven code-map/bugs.mjs citations of L-063 were remapped with them; this branch's own L-061 (watchdog spec) was dropped as a duplicate of master's L-066, same text. L-029 archived (guard `orders.lifecycle-conservation.spec.ts` in place) to hold the byte cap."
+  "note": "Merge of origin/master (d7dcf393, #612 F13 recurring invoices + standing orders) into fix/F25-calendar-date-correctness: master's register is the base — it already carried L-046 (F13) and the renumbered L-067…L-070 (#597), and this branch contributes only its pre-allocated L-047 (domain, F25 calendar dates), an id master never claimed, so nothing was renumbered on either side. That union stood at 41 entries / 41,962 bytes, over BOTH caps, so two entries were compacted to ARCHIVE.md verbatim under a dated section: L-036 (testing — guard REG-B72 T22 is landed and red when disabled) and L-028 (tooling — its rule now lives at the call site in .claude/code-map/api.md beside the root `overrides` pin it argues for). Two rather than the one strictly required, per [[L-039]]: a cap reached with ~0 margin is a tripwire for the next unrelated branch. activeCount 40→39, archivedCount 25→27, 38,945 of 40,960 bytes (2,015 headroom), nextId stays 71 (max id 70 across both files, +1). Prior note: Merge of origin/master (10ddc3fa, #597 in-repo bug registry) into `fix/F13-recurring-standing-v2` — master's #597 entries had already been renumbered to L-067…L-070 and L-029 archived to hold the byte cap."
 }

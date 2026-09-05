@@ -35,6 +35,7 @@ import {
 } from "@/lib/api/routes";
 import { useDrivers } from "@/lib/api/drivers";
 import { buildGoogleMapsLegs, type GmapsPoint } from "@/lib/gmaps-export";
+import { fmtCalendarDateWithWeekday } from "@/lib/calendar-date";
 import { ArrivedStopSheet } from "@/components/ArrivedStopSheet";
 
 // ─── Open in Google Maps export ───────────────────────────────────────────────
@@ -531,11 +532,10 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
   const optionalStops = stops.filter((s) => s.orders.length === 0);
   const packingList = packingData?.packingList ?? [];
 
-  const scheduledDate = new Date(run.scheduledDate).toLocaleDateString([], {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-  });
+  // scheduledDate is a UTC-midnight CALENDAR date — render its UTC calendar
+  // components directly, never the viewer's local timezone, which shows the
+  // previous day west of UTC (B91).
+  const scheduledDate = fmtCalendarDateWithWeekday(run.scheduledDate, "long");
   const driverName = run.driver?.contactName ?? "Unassigned";
 
   return (

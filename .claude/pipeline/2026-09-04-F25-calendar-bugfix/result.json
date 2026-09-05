@@ -1,0 +1,316 @@
+{
+  "provenance": "reconstructed; engine return truncated by the harness",
+  "runId": "wf_3168b7a2-8f1",
+  "mode": "bugfix",
+  "scale": "major",
+  "clean": false,
+  "startedAt": "2026-09-04T13:20:00Z",
+  "endedAt": "2026-09-04T23:28:00Z",
+  "durationSeconds": 35524,
+  "agents": 81,
+  "subagentTokens": 10234296,
+  "toolUses": 2043,
+  "estimatedCostUsd": 58.95,
+  "pricesAsOf": "2026-06-24",
+  "reconstructedFrom": [
+    "journal.jsonl (81 started + 81 result rows) for the run wf_3168b7a2-8f1",
+    "the harness usage line: 81 agents, 10,234,296 subagent tokens, 2,043 tool uses, 35,524 s, $58.95",
+    "the close-out pass that applied the final pass's remaining findings"
+  ],
+  "note": "Per-phase token and cost attribution is NOT recoverable: the journal carries only started/result rows, so every phaseReport entry has null tokens/estUsd. The run-level totals above are the harness's own numbers; phase names, agent counts and outcomes are derived from the 81 result shapes in journal order.",
+  "riskSummary": { "high": 6, "low": 67 },
+  "fixRouting": { "mechanical": 65, "sonnetDesigned": 6, "judgment": 7 },
+  "fixRounds": 2,
+  "redGate": {
+    "attempts": 2,
+    "structurallyRed": true,
+    "behaviorallyRed": true,
+    "properlyRed": true,
+    "remediateOn": "structural",
+    "note": "Attempt 1 was neither structurally nor behaviorally red: the mobile T5 spec sat outside the __tests__ collection root and two web REG tests asserted on unreferenced duplicate modules. Nine structural remediations later, attempt 2 was properlyRed."
+  },
+  "verify": {
+    "votesCast": 159,
+    "judged": 159,
+    "dropped": 0,
+    "firstVoteRefutedRate": null,
+    "tieBreaks": 1,
+    "lazy": true
+  },
+  "uiVerify": { "ran": false, "completed": false, "findings": [], "reVerify": false },
+  "mutationProbe": {
+    "ran": true,
+    "skipped": false,
+    "targets": 2,
+    "probed": 2,
+    "allCaught": true,
+    "restoredVerified": true,
+    "skippedTargets": []
+  },
+  "finalPass": {
+    "ran": true,
+    "skipped": false,
+    "completed": true,
+    "model": "fable",
+    "effort": "xhigh",
+    "fallback": false,
+    "findings": [
+      {
+        "severity": "major",
+        "file": "scripts/repair-f25-licence-dates.mjs",
+        "line": 270,
+        "summary": "--allow-expiring-rows is gated on a now snapshot taken before the type-back prompt, so a run straddling UTC midnight writes a currently-valid licence into the past ungated."
+      },
+      {
+        "severity": "major",
+        "file": "scripts/repair-f25-licence-dates.mjs",
+        "line": 34,
+        "summary": "The headline safety bound (~28 h earlier) is wrong: the PDT fixture moves 31 h and the documented UTC-12 floor moves ~36 h. Repeated twice in REPAIR-RUNBOOK.md."
+      },
+      {
+        "severity": "major",
+        "file": "apps/api/src/analytics/analytics.service.calendar.spec.ts",
+        "line": 133,
+        "summary": "The revenue-trend sibling regression cannot fail on the pre-fix body under TZ=UTC, which is the environment both CI and the API image run in."
+      },
+      {
+        "severity": "major",
+        "file": "apps/web/app/(dashboard)/routes/_components/EditRunModal.test.tsx",
+        "line": 1,
+        "summary": "The only proof that EditRunModal is wired to the B59 seam is matched by no command in verifyCommands."
+      },
+      {
+        "severity": "minor",
+        "file": "scripts/repair-f25-licence-dates.mjs",
+        "line": 270,
+        "summary": "Rows written by UTC+12..+14 devices recover one day early with no code guard, unlike the EXPIRING NOW class."
+      },
+      {
+        "severity": "minor",
+        "file": "apps/api/src/common/calendar-date.ts",
+        "line": 169,
+        "summary": "resolveTenantTimezone is a dead export whose doc comment names a caller that does not exist and hands back the America/New_York fallback the build plan lists as risk #1."
+      },
+      {
+        "severity": "minor",
+        "file": "apps/api/src/analytics/analytics.service.calendar.spec.ts",
+        "line": 12,
+        "summary": "The header states the bug's direction backwards (New York is WEST of UTC), and the opposite direction has no test."
+      },
+      {
+        "severity": "minor",
+        "file": "apps/web/app/(dashboard)/deliveries/page.tsx",
+        "line": 78,
+        "summary": "The Date column renders two different date formats in adjacent rows after the B91 swap."
+      },
+      {
+        "severity": "minor",
+        "file": "apps/api/src/analytics/demand-range.ts",
+        "line": 3,
+        "summary": "Modified as a sibling of the same defect class with no work package, radius entry or manifest entry."
+      },
+      {
+        "severity": "minor",
+        "file": "apps/api/src/analytics/analytics.service.ts",
+        "line": 174,
+        "summary": "dateRange's default fromDate is still built from host-local calendar components: the January-1 drop."
+      },
+      {
+        "severity": "dismissed",
+        "file": ".claude/pipeline/2026-09-04-F25-location-bugfix/pipeline-args.json",
+        "line": 7,
+        "summary": "Claimed a second bug-pipeline run (B185) is live in this worktree. DISMISSED with evidence: that run never started. The directory holds planning artifacts only, with no result.json, no RESUME status beyond planned and no agent activity, and Run A's own sequencing rule blocks Run B until this commit lands."
+      }
+    ]
+  },
+  "remainingFindings": [],
+  "gate": {
+    "pass": true,
+    "note": "The engine's own final gate was pass:false on node scripts/campaign-check.mjs alone (8 undischarged claims: B24, B130, B154, B11, B167, B62, B10, B08 - none of them F25's). Cause: a stale PARTIAL .campaign/runs/web-e2e.json in this worktree, the documented Playwright clobber trap. Moved to the session scratchpad, api.json regenerated from a full api jest run, campaign-check re-run clean at close-out.",
+    "commands": [
+      {
+        "command": "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+        "ok": true,
+        "detail": "clean"
+      },
+      {
+        "command": "cd apps/api && npx jest --silent",
+        "ok": true,
+        "detail": "233 suites, 3747 tests (includes the close-out additions)"
+      },
+      { "command": "cd apps/mobile && npx tsc --noEmit", "ok": true, "detail": "clean" },
+      {
+        "command": "cd apps/mobile && npx jest --silent",
+        "ok": true,
+        "detail": "111 suites, 1426 tests"
+      },
+      { "command": "cd apps/web && npx tsc --noEmit", "ok": true, "detail": "clean" },
+      {
+        "command": "cd apps/web && npx jest --runInBand",
+        "ok": true,
+        "detail": "24 suites, 104 tests - added at close-out; the run declared no web jest in its final gate"
+      },
+      {
+        "command": "node scripts/campaign-check.mjs",
+        "ok": true,
+        "detail": "194 ledger rows across 31 shards, 68 affirmative claims checked, every one backed - green once the stale web-e2e.json was moved aside and api.json regenerated from the full api run"
+      },
+      {
+        "command": "node scripts/validate-lessons.mjs",
+        "ok": true,
+        "detail": "36/40 entries, 37.1/40.0 KB"
+      },
+      {
+        "command": "cd apps/web && npx playwright test --list --reporter=list",
+        "ok": true,
+        "detail": "144 tests in 30 files"
+      }
+    ]
+  },
+  "overlap": null,
+  "cascadeAudit": null,
+  "escalation": { "triggered": false, "lensesSkipped": [] },
+  "deviations": [
+    "Launch args dropped dependsOn on WP-WEB and WP-MOB (both named a TEST package, which the engine does not accept as a work-package dependency); pipeline-args.json on disk corrected to what launched.",
+    "node scripts/campaign-check.mjs was excluded at Baseline as a bad command because of a stale partial Playwright artifact in this worktree.",
+    "Two analytics.service.ts siblings and one docblock (demand-range.ts) were swept beyond the declared package files; all three kept and now covered by radiusFiles, the code map and a pin.",
+    "The dead export resolveTenantTimezone was deleted from common/calendar-date.ts at close-out.",
+    "The dateRange fix flipped an EXISTING pin: analytics.service.spec.ts:1046 asserted new Date(new Date().getFullYear(), 0, 1) - the defect itself - so that assertion was re-pinned to the UTC anchor with the reason in a comment.",
+    "The revenue-trend regression uses a Date stub rather than a process.env.TZ pin: jest hands the sandbox a copy of process.env, so an in-file TZ pin never reaches Node's timezone cache and is inert (measured in this worktree)."
+  ],
+  "phaseReport": [
+    {
+      "phase": "Baseline",
+      "ran": true,
+      "agents": 4,
+      "rawFindings": 0,
+      "tokens": null,
+      "estUsd": null,
+      "effort": "low",
+      "model": "haiku",
+      "note": "workdir/args validation, harness-integrity check (0 findings), 11-command baseline sweep; campaign-check classified as a bad command and excluded"
+    },
+    {
+      "phase": "Test packages",
+      "ran": true,
+      "agents": 3,
+      "rawFindings": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": "high",
+      "model": "sonnet",
+      "note": "TP-WEB, TP-MOB, TP-API - seam extraction carrying today's buggy bodies plus the REG tests"
+    },
+    {
+      "phase": "Red gate",
+      "ran": true,
+      "agents": 5,
+      "rawFindings": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": "high",
+      "model": "opus",
+      "note": "attempt 1 not red (collection-root + unreferenced-duplicate defects), 9 structural remediations, attempt 2 properlyRed"
+    },
+    {
+      "phase": "Implement",
+      "ran": true,
+      "agents": 6,
+      "rawFindings": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": "high",
+      "model": "sonnet",
+      "note": "WP-API-CAL, WP-WEB, WP-MOB, WP-E2E, WP-SCRIPTS, WP-DOCS"
+    },
+    {
+      "phase": "Verify",
+      "ran": true,
+      "agents": 3,
+      "rawFindings": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": "low",
+      "model": "haiku",
+      "note": "round 1 red on the web/mobile jest lines, 4 fixes, round 2 green"
+    },
+    {
+      "phase": "Review",
+      "ran": true,
+      "agents": 6,
+      "rawFindings": 57,
+      "tokens": null,
+      "estUsd": null,
+      "effort": "high",
+      "model": "opus",
+      "note": "six lenses over the radius pack"
+    },
+    {
+      "phase": "Sibling sweep",
+      "ran": true,
+      "agents": 3,
+      "rawFindings": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": "medium",
+      "model": "sonnet",
+      "note": "siblingPatterns grep plus two file sweeps"
+    },
+    {
+      "phase": "Refute",
+      "ran": true,
+      "agents": 9,
+      "rawFindings": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": "high",
+      "model": "opus",
+      "note": "159 verdicts across the lens findings and the sweep hits"
+    },
+    {
+      "phase": "Mutation probe",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": "medium",
+      "model": "sonnet",
+      "note": "analytics.service.ts and common/calendar-date.ts - both defects caught, both files restored"
+    },
+    {
+      "phase": "Fix",
+      "ran": true,
+      "agents": 26,
+      "rawFindings": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": "high",
+      "model": "mixed",
+      "note": "round 1: 73 decisions (57 fix / 14 defer / 2 dispute) over 2 waves, 19 agents; round 2: 5 decisions, 5 agents"
+    },
+    {
+      "phase": "Final gate",
+      "ran": true,
+      "agents": 3,
+      "rawFindings": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": "low",
+      "model": "haiku",
+      "note": "api 3737/3737, mobile 1426/1426, lessons green, playwright list green; campaign-check red on the stale artifact"
+    },
+    {
+      "phase": "Final pass",
+      "ran": true,
+      "agents": 5,
+      "rawFindings": 14,
+      "tokens": null,
+      "estUsd": null,
+      "effort": "xhigh",
+      "model": "fable",
+      "note": "digest plus two independent reads (8 and 6 findings), each with its own refutation pass; every candidate confirmed real"
+    }
+  ],
+  "confirmedByPhase": { "Review": 57, "Sibling sweep": 5, "Final pass": 14 }
+}
