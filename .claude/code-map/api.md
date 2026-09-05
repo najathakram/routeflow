@@ -105,6 +105,36 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   now a third consumer — imported via dynamic `import()` (it's CJS, and CI's Node 20 can't
   `require()` an `.mjs`), `requireProxy: false` like `schema-drift.mjs` (a read like this may fall
   back to `DATABASE_URL`, unlike the writer `prod-migrate.mjs`). Contract: `src/common/e2e-seed-script.spec.ts`.
+- **`scripts/backfill-legacy-tenant-ids.mjs` + `scripts/lib/legacy-tenant-backfill.mjs` (close-out
+  review, 2026-09-05, OWNER-RUN)** — dry-run-first **data** repair for legacy rows whose `tenantId`
+  IS NULL (prod counts 2026-09-05: `RouteRunStop` 5, `PaymentCounter` 1, `CreditNote` 1). Such a row
+  is invisible to every tenant-scoped read AND reads as "foreign" to the fail-closed tenancy
+  post-filter, so it cannot be fixed through the product — a NULL `RouteRunStop` still renders on
+  the run card through a nested include but can never be completed/skipped, and the run
+  auto-completes with it stuck `PENDING`. Three modes: default **report** (read-only, one line per
+  NULL row: table, id, createdAt, parent ids, proposed tenantId, verdict + per-table
+  `ok=<n> refused=<n>`), `--dry-run` (report + the exact parameterized UPDATEs with bound values,
+  still read-only), `--live` (requires BOTH `--backup-attested "<text>"` **and** a typed
+  `BACKFILL <n> ROWS` on a TTY, then ONE transaction of id-pinned
+  `UPDATE … SET "tenantId" = $1 WHERE "id" = $2 AND "tenantId" IS NULL RETURNING "id"` — never a
+  blanket UPDATE). `--json` emits the report for the owner's records. URL resolution is
+  `schema-drift.mjs`'s (`lib/railway-db-url.mjs`, Railway proxy vars over `DATABASE_URL`); `pg` is
+  required lazily so argument validation always precedes the driver; `SET
+default_transaction_read_only = on` is set at connect in EVERY mode and lifted only after the
+  confirmation. Exit **0** ok · **1** error · **2** argument refusal _before connecting_ · **3**
+  confirmation refused (non-TTY or mismatched text) · **4** rolled back (a guarded UPDATE returned
+  no row). Pure decision layer `lib/legacy-tenant-backfill.mjs` (no I/O):
+  `classifyRouteRunStop`/`classifyPaymentCounter`/`classifyCreditNote(row) → {verdict, tenantId,
+reason}` over verdicts `ok` | `refuse: parent missing` | `refuse: parents disagree` |
+  `refuse: singleton` | `refuse: unique-pair collision`, plus `updateSql(table)` (table names come
+  from the `BACKFILL_TABLES` whitelist, never from a row) and `buildUpdates(reports)` (also throws
+  when two `ok` CreditNote rows would claim one `(tenantId, creditNoteNumber)` — the per-row
+  `pairCollision` EXISTS cannot see that). ⚠️ Never a migration, never run from an implementation
+  session, fresh backup first; output carries ids/tenant ids/`creditNoteNumber` and enum statuses
+  only — never names, amounts, `PaymentCounter.next` or the connection URL. Spec:
+  `src/common/backfill-legacy-tenant-ids-script.spec.ts` (B1–B4 every classifier branch +
+  `buildUpdates`, evaluated in one `node --input-type=module` shim like `railway-db-url.spec.ts`;
+  B5 CLI argument refusal + read-only source pins at spawn level, no database).
 - **`scripts/ci-audit-critical.mjs` (2026-09-04)** — CI advisory gate: wraps `npm audit
 --omit=dev --audit-level=<level> --json` in `spawnSync` (`shell:false`, up to 3 attempts,
   15s/45s backoff, 120s per-attempt timeout, 64 MiB `maxBuffer`) so an `npm` registry
@@ -415,7 +445,12 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   source text of the specific web/mobile files that drifted (`VendorBillStatus`, `POStatus`→
   `PurchaseOrderStatus`, `BuyerPromotion.type`→`PromotionType`, `EstimateStatus` on both apps) and
   asserts they no longer hand-declare a conflicting literal union — the permanent regression guard
-  for L-072. **`schema-folder.spec.ts` (2026-09-04, wave E / imp-10a, T1; cases (g)/(h) reworked
+  for L-072. ⚠️ `ENUM_TABLE` is a deliberate **40-of-80 SUBSET** (only the enums a client actually
+  mirrors), so an equality assertion against the generated set would be WRONG; the close-out review
+  (2026-09-05) added a third `describe` that pins the COUNT instead —
+  `Object.keys(PrismaEnums.$Enums).length === PINNED_PRISMA_ENUM_COUNT` (80) — as a triage
+  tripwire: a new/removed generated enum must be triaged into `ENUM_TABLE` (or deliberately left
+  unmirrored) BEFORE the constant is bumped. **`schema-folder.spec.ts` (2026-09-04, wave E / imp-10a, T1; cases (g)/(h) reworked
   wave E structure)** — pins `prisma/schema/` to exactly the 7 domain files, 125 model + 80 enum
   blocks total, `_base.prisma` holding only datasource+generator, every model/enum name unique,
   `prisma.config.ts` pointing `schema` at the folder with an explicit `migrations.path`. Case (g)

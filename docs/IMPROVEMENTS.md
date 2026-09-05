@@ -460,7 +460,14 @@ A balanced review should say what not to touch:
   assert the projection kept `tenantId`. Separately, 81 of 125 models declare `tenantId String?`
   with no backfill migration, and `findUniqueOrThrow`'s fail-closed check treats a NULL `tenantId`
   as foreign (5 call sites: `estimates.service.ts` ~205, `routes.service.ts` ~2405/~2679,
-  `orders.service.ts` ~3925) — a backfill decision is pending prod counts.
+  `orders.service.ts` ~3925). **Prod counts, 2026-09-05: `RouteRunStop` 5, `PaymentCounter` 1,
+  `CreditNote` 1.** #613 is **not** the cause of those rows 404ing: both `routeRunStop` call sites
+  are preceded by a tenant-scoped `findFirst` that already 404s a NULL-tenant row, `PaymentCounter`
+  has no read path at all, and the `CreditNote` row was already invisible to every tenant-scoped
+  read. So the guard stays fail-closed and the rows are treated as the defect — repaired as DATA by
+  [`apps/api/scripts/backfill-legacy-tenant-ids.mjs`](../apps/api/scripts/backfill-legacy-tenant-ids.mjs)
+  (read-only report → `--dry-run` → `--live`, which needs both `--backup-attested` and a typed
+  confirmation), owner-run after a fresh backup. It is a data repair, never a migration.
 - **The DB backup pipeline** (`apps/db-backup`) is well-designed: 2-hourly `pg_dump` → Cloudflare R2
   (S3-compatible, zero egress fees), 30-day prune, **monthly restore-verify**, and a healthchecks.io
   dead-man's switch. R2 is object storage, not a backup tool — this is a sound, cheap choice.
