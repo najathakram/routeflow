@@ -13,7 +13,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import { Prisma, MovementType, PaymentMethod } from "@prisma/client";
 import { costDecimal, nextAverageCost, reverseAverageCost } from "../inventory/costing";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import Anthropic from "@anthropic-ai/sdk";
 import sharp from "sharp";
 import { buildTokenWeights, composedProductName, matchLine } from "./product-matcher";
@@ -129,7 +129,7 @@ export class VendorBillsService {
    * A bill line's INVENTORY denomination. Suppliers price lines in whatever
    * unit the invoice prints — usually CASES for boxed goods — while
    * `Product.currentStock` and `Product.averageCost` are contractually per
-   * PIECE (common/pricing.ts `costPerSellingUnit`). A line with
+   * PIECE (@routeflow/pricing `costPerSellingUnit`). A line with
    * `packSize > 1` is a case line: pieces = qty × packSize, per-piece cost =
    * unitCost ÷ packSize. The bill's own money is untouched — `totalOwed`
    * stays Σ qty × unitCost in invoice denomination, matching the printed

@@ -14,7 +14,7 @@ import {
   tileCta,
 } from "../lib/catalog-tile-logic";
 import { priceCart, type CartLineInput } from "../lib/buyer-cart-pricing";
-import type { PromotionRule, PromoResult } from "../lib/pricing";
+import type { PromotionRule, PromoResult } from "@routeflow/pricing";
 import type { CartItem } from "../store/cartStore";
 import type { BuyerStockAlerts, ReplenishmentEstimate } from "../lib/api/buyer";
 

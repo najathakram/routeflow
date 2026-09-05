@@ -7,7 +7,7 @@
  * wire); fall back to `computeLineSubtotal` (mirrors the server's own boxed
  * proration) only when it doesn't. Pure — no React import — Jest-testable.
  */
-import { computeLineSubtotal } from "./pricing";
+import { computeLineSubtotal } from "@routeflow/pricing";
 
 export interface RunMoneyLineItem {
   qty: number;

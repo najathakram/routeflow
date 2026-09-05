@@ -49,7 +49,7 @@ import {
   getTierPrice,
   normalizeBoxesPieces,
   perUnitPrice,
-} from "@/lib/pricing";
+} from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
@@ -1070,18 +1070,16 @@ export default function NewInvoicePage() {
       // Always agrees with the dueDate above: picking a term derives the date,
       // and hand-typing a date clears the term, so the two can never disagree.
       paymentTermsLabel: terms || undefined,
-      items: items.map(
-        (it): CreateInvoiceItem => ({
-          productId: it.productId,
-          description: it.description,
-          qty: Number(it.qty),
-          unitPrice: Number(it.unitPrice),
-          discount: Number(it.discount) || undefined,
-          // Map the taxable checkbox to an actual tax rate sent to the API
-          taxRate: it.taxable ? taxRate : 0,
-          ...(it.unitsPerBox ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
-        }),
-      ),
+      items: items.map((it): CreateInvoiceItem => ({
+        productId: it.productId,
+        description: it.description,
+        qty: Number(it.qty),
+        unitPrice: Number(it.unitPrice),
+        discount: Number(it.discount) || undefined,
+        // Map the taxable checkbox to an actual tax rate sent to the API
+        taxRate: it.taxable ? taxRate : 0,
+        ...(it.unitsPerBox ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
+      })),
       notes: notes.trim() || undefined,
       referenceNumber: reference.trim() || undefined,
       subject: subject.trim() || undefined,

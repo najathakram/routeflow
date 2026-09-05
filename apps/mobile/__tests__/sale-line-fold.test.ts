@@ -20,7 +20,7 @@ import {
   setLineBoxes,
   setLinePieces,
 } from "../lib/sale-line";
-import { normalizeBoxesPieces } from "../lib/pricing";
+import { normalizeBoxesPieces } from "@routeflow/pricing";
 
 describe("sale-line boxed increment folds a typed plain qty (T-B194 / REG-B194)", () => {
   it("incrementLine folds prev.qty as loose pieces before adding the box, instead of discarding it", () => {

@@ -3,7 +3,11 @@ import { PrismaService } from "./prisma.service";
 // T-G8a (test-plan.md, F02b/G8) — the FIRST specs apps/api/src/prisma/ has ever had. They pin
 // the tenant-isolation engine every other module leans on: `_wrapTxWithTenant` (the proxy
 // `tenantTransaction` hands to its callback) and `tenantTransaction` itself (the `set_config`
-// RLS hand-off).
+// RLS hand-off), plus `_tenantExtension` — the `$extends` layer `forTenant()` returns.
+//
+// BOTH scoping layers are covered here on purpose. They are separate implementations of one
+// rule and they have drifted before: `findUniqueOrThrow` was unguarded in each of them
+// (L-055). A verb pinned on one layer is pinned on the other.
 //
 // Green by design — characterization of unchanged engine behavior (R9's coverage clause).
 // R9's red lives in rls-migration.spec.ts and rls-preflight.spec.ts.
@@ -45,6 +49,11 @@ function makeFakeModel(rows: FakeRow[]) {
       async (args: { where?: { id?: string } } = {}) =>
         rows.find((r) => r.id === args.where?.id) ?? null,
     ),
+    findUniqueOrThrow: jest.fn(async (args: { where?: { id?: string } } = {}) => {
+      const found = rows.find((r) => r.id === args.where?.id);
+      if (!found) throw new Error("RecordNotFound");
+      return found;
+    }),
     count: jest.fn(
       async (args: { where?: Record<string, unknown> } = {}) =>
         rows.filter((r) => matchesWhere(r, args.where)).length,
@@ -62,6 +71,13 @@ function makeFakeModel(rows: FakeRow[]) {
         const matched = rows.filter((r) => matchesWhere(r, args.where));
         matched.forEach((r) => Object.assign(r, args.data));
         return { count: matched.length };
+      },
+    ),
+    updateManyAndReturn: jest.fn(
+      async (args: { where?: Record<string, unknown>; data?: Partial<FakeRow> } = {}) => {
+        const matched = rows.filter((r) => matchesWhere(r, args.where));
+        matched.forEach((r) => Object.assign(r, args.data));
+        return matched;
       },
     ),
     delete: jest.fn(async (args: { where?: Record<string, unknown> } = {}) => {
@@ -93,6 +109,14 @@ function makeFakeModel(rows: FakeRow[]) {
       list.forEach((d) => rows.push({ ...(d as FakeRow) }));
       return { count: list.length };
     }),
+    createManyAndReturn: jest.fn(
+      async (args: { data?: Partial<FakeRow> | Partial<FakeRow>[] } = {}) => {
+        const list = Array.isArray(args.data) ? args.data : args.data ? [args.data] : [];
+        const created = list.map((d) => ({ ...(d as FakeRow) }));
+        rows.push(...created);
+        return created;
+      },
+    ),
     upsert: jest.fn(
       async (
         args: {
@@ -175,7 +199,26 @@ describe("REG-G8a PrismaService#_wrapTxWithTenant — tenant-isolation proxy (T-
       );
     });
 
-    it("upsert: injects tenantId into `create` only — `where` must keep using declared unique fields", async () => {
+    it("createManyAndReturn: injects tenantId into every element of `data`", async () => {
+      const { rows, model, tx } = buildTx();
+
+      const created = await tx.order.createManyAndReturn({
+        data: [{ id: "order-a7" }, { id: "order-a8" }],
+      });
+
+      expect(model.createManyAndReturn).toHaveBeenCalledWith({
+        data: [
+          { id: "order-a7", tenantId: "tenant-a" },
+          { id: "order-a8", tenantId: "tenant-a" },
+        ],
+      });
+      expect(created.map((r: FakeRow) => r.tenantId)).toEqual(["tenant-a", "tenant-a"]);
+      expect(rows.filter((r) => r.tenantId === "tenant-a").map((r) => r.id)).toEqual(
+        expect.arrayContaining(["order-a7", "order-a8"]),
+      );
+    });
+
+    it("upsert: injects tenantId into `create` and leaves `where` exactly as the caller wrote it", async () => {
       const { model, tx } = buildTx();
 
       await tx.order.upsert({
@@ -185,8 +228,12 @@ describe("REG-G8a PrismaService#_wrapTxWithTenant — tenant-isolation proxy (T-
       });
 
       const call = model.upsert.mock.calls[0][0];
-      // Prisma throws PrismaClientValidationError if `where` carries a field outside its
-      // declared unique constraint — the proxy deliberately leaves `where` untouched.
+      // Deliberate, and pinned so a "fix" cannot land silently: an extra non-unique
+      // filter in an upsert `where` compiles into Prisma's `ON CONFLICT DO UPDATE …
+      // WHERE` predicate, so a legacy row with a NULL `tenantId` resolves to `null`
+      // and the caller 500s. Scoping it needs a null guard + a backfill migration —
+      // the follow-on tracked in docs/IMPROVEMENTS.md item 9. The `forTenant()`
+      // extension layer already scopes both halves (covered below).
       expect(call.where).toEqual({ id: "order-a6" });
       expect(call.create).toEqual({ id: "order-a6", status: "NEW", tenantId: "tenant-a" });
     });
@@ -263,6 +310,20 @@ describe("REG-G8a PrismaService#_wrapTxWithTenant — tenant-isolation proxy (T-
       );
     });
 
+    it("updateManyAndReturn: merges tenantId into `where`, leaves `data` untouched", async () => {
+      const { model, tx } = buildTx();
+      const returned = await tx.order.updateManyAndReturn({
+        where: { status: "OPEN" },
+        data: { status: "DONE" },
+      });
+      expect(model.updateManyAndReturn).toHaveBeenCalledWith({
+        where: { status: "OPEN", tenantId: "tenant-a" },
+        data: { status: "DONE" },
+      });
+      // The rows it hands back are tenant-a's only — the tenant-B row was never matched.
+      expect(returned.map((r: FakeRow) => r.id).sort()).toEqual(["order-a1", "order-a2"]);
+    });
+
     it("delete: merges tenantId into `where`", async () => {
       const { rows, model, tx } = buildTx();
       await tx.order.delete({ where: { id: "order-a1" } });
@@ -282,7 +343,7 @@ describe("REG-G8a PrismaService#_wrapTxWithTenant — tenant-isolation proxy (T-
     });
   });
 
-  describe("(a) post-filters the one POST_FILTER_METHODS verb (findUnique can't take an extra `where` field)", () => {
+  describe("(a) post-filters the two findUnique* verbs (neither can take an extra `where` field)", () => {
     it("findUnique: leaves `where` unchanged, but blanks a cross-tenant hit to null", async () => {
       const { model, tx } = buildTx();
 
@@ -295,6 +356,60 @@ describe("REG-G8a PrismaService#_wrapTxWithTenant — tenant-isolation proxy (T-
       expect(model.findUnique).toHaveBeenNthCalledWith(2, { where: { id: "order-b1" } });
       expect(ownRow).toEqual({ id: "order-a1", tenantId: "tenant-a", status: "OPEN" });
       expect(foreignRow).toBeNull();
+    });
+
+    it("findUniqueOrThrow: resolves the tenant's own row unchanged", async () => {
+      const { model, tx } = buildTx();
+
+      await expect(tx.order.findUniqueOrThrow({ where: { id: "order-a1" } })).resolves.toEqual({
+        id: "order-a1",
+        tenantId: "tenant-a",
+        status: "OPEN",
+      });
+      expect(model.findUniqueOrThrow).toHaveBeenCalledWith({ where: { id: "order-a1" } });
+    });
+
+    it("findUniqueOrThrow: a tenant-B row rejects with Prisma's own P2025, not the row (L-055)", async () => {
+      const { tx } = buildTx();
+
+      // Indistinguishable from a genuine miss: the caller cannot tell "belongs to
+      // someone else" from "does not exist", which is the whole point of failing closed.
+      await expect(tx.order.findUniqueOrThrow({ where: { id: "order-b1" } })).rejects.toMatchObject(
+        { code: "P2025" },
+      );
+    });
+  });
+
+  describe("(a) fails closed on any verb the allowlists do not handle", () => {
+    it("an unhandled model operation throws instead of running unscoped", async () => {
+      // `aggregateRaw` is a real Prisma delegate method (MongoDB-only) that carries no
+      // tenant-scopable `where` — the stand-in for any verb a future Prisma release adds.
+      const rows = seedTwoTenantRows();
+      const delegate = { ...makeFakeModel(rows), aggregateRaw: jest.fn(async () => rows) };
+      const tx = wrapTxWithTenant({ order: delegate }, "tenant-a");
+
+      expect(() => tx.order.aggregateRaw({})).toThrow(
+        'tenant guard: unhandled Prisma operation "aggregateRaw" on order',
+      );
+      expect(delegate.aggregateRaw).not.toHaveBeenCalled();
+    });
+
+    it("non-function delegate members (`fields`, `name`) still read through untouched", async () => {
+      const rows = seedTwoTenantRows();
+      const delegate = { ...makeFakeModel(rows), fields: { id: "Order.id" }, name: "Order" };
+      const tx = wrapTxWithTenant({ order: delegate }, "tenant-a");
+
+      expect(tx.order.fields).toEqual({ id: "Order.id" });
+      expect(tx.order.name).toBe("Order");
+    });
+
+    it("PrismaClient's `_`-prefixed internals are not wrapped as if they were models", async () => {
+      const internal = { someInternalFn: jest.fn(() => "ok") };
+      const tx = wrapTxWithTenant({ _engineConfig: internal }, "tenant-a");
+
+      // Wrapping them would send every method on them into the throw above.
+      expect(tx._engineConfig).toBe(internal);
+      expect(tx._engineConfig.someInternalFn()).toBe("ok");
     });
   });
 
@@ -330,6 +445,156 @@ describe("REG-G8a PrismaService#_wrapTxWithTenant — tenant-isolation proxy (T-
       const { tx } = buildTx();
       expect(await tx.order.findUnique({ where: { id: "order-b1" } })).toBeNull();
     });
+  });
+});
+
+// The SECOND tenancy layer. `forTenant()` scopes through a Prisma `$extends` query
+// extension, not the tx proxy above, and the two have drifted apart before (L-055:
+// `findUniqueOrThrow` was unguarded in both). Driven the same way as the proxy — the
+// REAL `_tenantExtension` off the prototype — with a jest.fn standing in for Prisma's
+// `query` continuation, which is exactly the argument Prisma hands the handler.
+//
+// The extension is ONE `$allOperations` handler, not a per-operation map, because
+// Prisma composes a catch-all with named handlers instead of choosing between them —
+// see the comment on `_tenantExtension`. So these tests call it the way Prisma does:
+// one invocation per operation, with `operation` set.
+const tenantExtensionOp = (tenantId: string) =>
+  (
+    PrismaService.prototype as unknown as {
+      _tenantExtension(tenantId: string): {
+        query: {
+          $allModels: { $allOperations(ctx: Record<string, unknown>): Promise<any> };
+        };
+      };
+    }
+  )._tenantExtension(tenantId).query.$allModels.$allOperations;
+
+function runExtension(
+  operation: string,
+  args: Record<string, unknown>,
+  query: jest.Mock,
+  { tenantId = "tenant-a", model = "Order" } = {},
+): Promise<any> {
+  return tenantExtensionOp(tenantId)({ args, query, model, operation });
+}
+
+/** Prisma's continuation: echoes back the args the handler decided to send. */
+const echoQuery = () => jest.fn(async (args: unknown) => args);
+
+describe("REG-G8a PrismaService#_tenantExtension — tenant-isolation $extends layer (forTenant)", () => {
+  it("createManyAndReturn: injects tenantId into every element of `data`", async () => {
+    const query = echoQuery();
+    await runExtension(
+      "createManyAndReturn",
+      { data: [{ id: "order-a7" }, { id: "order-a8" }] },
+      query,
+    );
+    expect(query).toHaveBeenCalledWith({
+      data: [
+        { id: "order-a7", tenantId: "tenant-a" },
+        { id: "order-a8", tenantId: "tenant-a" },
+      ],
+    });
+  });
+
+  it("createManyAndReturn: injects tenantId into a single-object `data` too", async () => {
+    const query = echoQuery();
+    await runExtension("createManyAndReturn", { data: { id: "order-a9" } }, query);
+    expect(query).toHaveBeenCalledWith({ data: { id: "order-a9", tenantId: "tenant-a" } });
+  });
+
+  it("updateManyAndReturn: merges tenantId into `where`, leaves `data` untouched", async () => {
+    const query = echoQuery();
+    await runExtension(
+      "updateManyAndReturn",
+      { where: { status: "OPEN" }, data: { status: "DONE" } },
+      query,
+    );
+    expect(query).toHaveBeenCalledWith({
+      where: { status: "OPEN", tenantId: "tenant-a" },
+      data: { status: "DONE" },
+    });
+  });
+
+  it("upsert: injects tenantId into BOTH `where` and `create`", async () => {
+    const query = echoQuery();
+    await runExtension(
+      "upsert",
+      { where: { id: "order-a6" }, create: { id: "order-a6" }, update: { status: "CHANGED" } },
+      query,
+    );
+    expect(query).toHaveBeenCalledWith({
+      where: { id: "order-a6", tenantId: "tenant-a" },
+      create: { id: "order-a6", tenantId: "tenant-a" },
+      update: { status: "CHANGED" },
+    });
+  });
+
+  it("findUniqueOrThrow: resolves the tenant's own row unchanged", async () => {
+    const own = { id: "order-a1", tenantId: "tenant-a", status: "OPEN" };
+    const query = jest.fn(async () => own);
+    await expect(
+      runExtension("findUniqueOrThrow", { where: { id: "order-a1" } }, query),
+    ).resolves.toEqual(own);
+    // `where` is handed on untouched — findUnique* accepts only @id/@@unique fields.
+    expect(query).toHaveBeenCalledWith({ where: { id: "order-a1" } });
+  });
+
+  it("findUniqueOrThrow: a tenant-B row rejects with Prisma's own P2025, not the row (L-055)", async () => {
+    const query = jest.fn(async () => ({ id: "order-b1", tenantId: "tenant-b", status: "OPEN" }));
+    await expect(
+      runExtension("findUniqueOrThrow", { where: { id: "order-b1" } }, query),
+    ).rejects.toMatchObject({ code: "P2025" });
+  });
+
+  it("findUnique: a tenant-B row comes back as null", async () => {
+    const query = jest.fn(async () => ({ id: "order-b1", tenantId: "tenant-b", status: "OPEN" }));
+    await expect(
+      runExtension("findUnique", { where: { id: "order-b1" } }, query),
+    ).resolves.toBeNull();
+  });
+
+  it("any verb the switch does not scope fails closed instead of running unguarded", async () => {
+    const query = echoQuery();
+    // `aggregateRaw` is a real Prisma delegate method (MongoDB-only) carrying no
+    // tenant-scopable `where` — the stand-in for any verb a Prisma upgrade adds.
+    await expect(runExtension("aggregateRaw", {}, query)).rejects.toThrow(
+      'tenant guard: unhandled Prisma operation "aggregateRaw" on Order',
+    );
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("every verb the tx proxy scopes is scoped here too — the layers cannot drift", async () => {
+    for (const operation of [
+      "findMany",
+      "findFirst",
+      "findFirstOrThrow",
+      "count",
+      "update",
+      "updateMany",
+      "updateManyAndReturn",
+      "delete",
+      "deleteMany",
+      "aggregate",
+      "groupBy",
+    ]) {
+      const query = echoQuery();
+      await runExtension(operation, { where: { status: "OPEN" } }, query);
+      expect(query.mock.calls[0][0]).toEqual({
+        where: { status: "OPEN", tenantId: "tenant-a" },
+      });
+    }
+
+    for (const operation of ["create", "createMany", "createManyAndReturn"]) {
+      const query = echoQuery();
+      await runExtension(operation, { data: { id: "order-a9" } }, query);
+      expect(query.mock.calls[0][0]).toEqual({
+        data: { id: "order-a9", tenantId: "tenant-a" },
+      });
+    }
+
+    // The remaining four are covered above with their own shapes: upsert (where +
+    // create), findUnique / findUniqueOrThrow (post-filter, `where` untouched).
   });
 });
 

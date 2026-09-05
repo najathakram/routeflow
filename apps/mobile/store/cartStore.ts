@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { computeLineSubtotal } from "../lib/pricing";
+import { computeLineSubtotal } from "@routeflow/pricing";
 
 export interface CartItem {
   productId: string;

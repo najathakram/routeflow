@@ -1,21 +1,20 @@
 /**
- * Shared cross-mirror fixture table for `pricing-parity.spec.ts` (T-G3).
+ * Golden money table for `golden.spec.ts` (T2) — the fixtures this package's
+ * single source of money math is pinned against.
  *
  * Every `expected` value here is HAND-WORKED decimal arithmetic — never read
- * out of any mirror's implementation, and never derived by diffing one mirror
- * against another. That is deliberate: a bug replicated identically in all
- * three mirrors (REG-B122's EPSILON no-op, REG-B109's saving basis) would be
- * invisible to a mirror-vs-mirror comparison but is caught here because the
- * assertion is against the mathematically correct value.
+ * out of the implementation. That is deliberate: a wrong body (REG-B122's
+ * EPSILON no-op, REG-B109's saving basis) is caught because the assertion is
+ * against the mathematically correct value rather than against whatever the
+ * code currently returns.
  *
  * REG-B50 / REG-B109 / REG-B122 rows pin the register's confirmed
  * counter-examples (see
  * `.claude/pipeline/2026-08-31-f04-pricing-mirrors/discovery.md`). The
  * remaining rows (computeLineSubtotal general cases, the tier ladder,
- * normalizeBoxesPieces, PRORATE_EDGE_FIXTURES' guard pins) are ordinary 3-way
- * parity coverage for R4/R6 — they are NOT known to be currently broken, so
- * `pricing-parity.spec.ts` keeps them out of the REG-B* token set the red gate
- * filters on.
+ * normalizeBoxesPieces, PRORATE_EDGE_FIXTURES' guard pins) are ordinary
+ * coverage — they are NOT known to be currently broken, so they carry no
+ * REG-B* token.
  */
 
 // ─── roundMoney (REG-B122) ─────────────────────────────────────────────────
@@ -234,10 +233,10 @@ export const APPLY_BEST_PROMOTION_FIXTURES: PromotionSelectionFixture[] = [
 export interface ProrateLineSubtotalFixture {
   label: string;
   /**
-   * Nullable on purpose: the mobile mirror's signature accepts
-   * `number | null | undefined` (its callers hand `OrderItem.subtotal` straight
+   * Nullable on purpose: the package's signature accepts
+   * `number | null | undefined` (mobile's callers hand `OrderItem.subtotal` straight
    * through), and "a line carrying no stored money bills $0.00" is part of the
-   * contract all three mirrors owe — see PRORATE_EDGE_FIXTURES.
+   * contract the single implementation owes — see PRORATE_EDGE_FIXTURES.
    */
   storedSubtotal: number | null;
   deliveredQty: number;
@@ -436,7 +435,7 @@ export const PRORATE_EDGE_FIXTURES: ProrateLineSubtotalFixture[] = [
     // nullable) — `Number(null) || 0` = 0, so the line contributes $0.00 rather
     // than NaN to the driver's running total. Also a contract pin: an `undefined`
     // subtotal would reach roundMoney as NaN and be absorbed there too, so what
-    // this fixes in place is the OUTCOME every mirror owes, on both signatures.
+    // this fixes in place is the OUTCOME the single implementation owes, on both signatures.
     label: "storedSubtotal null -> 0.00 (a line with no agreed money is free)",
     storedSubtotal: null,
     deliveredQty: 3,
@@ -453,7 +452,7 @@ export const PRORATE_EDGE_FIXTURES: ProrateLineSubtotalFixture[] = [
     // `Math.min(raw, orderedQty)`), so this region stays unreachable in real
     // flows; genuine over-delivery is an order-EDIT concern, not proration.
     // The server oracle trusts its callers the same way, so no reachable
-    // mirror-vs-oracle divergence exists inside delivered <= orderQty.
+    // implementation-vs-oracle divergence exists inside delivered <= orderQty.
     label: "deliveredQty above orderQty is capped at the agreed subtotal: 9 of 6 -> 50.00",
     storedSubtotal: 50,
     deliveredQty: 9,

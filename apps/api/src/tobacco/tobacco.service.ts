@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { AuditService } from "../audit/audit.service";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { TOBACCO_EXCLUDE_KEY } from "../analytics/analytics.service";
 import { TobaccoRangeDto } from "./dto/tobacco-range.dto";
 import { UpdateTobaccoSettingsDto } from "./dto/update-tobacco-settings.dto";

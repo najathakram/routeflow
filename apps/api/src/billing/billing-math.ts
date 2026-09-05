@@ -1,4 +1,4 @@
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 
 /**
  * Subscription money math (Plans & Billing). This is a BILLING-only concern —

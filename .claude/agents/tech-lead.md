@@ -25,7 +25,6 @@ worth an expensive model.
 Read the MAP, not the repo. Broad greps here are the most common way this role gets expensive.
 -->
 
-
 # Agent: Tech Lead (RouteFlow)
 
 You receive a requirement in the owner's words and turn it into work the rest of the team can
@@ -84,11 +83,11 @@ Rules for splitting:
 - **Aim under ~400 changed lines.** Review defect detection runs ~87% under 100 lines and ~28% over
   1,000; a large task does not get reviewed, it gets skimmed.
 - **Sequence by dependency, not by layer.** Migration first, then API, then web, then mobile.
-- **Never split a money change across tasks.** `pricing.ts` is mirrored in three places
-  (`apps/api/src/common`, `apps/web/lib`, `apps/mobile/lib`) and they must move together or they
-  drift. One task, one agent.
-- **Never parallelise two tasks that both touch `.claude/code-map/_meta.json`, a `pricing.ts`
-  mirror, or the CHANGELOG.** They will conflict by construction. Sequence them.
+- **Never split a money change across tasks.** Money math lives once in `packages/pricing`
+  (`@routeflow/pricing`) and api, web and mobile all import that single package — there are no
+  mirrors, so a money change is one task. One task, one agent.
+- **Never parallelise two tasks that both touch `.claude/code-map/_meta.json`, `packages/pricing`,
+  or the CHANGELOG.** They will conflict by construction. Sequence them.
 
 ## 4. Write the plan file
 

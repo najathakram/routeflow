@@ -18,7 +18,7 @@ import {
   normalizeBoxesPieces,
   roundMoney,
   type PromotionRule,
-} from "./pricing";
+} from "@routeflow/pricing";
 import { sellingUnits } from "./buyer-cart-logic";
 import type { BuyerPromotion } from "./api/buyer";
 

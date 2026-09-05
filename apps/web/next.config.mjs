@@ -1,5 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildContentSecurityPolicy } from "./csp.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -60,37 +61,11 @@ const nextConfig = {
     // react-pdf's inline SVG; 'unsafe-eval' is required by Next.js dev overlay and by
     // some Radix/Framer internals. Both should be tightened to nonces once the app
     // migrates to a nonce-based CSP. connect-src covers the Railway API + socket.io.
+    // NODE_ENV is not a usable discriminator in a built image — `next build` forces
+    // production, so this branch is dead in every Docker image; the http API origin is
+    // derived from NEXT_PUBLIC_API_URL instead (prod is https -> no change).
     const isDev = process.env.NODE_ENV !== "production";
-    const csp = [
-      "default-src 'self'",
-      // Google Maps: @vis.gl/react-google-maps injects the Maps JS API script
-      // tag; without these two hosts EVERY dashboard map (trip builder, route
-      // create/detail) loads a permanently blank <Map> — the CSP added in
-      // 8aacd2d7 post-dated the Maps integration and silently broke them all.
-      `script-src 'self' 'unsafe-inline' https://maps.googleapis.com https://maps.gstatic.com${isDev ? " 'unsafe-eval'" : ""}`,
-      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      "font-src 'self' https://fonts.gstatic.com data:",
-      "img-src 'self' data: blob: https:",
-      // Dev: the local API/socket run on plain http/ws (localhost:3000), which
-      // `https: wss:` alone blocks — every API call fails CSP. Prod unchanged.
-      `connect-src 'self' https: wss:${isDev ? " http://localhost:* ws://localhost:*" : ""}`,
-      // PDF previews render in an <iframe> from a blob: URL (invoice scanning,
-      // the invoice builder) or from a signed API/storage URL (customer
-      // documents). Without an explicit frame-src these fall back to
-      // default-src 'self' and render blank — images were unaffected because
-      // img-src already allows blob:, which is why PNGs previewed but PDFs did
-      // not. `data:` is deliberately excluded: data: URIs in frames are an XSS
-      // vector, and nothing here needs them.
-      "frame-src 'self' blob: https:",
-      // Google's vector-map renderer (Advanced Markers use a mapId) can spin
-      // up a blob: worker; without this it falls back to default-src 'self'
-      // and marker pins never render even once the script loads.
-      "worker-src 'self' blob:",
-      "frame-ancestors 'none'",
-      "object-src 'none'",
-      "base-uri 'self'",
-      "form-action 'self'",
-    ].join("; ");
+    const csp = buildContentSecurityPolicy({ isDev, apiUrl: process.env.NEXT_PUBLIC_API_URL });
 
     return [
       {

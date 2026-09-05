@@ -1,4 +1,4 @@
-import { computeLineSubtotal } from "./pricing";
+import { computeLineSubtotal } from "@routeflow/pricing";
 import type { InvoiceTreatment } from "./api/tracked-categories";
 
 /**

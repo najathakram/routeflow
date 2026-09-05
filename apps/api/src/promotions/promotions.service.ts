@@ -6,7 +6,7 @@ import {
   scanPromotionZeroPrice,
   zeroPriceWarning,
   type PromotionRule,
-} from "../common/pricing";
+} from "@routeflow/pricing";
 import { CreatePromotionDto } from "./dto/create-promotion.dto";
 import { UpdatePromotionDto } from "./dto/update-promotion.dto";
 

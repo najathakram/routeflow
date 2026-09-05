@@ -48,7 +48,7 @@ import {
   normalizeBoxesPieces,
   priceForMarginFloor,
   roundMoney,
-} from "../lib/pricing";
+} from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "../lib/api/margin";
 import { CostHistorySheet } from "./CostHistorySheet";
 import { useTrackedCategories } from "../lib/api/tracked-categories";

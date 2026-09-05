@@ -1,4 +1,4 @@
-import { computeLineSubtotal, roundMoney } from "./pricing";
+import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 import type { CreateInvoiceItem } from "./api/invoices";
 
 /**

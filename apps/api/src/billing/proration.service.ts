@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { annualSaving, cyclePrice, daysBetween, prorateDaily, Cycle } from "./billing-math";
 import { planRank } from "./plan-catalog.constants";
 

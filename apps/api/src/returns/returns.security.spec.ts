@@ -18,6 +18,7 @@ import { ExecutionContext, HttpStatus } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { ThrottlerExceptionFilter } from "../common/throttler-exception.filter";
 import { ThrottlerException } from "@nestjs/throttler";
+import { __resetLoginThrottleCache, resolveLoginThrottle } from "../auth/login-throttle.config";
 
 // ─── Shared fixtures ─────────────────────────────────────────────────────────
 
@@ -199,8 +200,16 @@ describe("RF-160 ThrottlerExceptionFilter – Retry-After header", () => {
   let filter: ThrottlerExceptionFilter;
 
   beforeEach(() => {
+    // pB10: the filter reads the login window from the same config the @Throttle
+    // decorator uses. Clear the env knobs (and the memo) so this pin asserts the
+    // production default from the real source rather than a duplicated literal.
+    delete process.env.AUTH_LOGIN_THROTTLE_LIMIT;
+    delete process.env.AUTH_LOGIN_THROTTLE_TTL_MS;
+    __resetLoginThrottleCache();
     filter = new ThrottlerExceptionFilter();
   });
+
+  const defaultLoginRetryAfter = () => Math.ceil(resolveLoginThrottle().ttl / 1000);
 
   function makeHost(path: string): any {
     const res = {
@@ -221,7 +230,7 @@ describe("RF-160 ThrottlerExceptionFilter – Retry-After header", () => {
     const host = makeHost("/api/v1/auth/login");
     filter.catch(new ThrottlerException(), host);
     expect(host.res.status).toHaveBeenCalledWith(HttpStatus.TOO_MANY_REQUESTS);
-    expect(host.res.header).toHaveBeenCalledWith("Retry-After", "300");
+    expect(host.res.header).toHaveBeenCalledWith("Retry-After", String(defaultLoginRetryAfter()));
   });
 
   it("RF-160-2: sets Retry-After: 60 for other throttled routes", () => {

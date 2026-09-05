@@ -39,6 +39,7 @@
     },
     "dev": {
       "cache": false,
+      "dependsOn": ["^build"],
       "persistent": true
     },
     "lint": {
@@ -54,27 +55,25 @@
       "inputs": ["$TURBO_DEFAULT$"],
       "outputs": ["coverage/**"]
     },
-    "@routeflow/api#test": {
+    // A package's $TURBO_DEFAULT$ only ever covers its OWN directory. @routeflow/pricing's
+    // specs reach outside packages/pricing — no-mirrors.spec.ts walks apps/api/src, apps/web
+    // and apps/mobile to prove no mirror pricing files exist; package-shape.spec.ts reads the
+    // root package.json, turbo.json and each app's Dockerfile — so those paths must be hashed
+    // into THIS task's own key. Add an entry here whenever a spec in packages/pricing reaches
+    // outside packages/pricing.
+    "@routeflow/pricing#test": {
       "dependsOn": ["^build"],
-      // api's pricing-parity.spec.ts imports the web and mobile pricing mirrors by
-      // relative path, but a package's $TURBO_DEFAULT$ only ever covers its OWN
-      // directory — so a mirror-only edit left this task's hash untouched and turbo
-      // replayed a cached green for the very test that proves the mirrors agree.
-      // $TURBO_ROOT$ pulls those two files into this task's key (and only this one).
-      // Add an entry here whenever a spec in apps/api reaches outside apps/api.
-      // docs-truth.spec.ts and no-dead-deps.spec.ts (both apps/api/src/common) also read
-      // README.md, CLAUDE.md, and apps/web's app/components/hooks/lib trees directly — so
-      // those are hashed here too, per this file's own rule above.
       "inputs": [
         "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/apps/web/lib/pricing.ts",
-        "$TURBO_ROOT$/apps/mobile/lib/pricing.ts",
-        "$TURBO_ROOT$/README.md",
-        "$TURBO_ROOT$/CLAUDE.md",
-        "$TURBO_ROOT$/apps/web/app/**",
-        "$TURBO_ROOT$/apps/web/components/**",
-        "$TURBO_ROOT$/apps/web/hooks/**",
-        "$TURBO_ROOT$/apps/web/lib/**"
+        "$TURBO_ROOT$/apps/api/src/**",
+        "$TURBO_ROOT$/apps/api/scripts/**",
+        "$TURBO_ROOT$/apps/api/test/**",
+        "$TURBO_ROOT$/apps/web/**",
+        "$TURBO_ROOT$/apps/mobile/**",
+        "$TURBO_ROOT$/apps/*/Dockerfile",
+        "$TURBO_ROOT$/turbo.json",
+        "!$TURBO_ROOT$/apps/web/.next/**",
+        "!**/node_modules/**"
       ],
       "outputs": ["coverage/**"]
     },
@@ -83,8 +82,33 @@
       "inputs": ["test/**", "**/*.e2e-spec.ts"],
       "outputs": []
     },
+    // apps/api's docs-truth.spec.ts and no-dead-deps.spec.ts are tripwires that reach
+    // OUTSIDE apps/api (README.md, CLAUDE.md, apps/web's app/components/hooks/lib trees,
+    // apps/web + apps/mobile package.json) — apps/api's own `test` task's $TURBO_DEFAULT$
+    // never hashes those, so a change to any of them would replay a cached green. A
+    // `@routeflow/api#test` workspace-task override was tried for this and reverted:
+    // packages/pricing/src/package-shape.spec.ts forbids that key outright (one spec away
+    // from being forbidden entirely). A GENERIC task with explicit inputs survives instead —
+    // it isn't scoped to apps/api, so it can't collide with the forbidden override.
+    "test:repo-truth": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/README.md",
+        "$TURBO_ROOT$/CLAUDE.md",
+        "$TURBO_ROOT$/apps/web/package.json",
+        "$TURBO_ROOT$/apps/web/app/**",
+        "$TURBO_ROOT$/apps/web/components/**",
+        "$TURBO_ROOT$/apps/web/hooks/**",
+        "$TURBO_ROOT$/apps/web/lib/**",
+        "$TURBO_ROOT$/apps/mobile/package.json"
+      ],
+      "outputs": []
+    },
+    // `^build` first: @routeflow/pricing is a COMPILED workspace package, so its
+    // dependents cannot typecheck until its dist/*.d.ts exists.
     "check-types": {
-      "dependsOn": ["^check-types"],
+      "dependsOn": ["^build", "^check-types"],
       "outputs": []
     },
     "clean": {

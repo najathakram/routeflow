@@ -23,7 +23,7 @@ import {
   computeLineSubtotal,
   normalizeBoxesPieces,
   perUnitPrice,
-} from "@/lib/pricing";
+} from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";

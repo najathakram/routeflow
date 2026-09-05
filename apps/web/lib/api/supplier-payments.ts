@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import { roundMoney } from "../pricing";
+import { roundMoney } from "@routeflow/pricing";
 import type { SelectablePaymentMethod } from "../payment-methods";
 import type { VendorBillStatus } from "./vendor-bills";
 

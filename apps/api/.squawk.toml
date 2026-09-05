@@ -1,0 +1,55 @@
+# Squawk (squawk-cli) config — destructive-migration lint (item 3B).
+#
+# WHY THIS SHAPE: Squawk ships 40 rules total, most of which are lock-hygiene / index-safety
+# advisories (e.g. "add the index CONCURRENTLY", "set a lock_timeout") that Prisma's own
+# migration generator does not — and, in this repo, is not asked to — honour by design (see
+# the 3B brief's scratch probe: a real repo migration produced 28 such advisories on
+# ordinary, safe schema changes). Gating CI on those would either block routine migrations or
+# train everyone to click through the gate, defeating it. This config keeps ONLY the rules
+# that catch genuinely destructive, data-losing or contract-breaking statements — the ones a
+# migration author should never bypass without a written reason — and marks every other rule
+# advisory (excluded here, still visible via `squawk --reporter tty` for local curiosity).
+#
+# Kept active (the destructive gate set, 9 of 40):
+#   ban-drop-table, ban-drop-column, ban-drop-database, changing-column-type,
+#   adding-required-field, renaming-column, renaming-table, ban-truncate-cascade, syntax-error
+#
+# Everything else (31 of 40, from https://squawkhq.com/docs/rules as of 2026-09-03) is
+# excluded below. A migration author who genuinely needs to violate a kept rule silences it
+# per-statement with `-- reason: <why>` immediately followed by `-- squawk-ignore <rule>` —
+# scripts/lint-migrations.mjs refuses a squawk-ignore with no reason line above it.
+pg_version = "17.0"
+
+excluded_rules = [
+  "adding-field-with-default",
+  "adding-foreign-key-constraint",
+  "adding-not-nullable-field",
+  "adding-serial-primary-key-field",
+  "ban-char-field",
+  "ban-concurrent-index-creation-in-transaction",
+  "ban-drop-not-null",
+  "constraint-missing-not-valid",
+  "disallowed-unique-constraint",
+  "prefer-bigint-over-int",
+  "prefer-bigint-over-smallint",
+  "prefer-identity",
+  "prefer-robust-stmts",
+  "prefer-text-field",
+  "prefer-timestamptz",
+  "require-concurrent-index-creation",
+  "require-concurrent-index-deletion",
+  "transaction-nesting",
+  "ban-create-domain-with-constraint",
+  "ban-alter-domain-with-add-constraint",
+  "require-timeout-settings",
+  "require-lock-timeout",
+  "require-statement-timeout",
+  "ban-uncommitted-transaction",
+  "require-enum-value-ordering",
+  "require-table-schema",
+  "identifier-too-long",
+  "require-concurrent-partition-detach",
+  "require-concurrent-reindex",
+  "prefer-repack",
+  "ban-duplicate-column-assignments",
+]

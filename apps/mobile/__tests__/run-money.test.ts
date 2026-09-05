@@ -5,7 +5,7 @@
  * stub so these fail on assertion, not on module resolution.
  */
 import { lineItemSubtotal, sumOrderLineItems, sumStopOrders } from "../lib/run-money";
-import { computeLineSubtotal } from "../lib/pricing";
+import { computeLineSubtotal } from "@routeflow/pricing";
 
 describe("lineItemSubtotal (REG-B49)", () => {
   it("uses the server-computed subtotal for a boxed line, never qty * unitPrice", () => {
