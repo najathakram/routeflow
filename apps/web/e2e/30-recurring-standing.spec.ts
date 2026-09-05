@@ -250,7 +250,13 @@ test.describe("Recurring template edit + standing-order item edit (F13)", () => 
     await card.getByRole("link", { name: "Edit" }).click();
 
     await expect(page).toHaveURL(new RegExp(`/invoices/recurring/${template.id}/edit`));
-    await expect(page.getByRole("heading", { name: "Edit Recurring Template" })).toBeVisible({
+    // Scoped to #main-content: the dashboard layout's own <h1> title chrome (fed by
+    // usePageTitle/setTitle, apps/web/app/(dashboard)/layout.tsx) renders the same
+    // "Edit Recurring Template" text outside <main>, so an unscoped lookup resolves
+    // to 2 elements (same duplication spec 34 scopes around).
+    await expect(
+      page.locator("#main-content").getByRole("heading", { name: "Edit Recurring Template" }),
+    ).toBeVisible({
       timeout: 15_000,
     });
     await expect(page.getByText(businessName)).toBeVisible();

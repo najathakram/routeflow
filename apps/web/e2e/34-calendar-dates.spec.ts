@@ -87,8 +87,10 @@ test.describe("Calendar-date correctness (F25 / B59, B91)", () => {
       },
     });
     expect(driverRes.ok(), `POST /drivers returned ${driverRes.status()}`).toBe(true);
-    const driver: { id: string } = await driverRes.json();
-    expect(driver?.id, "POST /drivers response carried no id").toBeTruthy();
+    // DriversService.create() returns { driver, tempPassword } (mirrored by the web
+    // client's useCreateDriver in apps/web/lib/api/drivers.ts) — the id is nested.
+    const { driver }: { driver: { id: string } } = await driverRes.json();
+    expect(driver?.id, "POST /drivers returned no driver id").toBeTruthy();
 
     const routeRes = await request.post(`${api}/api/v1/routes`, {
       headers,
@@ -169,7 +171,8 @@ test.describe("Calendar-date correctness (F25 / B59, B91)", () => {
       },
     });
     expect(customerRes.ok(), `POST /customers returned ${customerRes.status()}`).toBe(true);
-    const customer: { id: string } = await customerRes.json();
+    // CustomersService.create() returns { customer, user, tempPassword } — the id is nested.
+    const { customer } = (await customerRes.json()) as { customer: { id: string } };
     expect(customer?.id, "POST /customers response carried no id").toBeTruthy();
 
     const licenseNumber = `E2E-B91-${suffix}`;
