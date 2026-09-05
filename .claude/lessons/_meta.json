@@ -1,10 +1,10 @@
 {
-  "nextId": 66,
-  "activeCount": 35,
+  "nextId": 67,
+  "activeCount": 36,
   "archivedCount": 24,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-04T21:00:00.000Z",
+  "updatedAt": "2026-09-04T23:30:00.000Z",
   "schemaVersion": 1,
-  "note": "Merge of origin/master (a5be8626, #610) into refactor/imp-01-pricing-package: master's L-058 (testing, REG-E2EGUARD-403) landed as-is; this branch's own L-058 (tooling, PR-4 `imp-01`) collided and was renumbered to L-065 (next free id after this branch's own L-064) — cross-refs fixed in code-map/CHANGELOG.md and docs/IMPROVEMENTS.md. nextId bumped to 66. Prior note: L-064 added (imp-04, deploy category) CSP connect-src fix; 2026-09-04 compaction (before PR-4 + B′ land) archived 8 entries to restore headroom — L-008, L-021, L-052, L-053, L-059, L-032, L-033, L-031 — moved verbatim to ARCHIVE.md."
+  "note": "Merge of origin/master (e07aa0b5, #611) into refactor/imp-01-pricing-package: master's #611 minted a NEW `L-061 · testing · watchdog spec` entry that collided with this branch's own pre-existing L-061 (testing, wave B′ P4, Prisma client-extension catch-all) — master's entry renumbered to L-066 (next free id after this branch's nextId of 66); this branch's own L-061 kept its id unchanged. nextId bumped to 67, activeCount 35→36. Prior note: merge of origin/master (a5be8626, #610) renumbered this branch's colliding L-058 to L-065."
 }

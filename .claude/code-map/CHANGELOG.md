@@ -8,6 +8,15 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-04** — (worktree `rf-imp-04`, branch `refactor/imp-01-pricing-package`, merged with
+  master `e07aa0b5`, #611) — **watchdog-spec-host-speed fix folded into the merge.** Conflicts
+  were confined to `.claude/code-map/_meta.json`, `.claude/code-map/api.md`,
+  `.claude/lessons/LESSONS.md` and `.claude/lessons/_meta.json` — resolved by union, keeping
+  both branches' unique content and preferring master's more complete "8 cases" description of
+  `visibility-watchdog-script.spec.ts` (this branch's own copy of that file, carried over from
+  the prior #610 merge, already matched master's byte-for-byte, so it merged clean with no
+  conflict). Lesson L-061 (testing, `watchdog-spec-host-speed`) kept its id from master; no id
+  collision this time.
 - **2026-09-04** — (worktree `rf-imp-04`, branch `refactor/imp-01-pricing-package`) — **CSP
   connect-src local-lane fix.** Root cause (proven by a Playwright trace): `next.config.mjs`'s
   `headers()` gated the `connect-src` dev-localhost relaxation on
@@ -46,6 +55,21 @@ http://localhost:3000/api/v1/auth/login` from `http://localhost:3001`) was CSP-b
     turbo task; fixed with a GENERIC `test:repo-truth` turbo task (`jest.repo-truth.config.js`,
     explicit `$TURBO_ROOT$/…` inputs, `apps/api/src/common/turbo-inputs.spec.ts` pins it). Lesson
     L-062 (tooling).
+- **2026-09-04** — (`watchdog-spec-host-speed` fix, L-061) `visibility-watchdog-script.spec.ts`'s
+  "defaults" test replaced its fixed 500 ms readiness wait with `awaitStartLine`, a capped poll on
+  the script's own `" start "` log line (kills the child in `finally` on every path); added a
+  deterministic slow-boot repro test (`REG-WATCHDOG-SLOWBOOT`, new fixture
+  `src/common/testing/slow-boot.cjs`) and a non-empty guard on the stdout-mirror test.
+  `scripts/visibility-watchdog.mjs` itself is unchanged.
+
+- **2026-09-04** — (branch `fix/e2e-freshness-guard-fail-open`, PR #610) REG-E2EGUARD-403: new
+  `scripts/ci-freshness-guard.mjs` replaces the e2e job's inline bash freshness guard — the old
+  `gh api … 2>/dev/null || true` capture treated a 4xx/5xx error body as a non-empty sha and
+  silently skipped every `deployment_status` E2E run once the token lost `deployments:read`
+  (green with zero test steps). The new script fails OPEN on any non-A/B decision-table outcome
+  and always exits 0; `.github/workflows/ci.yml`'s `e2e` job now declares
+  `permissions: {contents: read, deployments: read}`. `api.md` gains an entry; lesson L-058.
+
 - **2026-09-04** — (branch `fix/imp-02-order-merge-advisory-lock`, PR #609) VISIBILITY WATCHDOG:
   new `scripts/visibility-watchdog.mjs` arms the private flip on a detached, fixed 45-min
   deadline BEFORE any public-repo CI window — the fix for the killed-session incident where

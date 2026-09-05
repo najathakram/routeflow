@@ -266,6 +266,13 @@
 
 ## testing
 
+### L-066 · 2026-09-04 · testing · watchdog spec
+
+- **Symptom:** a spec green on CI failed on every loaded dev box, pushing people to skip the pre-push gate.
+- **Root cause:** a fixed 500 ms `setTimeout` stood in for "the spawned child has booted"; bare Node boot here is 0.6–6 s. A poll alone still fails: the api lane's undeclared Jest cap is 5 s.
+- **Lesson:** **A fixed delay is never a readiness signal. Wait on the observable (log line, exit, stream) with a capped poll, kill the child in `finally`, and give the async test its own timeout above the cap.**
+- **Guard:** `visibility-watchdog-script.spec.ts` slow-boot repro (`NODE_OPTIONS=--require slow-boot.cjs`, 1.5 s) stays green.
+
 ### L-063 · 2026-09-04 · testing · imp-04
 
 - **Symptom:** after apps/api's suite was split into two `npx jest` invocations,
