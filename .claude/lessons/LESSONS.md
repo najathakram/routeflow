@@ -306,6 +306,20 @@
 
 ## testing
 
+### L-075 · 2026-09-05 · testing · F13
+
+- **Symptom:** an E2E toast assertion via bare `getByText` hit a strict-mode violation
+  (2 elements) after the app gained an aria-live announcer that repeats toast copy.
+- **Root cause:** the same string is rendered twice on purpose — the visible toast
+  (`RadixToast.Title`) and Radix's own aria-live status region, portaled to `<body>`, which
+  mirrors the same title text for screen readers.
+- **Lesson:** **assert toasts through the toast container, never a bare text lookup — any copy
+  that is also announced resolves to two elements.** Scope through
+  `getByRole("region", { name: /notifications/i }).getByRole("listitem")`, not `page.getByText`.
+- **Guard:** the `getByRole("region"…).getByRole("listitem")` scoping convention (documented in
+  `21-destructive-guards.spec.ts`; no shared toast-assertion helper exists yet — a gap this entry
+  flags) applied at `apps/web/e2e/30-recurring-standing.spec.ts` (REG-B09, REG-B92).
+
 ### L-066 · 2026-09-04 · testing · watchdog spec
 
 - **Symptom:** a spec green on CI failed on every loaded dev box, pushing people to skip the pre-push gate.
@@ -508,22 +522,6 @@ build` forces production — so that branch was dead in every Docker image, not 
 - **Guard:** `apps/api/src/common/enum-parity.spec.ts` — a generic table (40 enums) against
   `packages/types/api/enums.ts`, plus a regression layer pinning the drifted files and the mobile
   jest stub that can't `require` the shared package directly.
-
-### L-037 · 2026-09-01 · domain · #TBD
-
-- **Symptom:** the fix for a reopen that wrongly credited stock still left the reopen billing the
-  delivery it had just undone — `OrderItem.deliveredQty` survived the reversal, and the
-  delivered-basis invoice reconcile bills exactly that field.
-- **Root cause:** the reversal was corrected for the field the bug report named and no other. The
-  forward path wrote `deliveredQty` unconditionally (whether or not money changed hands) while the
-  reversal reset only `status`.
-- **Lesson:** **A reversal must enumerate every field the forward operation wrote, not just the
-  one the bug report named** — and state, per write, whether it is undone by REVERSAL or covered
-  by REFUSAL (blocking the operation while that state stands). Those are different strategies and
-  the mix must be deliberate. ⚠️ Note the coupling: the new refusal guard is what made the
-  reversal gap REACHABLE, so a fix can open the path to a latent bug.
-- **Guard:** `REG-B55 (T21)`; the write-by-write enumeration is recorded in F11's fix card so the
-  next batch on this path starts from it rather than rebuilding it.
 
 ### L-045 · 2026-09-02 · domain · #TBD
 
