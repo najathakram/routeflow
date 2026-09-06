@@ -111,6 +111,7 @@ export class DriversService {
         heading: dto.heading,
         speedKph: dto.speedKph,
         batteryPct: dto.batteryPct,
+        accuracy: dto.accuracy,
         recordedAt,
       },
     });

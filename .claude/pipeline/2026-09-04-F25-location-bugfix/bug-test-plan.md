@@ -55,6 +55,10 @@ present). This is the behavioral wrong-value the red gate checks, not merely "th
   that path), but the mock's `driverLocation` omission should be added to `allModels()` as a
   low-effort follow-up if any future spec needs it — flagged as a candidate registry/backlog item, NOT
   fixed in this run (out of the minimal-diff fix design).
+  **Updated in fix round 1:** review found `accuracy: dto.accuracy` had zero executing coverage, so
+  `driverLocation` WAS added to `allModels()` in `apps/api/src/testing/prisma-mock.ts` and a
+  `describe("recordLocation")` block (T6a/T6b/T6c) was added to `apps/api/src/drivers/drivers.service.spec.ts`
+  — T6 is what proves R4; `drivers.service.ts` itself is unchanged by that round.
 - No other existing spec's fixtures are touched by this run's DTO/tracker changes — `post-location.dto.ts`
   gains one additive optional field; every existing property keeps its exact validators.
 
