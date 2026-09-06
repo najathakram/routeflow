@@ -294,6 +294,7 @@ No images, videos, or office binaries in git (mobile app icons in
 `apps/mobile/assets/` are the exception — required build assets). Machine-local
 home: `local-assets/` (gitignored). Generated docs/screenshots go there, never
 into `docs/`. The repo goes public briefly for CI, and clones should stay lean.
+`.claude/settings.local.json` is per-machine and gitignored; never commit it.
 
 ## Token Budget
 
