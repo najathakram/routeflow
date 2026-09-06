@@ -25,6 +25,22 @@ never accumulate history in `"notes"`.
   Lesson **L-081** (domain — gate a money write inside the primitive that performs it, never at
   one call site's query); registry note on B13 + new bug **B213** filed.
 
+- **2026-09-06** — (worktree `rf-registry`, branch `feat/registry-guards`, close-out) Merged
+  `origin/master` a94f9428. An Opus refute-first review round over the 2026-09-05 `sync --check`
+  / `move --tier` work below landed as `32df0fe4`: `sync --check` now prints the record count it
+  compared (`${N} record(s) mirror the ledger`) and rejects an unknown flag before any read; the
+  self-test's real-tree run is pinned to `REPO_ROOT` so it can't silently examine 0 records from
+  another cwd; the triage path of `move --tier` records `--why` and rolls back the ledger row +
+  catalogue on a late failure exactly as `file` does; T13b's dead anchor snapshot/restore was
+  deleted. F5 of that review corrected this file's own INDEX.md entry, which had invented a
+  `roundSha` field `move`'s triage path never derives and mis-credited the `batched` History
+  event's key/text to `file` instead of `expand` — both phrases are now gone from INDEX.md (`same
+fields`, `` `expand`'s own key/text ``); this CHANGELOG bullet already read correctly and needed
+  no edit. This close-out commit also opens hotfix shard F32 (issue #633) and discharges B213
+  against #616, discharges B92 (F13) and B185 (F25) after their deploy-triggered E2E runs, and
+  archives L-044 to land lesson L-080 (a committed derived file needs its own pre-push `--check`).
+  `mappedSha` finalised below to the commit containing all of this.
+- **2026-09-05** — (worktree `rf-registry`, `.claude/pipeline/2026-09-05-registry-guards`, R9/R10) `scripts/campaign/bugs.mjs` gains two guards: `sync --check` is a read-only mode of `sync` (derives `frontFor` vs each record's front matter, writes nothing, skips the commit scan, exits 1 naming stale ids or prints the mirror-clean line) — now run by the pre-push self-test against the real tree, closing the gap where a ledger row could land in a PR without `sync` ever running (#612/#617/#618 hit this: nine dirty records in every other worktree). `move <id> --to F## --tier T#` gives a catalogue id with no ledger row (a triage id filed without `--batch`, e.g. B213) its first row, under the same `withCatalogueLock`→`withShardLock` order and `file`'s own row shape; the existing re-home path is unchanged. `.claude/skills/bug-registry/SKILL.md` documents both plus the "run `sync` after any ledger edit, before committing" rule. Self-test cases T13/T13b/T14; no ledger semantics, campaign-check, or view changes. `mappedSha` → `2da6228c`.
 - **2026-09-06** — (worktree `rf-ocr`, branch `docs/627-bookkeeping-follow-up`) **#627**
   `chore/ci-private-minutes` (`0ee2672e`) — Option B bookkeeping follow-up, docs-only, no
   runtime change: `ci.yml`'s `verify` job `if:` now also skips `dependabot[bot]` `pull_request`

@@ -148,6 +148,16 @@ npm run bugs -- tier B32 T1 --why "the analysis designed 9 jest cases"      # re
 Both are first-class commands precisely because doing them by hand means editing two shards, the
 record front matter and the catalogue — four chances to leave the ledger holding two rows for one id.
 
+**A triage id filed without `--batch` has no ledger row at all**, and `move`/`tier`/`prove`/`reopen`
+normally refuse an id with no shard to find. Give it its first row with `--tier`:
+
+```bash
+npm run bugs -- move B213 --to F32 --tier T1 --why "triage id promoted into the hotfix shard"
+```
+
+`--tier` is required only the first time (no existing shard row); once the id has a row, plain
+`move --to` re-homes it as above and `--tier` is unnecessary.
+
 ## Closing out
 
 Two transitions, and they are deliberately separate — `proven` means merged with a passing test,
@@ -246,6 +256,18 @@ Be precise about this, because the answer shapes how much you can skip:
 only exists on branches carrying it — until PR #597 merges, a session on another branch gets no
 Gate 4 at all, so run `npm run bugs -- sync` yourself there. Commit the changed `bugs/B###.md`
 files alongside the fix.
+
+⚠️ **After ANY ledger edit (`prove`/`discharge`/`reopen`/`tier`/`move`/`file`), run `sync` before
+committing.** A ledger row that lands without a matching `sync` leaves every record's front matter
+stale, and the pre-push self-test refuses a push whose mirror has drifted:
+
+```bash
+npm run bugs -- sync --check   # read-only: exits 1 naming records whose front matter lags the ledger
+```
+
+`--check` derives the same comparison `sync` does but writes nothing (no record, no History event,
+no anchor update) and skips the commit scan — use it to verify the tree is clean without mutating
+anything. Plain `sync` (no flag) is still what fixes drift once `--check` finds it.
 
 ## Keeping the registry honest
 

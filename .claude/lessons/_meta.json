@@ -1,10 +1,10 @@
 {
   "nextId": 82,
   "activeCount": 40,
-  "archivedCount": 36,
+  "archivedCount": 37,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-06T06:56:55.000Z",
+  "updatedAt": "2026-09-06T07:40:46.719Z",
   "schemaVersion": 1,
-  "note": "fix/F09-credit-notes-wallet P8: minted L-081 (domain — gate a money write inside the primitive that performs it, never at one call site's query) after registry-guards took L-080; archived L-045 (the oldest domain entry with an automated-artifact guard, skipping L-044) to hold the 40-entry cap."
+  "note": "fix/F09-credit-notes-wallet: merged master 243325d2 (#635 → L-080, L-044 archived). This branch adds L-081 (domain — gate a money write inside the primitive that performs it) and archived L-045 (domain, oldest active entry with an automated guard after L-044) for headroom; the register stays byte-bound near 40 KB."
 }
