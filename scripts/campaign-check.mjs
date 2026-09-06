@@ -429,11 +429,15 @@ function main() {
   // on linear (non-merge) history, which is every other fixture in this file.
   function newestCommit(gitRoot, pathspecs) {
     try {
-      const res = spawnSync("git", ["log", "-1", "--format=%H%x1f%ct%x1f%s", "--", ...pathspecs], {
-        cwd: gitRoot,
-        encoding: "utf8",
-        shell: false,
-      });
+      const res = spawnSync(
+        "git",
+        ["log", "-1", "--first-parent", "--format=%H%x1f%ct%x1f%s", "--", ...pathspecs],
+        {
+          cwd: gitRoot,
+          encoding: "utf8",
+          shell: false,
+        },
+      );
       if (res.status !== 0 || !res.stdout || !res.stdout.trim()) return null;
       const [sha, ctStr, subject] = res.stdout.trim().split("\x1f");
       return { sha, ct: Number(ctStr), subject };
