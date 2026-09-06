@@ -3,5 +3,5 @@
   "generatedAt": "2026-09-06T06:00:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 1011,
-  "notes": "**2026-09-06** — (worktree `rf-F09`, branch `fix/F09-credit-notes-wallet`) merged master 243325d2 (#635); F09 map: credit-notes primitives (B66/B67 gates, `invoice-status-sets.ts`), B18 issue-flow removal, B19 invoice include, void cap + Serializable void tx, returns refund source scope, advance-wallet guard re-point, web/mobile credit-note screens, e2e spec 28. History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "**2026-09-06** — (worktree `rf-F09`, branch `fix/F09-credit-notes-wallet`) merged master 0b715128 (#634, #635); F09 map: credit-notes primitives (B66/B67 gates, `invoice-status-sets.ts`), B18 issue-flow removal, B19 invoice include, void cap + Serializable void tx, returns refund source scope, advance-wallet guard re-point, web/mobile credit-note screens, e2e spec 28; B214 filed for the invoice-delete door. History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
