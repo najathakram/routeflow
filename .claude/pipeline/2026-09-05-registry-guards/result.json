@@ -1,0 +1,185 @@
+{
+  "run": "registry-guards",
+  "branch": "feat/registry-guards",
+  "scale": "small",
+  "mode": "dev",
+  "clean": true,
+  "startedAt": "2026-09-06T00:30:00Z",
+  "endedAt": "2026-09-06T06:59:07Z",
+  "estimatedCostUsd": 16.94,
+  "pricesAsOf": "2026-06-24",
+  "riskSummary": "docs/scripts only (registry CLI + campaign records + one Jest describe-title token); no runtime code; Railway builds api for the test-file change only; cost excludes the engine half and the finisher agent",
+  "fixRouting": "Fable ruled every fix over the Opus lens; Sonnet applied; Opus re-checked",
+  "fixRounds": 2,
+  "provenance": "engine wf_80fe458c-f3c (old account) through the post-implement gate; review, fix, re-check and close-out by the light loop after the 2026-09-06 account switch — engine-phase tokens are not recoverable",
+  "phaseReport": [
+    {
+      "phase": "Baseline",
+      "ran": true,
+      "agents": null,
+      "rawFindings": null,
+      "confirmed": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": null,
+      "model": "claude-haiku-4-5",
+      "overlappedWith": null,
+      "note": "engine, pre-checkpoint: self-test + prettier green (2m19s); sync --check did not exist yet"
+    },
+    {
+      "phase": "Author tests",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": null,
+      "confirmed": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": "high",
+      "model": "claude-sonnet-5",
+      "overlappedWith": null,
+      "note": "TP-GUARDS: T13/T13b/T14 appended to cmds[\"self-test\"] (runCli child process)"
+    },
+    {
+      "phase": "Red gate",
+      "ran": true,
+      "agents": null,
+      "rawFindings": null,
+      "confirmed": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": null,
+      "model": "mixed (claude-haiku-4-5 run + claude-opus-5 audit)",
+      "overlappedWith": null,
+      "note": "properly red after one remediation (engine)"
+    },
+    {
+      "phase": "Implement",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": null,
+      "confirmed": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": "high/low",
+      "model": "claude-sonnet-5",
+      "overlappedWith": null,
+      "note": "WP-GUARDS (sync --check, move --tier) + WP-DOCS; post-implement gate PASS (engine)"
+    },
+    {
+      "phase": "Review",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": 12,
+      "confirmed": 12,
+      "tokens": 209782,
+      "estUsd": 5.24,
+      "effort": "high",
+      "model": "claude-opus-5",
+      "overlappedWith": "F09 reader",
+      "note": "light loop: one merged correctness+test-quality lens, refute-first — FIX-THEN-SHIP: 0 blocker / 2 major / 4 minor / 6 nit; proved the plan's JSON.stringify oracle would refuse every push (213/213) and that roundSha never existed; the interrupted 14-agent engine pass (0 findings captured) was discarded"
+    },
+    {
+      "phase": "Fix",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": null,
+      "confirmed": 8,
+      "tokens": 221233,
+      "estUsd": 2.21,
+      "effort": "high",
+      "model": "claude-sonnet-5",
+      "overlappedWith": "F09 stage A",
+      "note": "F1 F2 F4 F5 F7(note) F8 F9 F10 applied; F3 deferred (CRLF exposure), F6 at close-out, F11/F12 accepted; self-test 298/298, prettier clean, sync --check 213 records"
+    },
+    {
+      "phase": "Re-check",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": 3,
+      "confirmed": 0,
+      "tokens": 211522,
+      "estUsd": 5.29,
+      "effort": "high",
+      "model": "claude-opus-5",
+      "overlappedWith": "close-out executor",
+      "note": "HOLDS: all 8 fixes match the ruling, no new defect; F1 env-leak hypothesis refuted (node drops undefined env keys); 3 nits — N1 INDEX.md quoted the pre-fix message (fixed in the finisher round), N2 the count was catalogue.length not records compared (fixed: seen counter), N3 the F4 rollback has no self-test (deferred)"
+    },
+    {
+      "phase": "Close-out",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": null,
+      "confirmed": null,
+      "tokens": 419695,
+      "estUsd": 4.2,
+      "effort": "high/low",
+      "model": "claude-sonnet-5",
+      "overlappedWith": "F09 lenses",
+      "note": "prep reader (191,536 tok) verified #616/#629/E2E runs, found B106 already done and B185 already proven on master; executor (228,159 tok): issue #633 + board.json F32, REG-B213 title token, move/prove/discharge B213, discharge B92, re-prove --pr 629 + discharge B185, L-080 (+L-044 archived; register now byte-bound 39.7/40 KB), code map; commits 71dc61b0 ccde58c2 2673103e effe9db2"
+    },
+    {
+      "phase": "Finisher",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": null,
+      "confirmed": 2,
+      "tokens": null,
+      "estUsd": null,
+      "effort": "low",
+      "model": "claude-sonnet-5",
+      "overlappedWith": "F09 P8",
+      "note": "N1 (INDEX.md message) + N2 (seen counter) applied; result.json, ledger row, RUN-LOG; final gate self-test + prettier + sync --check"
+    }
+  ],
+  "confirmedByPhase": {
+    "Review": 12,
+    "Fix": 8,
+    "Re-check": 0,
+    "Finisher": 2
+  },
+  "redGate": {
+    "ran": true,
+    "remediateOn": "structural",
+    "properlyRed": true,
+    "structurallyRed": true,
+    "behaviorallyRed": true,
+    "attempts": 2
+  },
+  "verify": null,
+  "uiVerify": null,
+  "mutationProbe": {
+    "ran": false,
+    "skipped": "light loop — anti-vacuity established by the Opus lens's per-test mutation table (review-opus.md) and the vacuity hole it found (F1) was closed by an asserted count",
+    "targets": 0,
+    "probed": 0,
+    "allCaught": null,
+    "restoredVerified": null,
+    "skippedTargets": []
+  },
+  "finalPass": {
+    "ran": false,
+    "completed": null,
+    "skipped": "light loop — Fable ruled every fix from the Opus brief",
+    "model": null,
+    "effort": null,
+    "fallback": null,
+    "files": [],
+    "findings": []
+  },
+  "overlap": null,
+  "cascadeAudit": null,
+  "escalation": null,
+  "remainingFindings": [
+    {
+      "severity": "minor",
+      "file": "scripts/campaign/bugs.mjs",
+      "summary": "F3 deferred: --check compares front matter only; a hand-edited header line or unsynced commit-scan History is invisible (0/213 live); a full-bytes compare risks CRLF false-dirty on Windows"
+    },
+    {
+      "severity": "nit",
+      "file": "scripts/campaign/bugs.mjs",
+      "summary": "N3 deferred: the triage-move rollback (F4) has no self-test; file's EISDIR seam transfers if coverage is wanted"
+    }
+  ],
+  "gate": null
+}

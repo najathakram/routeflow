@@ -1,7 +1,7 @@
 {
-  "mappedSha": "b0d780b5",
-  "generatedAt": "2026-09-06T05:30:00.000Z",
+  "mappedSha": "2673103e",
+  "generatedAt": "2026-09-06T06:00:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 1011,
-  "notes": "**2026-09-06** — (worktree `rf-ocr`, branch `docs/627-bookkeeping-follow-up`) Option B bookkeeping follow-up for #627 `0ee2672e` (ci private-minutes cut + api Jest testTimeout 30000 / L-079) — docs-only, no source files touched, fileCount unchanged. History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "**2026-09-06** — (worktree `rf-registry`, branch `feat/registry-guards`, close-out) Merged origin/master a94f9428. An Opus refute-first review round over the 2026-09-05 `sync --check` / `move --tier` work below landed as `32df0fe4`: `sync --check` now prints the record count it compared (`${N} record(s) mirror the ledger`) and rejects an unknown flag before any read; the self-test's real-tree run is pinned to `REPO_ROOT` so it can't silently examine 0 records from another cwd; the triage path of `move --tier` records `--why` and rolls back the ledger row + catalogue on a late failure exactly as `file` does; T13b's dead anchor snapshot/restore was deleted. F5 of that review corrected this file's own INDEX.md entry, which had invented a `roundSha` field `move`'s triage path never derives and mis-credited the `batched` History event's key/text to `file` instead of `expand` — both phrases are now gone from INDEX.md (`same fields`, `expand`'s own key/text); this CHANGELOG bullet already read correctly and needed no edit. This close-out commit also opens hotfix shard F32 (issue #633) and discharges B213 against #616, discharges B92 (F13) and B185 (F25) after their deploy-triggered E2E runs, and archives L-044 to land lesson L-080 (a committed derived file needs its own pre-push `--check`). History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
