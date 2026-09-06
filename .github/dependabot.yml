@@ -21,14 +21,33 @@ updates:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
       # The jest toolchain is pinned as a set by root package.json `overrides`
-      # (30.2.0). Bumping only the workspace manifests (PR #479) mixes jest
-      # generations in one tree — jest-runtime 30.4+ calls jest-mock APIs the
-      # pinned 30.2.0 lacks (clearMocksOnScope TypeError, every suite dies).
-      # Jest moves ONLY via a deliberate whole-family bump of the overrides
-      # block (see the npm-ci-migration task).
+      # (30.2.0: jest, jest-runtime, jest-mock, jest-environment-node,
+      # jest-environment-jsdom, @jest/core, @jest/types, @jest/transform — PR #74).
+      # Bumping only the workspace manifests (PR #479) mixes jest generations in
+      # one tree — jest-runtime 30.4+ calls jest-mock APIs the pinned 30.2.0 lacks
+      # (clearMocksOnScope TypeError, every suite dies). Jest moves ONLY via a
+      # deliberate whole-family bump of the overrides block (see the
+      # npm-ci-migration task). EVERY member of that pinned set is listed here:
+      # the #630 group PR split jest-environment-jsdom off the family (30.5.1; it
+      # was the one declared member missing from this list), which
+      # `validate-lock-edges` refused as a workspace range the root override
+      # contradicts — 30.5.1 hard-depends on @jest/environment@30.5.1 →
+      # jest-mock@30.5.1, the exact split #74 pinned against. The transitive-only
+      # names are listed defensively so a later direct declaration of an
+      # `overrides` member cannot re-split the pinned set.
       - dependency-name: "jest"
         update-types: ["version-update:semver-minor", "version-update:semver-patch"]
       - dependency-name: "babel-jest"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "jest-environment-jsdom"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "jest-environment-node"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "jest-mock"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "jest-runtime"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "@jest/*"
         update-types: ["version-update:semver-minor", "version-update:semver-patch"]
       # Expo SDK 55 pins the native-module set (react-native 0.83.x, reanimated
       # 4.2.x, worklets 0.7.x, screens 4.2x, ...). Their "minor" bumps are
