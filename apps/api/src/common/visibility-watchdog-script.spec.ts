@@ -326,7 +326,9 @@ describe("visibility-watchdog.mjs contract", () => {
       }),
     ).rejects.toThrow(/code=3.*boom-diag/s);
 
-    expect(Date.now() - startedAt).toBeLessThan(5_000);
+    // 15 s: host-load flakes on 2026-09-05/06 refused two pushes; the property under test is
+    // "rejects rather than hangs", not the exact latency.
+    expect(Date.now() - startedAt).toBeLessThan(15_000);
     expect(capturedChild).toBeDefined();
     expect(capturedChild!.exitCode).not.toBeNull();
   }, 35_000);
