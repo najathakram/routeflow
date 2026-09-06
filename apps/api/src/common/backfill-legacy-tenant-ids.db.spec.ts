@@ -13,6 +13,13 @@
  * ITSELF NULL-tenant, so the run is repaired from its `Route` first and its stops follow in the
  * same transaction — with the `--dry-run` listing proving the parent statement really comes first.
  *
+ * D9–D11 cover the unattended-write flags (`--only-test-tenants` + the restricted `--confirm`).
+ * All three are only meaningful against a real database, because the guard's input is a slug
+ * READ from `Tenant`: D9 seeds a complete graph in a NON-approved tenant and proves the batch is
+ * refused with exit 3 and zero writes in `--live` AND in `--dry-run`; D10 proves the phrase's row
+ * count is a real check, not a formality; D11 drives the D7 production shape end to end with no
+ * TTY and no `BACKFILL_CONFIRM_TOKEN` — only the owner's own two flags.
+ *
  * D8 covers the SECOND task, `--deactivate-orphan-users` (owner decision 2026-09-05: deactivate,
  * never delete). Everything that matters about it is only true against a real database — that the
  * listing's WHERE hides SUPER_ADMINs and tenanted users rather than merely refusing them, that
@@ -67,6 +74,26 @@ const RUN_STOP_D = `${ID_PREFIX}runstop-d`;
 const USER_ORPHAN_ADMIN = `${ID_PREFIX}user-orphan-admin`;
 const USER_ORPHAN_SUPER = `${ID_PREFIX}user-orphan-super`;
 const USER_TENANTED = `${ID_PREFIX}user-tenanted`;
+// D9's negative control for `--only-test-tenants`: a tenant whose slug matches NONE of the
+// approved patterns, standing in for a client tenant. `acme-` is the repo's placeholder prefix
+// (CLAUDE.md forbids naming a real client anywhere), and `assertTestTenant` is deliberately NOT
+// called on it — being un-approved is the entire point. It exists only inside this spec's own
+// transaction of the local compose database (`requireLocalDatabaseUrl` refuses any other host)
+// and D9 deletes its whole graph before the next case runs.
+const NONTEST_TENANT_ID = `${ID_PREFIX}tenant-nontest`;
+const NONTEST_TENANT_SLUG = "acme-widgets-e2eguard";
+const NONTEST_ROUTE_ID = `${ID_PREFIX}route-nontest`;
+const NONTEST_RUN_ID = `${ID_PREFIX}run-nontest`;
+const NONTEST_STOP_ID = `${ID_PREFIX}stop-nontest`;
+const NONTEST_RUN_STOP = `${ID_PREFIX}runstop-nontest`;
+// D10's row (the count-mismatch case) and D11's happy-path graph.
+const STOP_E = `${ID_PREFIX}stop-e`;
+const RUN_STOP_E = `${ID_PREFIX}runstop-e`;
+const RUN_3_ID = `${ID_PREFIX}run-3`;
+const STOP_F = `${ID_PREFIX}stop-f`;
+const STOP_G = `${ID_PREFIX}stop-g`;
+const RUN_STOP_F = `${ID_PREFIX}runstop-f`;
+const RUN_STOP_G = `${ID_PREFIX}runstop-g`;
 
 const ATTESTATION = "spec";
 
@@ -165,11 +192,25 @@ describeDb("backfill-legacy-tenant-ids.mjs — real Postgres (report / dry-run /
     );
   }
 
-  async function seedTenantedRouteStop(id: string, stopNumber: number) {
+  async function seedTenantedRouteStop(
+    id: string,
+    stopNumber: number,
+    routeId: string = ROUTE_ID,
+    tenantId: string = TENANT_ID,
+  ) {
     await db.query(
       `INSERT INTO "RouteStop" ("id","routeId","stopNumber","createdAt","updatedAt","tenantId")
        VALUES ($1,$2,$3, now(), now(), $4)`,
-      [id, ROUTE_ID, stopNumber, TENANT_ID],
+      [id, routeId, stopNumber, tenantId],
+    );
+  }
+
+  /** A NULL-tenant `RouteRun` hanging off `routeId` — the production shape D7/D11 exercise. */
+  async function seedNullRun(id: string, routeId: string = ROUTE_ID) {
+    await db.query(
+      `INSERT INTO "RouteRun" ("id","routeId","scheduledDate","createdAt","updatedAt","tenantId")
+       VALUES ($1,$2, now(), now(), now(), NULL)`,
+      [id, routeId],
     );
   }
 
@@ -209,7 +250,9 @@ describeDb("backfill-legacy-tenant-ids.mjs — real Postgres (report / dry-run /
     await db.query('DELETE FROM "RouteRun" WHERE "id" LIKE $1', [`${ID_PREFIX}%`]);
     await db.query('DELETE FROM "RouteStop" WHERE "id" LIKE $1', [`${ID_PREFIX}%`]);
     await db.query('DELETE FROM "Route" WHERE "id" LIKE $1', [`${ID_PREFIX}%`]);
-    await db.query('DELETE FROM "Tenant" WHERE "id" = $1', [TENANT_ID]);
+    // By prefix, not by id: D9's negative-control tenant is deleted in the case itself, and this
+    // is the net that removes it (and any future sibling) if that case ever fails part-way.
+    await db.query('DELETE FROM "Tenant" WHERE "id" LIKE $1', [`${ID_PREFIX}%`]);
     await db.end();
   }, 120_000);
 
@@ -301,11 +344,7 @@ describeDb("backfill-legacy-tenant-ids.mjs — real Postgres (report / dry-run /
     // `refuse: parent missing` on account of its own parent, and could never be repaired.
     await seedTenantedRouteStop(STOP_C, 3);
     await seedTenantedRouteStop(STOP_D, 4);
-    await db.query(
-      `INSERT INTO "RouteRun" ("id","routeId","scheduledDate","createdAt","updatedAt","tenantId")
-       VALUES ($1,$2, now(), now(), now(), NULL)`,
-      [RUN_2_ID, ROUTE_ID],
-    );
+    await seedNullRun(RUN_2_ID);
     await seedNullRunStop(RUN_STOP_C, STOP_C, 1, RUN_2_ID);
     await seedNullRunStop(RUN_STOP_D, STOP_D, 2, RUN_2_ID);
 
@@ -415,5 +454,143 @@ describeDb("backfill-legacy-tenant-ids.mjs — real Postgres (report / dry-run /
     expect(again.status).toBe(0);
     expect(again.stdout).toContain("nothing to do");
     expect((await userRowOf(USER_ORPHAN_ADMIN)).status).toBe("INACTIVE");
+  });
+
+  it("D9 --only-test-tenants: a target row in a NON-test tenant refuses the batch, exit 3, zero writes", async () => {
+    // A complete graph in an un-approved tenant: Route, RouteStop and a TENANTED RouteRun (so the
+    // stop is `ok` on its own merits and the ONLY thing that can stop it is the guard), plus the
+    // NULL-tenant RouteRunStop the tool would repair.
+    await db.query(
+      `INSERT INTO "Tenant" ("id","slug","name","createdAt","updatedAt")
+       VALUES ($1,$2,$3, now(), now())`,
+      [NONTEST_TENANT_ID, NONTEST_TENANT_SLUG, `Backfill guard spec ${RUN_SUFFIX}`],
+    );
+    await db.query(
+      `INSERT INTO "Route" ("id","name","createdAt","updatedAt","tenantId")
+       VALUES ($1,$2, now(), now(), $3)`,
+      [NONTEST_ROUTE_ID, `Backfill guard route ${RUN_SUFFIX}`, NONTEST_TENANT_ID],
+    );
+    await seedTenantedRouteStop(NONTEST_STOP_ID, 1, NONTEST_ROUTE_ID, NONTEST_TENANT_ID);
+    await db.query(
+      `INSERT INTO "RouteRun" ("id","routeId","scheduledDate","createdAt","updatedAt","tenantId")
+       VALUES ($1,$2, now(), now(), now(), $3)`,
+      [NONTEST_RUN_ID, NONTEST_ROUTE_ID, NONTEST_TENANT_ID],
+    );
+    await seedNullRunStop(NONTEST_RUN_STOP, NONTEST_STOP_ID, 1, NONTEST_RUN_ID);
+
+    // Without the flag the row is a perfectly ordinary repair candidate — which is what makes
+    // the refusal below attributable to the guard and to nothing else.
+    expectOnlyOurOkRows([NONTEST_RUN_STOP]);
+
+    const res = runCli([
+      "--live",
+      "--only-test-tenants",
+      "--confirm",
+      "BACKFILL 1 ROWS",
+      "--backup-attested",
+      ATTESTATION,
+    ]);
+
+    expect(res.status).toBe(3);
+    const combined = res.stdout + res.stderr;
+    expect(combined).toContain("--only-test-tenants refuses this batch");
+    expect(combined).toContain(`RouteRunStop ${NONTEST_RUN_STOP}`);
+    expect(combined).toContain(`tenantSlug=${NONTEST_TENANT_SLUG}`);
+    expect(combined).toContain("NOTHING was written");
+    // no transaction was ever opened
+    expect(res.stdout).not.toContain("=== APPLIED ===");
+    expect(await tenantIdOf(NONTEST_RUN_STOP)).toBeNull();
+
+    // The guard is the same in --dry-run, so the preflight the owner reads is the live gate.
+    const dry = runCli(["--dry-run", "--only-test-tenants"]);
+    expect(dry.status).toBe(3);
+    expect(dry.stdout).toContain("=== REFUSED — --only-test-tenants ===");
+    expect(dry.stdout).not.toContain("statement(s) --live would execute");
+    expect(await tenantIdOf(NONTEST_RUN_STOP)).toBeNull();
+
+    // Clean up this case's own graph so the later cases' ok sets are exactly their own rows.
+    await db.query('DELETE FROM "RouteRunStop" WHERE "id" = $1', [NONTEST_RUN_STOP]);
+    await db.query('DELETE FROM "RouteRun" WHERE "id" = $1', [NONTEST_RUN_ID]);
+    await db.query('DELETE FROM "RouteStop" WHERE "id" = $1', [NONTEST_STOP_ID]);
+    await db.query('DELETE FROM "Route" WHERE "id" = $1', [NONTEST_ROUTE_ID]);
+    await db.query('DELETE FROM "Tenant" WHERE "id" = $1', [NONTEST_TENANT_ID]);
+  });
+
+  it("D10 --confirm with the wrong count: exit 3 and the test-tenant row is untouched", async () => {
+    // Same approved tenant as everything else here, so the guard PASSES and the only thing left
+    // to refuse the run is the phrase's row count — that is what this case pins.
+    await seedTenantedRouteStop(STOP_E, 5);
+    await seedNullRunStop(RUN_STOP_E, STOP_E, 5);
+    expectOnlyOurOkRows([RUN_STOP_E]);
+
+    const res = runCli([
+      "--live",
+      "--only-test-tenants",
+      "--confirm",
+      "BACKFILL 99 ROWS",
+      "--backup-attested",
+      ATTESTATION,
+    ]);
+
+    expect(res.status).toBe(3);
+    expect(res.stderr).toContain("confirmation text did not match");
+    expect(res.stdout).not.toContain("=== APPLIED ===");
+    expect(await tenantIdOf(RUN_STOP_E)).toBeNull();
+
+    // never written, so removing it is enough to leave D11 a clean ok set
+    await db.query('DELETE FROM "RouteRunStop" WHERE "id" = $1', [RUN_STOP_E]);
+    await db.query('DELETE FROM "RouteStop" WHERE "id" = $1', [STOP_E]);
+  });
+
+  it("D11 --only-test-tenants --confirm: the D7 shape is repaired unattended, then is a no-op", async () => {
+    // The production shape again (a NULL-tenant run with two NULL-tenant stops), this time driven
+    // with NO TTY and NO BACKFILL_CONFIRM_TOKEN — only the two new flags.
+    await seedTenantedRouteStop(STOP_F, 6);
+    await seedTenantedRouteStop(STOP_G, 7);
+    await seedNullRun(RUN_3_ID);
+    await seedNullRunStop(RUN_STOP_F, STOP_F, 1, RUN_3_ID);
+    await seedNullRunStop(RUN_STOP_G, STOP_G, 2, RUN_3_ID);
+
+    expectOnlyOurOkRows([RUN_3_ID, RUN_STOP_F, RUN_STOP_G]);
+
+    // The slug the guard judges is printed on every target line, in every mode.
+    const dry = runCli(["--dry-run", "--only-test-tenants"]);
+    expect(dry.status).toBe(0);
+    expect(dry.stdout).toContain(`tenantSlug=${TENANT_SLUG}`);
+    expect(dry.stdout).toContain("the 3 statement(s) --live would execute");
+    expect(dry.stdout).toContain(`[1] UPDATE "RouteRun" SET "tenantId"`);
+    expect(await runTenantIdOf(RUN_3_ID)).toBeNull();
+
+    const res = runCli([
+      "--live",
+      "--only-test-tenants",
+      "--confirm",
+      "BACKFILL 3 ROWS",
+      "--backup-attested",
+      ATTESTATION,
+    ]);
+
+    expect(res.status).toBe(0);
+    // the owner's own flag did the confirming — not the jest-only token
+    expect(res.stderr).not.toContain("BACKFILL_CONFIRM_TOKEN");
+    expect(res.stdout).toContain("=== APPLIED ===");
+    expect(res.stdout).toMatch(/RouteRun\s+1/);
+    expect(res.stdout).toMatch(/RouteRunStop\s+2/);
+    expect(await runTenantIdOf(RUN_3_ID)).toBe(TENANT_ID);
+    expect(await tenantIdOf(RUN_STOP_F)).toBe(TENANT_ID);
+    expect(await tenantIdOf(RUN_STOP_G)).toBe(TENANT_ID);
+
+    // re-runnable, unattended, with the count the second pass computes for itself
+    expectOnlyOurOkRows([]);
+    const again = runCli([
+      "--live",
+      "--only-test-tenants",
+      "--confirm",
+      "BACKFILL 0 ROWS",
+      "--backup-attested",
+      ATTESTATION,
+    ]);
+    expect(again.status).toBe(0);
+    expect(again.stdout).toContain("nothing to do");
   });
 });

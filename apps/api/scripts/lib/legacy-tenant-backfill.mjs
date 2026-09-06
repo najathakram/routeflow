@@ -29,7 +29,16 @@
  * friends, behind the CLI's `--deactivate-orphan-users`. It writes `User.status`, never a
  * `tenantId`, because a NULL-tenant `User` has no parent to derive one from — see the section
  * header there for the owner decision behind it.
+ *
+ * The ONE import in this file is the test-tenant policy (`scripts/lib/test-tenants.cjs`), used by
+ * `assertTestTenantTargets` at the bottom — the guard behind the CLI's `--only-test-tenants`. It
+ * is data, not I/O: a set, a regexp and a predicate over a slug string.
  */
+import {
+  isTestTenant,
+  TEST_TENANT_PATTERN,
+  TEST_TENANT_SLUGS,
+} from "../../../../scripts/lib/test-tenants.cjs";
 
 /** The only tables this tool may ever write, in the order `buildUpdates` emits them. The order is
  *  load-bearing, not cosmetic: `RouteRun` precedes `RouteRunStop` so a run repaired in this batch
@@ -285,6 +294,74 @@ export function buildUpdates(reports) {
     }
   }
   return updates;
+}
+
+// ─── the unattended-write guard behind `--only-test-tenants` ──────────────────────────────────
+
+/**
+ * Every row this batch would WRITE must land in an approved test tenant — the gate that makes an
+ * unattended `--confirm "<phrase>"` acceptable at all. It is deliberately a separate, pure
+ * function rather than a branch inside `buildUpdates`: the CLI resolves the slugs (one
+ * `SELECT "slug" FROM "Tenant" WHERE "id" = $1` per DISTINCT proposed tenant, cached), and the
+ * DECISION over those slugs is unit-testable with no database.
+ *
+ * The policy itself is never restated here: `isTestTenant` from `scripts/lib/test-tenants.cjs` is
+ * the single source of truth (`test`, `e2e-routeflow`, `routeflow-demo`, and slugs matching
+ * `qa-`/`e2e-`/`ux-audit-`), and this guard must never widen it — a near-miss like `testing-co`
+ * or `e2eclient` is a client tenant as far as this tool is concerned.
+ *
+ * ALL-OR-NOTHING, and unresolvable counts as a refusal: a proposed tenant id that no `Tenant` row
+ * carries (`slugById` holds `null` for it) cannot be shown to be a test tenant, so it is an
+ * offender exactly like a client slug. ONE offender refuses the WHOLE batch — never "write the
+ * good ones" — because the whole point is that an unattended run cannot touch client data.
+ *
+ * @param {Array<{ table: string, id: string, tenantId: string|null }>} rows the write list
+ * @param {Map<string, string|null>|Record<string, string|null>} slugById resolved tenant slugs
+ * @returns {Array<{ table: string, id: string, tenantId: string, slug: string }>} the checked rows
+ * @throws {Error} listing every offending row's table, id, tenant id and slug
+ */
+export function assertTestTenantTargets(rows, slugById) {
+  // A Map from the CLI, a plain object from the unit spec's JSON shim — both read the same way.
+  const lookup = (tenantId) => {
+    if (!slugById || typeof tenantId !== "string") return null;
+    if (typeof slugById.get === "function") return slugById.get(tenantId) ?? null;
+    return Object.prototype.hasOwnProperty.call(slugById, tenantId)
+      ? (slugById[tenantId] ?? null)
+      : null;
+  };
+
+  const list = rows ?? [];
+  const checked = [];
+  const offenders = [];
+  for (const row of list) {
+    const tenantId = typeof row?.tenantId === "string" ? row.tenantId : null;
+    const slug = lookup(tenantId);
+    const entry = {
+      table: row?.table ?? "<unknown>",
+      id: row?.id ?? "<unknown>",
+      tenantId,
+      slug,
+    };
+    if (typeof slug === "string" && isTestTenant(slug)) checked.push(entry);
+    else offenders.push(entry);
+  }
+
+  if (offenders.length > 0) {
+    const lines = offenders.map(
+      (o) =>
+        `  ${o.table} ${o.id} -> tenantId=${o.tenantId ?? "-"} ` +
+        `tenantSlug=${o.slug ?? "<unresolvable>"}`,
+    );
+    throw new Error(
+      `legacy-tenant-backfill: --only-test-tenants refuses this batch — ${offenders.length} of ` +
+        `${list.length} target row(s) do not resolve to an approved test tenant:\n` +
+        `${lines.join("\n")}\n` +
+        `  approved: ${[...TEST_TENANT_SLUGS].join(", ")} or a slug matching ` +
+        `${TEST_TENANT_PATTERN} (scripts/lib/test-tenants.cjs). NOTHING was written — a ` +
+        `client-tenant row keeps the interactive TTY confirmation as its only path.`,
+    );
+  }
+  return checked;
 }
 
 // ─── orphan users (a SECOND, mutually exclusive task) ─────────────────────────────────────────

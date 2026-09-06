@@ -27,6 +27,12 @@ import { pathToFileURL } from "node:url";
  * B6a below: it may only ever write the schema's INACTIVE status onto a NULL-tenant,
  * non-SUPER_ADMIN, non-deleted, currently-ACTIVE row; it never deletes, never writes a
  * `tenantId`, and it is refused outright when named alongside the tenant backfill.
+ *
+ * The unattended-write guard (`--only-test-tenants` + the restricted `--confirm "<phrase>"`,
+ * 2026-09-05) is covered from B8a below plus the spawn-level B5m–B5p. What must never regress
+ * there: the approved set is `scripts/lib/test-tenants.cjs`'s and is never widened, ONE
+ * non-matching or unresolvable target row refuses the WHOLE batch, and `--confirm` cannot exist
+ * without the guard — so a client tenant's rows keep the interactive TTY prompt as their only path.
  */
 
 const API_DIR = path.resolve(__dirname, "../..");
@@ -70,6 +76,9 @@ const out = cases.map((c) => {
       return { ok: true, value: lib.buildOrphanUserUpdates(c.reports) };
     }
     if (c.kind === "orphanUserUpdateSql") return { ok: true, value: lib.orphanUserUpdateSql() };
+    if (c.kind === "assertTestTenantTargets") {
+      return { ok: true, value: lib.assertTestTenantTargets(c.rows, c.slugById) };
+    }
     throw new Error("unknown case kind: " + c.kind);
   } catch (e) {
     return { ok: false, message: e.message };
@@ -101,6 +110,11 @@ const buildUpdates = (reports: unknown[]) => ({ kind: "buildUpdates", reports })
 const buildOrphanUserUpdates = (reports: unknown[]) => ({
   kind: "buildOrphanUserUpdates",
   reports,
+});
+const assertTestTenantTargets = (rows: unknown[], slugById: Record<string, string | null>) => ({
+  kind: "assertTestTenantTargets",
+  rows,
+  slugById,
 });
 
 const OK_REPORT = {
@@ -265,6 +279,49 @@ const CASES = [
   buildOrphanUserUpdates([{ table: "RouteRun", id: ROW_1, verdict: "ok", newStatus: INACTIVE }]),
   // the guarded statement itself — 39
   { kind: "orphanUserUpdateSql" },
+  // ─── the --only-test-tenants guard (unattended writes, 2026-09-05) ──────────────────────────
+  // assertTestTenantTargets — 40..45
+  // 40: every target row lands in an approved test tenant
+  assertTestTenantTargets(
+    [
+      { table: "RouteRun", id: ROW_1, tenantId: TENANT_A },
+      { table: "RouteRunStop", id: ROW_2, tenantId: TENANT_B },
+    ],
+    { [TENANT_A]: "ux-audit-2026-09", [TENANT_B]: "test" },
+  ),
+  // 41: one of two rows lands in a client tenant — the WHOLE batch is refused
+  assertTestTenantTargets(
+    [
+      { table: "RouteRun", id: ROW_1, tenantId: TENANT_A },
+      { table: "RouteRunStop", id: ROW_2, tenantId: TENANT_B },
+    ],
+    { [TENANT_A]: "test", [TENANT_B]: "acme-widgets" },
+  ),
+  // 42: the proposed tenant id matches no Tenant row at all — unresolvable is a refusal, never
+  // a pass-through: nothing can prove it is a test tenant.
+  assertTestTenantTargets([{ table: "CreditNote", id: ROW_1, tenantId: TENANT_A }], {}),
+  // 43: an empty write list has nothing to refuse
+  assertTestTenantTargets([], {}),
+  // 44: near-misses must NOT widen the policy — a prefix without the dash, a slug that merely
+  // starts with the word, and the bare pattern stem are all client tenants here.
+  assertTestTenantTargets(
+    [
+      { table: "RouteRun", id: ROW_1, tenantId: "t-1" },
+      { table: "RouteRun", id: ROW_2, tenantId: "t-2" },
+      { table: "RouteRunStop", id: ROW_1, tenantId: "t-3" },
+    ],
+    { "t-1": "testing-co", "t-2": "e2eclient", "t-3": "ux-audit" },
+  ),
+  // 45: the rest of the approved set, exactly as scripts/lib/test-tenants.cjs defines it
+  assertTestTenantTargets(
+    [
+      { table: "RouteRun", id: ROW_1, tenantId: "t-1" },
+      { table: "RouteRun", id: ROW_2, tenantId: "t-2" },
+      { table: "RouteRunStop", id: ROW_1, tenantId: "t-3" },
+      { table: "RouteRunStop", id: ROW_2, tenantId: "t-4" },
+    ],
+    { "t-1": "e2e-routeflow", "t-2": "routeflow-demo", "t-3": "qa-smoke", "t-4": "e2e-anything" },
+  ),
 ];
 
 const RESULTS = evaluate(CASES);
@@ -614,6 +671,70 @@ describe("legacy-tenant-backfill: buildOrphanUserUpdates", () => {
   });
 });
 
+describe("legacy-tenant-backfill: assertTestTenantTargets (--only-test-tenants)", () => {
+  it("B8a: passes when every target row's tenant resolves to an approved test tenant", () => {
+    const result = outcome(40);
+
+    expect(result.ok).toBe(true);
+    expect(result.value).toEqual([
+      { table: "RouteRun", id: ROW_1, tenantId: TENANT_A, slug: "ux-audit-2026-09" },
+      { table: "RouteRunStop", id: ROW_2, tenantId: TENANT_B, slug: "test" },
+    ]);
+  });
+
+  it("B8b: ONE client-tenant row refuses the whole batch, naming the id and the slug", () => {
+    const result = outcome(41);
+
+    expect(result.ok).toBe(false);
+    // The count says "1 of 2", so the owner can see the refusal is not about every row...
+    expect(result.message).toContain("1 of 2 target row(s)");
+    // ...and the offender is identified by table, id and slug — never only by a count.
+    expect(result.message).toContain(`RouteRunStop ${ROW_2}`);
+    expect(result.message).toContain("tenantSlug=acme-widgets");
+    // the compliant row is NOT listed as an offender
+    expect(result.message).not.toContain(`RouteRun ${ROW_1}`);
+    expect(result.message).toContain("NOTHING was written");
+  });
+
+  it("B8c: an unresolvable tenant id is an offender, not a pass-through", () => {
+    const result = outcome(42);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain(`CreditNote ${ROW_1}`);
+    expect(result.message).toContain("tenantSlug=<unresolvable>");
+  });
+
+  it("B8d: an empty write list has nothing to refuse", () => {
+    const result = outcome(43);
+
+    expect(result.ok).toBe(true);
+    expect(result.value).toEqual([]);
+  });
+
+  it("B8e: the policy is never widened — a near-miss slug is a client tenant", () => {
+    const result = outcome(44);
+
+    expect(result.ok).toBe(false);
+    // all three, so a single scan of the message shows every row that blocked the batch
+    expect(result.message).toContain("3 of 3 target row(s)");
+    expect(result.message).toContain("tenantSlug=testing-co");
+    expect(result.message).toContain("tenantSlug=e2eclient");
+    expect(result.message).toContain("tenantSlug=ux-audit");
+  });
+
+  it("B8f: the approved set is exactly scripts/lib/test-tenants.cjs's, patterns included", () => {
+    const result = outcome(45);
+
+    expect(result.ok).toBe(true);
+    expect((result.value as { slug: string }[]).map((r) => r.slug)).toEqual([
+      "e2e-routeflow",
+      "routeflow-demo",
+      "qa-smoke",
+      "e2e-anything",
+    ]);
+  });
+});
+
 // ─── CLI: argument validation must precede any connection ─────────────────────────────────────
 
 function runCli(args: string[]) {
@@ -749,6 +870,61 @@ describe("backfill-legacy-tenant-ids.mjs CLI contract", () => {
     expect(code).toMatch(/u\."role" <> '(\$\{SUPER_ADMIN_ROLE\}|SUPER_ADMIN)'/);
     // Output discipline is enforced by the SELECT list, not by remembering not to print things.
     expect(code).not.toMatch(/u\."email"|u\."username"|u\."password"|u\."googleId"/);
+  });
+
+  it("B5m: --confirm without --only-test-tenants exits 2 without attempting a connection", () => {
+    // The unattended confirmation exists ONLY inside the test-tenant guard. With an attested
+    // backup supplied, the guard rule is the only thing left that can refuse this invocation.
+    const res = runCli([
+      "--live",
+      "--backup-attested",
+      "backup 2026-09-05",
+      "--confirm",
+      "BACKFILL 1 ROWS",
+    ]);
+
+    expect(res.status).toBe(2);
+    const combined = res.stdout + res.stderr;
+    expect(combined).toContain("--confirm");
+    expect(combined).toContain("--only-test-tenants");
+    expect(combined).toContain("refused before opening any connection");
+    // no driver load, no connection: the refusal is an argument decision, not a runtime one
+    expect(combined).not.toMatch(/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|getaddrinfo/i);
+    expect(res.stderr).not.toContain("Cannot find module");
+  });
+
+  it("B5n: --only-test-tenants is refused for the orphan-user task before connecting", () => {
+    // Orphan users have no tenant at all, so the flag could not check anything — it is refused
+    // rather than silently ignored, which would let it LOOK as though a guard had run.
+    const res = runCli(["--deactivate-orphan-users", "--only-test-tenants"]);
+
+    expect(res.status).toBe(2);
+    const combined = res.stdout + res.stderr;
+    expect(combined).toContain("not tenant-scoped");
+    expect(combined).not.toMatch(/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|getaddrinfo/i);
+  });
+
+  it("B5o: --help documents the guard, the restricted --confirm and the exit codes", () => {
+    const res = runCli(["--help"]);
+
+    expect(res.status).toBe(0);
+    expect(res.stdout).toContain("--only-test-tenants");
+    expect(res.stdout).toContain('--confirm "<phrase>"');
+    // the policy module is named, so the reader knows where the approved list actually lives
+    expect(res.stdout).toContain("scripts/lib/test-tenants.cjs");
+    expect(res.stdout).toContain("BACKFILL <n> ROWS");
+    expect(res.stdout).toMatch(/does NOT relax --backup-attested/);
+  });
+
+  it("B5p: the guard resolves slugs from Tenant and is applied to the write list, not the report", () => {
+    const code = cliCodeLines();
+
+    // The one query the guard needs — and it reads the TENANT the row would receive.
+    expect(code).toContain('SELECT "slug" FROM "Tenant" WHERE "id" = $1');
+    // The decision lives in the pure module; the CLI only feeds it the write list + the slugs.
+    expect(code).toContain("assertTestTenantTargets(updates, slugById)");
+    // The unattended confirmation is read from argv, never widened into the token's gate.
+    expect(code).toContain("opts.confirm !== null ? opts.confirm : confirmTokenOverride()");
   });
 
   it("B5e: the session is declared read-only in code, not merely promised in a comment", () => {

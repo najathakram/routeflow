@@ -49,6 +49,26 @@
  *   --json        print the report as JSON instead of prose (for the owner's records).
  *   --help        usage, exit 0.
  *
+ * UNATTENDED WRITES — ONLY INTO APPROVED TEST TENANTS (2026-09-05)
+ *   --only-test-tenants  before ANY write, resolve the slug of the tenant each target row would
+ *                 RECEIVE (`SELECT "slug" FROM "Tenant" WHERE "id" = $1`, one query per DISTINCT
+ *                 proposed tenant) and require `isTestTenant(slug)` from
+ *                 `scripts/lib/test-tenants.cjs` — the single source of the policy, never
+ *                 restated and never widened here. ONE non-matching or unresolvable row refuses
+ *                 the WHOLE batch with exit 3 and ZERO writes, listing every offending id and
+ *                 slug. Enforced in EVERY mode, so the `--dry-run` the owner reads is the exact
+ *                 preflight of the live gate rather than a looser one. The orphan-user task is
+ *                 REFUSED under this flag (exit 2): those rows are not tenant-scoped at all, so
+ *                 there is no slug to check and nothing the flag could promise.
+ *   --confirm "<phrase>"  supplies the typed confirmation as a value, for an unattended `--live`.
+ *                 Accepted ONLY alongside `--only-test-tenants` (exit 2 otherwise, before any
+ *                 connection), and the phrase must equal EXACTLY the one the prompt would have
+ *                 asked for — `BACKFILL <n> ROWS` with `<n>` the applied count computed from
+ *                 THIS invocation's own classification. A mismatch is exit 3 with zero writes,
+ *                 which is what makes the count a real check rather than a formality. It does
+ *                 NOT relax `--backup-attested`. A client-tenant row keeps the interactive TTY
+ *                 prompt as its ONLY path.
+ *
  * A malformed batch (see `buildUpdates`) blocks report and `--dry-run` rather than failing them:
  * the refusal is printed to BOTH stdout and stderr, `--json` carries it as `batchError` with
  * `summary.blocked: true` (`summary.ok` still counts the ok rows), and the exit stays 0. `--live`
@@ -66,7 +86,8 @@
  *   1  error — no database URL, connection or query failure, transaction error
  *   2  argument refusal, raised BEFORE any connection is opened (notably `--live` with no
  *      `--backup-attested`, and naming both tasks at once)
- *   3  `--live` confirmation refused — stdin is not a TTY, or the typed text did not match
+ *   3  `--live` confirmation refused — stdin is not a TTY, or the typed text did not match; also
+ *      the `--only-test-tenants` refusal (a target row outside an approved test tenant)
  *   4  `--live` rolled back — a row changed under us (its guarded UPDATE returned no row)
  *
  * PRODUCTION-SAFETY RULES (this is a data repair on a live database, not a schema change)
@@ -92,6 +113,7 @@ import { createRequire } from "node:module";
 import readline from "node:readline";
 import { resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
 import {
+  assertTestTenantTargets,
   buildOrphanUserUpdates,
   buildUpdates,
   classifyCreditNote,
@@ -108,6 +130,7 @@ const HELP = `backfill-legacy-tenant-ids.mjs — repair rows whose tenantId IS N
 Usage: node apps/api/scripts/backfill-legacy-tenant-ids.mjs
          [--backfill-tenants | --deactivate-orphan-users]
          [--dry-run | --live] [--json] [--backup-attested "<text>"]
+         [--only-test-tenants [--confirm "<phrase>"]]
 
 Tasks (exactly one; naming both is refused with exit 2):
   --backfill-tenants        (default) derive and write the missing tenantId on legacy rows
@@ -119,6 +142,22 @@ Modes (either task):
   --live      apply them in one transaction; requires --backup-attested AND a typed confirmation
   --json      print the report as JSON instead of prose
   --help      print this help and exit 0
+
+Unattended writes (approved TEST tenants only):
+  --only-test-tenants   before any write, resolve the slug of the tenant every target row would
+                        receive and require an approved test tenant (isTestTenant in
+                        scripts/lib/test-tenants.cjs: test, e2e-routeflow, routeflow-demo, or a
+                        slug matching qa-/e2e-/ux-audit-). ONE non-matching or unresolvable row
+                        refuses the whole batch — exit 3, zero writes, offending ids and slugs
+                        listed. Enforced in every mode, so --dry-run previews the same gate.
+                        Refused with --deactivate-orphan-users (exit 2): orphan users are not
+                        tenant-scoped, so there is no slug to check.
+  --confirm "<phrase>"  supply the typed confirmation as a value instead of a TTY prompt. Allowed
+                        ONLY with --only-test-tenants (exit 2 otherwise, before connecting), and
+                        the phrase must equal exactly what the prompt would have asked for —
+                        BACKFILL <n> ROWS, with <n> the applied count this run computed. A
+                        mismatch is exit 3 with zero writes. It does NOT relax --backup-attested,
+                        and a client-tenant row keeps the TTY prompt as its only path.
 
 --backfill-tenants
   Tables, in write order: RouteRun, RouteRunStop, PaymentCounter, CreditNote. A NULL-tenant
@@ -165,6 +204,10 @@ function parseArgs(argv) {
     backfillTenants: false,
     deactivateOrphanUsers: false,
     backupAttested: null,
+    onlyTestTenants: false,
+    // `null` = not supplied. An EMPTY string is supplied-and-wrong, and must reach the phrase
+    // comparison (exit 3) rather than falling back to the prompt.
+    confirm: null,
     errors: [],
   };
   for (let i = 0; i < argv.length; i++) {
@@ -178,6 +221,9 @@ function parseArgs(argv) {
     else if (arg === "--backup-attested") opts.backupAttested = argv[++i] ?? "";
     else if (arg.startsWith("--backup-attested="))
       opts.backupAttested = arg.slice("--backup-attested=".length);
+    else if (arg === "--only-test-tenants") opts.onlyTestTenants = true;
+    else if (arg === "--confirm") opts.confirm = argv[++i] ?? "";
+    else if (arg.startsWith("--confirm=")) opts.confirm = arg.slice("--confirm=".length);
     else opts.errors.push(`unknown argument "${arg}"`);
   }
   if (opts.dryRun && opts.live) opts.errors.push("--dry-run and --live are mutually exclusive");
@@ -189,6 +235,25 @@ function parseArgs(argv) {
     opts.errors.push(
       "--backfill-tenants and --deactivate-orphan-users are mutually exclusive — this tool runs " +
         "exactly one repair per invocation",
+    );
+  }
+  // The orphan-user task has NO tenant to resolve — that is the whole reason it exists as a
+  // separate task — so `--only-test-tenants` could not check anything and must not look as
+  // though it did. It is refused outright rather than silently ignored.
+  if (opts.onlyTestTenants && opts.deactivateOrphanUsers) {
+    opts.errors.push(
+      "--only-test-tenants cannot be combined with --deactivate-orphan-users — orphan users are " +
+        "not tenant-scoped; run the user task without --only-test-tenants from a TTY",
+    );
+  }
+  // An unattended confirmation is allowed ONLY inside the test-tenant guard. Without it there is
+  // nothing standing between `--confirm` and a client tenant's rows, so the flag is refused here,
+  // before any connection — the TTY prompt stays the sole path for client data.
+  if (opts.confirm !== null && !opts.onlyTestTenants) {
+    opts.errors.push(
+      '--confirm "<phrase>" requires --only-test-tenants — an unattended confirmation is allowed ' +
+        "only when every target row resolves to an approved test tenant; client-tenant rows keep " +
+        "the interactive TTY confirmation as their only path",
     );
   }
   if (opts.live && !String(opts.backupAttested ?? "").trim()) {
@@ -374,7 +439,12 @@ function reportLine(report) {
     .join(" ");
   return (
     `${report.table}  id=${show(report.id)}  createdAt=${show(report.createdAt)}  ` +
-    `${parents}  -> tenantId=${show(report.tenantId)}  [${report.verdict}] ${report.reason}` +
+    `${parents}  -> tenantId=${show(report.tenantId)}` +
+    // Printed whenever the proposed tenant resolves to a slug — cheap, and it is what lets the
+    // owner see WHICH tenant a row is about to join without looking the id up by hand. It is
+    // also exactly what `--only-test-tenants` judges, so the report shows the gate's input.
+    (report.tenantSlug ? ` tenantSlug=${report.tenantSlug}` : "") +
+    `  [${report.verdict}] ${report.reason}` +
     // e.g. "(via run repaired in this batch)" — the stop's own RouteRun is NULL-tenant and the
     // tenant above is the one this same batch will write to it.
     (report.note ? ` ${report.note}` : "")
@@ -454,7 +524,13 @@ function ask(question) {
  * refused, 4 rolled back because a row no longer matched its guarded WHERE.
  */
 async function confirmAndApply(updates, phrase, applied, rollbackReason) {
-  const injected = confirmTokenOverride();
+  // `--confirm "<phrase>"` is the OWNER's unattended confirmation, admissible only alongside
+  // `--only-test-tenants` (enforced in parseArgs, before any connection) — so by the time it is
+  // read here, every row in `updates` has already been proven to land in an approved test tenant.
+  // It takes precedence over the jest-only BACKFILL_CONFIRM_TOKEN, which stays what it was: a
+  // test hook, ignored loudly outside a jest worker. Neither relaxes `--backup-attested`, and
+  // neither relaxes the phrase check below — an unattended run still has to name the exact count.
+  const injected = opts.confirm !== null ? opts.confirm : confirmTokenOverride();
   if (injected === undefined && !process.stdin.isTTY) {
     console.error(
       "backfill-legacy-tenant-ids: refused — --live needs an interactive TTY for the typed " +
@@ -503,6 +579,20 @@ async function runTenantBackfill() {
   say(`\n=== LEGACY NULL-tenantId BACKFILL — ${mode} — ${target} ===`);
   say("    session is READ ONLY; ids and verdicts only, no business data\n");
 
+  // Proposed tenant id → slug, resolved once per DISTINCT id and cached (a NULL entry means no
+  // `Tenant` row carries that id, which `--only-test-tenants` treats as an offender). It feeds
+  // BOTH the `tenantSlug=` column every mode prints and the guard below, so the owner reads
+  // exactly the value the gate judges.
+  const slugById = new Map();
+  async function slugFor(tenantId) {
+    if (typeof tenantId !== "string" || tenantId === "") return null;
+    if (slugById.has(tenantId)) return slugById.get(tenantId);
+    const { rows } = await client.query('SELECT "slug" FROM "Tenant" WHERE "id" = $1', [tenantId]);
+    const slug = rows[0]?.slug ?? null;
+    slugById.set(tenantId, slug);
+    return slug;
+  }
+
   const reports = [];
   const perTable = [];
   // Threaded through the listings in TABLES order. RouteRun is listed and classified first, so by
@@ -516,6 +606,7 @@ async function runTenantBackfill() {
       const { verdict, tenantId, reason } = spec.classify(row, ctx);
       if (verdict === VERDICT_OK) spec.onOk?.(row, tenantId, ctx);
       const note = spec.noteFor?.(row, verdict, ctx) ?? null;
+      const tenantSlug = await slugFor(tenantId);
       const report = {
         table: spec.table,
         id: row.id,
@@ -523,6 +614,7 @@ async function runTenantBackfill() {
         parents: spec.describe(row),
         verdict,
         tenantId,
+        ...(tenantSlug ? { tenantSlug } : {}),
         reason,
         ...(note ? { note } : {}),
         ...(spec.table === "CreditNote" ? { creditNoteNumber: row.creditNoteNumber } : {}),
@@ -564,6 +656,60 @@ async function runTenantBackfill() {
       TABLES.map((spec) => [spec.table, list.filter((u) => u.table === spec.table).length]),
     );
 
+  const applied = {};
+
+  /** The `--json` document. Emitted from exactly ONE place so the refusal path below cannot drift
+   *  from the normal one — a `--json` consumer sees the same shape either way, with the reason
+   *  carried as a field rather than as a missing document. */
+  const emitJson = (extra = {}) => {
+    if (!opts.json) return;
+    console.log(
+      JSON.stringify(
+        {
+          mode,
+          task,
+          target,
+          generatedAt: new Date().toISOString(),
+          onlyTestTenants: opts.onlyTestTenants,
+          backupAttested: opts.live ? opts.backupAttested : null,
+          rows: reports.map((r) => ({ ...r, createdAt: r.createdAt?.toISOString?.() ?? null })),
+          perTable,
+          summary: {
+            ok: okTotal,
+            refused: refusedTotal,
+            ...(batchError || extra.testTenantError ? { blocked: true } : {}),
+          },
+          ...(batchError ? { batchError } : {}),
+          ...(extra.testTenantError ? { testTenantError: extra.testTenantError } : {}),
+          updates: mode === "report" ? null : updates,
+          applied: mode === "live" ? applied : null,
+        },
+        null,
+        2,
+      ),
+    );
+  };
+
+  // `--only-test-tenants` — the gate that makes an unattended `--confirm` acceptable. It runs on
+  // the WRITE LIST (so refused rows, which are never written, cannot fail it) and in EVERY mode,
+  // so the `--dry-run` the owner reads is the exact preflight of `--live` rather than a looser
+  // one. A blocked batch has no write list to judge, so the batchError refusal above wins.
+  // The refusal goes to stderr AND stdout for the same reason the batch refusal does: a report
+  // redirected to a file must not look complete while the line explaining it went elsewhere.
+  if (opts.onlyTestTenants && !batchError) {
+    try {
+      assertTestTenantTargets(updates, slugById);
+    } catch (e) {
+      const testTenantError = e.message;
+      console.error(testTenantError);
+      say("=== REFUSED — --only-test-tenants ===");
+      say(testTenantError);
+      say("\n=== END — nothing was modified ===\n");
+      emitJson({ testTenantError });
+      return 3;
+    }
+  }
+
   if (mode === "dry-run") {
     say(
       batchError
@@ -578,8 +724,6 @@ async function runTenantBackfill() {
     );
     say("\n=== END — nothing was modified ===\n");
   }
-
-  const applied = {};
 
   if (mode === "live") {
     if (updates.length === 0) {
@@ -598,31 +742,7 @@ async function runTenantBackfill() {
     }
   }
 
-  if (opts.json) {
-    console.log(
-      JSON.stringify(
-        {
-          mode,
-          task,
-          target,
-          generatedAt: new Date().toISOString(),
-          backupAttested: opts.live ? opts.backupAttested : null,
-          rows: reports.map((r) => ({ ...r, createdAt: r.createdAt?.toISOString?.() ?? null })),
-          perTable,
-          summary: {
-            ok: okTotal,
-            refused: refusedTotal,
-            ...(batchError ? { blocked: true } : {}),
-          },
-          ...(batchError ? { batchError } : {}),
-          updates: mode === "report" ? null : updates,
-          applied: mode === "live" ? applied : null,
-        },
-        null,
-        2,
-      ),
-    );
-  }
+  emitJson();
   return 0;
 }
 
