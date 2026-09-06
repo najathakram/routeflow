@@ -489,6 +489,24 @@ private …` immediately followed by a `gh repo view --json visibility` read-bac
   `apps/api/scripts/**`, `apps/api/Dockerfile`, `apps/api/prisma.config.ts`, `package.json` and
   `docker-compose.yml` (no-single-schema-path's reach), and the spec pins ALL sixteen explicit
   inputs plus the lane's exact three specs.
+- **`src/common/campaign-check-freshness.spec.ts` (2026-09-06, campaign-check report freshness,
+  L-083)** — contract spec for `scripts/campaign-check.mjs`'s freshness rule and its new
+  `--freshness-only` pre-step (see [`INDEX`](INDEX.md)'s "Bug-register burn-down campaign" row).
+  Harness mirrors `ci-freshness-guard-script.spec.ts`'s `runScriptDirect` (`spawnSync` the real
+  `.mjs` directly) + `mkdtempSync` fixture pattern: a throwaway `git init` repo with two commits
+  (a workspace test file, then a `.claude/campaign/status/F01.jsonl` ledger row) at explicit
+  `GIT_AUTHOR_DATE`/`GIT_COMMITTER_DATE`, `CAMPAIGN_CHECK_STATUS_DIR` + `--runs-dir` pointed at the
+  fixture, env scrubbed of `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`/`CAMPAIGN_CHECK_TURBO_DRY_RUN`.
+  T1–T3/T5 pin the R1 staleness compare (report `generatedAt` vs. the newer of the test-file commit
+  or the ledger commit) and R2's exact refusal block (stale-by-name, before any token scan,
+  `cd <dir> && npx jest --maxWorkers=2`, the ritual line); T4 is the R3 positive control (no
+  affirmative T1 claim ⇒ never checked, green before and after — excluded from the "0 passed on
+  red" claim); T6–T9 drive `--freshness-only` (R4) through the `CAMPAIGN_CHECK_TURBO_DRY_RUN` seam
+  (R6, `JEST_WORKER_ID`-gated) — HIT refuses, MISS/parse-failure fails OPEN, the seam is ignored
+  outside a Jest worker; T10 runs the REAL `scripts/jest-campaign-reporter.cjs` in a child process
+  and asserts the new `generatedAt`/`gitHead` stamp (R0) with the four original fields unchanged;
+  T11 pins root `package.json`'s `verify` script starting with
+  `node scripts/campaign-check.mjs --freshness-only && ` (R5).
 - **`src/main.ts`** — ⚠️ NEVER `app.use(json())` here: it consumes the body before Nest captures `rawBody` and silently breaks EVERY Stripe webhook signature (#400 — the 2mb body limit goes through Nest's parser options). **Sentry (2026-08-26, DSN-optional):** `import "./instrument"` is the FIRST import (`src/instrument.ts` — `Sentry.init` with `enabled: !!process.env.SENTRY_DSN`, inert otherwise); global filters registered as `useGlobalFilters(new SentryExceptionFilter(httpAdapter), new ThrottlerExceptionFilter(), new MulterExceptionFilter())` — Nest reverses the array so the specific filters still win for their types; ⚠️ the catch-all Sentry filter MUST stay first or the narrow ones are never reached. `src/common/sentry-exception.filter.ts` captures ONLY ≥500s with `tenant`/user/path tags then defers to `super.catch`; `src/common/multer-exception.filter.ts` maps multer 2.3.0's newer codes (`LIMIT_FIELD_ARRAY_INDEX`, `INVALID_FIELD_NAME`, `STREAM_DESTROYED`) to 400 — @nestjs/platform-express's `transformException` switches on a frozen message list that predates them, so without it they arrive as raw `MulterError`s, score as 500, and capture one Sentry event per attacker probe. startup: `assertSecrets()` (JWT required in all envs; **`STORAGE_URL_SIGNING_SECRET` now FATAL in production too — F5-001 fail-closed**; `ENCRYPTION_KEY` still warn-only), **no boot-time DDL (PR-1, `imp-03a`, 2026-09-03)** — `runStartupMigration()` is deleted; schema drift is now caught read-only by `scripts/schema-drift.mjs`, not by a startup writer,
   helmet, trust proxy 2 (Railway CDN), CORS wildcard
   patterns, global `ValidationPipe` (whitelist/forbidNonWhitelisted/transform),

@@ -173,6 +173,17 @@ npm run bugs -- discharge F11 --evidence "Railway deploy <id> SUCCESS; Actions r
   --evidence-B129 "Actions run <id> job <id>: spec 28 REG-B129 passed against that deploy"
 ```
 
+```bash
+# after ANY ledger edit or master merge — before pushing
+cd apps/api && npx jest --maxWorkers=2
+cd apps/mobile && npx jest --maxWorkers=2       # when the batch carries T1 claims there too
+cd packages/pricing && npx jest --maxWorkers=2  # when the batch carries T1 claims there too
+```
+
+Run this before every push, not just before `prove`/`discharge`: turbo replays an unchanged
+workspace's tests from cache, so its `.campaign/runs/<ws>.json` report never refreshes on its
+own — see "Report freshness" above.
+
 Both write the ledger **replace-in-place** and update the record's front matter and History.
 Never hand-edit `status/F##.jsonl`: a second row for the same id is a duplicate the gate rejects,
 and that is the first mistake everyone makes.
@@ -298,6 +309,19 @@ because that is what sharpens the graph for everyone after you.
 `render` writes `local-assets/docs/routeflow-bug-registry.html`, a DERIVED view. ⚠️ It is a
 different file from `routeflow-bug-register.html`, which `enrich` still parses as the historical
 import source — never overwrite that one.
+
+### Report freshness
+
+A report in `.campaign/runs/<ws>.json` (`api`/`mobile`/`pricing`, the T1 jest evidence
+`campaign-check` reads) must be **newer than the newest commit** touching that workspace's own
+test files or the ledger shards (`.claude/campaign/status`) — otherwise `campaign-check` is
+reading proof a later commit invalidated. It refuses a stale report **by name**, with the exact
+regen command, **before scanning a single token** — never the confusing "no test titled with
+REG-B###" for a report that is merely old. `node scripts/campaign-check.mjs --freshness-only` is
+the FIRST step of `npm run verify` (before the `turbo run … test …` segment): for each stale
+consulted report it asks turbo `--dry-run=json` whether that workspace's `test` task would
+REPLAY from cache, and refuses in seconds only when it would — a cache **MISS** proceeds, because
+turbo is about to regenerate the report itself, so there is nothing to refuse yet (lesson L-083).
 
 ### Two agents, one shard
 
