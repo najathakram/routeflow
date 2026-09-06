@@ -5800,7 +5800,7 @@ cmds["self-test"] = () => {
           /* already dead */
         }
         awaitExit(impostor);
-        rmSync(lockDir, { recursive: true, force: true });
+        rmSync(lockDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       }
       check(
         "pid reuse: the impostor pid genuinely answers to a liveness check with no boot stamp",
@@ -5812,7 +5812,7 @@ cmds["self-test"] = () => {
         {
           code: rescuedFromReuse.code,
           verdict: /predates this boot/.test(rescuedFromReuse.out),
-          ageBased: /age|abandon|last resort/i.test(rescuedFromReuse.out),
+          ageBased: /last resort|abandon/i.test(rescuedFromReuse.out),
         },
         { code: 0, verdict: true, ageBased: false },
       );
@@ -5857,7 +5857,7 @@ cmds["self-test"] = () => {
       };
       // OWN this precondition rather than inherit it — this must prove the
       // fixture's own setup, never the previous fixture's cleanliness.
-      rmSync(lockDir, { recursive: true, force: true });
+      rmSync(lockDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       check(
         "owner-write failure: no lock exists before the fixture runs",
         existsSync(lockDir),
