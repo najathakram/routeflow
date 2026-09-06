@@ -49,10 +49,19 @@ function readJson(filePath: string): Record<string, any> {
   return JSON.parse(readFileSync(filePath, "utf8"));
 }
 
-// Derived from docs-truth.spec.ts (README.md, CLAUDE.md — both read off REPO_ROOT) and
-// no-dead-deps.spec.ts (apps/web/package.json manifest read, plus the four directories its
-// `walk()` recurses: apps/web/app, apps/web/components, apps/web/hooks, apps/web/lib; and
+// EVERY explicit input the lane carries beyond `$TURBO_DEFAULT$` — pinned here so an input
+// deleted from turbo.json fails a test instead of silently restoring the cached-green hole.
+//
+// The first eight are docs-truth.spec.ts's (README.md, CLAUDE.md — both read off REPO_ROOT)
+// and no-dead-deps.spec.ts's (apps/web/package.json manifest read, plus the four directories
+// its `walk()` recurses: apps/web/app, apps/web/components, apps/web/hooks, apps/web/lib; and
 // apps/mobile/package.json manifest read).
+//
+// The rest are no-single-schema-path.spec.ts's own reach: SCAN_DIR_ROOTS (apps/api/src,
+// apps/api/scripts, scripts, .github/workflows), the .claude/skills tree it walks separately,
+// and its SCAN_SINGLE_FILES — which include docker-compose.yml. That spec fails on any
+// surviving reference to the retired single `prisma/schema.prisma` path, so every file it reads
+// has to be hashed into THIS task's key or an edit reintroducing one replays a cached green.
 const OUTSIDE_API_PATHS = [
   "$TURBO_ROOT$/README.md",
   "$TURBO_ROOT$/CLAUDE.md",
@@ -62,6 +71,14 @@ const OUTSIDE_API_PATHS = [
   "$TURBO_ROOT$/apps/web/hooks/**",
   "$TURBO_ROOT$/apps/web/lib/**",
   "$TURBO_ROOT$/apps/mobile/package.json",
+  "$TURBO_ROOT$/scripts/**",
+  "$TURBO_ROOT$/.github/workflows/**",
+  "$TURBO_ROOT$/.claude/skills/**",
+  "$TURBO_ROOT$/apps/api/scripts/**",
+  "$TURBO_ROOT$/apps/api/Dockerfile",
+  "$TURBO_ROOT$/apps/api/prisma.config.ts",
+  "$TURBO_ROOT$/package.json",
+  "$TURBO_ROOT$/docker-compose.yml",
 ];
 
 describe("turbo.json test:repo-truth cache-safety", () => {
@@ -111,15 +128,27 @@ describe("jest config split: main lane ignores the repo-truth specs, repo-truth 
     ).toBe(true);
   });
 
-  it("jest.repo-truth.config.js's testRegex matches exactly the two repo-truth specs", () => {
+  it("jest.repo-truth.config.js's testRegex matches exactly the three repo-truth specs", () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const repoTruthConfig = require(join(REPO_ROOT, "apps/api/jest.repo-truth.config.js"));
     const regex = new RegExp(repoTruthConfig.testRegex);
-    expect(regex.test("src/common/docs-truth.spec.ts")).toBe(true);
-    expect(regex.test("src/common/no-dead-deps.spec.ts")).toBe(true);
+    // The lane runs EXACTLY these three — no-single-schema-path.spec.ts moved here with the
+    // wave-E schema-folder split, and a lane that silently stopped running it would leave the
+    // single-schema-path claim unproven while still reporting green.
+    for (const spec of ["docs-truth", "no-dead-deps", "no-single-schema-path"]) {
+      expect(regex.test(`src/common/${spec}.spec.ts`)).toBe(true);
+    }
     // and nothing else in this same directory
     expect(regex.test("src/common/turbo-inputs.spec.ts")).toBe(false);
     expect(regex.test("src/common/db-locks.spec.ts")).toBe(false);
+  });
+
+  it("the main jest config's testPathIgnorePatterns excludes no-single-schema-path.spec.ts", () => {
+    expect(
+      (apiPkg.jest?.testPathIgnorePatterns ?? []).some((p: string) =>
+        new RegExp(p).test("src/common/no-single-schema-path.spec.ts"),
+      ),
+    ).toBe(true);
   });
 
   it("jest.repo-truth.config.js never inherits the campaign reporter (would clobber .campaign/runs/api.json)", () => {

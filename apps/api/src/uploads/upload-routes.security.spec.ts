@@ -67,6 +67,10 @@ import { ImportService } from "../import/import.service";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const request = require("supertest");
 
+// 60 s budget for these multipart tests: real Buffers over real HTTP through the full
+// multipart parser refused pushes twice on host load (2026-09-05/06) under Jest's 5 s default.
+jest.setTimeout(60_000);
+
 /** What a handler handed to its service — the thing these tests actually check. */
 type Received = { originalname: string; mimetype: string; size: number; isBuffer: boolean };
 

@@ -156,12 +156,17 @@ function poBadge(status: string): { variant: BadgeVariant; label: string } {
 
 // ─── Status filter options ─────────────────────────────────────────────────────
 
-const STATUS_OPTIONS = [
+// Typed against the shared `VendorBillStatus` (same import the suppliers detail page uses for
+// its STATUS_LABELS/STATUS_VARIANTS records), so a status added to the schema-pinned union can
+// no longer go missing from this filter unnoticed — which is exactly how `OVERDUE` was absent
+// while the table below renders an "Overdue" badge for it.
+const STATUS_OPTIONS: Array<{ value: "" | VendorBillStatus; label: string }> = [
   { value: "", label: "All Statuses" },
   { value: "DRAFT", label: "Draft" },
   { value: "RECEIVED", label: "Received" },
   { value: "PARTIAL", label: "Partial" },
   { value: "PAID", label: "Paid" },
+  { value: "OVERDUE", label: "Overdue" },
   { value: "VOID", label: "Void" },
 ];
 

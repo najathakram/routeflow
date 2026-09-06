@@ -56,6 +56,7 @@ const STATUS_LABELS: Record<VendorBillStatus, string> = {
   RECEIVED: "Received",
   PARTIAL: "Partial",
   PAID: "Paid",
+  OVERDUE: "Overdue",
   VOID: "Void",
 };
 
@@ -64,6 +65,7 @@ const STATUS_VARIANTS: Record<VendorBillStatus, "neutral" | "warning" | "success
   RECEIVED: "warning",
   PARTIAL: "warning",
   PAID: "success",
+  OVERDUE: "danger",
   VOID: "danger",
 };
 

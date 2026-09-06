@@ -64,9 +64,11 @@ proved every moved function byte-identical to its pre-move source before the fou
 deleted. The package's own golden money table (`packages/pricing/src/golden.fixtures.ts` +
 `golden.spec.ts`) replaces the four hand-synced regression specs with one.
 
-**Follow-on.** `getTierPrice` now takes `any` for its `product` parameter (the api's original,
-looser signature) — web and mobile lost the compile-time `TierPriceable`-shape check their own
-mirrors gave the same call sites. Narrow the parameter type in a follow-on.
+**Follow-on.** The consolidation **widened** `getTierPrice`'s `product` parameter to `any` in
+[`packages/pricing/src/tier-pricing.ts`](../packages/pricing/src/tier-pricing.ts) (the api's
+original, looser signature won out) — web and mobile lost the compile-time `TierPriceable`-shape
+check their own mirrors gave the same call sites. Give it a real parameter type again in a
+follow-on.
 
 **Payoff.** Removed an entire class of money bugs; one source of truth, one test suite.
 
@@ -143,6 +145,12 @@ other instead of racing.
 **Remaining work.** A **cron leader lock** (guarding scheduled jobs that must run on exactly one
 replica, distinct from the per-customer order-merge lock above) is tracked separately as its own PR
 and is not part of this item.
+
+**Also outstanding (close-out review, 2026-09-05).** The item-edit path (`PATCH /orders/:id/items`
+and the buyer twin) still writes absolute line sets **outside** the customer advisory lock above —
+a concurrent merge can overwrite a concurrent edit (scenario: qty 10, edit → 12, merge folds
+10 + 5 = 15, correct is 17). Fix: take the same customer lock at those two controller entries;
+never thread a transaction into `updateOrderItems`.
 
 **Payoff.** Turns an undocumented footgun into a non-issue: the service can now scale to multiple
 replicas without risking order-merge corruption.
@@ -355,6 +363,31 @@ so a failing type-check no longer hides a failing lint/test in the same run.
 > (`tenantNotFound`) + a backfill migration
 > `UPDATE "PaymentCounter" SET "tenantId" = "id" WHERE "tenantId" IS NULL AND "id" IN (SELECT "id" FROM "Tenant")`,
 > preceded by a read-only prod count of such rows; the `forTenant()` layer already scopes it.
+>
+> **Follow-on (pg concurrent-query deprecation).** Observed in prod 2026-09-05, shortly after
+> #623: node-postgres logs a deprecation for a second query issued on a client that already has
+> one in flight. Diagnosed as **not** `db-locks.ts` — that module `await`s each of its three
+> statements in turn (`SET lock_timeout` at ~240, the lock call at ~248, the unlock at ~282), so
+> it never overlaps and needs no change. The real shape is `Promise.all` on a **pinned Prisma
+> interactive-transaction client**, where both branches share one connection:
+> [`sales-agents/commission-engine.service.ts`](../apps/api/src/sales-agents/commission-engine.service.ts)
+> ~222 (`runSync`'s `db` is a `tx` at every caller — `syncInvoiceCommissionSafe(id, tx)`),
+> [`common/msrp.ts`](../apps/api/src/common/msrp.ts) ~68 (`loadMsrpMap` is called with `tx` from
+> `estimates.service.ts` ~240 and with the tx-or-pool `db` from `invoices.service.ts` ~118),
+> [`drivers/drivers.service.ts`](../apps/api/src/drivers/drivers.service.ts) ~148 and
+> [`customers/customers.service.ts`](../apps/api/src/customers/customers.service.ts) ~1727 (both
+> plainly inside a `tenantTransaction`). Also audit — same `Promise.all` pair shape, but on a
+> pool-backed `forTenant()` client today, so each branch checks out its own connection:
+> `routes/routes.service.ts` ~1562 (pinned only when a caller threads `client`),
+> `buyer/statement.service.ts` ~57, `buyer/buyer.controller.ts` ~300, and
+> `messaging/messaging-config.service.ts` ~135/~141. A third statement can queue behind such a
+> pair without any code asking for it: Prisma's 5 s interactive-transaction timeout fires its own
+> `ROLLBACK` on the same pinned connection. **No correctness risk today** — `pg` 8 queues per
+> connection and runs them FIFO, so the pair still executes, in order, and only logs. It becomes
+> a hard failure on `pg@9`, which throws instead of queueing. Fix: serialize each pair into
+> sequential `await`s (the parallelism is illusory on a pinned client anyway — one connection,
+> one statement at a time) and pin it with a fake-tx spec whose mock records overlap, i.e. fails
+> if a second call starts before the first resolves.
 
 ---
 
@@ -401,8 +434,12 @@ so a failing type-check no longer hides a failing lint/test in the same run.
   `BuyerPromotion.type` omitted `"BUY_N_GET_M"` (masked by a compensating cast, now removed); both
   apps' `EstimateStatus` carried a phantom `"EXPIRED"` value the schema has never had (dead code,
   sibling-sweep find). See lesson L-072.
-  **Follow-on:** ~25 Prisma enums are still hand-mirrored at ~56 client sites without a parity row
-  (web `OrderStatus` omits `PARTIALLY_DELIVERED`); tracked as the next structure item.
+  **Follow-on:** ~43 site-level declarations (not ~25) still hand-mirror a Prisma enum without a
+  parity row — e.g. web `OrderStatus` omits `PARTIALLY_DELIVERED`; `apps/web/lib/api/numbering.ts`'s
+  `DocumentNumberType` and `products.ts`'s `CostingMethod` also hand-type a local union outside the
+  shared table (harmless today — both still match the schema). Not counted in that ~43: mobile
+  `recurring-invoices-logic.ts`'s `LastRunStatus` — `lastRunStatus` is `String?` in Prisma, not an
+  enum, so there is no schema enum for it to drift from. Tracked as the next structure item.
 - The **React 18 vs 19** split (mobile pulls 19, web needs 18, force-pinned at the image root in
   [`apps/web/Dockerfile`](../apps/web/Dockerfile)) is a hoisting hack worth revisiting. **Kept as
   is for 10b** — revisit with a Next 15 upgrade, not before.
@@ -441,7 +478,55 @@ A balanced review should say what not to touch:
 
 - **Tenant isolation** is genuinely strong — three independent layers (Prisma `$extends`, a
   transaction Proxy, and Postgres RLS) in
-  [`apps/api/src/prisma/prisma.service.ts`](../apps/api/src/prisma/prisma.service.ts).
+  [`apps/api/src/prisma/prisma.service.ts`](../apps/api/src/prisma/prisma.service.ts). Two caveats
+  from the close-out review (2026-09-05, neither exploitable today): the tenancy post-filter is
+  blind to a `select` that omits `tenantId` — both layers gate on `!== undefined`, so a projection
+  that drops the column reads as "no tenant to check" rather than "unknown tenant"; fix is to
+  assert the projection kept `tenantId`. Separately, 81 of 125 models declare `tenantId String?`
+  with no backfill migration, and `findUniqueOrThrow`'s fail-closed check treats a NULL `tenantId`
+  as foreign (5 call sites: `estimates.service.ts` ~205, `routes.service.ts` ~2405/~2679,
+  `orders.service.ts` ~3925, and `billing/plan-catalog.service.ts` ~243 — that fifth one is
+  inert, because `PlanVersion` is global reference data with no `tenantId` column at all, so the
+  guard short-circuits before it can compare anything). **Prod counts, 2026-09-05: `RouteRunStop` 5, `PaymentCounter` 1,
+  `CreditNote` 1.** #613 is **not** the cause of those rows 404ing: both `routeRunStop` call sites
+  are preceded by a tenant-scoped `findFirst` that already 404s a NULL-tenant row, `PaymentCounter`
+  has no read path at all, and the `CreditNote` row was already invisible to every tenant-scoped
+  read. So the guard stays fail-closed and the rows are treated as the defect — repaired as DATA by
+  [`apps/api/scripts/backfill-legacy-tenant-ids.mjs`](../apps/api/scripts/backfill-legacy-tenant-ids.mjs)
+  (read-only report → `--dry-run` → `--live`, which needs both `--backup-attested` and a typed
+  confirmation), owner-run after a fresh backup. It is a data repair, never a migration.
+  **What the first read-only prod report actually returned (2026-09-05):** all seven rows were
+  REFUSED, and for three different reasons.
+  1. The five `RouteRunStop`s were refused because their parent `RouteRun` rows are THEMSELVES
+     NULL-tenant (two runs, one carrying 1 stop and one carrying 4) — each stop's `RouteStop` and
+     the run's `Route` already agree on one tenant, so only the run in the middle was missing. The
+     tool therefore learned ONE cascade level: a NULL-tenant `RouteRun` whose `Route` names a
+     tenant and whose stops' `RouteStop`s all agree is repaired FIRST, and its stops are then
+     derived from that tenant, both inside the same single transaction (`RouteRun` updates before
+     `RouteRunStop` updates). Nothing else was relaxed — a stop under a refused run stays refused.
+  2. The `PaymentCounter` row is the literal `singleton` id, the pre-multi-tenant global counter.
+     It is left alone **by design**: giving it a tenant would hand that tenant a counter whose
+     `next` was advanced by every other tenant's payments.
+  3. The `CreditNote` is a duplicate-numbered orphan — writing its Customer-derived tenant would
+     violate `@@unique([tenantId, creditNoteNumber])`. Renumbering is a business decision, so it
+     stays refused pending a human ruling.
+
+  **Full picture (prod, 2026-09-05, read-only):** 112 tables carry a `tenantId` column; 16 hold
+  NULL rows (12,357 rows total), in two classes. Structural, by design, no user impact:
+  `RefreshToken` 1952/1952 (auth uses the raw client; the writer sets no `tenantId`),
+  `VendorBillItem` 2043/2043 and `PurchaseOrderItem` 3/3 (nested-create children read only via
+  `include`), `PaymentCounter` 1/6 (no read path), `AuditLog` 8275/25370 (platform-scoped),
+  `ExpenseCategory` 60/566 (global defaults, list uses an explicit `OR tenantId/null`), `User`
+  6/556 (3 super-admins by design + 3 April-2026 tenant-admin leftovers that would 401 at login).
+  Scattered April-2026 legacy orphans, hidden by tenant-scoped reads (pre-existing, not caused by
+  #613): `Expense` 1, `CreditNote` 1, `Return` 1 (+`ReturnItem` 1), `RecurringInvoice` 1 (+item
+  1), `RouteRun` 2, `RouteRunStop` 5, `StockLot` 4 (skipped in FIFO/LIFO costing → COGS falls back
+  to average; all 4 derivable from `Product.tenantId` — candidate next rule for the tool). A code
+  trace confirmed #613's fail-closed `findUniqueOrThrow` changes behaviour for none of the 16 (its
+  only site among them, `routes.service` `completeStop`/`completeWithPayment`, is pre-gated by
+  scoped 404s). The structural class is a tenancy-model decision (owner-scoped project), not a
+  backfill.
+
 - **The DB backup pipeline** (`apps/db-backup`) is well-designed: 2-hourly `pg_dump` → Cloudflare R2
   (S3-compatible, zero egress fees), 30-day prune, **monthly restore-verify**, and a healthchecks.io
   dead-man's switch. R2 is object storage, not a backup tool — this is a sound, cheap choice.

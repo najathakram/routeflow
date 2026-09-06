@@ -1,7 +1,7 @@
 {
-  "mappedSha": "2da6228c",
-  "generatedAt": "2026-09-06T03:46:37.346Z",
+  "mappedSha": "b0d780b5",
+  "generatedAt": "2026-09-06T05:30:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
-  "fileCount": 1006,
-  "notes": "Registry guards: sync --check + move --tier for triage ids (scripts/campaign/bugs.mjs). Full history: .claude/code-map/CHANGELOG.md."
+  "fileCount": 1011,
+  "notes": "**2026-09-06** — (worktree `rf-registry`, branch `feat/registry-guards`) merged origin/master a94f9428; the registry-guards entries (`sync --check`, `move --tier`, review-round corrections) live in INDEX.md; `mappedSha`/`generatedAt` are finalised in the close-out commit. History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
