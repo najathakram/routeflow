@@ -14,6 +14,17 @@ minutes it takes to run. This is the ONLY reason the flip exists — the push-tr
 that used to run on every merge was retired 2026-08-30 (`ci.yml` no longer has a `push:` trigger);
 this routine covers PR CI only.
 
+## Actions minutes
+
+Runs that happen **inside** a public window (this routine's step 1–4) are free — public-repo
+Actions minutes are unlimited. Private-minute exposure comes only from runs triggered **while
+the repo is private**: Dependabot PRs (opened on Dependabot's own schedule, independent of any
+window) and manual `workflow_dispatch` runs. `ci.yml`'s `verify` job now skips `pull_request`
+events actored by `dependabot[bot]` for exactly this reason (measured 16 Dependabot runs/14
+days, ~19 min each, all billed private) — a Dependabot PR gets its real `verify` via a manual
+`workflow_dispatch` on its branch inside a brief public window right before merge, using this
+same routine, instead of running twice for free.
+
 ## Watchdog (mandatory)
 
 **Launch `scripts/visibility-watchdog.mjs` detached, BEFORE step 1 below, every time.** It sleeps
