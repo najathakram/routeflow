@@ -1492,9 +1492,11 @@ cmds.sync = (args) => {
   // registry rather than one write).
   if (check) {
     const stale = [];
+    let seen = 0;
     for (const bug of catalogue) {
       const rec = readRecord(bug.id);
       if (!rec) continue;
+      seen++;
       const st = state.get(bug.id);
       const nextFront = { ...rec.front, ...frontFor(bug, st) };
       // Compare the RENDERED text, not the raw objects: `rec.front` came from
@@ -1508,7 +1510,7 @@ cmds.sync = (args) => {
     }
     if (stale.length)
       fail(`sync --check: ${stale.length} record(s) out of date — run sync: ${stale.join(", ")}`);
-    console.log(`sync --check: ${catalogue.length} record(s) mirror the ledger`);
+    console.log(`sync --check: ${seen} record(s) mirror the ledger`);
     return;
   }
 
