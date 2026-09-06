@@ -19,7 +19,6 @@ import { fmtCalendarDate } from "../../../lib/format-date";
 // Mirrors the web credit-notes status chips.
 const FILTERS = [
   { id: "ALL", label: "All" },
-  { id: "DRAFT", label: "Draft" },
   { id: "ISSUED", label: "Issued" },
   { id: "APPLIED", label: "Applied" },
   { id: "VOID", label: "Void" },

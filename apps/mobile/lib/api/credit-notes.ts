@@ -1,11 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { CreditNoteStatus } from "@routeflow/types";
 import { apiClient } from "../api-client";
 
 // ─── Types (mirror apps/web/lib/api/credit-notes.ts) ────────────────────────────
 
-// Web type has 4 values; the DB enum has only ISSUED|APPLIED|VOID (DRAFT never
-// occurs — create always writes ISSUED). Mirrored for 1:1 parity with web.
-export type CreditNoteStatus = "DRAFT" | "ISSUED" | "APPLIED" | "VOID";
+// Schema-pinned (packages/types/api/enums.ts): ISSUED | APPLIED | VOID — a
+// hand-typed local mirror of a server enum is how three real bugs shipped
+// (L-072). DRAFT never occurs — create always writes ISSUED.
+export type { CreditNoteStatus };
 
 export interface CreditNote {
   id: string;
@@ -108,15 +110,6 @@ export function useCreateCreditNote() {
 function invalidateCreditNote(qc: ReturnType<typeof useQueryClient>, id: string) {
   qc.invalidateQueries({ queryKey: ["credit-notes"] });
   qc.invalidateQueries({ queryKey: ["credit-notes", id] });
-}
-
-/** Issue == server no-op (service.issue() returns findOne; no status change). */
-export function useIssueCreditNote() {
-  const qc = useQueryClient();
-  return useMutation<CreditNote, Error, string>({
-    mutationFn: (id) => apiClient.post(`/credit-notes/${id}/issue`).then((r) => r.data),
-    onSuccess: (_, id) => invalidateCreditNote(qc, id),
-  });
 }
 
 /**

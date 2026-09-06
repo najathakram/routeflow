@@ -279,25 +279,6 @@ export function useCreateAdvancePayment() {
   });
 }
 
-export function useApplyAdvancePayment() {
-  const qc = useQueryClient();
-  return useMutation<
-    unknown,
-    Error,
-    { customerId: string; advancePaymentId: string; invoiceId: string; amount?: number }
-  >({
-    mutationFn: ({ customerId, advancePaymentId, ...data }) =>
-      apiClient
-        .post(`/customers/${customerId}/advance-payments/${advancePaymentId}/apply`, data)
-        .then((r) => r.data),
-    onSuccess: (_d, vars) => {
-      qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "advance-payments"] });
-      qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "statement"] });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-    },
-  });
-}
-
 // ─── Customer Special Prices ──────────────────────────────────────────────────
 
 export interface CustomerPrice {

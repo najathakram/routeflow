@@ -16,6 +16,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { roundMoney } from "@routeflow/pricing";
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
+import { CREDIT_NOT_APPLICABLE } from "../invoices/invoice-status-sets";
 import { geocodeAddress, GeocodableAddress, GeocodeCoords } from "../common/geocode.util";
 import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
@@ -1174,7 +1175,7 @@ export class CustomersService {
         include: { payments: true },
       });
       if (!inv) throw new NotFoundException("Invoice not found");
-      if (["PAID", "VOID", "WRITTEN_OFF"].includes(inv.status)) {
+      if (CREDIT_NOT_APPLICABLE.includes(inv.status)) {
         throw new BadRequestException(
           `Cannot apply advance payment to invoice with status ${inv.status}`,
         );
