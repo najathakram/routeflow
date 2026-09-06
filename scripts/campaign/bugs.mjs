@@ -57,7 +57,7 @@
 //   node scripts/campaign/bugs.mjs stats
 //   node scripts/campaign/bugs.mjs expand                      # create/refresh one record per catalogue row
 //   node scripts/campaign/bugs.mjs sync [--quiet] [--rescan] [--check]    # derive History from the ledger + an ANCHORED git scan (idempotent; Gate 4 runs this every turn)
-//     --check: read-only; exits 1 naming records whose front matter lags the ledger (the pre-push self-test runs it on the real tree)
+//     --check: read-only; exits 1 naming records whose front matter lags the ledger (front matter only; the commit scan is out of scope) (the pre-push self-test runs it on the real tree)
 //   node scripts/campaign/bugs.mjs show <B###>
 //   node scripts/campaign/bugs.mjs note <B###> "<text>" [--section "Root cause"]
 //   node scripts/campaign/bugs.mjs index                        # rebuild bugs.jsonl from the records (regenerate, never hand-edit)
@@ -1464,6 +1464,17 @@ const isCommit = (sha) => {
 // move on their own — the proof ledger and git — and appends any the record has
 // not recorded yet. Idempotent, so it is safe to run from a hook every turn.
 cmds.sync = (args) => {
+  // Unknown flags used to fall through silently to the writing path below
+  // (`sync --check` typo'd as `--chek` ran a full sync and exited 0) — now a
+  // load-bearing hazard for `--check`, which is the pre-push gate: refuse
+  // before any read rather than let a typo masquerade as a clean guard.
+  const known = new Set(["--quiet", "--rescan", "--check"]);
+  const unknown = args.filter((a) => a.startsWith("--") && !known.has(a));
+  if (unknown.length)
+    fail(
+      `sync: unknown flag(s) ${unknown.join(", ")} — usage: sync [--quiet] [--rescan] [--check]`,
+    );
+
   const catalogue = readCatalogue();
   const state = readState();
   const quiet = args.includes("--quiet");
@@ -1497,7 +1508,7 @@ cmds.sync = (args) => {
     }
     if (stale.length)
       fail(`sync --check: ${stale.length} record(s) out of date — run sync: ${stale.join(", ")}`);
-    console.log("sync --check: records mirror the ledger");
+    console.log(`sync --check: ${catalogue.length} record(s) mirror the ledger`);
     return;
   }
 
@@ -2836,6 +2847,14 @@ const runCli = (argv, root) => {
         // upsertLedgerRowLocked; production runs never carry it.
         env: { ...process.env, BUGS_ROOT: root, BUGS_SELF_TEST: "1" },
         stdio: ["ignore", "pipe", "pipe"],
+        // A real-tree run (`root` undefined — T13b, the pre-push guard) must
+        // not depend on the INVOKER's cwd: `rootDir()` resolves `.claude/campaign`
+        // relative to `process.cwd()`, so a caller running from any other
+        // directory (`apps/api`, say) silently sees an empty catalogue and
+        // `--check` reports clean having examined zero real records. A fixture
+        // run (`root` given) keeps the inherited cwd — irrelevant there since
+        // BUGS_ROOT already points every path helper at the tmp fixture.
+        ...(root === undefined ? { cwd: REPO_ROOT } : {}),
       }),
     };
   } catch (e) {
@@ -6911,7 +6930,7 @@ cmds["self-test"] = () => {
         "T13/R9: sync --check exits 0 and reports the records mirror the ledger",
         {
           code: clean.code,
-          mirrors: clean.out.includes("sync --check: records mirror the ledger"),
+          mirrors: /\d+ record\(s\) mirror the ledger/.test(clean.out),
           ranASync: /recorded \d+ new event/.test(clean.out),
         },
         { code: 0, mirrors: true, ranASync: false },
@@ -6974,9 +6993,23 @@ cmds["self-test"] = () => {
         "T13/R9: after a real sync reconciles the drift, --check is clean again",
         {
           code: reconciled.code,
-          mirrors: reconciled.out.includes("sync --check: records mirror the ledger"),
+          mirrors: /\d+ record\(s\) mirror the ledger/.test(reconciled.out),
         },
         { code: 0, mirrors: true },
+      );
+
+      // A typo'd flag (`--chek`) used to fall through unrecognised to the
+      // WRITING sync path and exit 0 — the wrong default for what is now a
+      // pre-push gate. It must be refused outright, before any read.
+      const typoed = runCli(["sync", "--chek"], tmp);
+      check(
+        "T13/R9: an unrecognised sync flag is refused, not silently treated as a write",
+        {
+          code: typoed.code,
+          ranASync: /recorded \d+ new event/.test(typoed.out),
+          named: typoed.out.includes("unknown flag"),
+        },
+        { code: 1, ranASync: false, named: true },
       );
     } finally {
       rmSync(tmp, { recursive: true, force: true });
@@ -6984,36 +7017,33 @@ cmds["self-test"] = () => {
   }
 
   // T13b/R9 — the pre-push guard: `sync --check` against the REAL repository
-  // tree (no BUGS_ROOT override, cwd = REPO_ROOT) must exit clean when the
-  // committed records already mirror the ledger. Before the implementation,
-  // `--check` is not recognised and a plain `sync` runs instead, which prints
-  // "recorded N new event(s)." rather than the check's own message.
-  //
-  // Until `--check` exists, this block therefore performs a REAL `sync`, which
-  // writes the machine-local sync anchor. That side effect is snapshotted and
-  // restored around the run so a red-gate pass leaves the working tree exactly
-  // as it found it.
+  // tree (no BUGS_ROOT override, cwd = REPO_ROOT) must exit clean, having
+  // actually examined the real records, when the committed records already
+  // mirror the ledger. Before the implementation, `--check` is not
+  // recognised and a plain `sync` runs instead, which prints "recorded N new
+  // event(s)." rather than the check's own message. `--check` returns before
+  // `commitMentions` (never reaching the anchor's first-run/re-anchor
+  // branch), so this run touches no machine-local state and needs no
+  // snapshot/restore around it.
   {
-    const realAnchorPath =
-      process.env.BUGS_SYNC_STATE || join(process.cwd(), ".campaign", "bugs-sync-state.json");
-    const realAnchorSaved = existsSync(realAnchorPath)
-      ? readFileSync(realAnchorPath, "utf8")
-      : null;
-    try {
-      const real = runCli(["sync", "--check"], undefined);
-      check(
-        "T13b/R9: sync --check against the real tree is clean and read-only",
-        {
-          code: real.code,
-          mirrors: real.out.includes("records mirror the ledger"),
-          ranASync: /recorded \d+ new event/.test(real.out),
-        },
-        { code: 0, mirrors: true, ranASync: false },
-      );
-    } finally {
-      if (realAnchorSaved !== null) writeFileSync(realAnchorPath, realAnchorSaved);
-      else rmSync(realAnchorPath, { force: true });
-    }
+    const real = runCli(["sync", "--check"], undefined);
+    check(
+      "T13b/R9: sync --check against the real tree is clean and read-only",
+      {
+        code: real.code,
+        mirrors: /\d+ record\(s\) mirror the ledger/.test(real.out),
+        // The vacuity this closes: `runCli` used to pass no `cwd`, so
+        // invoking this from any directory other than the repo root (e.g.
+        // `apps/api`) resolved the catalogue path against the wrong
+        // directory, saw an EMPTY catalogue, and printed the mirror-clean
+        // line having examined zero real records — a permanent green no-op.
+        // Parsing the examined count out of the message and requiring >= 1
+        // is the only assertion here that can catch that regression.
+        examined: Number((real.out.match(/(\d+) record\(s\) mirror/) || [])[1]) >= 1,
+        ranASync: /recorded \d+ new event/.test(real.out),
+      },
+      { code: 0, mirrors: true, examined: true, ranASync: false },
+    );
   }
 
   // T14/R10 — `move` gains a first-time TRIAGE path for a bug filed with no
@@ -7053,7 +7083,10 @@ cmds["self-test"] = () => {
         { code: 1, tier: true, oldMsg: false },
       );
 
-      const triaged = runCli(["move", "B1", "--to", "F05", "--tier", "T1"], tmp);
+      const triaged = runCli(
+        ["move", "B1", "--to", "F05", "--tier", "T1", "--why", "triage reason"],
+        tmp,
+      );
       check("T14/R10: triage-move with --tier succeeds", triaged.code, 0);
       check(
         "T14/R10: triage-move reports it created the first ledger row",
@@ -7088,6 +7121,24 @@ cmds["self-test"] = () => {
       check(
         "T14/R10: show B1's History carries a line naming the triage as batched into F05",
         afterTriage.out.split("\n").some((l) => l.includes("batched") && l.includes("F05")),
+        true,
+      );
+      check(
+        "T14/R10: show B1's History records the triage's --why reason",
+        afterTriage.out
+          .split("\n")
+          .some((l) => l.includes("batched") && l.includes("triage reason")),
+        true,
+      );
+
+      // The catalogue write (`cat.batch = to`) is otherwise untested: `show`
+      // renders the record (whose batch comes from the ledger row via
+      // `frontFor`) and `batchIndex` keys off the shards, not the catalogue —
+      // `list --batch` is the ONE reader keyed off the catalogue's own copy.
+      const listF05 = runCli(["list", "--batch", "F05"], tmp);
+      check(
+        "T14/R10: list --batch F05 shows the triaged bug (catalogue.batch was updated)",
+        /\bB1\b/.test(listF05.out),
         true,
       );
 
@@ -7126,6 +7177,16 @@ cmds["self-test"] = () => {
         "T14/R10: F06's shard holds B1 after the re-home",
         f06Rows.some((r) => r.id === "B1"),
         true,
+      );
+      const listF06AfterRehome = runCli(["list", "--batch", "F06"], tmp);
+      const listF05AfterRehome = runCli(["list", "--batch", "F05"], tmp);
+      check(
+        "T14/R10: list --batch reflects the re-home's catalogue update too",
+        {
+          f06HasB1: /\bB1\b/.test(listF06AfterRehome.out),
+          f05HasB1: /\bB1\b/.test(listF05AfterRehome.out),
+        },
+        { f06HasB1: true, f05HasB1: false },
       );
 
       // Same discrimination problem as the --tier refusal: today an unknown id
@@ -7202,28 +7263,50 @@ cmds.move = (args) => {
           `ledger write for ${id} did not land as intended — re-read row is ${JSON.stringify(landed)}`,
         );
 
-      const rows = readCatalogue();
-      const cat = rows.find((r) => r.id === id);
-      if (cat) {
-        cat.batch = to;
-        writeCatalogue(rows);
+      // Snapshot BEFORE the catalogue write, same shape as `file`'s catch
+      // (bugs.mjs:440-466): anything below that throws restores the catalogue
+      // to this pre-write state rather than leave a dangling row with a
+      // ledger entry and no matching catalogue/record.
+      const before = readCatalogue();
+      try {
+        const rows = readCatalogue();
+        const cat = rows.find((r) => r.id === id);
+        if (cat) {
+          cat.batch = to;
+          writeCatalogue(rows);
+        }
+
+        const rec = readRecord(id);
+        if (rec) {
+          // Same key/text `expand` uses when it first bakes a ledger row's batch
+          // into a freshly created record, so a triaged id's History reads no
+          // differently than one that had a batch from the moment it was filed.
+          const body = appendEvent(
+            rec.body,
+            `batch-${to}`,
+            "batched",
+            `assigned to ${to}${why ? ` — ${why}` : ""}`,
+          );
+          writeRecord(id, { ...rec.front, ...frontFor(bug, landed) }, body);
+        }
+
+        // Read back and assert (L-067): a write that silently failed to land
+        // must not be reported as having succeeded.
+        if (!readShard(to).rows.some((r) => r.id === id))
+          fail(`${id} is missing from ${to}.jsonl after the triage-move`);
+      } catch (e) {
+        writeCatalogue(before);
+        // The ledger row this call just ADDED (mustBeNew:true guarantees it
+        // was an add, never an update) is not this catch's to leave behind —
+        // left in place, it is an orphan with no catalogue row and no
+        // record, and no gate or command can see it.
+        dropLedgerRow(to, id);
+        fail(
+          `move: ${id} failed after the ledger write (${e.message}) — catalogue and ledger restored to their pre-write state`,
+        );
       }
 
-      const rec = readRecord(id);
-      if (rec) {
-        // Same key/text `expand` uses when it first bakes a ledger row's batch
-        // into a freshly created record, so a triaged id's History reads no
-        // differently than one that had a batch from the moment it was filed.
-        const body = appendEvent(rec.body, `batch-${to}`, "batched", `assigned to ${to}`);
-        writeRecord(id, { ...rec.front, ...frontFor(bug, landed) }, body);
-      }
-
-      // Read back and assert (L-067): a write that silently failed to land
-      // must not be reported as having succeeded.
-      if (!readShard(to).rows.some((r) => r.id === id))
-        fail(`${id} is missing from ${to}.jsonl after the triage-move`);
-
-      console.log(`move: ${id} -> ${to} (first ledger row, tier ${tier})`);
+      console.log(`move: ${id} -> ${to} (first ledger row, tier ${tier})${why ? ` (${why})` : ""}`);
     });
     return;
   }
