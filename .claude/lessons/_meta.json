@@ -4,7 +4,7 @@
   "archivedCount": 38,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-06T09:26:45.096Z",
+  "updatedAt": "2026-09-06T09:37:58.771Z",
   "schemaVersion": 1,
-  "note": "fix/bugs-selftest-lock-liveness: merged master 3bc86627 (L-081 present, L-045 archived upstream). Added L-082 (testing — never forge a timestamp relative to now by a plausible machine uptime; per-fixture cleanup) and archived L-054 (domain, oldest active entry with an automated guard) for headroom."
+  "note": "fix/bugs-selftest-lock-liveness: merged master 3bc86627 (L-081 present, L-045 archived upstream). Added L-082 (testing — never forge a timestamp relative to now by a plausible machine uptime; per-fixture cleanup) and archived L-054 (domain, oldest active entry with an automated guard) for headroom; the Opus re-check follow-through (age-verdict regex, lockdir rm retries) carries no new lesson — L-082 covers this fix."
 }
