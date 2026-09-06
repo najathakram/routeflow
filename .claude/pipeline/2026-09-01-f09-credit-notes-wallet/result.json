@@ -154,7 +154,7 @@
       "effort": "low",
       "model": "claude-sonnet-5",
       "overlappedWith": "registry finisher",
-      "note": "code map (api/web/mobile, mappedSha 179dd400), L-081 (+L-045 archived; register 39.8/40.0 KB), B13 root-cause note, sibling filed (id allocated as B213 on the master-based catalogue — renumbered after the W1 merge); commit afcee3a1"
+      "note": "code map (api/web/mobile, mappedSha 179dd400), L-081 (+L-045 archived; register 39.8/40.0 KB), B13 root-cause note, sibling filed (first allocated as B213 on the master-based catalogue, renumbered to B214 after the #635 merge); commit afcee3a1"
     },
     {
       "phase": "Scoped gates",

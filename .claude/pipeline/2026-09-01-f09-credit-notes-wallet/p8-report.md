@@ -2,13 +2,13 @@
 
 Worktree `C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09`, branch `fix/F09-credit-notes-wallet`,
 started at HEAD `179dd400` (merge of origin/master `a94f9428`). Executed `p8-plan.md` steps 1-4
-with the two overriding facts from the task brief (L-081/nextId 82, B213 filed before the
+with the two overriding facts from the task brief (L-081/nextId 82, B214 filed before the
 `deleteInvoice` map clause was written). No `bugs.mjs prove/discharge/move/tier/reopen` was run;
 no push/stash/reset/checkout/rebase; no npm ci/install/Docker/turbo/Jest.
 
 ## 1. New bug filed
 
-**B213** — "Deleting an invoice (or its order) leaves the credit notes it sourced fully spendable
+**B214** — "Deleting an invoice (or its order) leaves the credit notes it sourced fully spendable
 with no provenance" · `apps/api/src/invoices/invoices.service.ts#deleteInvoice` · severity high ·
 state `uncampaigned` (no batch yet — flagged in the record for `@tech-lead`/`--batch F##`). Files:
 `apps/api/src/invoices/invoices.service.ts apps/api/src/orders/orders.service.ts
@@ -53,7 +53,7 @@ plan text — see "notes" for the two spots where the code differs from the plan
     tx now runs `{ isolationLevel: "Serializable", timeout: 15_000 }`, matching the orders-side
     void caller).
   - `invoices/` — added a bullet for the new `invoice-status-sets.ts` file (all four exclude-lists
-    - why each differs) and a `deleteInvoice` bullet naming **B213** as the filed-not-fixed
+    - why each differs) and a `deleteInvoice` bullet naming **B214** as the filed-not-fixed
       sibling door.
   - `returns/` — extended the `processRefund` bullet with lens A2 (live-source invoice select via
     `CREDIT_SOURCE_EXCLUDED`); named the actual test location, `returns-refund.spec.ts` (the
@@ -93,7 +93,7 @@ plan text — see "notes" for the two spots where the code differs from the plan
   JSONL, not JSON, and prettier has no parser for it — left untouched, correctly): `--write`
   reformatted `api.md` (5 of its bullets — the ones this session edited; a stray
   `*different*` → `_different_` emphasis-marker normalization inside the new A5 sentence, no
-  content change) and `B213.md` (freshly written by `bugs.mjs file`, not yet Prettier-formatted);
+  content change) and `B214.md` (freshly written by `bugs.mjs file`, not yet Prettier-formatted);
   every other file reported `(unchanged)`. `--check` afterward: "All matched files use Prettier
   code style!"
 - `git status --porcelain` (before staging/commit):
@@ -109,7 +109,7 @@ plan text — see "notes" for the two spots where the code differs from the plan
    M .claude/lessons/ARCHIVE.md
    M .claude/lessons/LESSONS.md
    M .claude/lessons/_meta.json
-  ?? .claude/campaign/bugs/B213.md
+  ?? .claude/campaign/bugs/B214.md
   ```
   `B13.md`/`B185.md` are `bugs.mjs file`'s own side effect (the command's ledger-wide refresh pass
   touched B13's history/state and appended a `commit` history line to B185 reconciled from git log
@@ -119,7 +119,7 @@ plan text — see "notes" for the two spots where the code differs from the plan
 ## 5. Registry records (quoted)
 
 `node scripts/campaign/bugs.mjs note B13 ... --section "Root cause"` → `B13: wrote "Root cause".`
-`node scripts/campaign/bugs.mjs file ...` → `filed B213 — Deleting an invoice (or its order)
+`node scripts/campaign/bugs.mjs file ...` → `filed B214 — Deleting an invoice (or its order)
 leaves the credit notes it sourced fully spendable with no provenance` (severity high, carve-out:
 money — plan-only, no unattended fix; unbatched, flagged for `@tech-lead`/`--batch F##`).
 `node scripts/campaign/bugs.mjs sync` → `sync: recorded 0 new event(s).`
@@ -131,7 +131,7 @@ money — plan-only, no unattended fix; unbatched, flagged for `@tech-lead`/`--b
 > called; R11 is a FEATURE deferred to dev-pipeline; the duplicate useApplyAdvancePayment hook was
 > deleted (R12). Ledger row stays queued pending the owner's feature decision.
 
-`show B213` (full record): id B213, title "Deleting an invoice (or its order) leaves the credit
+`show B214` (full record): id B214, title "Deleting an invoice (or its order) leaves the credit
 notes it sourced fully spendable with no provenance", location
 `apps/api/src/invoices/invoices.service.ts#deleteInvoice`, severity high, state `uncampaigned`,
 sensitive (money); Reported evidence section carries the `--symptom` text verbatim; History: `2026-
@@ -141,6 +141,6 @@ sensitive (money); Reported evidence section carries the `--symptom` text verbat
 
 **Committed.** Sha `afcee3a1` (`afcee3a186084b10350526d045ebef9c29f6779b`) on
 `fix/F09-credit-notes-wallet`, on top of `179dd400`. 13 files changed, 288 insertions(+),
-33 deletions(-) — the 11 modified `.claude/` files plus the new `.claude/campaign/bugs/B213.md`
+33 deletions(-) — the 11 modified `.claude/` files plus the new `.claude/campaign/bugs/B214.md`
 and this report. The pre-commit hook's lint-staged (`prettier --write`) ran clean; `git status
 --porcelain` is empty post-commit.
