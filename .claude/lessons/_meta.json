@@ -4,7 +4,7 @@
   "archivedCount": 40,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-06T17:37:58.073Z",
+  "updatedAt": "2026-09-06T19:14:12.020Z",
   "schemaVersion": 1,
-  "note": "fix/campaign-check-report-freshness: added L-083 (tooling — campaign-check must refuse a stale run artifact by name, with the regen command, before scanning a single token) and archived L-065 (tooling) + L-046 (domain), the oldest active entries whose Guard names a landed automated artifact, for headroom (L-072 skipped — cited inline by CLAUDE.md)."
+  "note": "fix/campaign-check-report-freshness: added L-083 (tooling — campaign-check must refuse a stale run artifact by name, with the regen command, before scanning a single token) and archived L-065 (tooling) + L-046 (domain), the oldest active entries whose Guard names a landed automated artifact, for headroom (L-072 skipped — cited inline by CLAUDE.md); b28e8d65 (restore --first-parent after a concurrent probe mutation was captured by df7494dd) carries no new register entry — the rule that a tree-mutating probe runs alone already exists in the model-routing skill and the incident is recorded in the dev-pipeline RUN-LOG."
 }
