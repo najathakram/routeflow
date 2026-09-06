@@ -60,7 +60,7 @@ function VoidConfirmModal({
       }
     >
       <p className="text-sm text-navy/70">
-        Voiding this credit note will mark it as cancelled. It can no longer be issued or applied.
+        Voiding this credit note will mark it as cancelled. It can no longer be applied.
       </p>
     </Modal>
   );

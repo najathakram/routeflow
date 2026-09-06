@@ -225,6 +225,7 @@ describe("CreditNotesService — wallet-exclusion on the credit apply paths (F09
     const result = await service.settleOrderCreditsInTx(prisma as any, "order-void");
 
     expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
+    expect(prisma.creditNote.update).not.toHaveBeenCalled();
     expect(result.applied).toBe(0);
   });
 
@@ -479,7 +480,7 @@ describe("InvoicesService — voidInvoiceInTx caps/voids credit notes it sourced
     expect(prisma.creditNote.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "cn-src-partial" },
-        data: expect.objectContaining({ amount: 40 }),
+        data: expect.objectContaining({ amount: 40, status: "APPLIED" }),
       }),
     );
     expect(prisma.creditNote.update).not.toHaveBeenCalledWith(

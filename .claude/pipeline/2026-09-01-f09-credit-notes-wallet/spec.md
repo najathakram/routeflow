@@ -16,8 +16,8 @@ migration.** Conventions: NestJS `Test.createTestingModule`, module-boundary moc
 - **R3 (P0, jest):** **PAID stays IN the settle set — and this is the requirement most likely
   to be "simplified" into a bug.** Reading the code changed this design: the two obvious
   candidates for reuse, `applyToInvoice`'s `notApplicableStatuses` (`[PAID, VOID,
-  WRITTEN_OFF]`) and `recordDeliveryPaymentInTx`'s `PAYABLE` (`[DRAFT, SENT, PARTIAL,
-  OVERDUE]`), **both exclude PAID** — and `settleOrderCreditsInTx` runs a **shrink** pass over
+WRITTEN_OFF]`) and `recordDeliveryPaymentInTx`'s `PAYABLE` (`[DRAFT, SENT, PARTIAL,
+OVERDUE]`), **both exclude PAID** — and `settleOrderCreditsInTx` runs a **shrink** pass over
   the very same invoice list before its apply pass. Excluding PAID would stop an order edit
   from un-applying now-excess credit on a PAID invoice, stranding customer money. Including
   PAID in the apply pass is harmless: `applyCreditInTx` clamps to the remaining balance, which
@@ -42,7 +42,7 @@ migration.** Conventions: NestJS `Test.createTestingModule`, module-boundary moc
   note is capped to `amountUsed` (already-spent money is not clawed back; that would corrupt
   invoices the credit already paid). Runs **inside** the existing void transaction.
 - **R6 (P1, jest):** already-applied credit is untouched by R5 — no `InvoicePayment` is deleted
-  and no `amountUsed` decremented. R5 removes only *spendable* headroom.
+  and no `amountUsed` decremented. R5 removes only _spendable_ headroom.
 
 ### B18 — delete the flow that can never run (web + mobile + API)
 
@@ -57,7 +57,7 @@ migration.** Conventions: NestJS `Test.createTestingModule`, module-boundary moc
 ### B19 — invoice numbers, not UUIDs
 
 - **R9 (P0, jest + e2e T2):** `findAll` includes `invoice: { select: { id: true,
-  invoiceNumber: true } }`, matching `findOne`'s existing shape.
+invoiceNumber: true } }`, matching `findOne`'s existing shape.
 - **R10 (P0, e2e T2):** all three web render sites show `invoice?.invoiceNumber ?? invoiceId`:
   list `page.tsx` ~:855, detail ~:508-516 and ~:638-646. The `href` keeps using the id.
 
@@ -78,9 +78,14 @@ consumed against WRITTEN_OFF debt. Rollback = revert the single PR; no persisted
 Behaviour deltas an operator sees on deploy day: (1) creating a credit note against a voided
 invoice is refused with a reason; (2) voiding an invoice now also removes the unused headroom of
 credits it sourced; (3) the never-working Issue button disappears; (4) invoice numbers replace
-UUIDs; (5) a new Apply-advance action appears on web.
+UUIDs; (5) a new Apply-advance action appears on web; (6) unvoiding an invoice does not resurrect
+the credit notes the void capped or voided; the freed headroom lets the operator mint a
+replacement note.
 
 ## Non-goals
 
 A real DRAFT lifecycle (D5-deferred) · clawing back already-spent credit · touching
-`applyToInvoice`'s manual guards · F08's scope in the same file · retro-repair in code.
+`applyToInvoice`'s manual guards · F08's scope in the same file · retro-repair in code · a later
+restore (order-edit shrink, un-apply) may return spent credit to a note whose source was voided —
+that credit was really spent and is not corruption; the D4 repair report must not classify these
+rows as such.

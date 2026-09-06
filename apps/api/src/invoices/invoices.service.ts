@@ -3900,12 +3900,20 @@ export class InvoicesService {
     // an order, it should be possible to split it into multiple invoices"
     // scenario. The auto-create-on-DELIVERED captured all remaining qty; voiding
     // releases it so a fresh split can run.
-    return this.prisma.tenantTransaction(async (tx) => {
-      // Wallet money first: a credit applied to this invoice goes back to its note
-      // (spendable again) instead of being stranded on a dead invoice.
-      await this.releaseWalletPaymentsInTx(tx, id);
-      return this.voidInvoiceInTx(tx, id, inv.orderId);
-    });
+    return this.prisma.tenantTransaction(
+      async (tx) => {
+        // Wallet money first: a credit applied to this invoice goes back to its note
+        // (spendable again) instead of being stranded on a dead invoice.
+        await this.releaseWalletPaymentsInTx(tx, id);
+        return this.voidInvoiceInTx(tx, id, inv.orderId);
+      },
+      // Serializable, matching the orders-side void caller (orders.service.ts ~:2770):
+      // the default READ COMMITTED left a window between the cap's findMany/update pair
+      // (below, in voidInvoiceInTx) where a concurrent applyToInvoice/settleOrderCreditsInTx
+      // on a different invoice could raise a note's amountUsed, so the blind full-column
+      // cap write could land at amount < amountUsed (F09 A5).
+      { isolationLevel: "Serializable", timeout: 15_000 },
+    );
   }
 
   /**

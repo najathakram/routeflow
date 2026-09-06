@@ -4,7 +4,7 @@ import type { CreditNoteStatus } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type { CreditNoteStatus } from "@routeflow/types";
+export type { CreditNoteStatus };
 
 export interface CreditNote {
   id: string;

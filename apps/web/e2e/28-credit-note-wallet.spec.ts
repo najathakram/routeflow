@@ -99,7 +99,12 @@ test.describe("Credit-note wallet UI: invoice number over UUID, no Issue afforda
     // Heading first — asserting the invoice string against a page that never
     // rendered would be meaningless (the absent-UUID half in particular would
     // trivially pass on a blank screen).
-    await expect(page.getByRole("heading", { name: "Credit Notes" })).toBeVisible({
+    // Scoped to #main-content: the dashboard shell's own <h1> also reads
+    // "Credit Notes" (via setTitle), so an unscoped match resolves 2 elements
+    // and violates strict mode — same trap as 15-stock-count-ui.spec.ts:150-152.
+    await expect(
+      page.locator("#main-content").getByRole("heading", { name: "Credit Notes" }),
+    ).toBeVisible({
       timeout: 15_000,
     });
 
@@ -110,7 +115,11 @@ test.describe("Credit-note wallet UI: invoice number over UUID, no Issue afforda
   test("REG-B18: /credit-notes/:id loads (number heading) with no Issue Credit Note button (R7 / T14)", async ({
     page,
   }) => {
-    const cn = creditNoteFixture();
+    // REG-B18's oracle needs a fixture the pre-fix build would still show an
+    // Issue button for, or a green result is not evidence of anything: DRAFT
+    // is the phantom status the deleted flow keyed its button on, wire-shaped
+    // but never actually issuable post-P2 (status is created ISSUED).
+    const cn = { ...creditNoteFixture(), status: "DRAFT" };
     await page.route(new RegExp(`/api/v1/credit-notes/${CN_ID}(\\?.*)?$`), (route) => {
       if (route.request().method() !== "GET") return route.continue();
       return fulfillJson(route, cn);
@@ -119,7 +128,11 @@ test.describe("Credit-note wallet UI: invoice number over UUID, no Issue afforda
 
     await page.goto(`/credit-notes/${CN_ID}`);
 
-    await expect(page.getByRole("heading", { name: cn.creditNoteNumber })).toBeVisible({
+    // Scoped to #main-content for the same reason as the list heading above —
+    // the detail page's own <h1> (setTitle) duplicates this <h2> string.
+    await expect(
+      page.locator("#main-content").getByRole("heading", { name: cn.creditNoteNumber }),
+    ).toBeVisible({
       timeout: 15_000,
     });
     await expect(page.getByRole("button", { name: "Issue Credit Note", exact: true })).toHaveCount(

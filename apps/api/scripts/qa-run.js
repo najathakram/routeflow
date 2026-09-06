@@ -1292,16 +1292,6 @@ async function section2() {
     assert(Array.isArray(list), "Expected array");
   });
 
-  await test(53, "POST /credit-notes/:id/issue → status ISSUED", async () => {
-    const r = await api(
-      "POST",
-      `/credit-notes/${state.creditNoteId}/issue`,
-      {},
-      state.operatorToken,
-    );
-    assert(r.status === "ISSUED", `status=${r.status}`);
-  });
-
   // Returns
   await test(54, "GET /returns returns all returns", async () => {
     const r = await api("GET", "/returns", null, state.operatorToken);
