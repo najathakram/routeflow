@@ -634,3 +634,31 @@ suite) rather than judgment/none/runbook.
   reachable (a SKIPPED stop on a COMPLETED run), ship the refusal for it in the same PR ([[L-030]]).
 - **Guard:** `REG-B129 (T5 path: cancel → un-cancel → re-dispatch)`, `REG-B211 (T12 path:
 complete-with-skipped → reopen refused)`; mutation probes in the F11 PR body.
+
+## Archived 2026-09-06 — headroom for L-083 (campaign-check freshness)
+
+Landing L-083 (tooling — campaign-check must refuse a stale run artifact by name, with the regen
+command, before scanning a single token) at 40 of 40 active entries required archiving first.
+Both entries below archived 2026-09-06 for headroom (L-083 added; register at its byte cap) —
+guard automated: **L-065** (tooling) is the oldest active entry whose Guard names a landed
+automated spec (`no-runtime-workspace-imports.spec.ts`) rather than judgment/none/runbook; the
+next-oldest by that rule, L-072, stays active because `CLAUDE.md`'s Conventions cite it inline by
+id, so **L-046** (domain), the following qualifying entry, is archived instead.
+
+### L-065 · 2026-09-03 · tooling · PR-4 `imp-01`
+
+- **Symptom:** the review counted "four copies", the first plan promised a source-direct package
+  "exactly like `@routeflow/types`", and the repo's own comments already said that shape crashes
+  `node dist/main.js`.
+- **Lesson:** a workspace package the API imports at runtime must ship compiled JS — `nest build`
+  emits `require()` verbatim; source-direct packages are a client-only convenience. Build it on
+  `postinstall` so every `npm ci` (CI, Docker, dev) produces `dist` before anything typechecks.
+- **Guard:** `no-runtime-workspace-imports.spec.ts` (PR-1's engine already seeded the idea; this PR
+  makes it assert every `@routeflow/*` the API imports has a built `main`).
+
+### L-046 · 2026-09-04 · domain · F13
+
+- **Symptom:** a MONTHLY recurring invoice never advanced; a standing order billed list price; a failed cycle was silently skipped; a failed cycle's unconditional rollback could hand the schedule back for a cycle another run had already billed.
+- **Root cause:** a month-advance compared against a mutated date; a second writer priced lines outside the one buyer resolver; the cron advanced the schedule before it knew the outcome and never recorded it; the restore after failure was not conditioned on the claim that made it.
+- **Lesson:** **Every path that materialises an order or invoice from a saved shape is a pricing writer and a schedule writer: price through the shared resolver, record the outcome on the row you advanced, and undo a claim only by compare-and-set on the value the claim wrote — a miss means someone newer owns the row, so write nothing.**
+- **Guard:** REG-B48 T9–T16 through the real resolver; REG-B46 T1–T7b; REG-B106 T17/T17b/T17c/T18/T19 ([[L-030]]: a write and its record share one condition; [[L-045]]: release on the forward-path marker).
