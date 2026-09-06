@@ -80,3 +80,12 @@ archivedCount +1, updatedAt now, note = one sentence. `node scripts/validate-les
 Deferred to the push slot (Fable): `prove B66 --pr <n> --proof "REG-B66 …"`, `prove B67 --pr <n> --proof
 "REG-B67 …"`, `prove B18 --pr <n> --pending-deploy --proof "REG-B18 …"`, `prove B19 --pr <n> --pending-deploy
 --proof "REG-B19 …"`, then `sync` and a second push.
+
+## Post-P8 correction (Fable, 2026-09-06 ~07:10Z) — id collision
+
+P8's `file` allocated **B213** for the invoice-delete credit door because this tree is master-based and the
+OCR-outage **B213** exists only on `feat/registry-guards` (W1). After W1 lands and `origin/master` is merged
+here: take master's `bugs/B213.md` and catalogue row (the OCR one), delete this branch's B213 record + row,
+re-run the same `bugs.mjs file …` command so the delete-door bug gets the next free id, fix the code-map
+`deleteInvoice` clause and `p8-report.md` to the new id, `sync`, commit `chore(campaign): renumber the
+invoice-delete credit door after the f32 merge`. Then F09 is "ready to push" (W2).

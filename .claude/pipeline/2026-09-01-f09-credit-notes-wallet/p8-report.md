@@ -139,7 +139,8 @@ sensitive (money); Reported evidence section carries the `--symptom` text verbat
 
 ## 6. Commit
 
-Not yet committed at the time this report was written (written before the commit, per
-instructions, so it is included in it). Staged: all 11 modified `.claude/` files plus the new
-`.claude/campaign/bugs/B213.md` and this report. Commit subject:
-`docs(f09): code map, lesson, b13 note, file the invoice-delete credit door`.
+**Committed.** Sha `afcee3a1` (`afcee3a186084b10350526d045ebef9c29f6779b`) on
+`fix/F09-credit-notes-wallet`, on top of `179dd400`. 13 files changed, 288 insertions(+),
+33 deletions(-) — the 11 modified `.claude/` files plus the new `.claude/campaign/bugs/B213.md`
+and this report. The pre-commit hook's lint-staged (`prettier --write`) ran clean; `git status
+--porcelain` is empty post-commit.

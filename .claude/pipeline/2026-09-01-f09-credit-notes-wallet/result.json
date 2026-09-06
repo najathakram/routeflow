@@ -1,0 +1,238 @@
+{
+  "run": "f09-credit-notes-wallet",
+  "branch": "fix/F09-credit-notes-wallet",
+  "scale": "major",
+  "mode": "bugfix",
+  "clean": true,
+  "startedAt": "2026-09-06T00:30:00Z",
+  "endedAt": "2026-09-06T07:16:12Z",
+  "estimatedCostUsd": 23.54,
+  "pricesAsOf": "2026-06-24",
+  "riskSummary": "HIGH — money primitives (credit-note apply/mint/void cap) + returns refund path + web/mobile credit-note screens; no schema change; rollback = revert",
+  "fixRouting": "Fable ruled every fix over two Opus lenses; Sonnet applied; the probe ladder proved each REG test discriminates",
+  "fixRounds": 3,
+  "provenance": "bug-pipeline engine wf_26c82331-3b7 (old account) through Implement (P1/P2/P5/P6/P7); T6/T7 oracles, P3, P8, both lenses, probes and fix rounds by the light loop after the 2026-09-06 account switch — engine-phase tokens are not recoverable",
+  "phaseReport": [
+    {
+      "phase": "Evidence + refutation + ruling",
+      "ran": true,
+      "agents": null,
+      "rawFindings": null,
+      "confirmed": 5,
+      "tokens": null,
+      "estUsd": null,
+      "effort": null,
+      "model": "mixed (claude-opus-5 refutation, claude-fable-5-1 ruling)",
+      "overlappedWith": null,
+      "note": "engine, 2026-09-05: B66/B67/B18/B19 confirmed, B13 refuted as a bug (feature); cause-ruling.md"
+    },
+    {
+      "phase": "Author tests",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": null,
+      "confirmed": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": "high",
+      "model": "claude-sonnet-5",
+      "overlappedWith": null,
+      "note": "TP-API: gate (T1 T2 T5 T6 T7 T9 T10 T11 T12) + pins (T3 T3b T4 T7b T8) — engine"
+    },
+    {
+      "phase": "Red gate",
+      "ran": true,
+      "agents": null,
+      "rawFindings": null,
+      "confirmed": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": null,
+      "model": "mixed (claude-haiku-4-5 run + claude-opus-5 audit x2 + remediation)",
+      "overlappedWith": null,
+      "note": "engine: audited twice, properlyRed false both times — structural blockers cleared by one 8-fix remediation; the behavioral blocker (T6/T7 failing on the same no-throw absence) was closed by the light loop's outcome-capture oracles and proven by the probe ladder"
+    },
+    {
+      "phase": "Implement",
+      "ran": true,
+      "agents": null,
+      "rawFindings": null,
+      "confirmed": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": "high",
+      "model": "claude-sonnet-5",
+      "overlappedWith": null,
+      "note": "engine: P1 P2 P5 P6 P7 (17 agents started / 15 recorded); P3 + P8 left for the light loop"
+    },
+    {
+      "phase": "Reader",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": null,
+      "confirmed": null,
+      "tokens": 200570,
+      "estUsd": 2.01,
+      "effort": "high",
+      "model": "claude-sonnet-5",
+      "overlappedWith": "registry review",
+      "note": "current-state reader: T6/T7 already green, only T9/T10/T11 red, no refuted state in bugs.mjs, Baseline range clean"
+    },
+    {
+      "phase": "Stage A (oracles + P3)",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": null,
+      "confirmed": null,
+      "tokens": 162210,
+      "estUsd": 1.62,
+      "effort": "high",
+      "model": "claude-sonnet-5",
+      "overlappedWith": "registry fix round",
+      "note": "T6/T7 outcome-capture oracle; P3 void-side cap with in-loop invoiceId filter + APPLIED on partial cap; 15/15, invoices.service.spec 266/266, tsc clean — commit 5c0dc464"
+    },
+    {
+      "phase": "Mutation probe",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": null,
+      "confirmed": 6,
+      "tokens": 198673,
+      "estUsd": 1.99,
+      "effort": "medium",
+      "model": "claude-sonnet-5",
+      "overlappedWith": "F09 lenses",
+      "note": "ladder M1-M4 + RP1 + RP2 all matched the ruling: T6/T7 red on their own invoice ids, RP1 reds T1/T2/T5/T6/T7/T12, RP2 reds T9/T10/T11; tree restored after each step"
+    },
+    {
+      "phase": "Review lens A (api money)",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": 11,
+      "confirmed": 11,
+      "tokens": 239180,
+      "estUsd": 5.98,
+      "effort": "high",
+      "model": "claude-opus-5",
+      "overlappedWith": "probes, lens B",
+      "note": "FIX-THEN-SHIP 1 blocker / 3 major / 5 minor / 2 nit; refuted A3 (return-backed credit) on money grounds; A4 (delete door) filed"
+    },
+    {
+      "phase": "Review lens B (web/mobile/e2e)",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": 6,
+      "confirmed": 6,
+      "tokens": 221988,
+      "estUsd": 5.55,
+      "effort": "high",
+      "model": "claude-opus-5",
+      "overlappedWith": "probes, lens A",
+      "note": "FIX-THEN-SHIP 1 blocker (unscoped heading locators in spec 28) / 2 major (vacuous REG-B18 fixture; stale QA scripts) / 1 minor / 2 nit"
+    },
+    {
+      "phase": "Fix",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": null,
+      "confirmed": 11,
+      "tokens": 337197,
+      "estUsd": 3.37,
+      "effort": "high",
+      "model": "claude-sonnet-5",
+      "overlappedWith": "registry executor",
+      "note": "round 2 (B1-B5) 149,374 tok + round 3 (A2 A5 A6 A7 A8 A9 A11) 187,823 tok; api scoped jest 398/398, web tsc clean, spec 28 lists 2 — commit 75234ac1"
+    },
+    {
+      "phase": "P8 bookkeeping",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": null,
+      "confirmed": null,
+      "tokens": 302215,
+      "estUsd": 3.02,
+      "effort": "low",
+      "model": "claude-sonnet-5",
+      "overlappedWith": "registry finisher",
+      "note": "code map (api/web/mobile, mappedSha 179dd400), L-081 (+L-045 archived; register 39.8/40.0 KB), B13 root-cause note, sibling filed (id allocated as B213 on the master-based catalogue — renumbered after the W1 merge); commit afcee3a1"
+    },
+    {
+      "phase": "Scoped gates",
+      "ran": true,
+      "agents": 0,
+      "rawFindings": 0,
+      "confirmed": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": null,
+      "model": null,
+      "overlappedWith": "registry push",
+      "note": "perRound on 179dd400: api tsc 0; api jest src/credit-notes|invoices|returns 15 suites / 395 tests green (90 s); web tsc 0; mobile tsc 0; mobile credit-notes-helpers 12/12; validate-lessons 40/40 39.8 KB. Final full api+mobile suites run inside the pre-push hook per the lead."
+    }
+  ],
+  "confirmedByPhase": {
+    "Review lens A (api money)": 11,
+    "Review lens B (web/mobile/e2e)": 6,
+    "Fix": 11,
+    "Mutation probe": 6
+  },
+  "redGate": {
+    "ran": true,
+    "remediateOn": "behavioral",
+    "properlyRed": true,
+    "structurallyRed": true,
+    "behaviorallyRed": true,
+    "attempts": 3,
+    "note": "engine audits 1-2 false; the light loop's oracle rewrite + probe ladder made the third capture behaviorally red (each test on its own value)"
+  },
+  "verify": null,
+  "uiVerify": null,
+  "mutationProbe": {
+    "ran": true,
+    "skipped": null,
+    "targets": 2,
+    "probed": 6,
+    "allCaught": true,
+    "restoredVerified": true,
+    "skippedTargets": []
+  },
+  "finalPass": {
+    "ran": false,
+    "completed": null,
+    "skipped": "light loop — Fable ruled every fix from the two Opus briefs",
+    "model": null,
+    "effort": null,
+    "fallback": null,
+    "files": [],
+    "findings": []
+  },
+  "overlap": null,
+  "cascadeAudit": null,
+  "escalation": null,
+  "remainingFindings": [
+    {
+      "severity": "major",
+      "file": "apps/api/src/invoices/invoices.service.ts",
+      "summary": "A4 filed, not bundled: deleteInvoice / order-delete leave sourced credit notes fully spendable with no provenance (the delete twin of B66's void door)"
+    },
+    {
+      "severity": "minor",
+      "file": "apps/api/src/invoices/invoices.service.ts",
+      "summary": "A8 documented: unvoid does not resurrect capped/voided notes (freed headroom lets a replacement be minted)"
+    },
+    {
+      "severity": "minor",
+      "file": "apps/api/src/credit-notes/credit-notes.service.ts",
+      "summary": "A9 documented as a non-goal: a later shrink/un-apply restore can return spent credit to a capped note"
+    },
+    {
+      "severity": "nit",
+      "file": "apps/api/src/invoices/invoices.service.ts",
+      "summary": "C4/C5 owner question: recordPayment / recordStandalonePayment accept real cash on a WRITTEN_OFF invoice"
+    }
+  ],
+  "gate": {
+    "perRound": "green",
+    "final": "pre-push hook"
+  }
+}
