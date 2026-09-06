@@ -1,0 +1,131 @@
+{
+  "run": "bugs-selftest-lock-liveness",
+  "branch": "fix/bugs-selftest-lock-liveness",
+  "scale": "small",
+  "mode": "bugfix",
+  "clean": true,
+  "startedAt": "2026-09-06T08:45:00Z",
+  "endedAt": "2026-09-06T09:38:36Z",
+  "estimatedCostUsd": 8.85,
+  "pricesAsOf": "2026-06-24",
+  "riskSummary": "scripts + docs only (bugs.mjs self-test fixtures, lessons, code map); lock primitives untouched; no deploy (scripts/ outside Railway watchPatterns)",
+  "fixRouting": "Fable ruled from the reader brief; Sonnet applied; Opus re-checked",
+  "fixRounds": 2,
+  "provenance": "light loop, no engine: CI run 34019219777 (ubuntu, 4 cascading self-test failures) → Sonnet reader → Fable ruling (value collision) → Sonnet fix → Opus re-check",
+  "phaseReport": [
+    {
+      "phase": "Evidence (reader)",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": 1,
+      "confirmed": 1,
+      "tokens": 190299,
+      "estUsd": 1.9,
+      "effort": "high",
+      "model": "claude-sonnet-5",
+      "overlappedWith": "F09 W2 window",
+      "note": "CI log + fixture + lock code: the forged bootAt (now − 20 min) collides with pidAlive's 5 s boot-stamp slop on a runner up ≈ 20 min; failures 2–4 cascade via the shared lock dir; the 10.06 s log gap = the waiter's full spin"
+    },
+    {
+      "phase": "Cause ruling",
+      "ran": true,
+      "agents": 0,
+      "rawFindings": null,
+      "confirmed": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": "high",
+      "model": "claude-fable-5-1",
+      "overlappedWith": null,
+      "note": "value collision, not jitter; R1 forge off the real boot stamp, R2 verdict assertion, R3 diagnostics, R4 per-fixture cleanup, R5 L-082, R6 map"
+    },
+    {
+      "phase": "Fix",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": null,
+      "confirmed": 6,
+      "tokens": 256389,
+      "estUsd": 2.56,
+      "effort": "high",
+      "model": "claude-sonnet-5",
+      "overlappedWith": "F09 landing",
+      "note": "R1–R6 applied; check count 290 → 289 (ruled fold); self-test green 8/8 runs after one unexplained first-run '3 FAILURE(S)' (handed to the re-check); commit 1245bb07"
+    },
+    {
+      "phase": "Re-check",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": 4,
+      "confirmed": 2,
+      "tokens": 175711,
+      "estUsd": 4.39,
+      "effort": "high",
+      "model": "claude-opus-5",
+      "overlappedWith": "master merge 3bc86627",
+      "note": "HOLDS: value collision confirmed as the only code-consistent cause (EPERM/zombie/bad-pid refuted); age path cannot pre-empt (owner.at never read; age from lockdir mtime; third branch gated on alive===null); the first-run 3 FAILURE(S) is not a race in this diff; F-1 (age regex too broad) and F-2 (rmSync retries on Windows) applied, F-3 (tee diagnostics) skipped, F-4 info resolved by the master merge"
+    },
+    {
+      "phase": "Fix round 2 + gates",
+      "ran": true,
+      "agents": 0,
+      "rawFindings": null,
+      "confirmed": 2,
+      "tokens": null,
+      "estUsd": null,
+      "effort": null,
+      "model": "claude-fable-5-1",
+      "overlappedWith": null,
+      "note": "F-1/F-2 applied by hand (3 lines); merged master 3bc86627 (LESSONS.md = master − L-054 + L-082; register 40/40 at 40.0/40.0 KB); self-test green x3 on the merged tree; prettier, sync --check 214, validate-lessons green"
+    }
+  ],
+  "confirmedByPhase": {
+    "Evidence (reader)": 1,
+    "Fix": 6,
+    "Re-check": 2
+  },
+  "redGate": {
+    "ran": false,
+    "remediateOn": "behavioral",
+    "properlyRed": null,
+    "structurallyRed": null,
+    "behaviorallyRed": null,
+    "attempts": 0,
+    "note": "no red-first repro possible on a dev box (the collision needs os.uptime ≈ 20 min); the CI log is the red; non-vacuity by the ruling's mutation table"
+  },
+  "verify": null,
+  "uiVerify": null,
+  "mutationProbe": {
+    "ran": false,
+    "skipped": "small light loop — mutations named per check in ruling.md, not executed",
+    "targets": 0,
+    "probed": 0,
+    "allCaught": null,
+    "restoredVerified": null,
+    "skippedTargets": []
+  },
+  "finalPass": {
+    "ran": false,
+    "completed": null,
+    "skipped": "light loop — Fable ruled from the reader brief",
+    "model": null,
+    "effort": null,
+    "fallback": null,
+    "files": [],
+    "findings": []
+  },
+  "overlap": null,
+  "cascadeAudit": null,
+  "escalation": null,
+  "remainingFindings": [
+    {
+      "severity": "nit",
+      "file": "scripts/campaign/bugs.mjs",
+      "summary": "F-3 deferred: the self-test cannot name its failing checks from a tail — pipe through tee and grep ^  FAIL"
+    }
+  ],
+  "gate": {
+    "local": "green",
+    "final": "pre-push hook + CI (ubuntu)"
+  }
+}

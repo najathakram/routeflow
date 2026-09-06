@@ -5766,36 +5766,60 @@ cmds["self-test"] = () => {
       const impostor = spawn(process.execPath, ["-e", "setTimeout(() => {}, 15000)"], {
         stdio: "ignore",
       });
-      mkdirSync(lockDir);
-      writeFileSync(
-        ownerPath(lockDir),
-        JSON.stringify({
-          pid: impostor.pid,
-          token: "pid-reuse-fixture-token",
-          at: Date.now() - LOCK_ABANDON_MS * 10,
-          bootAt: Date.now() - LOCK_ABANDON_MS * 10,
-        }),
-      );
-      const pidReuseCheck = pidAlive(impostor.pid);
-      const rescuedFromReuse = runCli(["tier", "B1", "T1", "--why", "pid-reuse fixture"], tmp);
-      impostor.kill();
+      let pidReuseCheck, rescuedFromReuse;
+      try {
+        mkdirSync(lockDir);
+        // Forge the boot stamp relative to the machine's REAL boot
+        // (bootStamp()), never to "now" by a plausible uptime offset.
+        // BOOT_STAMP_SLOP_MS only cares about the GAP between the forged and
+        // real stamps, not which reference either was measured from — the
+        // previous "now minus 20 minutes" collided head-on with a CI runner
+        // whose actual os.uptime() was itself ~20 minutes at self-test time
+        // (CI run 34019219777). One year before the real boot can never land
+        // inside that slop on any machine, whatever its uptime.
+        const forgedBoot = bootStamp() - 365 * 24 * 3600_000;
+        writeFileSync(
+          ownerPath(lockDir),
+          JSON.stringify({
+            pid: impostor.pid,
+            token: "pid-reuse-fixture-token",
+            at: Date.now() - LOCK_ABANDON_MS * 10,
+            bootAt: forgedBoot,
+          }),
+        );
+        pidReuseCheck = pidAlive(impostor.pid);
+        rescuedFromReuse = runCli(["tier", "B1", "T1", "--why", "pid-reuse fixture"], tmp);
+      } finally {
+        // Always kill AND wait for the impostor to actually exit — never
+        // leave a lingering child process behind for a later fixture or CI
+        // to trip over — and always clear the lockdir this fixture forged,
+        // whether the CLI above succeeded, failed, or threw.
+        try {
+          process.kill(impostor.pid);
+        } catch {
+          /* already dead */
+        }
+        awaitExit(impostor);
+        rmSync(lockDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      }
       check(
         "pid reuse: the impostor pid genuinely answers to a liveness check with no boot stamp",
         pidReuseCheck,
         true,
       );
       check(
-        "pid reuse: the NEXT waiter succeeds in one invocation, not after LOCK_ABANDON_MS",
-        rescuedFromReuse.code,
-        0,
+        "pid reuse: the waiter breaks the lock on the boot-mismatch verdict (never age) and succeeds",
+        {
+          code: rescuedFromReuse.code,
+          verdict: /predates this boot/.test(rescuedFromReuse.out),
+          ageBased: /last resort|abandon/i.test(rescuedFromReuse.out),
+        },
+        { code: 0, verdict: true, ageBased: false },
       );
-      check(
-        "pid reuse: breaking it names the boot mismatch, never the age-based last resort",
-        /breaking the lock on F01\.jsonl — its owner \(pid \d+\) predates this boot/.test(
-          rescuedFromReuse.out,
-        ),
-        true,
-      );
+      // A future give-up here means the waiter's OWN message — not a bare
+      // shard value — is what explains it; print it once, right where a
+      // "got T2" would otherwise read as a mystery.
+      if (rescuedFromReuse.code !== 0) console.error(rescuedFromReuse.out.slice(-1200));
       check(
         "pid reuse: the write it was blocking actually landed",
         readShard("F01").rows.find((r) => r.id === "B1")?.tier,
@@ -5831,6 +5855,9 @@ cmds["self-test"] = () => {
           return { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
         }
       };
+      // OWN this precondition rather than inherit it — this must prove the
+      // fixture's own setup, never the previous fixture's cleanliness.
+      rmSync(lockDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       check(
         "owner-write failure: no lock exists before the fixture runs",
         existsSync(lockDir),

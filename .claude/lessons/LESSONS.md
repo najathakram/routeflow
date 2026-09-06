@@ -324,6 +324,21 @@
 - **Guard:** self-test `liveness:` checks (a2) and the dead-holder `observed gone` assertion, run on
   both platforms; CI run 33938718344 is the red that proved it.
 
+### L-082 · 2026-09-06 · testing · bugs.mjs self-test
+
+- **Symptom:** the registry self-test's pid-reuse fixture failed on an ubuntu runner (four checks in a
+  cascade) and passed on every Windows run and on its own CI re-run.
+- **Root cause:** the fixture forged a stale lock owner's boot stamp as "now minus 20 minutes"; the
+  liveness check treats a stamp within 5 s of the machine's real boot as the same boot, and a CI runner
+  that had been up about 20 minutes when the self-test started made the impostor look genuinely alive,
+  so the waiter spun out and the next fixtures inherited its lock dir.
+- **Lesson:** **never forge a timestamp relative to "now" by a plausible machine uptime — forge it
+  relative to the real boot stamp, far outside any slop; and give every fixture its own setup and
+  cleanup so a give-up cannot cascade into unrelated checks.**
+- **Guard:** the pid-reuse fixture forges `bootAt = bootStamp() − 1 year` and asserts the
+  "predates this boot" verdict; the owner-write fixture clears the lock dir before its own precondition
+  (`scripts/campaign/bugs.mjs` self-test, step 6 of `npm run verify`).
+
 ## testing
 
 ### L-076 · 2026-09-05 · testing · F13
@@ -532,19 +547,6 @@ build` forces production — so that branch was dead in every Docker image, not 
   REG-B90/B91 mobile helper tests + the mirror-identity pin; the revenue-trend pin uses a Date
   whose local getters disagree with its ISO view; REG-B185 DTO spec ([[L-026]] client sentinels
   never reach a validator unmapped).
-
-### L-054 · 2026-09-03 · domain · PR-2 `imp-02-order-merge-advisory-lock`
-
-- **Symptom:** a money-critical read-fold-write (order merge) was serialized by an in-process
-  promise chain that a second replica cannot see; the deferral note said scaling would corrupt
-  lines silently.
-- **Root cause:** the lock lived where the code was, not where the data is.
-- **Lesson:** a lock guarding a read-then-absolute-write must live in the system of record
-  (`pg_advisory_lock` on a pinned connection, or inside the write's own transaction) — never in
-  process memory; prove it with two sessions against a real database (`*.db.spec.ts`), never a
-  mocked service alone.
-- **Guard:** `db-locks.spec.ts` (T1), `db-locks.db.spec.ts` (T4, `npm run local:test:db`),
-  `orders.merge-lock.spec.ts` (T3), and `orders.scan-hardening.spec.ts`'s concurrent-merge case.
 
 ### L-072 · 2026-09-03 · domain · wave E `imp-10b`
 

@@ -135,6 +135,21 @@
 
 ## domain
 
+> archived 2026-09-06 for headroom (L-082 added) — guard automated (db-locks specs, orders.merge-lock spec).
+
+### L-054 · 2026-09-03 · domain · PR-2 `imp-02-order-merge-advisory-lock`
+
+- **Symptom:** a money-critical read-fold-write (order merge) was serialized by an in-process
+  promise chain that a second replica cannot see; the deferral note said scaling would corrupt
+  lines silently.
+- **Root cause:** the lock lived where the code was, not where the data is.
+- **Lesson:** a lock guarding a read-then-absolute-write must live in the system of record
+  (`pg_advisory_lock` on a pinned connection, or inside the write's own transaction) — never in
+  process memory; prove it with two sessions against a real database (`*.db.spec.ts`), never a
+  mocked service alone.
+- **Guard:** `db-locks.spec.ts` (T1), `db-locks.db.spec.ts` (T4, `npm run local:test:db`),
+  `orders.merge-lock.spec.ts` (T3), and `orders.scan-hardening.spec.ts`'s concurrent-merge case.
+
 ### L-022 · 2026-08-21 · domain · #393
 
 - **Symptom:** 40% of a live buyer portal showed $0.00 — and the server would have billed it.
