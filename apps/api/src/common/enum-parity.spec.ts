@@ -97,6 +97,32 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
   });
 });
 
+// ─── Triage tripwire: no generated enum arrives unnoticed (L-072) ──────────────────────────────
+
+/**
+ * `ENUM_TABLE` above is a deliberate SUBSET — the enums `packages/types/api/enums.ts`
+ * actually mirrors, 40 of the 80 the client generates today. Asserting the two sets EQUAL
+ * would therefore be wrong: most Prisma enums have no client-side mirror and need none.
+ *
+ * What still has to be caught is a NEW enum arriving unnoticed, because the next thing that
+ * happens to a new enum is web or mobile hand-typing it — the exact L-072 drift class this
+ * file exists for. So pin the count instead. When this test fails, do the triage first:
+ *   - enum ADDED → either add its `*_VALUES` array to `packages/types/api/enums.ts` plus a row
+ *     to `ENUM_TABLE`, or decide deliberately that no app mirrors it — then bump the constant;
+ *   - enum REMOVED → drop its `ENUM_TABLE` row (if it had one), then bump the constant.
+ * Bumping the number without that decision is the one way to defeat this tripwire.
+ */
+const PINNED_PRISMA_ENUM_COUNT = 80;
+
+describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
+  it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {
+    expect(Object.keys(PrismaEnums.$Enums).length).toBe(PINNED_PRISMA_ENUM_COUNT);
+    // ENUM_TABLE is the mirrored subset, never the whole set — a future edit that turns this
+    // into an equality assertion would be wrong, so pin the relationship it actually has.
+    expect(ENUM_TABLE.length).toBeLessThan(PINNED_PRISMA_ENUM_COUNT);
+  });
+});
+
 // ─── Regression layer: the four confirmed drifts (3 from the bug card + 1 sibling-sweep find) ──
 
 /**
@@ -143,8 +169,13 @@ function importsFromSharedPackage(filePath: string, typeName: string): boolean {
 }
 
 describe("regression: hand-typed web/mobile enum mirrors must not re-drift (L-072)", () => {
-  it("mobile VendorBillStatus (apps/mobile/lib/api/vendor-bills.ts) matches Prisma VendorBillStatus", () => {
-    const file = path.join(REPO_ROOT, "apps/mobile/lib/api/vendor-bills.ts");
+  it.each([
+    ["mobile", "apps/mobile/lib/api/vendor-bills.ts"],
+    // Close-out review (2026-09-05): web hand-typed the same union, also missing
+    // "OVERDUE" — pinned here the same way mobile was in wave E (L-072).
+    ["web", "apps/web/lib/api/vendor-bills.ts"],
+  ])("%s VendorBillStatus (%s) matches Prisma VendorBillStatus", (_app, relPath) => {
+    const file = path.join(REPO_ROOT, relPath);
     const local = extractLocalLiteralUnion(file, "VendorBillStatus");
     const expected = Object.values(PrismaEnums.VendorBillStatus);
     if (local) {

@@ -7,18 +7,24 @@ import type {
   DuplicateVendorBillInfo,
   PriorScanSummary,
   UnlinkedItemsError,
+  VendorBillStatus,
 } from "@routeflow/types";
+/**
+ * Close-out review (2026-09-05): was a hand-typed local union missing
+ * `"OVERDUE"` — now imported from `@routeflow/types`, pinned to the schema by
+ * `enum-parity.spec.ts` (see mobile's `apps/mobile/lib/api/vendor-bills.ts`,
+ * L-072, for the same fix applied there in wave E).
+ */
 export type {
   CheckVendorBillDuplicateDto,
   DuplicateVendorBillError,
   DuplicateVendorBillInfo,
   PriorScanSummary,
   UnlinkedItemsError,
+  VendorBillStatus,
 } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-export type VendorBillStatus = "DRAFT" | "RECEIVED" | "PARTIAL" | "PAID" | "VOID";
 
 export interface VendorBillItem {
   id: string;

@@ -14,6 +14,17 @@ minutes it takes to run. This is the ONLY reason the flip exists — the push-tr
 that used to run on every merge was retired 2026-08-30 (`ci.yml` no longer has a `push:` trigger);
 this routine covers PR CI only.
 
+## Actions minutes
+
+Runs that happen **inside** a public window (this routine's step 1–4) are free — public-repo
+Actions minutes are unlimited. Private-minute exposure comes only from runs triggered **while
+the repo is private**: Dependabot PRs (opened on Dependabot's own schedule, independent of any
+window) and manual `workflow_dispatch` runs. `ci.yml`'s `verify` job now skips `pull_request`
+events actored by `dependabot[bot]` for exactly this reason (measured 16 Dependabot runs/14
+days, ~19 min each, all billed private) — a Dependabot PR gets its real `verify` via a manual
+`workflow_dispatch` on its branch inside a brief public window right before merge, using this
+same routine, instead of running twice for free.
+
 ## Watchdog (mandatory)
 
 **Launch `scripts/visibility-watchdog.mjs` detached, BEFORE step 1 below, every time.** It sleeps
@@ -35,6 +46,15 @@ line) before proceeding to step 1. A flip-to-private by the watchdog while CI, a
 deploy is still running is the CORRECT outcome, not a failure — a GitHub Actions run on a private
 repo just fails on billing (see below); rerun it once the window reopens. The watchdog's later
 flip is harmless if the routine's own step 4 already flipped private first.
+
+**Failure marker — `local-assets/visibility-watchdog.FAILED` in the MAIN checkout.** The watchdog
+resolves `local-assets/` against the main checkout (via `git rev-parse --git-common-dir`), never
+the worktree it was armed from, and reports the resolved directory as `root=` on its `start`
+line — so there is exactly one path to check no matter where it was launched.
+**Before opening any window and after each one, check that
+`local-assets/visibility-watchdog.FAILED` does not exist in the main checkout; if it does, flip
+private by hand, read visibility back, then delete the marker.** The watchdog writes it only
+after every attempt failed, and clears it itself on the next confirmed flip.
 
 ## The routine
 

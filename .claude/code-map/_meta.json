@@ -1,7 +1,7 @@
 {
-  "mappedSha": "5c0dc464",
-  "generatedAt": "2026-09-06T06:17:35.850Z",
+  "mappedSha": "b0d780b5",
+  "generatedAt": "2026-09-06T05:30:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
-  "fileCount": 1006,
-  "notes": "**2026-09-06** — (worktree `rf-F09`, branch `fix/F09-credit-notes-wallet`) partial: `voidInvoiceInTx` credit-note capping (F09 P3, 5c0dc464) mapped in api.md; the full F09 map (credit-notes service/controller, invoice-status-sets, web/mobile credit-notes, e2e spec 28) lands with P8. History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "fileCount": 1011,
+  "notes": "**2026-09-06** — (worktree `rf-F09`, branch `fix/F09-credit-notes-wallet`) merged origin/master a94f9428; partial: `voidInvoiceInTx` credit-note capping (F09 P3) mapped in api.md; the full F09 map lands with P8. History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

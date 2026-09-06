@@ -1,10 +1,10 @@
 {
-  "nextId": 77,
-  "activeCount": 39,
-  "archivedCount": 33,
+  "nextId": 80,
+  "activeCount": 40,
+  "archivedCount": 35,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-06T06:18:09.937Z",
+  "updatedAt": "2026-09-06T06:50:44.275Z",
   "schemaVersion": 1,
-  "note": "fix/F09-credit-notes-wallet @ 5c0dc464 (P3 void-side capping): lesson PENDING, not skipped — it is minted in P8 after `origin/master` (a94f9428, nextId 80) is merged, because L-077..L-079 already exist upstream and this branch still reads nextId 77; minting now would collide at the merge ([[L-039]]). Draft: gate a money write inside the primitive that performs it — a where-only fix at one call site is bypassed by sibling primitives and by mocks that inject query results."
+  "note": "fix/F09-credit-notes-wallet: merged origin/master a94f9428 (nextId 80, 40/40). The F09 lesson (gate a money write inside the primitive that performs it) is minted in P8 as L-081 after the registry-guards branch takes L-080; this note acknowledges the fix commits 5c0dc464 and 75234ac1 until then."
 }

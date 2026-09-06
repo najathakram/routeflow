@@ -16,6 +16,10 @@ watchPatterns = ["apps/api/**", "packages/**"]
 # still runs a pending-order sweep per process — a startup call, not a tick, so it stays
 # deliberately un-elected; it is safe on two replicas because it merges through
 # mergeAllPendingForCustomer, which takes the same customer-keyed lock as every other merge.
+# Residual: the item-edit path (PATCH /orders/:id/items and the buyer twin) still writes
+# absolute line sets OUTSIDE the customer lock, so a concurrent merge can overwrite it —
+# a pre-existing race that extra replicas widen; serialize that writer before raising
+# numReplicas far (follow-on recorded in docs/IMPROVEMENTS.md).
 healthcheckPath = "/api/v1/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
