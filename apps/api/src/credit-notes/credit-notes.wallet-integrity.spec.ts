@@ -75,7 +75,6 @@ jest.mock("../invoices/invoice-pdf.service", () => ({
 }));
 
 import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException } from "@nestjs/common";
 
 import { CreditNotesService } from "./credit-notes.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -321,16 +320,28 @@ describe("CreditNotesService — create() refuses VOID/WRITTEN_OFF source invoic
     });
     prisma.creditNote.aggregate.mockResolvedValueOnce({ _sum: { amount: 0 } });
 
-    let caught: any;
-    try {
-      await service.create({ customerId: "c1", invoiceId: "inv-void-1", amount: 30 });
-    } catch (e) {
-      caught = e;
-    }
+    const outcome = await service
+      .create({ customerId: "c1", invoiceId: "inv-void-1", amount: 30 })
+      .then(
+        (created: any) => ({
+          threw: false,
+          createdFor: created?.invoiceId, // the create mock echoes args.data → names THIS test's invoice
+          createCalls: prisma.creditNote.create.mock.calls.length,
+        }),
+        (e: any) => ({
+          threw: true,
+          type: e?.constructor?.name,
+          message: String(e?.message),
+          createCalls: prisma.creditNote.create.mock.calls.length,
+        }),
+      );
 
-    expect(caught).toBeInstanceOf(BadRequestException);
-    expect(caught?.message).toMatch(/VOID/);
-    expect(prisma.creditNote.create).not.toHaveBeenCalled();
+    expect(outcome).toEqual({
+      threw: true,
+      type: "BadRequestException",
+      message: expect.stringMatching(/VOID/),
+      createCalls: 0,
+    });
   });
 
   it("T7 (R4, REG-B66): create({ invoiceId }) against a WRITTEN_OFF invoice rejects, naming the status, with no creditNote.create call", async () => {
@@ -342,16 +353,28 @@ describe("CreditNotesService — create() refuses VOID/WRITTEN_OFF source invoic
     });
     prisma.creditNote.aggregate.mockResolvedValueOnce({ _sum: { amount: 0 } });
 
-    let caught: any;
-    try {
-      await service.create({ customerId: "c1", invoiceId: "inv-written-off-1", amount: 30 });
-    } catch (e) {
-      caught = e;
-    }
+    const outcome = await service
+      .create({ customerId: "c1", invoiceId: "inv-written-off-1", amount: 30 })
+      .then(
+        (created: any) => ({
+          threw: false,
+          createdFor: created?.invoiceId, // the create mock echoes args.data → names THIS test's invoice
+          createCalls: prisma.creditNote.create.mock.calls.length,
+        }),
+        (e: any) => ({
+          threw: true,
+          type: e?.constructor?.name,
+          message: String(e?.message),
+          createCalls: prisma.creditNote.create.mock.calls.length,
+        }),
+      );
 
-    expect(caught).toBeInstanceOf(BadRequestException);
-    expect(caught?.message).toMatch(/WRITTEN_OFF/);
-    expect(prisma.creditNote.create).not.toHaveBeenCalled();
+    expect(outcome).toEqual({
+      threw: true,
+      type: "BadRequestException",
+      message: expect.stringMatching(/WRITTEN_OFF/),
+      createCalls: 0,
+    });
   });
 });
 

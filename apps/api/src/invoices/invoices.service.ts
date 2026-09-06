@@ -24,7 +24,13 @@ import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { loadMsrpMap } from "../common/msrp";
 import { EntitlementsService } from "../billing/entitlements.service";
-import { CheckStatus, InvoiceStatus, NotificationEvent, UserRole } from "@prisma/client";
+import {
+  CheckStatus,
+  CreditNoteStatus,
+  InvoiceStatus,
+  NotificationEvent,
+  UserRole,
+} from "@prisma/client";
 import {
   CreateInvoiceDto,
   RecordInvoicePaymentDto,
@@ -3847,6 +3853,31 @@ export class InvoicesService {
     // Sales agents & commissions: a voided invoice targets zero — this
     // emits the compensating CLAWBACK adjustment when commission was claimed.
     await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
+    // F09/B66: a credit note's headroom dies with the invoice that justified it. Only the
+    // UNUSED portion goes — spent credit paid real invoices and clawing it back would
+    // corrupt them (R6). CreditNoteStatus enum, never the string literal, so the sibling
+    // sweep's single-status `status: { not: "VOID" }` pattern doesn't match this fix.
+    const sourced = await tx.creditNote.findMany({
+      where: { invoiceId: id, status: { not: CreditNoteStatus.VOID } },
+      select: { id: true, amount: true, amountUsed: true, invoiceId: true },
+    });
+    for (const cn of sourced) {
+      // Defense-in-depth scoping: the query above already restricts to this invoice,
+      // but the service itself — not only the query — must not touch a note it did
+      // not source (T11).
+      if (cn.invoiceId !== id) continue;
+      const used = Number(cn.amountUsed ?? 0);
+      await tx.creditNote.update({
+        where: { id: cn.id },
+        data:
+          used <= 0.001
+            ? { status: CreditNoteStatus.VOID }
+            : // Capping amount to the used portion leaves zero headroom (amount - amountUsed
+              // === 0) — the same "fully consumed" condition applyCreditInTx (:450-461) flips
+              // to APPLIED, so a capped note must read APPLIED too, never a stale ISSUED.
+              { amount: roundMoney(used), status: CreditNoteStatus.APPLIED },
+      });
+    }
     // Status already flipped to VOID by the claim above; return the fresh record.
     return tx.invoice.findUnique({ where: { id } });
   }
