@@ -64,6 +64,28 @@ describe("buildLocationPayload", () => {
     expect(payload.accuracy).toBeUndefined();
   });
 
+  it("REG-B185 omits an accuracy above the DTO's @Max(99999.99) bound", () => {
+    const payload = buildLocationPayload(
+      { latitude: 34.05, longitude: -118.24, accuracy: 1e6 },
+      "2026-09-04T00:00:00.000Z",
+    );
+    expect(payload.accuracy).toBeUndefined();
+  });
+
+  it("REG-B185 clamps an implausible heading to null but passes 360 through", () => {
+    const tooHigh = buildLocationPayload(
+      { latitude: 34.05, longitude: -118.24, heading: 361 },
+      "2026-09-04T00:00:00.000Z",
+    );
+    expect(tooHigh.heading).toBeNull();
+
+    const atBoundary = buildLocationPayload(
+      { latitude: 34.05, longitude: -118.24, heading: 360 },
+      "2026-09-04T00:00:00.000Z",
+    );
+    expect(atBoundary.heading).toBe(360);
+  });
+
   it("omits an implausible speed instead of failing the ping", () => {
     const implausible = buildLocationPayload(
       { latitude: 34.05, longitude: -118.24, heading: 45, speed: 200 },

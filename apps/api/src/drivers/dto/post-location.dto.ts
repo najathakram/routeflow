@@ -39,6 +39,7 @@ export class PostLocationDto {
   @Type(() => Number)
   @IsNumber()
   @Min(0)
+  @Max(99999.99)
   accuracy?: number;
 
   @IsString()

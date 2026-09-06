@@ -56,6 +56,30 @@ describe("PostLocationDto", () => {
       expect(constraintKeys).not.toContain("whitelistValidation");
       expect(constraintKeys).toContain("min");
     });
+
+    // B185 (F25-location): the column is `Decimal(8,2)` (schema/sales.prisma) —
+    // an unbounded accuracy would overflow Postgres and 500 the whole ping,
+    // the same failure class the sentinel fix closed off for heading/speedKph.
+    it("REG-B185 DTO rejects an accuracy above the Decimal(8,2) column bound", async () => {
+      const errors = await whitelistErrors({
+        ...basePayload,
+        accuracy: 1000000,
+      });
+      const accuracyError = errors.find((e) => e.property === "accuracy");
+      expect(accuracyError).toBeDefined();
+
+      const constraintKeys = Object.keys(accuracyError?.constraints ?? {});
+      expect(constraintKeys).not.toContain("whitelistValidation");
+      expect(constraintKeys).toContain("max");
+    });
+
+    it("REG-B185 DTO accepts an accuracy exactly at the 99999.99 bound", async () => {
+      const errors = await whitelistErrors({
+        ...basePayload,
+        accuracy: 99999.99,
+      });
+      expect(errors).toHaveLength(0);
+    });
   });
 
   describe("T5 pins — existing validation surface unchanged", () => {

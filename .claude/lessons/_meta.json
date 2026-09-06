@@ -4,7 +4,7 @@
   "archivedCount": 33,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-05T21:15:00.000Z",
+  "updatedAt": "2026-09-06T00:28:53.000Z",
   "schemaVersion": 1,
   "note": "fix/e2e-recurring-toast-locator, rebased onto origin/master 1ebd4f54 (#623 PR-2b `imp-02b-cron-leader-lock`, which itself rebased onto b1e3bed0 #622 and archived L-013 + L-040 for headroom — see the archived cap-discipline note above). REG-B92's spec-30 toast assertion (bare page.getByText(\"Recurring template updated\")) hit a strict-mode violation against Radix's aria-live announcer mirror; scoped both spec-30 toast assertions (REG-B09's \"Standing order updated\", REG-B92's \"Recurring template updated\") through getByRole(\"region\", {name:/notifications/i}).getByRole(\"listitem\"), the convention 21-destructive-guards.spec.ts already documents — no shared toast helper exists yet. Minted as L-075 (testing) on the branch when the register was at 40/40 (nextId 75) inherited from b1e3bed0; renumbered to L-076 here because #623 claimed L-075 upstream first — ids are immutable once merged and a reserved gap is never reused ([[L-039]]). Archived L-037 (domain, #TBD, REG-B55 (T21) reversal-completeness lesson) to restore headroom before adding L-076 under the older b1e3bed0-based cap — L-037 was the oldest active entry with a genuinely automated (non-\"none\"/judgment) guard, per the same rule the prior L-071-driven archival of L-030 used. Combined with master's own L-013/L-040 archival the register now sits comfortably under the cap. Final state: 39 active, 33 archived, nextId 77 (max id 76 across both files, +1)."
 }

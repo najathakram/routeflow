@@ -487,7 +487,9 @@ build` forces production — so that branch was dead in every Docker image, not 
 - **Lesson:** **A calendar date is a string, not an instant: store it as UTC midnight, render and
   edit it only through the shared calendar-date helper (web/mobile mirrors), and evaluate day
   boundaries in the TENANT's timezone through the one api helper — never `setHours`, local
-  getters or `toLocaleDateString` on a date-only field.**
+  getters or `toLocaleDateString` on a date-only field. A device sentinel (iOS `-1` for unknown
+  heading/speed) never reaches a bounded DTO unmapped — map it to null at the client seam and
+  mirror every server bound there, or one unknown field 400s the whole payload.**
   A test for any of this must take the zone as DATA: under `TZ=UTC` — CI and the API image —
   host-local and UTC components are identical, so a host-clock oracle is green on the buggy
   body, and an in-file `process.env.TZ` pin is inert under jest (the sandbox gets a copy of

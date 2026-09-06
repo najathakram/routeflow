@@ -1,6 +1,6 @@
 {
   "mappedSha": "d12203a3",
-  "generatedAt": "2026-09-05T18:10:00.000Z",
+  "generatedAt": "2026-09-06T00:28:53.000Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 1009,
   "notes": "**2026-09-05** — (worktree `rf-F25`, branch `fix/F25-location-b185`) — **FINAL REBASE onto `origin/master` `d12203a3`** (#625 e2e toast-locator scoping, discharging B59/B91 to `done`), superseding the prior base `8f136b9a`. Four files conflicted, all bookkeeping — no production code collided, since B185's fix (`apps/mobile/lib/location-payload.ts`, `apps/api/src/drivers/dto/post-location.dto.ts` + `drivers.service.ts`) sits entirely outside this rebase's touched paths: `.claude/campaign/bugs/B59.md` and `B91.md` (master's `done` state + its E2E-confirmation History line won — our F25-batch Gate-4 mirrors were still `proven-pending-deploy`, now reconciled), this `_meta.json`, and `.claude/lessons/_meta.json` (recomputed below). `.claude/pipeline/cost-ledger.jsonl` auto-merged (append-only union driver). `mappedSha` 5aa011e3 → d12203a3. `fileCount` 1006 (master) + 3 (B185's new files: `apps/mobile/lib/location-payload.ts`, `apps/mobile/__tests__/location-payload.test.ts`, `apps/api/src/drivers/dto/post-location.dto.spec.ts`) = **1009**. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
