@@ -8,6 +8,17 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-06** — (worktree `rf-ocr`, branch `docs/627-bookkeeping-follow-up`) **#627**
+  `chore/ci-private-minutes` (`0ee2672e`) — Option B bookkeeping follow-up, docs-only, no
+  runtime change: `ci.yml`'s `verify` job `if:` now also skips `dependabot[bot]` `pull_request`
+  events (dispatched manually inside a public window instead of burning private minutes);
+  `dependabot.yml` groups all `github-actions` updates into one `actions-all` PR;
+  `apps/api/package.json` sets Jest `testTimeout: 30000` for the whole workspace, fixing the
+  cold-ts-jest-worker flake class instead of per-spec budgets (lesson L-079); two specs kept
+  explicit larger budgets on top of that floor — `visibility-watchdog-script`'s "rejects
+  promptly" bound 15 s, `upload-routes.security.spec.ts` 60 s for its multipart round-trips; and
+  the "Actions minutes" runbook note records the private-minutes accounting. Lessons: L-079
+  added, L-011 (tooling, guard now enforced in code) archived to hold the 40-entry cap.
 - **2026-09-05** — (worktree `rf-ocr`, branch `chore/bookkeeping-follow-up-rule`) **BOOKKEEPING
   OPTION B** (owner ruling 2026-09-05): code PRs now touch code and their tests only — the
   code-map/lessons/ledger update moves to a docs-only follow-up commit/PR the landing

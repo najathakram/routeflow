@@ -1,10 +1,10 @@
 {
-  "nextId": 79,
+  "nextId": 80,
   "activeCount": 40,
-  "archivedCount": 34,
+  "archivedCount": 35,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-06T03:00:38.000Z",
+  "updatedAt": "2026-09-06T05:30:00.000Z",
   "schemaVersion": 1,
-  "note": "Merge of origin/master d12203a3 (#624 upload multipart coverage, #625 recurring/standing toast locators) into fix/imp-closeout-review. MASTER IS THE BASE and every master entry is kept verbatim, including #625's new L-076 (testing — assert toasts through the toast container, never a bare text lookup) and its archive of L-037. RENUMBERED: this branch's two entries were minted as L-076/L-077 against master 1ebd4f54 (nextId 77 reserved nothing above 76); #625 landed first and claimed L-076, so per this branch's own L-078 rule an id belongs to whichever branch LANDS first — L-076 (deploy) became L-077 and L-077 (process) became L-078, and every branch-side citation moved with them (.claude/code-map/api.md line 218, .claude/code-map/CHANGELOG.md's 2026-09-05 rf-imp-E bullet, this note, ARCHIVE.md's section heading). Master's ids were untouched. THE MERGE PROVED L-078 LIVE: LESSONS.md auto-merged CLEANLY into a duplicate L-076 — master's testing entry in the ## testing section and this branch's deploy entry in the ## deploy section, no textual conflict, no marker — exactly the failure L-078 describes; only _meta.json and ARCHIVE.md conflicted. ARCHIVE: both sides archived L-037 independently and for the same reason, so the union deduped it — master's '#625 headroom for L-076' section is kept verbatim with L-037 under it, and this branch's section (retitled 'headroom for L-077/L-078') now carries L-039 alone. L-039 is this branch's only remaining contribution to the archive. CAP: 40 active of 40 and 38.8 of 40.0 KB — the register lands AT the entry cap, because master's own L-037 archival already consumed the headroom this branch's two-entry block was meant to create. validate-lessons exits 0 (0 duplicate ids, counts match, nextId 79 > max L-078), but the next branch to append MUST archive first; that is L-039's own rule and it is now the binding constraint. Union: master 39 active − L-039 + 2 renumbered = 40 active, 34 archived (master's 33 + L-039), nextId 79. Prior note: final rebase of fix/imp-closeout-review onto origin/master 1ebd4f54 (#623 imp-02b leader-elected crons)."
+  "note": "Bookkeeping follow-up for #627 (0ee2672e): added L-079 (tooling — per-workspace Jest testTimeout fixes the cold-worker flake class) and archived L-011 (tooling, guard now enforced in code) to hold the 40-entry cap; see ARCHIVE.md's 2026-09-06 section."
 }
