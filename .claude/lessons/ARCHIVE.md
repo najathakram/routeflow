@@ -529,3 +529,32 @@ headroom on the byte cap, not at it.
   reversal gap REACHABLE, so a fix can open the path to a latent bug.
 - **Guard:** `REG-B55 (T21)`; the write-by-write enumeration is recorded in F11's fix card so the
   next batch on this path starts from it rather than rebuilding it.
+
+## Archived 2026-09-05 — headroom for L-077/L-078 (fix/imp-closeout-review)
+
+This branch planned a two-entry block — **L-037** and **L-039** — chosen oldest-first among
+entries whose guard is a landed automated check rather than a procedure, and which nothing
+outside a frozen `.claude/pipeline/` run record still cites. Merging master `d12203a3`
+(#624, #625) showed L-037 already archived directly above, by #625, on exactly that reasoning,
+so only **L-039** (tooling, 2026-09-01 — `validate-lessons` now prints `binding:` and the
+remaining headroom on every run, which is the whole of what the entry asks a reader to
+remember) moves here. Program entries (`imp-*`/wave) and L-074 were excluded by rule. Ids stay
+retired: the `[[L-039]]` references already in this file still resolve. The register lands at
+40 of 40 entries and 38.8 of 40.0 KB — at the entry cap, so the next branch to append must
+archive first ([[L-039]]'s own rule about landing with headroom).
+
+### L-039 · 2026-09-01 · tooling
+
+- **Symptom:** a green PR went red after a routine rebase, on a check unrelated to its contents —
+  and its author could not fix it: the failing number is a policy threshold only the owner may set.
+- **Root cause:** the gate shipped while the repo sat **71 bytes** under the cap it enforces.
+  Correct gate, zero margin — so the next branch to append to the capped file inherits a failure it
+  did not cause, and appending is exactly what the rules REQUIRE after a fix.
+- **Lesson:** **Land a gate only with headroom, and only when its threshold is a number you are
+  authorized to set.** At zero margin a gate is a tripwire for the next unrelated PR, not a guard;
+  if the threshold is an owner's call, land the ruling with it or the gate blocks the project on a
+  decision nobody scheduled.
+- **Guard:** `validate-lessons` prints `binding:` and the remaining headroom every run — treat
+  `~0 more` as unlanded work. Second-order cost: the run died at the gate, so everything its
+  success path owned went undone and the repo was left **public** — a private flip that lives
+  after a green CI is not a `finally`.

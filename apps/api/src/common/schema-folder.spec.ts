@@ -162,6 +162,12 @@ describe("schema folder (wave E / imp-10a, T1)", () => {
     expect(res.status).toBe(0);
   }, 130_000);
 
+  // (h) needs the pre-split blob at ORIGINAL_REF, which a depth-1 CI clone (GitHub Actions'
+  // default `actions/checkout`) cannot reach — it always `it.skip`s there, so it never proves
+  // anything in CI and is a LOCAL-only proof (a full clone, e.g. this dev machine's). The
+  // standing guard that actually runs in CI going forward is `db-migrations.yml`'s
+  // `apps/api/scripts/schema-drift.mjs` (`prisma migrate status` + `migrate diff --exit-code`
+  // against the target DB) — that is what must stay green, not this case.
   const hasOriginalRef =
     spawnSync("git", ["cat-file", "-e", `${ORIGINAL_REF}:apps/api/prisma/schema.prisma`], {
       cwd: REPO_ROOT,
@@ -171,8 +177,8 @@ describe("schema folder (wave E / imp-10a, T1)", () => {
   const maybeIt = hasOriginalRef ? it : it.skip;
   maybeIt(
     hasOriginalRef
-      ? `(h) \`--check --from-ref ${ORIGINAL_REF}\` exits 0 and reports block-identical (${EXPECTED_BLOCK_COUNT} blocks)`
-      : `(h) SKIPPED — ${ORIGINAL_REF}:apps/api/prisma/schema.prisma is unreachable (shallow clone), so the block-identical proof against it cannot run here`,
+      ? `(h) [local-only, skipped on shallow clones] \`--check --from-ref ${ORIGINAL_REF}\` exits 0 and reports block-identical (${EXPECTED_BLOCK_COUNT} blocks)`
+      : `(h) [local-only, skipped on shallow clones] SKIPPED — ${ORIGINAL_REF}:apps/api/prisma/schema.prisma is unreachable (shallow clone), so the block-identical proof against it cannot run here`,
     () => {
       const res = spawnSync(
         process.execPath,
