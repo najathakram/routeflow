@@ -141,7 +141,8 @@
       "/node_modules/",
       "\\.db\\.spec\\.ts$",
       "docs-truth\\.spec\\.ts$",
-      "no-dead-deps\\.spec\\.ts$"
+      "no-dead-deps\\.spec\\.ts$",
+      "no-single-schema-path\\.spec\\.ts$"
     ],
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"

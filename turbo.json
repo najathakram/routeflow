@@ -101,7 +101,18 @@
         "$TURBO_ROOT$/apps/web/components/**",
         "$TURBO_ROOT$/apps/web/hooks/**",
         "$TURBO_ROOT$/apps/web/lib/**",
-        "$TURBO_ROOT$/apps/mobile/package.json"
+        "$TURBO_ROOT$/apps/mobile/package.json",
+        // no-single-schema-path.spec.ts (moved here from apps/api's plain `test` task)
+        // walks all of these outside apps/api/src — same reasoning as the docs-truth /
+        // no-dead-deps entries above: an edit here must bust this task's cache too.
+        "$TURBO_ROOT$/scripts/**",
+        "$TURBO_ROOT$/.github/workflows/**",
+        "$TURBO_ROOT$/.claude/skills/**",
+        "$TURBO_ROOT$/apps/api/scripts/**",
+        "$TURBO_ROOT$/apps/api/Dockerfile",
+        "$TURBO_ROOT$/apps/api/prisma.config.ts",
+        "$TURBO_ROOT$/package.json",
+        "$TURBO_ROOT$/docker-compose.yml"
       ],
       "outputs": []
     },

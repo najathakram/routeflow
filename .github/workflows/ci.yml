@@ -425,9 +425,18 @@ jobs:
         # logic (a missing/unreadable file, a node startup failure): it still
         # publishes run=true. `continue-on-error` would NOT — it leaves the
         # output unset, and all 7 consumers below would skip: the original bug.
+        # Exit 2 is different: the script's OWN deliberate refusal when
+        # GITHUB_OUTPUT is unset (it cannot publish `run` at all, so writing
+        # run=true here would just fail again) — that must fail the step
+        # loudly, not get swallowed into the generic crash fallback below.
         run: |
           node "$(git rev-parse --show-toplevel)/scripts/ci-freshness-guard.mjs" || {
-            echo "::warning::freshness guard crashed (exit $?) — proceeding rather than skipping"
+            rc=$?
+            if [ "$rc" = "2" ]; then
+              echo "::error::freshness guard exited 2 (GITHUB_OUTPUT unset)"
+              exit 2
+            fi
+            echo "::warning::freshness guard crashed (exit $rc) — proceeding rather than skipping"
             echo "run=true" >> "$GITHUB_OUTPUT"
           }
 

@@ -41,20 +41,61 @@
 //     --minutes  minutes to wait before flipping private (default 45)
 //     --repo     "owner/name" to flip (default najathakram/routeflow)
 //
+// FLIP RETRY (2026-09-05)
+// The private flip used to be attempted once, with only the read-back
+// retried — a single `gh repo edit` failure (a transient 5xx, a rate limit)
+// left the repo public with nothing left to try. The flip itself is now
+// retried: up to 6 attempts, sleeping between them. Only FIVE delays are
+// reachable between 6 attempts (the last attempt is never followed by a
+// sleep), so the list is five long: 5s, 15s, 30s, 60s, 120s — a worst case of
+// ≈ 3.8 min of sleeps plus up to 6 × 2 × 60 s of gh timeouts (two bounded `gh`
+// calls per attempt, see runGh). Each attempt runs `gh repo edit ...
+// --visibility private ...` followed immediately by a `gh repo view`
+// read-back; the loop stops as soon as a read-back reports PRIVATE. Every
+// attempt is logged with its edit exit status and the first line of stderr —
+// or, for a call that never returned, `spawn-error` plus the spawn error's
+// own `code` (`ETIMEDOUT` for a call the 60 s timeout killed) — win or lose.
+//
 // EXIT CODE
-//   0 — the flip ran and was verified PRIVATE.
-//   1 — the flip command failed, or the repo could not be confirmed PRIVATE
-//       within the retry budget. Either way, check the log — a human may need
-//       to flip it by hand.
+//   0 — a read-back confirmed PRIVATE within the attempt budget. Any stale
+//       `local-assets/visibility-watchdog.FAILED` marker is removed.
+//   1 — no read-back confirmed PRIVATE after 6 attempts. A marker file is
+//       written to `local-assets/visibility-watchdog.FAILED` (ISO time,
+//       repo, last error) so a later check doesn't need the log — a human
+//       needs to flip it by hand.
 //
 // LOG
 // One line per event, appended to `local-assets/visibility-watchdog.log`
 // (created if missing; gitignored — see .gitignore's "local-assets/" section)
 // and also printed to stdout:
-//   <ISO timestamp> start|flip|verified|error <detail>
+//   <ISO timestamp> start|attempt|verified|error <detail>
+// The `start` line reports the visibility read at launch, before the wait
+// even begins (`visibility=<X>`) — if it is already PRIVATE the watchdog
+// keeps running anyway, since the public window it guards against may still
+// open later in the deploy flow. It also reports `root=<path>` (the directory
+// the log and the FAILED marker are written under, see MARKER/LOG ROOT below)
+// and `delays=<json>` (the backoff list actually in force).
 //
-// TEST-ONLY OVERRIDES (never set these outside a Jest worker — see
+// MARKER/LOG ROOT
+// `local-assets/` is resolved against the MAIN checkout, never the worktree
+// the watchdog happened to be launched from: `git rev-parse
+// --path-format=absolute --git-common-dir` names the main repository's `.git`
+// directory even from inside a linked worktree, and its parent is that main
+// checkout. A reader following the runbook looks in ONE place, so a watchdog
+// armed from `.claude/worktrees/rf-xyz` must not hide its FAILED marker there.
+// If git cannot be run (not installed, not a repository), this falls back to
+// the `__dirname`-derived repo root — the previous behaviour.
+//
+// TEST-ONLY OVERRIDES (four; honoured ONLY inside a Jest worker — see
 // apps/api/src/common/visibility-watchdog-script.spec.ts)
+// Each is read through `testOverride()`, which mirrors
+// `SCHEMA_DRIFT_PRISMA_CLI` in apps/api/scripts/schema-drift.mjs: the value is
+// used only when `process.env.JEST_WORKER_ID` is set, and then exactly one
+// `WARNING: test override <NAME> active` line goes to stderr. Anywhere else the
+// variable is IGNORED — loudly, with one stderr line naming it — so a stray
+// export in an operator's shell can never point the real watchdog at a fake
+// `gh`, silence its marker, or collapse its backoff. `NODE_ENV` is deliberately
+// not part of the guard, for the same reason schema-drift.mjs leaves it out.
 //   VISIBILITY_WATCHDOG_GH_CMD             JSON array of argv, e.g.
 //                                           '["node","/tmp/fake-gh.mjs"]', replacing the
 //                                           real `gh` invocation entirely so specs can
@@ -63,8 +104,14 @@
 //   VISIBILITY_WATCHDOG_LOG_FILE           Absolute path overriding the default
 //                                           `local-assets/visibility-watchdog.log`, so
 //                                           specs never touch the real operational log.
-//   VISIBILITY_WATCHDOG_VERIFY_INTERVAL_MS Overrides the 10s read-back poll interval so
-//                                           specs don't sleep for real.
+//   VISIBILITY_WATCHDOG_MARKER_FILE        Absolute path overriding the default
+//                                           `local-assets/visibility-watchdog.FAILED`, so
+//                                           specs never touch the real marker file.
+//   VISIBILITY_WATCHDOG_ATTEMPT_DELAYS_MS  JSON array overriding the default backoff
+//                                           `[5000,15000,30000,60000,120000]` between flip
+//                                           attempts, so specs don't sleep for real
+//                                           minutes. A malformed or non-numeric value
+//                                           falls back to that default list.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -73,12 +120,60 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
-const DEFAULT_LOG_FILE = path.join(REPO_ROOT, "local-assets", "visibility-watchdog.log");
 
 const DEFAULT_REPO = "najathakram/routeflow";
 const DEFAULT_MINUTES = 45;
-const VERIFY_MAX_TRIES = 5;
-const DEFAULT_VERIFY_INTERVAL_MS = 10_000;
+const MAX_ATTEMPTS = 6;
+// FIVE delays for SIX attempts: attempt 6 is never followed by a sleep, so a sixth entry
+// would be dead weight that also inflated the documented budget. Sum = 230 s ≈ 3.8 min.
+const DEFAULT_ATTEMPT_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000];
+// Every `gh` call is bounded: an unattended watchdog whose retry loop is "bounded" by attempt
+// count alone is not bounded at all if one call can hang forever (no TTY to notice, no session
+// left to kill it). SIGKILL because a hung `gh` may not honour SIGTERM.
+const GH_TIMEOUT_MS = 60_000;
+const GIT_TIMEOUT_MS = 10_000;
+
+// ─── test-only overrides ──────────────────────────────────────────────────────────────────────
+// Mirrors SCHEMA_DRIFT_PRISMA_CLI in apps/api/scripts/schema-drift.mjs: honoured ONLY inside a
+// jest worker that also sets the variable, announced once when honoured, and ignored LOUDLY
+// anywhere else — a stray export must never be able to disarm the real watchdog. Memoised so a
+// helper called on every log line still prints exactly one line per variable.
+const UNDER_TEST = Boolean(process.env.JEST_WORKER_ID);
+const announcedOverrides = new Set();
+
+function testOverride(name) {
+  const raw = process.env[name];
+  if (!raw) return undefined;
+  if (!announcedOverrides.has(name)) {
+    announcedOverrides.add(name);
+    console.error(
+      UNDER_TEST
+        ? `visibility-watchdog: WARNING: test override ${name} active — this is NOT a real flip guard`
+        : `visibility-watchdog: ${name} is ignored outside test (JEST_WORKER_ID unset); using the real value`,
+    );
+  }
+  return UNDER_TEST ? raw : undefined;
+}
+
+// ─── where the log and the FAILED marker live ─────────────────────────────────────────────────
+// The MAIN checkout, not whatever worktree armed the watchdog: `--git-common-dir` points at the
+// main repository's `.git` even from a linked worktree, so its parent is the one directory the
+// runbook tells a human to check. Falls back to this file's own repo root when git fails.
+let cachedRoot = null;
+
+function markerRoot() {
+  if (cachedRoot) return cachedRoot;
+  const res = spawnSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+    cwd: REPO_ROOT,
+    shell: false,
+    encoding: "utf8",
+    timeout: GIT_TIMEOUT_MS,
+    killSignal: "SIGKILL",
+  });
+  const out = !res.error && res.status === 0 ? (res.stdout || "").trim() : "";
+  cachedRoot = out ? path.dirname(path.resolve(out)) : REPO_ROOT;
+  return cachedRoot;
+}
 
 function parseArgs(argv) {
   let minutes = DEFAULT_MINUTES;
@@ -105,18 +200,38 @@ function parseArgs(argv) {
 }
 
 function logFile() {
-  return process.env.VISIBILITY_WATCHDOG_LOG_FILE || DEFAULT_LOG_FILE;
+  return (
+    testOverride("VISIBILITY_WATCHDOG_LOG_FILE") ||
+    path.join(markerRoot(), "local-assets", "visibility-watchdog.log")
+  );
 }
 
-function verifyIntervalMs() {
-  const raw = process.env.VISIBILITY_WATCHDOG_VERIFY_INTERVAL_MS;
-  if (!raw) return DEFAULT_VERIFY_INTERVAL_MS;
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_VERIFY_INTERVAL_MS;
+function markerFile() {
+  return (
+    testOverride("VISIBILITY_WATCHDOG_MARKER_FILE") ||
+    path.join(markerRoot(), "local-assets", "visibility-watchdog.FAILED")
+  );
+}
+
+/** The backoff actually in force. Exported so the delay budget can be asserted directly; it is
+ *  also reported as `delays=` on the `start` log line, which is how the spec reads it without
+ *  importing this module (importing it would run `main()`). */
+export function attemptDelaysMs() {
+  const raw = testOverride("VISIBILITY_WATCHDOG_ATTEMPT_DELAYS_MS");
+  if (!raw) return DEFAULT_ATTEMPT_DELAYS_MS;
+  try {
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr) && arr.length > 0 && arr.every((n) => Number.isFinite(n) && n >= 0)) {
+      return arr;
+    }
+  } catch {
+    // fall through to default
+  }
+  return DEFAULT_ATTEMPT_DELAYS_MS;
 }
 
 function ghBase() {
-  const overrideRaw = process.env.VISIBILITY_WATCHDOG_GH_CMD;
+  const overrideRaw = testOverride("VISIBILITY_WATCHDOG_GH_CMD");
   if (overrideRaw) {
     // Test-only — see header comment.
     const argv = JSON.parse(overrideRaw);
@@ -131,7 +246,22 @@ function runGh(subArgs) {
     shell: false,
     encoding: "utf8",
     env: process.env,
+    // A hung `gh` in an unattended watchdog is a public repo that never goes private: the
+    // timeout turns it into a normal failed attempt (result.error.code === "ETIMEDOUT") that
+    // the retry loop can move past, and SIGKILL guarantees the child actually dies.
+    timeout: GH_TIMEOUT_MS,
+    killSignal: "SIGKILL",
   });
+}
+
+/** One-line diagnosis for a spawnSync result: the spawn error's own `code` (ETIMEDOUT for a
+ *  call the timeout killed) plus its message, or else the first line of stderr. */
+function firstErrorLine(result) {
+  if (result.error) {
+    const code = result.error.code ? `${result.error.code}: ` : "";
+    return `${code}${result.error.message}`;
+  }
+  return (result.stderr || "").trim().split("\n")[0] || "";
 }
 
 function log(event, detail) {
@@ -151,59 +281,97 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function readVisibility(repo) {
+  const viewResult = runGh(["repo", "view", repo, "--json", "visibility"]);
+  if (!viewResult.error && viewResult.status === 0) {
+    try {
+      return JSON.parse(viewResult.stdout).visibility ?? null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function writeFailedMarker(repo, errorDetail) {
+  const file = markerFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(
+    file,
+    JSON.stringify({ time: new Date().toISOString(), repo, error: errorDetail }, null, 2) + "\n",
+  );
+}
+
+function clearFailedMarker() {
+  const file = markerFile();
+  if (fs.existsSync(file)) {
+    fs.rmSync(file, { force: true });
+  }
+}
+
 async function main() {
   const { minutes, repo } = parseArgs(process.argv.slice(2));
   const waitMs = Math.round(minutes * 60_000);
   const deadline = new Date(Date.now() + waitMs).toISOString();
-  log("start", `minutes=${minutes} repo=${repo} pid=${process.pid} deadline=${deadline}`);
+
+  const startVisibility = readVisibility(repo) ?? "unknown";
+  // Read BEFORE the wait so the launch line already carries both the resolved root a human
+  // would go looking in and the backoff actually in force (a malformed override falls back to
+  // the default list, and `delays=` is where that is visible).
+  const delays = attemptDelaysMs();
+  log(
+    "start",
+    `visibility=${startVisibility} minutes=${minutes} repo=${repo} pid=${process.pid} ` +
+      `root=${markerRoot()} delays=${JSON.stringify(delays)} deadline=${deadline}`,
+  );
+  // Keep running even if already PRIVATE — the public window this watchdog
+  // guards against may still open later in the deploy flow.
 
   await sleep(waitMs);
 
-  const editResult = runGh([
-    "repo",
-    "edit",
-    repo,
-    "--visibility",
-    "private",
-    "--accept-visibility-change-consequences",
-  ]);
-  if (editResult.error || editResult.status !== 0) {
-    const detail = editResult.error
-      ? editResult.error.message
-      : `exit=${editResult.status} stderr=${(editResult.stderr || "").trim().slice(0, 500)}`;
-    log("error", `gh repo edit --visibility private failed: ${detail}`);
-    return 1;
-  }
-  log("flip", "gh repo edit --visibility private exit=0");
+  let lastErrorDetail = "no successful read-back";
 
-  const interval = verifyIntervalMs();
-  for (let attempt = 1; attempt <= VERIFY_MAX_TRIES; attempt++) {
-    const viewResult = runGh(["repo", "view", repo, "--json", "visibility"]);
-    let visibility = null;
-    if (!viewResult.error && viewResult.status === 0) {
-      try {
-        visibility = JSON.parse(viewResult.stdout).visibility;
-      } catch {
-        visibility = null;
-      }
-    }
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const editResult = runGh([
+      "repo",
+      "edit",
+      repo,
+      "--visibility",
+      "private",
+      "--accept-visibility-change-consequences",
+    ]);
+    const editExit = editResult.error ? "spawn-error" : String(editResult.status);
+    const editStderrFirstLine = firstErrorLine(editResult);
+
+    const visibility = readVisibility(repo);
+
+    log(
+      "attempt",
+      `n=${attempt}/${MAX_ATTEMPTS} edit_exit=${editExit} edit_stderr=${JSON.stringify(
+        editStderrFirstLine,
+      )} visibility=${visibility ?? "unreadable"}`,
+    );
+
     if (visibility === "PRIVATE") {
-      log("verified", `visibility=PRIVATE attempt=${attempt}/${VERIFY_MAX_TRIES}`);
+      log("verified", `visibility=PRIVATE attempt=${attempt}/${MAX_ATTEMPTS}`);
+      clearFailedMarker();
       return 0;
     }
-    if (attempt < VERIFY_MAX_TRIES) {
-      await sleep(interval);
-    } else {
-      log(
-        "error",
-        `visibility not confirmed PRIVATE after ${VERIFY_MAX_TRIES} attempts (last read: ${
-          visibility ?? "unreadable"
-        }) — check manually`,
-      );
-      return 1;
+
+    lastErrorDetail = `edit_exit=${editExit} edit_stderr=${editStderrFirstLine} visibility=${
+      visibility ?? "unreadable"
+    }`;
+
+    if (attempt < MAX_ATTEMPTS) {
+      await sleep(delays[attempt - 1] ?? delays[delays.length - 1]);
     }
   }
-  // Unreachable — the loop always returns — but keep a safe fallback.
+
+  log(
+    "error",
+    `visibility not confirmed PRIVATE after ${MAX_ATTEMPTS} attempts (last: ${lastErrorDetail}) — check manually`,
+  );
+  writeFailedMarker(repo, lastErrorDetail);
   return 1;
 }
 
