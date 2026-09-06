@@ -24,7 +24,21 @@
  * repaired only from a `Route` that names a tenant AND agrees with every `RouteStop` its stops
  * instantiate, and the stop rule is otherwise untouched — `RouteStop` and `Route` must still
  * equal the run tenant, whether that tenant is stored or about to be.
+ *
+ * A SECOND, MUTUALLY EXCLUSIVE TASK lives at the bottom of this file: `classifyOrphanUser` and
+ * friends, behind the CLI's `--deactivate-orphan-users`. It writes `User.status`, never a
+ * `tenantId`, because a NULL-tenant `User` has no parent to derive one from — see the section
+ * header there for the owner decision behind it.
+ *
+ * The ONE import in this file is the test-tenant policy (`scripts/lib/test-tenants.cjs`), used by
+ * `assertTestTenantTargets` at the bottom — the guard behind the CLI's `--only-test-tenants`. It
+ * is data, not I/O: a set, a regexp and a predicate over a slug string.
  */
+import {
+  isTestTenant,
+  TEST_TENANT_PATTERN,
+  TEST_TENANT_SLUGS,
+} from "../../../../scripts/lib/test-tenants.cjs";
 
 /** The only tables this tool may ever write, in the order `buildUpdates` emits them. The order is
  *  load-bearing, not cosmetic: `RouteRun` precedes `RouteRunStop` so a run repaired in this batch
@@ -278,6 +292,205 @@ export function buildUpdates(reports) {
         params: [report.tenantId, report.id],
       });
     }
+  }
+  return updates;
+}
+
+// ─── the unattended-write guard behind `--only-test-tenants` ──────────────────────────────────
+
+/**
+ * Every row this batch would WRITE must land in an approved test tenant — the gate that makes an
+ * unattended `--confirm "<phrase>"` acceptable at all. It is deliberately a separate, pure
+ * function rather than a branch inside `buildUpdates`: the CLI resolves the slugs (one
+ * `SELECT "slug" FROM "Tenant" WHERE "id" = $1` per DISTINCT proposed tenant, cached), and the
+ * DECISION over those slugs is unit-testable with no database.
+ *
+ * The policy itself is never restated here: `isTestTenant` from `scripts/lib/test-tenants.cjs` is
+ * the single source of truth (`test`, `e2e-routeflow`, `routeflow-demo`, and slugs matching
+ * `qa-`/`e2e-`/`ux-audit-`), and this guard must never widen it — a near-miss like `testing-co`
+ * or `e2eclient` is a client tenant as far as this tool is concerned.
+ *
+ * ALL-OR-NOTHING, and unresolvable counts as a refusal: a proposed tenant id that no `Tenant` row
+ * carries (`slugById` holds `null` for it) cannot be shown to be a test tenant, so it is an
+ * offender exactly like a client slug. ONE offender refuses the WHOLE batch — never "write the
+ * good ones" — because the whole point is that an unattended run cannot touch client data.
+ *
+ * @param {Array<{ table: string, id: string, tenantId: string|null }>} rows the write list
+ * @param {Map<string, string|null>|Record<string, string|null>} slugById resolved tenant slugs
+ * @returns {Array<{ table: string, id: string, tenantId: string, slug: string }>} the checked rows
+ * @throws {Error} listing every offending row's table, id, tenant id and slug
+ */
+export function assertTestTenantTargets(rows, slugById) {
+  // A Map from the CLI, a plain object from the unit spec's JSON shim — both read the same way.
+  const lookup = (tenantId) => {
+    if (!slugById || typeof tenantId !== "string") return null;
+    if (typeof slugById.get === "function") return slugById.get(tenantId) ?? null;
+    return Object.prototype.hasOwnProperty.call(slugById, tenantId)
+      ? (slugById[tenantId] ?? null)
+      : null;
+  };
+
+  const list = rows ?? [];
+  const checked = [];
+  const offenders = [];
+  for (const row of list) {
+    const tenantId = typeof row?.tenantId === "string" ? row.tenantId : null;
+    const slug = lookup(tenantId);
+    const entry = {
+      table: row?.table ?? "<unknown>",
+      id: row?.id ?? "<unknown>",
+      tenantId,
+      slug,
+    };
+    if (typeof slug === "string" && isTestTenant(slug)) checked.push(entry);
+    else offenders.push(entry);
+  }
+
+  if (offenders.length > 0) {
+    const lines = offenders.map(
+      (o) =>
+        `  ${o.table} ${o.id} -> tenantId=${o.tenantId ?? "-"} ` +
+        `tenantSlug=${o.slug ?? "<unresolvable>"}`,
+    );
+    throw new Error(
+      `legacy-tenant-backfill: --only-test-tenants refuses this batch — ${offenders.length} of ` +
+        `${list.length} target row(s) do not resolve to an approved test tenant:\n` +
+        `${lines.join("\n")}\n` +
+        `  approved: ${[...TEST_TENANT_SLUGS].join(", ")} or a slug matching ` +
+        `${TEST_TENANT_PATTERN} (scripts/lib/test-tenants.cjs). NOTHING was written — a ` +
+        `client-tenant row keeps the interactive TTY confirmation as its only path.`,
+    );
+  }
+  return checked;
+}
+
+// ─── orphan users (a SECOND, mutually exclusive task) ─────────────────────────────────────────
+//
+// Everything above repairs a NULL `tenantId` by DERIVING one from a parent. NULL-tenant `User`
+// rows cannot be repaired that way: a user has no parent row that names a tenant, so there is
+// nothing to derive from. The full prod census (2026-09-05) found six of them — three
+// SUPER_ADMINs, which are platform accounts and correct as they are, and three April-2026
+// TENANT_ADMIN leftovers that would 401 at login because every tenant-scoped read is blind to
+// them. OWNER DECISION 2026-09-05: those are to be DEACTIVATED, never deleted — a deactivated
+// row keeps its audit trail, its foreign keys and its history, and can be reversed by hand; a
+// deleted one cannot.
+//
+// This is therefore a status change, not a tenant repair, and it shares nothing with the four
+// tables above but the safety rails: report → --dry-run → --live, a typed confirmation, an
+// attested backup, one transaction, and a guarded statement whose WHERE re-states every
+// precondition the report showed.
+
+/** `User.status` values, verbatim from `enum UserStatus` in
+ *  `apps/api/prisma/schema/tenancy.prisma` (ACTIVE | INACTIVE | SUSPENDED) and mirrored by
+ *  `UserStatus` in `packages/types/index.ts`. `INACTIVE` is the schema's inactive value — the
+ *  tool writes that literal and nothing else. */
+export const USER_STATUS_ACTIVE = "ACTIVE";
+export const USER_STATUS_INACTIVE = "INACTIVE";
+
+/** `enum UserRole` value this task must never touch — a platform account, tenant-less BY DESIGN.
+ *  It is excluded by the listing's own WHERE and refused again here, on purpose: the guard that
+ *  matters is the one that still holds when someone edits the query. */
+export const SUPER_ADMIN_ROLE = "SUPER_ADMIN";
+
+export const VERDICT_ALREADY_INACTIVE = "refuse: already inactive";
+export const VERDICT_SUPER_ADMIN = "refuse: super admin";
+export const VERDICT_DELETED = "refuse: deleted";
+
+const acceptUser = (status, reason) => ({ verdict: VERDICT_OK, status, reason });
+const refuseUser = (verdict, reason) => ({ verdict, status: null, reason });
+
+/**
+ * One NULL-tenant, non-SUPER_ADMIN `User` row → the verdict the report prints.
+ *
+ * `status` is the value `--live` would WRITE (always `INACTIVE`, never anything else) and is
+ * `null` for every refusal, mirroring `tenantId` in the classifiers above.
+ *
+ * Precedence is deliberate — the strongest refusal first, so a row that trips two rules is
+ * reported by the one that matters most:
+ *   1. `refuse: super admin` — defensive. The listing's WHERE already excludes the role, so this
+ *      should never appear; it is here so that a future edit to the query cannot turn a platform
+ *      account into a deactivated one silently.
+ *   2. `refuse: deleted` — `deletedAt` is set, so the row is already soft-deleted and changing
+ *      its status would only muddy the record.
+ *   3. `refuse: already inactive` — the status is not `ACTIVE` (INACTIVE or SUSPENDED). Nothing
+ *      to do, and re-running must never rewrite a status somebody else chose.
+ * Anything else is `ok`.
+ *
+ * @param {{ role?: string|null, status?: string|null, deletedAt?: string|Date|null }} row
+ */
+export function classifyOrphanUser(row) {
+  const { role, status, deletedAt } = row ?? {};
+  if (role === SUPER_ADMIN_ROLE) {
+    return refuseUser(
+      VERDICT_SUPER_ADMIN,
+      "role is SUPER_ADMIN — a platform account is tenant-less by design",
+    );
+  }
+  if (deletedAt) {
+    return refuseUser(VERDICT_DELETED, "deletedAt is set — the row is already soft-deleted");
+  }
+  if (status !== USER_STATUS_ACTIVE) {
+    return refuseUser(
+      VERDICT_ALREADY_INACTIVE,
+      `status is ${status ?? "unknown"}, not ${USER_STATUS_ACTIVE} — nothing to deactivate`,
+    );
+  }
+  return acceptUser(
+    USER_STATUS_INACTIVE,
+    `NULL tenantId with role ${role} — unreachable through the product; deactivate, never delete`,
+  );
+}
+
+/**
+ * The guarded statement, id-pinned and precondition-pinned. Every clause of the WHERE re-states
+ * something the report showed the owner, so a row that changed in between (given a tenant,
+ * promoted, deactivated by hand) returns ZERO rows and rolls the whole batch back rather than
+ * being written against a state nobody read:
+ *   - `"id" = $2`             — one row, never a blanket update;
+ *   - `"tenantId" IS NULL`    — still an orphan;
+ *   - `"role" <> 'SUPER_ADMIN'` — still not a platform account;
+ *   - `"status" = $3`         — still ACTIVE (this is also what makes a re-run a no-op).
+ * `"updatedAt"` is set explicitly because this is raw SQL: Prisma's `@updatedAt` is a client-side
+ * concern and would not fire here.
+ */
+export function orphanUserUpdateSql() {
+  return (
+    `UPDATE "User" SET "status" = $1, "updatedAt" = now()` +
+    ` WHERE "id" = $2 AND "tenantId" IS NULL AND "role" <> '${SUPER_ADMIN_ROLE}' AND "status" = $3` +
+    ` RETURNING "id"`
+  );
+}
+
+/**
+ * One guarded UPDATE per `ok` report and nothing at all for a refusal — the `buildUpdates`
+ * contract, for the user task. Throws rather than returning a half-safe list when a report is
+ * malformed, so a caller cannot smuggle another table or another status through the batch.
+ *
+ * @param {Array<{ table: string, id: string, verdict: string, newStatus: string|null }>} reports
+ * @returns {Array<{ table: string, id: string, status: string, sql: string, params: [string, string, string] }>}
+ */
+export function buildOrphanUserUpdates(reports) {
+  const updates = [];
+  for (const report of reports ?? []) {
+    if (!report || report.verdict !== VERDICT_OK) continue;
+    if (report.table !== "User") {
+      throw new Error(
+        `legacy-tenant-backfill: unknown table "${report.table}" in an orphan-user report`,
+      );
+    }
+    if (!report.id || report.newStatus !== USER_STATUS_INACTIVE) {
+      throw new Error(
+        "legacy-tenant-backfill: User report marked ok without both an id and the " +
+          `${USER_STATUS_INACTIVE} status`,
+      );
+    }
+    updates.push({
+      table: "User",
+      id: report.id,
+      status: USER_STATUS_INACTIVE,
+      sql: orphanUserUpdateSql(),
+      params: [USER_STATUS_INACTIVE, report.id, USER_STATUS_ACTIVE],
+    });
   }
   return updates;
 }

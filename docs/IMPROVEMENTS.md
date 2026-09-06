@@ -525,7 +525,12 @@ A balanced review should say what not to touch:
   trace confirmed #613's fail-closed `findUniqueOrThrow` changes behaviour for none of the 16 (its
   only site among them, `routes.service` `completeStop`/`completeWithPayment`, is pre-gated by
   scoped 404s). The structural class is a tenancy-model decision (owner-scoped project), not a
-  backfill.
+  backfill. **Owner decision 2026-09-05 on the `User` rows:** the three non-`SUPER_ADMIN`
+  leftovers are DEACTIVATED, never deleted — the tool's second, mutually exclusive mode
+  `--deactivate-orphan-users` (report → `--dry-run` → `--live`, same attested backup and typed
+  confirmation, one transaction) sets `status` to the schema's `INACTIVE` on rows matching
+  `tenantId IS NULL AND role <> 'SUPER_ADMIN'` and writes nothing else, leaving the row, its
+  foreign keys and its audit trail intact.
 
 - **The DB backup pipeline** (`apps/db-backup`) is well-designed: 2-hourly `pg_dump` → Cloudflare R2
   (S3-compatible, zero egress fees), 30-day prune, **monthly restore-verify**, and a healthchecks.io
