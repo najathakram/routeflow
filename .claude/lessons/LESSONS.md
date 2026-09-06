@@ -326,6 +326,21 @@
 
 ## testing
 
+### L-082 · 2026-09-06 · testing · bugs.mjs self-test
+
+- **Symptom:** the registry self-test's pid-reuse fixture failed on an ubuntu runner (four checks in a
+  cascade) and passed on every Windows run and on its own CI re-run.
+- **Root cause:** the fixture forged a stale lock owner's boot stamp as "now minus 20 minutes"; the
+  liveness check treats a stamp within 5 s of the machine's real boot as the same boot, and a CI runner
+  that had been up about 20 minutes when the self-test started made the impostor look genuinely alive,
+  so the waiter spun out and the next fixtures inherited its lock dir.
+- **Lesson:** **never forge a timestamp relative to "now" by a plausible machine uptime — forge it
+  relative to the real boot stamp, far outside any slop; and give every fixture its own setup and
+  cleanup so a give-up cannot cascade into unrelated checks.**
+- **Guard:** the pid-reuse fixture forges `bootAt = bootStamp() − 1 year` and asserts the
+  "predates this boot" verdict; the owner-write fixture clears the lock dir before its own precondition
+  (`scripts/campaign/bugs.mjs` self-test, step 6 of `npm run verify`).
+
 ### L-076 · 2026-09-05 · testing · F13
 
 - **Symptom:** an E2E toast assertion via bare `getByText` hit a strict-mode violation
@@ -558,20 +573,3 @@ build` forces production — so that branch was dead in every Docker image, not 
 - **Guard:** `apps/api/src/common/enum-parity.spec.ts` — a generic table (40 enums) against
   `packages/types/api/enums.ts`, plus a regression layer pinning the drifted files and the mobile
   jest stub that can't `require` the shared package directly.
-
-### L-045 · 2026-09-02 · domain · #TBD
-
-- **Symptom:** every cancelled run, and every run completed with a skipped stop, left its
-  undelivered orders pinned to a stale `routeRunStopId` — invisible to the dispatch sweep and the
-  trip builder (both require the pointer null), while the buyer card kept showing a driver and
-  "you're next" for a called-off run.
-- **Root cause:** the pointer was set by one path (dispatch) and every re-entry reader keyed on it
-  being null, but neither terminal transition ever cleared it. The invariant had a writer and its
-  readers, and no releaser — same shape as [[L-029]]'s teardown paths.
-- **Lesson:** **A pointer that gates re-entry must be released by every transition that makes the
-  pointed-at thing terminal, inside that transition's own transaction — and the release predicate
-  must be the durable marker the forward path writes (here `stop.status = COMPLETED`), never the
-  existence of a side row a payment-only path skips.** When the release makes a new state pair
-  reachable (a SKIPPED stop on a COMPLETED run), ship the refusal for it in the same PR ([[L-030]]).
-- **Guard:** `REG-B129 (T5 path: cancel → un-cancel → re-dispatch)`, `REG-B211 (T12 path:
-complete-with-skipped → reopen refused)`; mutation probes in the F11 PR body.

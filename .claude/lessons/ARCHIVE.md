@@ -595,3 +595,29 @@ ways") was kept — it is still cited from project memory.
 - **Lesson:** **Regenerate the Prisma client after any pull/checkout/rebase across a schema
   change, and expect all worktrees to share one generated client.**
 - **Guard:** none — judgment.
+
+## Archived 2026-09-06 — headroom for L-082 (lock-liveness self-test fix)
+
+Landing L-082 (testing — the pid-reuse self-test fixture forged a stale owner's boot stamp
+relative to "now" instead of the real boot, colliding with a CI runner's own uptime, CI run 34019219777) at 40 of 40 active entries required archiving first. **L-045** was the oldest
+active entry whose Guard names an automated artifact rather than judgment/none/a runbook
+(`REG-B129`/`REG-B211` regression tests plus the F11 PR's mutation probes) — the fix's ruling
+(`.claude/pipeline/2026-09-06-lock-liveness/ruling.md`) described L-045 as "already archived",
+which the register did not actually reflect; it is archived now, closing that gap.
+
+### L-045 · 2026-09-02 · domain · #TBD
+
+- **Symptom:** every cancelled run, and every run completed with a skipped stop, left its
+  undelivered orders pinned to a stale `routeRunStopId` — invisible to the dispatch sweep and the
+  trip builder (both require the pointer null), while the buyer card kept showing a driver and
+  "you're next" for a called-off run.
+- **Root cause:** the pointer was set by one path (dispatch) and every re-entry reader keyed on it
+  being null, but neither terminal transition ever cleared it. The invariant had a writer and its
+  readers, and no releaser — same shape as [[L-029]]'s teardown paths.
+- **Lesson:** **A pointer that gates re-entry must be released by every transition that makes the
+  pointed-at thing terminal, inside that transition's own transaction — and the release predicate
+  must be the durable marker the forward path writes (here `stop.status = COMPLETED`), never the
+  existence of a side row a payment-only path skips.** When the release makes a new state pair
+  reachable (a SKIPPED stop on a COMPLETED run), ship the refusal for it in the same PR ([[L-030]]).
+- **Guard:** `REG-B129 (T5 path: cancel → un-cancel → re-dispatch)`, `REG-B211 (T12 path:
+complete-with-skipped → reopen refused)`; mutation probes in the F11 PR body.
