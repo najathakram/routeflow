@@ -233,7 +233,7 @@ Names only — see each app's example file. Never commit values.
   CI replay), not a byte/block diff against a file that no longer exists. `apps/api/prisma/migrations/`
   is untouched by the split — the split generated **no** migration. `migrate diff --to-schema`
   takes the folder (help text says "file"; the folder form works).
-- Schema changes apply to prod **only** via `railway run npx prisma migrate deploy`; locally `npx prisma migrate dev` against docker-compose.
+- Schema changes apply to prod **only** via `railway run --service postgres node apps/api/scripts/prod-migrate.mjs` (a bare `prisma migrate deploy` only resolves the schema folder + `prisma.config.ts` when run from `apps/api` — cwd-relative — so this script `cd`s there internally instead of relying on the caller's cwd); locally `npx prisma migrate dev` against docker-compose.
 - **Never** `--force-reset`; **never** run the destructive scripts listed in `CLAUDE_SESSION_PREAMBLE.md`; seed additively.
 - Destructive migrations are blocked in CI by Squawk (`npm run lint:migrations`); whitelist a
   statement with `-- reason:` + `-- squawk-ignore <rule>`.

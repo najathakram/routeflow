@@ -105,6 +105,74 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   now a third consumer — imported via dynamic `import()` (it's CJS, and CI's Node 20 can't
   `require()` an `.mjs`), `requireProxy: false` like `schema-drift.mjs` (a read like this may fall
   back to `DATABASE_URL`, unlike the writer `prod-migrate.mjs`). Contract: `src/common/e2e-seed-script.spec.ts`.
+- **`scripts/backfill-legacy-tenant-ids.mjs` + `scripts/lib/legacy-tenant-backfill.mjs` (close-out
+  review, 2026-09-05, OWNER-RUN)** — dry-run-first **data** repair for legacy rows whose `tenantId`
+  IS NULL (prod counts 2026-09-05: `RouteRunStop` 5, `PaymentCounter` 1, `CreditNote` 1). Such a row
+  is invisible to every tenant-scoped read AND reads as "foreign" to the fail-closed tenancy
+  post-filter, so it cannot be fixed through the product — a NULL `RouteRunStop` still renders on
+  the run card through a nested include but can never be completed/skipped, and the run
+  auto-completes with it stuck `PENDING`. Three modes: default **report** (read-only, one line per
+  NULL row: table, id, createdAt, parent ids, proposed tenantId, verdict + per-table
+  `ok=<n> refused=<n>`), `--dry-run` (report + the exact parameterized UPDATEs with bound values,
+  still read-only), `--live` (requires BOTH `--backup-attested "<text>"` **and** a typed
+  `BACKFILL <n> ROWS` on a TTY, then ONE transaction of id-pinned
+  `UPDATE … SET "tenantId" = $1 WHERE "id" = $2 AND "tenantId" IS NULL RETURNING "id"` — never a
+  blanket UPDATE). `--json` emits the report for the owner's records. URL resolution is
+  `schema-drift.mjs`'s (`lib/railway-db-url.mjs`, Railway proxy vars over `DATABASE_URL`); `pg` is
+  required lazily so argument validation always precedes the driver; `SET
+default_transaction_read_only = on` is set at connect in EVERY mode and lifted only after the
+  confirmation. Exit **0** ok · **1** error · **2** argument refusal _before connecting_ · **3**
+  confirmation refused (non-TTY or mismatched text) · **4** rolled back (a guarded UPDATE returned
+  no row). Pure decision layer `lib/legacy-tenant-backfill.mjs` (no I/O):
+  `classifyRouteRun`/`classifyRouteRunStop`/`classifyPaymentCounter`/`classifyCreditNote(row) →
+{verdict, tenantId, reason}` over verdicts `ok` | `refuse: parent missing` | `refuse: parents disagree` |
+  `refuse: singleton` | `refuse: unique-pair collision`, plus `updateSql(table)` (table names come
+  from the `BACKFILL_TABLES` whitelist, never from a row) and `buildUpdates(reports)` (also throws
+  when two `ok` CreditNote rows would claim one `(tenantId, creditNoteNumber)` — the per-row
+  `pairCollision` EXISTS cannot see that). ⚠️ Never a migration, never run from an implementation
+  session, fresh backup first; output carries ids/tenant ids/`creditNoteNumber` and enum statuses
+  only — never names, amounts, `PaymentCounter.next` or the connection URL. Spec:
+  `src/common/backfill-legacy-tenant-ids-script.spec.ts` (B1–B4 every classifier branch +
+  `buildUpdates`, evaluated in one `node --input-type=module` shim like `railway-db-url.spec.ts`;
+  B5 CLI argument refusal + read-only source pins at spawn level, no database).
+  **Close-out re-check (2026-09-05):** the CreditNote SELECT also reads `i."id" AS
+"invoiceRowId"`, because `invoiceTenantId` alone cannot tell "no invoice linked" from "the
+  linked Invoice is GONE" or "the linked Invoice is itself NULL-tenant" — all three read NULL
+  after the LEFT JOIN, and the last two used to be ACCEPTED off the Customer alone; both are now
+  `refuse: parent missing` (B3g/B3h). A `buildUpdates` throw no longer fails report **or**
+  `--dry-run`: the refusal prints to stdout as well as stderr and `--json` carries it as
+  `batchError` with `summary.blocked: true` (`summary.ok` unchanged); only `--live` throws.
+  Test-only `BACKFILL_CONFIRM_TOKEN` supplies the typed confirmation as a value, honoured ONLY
+  inside a jest worker (loud WARNING, same gate shape as the watchdog's four overrides) and never
+  relaxing `--backup-attested`. DB-lane spec `src/common/backfill-legacy-tenant-ids.db.spec.ts`
+  (`jest.db.config.js`, `npm run local:test:db`) executes the real paths against the compose
+  Postgres — D1 report and D2 `--dry-run` leave the row NULL, D3 `--live` writes the RouteRun's
+  tenant, D4 a second `--live` is "nothing to do", D5 a mismatched token exits 3, D6 a non-TTY
+  with no token exits 3 — over a throwaway `e2e-backfill-*` tenant whose rows all carry an
+  `e2e-backfill-` id prefix, with an ok-set assertion before every `--live` so a compose database
+  holding someone else's NULL-tenant rows fails the spec instead of repairing them.
+  **ONE CASCADE LEVEL (2026-09-05, after the prod report):** the read-only run refused all five
+  `RouteRunStop`s for one reason — their parent `RouteRun` rows are THEMSELVES NULL-tenant (two
+  runs, 1 stop and 4 stops), even though each stop's `RouteStop` and the run's `Route` agree. So
+  `RouteRun` is now a fourth listed/writable table and the FIRST one: `classifyRouteRun({routeRowId,
+routeTenantId, stopTenantIds, stopCount})` derives the run's tenant from its `Route` (`refuse:
+parent missing` when the Route row or its tenant is absent) and treats the DISTINCT non-NULL
+  `RouteStop.tenantId` values reached through the run's stops as a CHECK, never a source —
+  any disagreement is `refuse: parents disagree`, an empty set (`array_agg` over zero rows is NULL)
+  is fine. `classifyRouteRunStop` gains `effectiveRunTenantId`: when the stop's run is NULL-tenant
+  the CLI passes the tenant THIS batch will write to it (only for runs whose own verdict is `ok` —
+  `ctx.repairedRunTenants`, populated by the RouteRun listing, which is why it is first in
+  `TABLES`), and the unchanged three-way rule then applies, so a stop under a refused run stays
+  refused and a disagreeing `RouteStop` is still refused. Report lines for such a stop carry
+  `(via run repaired in this batch)`. `BACKFILL_TABLES` is now
+  `["RouteRun","RouteRunStop","PaymentCounter","CreditNote"]` and that array IS the write order:
+  `buildUpdates` validates every `ok` report first, then emits grouped by the whitelist, so a
+  caller cannot make the batch write a child before its parent by reordering the reports; `--live`
+  runs both in the SAME single transaction. Coverage: B0a–B0e (`classifyRouteRun`), B1e–B1g (the
+  effective tenant relaxes nothing), B4f (ordering), B5h (CLI source pins for the listing and the
+  note), and DB-lane **D7** — a second NULL-tenant `RouteRun` with two NULL-tenant stops is
+  reported `ok` + `ok (via run)`, `--dry-run` shows `[1]` as the `RouteRun` statement of 3, `--live`
+  repairs all three in one transaction, and the re-run is "nothing to do".
 - **`scripts/ci-audit-critical.mjs` (2026-09-04)** — CI advisory gate: wraps `npm audit
 --omit=dev --audit-level=<level> --json` in `spawnSync` (`shell:false`, up to 3 attempts,
   15s/45s backoff, 120s per-attempt timeout, 64 MiB `maxBuffer`) so an `npm` registry
@@ -145,19 +213,37 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   safety net for the public-repo CI window in the canonical deploy flow (`CLAUDE.md`,
   `docs/runbooks/deploy-visibility-flip.md`): launched BEFORE `gh repo edit … public`, it
   `setTimeout`-sleeps `--minutes` (default 45, never a busy-wait, so signals still work),
-  then flips `--repo` (default `najathakram/routeflow`) private via `spawnSync("gh", …,
-{shell:false})` and read-back-verifies `gh repo view --json visibility` in a loop (≤5
-  tries, 10s apart) until `PRIVATE`. Appends one `<ISO> start|flip|verified|error <detail>`
-  line per event to `local-assets/visibility-watchdog.log` (gitignored) and mirrors it to
-  stdout; exits 0 once verified, 1 on an edit failure or an unconfirmed flip. A flip landing
-  mid-CI/mid-deploy is by design — a private-repo Action just fails on billing and gets
-  rerun. Test-only env: `VISIBILITY_WATCHDOG_GH_CMD` (JSON argv, swaps in a fake `gh` — no
-  network), `VISIBILITY_WATCHDOG_LOG_FILE` (scratch log path), `VISIBILITY_WATCHDOG_VERIFY_INTERVAL_MS`
-  (collapses the 10s poll for fast specs). Contract spec:
-  `src/common/visibility-watchdog-script.spec.ts` (spawn-level, fake `gh` driver, 8 cases:
-  success, never-verifies, edit-fails, stdout mirrors log (now guarded non-empty), arg
-  defaults, slow-boot repro, awaitStartLine cap-rejection + kill pin, awaitStartLine
-  prompt-reject (exit code + stderr) when the child dies before the start line). The "arg
+  then retries the flip itself: **up to 6 attempts**, each one `gh repo edit … --visibility
+private …` immediately followed by a `gh repo view --json visibility` read-back, stopping at
+  the first `PRIVATE`. **Bounded end to end (close-out re-check, 2026-09-05, L-077):** every
+  `gh` call carries `timeout: 60_000, killSignal: "SIGKILL"` (a hung call is otherwise an
+  unbounded public window), and the backoff list is FIVE long — `[5s,15s,30s,60s,120s]`, since
+  attempt 6 is never followed by a sleep — so the worst case is ≈3.8 min of sleeps plus
+  6 × 2 × 60 s of call timeouts. Appends one `<ISO> start|attempt|verified|error <detail>`
+  line per event to `local-assets/visibility-watchdog.log` (gitignored) and mirrors it to stdout;
+  `start` reports `root=` and `delays=`, an `attempt` reports `edit_exit=` (`spawn-error` for a
+  call that never returned) and `edit_stderr=` (prefixed with the spawn error's own `code`, e.g.
+  `ETIMEDOUT`). Exits 0 once verified (clearing any stale marker), 1 after 6 unconfirmed
+  attempts — then writing `local-assets/visibility-watchdog.FAILED`. ⚠️ **`local-assets/`
+  resolves against the MAIN checkout**, via `git rev-parse --path-format=absolute
+--git-common-dir` (10 s timeout, falling back to the `__dirname` repo root): a watchdog armed
+  from `.claude/worktrees/*` must not hide its marker there, and
+  `docs/runbooks/deploy-visibility-flip.md` names the path to check before and after every
+  window. A flip landing mid-CI/mid-deploy is by design — a private-repo Action just fails on
+  billing and gets rerun. **Four test-only env overrides, all routed through `testOverride()`
+  and honoured ONLY inside a jest worker** (`JEST_WORKER_ID` set), with one
+  `WARNING: test override <NAME> active` stderr line when honoured and one naming line when
+  ignored — the `SCHEMA_DRIFT_PRISMA_CLI` pattern from `scripts/schema-drift.mjs`:
+  `VISIBILITY_WATCHDOG_GH_CMD` (JSON argv, swaps in a fake `gh` — no network),
+  `…_LOG_FILE` / `…_MARKER_FILE` (scratch paths), `…_ATTEMPT_DELAYS_MS` (JSON array; malformed
+  input falls back to the default list). Contract spec:
+  `src/common/visibility-watchdog-script.spec.ts` (spawn-level, fake `gh` driver, 12 cases:
+  success, retry-then-success (40 ms delays, elapsed ≥ 80 ms for two real sleeps),
+  malformed-delays fallback, override WARNING lines, source pin that every override is read
+  through the `JEST_WORKER_ID` gate, jest-worker inheritance, `root=` line, never-verifies,
+  edit-fails, stdout mirrors log (guarded non-empty), arg defaults, slow-boot repro,
+  awaitStartLine cap-rejection + kill pin, awaitStartLine prompt-reject (exit code + stderr)
+  when the child dies before the start line). The "arg
   defaults" and slow-boot cases share
   `awaitStartLine({ argv = [SCRIPT], env, logFile, capMs = 30_000, intervalMs = 50, onSpawn })`
   (`logFile` required — the poll reads it; `onSpawn` is a test-only hook handing back the child
@@ -330,15 +416,20 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   would replay a stale green. `jest.repo-truth.config.js` extends the `package.json` `"jest"`
   config the same way `jest.db.config.js` does (`reporters: ["default"]` — never the campaign
   reporter, which would clobber `.campaign/runs/api.json`) with `testRegex:
-"(docs-truth|no-dead-deps)\\.spec\\.ts$"`; the main config's `testPathIgnorePatterns` excludes
-  both by name so `npm test` never double-runs them. New API script `test:repo-truth`; root
+"(docs-truth|no-dead-deps|no-single-schema-path)\\.spec\\.ts$"` (the third joined it
+  with wave E's schema-folder split); the main config's `testPathIgnorePatterns` excludes all three
+  by name so `npm test` never double-runs them. New API script `test:repo-truth`; root
   `verify` gained the `test:repo-truth` token on the `turbo run check-types lint test` list. A
   `@routeflow/api#test` workspace-task override was tried first and reverted —
   `packages/pricing/src/package-shape.spec.ts` forbids that exact key — so `turbo.json` instead
   carries a GENERIC `test:repo-truth` task (`dependsOn: ["^build"]`, outside paths as explicit
   `$TURBO_ROOT$/…` `inputs`, `outputs: []`); only apps/api declares the script, so turbo only
   ever executes it there. `turbo-inputs.spec.ts` pins the task's inputs list, the verify/script
-  wiring, and the jest-config split (Lesson L-062, tooling).
+  wiring, and the jest-config split (Lesson L-062, tooling). **Close-out re-check (2026-09-05):**
+  the inputs also carry `scripts/**`, `.github/workflows/**`, `.claude/skills/**`,
+  `apps/api/scripts/**`, `apps/api/Dockerfile`, `apps/api/prisma.config.ts`, `package.json` and
+  `docker-compose.yml` (no-single-schema-path's reach), and the spec pins ALL sixteen explicit
+  inputs plus the lane's exact three specs.
 - **`src/main.ts`** — ⚠️ NEVER `app.use(json())` here: it consumes the body before Nest captures `rawBody` and silently breaks EVERY Stripe webhook signature (#400 — the 2mb body limit goes through Nest's parser options). **Sentry (2026-08-26, DSN-optional):** `import "./instrument"` is the FIRST import (`src/instrument.ts` — `Sentry.init` with `enabled: !!process.env.SENTRY_DSN`, inert otherwise); global filters registered as `useGlobalFilters(new SentryExceptionFilter(httpAdapter), new ThrottlerExceptionFilter(), new MulterExceptionFilter())` — Nest reverses the array so the specific filters still win for their types; ⚠️ the catch-all Sentry filter MUST stay first or the narrow ones are never reached. `src/common/sentry-exception.filter.ts` captures ONLY ≥500s with `tenant`/user/path tags then defers to `super.catch`; `src/common/multer-exception.filter.ts` maps multer 2.3.0's newer codes (`LIMIT_FIELD_ARRAY_INDEX`, `INVALID_FIELD_NAME`, `STREAM_DESTROYED`) to 400 — @nestjs/platform-express's `transformException` switches on a frozen message list that predates them, so without it they arrive as raw `MulterError`s, score as 500, and capture one Sentry event per attacker probe. startup: `assertSecrets()` (JWT required in all envs; **`STORAGE_URL_SIGNING_SECRET` now FATAL in production too — F5-001 fail-closed**; `ENCRYPTION_KEY` still warn-only), **no boot-time DDL (PR-1, `imp-03a`, 2026-09-03)** — `runStartupMigration()` is deleted; schema drift is now caught read-only by `scripts/schema-drift.mjs`, not by a startup writer,
   helmet, trust proxy 2 (Railway CDN), CORS wildcard
   patterns, global `ValidationPipe` (whitelist/forbidNonWhitelisted/transform),
@@ -415,7 +506,12 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   source text of the specific web/mobile files that drifted (`VendorBillStatus`, `POStatus`→
   `PurchaseOrderStatus`, `BuyerPromotion.type`→`PromotionType`, `EstimateStatus` on both apps) and
   asserts they no longer hand-declare a conflicting literal union — the permanent regression guard
-  for L-072. **`schema-folder.spec.ts` (2026-09-04, wave E / imp-10a, T1; cases (g)/(h) reworked
+  for L-072. ⚠️ `ENUM_TABLE` is a deliberate **40-of-80 SUBSET** (only the enums a client actually
+  mirrors), so an equality assertion against the generated set would be WRONG; the close-out review
+  (2026-09-05) added a third `describe` that pins the COUNT instead —
+  `Object.keys(PrismaEnums.$Enums).length === PINNED_PRISMA_ENUM_COUNT` (80) — as a triage
+  tripwire: a new/removed generated enum must be triaged into `ENUM_TABLE` (or deliberately left
+  unmirrored) BEFORE the constant is bumped. **`schema-folder.spec.ts` (2026-09-04, wave E / imp-10a, T1; cases (g)/(h) reworked
   wave E structure)** — pins `prisma/schema/` to exactly the 7 domain files, 125 model + 80 enum
   blocks total, `_base.prisma` holding only datasource+generator, every model/enum name unique,
   `prisma.config.ts` pointing `schema` at the folder with an explicit `migrations.path`. Case (g)
@@ -816,6 +912,7 @@ validate()` and `buyer/strategies/buyer-jwt.strategy.ts validate()` both now cop
 - **service** — `findAll`, `findOne`, `create`, `update`, `updateStatus`, `updateLocation`, `remove`, `getMetrics`, `getRouteHistory`. side effects: Driver/DriverLocation writes; Socket.io location broadcast.
 - **`remove()` is dual-role aware (2026-08-28)**: after the scheduled/in-progress run guard and the route/routeRun/deliveryMutation unlinks, it reads the linked `user.role` inside the tx and branches — a `DRIVER`-role login is still deleted with the profile, but **OPERATOR/TENANT_ADMIN dual-role staff keep their login** and get `canActAsDriver: false` in the same transaction. Previously `DELETE /drivers/:id` hard-deleted the linked User unconditionally: on an admin with restrict-FK children (messages, stock counts, device tokens) the user-delete failed → the whole tx rolled back → the driver row "came back", and when it succeeded it would have deleted the tenant's ADMIN LOGIN. Clearing the flag is what makes the deletion stick — `users.service.toggleDriverPermit` (unchanged, the explicit Settings → "Act as driver" opt-in) is the ONLY path that recreates the Driver row. Spec: `drivers.service.spec.ts` `describe("remove")`.
 - **Ad-hoc trips home base (2026-08-24):** `Driver.homeLat`/`homeLng`/`homeAddress` (nullable, migration `20260904000000_adhoc_trips_and_fulfillment`) on `UpdateDriverDto`; `update()` best-effort geocodes a changed `homeAddress` via the shared `common/geocode.util.ts` — failure clears coords to `null` rather than throwing (never blocks the save). Consumed only by `trips.service.ts` `resolveOrigin`'s DRIVER tier. Written from the OPERATOR driver profile only (web `drivers/_components/EditDriverModal.tsx` "Home Base" section → `PATCH /drivers/:id`); no driver-facing UI reads/writes these fields.
+- **`dto/post-location.dto.ts` gained `accuracy` (2026-09-04, B185):** `@IsOptional() @Type(()=>Number) @IsNumber() @Min(0) accuracy?: number` (no `@Max`) — `heading`/`speedKph`'s existing `@Min(0)`/`@Max()` bounds are unchanged, so a present negative `heading`/`speedKph` (not the mobile seam's mapped `null`) is still rejected. `recordLocation()`'s `driverLocation.create()` gains `accuracy: dto.accuracy`. Pairs with the mobile `lib/location-payload.ts` seam (see `mobile.md`), which now maps iOS's `-1` heading/speed sentinel to `null` before it ever reaches this DTO — previously the raw `-1` 400'd the whole ping. Spec: `dto/post-location.dto.spec.ts`.
 
 ### `products/`
 
