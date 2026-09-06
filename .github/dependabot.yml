@@ -77,3 +77,10 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    groups:
+      # Ungrouped, this ecosystem opened one individual PR per bumped action —
+      # each one its own `verify` run. One group == one PR per week for the
+      # whole ecosystem, same shape as the npm "minor-and-patch" group above.
+      actions-all:
+        patterns:
+          - "*"
