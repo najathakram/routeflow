@@ -1,0 +1,59 @@
+{
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-05-registry-guards/build-plan.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-05-registry-guards/test-plan.md",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-06T00:30:00Z",
+  "scale": "small",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry",
+  "context": "In-repo bug registry (scripts/campaign/bugs.mjs): add a read-only `sync --check` mirror guard and let `move --tier` give a triage id its first ledger row; docs/scripts only; never a live client identifier.",
+  "formatCommand": "npx prettier --write scripts/campaign/bugs.mjs",
+  "testPackages": [
+    {
+      "id": "TP-GUARDS",
+      "title": "self-test cases T13/T13b/T14",
+      "files": ["scripts/campaign/bugs.mjs"],
+      "tests": ["T13", "T13b", "T14"],
+      "effort": "high",
+      "brief": "Append the three cases at the end of cmds[\"self-test\"] in the harness idiom (runCli child process, check(), tmpdir fixture, env save/restore in finally). Touch nothing else in the file. Implement nothing."
+    }
+  ],
+  "redGate": { "commands": ["node scripts/campaign/bugs.mjs self-test"], "expect": "fail" },
+  "packages": [
+    {
+      "id": "WP-GUARDS",
+      "title": "sync --check + move --tier",
+      "files": ["scripts/campaign/bugs.mjs"],
+      "satisfies": ["R9", "R10"],
+      "provenBy": ["T13", "T13b", "T14"],
+      "effort": "high",
+      "brief": "Steps 1-3 of build-plan §WP-GUARDS: --check derives without writing and exits 1 naming stale records (or prints the mirror line); move creates the first ledger row for a catalogue id under catalogue-then-shard locks with the batched History event and a read-back; usage block updated; every existing self-test check stays green."
+    },
+    {
+      "id": "WP-DOCS",
+      "title": "SKILL.md + code map",
+      "files": [
+        ".claude/skills/bug-registry/SKILL.md",
+        ".claude/code-map/INDEX.md",
+        ".claude/code-map/_meta.json",
+        ".claude/code-map/CHANGELOG.md"
+      ],
+      "dependsOn": ["WP-GUARDS"],
+      "satisfies": [],
+      "provenBy": [],
+      "effort": "low",
+      "brief": "Document sync --check (and the sync-before-commit rule) and move --tier; code-map entry for bugs.mjs, _meta bump, CHANGELOG bullet."
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "node scripts/campaign/bugs.mjs self-test",
+      "npx prettier --check \"scripts/campaign/*.mjs\""
+    ],
+    "final": [
+      "node scripts/campaign/bugs.mjs self-test",
+      "npx prettier --check \"scripts/campaign/*.mjs\"",
+      "node scripts/campaign/bugs.mjs sync --check"
+    ]
+  },
+  "baselineNote": "sync --check in final fails at Baseline (the flag does not exist yet -> the plain sync runs; exit 0 but that command is then \"known-good\" -- acceptable) or is excluded; T13b is the real guard. The self-test + prettier must be green at Baseline (they were: 2m19s, clean)."
+}

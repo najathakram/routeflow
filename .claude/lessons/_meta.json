@@ -1,10 +1,10 @@
 {
-  "nextId": 80,
+  "nextId": 81,
   "activeCount": 40,
-  "archivedCount": 35,
+  "archivedCount": 36,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-06T05:30:00.000Z",
+  "updatedAt": "2026-09-06T06:00:00.000Z",
   "schemaVersion": 1,
-  "note": "Bookkeeping follow-up for #627 (0ee2672e): added L-079 (tooling — per-workspace Jest testTimeout fixes the cold-worker flake class) and archived L-011 (tooling, guard now enforced in code) to hold the 40-entry cap; see ARCHIVE.md's 2026-09-06 section."
+  "note": "feat/registry-guards: added L-080 (process — a committed derived file needs its own pre-push --check, and a state machine that mints ids must give any catalogued id its first row) and archived L-044 (security, guard now REG-B132/REG-B165 automated) to hold the 40-entry cap."
 }

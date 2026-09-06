@@ -11,6 +11,20 @@
 
 ## process
 
+### L-080 · 2026-09-06 · process · registry-guards
+
+- **Symptom:** three PRs (#612/#617/#618) landed bug-ledger rows while the per-bug records still
+  said `queued`; every other worktree's Stop-hook Gate 4 then rewrote nine records on its next turn,
+  and a triage id filed without `--batch` (B213) could not be moved into a batch under its own id.
+- **Root cause:** the record front matter is a mirror DERIVED from the ledger by `sync`, yet nothing
+  refused a push whose ledger edit skipped `sync`; and `move` only knew how to re-home an existing
+  shard row, so an id with no row had to be re-filed under a new number.
+- **Lesson:** **a committed derived file needs a read-only `--check` of its own derivation that the
+  pre-push gate runs on the real tree; a state machine that mints ids must be able to give any
+  catalogued id its FIRST row, not only move an existing one.**
+- **Guard:** `sync --check` (T13/T13b) and `move --tier` (T14) in `scripts/campaign/bugs.mjs`
+  `self-test`, which `npm run verify` runs before every push.
+
 ### L-078 · 2026-09-05 · process · close-out re-check
 
 - **Symptom:** `LESSONS.md` keeps merging CLEANLY into duplicate ids — L-054 four times, then
@@ -561,21 +575,3 @@ build` forces production — so that branch was dead in every Docker image, not 
   reachable (a SKIPPED stop on a COMPLETED run), ship the refusal for it in the same PR ([[L-030]]).
 - **Guard:** `REG-B129 (T5 path: cancel → un-cancel → re-dispatch)`, `REG-B211 (T12 path:
 complete-with-skipped → reopen refused)`; mutation probes in the F11 PR body.
-
-## security
-
-### L-044 · 2026-09-02 · security
-
-- **Symptom:** four fixes in one batch were "protected" by things that had never once done
-  anything — a log-only APP_GUARD that read `req.user` before any route guard populated it (never
-  fired), and a green unit test asserting a DRIVER _may_ write a price override (it asserted the
-  bug).
-- **Root cause:** a guard that always returns `true` and a test that always passes are
-  indistinguishable from working ones; nobody had asked what would turn either red.
-- **Lesson:** **Green is a claim, not evidence. Before inverting a requirement, grep the suites
-  for a test that asserts the OLD behaviour (it passes on the bug — invert it, don't route around
-  it); before trusting a side-effect-only guard or interceptor, name the input that makes it act
-  and prove that input exists at that point in the pipeline (APP_GUARDs run before route guards,
-  so `req.user` is never set there).**
-- **Guard:** `REG-B132` (the inverted test) and `REG-B165` (`impersonation.guard.spec.ts` header
-  case with `req.user` undefined); mutation probes in the F14 PR body.

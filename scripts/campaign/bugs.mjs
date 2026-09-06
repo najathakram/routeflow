@@ -56,7 +56,8 @@
 //   node scripts/campaign/bugs.mjs list [--open] [--sensitive] [--batch F09]
 //   node scripts/campaign/bugs.mjs stats
 //   node scripts/campaign/bugs.mjs expand                      # create/refresh one record per catalogue row
-//   node scripts/campaign/bugs.mjs sync [--quiet] [--rescan]    # derive History from the ledger + an ANCHORED git scan (idempotent; Gate 4 runs this every turn)
+//   node scripts/campaign/bugs.mjs sync [--quiet] [--rescan] [--check]    # derive History from the ledger + an ANCHORED git scan (idempotent; Gate 4 runs this every turn)
+//     --check: read-only; exits 1 naming records whose front matter lags the ledger (front matter only; the commit scan is out of scope) (the pre-push self-test runs it on the real tree)
 //   node scripts/campaign/bugs.mjs show <B###>
 //   node scripts/campaign/bugs.mjs note <B###> "<text>" [--section "Root cause"]
 //   node scripts/campaign/bugs.mjs index                        # rebuild bugs.jsonl from the records (regenerate, never hand-edit)
@@ -69,7 +70,7 @@
 //   node scripts/campaign/bugs.mjs tier <B###> <T1|T2|T3> --why "<reason>"
 //   node scripts/campaign/bugs.mjs status [F##]                 # per-batch done/analysed counts
 //   node scripts/campaign/bugs.mjs triage                       # catalogue bugs with no ledger row at all
-//   node scripts/campaign/bugs.mjs move <B###> --to <F##> [--why "<reason>"]
+//   node scripts/campaign/bugs.mjs move <B###> --to <F##> [--tier T1|T2|T3] [--why "<reason>"]   (an uncampaigned id needs --tier to get its first row)
 //   node scripts/campaign/bugs.mjs enrich                       # pull the register's detail blocks + files into every record (owner-machine only)
 //   node scripts/campaign/bugs.mjs deps [--bug B###] [--hub-threshold N] [--all]
 //   node scripts/campaign/bugs.mjs render [--open]              # regenerate the derived HTML view
@@ -1463,10 +1464,55 @@ const isCommit = (sha) => {
 // move on their own — the proof ledger and git — and appends any the record has
 // not recorded yet. Idempotent, so it is safe to run from a hook every turn.
 cmds.sync = (args) => {
+  // Unknown flags used to fall through silently to the writing path below
+  // (`sync --check` typo'd as `--chek` ran a full sync and exited 0) — now a
+  // load-bearing hazard for `--check`, which is the pre-push gate: refuse
+  // before any read rather than let a typo masquerade as a clean guard.
+  const known = new Set(["--quiet", "--rescan", "--check"]);
+  const unknown = args.filter((a) => a.startsWith("--") && !known.has(a));
+  if (unknown.length)
+    fail(
+      `sync: unknown flag(s) ${unknown.join(", ")} — usage: sync [--quiet] [--rescan] [--check]`,
+    );
+
   const catalogue = readCatalogue();
   const state = readState();
   const quiet = args.includes("--quiet");
+  const check = args.includes("--check");
   const events = [];
+
+  // Read-only mirror guard (R9): derive the same front matter the write path
+  // below derives for every record — but never write it, and never touch the
+  // commit scan or the sync anchor (commitMentions' first-run/re-anchor branch
+  // persists the anchor itself, which a "read-only" check must not trigger
+  // either). Any record whose derived front matter disagrees with what is on
+  // disk means a ledger edit landed without a `sync` to reconcile it — the
+  // pre-push self-test runs this against the real tree so that can never reach
+  // master silently (L-067's read-back discipline, applied to the whole
+  // registry rather than one write).
+  if (check) {
+    const stale = [];
+    let seen = 0;
+    for (const bug of catalogue) {
+      const rec = readRecord(bug.id);
+      if (!rec) continue;
+      seen++;
+      const st = state.get(bug.id);
+      const nextFront = { ...rec.front, ...frontFor(bug, st) };
+      // Compare the RENDERED text, not the raw objects: `rec.front` came from
+      // parsing front-matter text, so every value on it is a string (or null),
+      // while `frontFor` returns typed values (`sensitive` is a real boolean).
+      // A raw JSON.stringify comparison flags that type difference as drift on
+      // every record, always — `renderFront` is the same serialisation the
+      // write path uses, so this asks the only question that matters: would a
+      // real `sync` change what is on disk.
+      if (renderFront(nextFront) !== renderFront(rec.front)) stale.push(bug.id);
+    }
+    if (stale.length)
+      fail(`sync --check: ${stale.length} record(s) out of date — run sync: ${stale.join(", ")}`);
+    console.log(`sync --check: ${seen} record(s) mirror the ledger`);
+    return;
+  }
 
   const { mentions, head, note, unscanned } = commitMentions(state, args);
   if (note) {
@@ -2803,6 +2849,14 @@ const runCli = (argv, root) => {
         // upsertLedgerRowLocked; production runs never carry it.
         env: { ...process.env, BUGS_ROOT: root, BUGS_SELF_TEST: "1" },
         stdio: ["ignore", "pipe", "pipe"],
+        // A real-tree run (`root` undefined — T13b, the pre-push guard) must
+        // not depend on the INVOKER's cwd: `rootDir()` resolves `.claude/campaign`
+        // relative to `process.cwd()`, so a caller running from any other
+        // directory (`apps/api`, say) silently sees an empty catalogue and
+        // `--check` reports clean having examined zero real records. A fixture
+        // run (`root` given) keeps the inherited cwd — irrelevant there since
+        // BUGS_ROOT already points every path helper at the tmp fixture.
+        ...(root === undefined ? { cwd: REPO_ROOT } : {}),
       }),
     };
   } catch (e) {
@@ -6826,6 +6880,335 @@ cmds["self-test"] = () => {
     rmSync(tmp, { recursive: true, force: true });
   }
 
+  // T13/R9 — `sync --check` must be a READ-ONLY mirror guard: it reports
+  // whether every record's front matter mirrors its ledger row, but a `--check`
+  // run must never itself write a record, and it must never report clean when
+  // a shard state has drifted out from under its record without a real `sync`
+  // to reconcile it. Driven entirely through the real CLI (`runCli`) so a
+  // refusal-shaped exit is observed rather than short-circuited by an
+  // in-process call.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    try {
+      runCli(
+        [
+          "file",
+          "Fixture",
+          "--location",
+          "apps/api/src/x.ts",
+          "--severity",
+          "high",
+          "--batch",
+          "F05",
+          "--tier",
+          "T1",
+        ],
+        tmp,
+      ); // B1
+      runCli(
+        [
+          "file",
+          "Fixture",
+          "--location",
+          "apps/api/src/x.ts",
+          "--severity",
+          "high",
+          "--batch",
+          "F05",
+          "--tier",
+          "T1",
+        ],
+        tmp,
+      ); // B2
+      runCli(["sync", "--quiet"], tmp);
+
+      // `code` alone cannot discriminate here: an unrecognised `--check` falls
+      // through to a plain `sync`, which also exits 0. `ranASync` is therefore
+      // asserted FALSE — a real read-only check must not print the writer's
+      // "recorded N new event(s)" line — so this can only go green once
+      // `--check` is a mode of its own.
+      const clean = runCli(["sync", "--check"], tmp);
+      check(
+        "T13/R9: sync --check exits 0 and reports the records mirror the ledger",
+        {
+          code: clean.code,
+          mirrors: /\d+ record\(s\) mirror the ledger/.test(clean.out),
+          ranASync: /recorded \d+ new event/.test(clean.out),
+        },
+        { code: 0, mirrors: true, ranASync: false },
+      );
+
+      // Drift B1's shard state WITHOUT running a real sync to reconcile it —
+      // exactly the state a ledger edit committed without `sync` leaves behind.
+      const f05Path = join(tmp, "status", "F05.jsonl");
+      const drifted = readFileSync(f05Path, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => {
+          const row = JSON.parse(l);
+          if (row.id === "B1") row.state = "done";
+          return JSON.stringify(row);
+        });
+      writeFileSync(f05Path, drifted.join("\n") + "\n");
+
+      const b1Path = join(tmp, "bugs", "B1.md");
+      const beforeCheck = readFileSync(b1Path, "utf8");
+      const anchorPath = join(tmp, "sync-state.json");
+      // A clock-independent read-only oracle. Comparing the anchor's bytes
+      // alone leans on `at` differing between two runs, so two syncs landing
+      // in the same millisecond would look untouched. `writeSyncState` rewrites
+      // the file WHOLESALE as `{ lastSha, at }`, so a sentinel key planted here
+      // cannot survive any write, whatever the clock says.
+      if (existsSync(anchorPath)) {
+        const anchor = JSON.parse(readFileSync(anchorPath, "utf8"));
+        anchor.selfTestSentinel = "T13-read-only-probe";
+        writeFileSync(anchorPath, JSON.stringify(anchor, null, 2) + "\n");
+      }
+      const readAnchor = () => (existsSync(anchorPath) ? readFileSync(anchorPath, "utf8") : null);
+      const anchorBeforeCheck = readAnchor();
+
+      const dirty = runCli(["sync", "--check"], tmp);
+      check("T13/R9: sync --check exits 1 when a shard state has drifted", dirty.code, 1);
+      // The drifted id is asserted together with the count and with the
+      // absence of the writer's line: on its own, `out.includes("B1")` is
+      // already true today because the plain `sync` that runs instead prints
+      // B1 while RECONCILING it.
+      check(
+        "T13/R9: sync --check reports the out-of-date count and names the drifted id",
+        {
+          count: dirty.out.includes("1 record(s) out of date"),
+          named: /\bB1\b/.test(dirty.out),
+          ranASync: /recorded \d+ new event/.test(dirty.out),
+        },
+        { count: true, named: true, ranASync: false },
+      );
+      check(
+        "T13/R9: sync --check does NOT write the record it found out of date",
+        readFileSync(b1Path, "utf8"),
+        beforeCheck,
+      );
+      check("T13/R9: sync --check does not touch the sync anchor", readAnchor(), anchorBeforeCheck);
+
+      runCli(["sync", "--quiet"], tmp);
+      const reconciled = runCli(["sync", "--check"], tmp);
+      check(
+        "T13/R9: after a real sync reconciles the drift, --check is clean again",
+        {
+          code: reconciled.code,
+          mirrors: /\d+ record\(s\) mirror the ledger/.test(reconciled.out),
+        },
+        { code: 0, mirrors: true },
+      );
+
+      // A typo'd flag (`--chek`) used to fall through unrecognised to the
+      // WRITING sync path and exit 0 — the wrong default for what is now a
+      // pre-push gate. It must be refused outright, before any read.
+      const typoed = runCli(["sync", "--chek"], tmp);
+      check(
+        "T13/R9: an unrecognised sync flag is refused, not silently treated as a write",
+        {
+          code: typoed.code,
+          ranASync: /recorded \d+ new event/.test(typoed.out),
+          named: typoed.out.includes("unknown flag"),
+        },
+        { code: 1, ranASync: false, named: true },
+      );
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // T13b/R9 — the pre-push guard: `sync --check` against the REAL repository
+  // tree (no BUGS_ROOT override, cwd = REPO_ROOT) must exit clean, having
+  // actually examined the real records, when the committed records already
+  // mirror the ledger. Before the implementation, `--check` is not
+  // recognised and a plain `sync` runs instead, which prints "recorded N new
+  // event(s)." rather than the check's own message. `--check` returns before
+  // `commitMentions` (never reaching the anchor's first-run/re-anchor
+  // branch), so this run touches no machine-local state and needs no
+  // snapshot/restore around it.
+  {
+    const real = runCli(["sync", "--check"], undefined);
+    check(
+      "T13b/R9: sync --check against the real tree is clean and read-only",
+      {
+        code: real.code,
+        mirrors: /\d+ record\(s\) mirror the ledger/.test(real.out),
+        // The vacuity this closes: `runCli` used to pass no `cwd`, so
+        // invoking this from any directory other than the repo root (e.g.
+        // `apps/api`) resolved the catalogue path against the wrong
+        // directory, saw an EMPTY catalogue, and printed the mirror-clean
+        // line having examined zero real records — a permanent green no-op.
+        // Parsing the examined count out of the message and requiring >= 1
+        // is the only assertion here that can catch that regression.
+        examined: Number((real.out.match(/(\d+) record\(s\) mirror/) || [])[1]) >= 1,
+        ranASync: /recorded \d+ new event/.test(real.out),
+      },
+      { code: 0, mirrors: true, examined: true, ranASync: false },
+    );
+  }
+
+  // T14/R10 — `move` gains a first-time TRIAGE path for a bug filed with no
+  // `--batch` (no ledger row at all yet): it must require `--tier` (a ledger
+  // tier is a ruling, not a default — the same rule `file --batch` already
+  // enforces), create the row as a genuinely NEW one, and log the triage as a
+  // History event — while the EXISTING re-home path (a bug that already has a
+  // ledger row) keeps working without `--tier`.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    try {
+      runCli(
+        ["file", "Triage fixture", "--location", "apps/api/src/x.ts", "--severity", "high"],
+        tmp,
+      ); // B1, no --batch
+
+      // A FIXTURE PRECONDITION, not a scored check — `file` without `--batch`
+      // already leaves a bug uncampaigned today, and the red-gate contract bars
+      // asserting what is already true. It throws instead, so a broken fixture
+      // is loud without counting as a green new check.
+      const fresh = runCli(["show", "B1"], tmp);
+      if (!fresh.out.includes("state: uncampaigned"))
+        throw new Error("T14 fixture precondition broken: fresh bug is not uncampaigned");
+
+      // `code` 1 alone proves nothing: today `move B1 --to F05` already exits 1
+      // with "B1 is in no ledger shard — nothing to move", a refusal that has
+      // nothing to do with `--tier`. The old message is asserted ABSENT so the
+      // dead-end cannot masquerade as the new guard.
+      const noTier = runCli(["move", "B1", "--to", "F05"], tmp);
+      check(
+        "T14/R10: triage-move without --tier is refused because --tier is required",
+        {
+          code: noTier.code,
+          tier: noTier.out.includes("--tier is required"),
+          oldMsg: noTier.out.includes("no ledger shard"),
+        },
+        { code: 1, tier: true, oldMsg: false },
+      );
+
+      const triaged = runCli(
+        ["move", "B1", "--to", "F05", "--tier", "T1", "--why", "triage reason"],
+        tmp,
+      );
+      check("T14/R10: triage-move with --tier succeeds", triaged.code, 0);
+      check(
+        "T14/R10: triage-move reports it created the first ledger row",
+        triaged.out.includes("first ledger row"),
+        true,
+      );
+
+      const f05Path = join(tmp, "status", "F05.jsonl");
+      const f05Exists = existsSync(f05Path);
+      check("T14/R10: F05.jsonl exists after the triage-move", f05Exists, true);
+      const f05Lines = f05Exists ? readFileSync(f05Path, "utf8").split("\n").filter(Boolean) : [];
+      check("T14/R10: F05.jsonl holds exactly one row after the triage-move", f05Lines.length, 1);
+      const f05Row = f05Lines.length === 1 ? JSON.parse(f05Lines[0]) : null;
+      check(
+        "T14/R10: the triage-move's ledger row carries id/batch/tier/state",
+        f05Row && { id: f05Row.id, batch: f05Row.batch, tier: f05Row.tier, state: f05Row.state },
+        { id: "B1", batch: "F05", tier: "T1", state: "queued" },
+      );
+
+      const afterTriage = runCli(["show", "B1"], tmp);
+      check(
+        "T14/R10: show B1 reflects the new batch",
+        afterTriage.out.includes("batch: F05"),
+        true,
+      );
+      check("T14/R10: show B1 reflects the new tier", afterTriage.out.includes("tier: T1"), true);
+      check(
+        "T14/R10: show B1 reflects the new state",
+        afterTriage.out.includes("state: queued"),
+        true,
+      );
+      check(
+        "T14/R10: show B1's History carries a line naming the triage as batched into F05",
+        afterTriage.out.split("\n").some((l) => l.includes("batched") && l.includes("F05")),
+        true,
+      );
+      check(
+        "T14/R10: show B1's History records the triage's --why reason",
+        afterTriage.out
+          .split("\n")
+          .some((l) => l.includes("batched") && l.includes("triage reason")),
+        true,
+      );
+
+      // The catalogue write (`cat.batch = to`) is otherwise untested: `show`
+      // renders the record (whose batch comes from the ledger row via
+      // `frontFor`) and `batchIndex` keys off the shards, not the catalogue —
+      // `list --batch` is the ONE reader keyed off the catalogue's own copy.
+      const listF05 = runCli(["list", "--batch", "F05"], tmp);
+      check(
+        "T14/R10: list --batch F05 shows the triaged bug (catalogue.batch was updated)",
+        /\bB1\b/.test(listF05.out),
+        true,
+      );
+
+      // The re-home path is pre-existing behavior, so it needs an oracle of its
+      // own rather than riding on the triage row: `--tier` must NOT be demanded
+      // of a bug that already has a ledger row.
+      const rehomed = runCli(["move", "B1", "--to", "F06"], tmp);
+      check(
+        "T14/R10: an existing ledger row can still be re-homed without --tier",
+        { code: rehomed.code, tierDemanded: rehomed.out.includes("--tier is required") },
+        { code: 0, tierDemanded: false },
+      );
+      const f05After = existsSync(f05Path)
+        ? readFileSync(f05Path, "utf8")
+            .split("\n")
+            .filter(Boolean)
+            .map((l) => JSON.parse(l))
+        : [];
+      // The shard's continued EXISTENCE is asserted alongside the absence:
+      // `move` rewrites the source shard with its remaining rows (an empty file
+      // when none are left), so "F05.jsonl was never created" must not be able
+      // to satisfy "F05 no longer holds B1".
+      check(
+        "T14/R10: F05's shard survives the re-home and no longer holds B1",
+        { exists: existsSync(f05Path), holdsB1: f05After.some((r) => r.id === "B1") },
+        { exists: true, holdsB1: false },
+      );
+      const f06Path = join(tmp, "status", "F06.jsonl");
+      const f06Rows = existsSync(f06Path)
+        ? readFileSync(f06Path, "utf8")
+            .split("\n")
+            .filter(Boolean)
+            .map((l) => JSON.parse(l))
+        : [];
+      check(
+        "T14/R10: F06's shard holds B1 after the re-home",
+        f06Rows.some((r) => r.id === "B1"),
+        true,
+      );
+      const listF06AfterRehome = runCli(["list", "--batch", "F06"], tmp);
+      const listF05AfterRehome = runCli(["list", "--batch", "F05"], tmp);
+      check(
+        "T14/R10: list --batch reflects the re-home's catalogue update too",
+        {
+          f06HasB1: /\bB1\b/.test(listF06AfterRehome.out),
+          f05HasB1: /\bB1\b/.test(listF05AfterRehome.out),
+        },
+        { f06HasB1: true, f05HasB1: false },
+      );
+
+      // Same discrimination problem as the --tier refusal: today an unknown id
+      // exits 1 with the very same "is in no ledger shard" message an existing
+      // but unbatched bug gets, so the old message is asserted absent.
+      const unknown = runCli(["move", "B9", "--to", "F05", "--tier", "T1"], tmp);
+      check(
+        "T14/R10: triage-move on an id outside the catalogue is refused as an unknown id",
+        {
+          code: unknown.code,
+          unknown: unknown.out.includes("unknown id"),
+          oldMsg: unknown.out.includes("no ledger shard"),
+        },
+        { code: 1, unknown: true, oldMsg: false },
+      );
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
   console.log(failures ? `\nself-test: ${failures} FAILURE(S)` : "\nself-test: all checks passed");
   if (failures) process.exit(1);
 };
@@ -6838,12 +7221,97 @@ cmds["self-test"] = () => {
 cmds.move = (args) => {
   const typed = (args[0] ?? "").toUpperCase();
   const why = flag(args, "why");
-  if (!BUG_ID_RE.test(typed)) fail('usage: move <B###> --to <F##> [--why "<reason>"]');
+  if (!BUG_ID_RE.test(typed))
+    fail('usage: move <B###> --to <F##> [--tier T1|T2|T3] [--why "<reason>"]');
   const id = resolveId(typed);
   const to = normBatch(flag(args, "to"));
 
   const from = findShardOf(id);
-  if (!from) fail(`${id} is in no ledger shard — nothing to move`);
+  if (!from) {
+    // TRIAGE PATH (R10): this id has never had a ledger row anywhere — filed
+    // without `--batch` (or, in principle, dropped from its last shard with no
+    // replacement). Mirror `file --batch`'s own rule rather than default one:
+    // a ledger tier is a ruling, not a default, so this refuses just as `file`
+    // does when the id is otherwise real. An id absent from the catalogue
+    // entirely is a different failure (there is nothing here to triage) and is
+    // checked first so it can never be masked by the --tier message.
+    const catalogue = readCatalogue();
+    const bug = catalogue.find((r) => r.id === id);
+    if (!bug) fail(`${id}: unknown id`);
+    const tierArg = flag(args, "tier");
+    if (!tierArg) fail(`${id} has no ledger row yet — --tier is required to create it`);
+    const tier = tierArg.toUpperCase();
+    if (!/^T[123]$/.test(tier)) fail("--tier must be one of T1|T2|T3");
+
+    // Same lock order as `file`: catalogue outermost, with `upsertLedgerRow`
+    // taking the shard lock internally — the static lock-order self-test
+    // parses this file's own source for exactly that nesting.
+    withCatalogueLock(() => {
+      const row = {
+        id,
+        batch: to,
+        tier,
+        state: "queued",
+        pr: null,
+        proof: null,
+        evidence: null,
+      };
+      // mustBeNew: `findShardOf` just confirmed this id has no row anywhere. A
+      // row appearing between that check and this write means another process
+      // triaged it first — refuse loudly rather than silently merge into it.
+      const { row: landed } = upsertLedgerRow(to, row, { mustBeNew: true });
+      if (landed?.batch !== to || landed?.tier !== tier || landed?.state !== "queued")
+        fail(
+          `ledger write for ${id} did not land as intended — re-read row is ${JSON.stringify(landed)}`,
+        );
+
+      // Snapshot BEFORE the catalogue write, same shape as `file`'s catch
+      // (bugs.mjs:440-466): anything below that throws restores the catalogue
+      // to this pre-write state rather than leave a dangling row with a
+      // ledger entry and no matching catalogue/record.
+      const before = readCatalogue();
+      try {
+        const rows = readCatalogue();
+        const cat = rows.find((r) => r.id === id);
+        if (cat) {
+          cat.batch = to;
+          writeCatalogue(rows);
+        }
+
+        const rec = readRecord(id);
+        if (rec) {
+          // Same key/text `expand` uses when it first bakes a ledger row's batch
+          // into a freshly created record, so a triaged id's History reads no
+          // differently than one that had a batch from the moment it was filed.
+          const body = appendEvent(
+            rec.body,
+            `batch-${to}`,
+            "batched",
+            `assigned to ${to}${why ? ` — ${why}` : ""}`,
+          );
+          writeRecord(id, { ...rec.front, ...frontFor(bug, landed) }, body);
+        }
+
+        // Read back and assert (L-067): a write that silently failed to land
+        // must not be reported as having succeeded.
+        if (!readShard(to).rows.some((r) => r.id === id))
+          fail(`${id} is missing from ${to}.jsonl after the triage-move`);
+      } catch (e) {
+        writeCatalogue(before);
+        // The ledger row this call just ADDED (mustBeNew:true guarantees it
+        // was an add, never an update) is not this catch's to leave behind —
+        // left in place, it is an orphan with no catalogue row and no
+        // record, and no gate or command can see it.
+        dropLedgerRow(to, id);
+        fail(
+          `move: ${id} failed after the ledger write (${e.message}) — catalogue and ledger restored to their pre-write state`,
+        );
+      }
+
+      console.log(`move: ${id} -> ${to} (first ledger row, tier ${tier})${why ? ` (${why})` : ""}`);
+    });
+    return;
+  }
   if (from === to) fail(`${id} is already in ${to}`);
 
   // The catalogue lock is OUTERMOST, exactly like `file`'s — `move` is a

@@ -122,7 +122,7 @@ describe("AddonGuard", () => {
     await expect(guard.canActivate(contextFor(undefined))).resolves.toBe(true);
   });
 
-  describe("REG-OCR-1 registry-driven observe-first mode", () => {
+  describe("REG-OCR-1 / REG-B213 registry-driven observe-first mode", () => {
     let warnSpy: jest.SpyInstance;
 
     afterEach(() => {

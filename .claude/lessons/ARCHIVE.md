@@ -171,6 +171,24 @@
   verification.**
 - **Guard:** non-httpOnly requirement documented at the cookie's writers/readers.
 
+> archived 2026-09-06 for headroom — guard automated (registry-guards, making room for L-080).
+
+### L-044 · 2026-09-02 · security
+
+- **Symptom:** four fixes in one batch were "protected" by things that had never once done
+  anything — a log-only APP_GUARD that read `req.user` before any route guard populated it (never
+  fired), and a green unit test asserting a DRIVER _may_ write a price override (it asserted the
+  bug).
+- **Root cause:** a guard that always returns `true` and a test that always passes are
+  indistinguishable from working ones; nobody had asked what would turn either red.
+- **Lesson:** **Green is a claim, not evidence. Before inverting a requirement, grep the suites
+  for a test that asserts the OLD behaviour (it passes on the bug — invert it, don't route around
+  it); before trusting a side-effect-only guard or interceptor, name the input that makes it act
+  and prove that input exists at that point in the pipeline (APP_GUARDs run before route guards,
+  so `req.user` is never set there).**
+- **Guard:** `REG-B132` (the inverted test) and `REG-B165` (`impersonation.guard.spec.ts` header
+  case with `req.user` undefined); mutation probes in the F14 PR body.
+
 ## Archived 2026-09-04 — compaction before PR-4 + B′ landing
 
 > Register hit its cap (40/40 entries, 40,917/40,960 B). Compacted to restore headroom before the
