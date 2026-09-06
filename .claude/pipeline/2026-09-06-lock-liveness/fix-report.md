@@ -328,4 +328,5 @@ Exit 0.
 ## Commit
 
 Subject: `fix(campaign): pid-reuse self-test forges bootAt off the real boot` (66 chars).
-Sha: appended below after commit.
+Sha: `1245bb07d74ecd9446c0677871de25669c7cdf2b` (11 files changed, 1212 insertions(+), 48
+deletions(-); `git status --porcelain` clean after commit). Not pushed, per instructions.
