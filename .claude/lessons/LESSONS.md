@@ -125,6 +125,25 @@
 
 ## tooling
 
+### L-079 · 2026-09-06 · tooling · #627 `chore/ci-private-minutes`
+
+- **Symptom:** three unrelated api specs refused pre-push verifies on 2026-09-05/06 with
+  "Exceeded timeout of 5000 ms" (upload-routes.security, visibility-watchdog-script,
+  import-customer-cap) — each green standalone (import-customer-cap: 4/4 in 49 s cold, 6.7 s
+  warm); two Run B pushes and one CI-branch push lost ~35 min.
+- **Root cause:** Jest's default `testTimeout` of 5 s was never set for the api workspace; a cold
+  ts-jest worker charges module/Nest-testing-module init to the first test, and beside a parallel
+  verify, an engine run, or a Docker build that first test exceeds 5 s. Per-spec budgets fixed one
+  site at a time (whack-a-mole).
+- **Lesson:** **a flake class needs a class-level fix — set the per-workspace Jest `testTimeout`
+  (≥ 30 s; the `.db.spec` lane already ran at 30 s) instead of hardening specs one by one; keep
+  explicit larger budgets only where a test legitimately does long I/O (multipart round-trips
+  60 s).**
+- **Guard:** `apps/api/package.json` jest `testTimeout: 30000` (#627, master `0ee2672e`);
+  watchdog spec's "rejects promptly" bound 15 s; `upload-routes.security.spec.ts` 60 s.
+  Regression signal: any "Exceeded timeout of 5000 ms" in an api spec again means the config was
+  dropped.
+
 ### L-074 · 2026-09-05 · tooling
 
 - **Symptom:** a prod-capable seed run through `railway run --service postgres` wrote to the LOCAL
@@ -203,16 +222,6 @@
 - **Lesson:** **A bare non-zero task exit with no test report is environmental — re-run that
   workspace directly before debugging; CI on clean runners is the authoritative gate.**
 - **Guard:** none — judgment (triage: direct `npx jest`, then filtered turbo).
-
-### L-011 · 2026-08-25 · tooling
-
-- **Symptom:** phantom `X does not exist in type` errors on correct code; pre-push blocked.
-- **Root cause:** the generated Prisma client was stale after pulling a schema change — and
-  `npx prisma generate` writes to the **shared root** `node_modules`, so parallel worktrees
-  clobber each other's client.
-- **Lesson:** **Regenerate the Prisma client after any pull/checkout/rebase across a schema
-  change, and expect all worktrees to share one generated client.**
-- **Guard:** none — judgment.
 
 ### L-055 · 2026-09-03 · tooling · wave D imp-05
 
@@ -498,7 +507,9 @@ build` forces production — so that branch was dead in every Docker image, not 
 - **Lesson:** **A calendar date is a string, not an instant: store it as UTC midnight, render and
   edit it only through the shared calendar-date helper (web/mobile mirrors), and evaluate day
   boundaries in the TENANT's timezone through the one api helper — never `setHours`, local
-  getters or `toLocaleDateString` on a date-only field.**
+  getters or `toLocaleDateString` on a date-only field. A device sentinel (iOS `-1` for unknown
+  heading/speed) never reaches a bounded DTO unmapped — map it to null at the client seam and
+  mirror every server bound there, or one unknown field 400s the whole payload.**
   A test for any of this must take the zone as DATA: under `TZ=UTC` — CI and the API image —
   host-local and UTC components are identical, so a host-clock oracle is green on the buggy
   body, and an in-file `process.env.TZ` pin is inert under jest (the sandbox gets a copy of

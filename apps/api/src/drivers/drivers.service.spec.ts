@@ -260,6 +260,55 @@ describe("DriversService", () => {
     });
   });
 
+  // ─── recordLocation ───────────────────────────────────────────────────────
+
+  describe("recordLocation", () => {
+    // A stationary/indoor ping: the mobile tracker maps the platform's -1 sentinels
+    // to null before POSTing (B185), so heading/speedKph arrive absent-but-present.
+    const baseDto = {
+      lat: 34.05,
+      lng: -118.24,
+      recordedAt: "2026-09-04T00:00:00.000Z",
+      heading: null,
+      speedKph: null,
+    } as any;
+
+    beforeEach(() => {
+      prisma.driver.findFirst.mockResolvedValue({ id: "driver-1", tenantId: "tenant-1" } as any);
+      prisma.driverLocation.create.mockResolvedValue({} as any);
+    });
+
+    it("persists accuracy on the created DriverLocation row when the ping carries it", async () => {
+      const result = await service.recordLocation("user-drv", { ...baseDto, accuracy: 4.5 });
+
+      expect(result).toEqual({ ok: true });
+      expect(prisma.driverLocation.create).toHaveBeenCalledTimes(1);
+      const data = prisma.driverLocation.create.mock.calls[0][0].data;
+      expect(data.accuracy).toBe(4.5);
+      expect(data.driverId).toBe("driver-1");
+      expect(data.runId).toBeNull();
+      expect(data.recordedAt).toEqual(new Date(baseDto.recordedAt));
+    });
+
+    it("writes no accuracy when the ping does not carry one", async () => {
+      await service.recordLocation("user-drv", { ...baseDto });
+
+      expect(prisma.driverLocation.create).toHaveBeenCalledTimes(1);
+      const data = prisma.driverLocation.create.mock.calls[0][0].data;
+      expect(data.accuracy).toBeUndefined();
+    });
+
+    it("throws NotFoundException and writes nothing when the user has no driver profile", async () => {
+      prisma.driver.findFirst.mockResolvedValue(null);
+
+      await expect(service.recordLocation("user-nobody", { ...baseDto })).rejects.toThrow(
+        NotFoundException,
+      );
+
+      expect(prisma.driverLocation.create).not.toHaveBeenCalled();
+    });
+  });
+
   // ─── remove ───────────────────────────────────────────────────────────────
 
   describe("remove", () => {

@@ -3,6 +3,26 @@
 Written at launch, before the engine runs. The resume key is `{scriptPath, resumeFromRunId, args}` and
 **args are NOT stored by the tool** — that is why `pipeline-args.json` sits beside this file.
 
+## Status (re-anchored 2026-09-05)
+
+- **Branch:** `fix/F25-location-b185`, checked out from `origin/master`.
+- **Base sha:** `8f136b9a9e7760a816127490ac83682f75c4a2ff` (#618, "discharge f13 and f25 — 6 rows done;
+  recount banner"), which carries `1f6483ec` (#617, the F25 calendar-correctness fix) as an ancestor.
+- **Ready to launch after the calendar batch shipped as #617.** Run A's close-out landed on master:
+  `.claude/campaign/status/F25.jsonl` already carries B59/B90/B91/B118 (B90/B118 `done`; B59/B91
+  `proven-pending-deploy` — pending rows are an E2E-serialization artifact unrelated to B185, not a
+  blocker for this run), and `.claude/lessons/LESSONS.md` already has `L-047`. The sequencing rule
+  below and WP-DOCS-LOC's precondition are both satisfied.
+- Baseline re-verified clean on this base: `prisma generate`, `apps/api` tsc (`tsconfig.build.json`),
+  `apps/mobile` tsc, `apps/mobile` full jest (109 suites / 1383 tests), `apps/api` `src/drivers` jest
+  (16/16) — all exit 0.
+- `pipeline-args.json` / `build-plan.md`'s embedded args block had an invalid `dependsOn: ['TP-LOC']`
+  on both `WP-MOB-LOC` and `WP-API-LOC` (a work package naming a test package — dropped silently by
+  the engine's separate TP/WP namespaces, per `RUN-LOG.md`'s prior WP-WEB→TP-WEB/WP-MOB→TP-MOB note).
+  Removed on both; test-first ordering is still guaranteed by phase order alone. All three ruling/
+  build-plan line anchors (`location-tracker.native.ts:32-39`/`:78-85`, `post-location.dto.ts:20`/`:27`,
+  `drivers.service.ts:105-116`) were checked against the current tree and are unchanged — no drift.
+
 ## What this run is
 
 Run B of the F25 batch (bug-pipeline, `mode: 'bugfix'`, `scale: 'small'`) — B185: iOS reports `heading`/
@@ -62,17 +82,19 @@ it in this same worktree, it should still be present — just re-verify the vers
 
 ## Setup to verify in this worktree before launch — do not redo blindly
 
-- Worktree HEAD at launch time: `f60bd27c893bc0b1058d6dcdfff8180cdd92b42d` — matches the sha
-  `cause-brief.md`/`refutation.md` pinned; re-verify with `git rev-parse HEAD` and re-read both evidence
-  files if it has moved. **If Run A has landed by the time this launches, HEAD will have moved past this
-  sha — that is expected and fine; re-confirm the B185-specific lines (`location-tracker.native.ts:32-39`/
-  `:74-85`, `post-location.dto.ts` full 44-line file, `drivers.service.ts:93-116`) are still unchanged at
-  the new HEAD before trusting this ruling's line citations verbatim.**
-- Confirm Run A's `WP-DOCS` has actually landed (check `.claude/campaign/status/F25.jsonl` for `B59`/`B90`/
-  `B91`/`B118` rows already updated, and `.claude/lessons/LESSONS.md` for `L-047` already present) before
-  launching this run's engine.
-- This worktree's own `npm ci` / `npx prisma generate` status was NOT re-verified this pass (read-only
-  transcription task, no installs run) — confirm both before the engine's first `tsc`/`jest` round.
+- **Superseded 2026-09-05:** original HEAD at launch-planning time was `f60bd27c893bc0b1058d6dcdfff8180cdd92b42d`
+  (pre-#617). The worktree has since been re-anchored to a fresh branch, `fix/F25-location-b185`, cut from
+  `origin/master` at `8f136b9a9e7760a816127490ac83682f75c4a2ff` (post-#617/#618). Re-verified at that sha:
+  `location-tracker.native.ts:32-39`/`:78-85` (payload construction, unchanged from the citations above —
+  note the corrected `:78-85` vs. this card's earlier `:74-85` typo), `post-location.dto.ts:20`/`:27`
+  (`@Min(0)`), `drivers.service.ts:105-116` (`recordLocation`'s `create()` call) — all still line-for-line
+  as `cause-ruling.md`/`build-plan.md` describe. Re-verify again with `git rev-parse HEAD` if it moves further.
+- Run A's `WP-DOCS` is confirmed landed: `.claude/campaign/status/F25.jsonl` carries `B59`/`B90`/`B91`/`B118`
+  (rows discussed in the Status section above), and `.claude/lessons/LESSONS.md` has `L-047`.
+- This worktree's `npx prisma generate` was re-run clean on the new base (2026-09-05). `apps/api` and
+  `apps/mobile` tsc, `apps/mobile` full jest, and `apps/api src/drivers` jest were also re-run clean —
+  see the Status section. `npm ci` itself was not re-run this pass; run it first if `node_modules` looks
+  stale before trusting these results blindly.
 
 ## On resume
 
@@ -114,4 +136,10 @@ Trust the resumed run's own `phaseReport`. Do NOT reconstruct progress from WIP 
   bumps `.claude/lessons/_meta.json.updatedAt` only.
 - PR body must state the deploy-ordering constraint (API merges/deploys before any mobile OTA) as a release
   note, not just a code comment — this is an operational hazard, not only a documentation nicety.
+- PR body must ALSO state the **directional rollback** rule (same hazard, reverse direction): the API's
+  optional `accuracy` DTO field is additive and must NOT be reverted while any shipped mobile build sends
+  it — `forbidNonWhitelisted: true` (`apps/api/src/main.ts`) would then reject 100% of pings on both
+  platforms and the tracker's empty catch would swallow every one, strictly worse than B185. Roll back
+  mobile first (revert the seam / ship an OTA without `accuracy`), then optionally the API; or leave the DTO
+  field in place and revert only the mobile side. No schema/migration is involved either way.
 - No data repair owed (§6: rejected pings were never stored).
