@@ -19,6 +19,7 @@ import {
 } from "@routeflow/pricing";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { CONFIRMED_PAYMENT, sumConfirmed } from "./payment-predicates";
+import { PAYABLE } from "./invoice-status-sets";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { loadMsrpMap } from "../common/msrp";
@@ -4510,12 +4511,7 @@ export class InvoicesService {
     // Payable statuses — exclude terminal VOID/WRITTEN_OFF: a written-off bad debt
     // must not swallow the cash (recomputeStatus can't advance it), which would also
     // starve a live sibling since we apply oldest-first.
-    const PAYABLE = [
-      InvoiceStatus.DRAFT,
-      InvoiceStatus.SENT,
-      InvoiceStatus.PARTIAL,
-      InvoiceStatus.OVERDUE,
-    ];
+    // (shared with credit-notes.service.ts via invoice-status-sets.ts, F09/R3a)
 
     // Only orders actually delivered in THIS completion may be rebuilt on the
     // delivered basis. Default to all orderIds for callers that don't distinguish

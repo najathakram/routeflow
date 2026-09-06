@@ -493,5 +493,20 @@ export default defineConfig({
         timezoneId: "America/Los_Angeles",
       },
     },
+
+    // ── Credit-note wallet UI (F09, spec 28) ───────────────────────────────────
+    // REG-B19 / REG-B18: invoice number over raw UUID on the credit-notes list
+    // and detail pages, and no "Issue Credit Note" affordance. Fully mocked —
+    // no writes to any tenant. Uses operator auth state.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "credit-note-wallet",
+      testMatch: /28-credit-note-wallet\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
   ],
 });

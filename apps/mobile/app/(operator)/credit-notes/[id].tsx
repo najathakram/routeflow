@@ -16,7 +16,6 @@ import { NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import {
   useApplyCreditNote,
   useCreditNote,
-  useIssueCreditNote,
   useOpenInvoicesForCustomer,
   useVoidCreditNote,
 } from "../../../lib/api/credit-notes";
@@ -44,7 +43,6 @@ export default function CreditNoteDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
 
   const { data: cn, isLoading, refetch } = useCreditNote(id ?? "");
-  const issueMut = useIssueCreditNote();
   const applyMut = useApplyCreditNote();
   const voidMut = useVoidCreditNote();
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -76,17 +74,6 @@ export default function CreditNoteDetailScreen() {
   // Apply is gated on the FULL open predicate, not status alone — an expired
   // or fully-consumed ISSUED note would just 400 on apply.
   const canApply = flags.canApply && isCreditOpenForApply(cn, new Date());
-
-  const handleIssue = () => {
-    if (!id) return;
-    issueMut.mutate(id, {
-      onSuccess: () => {
-        showToast("Credit note issued");
-        refetch();
-      },
-      onError: onErr,
-    });
-  };
 
   const handleApply = (invoiceId: string) => {
     if (!id) return;
@@ -170,15 +157,8 @@ export default function CreditNoteDetailScreen() {
           </View>
 
           {/* Actions */}
-          {flags.canIssue || flags.canApply || flags.canVoid ? (
+          {flags.canApply || flags.canVoid ? (
             <View style={styles.actionsGrid}>
-              {flags.canIssue ? (
-                <ActionTile
-                  icon="paper-plane-outline"
-                  label={issueMut.isPending ? "Issuing…" : "Issue"}
-                  onPress={handleIssue}
-                />
-              ) : null}
               {canApply ? (
                 <ActionTile
                   icon="checkmark-circle-outline"

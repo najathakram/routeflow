@@ -9,7 +9,6 @@ import {
   CheckCircle2,
   FileText,
   Loader2,
-  Send,
   Receipt,
   Search,
   Zap,
@@ -20,7 +19,6 @@ import { Button, Badge, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useCreditNote,
-  useIssueCreditNote,
   useApplyCreditNote,
   useVoidCreditNote,
   useUpdateCreditNote,
@@ -28,46 +26,6 @@ import {
 import { useInvoices } from "@/lib/api/invoices";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { DocumentLetterhead } from "@/components/DocumentLetterhead";
-
-// ─── Issue confirm modal ──────────────────────────────────────────────────────
-
-function IssueConfirmModal({
-  isOpen,
-  onClose,
-  onConfirm,
-  cnNumber,
-  isPending,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  onConfirm: () => void;
-  cnNumber: string;
-  isPending: boolean;
-}) {
-  return (
-    <Modal
-      open={isOpen}
-      onClose={onClose}
-      title="Issue Credit Note?"
-      description={`Issue credit note ${cnNumber}?`}
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose} disabled={isPending}>
-            Cancel
-          </Button>
-          <Button onClick={onConfirm} loading={isPending}>
-            Issue Credit Note
-          </Button>
-        </>
-      }
-    >
-      <p className="text-sm text-navy/70">
-        Once issued, this credit note can be applied to an open invoice or voided. It can no longer
-        be edited.
-      </p>
-    </Modal>
-  );
-}
 
 // ─── Void confirm modal ───────────────────────────────────────────────────────
 
@@ -240,12 +198,10 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
   const { toast } = useToast();
 
   const { data: cn, isLoading, isError } = useCreditNote(params.id);
-  const issueCreditNote = useIssueCreditNote();
   const applyCreditNote = useApplyCreditNote();
   const voidCreditNote = useVoidCreditNote();
   const updateCreditNote = useUpdateCreditNote();
 
-  const [isIssueOpen, setIsIssueOpen] = React.useState(false);
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
   const [isApplyOpen, setIsApplyOpen] = React.useState(false);
   // Inline reason edit — editable at ANY status (descriptive text).
@@ -285,26 +241,6 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
   const canApply = status === "ISSUED" && !isExpired;
 
   // ── Action handlers ──────────────────────────────────────────────────────────
-
-  const handleIssue = () => {
-    setIsIssueOpen(false);
-    issueCreditNote.mutate(cn.id, {
-      onSuccess: () => {
-        toast({
-          title: "Credit note issued",
-          description: `${cn.creditNoteNumber} has been issued.`,
-          variant: "success",
-        });
-      },
-      onError: () => {
-        toast({
-          title: "Failed to issue credit note",
-          description: "Please try again.",
-          variant: "error",
-        });
-      },
-    });
-  };
 
   const handleVoid = () => {
     voidCreditNote.mutate(cn.id, {
@@ -407,27 +343,6 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
 
         {/* Actions */}
         <div className="flex flex-wrap items-center gap-2">
-          {status === "DRAFT" && (
-            <>
-              <Button
-                size="sm"
-                leftIcon={<Send className="h-4 w-4" />}
-                onClick={() => setIsIssueOpen(true)}
-                loading={issueCreditNote.isPending}
-              >
-                Issue
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                leftIcon={<Ban className="h-4 w-4" />}
-                onClick={() => setIsVoidOpen(true)}
-              >
-                Void
-              </Button>
-            </>
-          )}
-
           {status === "ISSUED" && (
             <>
               <Button
@@ -513,7 +428,7 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
                       className="text-brand-600 hover:underline"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      {cn.invoiceId}
+                      {cn.invoice?.invoiceNumber ?? cn.invoiceId}
                     </Link>
                   </p>
                 )}
@@ -643,27 +558,12 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
                       href={`/invoices/${cn.invoiceId}`}
                       className="text-brand-600 hover:underline text-xs font-mono"
                     >
-                      {cn.invoiceId}
+                      {cn.invoice?.invoiceNumber ?? cn.invoiceId}
                     </Link>
                   </dd>
                 </div>
               )}
             </dl>
-
-            {status === "DRAFT" && (
-              <div className="mt-4 space-y-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="w-full"
-                  leftIcon={<Send className="h-4 w-4" />}
-                  onClick={() => setIsIssueOpen(true)}
-                  loading={issueCreditNote.isPending}
-                >
-                  Issue Credit Note
-                </Button>
-              </div>
-            )}
 
             {status === "ISSUED" && (
               <div className="mt-4 space-y-2">
@@ -701,14 +601,6 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
       </div>
 
       {/* Modals */}
-      <IssueConfirmModal
-        isOpen={isIssueOpen}
-        onClose={() => setIsIssueOpen(false)}
-        onConfirm={handleIssue}
-        cnNumber={cn.creditNoteNumber}
-        isPending={issueCreditNote.isPending}
-      />
-
       <VoidConfirmModal
         isOpen={isVoidOpen}
         onClose={() => setIsVoidOpen(false)}
