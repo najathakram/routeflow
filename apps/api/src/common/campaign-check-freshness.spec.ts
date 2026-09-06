@@ -23,7 +23,13 @@ const SCRIPT = path.join(REPO_ROOT, "scripts/campaign-check.mjs");
 const REPORTER = path.join(REPO_ROOT, "scripts/jest-campaign-reporter.cjs");
 const ROOT_PKG_PATH = path.join(REPO_ROOT, "package.json");
 
-const T0 = 1_800_000_000; // arbitrary fixed epoch anchor — only relative offsets matter
+// Anchored a day behind the REAL wall clock, not a hardcoded literal: F3's clock-skew clamp
+// (fix-round 1) compares a commit's %ct against the actual `Date.now()`, so a fixed epoch chosen
+// without regard to when this spec runs can drift into the calendar future relative to that
+// clock and get clamped by the very guard under test — a literal 1_800_000_000 already sits
+// ~130 days ahead of "today" at the time this round was written. Only relative offsets among the
+// tests still matter; T0 itself just needs to stay safely in the past.
+const T0 = Math.floor(Date.now() / 1000) - 24 * 3600;
 
 function iso(epochSeconds: number): string {
   return new Date(epochSeconds * 1000).toISOString();
@@ -122,6 +128,16 @@ function writeReport(
   fs.writeFileSync(path.join(runsDir, `${name}.json`), JSON.stringify(report));
 }
 
+// Commits an unrelated file (T16, F5) — touches NEITHER the api test-file glob NOR the ledger
+// pathspec, so it must never move the freshness bound (bounding by HEAD instead of the specific
+// pathspecs would fail this).
+function writeUnrelatedCommit(dir: string, epochSeconds: number): void {
+  const docsDir = path.join(dir, "docs");
+  fs.mkdirSync(docsDir, { recursive: true });
+  fs.writeFileSync(path.join(docsDir, "x.md"), `unrelated change at ${epochSeconds}\n`);
+  commitAt(dir, epochSeconds, "docs: touch unrelated file");
+}
+
 function writeTurboDryRunFile(dir: string, cacheStatus: string): string {
   const p = path.join(dir, "turbo-dry-run.json");
   fs.writeFileSync(
@@ -181,7 +197,7 @@ function mkFixtureDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "campaign-check-freshness-"));
 }
 
-describe("campaign-check freshness guard (spec T1–T14)", () => {
+describe("campaign-check freshness guard (spec T1–T17)", () => {
   it("T1 (R1,R2): a report older than a later ledger-shard commit refuses in full mode before any token scan", () => {
     const dir = mkFixtureDir();
     try {
@@ -546,6 +562,43 @@ describe("campaign-check freshness guard (spec T1–T14)", () => {
     } finally {
       fs.rmSync(dirB, { recursive: true, force: true });
     }
+
+    // Case C (F2): `--onlyChanged` alone, with NO path or name pattern set, must also mark the
+    // artifact partial — `jest -o` produces a genuinely partial run that a patterns-only check
+    // (the pre-fix `computePartial`) would miss entirely and stamp `partial: false`.
+    const dirC = mkFixtureDir();
+    try {
+      const wsDirC = path.join(dirC, "apps", "api");
+      fs.mkdirSync(wsDirC, { recursive: true });
+      const nodeScriptC = [
+        `const Reporter = require(${JSON.stringify(REPORTER)});`,
+        `const globalConfig = { onlyChanged: true };`,
+        `const reporter = new Reporter(globalConfig, { artifact: "api" });`,
+        `reporter.onRunComplete(null, {`,
+        `  numTotalTests: 3,`,
+        `  numPassedTests: 3,`,
+        `  numFailedTests: 0,`,
+        `  testResults: [],`,
+        `});`,
+      ].join("\n");
+
+      const resC = spawnSync(process.execPath, ["-e", nodeScriptC], {
+        cwd: wsDirC,
+        encoding: "utf8",
+        timeout: 60_000,
+        env: scrubGitEnv(),
+        shell: false,
+      });
+      expect(resC.status).toBe(0);
+
+      const writtenC = JSON.parse(
+        fs.readFileSync(path.join(dirC, ".campaign", "runs", "api.json"), "utf8"),
+      );
+      expect(writtenC.partial).toBe(true);
+      expect(writtenC.partialPatterns).toContain("onlyChanged");
+    } finally {
+      fs.rmSync(dirC, { recursive: true, force: true });
+    }
   });
 
   it("T13 (R9): full mode refuses a PARTIAL report even when it is fresh by time and its token is present", () => {
@@ -660,6 +713,138 @@ describe("campaign-check freshness guard (spec T1–T14)", () => {
       expect(resMiss.status).toBe(0);
     } finally {
       fs.rmSync(dirMiss, { recursive: true, force: true });
+    }
+  });
+
+  // Fix-round 1 (F1, blocker): `git log -1 -- <pathspec>` (no `--first-parent`) is pruned by
+  // git's default history simplification whenever a merge is TREESAME to one parent for the
+  // given path — a branch that merges in the ledger shards from elsewhere is TREESAME to the
+  // INCOMING side, so plain `git log` reports the side branch's own (older) commit, never the
+  // merge's own time. T15 reproduces that shape with real git and pins BOTH the campaign-check
+  // refusal AND the raw `git log` discrepancy the reviewer proved empirically on this repo.
+  it("T15 (F1, R1 merge): a merge that brings in the ledger shards is judged by the MERGE's own time, not the side branch's", () => {
+    const dir = mkFixtureDir();
+    try {
+      initFixtureRepo(dir);
+      // C1 ("the FIRST commit") — main gains the api spec file, t0-600. `side` branches from here.
+      writeApiSpecCommit(dir, T0 - 600);
+      const mainBranch = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+        cwd: dir,
+        encoding: "utf8",
+        env: scrubGitEnv(),
+        shell: false,
+      }).stdout.trim();
+
+      // C2 (side, t0) — the ledger shard, committed OLDER than the report will be.
+      git(["branch", "side"], dir);
+      git(["checkout", "side"], dir);
+      writeLedgerCommit(dir, T0, [B1_DONE_ROW]);
+      git(["checkout", mainBranch], dir);
+
+      // M (main, t0+600) — `--no-ff` merge of `side`. M's tree equals side's (a trivial,
+      // fast-forwardable merge forced into a real merge commit), so M is TREESAME to `side`
+      // (the SECOND parent) for the ledger pathspec but NOT to C1 (the first parent, which never
+      // had the file) — exactly the shape default `git log -- <path>` prunes down to `side`'s
+      // own (older) commit, and `--first-parent` does not.
+      git(["merge", "--no-ff", "side", "-m", "merge side"], dir, {
+        GIT_AUTHOR_DATE: `${T0 + 600} +0000`,
+        GIT_COMMITTER_DATE: `${T0 + 600} +0000`,
+      });
+
+      // Reproduce the reviewer's empirical proof INSIDE this fixture: without --first-parent,
+      // git log follows the TREESAME (side) parent and reports the OLDER commit (t0); with
+      // --first-parent it reports the merge itself (t0+600). Both are asserted, not just eyeballed.
+      const withoutFirstParent = spawnSync(
+        "git",
+        ["log", "-1", "--format=%ct", "--", ".claude/campaign/status"],
+        { cwd: dir, encoding: "utf8", env: scrubGitEnv(), shell: false },
+      );
+      const withFirstParent = spawnSync(
+        "git",
+        ["log", "-1", "--first-parent", "--format=%ct", "--", ".claude/campaign/status"],
+        { cwd: dir, encoding: "utf8", env: scrubGitEnv(), shell: false },
+      );
+      expect(withoutFirstParent.stdout.trim()).toBe(String(T0));
+      expect(withFirstParent.stdout.trim()).toBe(String(T0 + 600));
+
+      const runsDir = path.join(dir, ".campaign", "runs");
+      // api.json is real proof (REG-B1 passing) but predates the MERGE — R1 must refuse before
+      // that proof is ever consulted, and must name the merge's time (t0+600), not side's (t0).
+      writeReport(runsDir, "api", { generatedAt: iso(T0 + 300) });
+      writeReport(runsDir, "mobile", { generatedAt: iso(T0 + 10_000), tokens: [] });
+      writeReport(runsDir, "pricing", { generatedAt: iso(T0 + 10_000), tokens: [] });
+
+      const res = runCampaignCheck({ fixtureDir: dir, runsDir });
+      const out = combined(res);
+
+      expect(out).toContain("STALE");
+      expect(out).toContain("api.json");
+      expect(out).toContain("the ledger shards");
+      expect(out).toContain(iso(T0 + 600));
+      expect(out).not.toContain(iso(T0));
+      expect(out).toContain("cd apps/api && npx jest --maxWorkers=2");
+      expect(out).not.toContain("no test titled");
+      expect(res.status).toBe(1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Fix-round 1 (F5, R1 scoping): nothing in T1–T14 pins that the staleness bound comes from the
+  // two SPECIFIC pathspecs rather than "whatever HEAD touched" — bounding by HEAD instead would
+  // pass every one of those tests while failing this one, since a later unrelated commit would
+  // wrongly mark a fresh report stale.
+  it("T16 (F5, R1 scoping): a later commit outside both pathspecs never marks a fresh report stale", () => {
+    const dir = mkFixtureDir();
+    try {
+      initFixtureRepo(dir);
+      writeApiSpecCommit(dir, T0 - 600);
+      writeLedgerCommit(dir, T0 - 500, [B1_DONE_ROW]);
+      const runsDir = path.join(dir, ".campaign", "runs");
+      writeReport(runsDir, "api", { generatedAt: iso(T0) });
+      writeReport(runsDir, "mobile", { generatedAt: iso(T0), tokens: [] });
+      writeReport(runsDir, "pricing", { generatedAt: iso(T0), tokens: [] });
+      // Newer than the report, HEAD after this — but touches neither apps/api/**/*.spec.ts nor
+      // .claude/campaign/status, so it must impose no bound.
+      writeUnrelatedCommit(dir, T0 + 900);
+
+      const res = runCampaignCheck({ fixtureDir: dir, runsDir });
+      const out = combined(res);
+
+      expect(out).not.toContain("STALE");
+      expect(out).toContain("api.json fresh");
+      expect(res.status).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Fix-round 1 (F3): a commit timestamped ahead of the real wall clock (clock skew) must not
+  // hard-block every future report forever — the bound clamps to now, with a one-line note, and
+  // a report generated at (approximately) now is judged fresh against that clamped bound.
+  it("T17 (F3): a future-dated ledger commit clamps to now with a clock-skew note, and a just-written report is fresh", () => {
+    const dir = mkFixtureDir();
+    try {
+      initFixtureRepo(dir);
+      const nowSec = Math.floor(Date.now() / 1000);
+      writeApiSpecCommit(dir, nowSec - 7200);
+      writeLedgerCommit(dir, nowSec + 3600, [B1_DONE_ROW]); // 1h ahead of the real clock
+      const runsDir = path.join(dir, ".campaign", "runs");
+      // Generous buffer past "now" so the report is unambiguously fresh against the CLAMPED
+      // bound regardless of the few seconds this fixture's own git/node spawns take.
+      writeReport(runsDir, "api", { generatedAt: iso(nowSec + 60) });
+      writeReport(runsDir, "mobile", { generatedAt: iso(nowSec + 60), tokens: [] });
+      writeReport(runsDir, "pricing", { generatedAt: iso(nowSec + 60), tokens: [] });
+
+      const res = runCampaignCheck({ fixtureDir: dir, runsDir });
+      const out = combined(res);
+
+      expect(out).toContain("clock skew");
+      expect(out).not.toContain("STALE");
+      expect(out).toContain("api.json fresh");
+      expect(res.status).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 });

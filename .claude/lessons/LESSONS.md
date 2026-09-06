@@ -152,7 +152,9 @@
   and refuse a stale artifact by name, with the regeneration command, before it scans a single token.**
 - **Guard:** `scripts/campaign-check.mjs` freshness rule (full mode, before indexing) + `--freshness-only`
   pre-step at the head of `npm run verify` that asks `turbo --dry-run=json` whether a replay is coming;
-  `apps/api/src/common/campaign-check-freshness.spec.ts` T1–T10.
+  `apps/api/src/common/campaign-check-freshness.spec.ts` T1–T17 (T15–T17 added in fix-round 1: the
+  bound now uses `git log --first-parent` — a merge TREESAME to one parent for the path was judged
+  by the OLDER pre-merge commit otherwise — and clamps to `Date.now()` on a future-dated commit).
 
 ### L-079 · 2026-09-06 · tooling · #627 `chore/ci-private-minutes`
 

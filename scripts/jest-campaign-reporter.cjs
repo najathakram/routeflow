@@ -41,21 +41,33 @@ function gitHead() {
   }
 }
 
-// R9: partial-report detection — true when jest ran scoped to a test path or name pattern
-// (a positional file arg, `-t`, `--testPathPattern`, …), which leaves this artifact covering
-// only the tests that ran, not the full workspace suite (a scoped run can "launder" a stale
-// report by making it fresh-by-time while still not being real full-suite evidence — the L-063
-// twin R9 exists to close). Reads the installed Jest's `globalConfig` defensively across
-// versions: Jest 30 wraps path patterns in a `TestPathPatterns` object from `@jest/pattern`
-// (`.isSet()` / `.patterns`); older Jest exposes a plain `testPathPattern` string.
-// `testNamePattern` (a `-t` filter) is a plain string in every version.
+// R9: partial-report detection — true when jest ran scoped to a test path or name pattern, OR
+// scoped by any of `--onlyChanged`/`--changedSince`/`--shard`/`--findRelatedTests`, each of which
+// leaves this artifact covering only some of the tests, not the full workspace suite (a scoped
+// run can "launder" a stale report by making it fresh-by-time while still not being real
+// full-suite evidence — the L-063 twin R9 exists to close). Reads the installed Jest's
+// `globalConfig` defensively across versions: Jest 30 wraps path patterns in a `TestPathPatterns`
+// object from `@jest/pattern` (`.isSet()` / `.patterns`); older Jest exposes a plain
+// `testPathPattern` string. `testNamePattern` (a `-t` filter) is a plain string in every version.
+//
+// F2: `tpp.isSet()` being true is ITSELF the partial signal — the shape of `.patterns` is only
+// used to make the printed reason legible, never to decide `partial`. `TestPathPatternsExecutor`
+// (same `@jest/pattern` module) exposes `isSet()` with a non-array `.patterns`, so falling
+// through to `partial: false` on that shape (the pre-fix behaviour) is the fail-OPEN direction
+// R9 exists to close; a `<pattern>` placeholder is recorded instead of silently dropping the
+// reason. `onlyChanged`/`changedSince`/`shard`/`findRelatedTests` are booleans/strings/objects on
+// `globalConfig` directly (never wrapped), so each is its own independent trigger with a
+// synthetic label — a full `turbo run test` invocation sets none of them.
 function computePartial(globalConfig) {
   const patterns = [];
   const gc = globalConfig || {};
 
   const tpp = gc.testPathPatterns;
   if (tpp && typeof tpp.isSet === "function") {
-    if (tpp.isSet() && Array.isArray(tpp.patterns)) patterns.push(...tpp.patterns);
+    if (tpp.isSet()) {
+      if (Array.isArray(tpp.patterns)) patterns.push(...tpp.patterns);
+      else patterns.push("<pattern>");
+    }
   } else if (Array.isArray(tpp) && tpp.length > 0) {
     patterns.push(...tpp);
   }
@@ -65,6 +77,13 @@ function computePartial(globalConfig) {
   }
   if (typeof gc.testNamePattern === "string" && gc.testNamePattern) {
     patterns.push(gc.testNamePattern);
+  }
+  if (gc.onlyChanged) patterns.push("onlyChanged");
+  if (gc.changedSince) patterns.push(`changedSince ${gc.changedSince}`);
+  if (gc.findRelatedTests) patterns.push("findRelatedTests");
+  if (gc.shard && typeof gc.shard === "object") {
+    const { shardIndex, shardCount } = gc.shard;
+    patterns.push(`shard ${shardIndex}/${shardCount}`);
   }
 
   return { partial: patterns.length > 0, partialPatterns: patterns };

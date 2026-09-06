@@ -417,6 +417,16 @@ function main() {
 
   // newestCommit(gitRoot, pathspecs) -> { sha, ct, subject } for the newest commit touching
   // any of `pathspecs`, or null when no commit touches them (imposes no bound — R1).
+  //
+  // F1: `--first-parent` is required. `git log -- <path>`'s default history simplification
+  // prunes a merge commit that is TREESAME to one of its parents for the given path and
+  // silently follows only that parent instead — a `git merge origin/master` on a branch that
+  // did not itself touch the path is TREESAME to the incoming (non-first) side, so plain
+  // `git log -1 -- <path>` reports the ORIGINAL upstream commit's %ct, not the merge's own —
+  // exactly the population of refusals this freshness rule exists to catch (see T15). With
+  // `--first-parent`, log only ever walks the branch's own line, so the merge itself is the
+  // commit reported whenever it changed the path relative to its first parent; it is a no-op
+  // on linear (non-merge) history, which is every other fixture in this file.
   function newestCommit(gitRoot, pathspecs) {
     try {
       const res = spawnSync("git", ["log", "-1", "--format=%H%x1f%ct%x1f%s", "--", ...pathspecs], {
@@ -430,6 +440,28 @@ function main() {
     } catch {
       return null;
     }
+  }
+
+  // F3: a commit whose committer date is ahead of THIS machine's clock (a fast dev-box clock, a
+  // hand-set GIT_COMMITTER_DATE, a rewrite that lost --committer-date-is-author-date) must never
+  // hard-block every future report forever — a freshly regenerated report can never be "newer"
+  // than a moment that has not happened yet, so the refusal would repeat after every
+  // regeneration with no recoverable action. Clamp the bound to now before it is compared, and
+  // say so once per offending commit (skewNoted dedupes across this call's per-workspace loop,
+  // since the same ledger commit is re-fetched for every consulted workspace).
+  function clampCommitToNow(commit, skewNoted) {
+    if (!commit) return commit;
+    const nowMs = Date.now();
+    const rawMs = commit.ct * 1000;
+    if (rawMs <= nowMs) return commit;
+    if (!skewNoted.has(commit.sha)) {
+      skewNoted.add(commit.sha);
+      console.log(
+        `campaign-check: note — commit ${commit.sha.slice(0, 7)} is dated in the future ` +
+          `(${new Date(rawMs).toISOString()}); clock skew? treating it as now`,
+      );
+    }
+    return { ...commit, ct: Math.floor(nowMs / 1000) };
   }
 
   function formatGeneratedAt(reportTimeMs, viaMtime) {
@@ -559,6 +591,7 @@ function main() {
 
     let anyStaleFull = false;
     let anyHitRefusal = false;
+    const skewNoted = new Set(); // F3: sha -> printed once per checkFreshness call
 
     for (const wsInfo of T1_WORKSPACES) {
       const exists = fs.existsSync(wsInfo.jsonPath);
@@ -602,9 +635,14 @@ function main() {
         block = partialBlock(wsInfo, partialPatterns);
         reason = "partial";
       } else {
-        const testsCommit = gitRoot ? newestCommit(gitRoot, wsInfo.testPathspecs) : null;
-        const ledgerCommit =
-          gitRoot && ledgerPathspec ? newestCommit(gitRoot, [ledgerPathspec]) : null;
+        const testsCommit = clampCommitToNow(
+          gitRoot ? newestCommit(gitRoot, wsInfo.testPathspecs) : null,
+          skewNoted,
+        );
+        const ledgerCommit = clampCommitToNow(
+          gitRoot && ledgerPathspec ? newestCommit(gitRoot, [ledgerPathspec]) : null,
+          skewNoted,
+        );
 
         let newestCause = null;
         if (testsCommit) newestCause = { label: `${wsInfo.dir} test files`, commit: testsCommit };
