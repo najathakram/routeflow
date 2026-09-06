@@ -203,6 +203,35 @@ parent missing` when the Route row or its tenant is absent) and treats the DISTI
   are seeded; only the first is listed (the other two never appear), `--live` with
   `DEACTIVATE 1 USERS` sets it `INACTIVE` while leaving `deletedAt`/`tenantId` and the other two
   rows untouched, and the re-run is "nothing to do".
+  **UNATTENDED WRITES, APPROVED TEST TENANTS ONLY — `--only-test-tenants` + `--confirm "<phrase>"`
+  (2026-09-05):** the tool's `--live` path needed a TTY, which made the whole repair unrunnable
+  from a session even on a throwaway tenant. Two flags open exactly that door and no wider one.
+  `--only-test-tenants` resolves the slug of the tenant every TARGET row would RECEIVE — one
+  `SELECT "slug" FROM "Tenant" WHERE "id" = $1` per DISTINCT proposed tenant, cached in
+  `slugById` — and hands the WRITE LIST plus those slugs to the new pure guard
+  `assertTestTenantTargets(rows, slugById)`, which requires `isTestTenant(slug)` from
+  `scripts/lib/test-tenants.cjs` (the sole source of the policy — never restated, never widened;
+  a near-miss like `testing-co` or `e2eclient` is a client tenant). ONE non-matching **or
+  unresolvable** row refuses the WHOLE batch: **exit 3**, zero writes, every offender listed as
+  `<table> <id> -> tenantId=… tenantSlug=…` on stdout AND stderr, `testTenantError` +
+  `summary.blocked` in `--json`. It is enforced in EVERY mode, so `--dry-run` is the exact
+  preflight of the live gate. `--confirm "<phrase>"` supplies the typed confirmation as a value
+  and is accepted ONLY alongside that guard (**exit 2** before any connection otherwise) — the
+  phrase must equal `BACKFILL <n> ROWS` with `<n>` the applied count THIS invocation computed, so
+  a stale count is exit 3 with zero writes; it takes precedence over the jest-only
+  `BACKFILL_CONFIRM_TOKEN` (unchanged) and relaxes neither `--backup-attested` nor the phrase
+  check. **The orphan-user task is REFUSED under the guard (exit 2)** — those rows are not
+  tenant-scoped, so there is no slug to check and nothing the flag could promise. Every report
+  line now also carries `tenantSlug=<slug>` whenever the proposed tenant resolves, in every mode,
+  so the owner reads the gate's own input. `--json` gains `onlyTestTenants` and is emitted from
+  one `emitJson` so the refusal path cannot drift from the normal one. Coverage: B8a–B8f (the
+  pure guard: the approved set, one offender refusing the batch, unresolvable, empty list, and
+  the near-misses that must stay refused), B5m–B5p (spawn-level `--confirm` without the guard →
+  exit 2, the orphan refusal, the help text, and source pins on the slug query, the guard call
+  and the `--confirm`-over-token precedence), and DB-lane **D9–D11** — D9 seeds a whole graph in
+  a NON-approved tenant (`acme-*`, created and deleted by the case) and proves exit 3 with zero
+  writes in `--live` AND `--dry-run`; D10 proves a wrong `<n>` is exit 3; D11 drives the D7
+  production shape end to end with no TTY and no token, then re-runs to "nothing to do".
 - **`scripts/ci-audit-critical.mjs` (2026-09-04)** — CI advisory gate: wraps `npm audit
 --omit=dev --audit-level=<level> --json` in `spawnSync` (`shell:false`, up to 3 attempts,
   15s/45s backoff, 120s per-attempt timeout, 64 MiB `maxBuffer`) so an `npm` registry
