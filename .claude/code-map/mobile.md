@@ -107,6 +107,15 @@ in `useOpenPurchaseOrders` always return zero rows for that leg; `lib/api/buyer.
 - **auth / secure storage** `lib/auth.ts` — SecureStore native / localStorage web, token refresh with 401-retry.
 - **tenant branding** `lib/tenant-store.ts` — slug, businessName, primaryColor, logoKey (persistent Zustand).
 - **location tracker** `lib/location-tracker.ts` (+ `.web.ts`) — driver background location.
+- **location payload seam** `lib/location-payload.ts` (NEW 2026-09-04, B185) —
+  `buildLocationPayload(coords, recordedAt)` extracted out of `lib/location-tracker.native.ts`'s
+  two inline POST-body call sites (behavior-preserving seam so it is unit-testable without
+  Expo/TaskManager). iOS reports `-1` for heading/speed with no fix; this maps a
+  negative-or-null `heading`/`speed` to `null` (was forwarded raw and 400'd on the API's
+  `@Min(0)` decorators), converts a present speed m/s→km/h, and passes `accuracy` through only
+  when present and `>= 0` (omitted otherwise, matching the API's new `@Min(0)` bound — no
+  `@Max`). Both `location-tracker.native.ts` call sites spread its return alongside their
+  existing lat/lng/runId fields. Spec: `__tests__/location-payload.test.ts`.
 - **stores** `store/{cartStore,mileageStore,podStore,routeStore,productPickerStore,offlineQueue,listUiStore}.ts`.
 - **scan/queue/toast primitives (NEW 2026-08-31, F30 — all pure + jest'd, see the F30 batch section):**
   `lib/scan-pending-buffer.ts` (`PendingBufferState`, `PENDING_BUFFER_DEPTH` = 2, `createPendingBuffer`,

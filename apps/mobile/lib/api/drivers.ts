@@ -128,23 +128,3 @@ export function useUpdateDriver() {
     },
   });
 }
-
-// ─── Location reporting (driver-side, Phase 7b) ───────────────────────────────
-
-export interface DriverLocationPoint {
-  lat: number;
-  lng: number;
-  heading?: number | null;
-  speedKph?: number | null;
-  batteryPct?: number | null;
-  recordedAt: string;
-  runId?: string | null;
-}
-
-export function usePostDriverLocation() {
-  return useMutation<void, Error, DriverLocationPoint>({
-    mutationFn: (body) => apiClient.post("/drivers/me/location", body).then(() => undefined),
-    // Keep silent on success/failure — this is background telemetry.
-    retry: 1,
-  });
-}
