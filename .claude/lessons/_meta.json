@@ -1,10 +1,10 @@
 {
-  "nextId": 80,
+  "nextId": 82,
   "activeCount": 40,
-  "archivedCount": 35,
+  "archivedCount": 36,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-06T06:50:44.275Z",
+  "updatedAt": "2026-09-06T06:56:55.000Z",
   "schemaVersion": 1,
-  "note": "fix/F09-credit-notes-wallet: merged origin/master a94f9428 (nextId 80, 40/40). The F09 lesson (gate a money write inside the primitive that performs it) is minted in P8 as L-081 after the registry-guards branch takes L-080; this note acknowledges the fix commits 5c0dc464 and 75234ac1 until then."
+  "note": "fix/F09-credit-notes-wallet P8: minted L-081 (domain — gate a money write inside the primitive that performs it, never at one call site's query) after registry-guards took L-080; archived L-045 (the oldest domain entry with an automated-artifact guard, skipping L-044) to hold the 40-entry cap."
 }

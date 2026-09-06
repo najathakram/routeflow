@@ -8,6 +8,23 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-06** — (worktree `rf-F09`, branch `fix/F09-credit-notes-wallet`, P8 bookkeeping
+  follow-up, `179dd400`) F09 credit-notes/wallet batch mapped in full — **api.md**: B66/B67
+  money-write gates consolidated into `invoices/invoice-status-sets.ts` (`CREDIT_NOT_APPLICABLE`,
+  `CREDIT_SETTLE_EXCLUDED`, `CREDIT_SOURCE_EXCLUDED`, `PAYABLE`), `create()`'s VOID/WRITTEN_OFF
+  refusal (DRAFT allowed on purpose), `findAll`'s invoice-number include (B19), `issue()`/
+  `POST :id/issue` deletion (B18), the void-cap's added `Serializable` isolation (lens A5),
+  `processRefund`'s live-source invoice select (lens A2), the advance-wallet guard re-point (lens
+  A6), and a new `deleteInvoice` clause naming the delete-door sibling **filed as B213** (lens
+  A4/D1 — void is capped, delete is not, deliberately out of this PR's scope). **web.md**:
+  `credit-notes.ts`'s `CreditNoteStatus`/`invoice` field + dead-hook removal, `customers.ts`'s
+  `useApplyAdvancePayment` removal (B13 refuted as a bug, R11 deferred to dev-pipeline), the
+  DRAFT/Issue UI removal + invoice-number rendering on the credit-notes pages, and the new
+  `e2e/28-credit-note-wallet.spec.ts` + `credit-note-wallet` project. **mobile.md**:
+  `credit-notes-logic.ts`'s DRAFT pill/`canIssue` removal and the matching screen/test trims.
+  Lesson **L-081** (domain — gate a money write inside the primitive that performs it, never at
+  one call site's query); registry note on B13 + new bug **B213** filed.
+
 - **2026-09-06** — (worktree `rf-ocr`, branch `docs/627-bookkeeping-follow-up`) **#627**
   `chore/ci-private-minutes` (`0ee2672e`) — Option B bookkeeping follow-up, docs-only, no
   runtime change: `ci.yml`'s `verify` job `if:` now also skips `dependabot[bot]` `pull_request`

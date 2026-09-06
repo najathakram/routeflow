@@ -482,6 +482,23 @@ build` forces production — so that branch was dead in every Docker image, not 
 
 ## domain
 
+### L-081 · 2026-09-06 · domain · F09
+
+- **Symptom:** wallet credit kept being consumed by WRITTEN_OFF (forgiven) invoices after the settle
+  query had excluded VOID, and a fix at that query would still have missed the second door — the
+  auto-apply path `send()`/`sendEmail()` reach — while a test whose mock injects the query result
+  could not even see a `where`-only fix.
+- **Root cause:** the guard lived at one call site's query instead of at the money write; four
+  hand-rolled status lists (manual apply, settle, delivery payments, the advance wallet) had drifted
+  apart, and PAID had to stay in the settle set because the same loop shrinks excess credit.
+- **Lesson:** **gate a money write inside the primitive that performs it, on the row it just read
+  (an exclude-list, so a fixture without the field still writes) — sibling primitives and
+  result-injecting mocks bypass a where-only fix; and keep every status set in one named module with
+  the reason each differs written beside it.**
+- **Guard:** REG-B67 T1/T2/T5 (apply-side, incl. the auto-apply door) and REG-B66 T6/T7/T9–T11 in
+  `apps/api/src/credit-notes/credit-notes.wallet-integrity.spec.ts`; the pins file (T3/T3b) proves
+  PAID/WRITTEN_OFF still shrink; `apps/api/src/invoices/invoice-status-sets.ts` is the one home.
+
 ### L-071 · 2026-09-04 · domain · OCR gate
 
 - **Symptom:** every invoice scan returned 403 for days; the web modal said "check the file and try again", so it read as a bad file, not a missing entitlement.
@@ -544,23 +561,6 @@ build` forces production — so that branch was dead in every Docker image, not 
 - **Guard:** `apps/api/src/common/enum-parity.spec.ts` — a generic table (40 enums) against
   `packages/types/api/enums.ts`, plus a regression layer pinning the drifted files and the mobile
   jest stub that can't `require` the shared package directly.
-
-### L-045 · 2026-09-02 · domain · #TBD
-
-- **Symptom:** every cancelled run, and every run completed with a skipped stop, left its
-  undelivered orders pinned to a stale `routeRunStopId` — invisible to the dispatch sweep and the
-  trip builder (both require the pointer null), while the buyer card kept showing a driver and
-  "you're next" for a called-off run.
-- **Root cause:** the pointer was set by one path (dispatch) and every re-entry reader keyed on it
-  being null, but neither terminal transition ever cleared it. The invariant had a writer and its
-  readers, and no releaser — same shape as [[L-029]]'s teardown paths.
-- **Lesson:** **A pointer that gates re-entry must be released by every transition that makes the
-  pointed-at thing terminal, inside that transition's own transaction — and the release predicate
-  must be the durable marker the forward path writes (here `stop.status = COMPLETED`), never the
-  existence of a side row a payment-only path skips.** When the release makes a new state pair
-  reachable (a SKIPPED stop on a COMPLETED run), ship the refusal for it in the same PR ([[L-030]]).
-- **Guard:** `REG-B129 (T5 path: cancel → un-cancel → re-dispatch)`, `REG-B211 (T12 path:
-complete-with-skipped → reopen refused)`; mutation probes in the F11 PR body.
 
 ## security
 
