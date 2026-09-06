@@ -1283,24 +1283,6 @@ async function main() {
     expect(Array.isArray(data.data ?? data), "Expected array");
   });
 
-  await check("POST /credit-notes/:id/issue → 200 ISSUED", async () => {
-    // Create a fresh credit note in DRAFT status to issue
-    // Note: credit notes are created as ISSUED directly in this service,
-    // so we just verify the issue endpoint on the existing one (idempotent or 400)
-    expect(createdCreditNoteId !== "", "No credit note id");
-    const { status, data } = await api(
-      "POST",
-      `/credit-notes/${createdCreditNoteId}/issue`,
-      undefined,
-      operatorToken,
-    );
-    // Could return 200 (already issued, idempotent) or 400 (already issued)
-    expect(
-      [200, 201, 400].includes(status),
-      `Expected 200/201/400, got ${status}: ${JSON.stringify(data)}`,
-    );
-  });
-
   await check("POST /credit-notes/:id/void → 200 VOID", async () => {
     // Create a fresh credit note to void
     const cId = existingCustomerId || createdCustomerId;

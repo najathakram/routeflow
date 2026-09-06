@@ -11,6 +11,11 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { roundMoney } from "@routeflow/pricing";
 import { InvoiceStatus, PaymentMethod } from "@prisma/client";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import {
+  CREDIT_NOT_APPLICABLE,
+  CREDIT_SETTLE_EXCLUDED,
+  CREDIT_SOURCE_EXCLUDED,
+} from "../invoices/invoice-status-sets";
 
 @Injectable()
 export class CreditNotesService {
@@ -110,6 +115,7 @@ export class CreditNotesService {
             select: {
               total: true,
               customerId: true,
+              status: true,
               items: {
                 select: {
                   id: true,
@@ -124,6 +130,13 @@ export class CreditNotesService {
           if (!invoice) throw new BadRequestException("Invoice not found");
           if (invoice.customerId !== dto.customerId)
             throw new BadRequestException("Invoice does not belong to this customer");
+          // F09/B66: a dead or forgiven invoice justifies no new credit. DRAFT is
+          // allowed on purpose (returns.processRefund and the UI picker rely on it).
+          if (CREDIT_SOURCE_EXCLUDED.includes(invoice.status)) {
+            throw new BadRequestException(
+              `Cannot issue a credit note against a ${invoice.status} invoice.`,
+            );
+          }
 
           const existingCredits = await tx.creditNote.aggregate({
             where: { invoiceId: dto.invoiceId, status: { not: "VOID" } },
@@ -294,7 +307,10 @@ export class CreditNotesService {
     const [data, total] = await Promise.all([
       this.prisma.forTenant().creditNote.findMany({
         where,
-        include: { customer: { select: { id: true, businessName: true } } },
+        include: {
+          customer: { select: { id: true, businessName: true } },
+          invoice: { select: { id: true, invoiceNumber: true } },
+        },
         orderBy: { createdAt: "desc" },
         skip,
         take: limit,
@@ -355,10 +371,6 @@ export class CreditNotesService {
     return cn;
   }
 
-  async issue(id: string) {
-    return this.findOne(id);
-  }
-
   /**
    * P5-13: the single tx-safe primitive that applies (part of) a credit note to an
    * invoice. Runs INSIDE an already-open tenant transaction `tx` — never opens its
@@ -387,6 +399,12 @@ export class CreditNotesService {
     requestedAmount?: number,
     opts?: { autoApplied?: boolean; tenantId?: string | null },
   ): Promise<{ applied: number; invoiceStatus: InvoiceStatus | null }> {
+    // F09/B67: the write is gated here, not at the callers' queries — settle,
+    // auto-apply and any future caller all pass through this line. Exclude-list
+    // on purpose: a fixture without `status` still applies.
+    if (CREDIT_SETTLE_EXCLUDED.includes(inv.status as InvoiceStatus)) {
+      return { applied: 0, invoiceStatus: null };
+    }
     const remaining = roundMoney(Number(cn.amount) - Number(cn.amountUsed));
     // P5-12: a bounced check flips its InvoicePayment to VOID — must NOT count as
     // paid, so the credit can correctly cover the re-opened balance.
@@ -534,12 +552,7 @@ export class CreditNotesService {
         });
         if (!inv) throw new NotFoundException("Invoice not found");
 
-        const notApplicableStatuses: InvoiceStatus[] = [
-          InvoiceStatus.PAID,
-          InvoiceStatus.VOID,
-          InvoiceStatus.WRITTEN_OFF,
-        ];
-        if (notApplicableStatuses.includes(inv.status)) {
+        if (CREDIT_NOT_APPLICABLE.includes(inv.status)) {
           throw new BadRequestException(
             `Cannot apply credit note to invoice with status ${inv.status}`,
           );

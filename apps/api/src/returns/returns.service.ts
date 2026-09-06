@@ -20,6 +20,7 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { roundMoney } from "@routeflow/pricing";
 import type { ProcessRefundDto } from "./dto/process-refund.dto";
+import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
 
 @Injectable()
 export class ReturnsService {
@@ -315,7 +316,15 @@ export class ReturnsService {
         order: {
           select: {
             orderNumber: true,
-            invoices: { select: { id: true } },
+            // Live sources only (F09 A2): an unfiltered select let a VOID/WRITTEN_OFF
+            // sole invoice reach create()'s CREDIT_SOURCE_EXCLUDED guard, which threw
+            // AFTER the RECEIVED->REFUNDED claim below had already committed — losing
+            // the refund with no recovery path. Zero live invoices now falls into the
+            // same "2+ invoices" ternary branch below and mints the credit UNSOURCED.
+            invoices: {
+              where: { status: { notIn: CREDIT_SOURCE_EXCLUDED } },
+              select: { id: true },
+            },
             lineItems: { select: { productId: true, qty: true, unitPrice: true, subtotal: true } },
           },
         },

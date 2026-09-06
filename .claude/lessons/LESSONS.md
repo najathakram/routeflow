@@ -324,8 +324,6 @@
 - **Guard:** self-test `liveness:` checks (a2) and the dead-holder `observed gone` assertion, run on
   both platforms; CI run 33938718344 is the red that proved it.
 
-## testing
-
 ### L-082 · 2026-09-06 · testing · bugs.mjs self-test
 
 - **Symptom:** the registry self-test's pid-reuse fixture failed on an ubuntu runner (four checks in a
@@ -340,6 +338,8 @@
 - **Guard:** the pid-reuse fixture forges `bootAt = bootStamp() − 1 year` and asserts the
   "predates this boot" verdict; the owner-write fixture clears the lock dir before its own precondition
   (`scripts/campaign/bugs.mjs` self-test, step 6 of `npm run verify`).
+
+## testing
 
 ### L-076 · 2026-09-05 · testing · F13
 
@@ -548,19 +548,6 @@ build` forces production — so that branch was dead in every Docker image, not 
   whose local getters disagree with its ISO view; REG-B185 DTO spec ([[L-026]] client sentinels
   never reach a validator unmapped).
 
-### L-054 · 2026-09-03 · domain · PR-2 `imp-02-order-merge-advisory-lock`
-
-- **Symptom:** a money-critical read-fold-write (order merge) was serialized by an in-process
-  promise chain that a second replica cannot see; the deferral note said scaling would corrupt
-  lines silently.
-- **Root cause:** the lock lived where the code was, not where the data is.
-- **Lesson:** a lock guarding a read-then-absolute-write must live in the system of record
-  (`pg_advisory_lock` on a pinned connection, or inside the write's own transaction) — never in
-  process memory; prove it with two sessions against a real database (`*.db.spec.ts`), never a
-  mocked service alone.
-- **Guard:** `db-locks.spec.ts` (T1), `db-locks.db.spec.ts` (T4, `npm run local:test:db`),
-  `orders.merge-lock.spec.ts` (T3), and `orders.scan-hardening.spec.ts`'s concurrent-merge case.
-
 ### L-072 · 2026-09-03 · domain · wave E `imp-10b`
 
 - **Symptom:** 4 hand-typed client mirrors of Prisma enums drifted from the schema (invented,
@@ -573,3 +560,20 @@ build` forces production — so that branch was dead in every Docker image, not 
 - **Guard:** `apps/api/src/common/enum-parity.spec.ts` — a generic table (40 enums) against
   `packages/types/api/enums.ts`, plus a regression layer pinning the drifted files and the mobile
   jest stub that can't `require` the shared package directly.
+
+### L-081 · 2026-09-06 · domain · F09
+
+- **Symptom:** wallet credit kept being consumed by WRITTEN_OFF (forgiven) invoices after the settle
+  query had excluded VOID, and a fix at that query would still have missed the second door — the
+  auto-apply path `send()`/`sendEmail()` reach — while a test whose mock injects the query result
+  could not even see a `where`-only fix.
+- **Root cause:** the guard lived at one call site's query instead of at the money write; four
+  hand-rolled status lists (manual apply, settle, delivery payments, the advance wallet) had drifted
+  apart, and PAID had to stay in the settle set because the same loop shrinks excess credit.
+- **Lesson:** **gate a money write inside the primitive that performs it, on the row it just read
+  (an exclude-list, so a fixture without the field still writes) — sibling primitives and
+  result-injecting mocks bypass a where-only fix; and keep every status set in one named module with
+  the reason each differs written beside it.**
+- **Guard:** REG-B67 T1/T2/T5 (apply-side, incl. the auto-apply door) and REG-B66 T6/T7/T9–T11 in
+  `apps/api/src/credit-notes/credit-notes.wallet-integrity.spec.ts`; the pins file (T3/T3b) proves
+  PAID/WRITTEN_OFF still shrink; `apps/api/src/invoices/invoice-status-sets.ts` is the one home.

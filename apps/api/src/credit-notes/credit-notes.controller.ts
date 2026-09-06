@@ -48,13 +48,6 @@ export class CreditNotesController {
     return this.creditNotesService.findOneForUser(id, user);
   }
 
-  @Post(":id/issue")
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
-  issue(@Param("id") id: string) {
-    return this.creditNotesService.issue(id);
-  }
-
   @Post(":id/apply")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)

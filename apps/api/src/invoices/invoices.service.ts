@@ -19,11 +19,18 @@ import {
 } from "@routeflow/pricing";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { CONFIRMED_PAYMENT, sumConfirmed } from "./payment-predicates";
+import { PAYABLE } from "./invoice-status-sets";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { loadMsrpMap } from "../common/msrp";
 import { EntitlementsService } from "../billing/entitlements.service";
-import { CheckStatus, InvoiceStatus, NotificationEvent, UserRole } from "@prisma/client";
+import {
+  CheckStatus,
+  CreditNoteStatus,
+  InvoiceStatus,
+  NotificationEvent,
+  UserRole,
+} from "@prisma/client";
 import {
   CreateInvoiceDto,
   RecordInvoicePaymentDto,
@@ -3846,6 +3853,31 @@ export class InvoicesService {
     // Sales agents & commissions: a voided invoice targets zero — this
     // emits the compensating CLAWBACK adjustment when commission was claimed.
     await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
+    // F09/B66: a credit note's headroom dies with the invoice that justified it. Only the
+    // UNUSED portion goes — spent credit paid real invoices and clawing it back would
+    // corrupt them (R6). CreditNoteStatus enum, never the string literal, so the sibling
+    // sweep's single-status `status: { not: "VOID" }` pattern doesn't match this fix.
+    const sourced = await tx.creditNote.findMany({
+      where: { invoiceId: id, status: { not: CreditNoteStatus.VOID } },
+      select: { id: true, amount: true, amountUsed: true, invoiceId: true },
+    });
+    for (const cn of sourced) {
+      // Defense-in-depth scoping: the query above already restricts to this invoice,
+      // but the service itself — not only the query — must not touch a note it did
+      // not source (T11).
+      if (cn.invoiceId !== id) continue;
+      const used = Number(cn.amountUsed ?? 0);
+      await tx.creditNote.update({
+        where: { id: cn.id },
+        data:
+          used <= 0.001
+            ? { status: CreditNoteStatus.VOID }
+            : // Capping amount to the used portion leaves zero headroom (amount - amountUsed
+              // === 0) — the same "fully consumed" condition applyCreditInTx (:450-461) flips
+              // to APPLIED, so a capped note must read APPLIED too, never a stale ISSUED.
+              { amount: roundMoney(used), status: CreditNoteStatus.APPLIED },
+      });
+    }
     // Status already flipped to VOID by the claim above; return the fresh record.
     return tx.invoice.findUnique({ where: { id } });
   }
@@ -3868,12 +3900,20 @@ export class InvoicesService {
     // an order, it should be possible to split it into multiple invoices"
     // scenario. The auto-create-on-DELIVERED captured all remaining qty; voiding
     // releases it so a fresh split can run.
-    return this.prisma.tenantTransaction(async (tx) => {
-      // Wallet money first: a credit applied to this invoice goes back to its note
-      // (spendable again) instead of being stranded on a dead invoice.
-      await this.releaseWalletPaymentsInTx(tx, id);
-      return this.voidInvoiceInTx(tx, id, inv.orderId);
-    });
+    return this.prisma.tenantTransaction(
+      async (tx) => {
+        // Wallet money first: a credit applied to this invoice goes back to its note
+        // (spendable again) instead of being stranded on a dead invoice.
+        await this.releaseWalletPaymentsInTx(tx, id);
+        return this.voidInvoiceInTx(tx, id, inv.orderId);
+      },
+      // Serializable, matching the orders-side void caller (orders.service.ts ~:2770):
+      // the default READ COMMITTED left a window between the cap's findMany/update pair
+      // (below, in voidInvoiceInTx) where a concurrent applyToInvoice/settleOrderCreditsInTx
+      // on a different invoice could raise a note's amountUsed, so the blind full-column
+      // cap write could land at amount < amountUsed (F09 A5).
+      { isolationLevel: "Serializable", timeout: 15_000 },
+    );
   }
 
   /**
@@ -4510,12 +4550,7 @@ export class InvoicesService {
     // Payable statuses — exclude terminal VOID/WRITTEN_OFF: a written-off bad debt
     // must not swallow the cash (recomputeStatus can't advance it), which would also
     // starve a live sibling since we apply oldest-first.
-    const PAYABLE = [
-      InvoiceStatus.DRAFT,
-      InvoiceStatus.SENT,
-      InvoiceStatus.PARTIAL,
-      InvoiceStatus.OVERDUE,
-    ];
+    // (shared with credit-notes.service.ts via invoice-status-sets.ts, F09/R3a)
 
     // Only orders actually delivered in THIS completion may be rebuilt on the
     // delivered basis. Default to all orderIds for callers that don't distinguish

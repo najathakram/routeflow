@@ -120,6 +120,45 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     expect(dto.invoiceId).toBeUndefined();
   });
 
+  it("F09 A2: refund against a voided source mints an unsourced credit note", async () => {
+    // The order's only invoice was VOID. The live-source select (CREDIT_SOURCE_EXCLUDED)
+    // filters it out at the DB, so `order.invoices` comes back empty here — exactly like
+    // the pre-fix code otherwise reaching create()'s guard AFTER the RECEIVED->REFUNDED
+    // claim already committed, which threw and lost the refund with no recovery path.
+    // With the fix, zero live invoices takes the same branch as 2+ invoices: undefined
+    // invoiceId, credit minted unsourced, and processRefund resolves normally.
+    prisma.return.findUnique.mockResolvedValue({
+      id: "ret-12",
+      returnNumber: "RET-2026-012",
+      status: "RECEIVED",
+      customerId: "cust-1",
+      items: [{ productId: "p1", qty: 2 }],
+      order: {
+        orderNumber: "ORD-012",
+        invoices: [], // the sole invoice was VOID and excluded by the live-source filter
+        lineItems: [{ productId: "p1", qty: 10, unitPrice: 15, subtotal: 100 }],
+      },
+    });
+    prisma.return.updateMany.mockResolvedValue({ count: 1 });
+    prisma.return.update.mockResolvedValue({
+      id: "ret-12",
+      status: "REFUNDED",
+      creditNoteId: "cn-12",
+    });
+    creditNotesCreate.mockResolvedValue({ id: "cn-12", creditNoteNumber: "CN-2026-0012" });
+
+    const result = await service.processRefund("ret-12");
+
+    expect(creditNotesCreate).toHaveBeenCalledTimes(1);
+    const dto = creditNotesCreate.mock.calls[0][0];
+    expect(dto.invoiceId).toBeUndefined();
+    expect(prisma.return.update).toHaveBeenCalledWith({
+      where: { id: "ret-12" },
+      data: { creditNoteId: "cn-12" },
+    });
+    expect(result.creditNoteId).toBe("cn-12");
+  });
+
   it("skips credit creation for a $0 refund (no matching items) but still flips REFUNDED", async () => {
     prisma.return.findUnique
       .mockResolvedValueOnce({

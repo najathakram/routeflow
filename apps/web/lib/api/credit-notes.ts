@@ -1,9 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { CreditNoteStatus } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type CreditNoteStatus = "DRAFT" | "ISSUED" | "APPLIED" | "VOID";
+export type { CreditNoteStatus };
 
 export interface CreditNote {
   id: string;
@@ -11,6 +12,8 @@ export interface CreditNote {
   customerId: string;
   customer?: { id: string; businessName: string; contactName?: string; address?: string };
   invoiceId?: string;
+  /** F09/R10: the linked invoice's number, so the UI never has to show a raw UUID. */
+  invoice?: { id: string; invoiceNumber: string };
   status: CreditNoteStatus;
   /** Optional on the wire in some responses — fall back to createdAt for display. */
   issueDate?: string;
@@ -101,17 +104,6 @@ export function useCreateCreditNote() {
   return useMutation<CreditNote, Error, CreateCreditNoteDto>({
     mutationFn: (dto) => apiClient.post("/credit-notes", dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["credit-notes"] }),
-  });
-}
-
-export function useIssueCreditNote() {
-  const qc = useQueryClient();
-  return useMutation<CreditNote, Error, string>({
-    mutationFn: (id) => apiClient.post(`/credit-notes/${id}/issue`).then((r) => r.data),
-    onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ["credit-notes"] });
-      qc.invalidateQueries({ queryKey: ["credit-notes", id] });
-    },
   });
 }
 

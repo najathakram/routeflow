@@ -34,7 +34,6 @@ function isOpenCredit(cn: CreditNote): boolean {
 
 const STATUS_CHIPS: { value: string; label: string }[] = [
   { value: "", label: "All" },
-  { value: "DRAFT", label: "Draft" },
   { value: "ISSUED", label: "Issued" },
   { value: "APPLIED", label: "Applied" },
   { value: "VOID", label: "Void" },
@@ -558,9 +557,8 @@ export default function CreditNotesPage() {
   const all = allData?.data ?? [];
 
   const kpiCounts = React.useMemo(() => {
-    const counts = { total: all.length, draft: 0, issued: 0, applied: 0, void: 0 };
+    const counts = { total: all.length, issued: 0, applied: 0, void: 0 };
     for (const cn of all) {
-      if (cn.status === "DRAFT") counts.draft++;
       if (cn.status === "ISSUED") counts.issued++;
       if (cn.status === "APPLIED") counts.applied++;
       if (cn.status === "VOID") counts.void++;
@@ -674,15 +672,12 @@ export default function CreditNotesPage() {
             const count =
               chip.value === ""
                 ? kpiCounts.total
-                : chip.value === "DRAFT"
-                  ? kpiCounts.draft
-                  : chip.value === "ISSUED"
-                    ? kpiCounts.issued
-                    : chip.value === "APPLIED"
-                      ? kpiCounts.applied
-                      : kpiCounts.void;
-            const showCount =
-              chip.value === "" || chip.value === "DRAFT" || chip.value === "ISSUED";
+                : chip.value === "ISSUED"
+                  ? kpiCounts.issued
+                  : chip.value === "APPLIED"
+                    ? kpiCounts.applied
+                    : kpiCounts.void;
+            const showCount = chip.value === "" || chip.value === "ISSUED";
             return (
               <button
                 key={chip.value || "all"}
@@ -853,7 +848,9 @@ export default function CreditNotesPage() {
                     </td>
                     <td className="px-4 py-3">
                       {cn.invoiceId ? (
-                        <span className="font-mono text-xs text-brand-600">{cn.invoiceId}</span>
+                        <span className="font-mono text-xs text-brand-600">
+                          {cn.invoice?.invoiceNumber ?? cn.invoiceId}
+                        </span>
                       ) : (
                         <span className="text-xs text-navy/40">next invoice (auto)</span>
                       )}
