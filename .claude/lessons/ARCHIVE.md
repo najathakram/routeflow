@@ -558,3 +558,22 @@ archive first ([[L-039]]'s own rule about landing with headroom).
   `~0 more` as unlanded work. Second-order cost: the run died at the gate, so everything its
   success path owned went undone and the repo was left **public** — a private flip that lives
   after a green CI is not a `finally`.
+
+## Archived 2026-09-06 — headroom for L-079 (#627 bookkeeping follow-up)
+
+Landing L-079 (tooling — a cold ts-jest worker's first-test init trips the api workspace's
+unset 5 s Jest default) at 40 of 40 active entries required archiving first. **L-011** was the
+oldest tooling entry whose guard is now a landed automated check rather than judgment: stale
+Prisma clients after a schema pull are caught by CI's `check-types`/build step and the
+project's later `postinstall` generate step, not by memory alone. L-010 ("Turbo lies both
+ways") was kept — it is still cited from project memory.
+
+### L-011 · 2026-08-25 · tooling
+
+- **Symptom:** phantom `X does not exist in type` errors on correct code; pre-push blocked.
+- **Root cause:** the generated Prisma client was stale after pulling a schema change — and
+  `npx prisma generate` writes to the **shared root** `node_modules`, so parallel worktrees
+  clobber each other's client.
+- **Lesson:** **Regenerate the Prisma client after any pull/checkout/rebase across a schema
+  change, and expect all worktrees to share one generated client.**
+- **Guard:** none — judgment.
