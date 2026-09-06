@@ -47,10 +47,9 @@ export const ADDON_GATE_REGISTRY: Readonly<Record<string, AddonGateEntry>> = {
     grantPath:
       'Platform Admin → Tenants → [tenant] → add-ons (AddonService.enableAddon writes addonKey "ocr")',
     backfill:
-      "OPEN — restore scanning for every tenant (dark) on 2026-09-04; before any flip: run the blast-radius " +
-      "report and grant the listed tenants, or decide OCR stays included. Known gaps: the plan flag " +
-      '"addon.ocr" and the SKU writer ("OCR_PACK_250", subscription-mutation.service.ts) never write this key.',
-    reviewBy: "2026-10-15",
+      "Owner decision 2026-09-05: OCR available to all tenants; gate stays dark until OCR is " +
+      "monetized; no grants required",
+    reviewBy: "2027-03-31",
   },
   tobacco_dealer: {
     state: "enforced",

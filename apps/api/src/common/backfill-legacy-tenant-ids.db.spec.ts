@@ -13,6 +13,12 @@
  * ITSELF NULL-tenant, so the run is repaired from its `Route` first and its stops follow in the
  * same transaction — with the `--dry-run` listing proving the parent statement really comes first.
  *
+ * D8 covers the SECOND task, `--deactivate-orphan-users` (owner decision 2026-09-05: deactivate,
+ * never delete). Everything that matters about it is only true against a real database — that the
+ * listing's WHERE hides SUPER_ADMINs and tenanted users rather than merely refusing them, that
+ * `--live` writes the schema's inactive status onto exactly one row and moves nothing else, that
+ * the row is still THERE afterwards, and that a second run has nothing to do.
+ *
  * Collected only by `jest.db.config.js` (`.db.spec.ts$`) — run it through
  * `npm run local:test:db`, which points DATABASE_URL at the compose Postgres and sets
  * RUN_DB_SPECS. `requireLocalDatabaseUrl()` refuses any non-local host.
@@ -56,6 +62,11 @@ const STOP_C = `${ID_PREFIX}stop-c`;
 const STOP_D = `${ID_PREFIX}stop-d`;
 const RUN_STOP_C = `${ID_PREFIX}runstop-c`;
 const RUN_STOP_D = `${ID_PREFIX}runstop-d`;
+// D8's own rows: the one repairable orphan, the platform account the WHERE must hide, and a
+// perfectly ordinary tenanted user that must never be in scope at all.
+const USER_ORPHAN_ADMIN = `${ID_PREFIX}user-orphan-admin`;
+const USER_ORPHAN_SUPER = `${ID_PREFIX}user-orphan-super`;
+const USER_TENANTED = `${ID_PREFIX}user-tenanted`;
 
 const ATTESTATION = "spec";
 
@@ -124,6 +135,36 @@ describeDb("backfill-legacy-tenant-ids.mjs — real Postgres (report / dry-run /
     );
   }
 
+  /** The ids the orphan-user task would deactivate, read back through its own `--json` report. */
+  function okUserIds(): string[] {
+    const res = runCli(["--deactivate-orphan-users", "--json"]);
+    expect(res.status).toBe(0);
+    const report = JSON.parse(res.stdout) as { rows: { id: string; verdict: string }[] };
+    return report.rows.filter((r) => r.verdict === "ok").map((r) => r.id);
+  }
+
+  async function userRowOf(
+    userId: string,
+  ): Promise<{ status: string; tenantId: string | null; deletedAt: Date | null }> {
+    const { rows } = await db.query(
+      'SELECT "status", "tenantId", "deletedAt" FROM "User" WHERE "id" = $1',
+      [userId],
+    );
+    // The row still EXISTING is half of what D8 proves — this tool deactivates, never deletes.
+    expect(rows).toHaveLength(1);
+    return rows[0];
+  }
+
+  async function seedUser(id: string, role: string, status: string, tenantId: string | null) {
+    // email/username are unique per (tenantId, …) and are never read back by anything here; they
+    // exist only because the columns are NOT NULL. Nothing the tool prints may contain them.
+    await db.query(
+      `INSERT INTO "User" ("id","email","username","role","status","createdAt","updatedAt","tenantId")
+       VALUES ($1,$2,$3,$4::"UserRole",$5::"UserStatus", now(), now(), $6)`,
+      [id, `${id}@example.invalid`, id, role, status, tenantId],
+    );
+  }
+
   async function seedTenantedRouteStop(id: string, stopNumber: number) {
     await db.query(
       `INSERT INTO "RouteStop" ("id","routeId","stopNumber","createdAt","updatedAt","tenantId")
@@ -163,6 +204,7 @@ describeDb("backfill-legacy-tenant-ids.mjs — real Postgres (report / dry-run /
   afterAll(async () => {
     if (!db) return;
     // FK order, and never anything outside this run's own id prefix.
+    await db.query('DELETE FROM "User" WHERE "id" LIKE $1', [`${ID_PREFIX}%`]);
     await db.query('DELETE FROM "RouteRunStop" WHERE "id" LIKE $1', [`${ID_PREFIX}%`]);
     await db.query('DELETE FROM "RouteRun" WHERE "id" LIKE $1', [`${ID_PREFIX}%`]);
     await db.query('DELETE FROM "RouteStop" WHERE "id" LIKE $1', [`${ID_PREFIX}%`]);
@@ -306,5 +348,72 @@ describeDb("backfill-legacy-tenant-ids.mjs — real Postgres (report / dry-run /
     });
     expect(again.status).toBe(0);
     expect(again.stdout).toContain("nothing to do");
+  });
+
+  it("D8 --deactivate-orphan-users: the NULL-tenant TENANT_ADMIN is deactivated, nothing else is", async () => {
+    // The prod shape (census 2026-09-05): NULL-tenant users are three SUPER_ADMINs, which are
+    // platform accounts and correct as they are, and three April-2026 TENANT_ADMIN leftovers that
+    // would 401 at login. The tenanted user is the control: it is not NULL-tenant and must never
+    // be in scope, however the WHERE is later edited.
+    await seedUser(USER_ORPHAN_ADMIN, "TENANT_ADMIN", "ACTIVE", null);
+    await seedUser(USER_ORPHAN_SUPER, "SUPER_ADMIN", "ACTIVE", null);
+    await seedUser(USER_TENANTED, "OPERATOR", "ACTIVE", TENANT_ID);
+
+    // Whole-database, like the tenant cases: a compose DB carrying somebody else's NULL-tenant
+    // user fails this test rather than getting it deactivated.
+    expect(okUserIds().sort()).toEqual([USER_ORPHAN_ADMIN]);
+
+    const report = runCli(["--deactivate-orphan-users"]);
+    expect(report.status).toBe(0);
+    expect(report.stdout).toContain(`User ${USER_ORPHAN_ADMIN} role=TENANT_ADMIN status=ACTIVE`);
+    expect(report.stdout).toContain("-> ok");
+    // The SUPER_ADMIN and the tenanted user are not refused — they are never listed at all,
+    // because the listing's own WHERE excludes them.
+    expect(report.stdout).not.toContain(USER_ORPHAN_SUPER);
+    expect(report.stdout).not.toContain(USER_TENANTED);
+    // Output discipline, proven on real rows: no email, username or name reaches stdout.
+    expect(report.stdout).not.toContain("@example.invalid");
+    expect(report.stdout).toMatch(/User\s+ok=1 refused=0/);
+    expect((await userRowOf(USER_ORPHAN_ADMIN)).status).toBe("ACTIVE");
+
+    const dry = runCli(["--deactivate-orphan-users", "--dry-run"]);
+    expect(dry.status).toBe(0);
+    expect(dry.stdout).toContain("the 1 statement(s) --live would execute");
+    expect(dry.stdout).toContain(
+      'UPDATE "User" SET "status" = $1, "updatedAt" = now() WHERE "id" = $2 ' +
+        'AND "tenantId" IS NULL AND "role" <> \'SUPER_ADMIN\' AND "status" = $3',
+    );
+    expect(dry.stdout).toContain("$1 = INACTIVE");
+    expect(dry.stdout).toContain(`$2 = ${USER_ORPHAN_ADMIN}`);
+    expect(dry.stdout).toContain("$3 = ACTIVE");
+    expect((await userRowOf(USER_ORPHAN_ADMIN)).status).toBe("ACTIVE");
+
+    const res = runCli(["--deactivate-orphan-users", "--live", "--backup-attested", ATTESTATION], {
+      BACKFILL_CONFIRM_TOKEN: "DEACTIVATE 1 USERS",
+    });
+
+    expect(res.status).toBe(0);
+    expect(res.stderr).toContain("WARNING: test override BACKFILL_CONFIRM_TOKEN active");
+    expect(res.stdout).toContain("=== APPLIED ===");
+
+    // Deactivated, NEVER deleted: the row is still there, still NULL-tenant, still not
+    // soft-deleted — only its status moved, and only to the schema's inactive value.
+    const after = await userRowOf(USER_ORPHAN_ADMIN);
+    expect(after.status).toBe("INACTIVE");
+    expect(after.deletedAt).toBeNull();
+    expect(after.tenantId).toBeNull();
+    // and nothing else moved
+    expect((await userRowOf(USER_ORPHAN_SUPER)).status).toBe("ACTIVE");
+    expect((await userRowOf(USER_TENANTED)).status).toBe("ACTIVE");
+
+    // re-runnable: the `"status" = $3` guard makes a second pass a no-op
+    expect(okUserIds()).toEqual([]);
+    const again = runCli(
+      ["--deactivate-orphan-users", "--live", "--backup-attested", ATTESTATION],
+      { BACKFILL_CONFIRM_TOKEN: "DEACTIVATE 0 USERS" },
+    );
+    expect(again.status).toBe(0);
+    expect(again.stdout).toContain("nothing to do");
+    expect((await userRowOf(USER_ORPHAN_ADMIN)).status).toBe("INACTIVE");
   });
 });

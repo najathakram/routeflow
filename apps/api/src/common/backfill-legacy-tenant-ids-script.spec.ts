@@ -22,6 +22,11 @@ import { pathToFileURL } from "node:url";
  * arrive in, the one cascade level relaxes nothing else (a stop under a refused run stays
  * refused; a disagreeing RouteStop is still refused), and `--live` without an attested backup
  * dies before it can reach a database.
+ *
+ * The orphan-user task (`--deactivate-orphan-users`, owner decision 2026-09-05) is covered from
+ * B6a below: it may only ever write the schema's INACTIVE status onto a NULL-tenant,
+ * non-SUPER_ADMIN, non-deleted, currently-ACTIVE row; it never deletes, never writes a
+ * `tenantId`, and it is refused outright when named alongside the tenant backfill.
  */
 
 const API_DIR = path.resolve(__dirname, "../..");
@@ -38,6 +43,16 @@ const ROW_2 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2";
 const GUARDED_UPDATE = (table: string) =>
   `UPDATE "${table}" SET "tenantId" = $1 WHERE "id" = $2 AND "tenantId" IS NULL RETURNING "id"`;
 
+// `enum UserStatus` in apps/api/prisma/schema/tenancy.prisma is ACTIVE | INACTIVE | SUSPENDED,
+// mirrored by `UserStatus` in packages/types/index.ts. The tool writes INACTIVE and only INACTIVE.
+const ACTIVE = "ACTIVE";
+const INACTIVE = "INACTIVE";
+// Spelled out here rather than imported, so a change to the statement has to be made twice —
+// once in the tool, once in the contract somebody reviews.
+const GUARDED_USER_UPDATE =
+  'UPDATE "User" SET "status" = $1, "updatedAt" = now() WHERE "id" = $2 AND "tenantId" IS NULL ' +
+  'AND "role" <> \'SUPER_ADMIN\' AND "status" = $3 RETURNING "id"';
+
 // ─── one child process evaluates every pure-module case ───────────────────────────────────────
 
 const SHIM = `
@@ -49,7 +64,12 @@ const out = cases.map((c) => {
     if (c.kind === "routeRunStop") return { ok: true, value: lib.classifyRouteRunStop(c.row) };
     if (c.kind === "paymentCounter") return { ok: true, value: lib.classifyPaymentCounter(c.row) };
     if (c.kind === "creditNote") return { ok: true, value: lib.classifyCreditNote(c.row) };
+    if (c.kind === "orphanUser") return { ok: true, value: lib.classifyOrphanUser(c.row) };
     if (c.kind === "buildUpdates") return { ok: true, value: lib.buildUpdates(c.reports) };
+    if (c.kind === "buildOrphanUserUpdates") {
+      return { ok: true, value: lib.buildOrphanUserUpdates(c.reports) };
+    }
+    if (c.kind === "orphanUserUpdateSql") return { ok: true, value: lib.orphanUserUpdateSql() };
     throw new Error("unknown case kind: " + c.kind);
   } catch (e) {
     return { ok: false, message: e.message };
@@ -76,7 +96,12 @@ const routeRun = (row: Record<string, unknown>) => ({ kind: "routeRun", row });
 const routeRunStop = (row: Record<string, unknown>) => ({ kind: "routeRunStop", row });
 const paymentCounter = (row: Record<string, unknown>) => ({ kind: "paymentCounter", row });
 const creditNote = (row: Record<string, unknown>) => ({ kind: "creditNote", row });
+const orphanUser = (row: Record<string, unknown>) => ({ kind: "orphanUser", row });
 const buildUpdates = (reports: unknown[]) => ({ kind: "buildUpdates", reports });
+const buildOrphanUserUpdates = (reports: unknown[]) => ({
+  kind: "buildOrphanUserUpdates",
+  reports,
+});
 
 const OK_REPORT = {
   table: "RouteRunStop",
@@ -219,6 +244,27 @@ const CASES = [
     { table: "RouteRunStop", id: ROW_2, verdict: "ok", tenantId: TENANT_A },
     { table: "RouteRun", id: ROW_1, verdict: "ok", tenantId: TENANT_A },
   ]),
+  // ─── the orphan-user task (owner decision 2026-09-05: deactivate, never delete) ─────────────
+  // classifyOrphanUser — 30..35
+  orphanUser({ role: "TENANT_ADMIN", status: ACTIVE, deletedAt: null }),
+  orphanUser({ role: "TENANT_ADMIN", status: INACTIVE, deletedAt: null }),
+  // SUSPENDED is the third UserStatus value: also "not ACTIVE", so also nothing to do — the rule
+  // is `status === ACTIVE`, never `status !== INACTIVE`.
+  orphanUser({ role: "OPERATOR", status: "SUSPENDED", deletedAt: null }),
+  orphanUser({ role: "SUPER_ADMIN", status: ACTIVE, deletedAt: null }),
+  orphanUser({ role: "TENANT_ADMIN", status: ACTIVE, deletedAt: "2026-04-02T00:00:00.000Z" }),
+  // precedence: a super admin that is ALSO deleted and ALSO inactive is still reported as the
+  // super admin, so the strongest refusal is the one the owner reads.
+  orphanUser({ role: "SUPER_ADMIN", status: INACTIVE, deletedAt: "2026-04-02T00:00:00.000Z" }),
+  // buildOrphanUserUpdates — 36..38
+  buildOrphanUserUpdates([
+    { table: "User", id: ROW_1, verdict: "ok", newStatus: INACTIVE },
+    { table: "User", id: ROW_2, verdict: "refuse: already inactive", newStatus: null },
+  ]),
+  buildOrphanUserUpdates([{ table: "User", id: ROW_1, verdict: "ok", newStatus: null }]),
+  buildOrphanUserUpdates([{ table: "RouteRun", id: ROW_1, verdict: "ok", newStatus: INACTIVE }]),
+  // the guarded statement itself — 39
+  { kind: "orphanUserUpdateSql" },
 ];
 
 const RESULTS = evaluate(CASES);
@@ -473,6 +519,101 @@ describe("legacy-tenant-backfill: buildUpdates", () => {
   });
 });
 
+// ─── the orphan-user task ─────────────────────────────────────────────────────────────────────
+
+function userVerdictOf(index: number) {
+  const result = outcome(index);
+  expect(result.ok).toBe(true);
+  return result.value as { verdict: string; status: string | null; reason: string };
+}
+
+describe("legacy-tenant-backfill: classifyOrphanUser", () => {
+  it("B6a: ok — an ACTIVE, non-deleted, non-SUPER_ADMIN row is deactivated (never deleted)", () => {
+    const v = userVerdictOf(30);
+    expect(v.verdict).toBe("ok");
+    // The one value the tool may ever write, and it is the schema's, not a synonym.
+    expect(v.status).toBe(INACTIVE);
+    // The prose states the decision; B7a's statement is what proves it — a status change, and
+    // no DELETE anywhere in the SQL this verdict produces.
+    expect(v.reason).toMatch(/deactivate/i);
+  });
+
+  it("B6b: refuse: already inactive — INACTIVE proposes no write", () => {
+    const v = userVerdictOf(31);
+    expect(v.verdict).toBe("refuse: already inactive");
+    expect(v.status).toBeNull();
+  });
+
+  it("B6c: refuse: already inactive — SUSPENDED is also not the active value", () => {
+    const v = userVerdictOf(32);
+    expect(v.verdict).toBe("refuse: already inactive");
+    expect(v.status).toBeNull();
+  });
+
+  it("B6d: refuse: super admin — defensive, even though the listing's WHERE excludes the role", () => {
+    const v = userVerdictOf(33);
+    expect(v.verdict).toBe("refuse: super admin");
+    expect(v.status).toBeNull();
+  });
+
+  it("B6e: refuse: deleted — a soft-deleted row is left exactly as it is", () => {
+    const v = userVerdictOf(34);
+    expect(v.verdict).toBe("refuse: deleted");
+    expect(v.status).toBeNull();
+  });
+
+  it("B6f: the super-admin refusal outranks the deleted and already-inactive ones", () => {
+    expect(userVerdictOf(35).verdict).toBe("refuse: super admin");
+  });
+});
+
+describe("legacy-tenant-backfill: buildOrphanUserUpdates", () => {
+  it("B7a: one guarded UPDATE per ok row, none for a refusal, and the exact statement", () => {
+    const result = outcome(36);
+    expect(result.ok).toBe(true);
+    const updates = result.value as Array<{
+      table: string;
+      id: string;
+      status: string;
+      sql: string;
+      params: [string, string, string];
+    }>;
+
+    expect(updates).toHaveLength(1);
+    expect(updates[0].table).toBe("User");
+    expect(updates[0].id).toBe(ROW_1);
+    expect(updates[0].sql).toBe(GUARDED_USER_UPDATE);
+    // $1 the value written, $2 the id the report showed, $3 the status the row must STILL have —
+    // which is what makes a re-run a no-op and a row changed under us a rollback.
+    expect(updates[0].params).toEqual([INACTIVE, ROW_1, ACTIVE]);
+    // Every precondition the report displayed is re-stated in the WHERE.
+    expect(updates[0].sql).toContain('"tenantId" IS NULL');
+    expect(updates[0].sql).toContain("\"role\" <> 'SUPER_ADMIN'");
+    expect(updates[0].sql).toContain('RETURNING "id"');
+    // A status change, never a tenant write and never a delete.
+    expect(updates[0].sql).not.toContain('"tenantId" =');
+    expect(updates[0].sql).not.toMatch(/DELETE/i);
+  });
+
+  it("B7b: refuses an ok row that proposes anything but the inactive status", () => {
+    const result = outcome(37);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain(INACTIVE);
+  });
+
+  it("B7c: refuses a report for any table but User (no identifier from a report)", () => {
+    const result = outcome(38);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("RouteRun");
+  });
+
+  it("B7d: orphanUserUpdateSql is the guarded statement verbatim", () => {
+    const result = outcome(39);
+    expect(result.ok).toBe(true);
+    expect(result.value).toBe(GUARDED_USER_UPDATE);
+  });
+});
+
 // ─── CLI: argument validation must precede any connection ─────────────────────────────────────
 
 function runCli(args: string[]) {
@@ -565,6 +706,49 @@ describe("backfill-legacy-tenant-ids.mjs CLI contract", () => {
     // --live still refuses without an attested backup, token or no token (B5a proves the exit)
     const res = runCli(["--live"]);
     expect(res.status).toBe(2);
+  });
+
+  it("B5i: naming both tasks is refused before connecting", () => {
+    // The tenant backfill is the DEFAULT, so it is nameable explicitly for exactly this reason:
+    // asking for both must be an error, never a silent choice of one.
+    const res = runCli(["--backfill-tenants", "--deactivate-orphan-users"]);
+
+    expect(res.status).toBe(2);
+    expect(res.stdout + res.stderr).toContain("mutually exclusive");
+    expect(res.stdout + res.stderr).not.toMatch(/ECONNREFUSED|ENOTFOUND|getaddrinfo/i);
+  });
+
+  it("B5j: --deactivate-orphan-users --live still needs an attested backup", () => {
+    const res = runCli(["--deactivate-orphan-users", "--live"]);
+
+    expect(res.status).toBe(2);
+    expect(res.stdout + res.stderr).toContain("--backup-attested");
+    expect(res.stdout + res.stderr).not.toMatch(/ECONNREFUSED|ENOTFOUND|getaddrinfo/i);
+  });
+
+  it("B5k: --help documents the second task, its confirmation phrase and its verdicts", () => {
+    const res = runCli(["--help"]);
+
+    expect(res.status).toBe(0);
+    expect(res.stdout).toContain("--deactivate-orphan-users");
+    expect(res.stdout).toContain("--backfill-tenants");
+    expect(res.stdout).toContain("DEACTIVATE <n> USERS");
+    expect(res.stdout).toContain("refuse: already inactive");
+    expect(res.stdout).toContain("refuse: super admin");
+    expect(res.stdout).toContain("refuse: deleted");
+    // The decision, in the tool the owner runs — not only in a doc.
+    expect(res.stdout).toMatch(/NEVER deleted/);
+  });
+
+  it("B5l: the User listing is scoped by the WHERE and selects nothing that identifies a person", () => {
+    const code = cliCodeLines();
+
+    expect(code).toContain('WHERE u."tenantId" IS NULL');
+    // Written from the shared constant today; the literal form would be just as correct, so the
+    // pin is on the EXCLUSION, not on which of the two spellings the query happens to use.
+    expect(code).toMatch(/u\."role" <> '(\$\{SUPER_ADMIN_ROLE\}|SUPER_ADMIN)'/);
+    // Output discipline is enforced by the SELECT list, not by remembering not to print things.
+    expect(code).not.toMatch(/u\."email"|u\."username"|u\."password"|u\."googleId"/);
   });
 
   it("B5e: the session is declared read-only in code, not merely promised in a comment", () => {

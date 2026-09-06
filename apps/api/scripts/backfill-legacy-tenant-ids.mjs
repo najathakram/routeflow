@@ -23,13 +23,29 @@
  * whose run was refused stays refused. In `--live` the `RouteRun` updates execute before the stop
  * updates inside the SAME single transaction, so the batch is still all-or-nothing.
  *
- * MODES
- *   (default)     report — read-only. Lists every NULL-tenant row with its parents, the tenant
- *                 this tool would derive, and a verdict. Exit 0.
+ * TASKS — exactly ONE per invocation, and they are mutually exclusive (exit 2 if both are named)
+ *   --backfill-tenants          (the default) the four-table tenant repair described above.
+ *   --deactivate-orphan-users   a DIFFERENT repair on a DIFFERENT table, sharing only the safety
+ *                 rails. NULL-tenant `User` rows have no parent to derive a tenant from, so they
+ *                 cannot be backfilled at all: the prod census of 2026-09-05 found six, three
+ *                 SUPER_ADMINs (platform accounts, correct as they are) and three April-2026
+ *                 TENANT_ADMIN leftovers that would 401 at login. OWNER DECISION 2026-09-05:
+ *                 those are DEACTIVATED — `status` set to the schema's inactive value — and
+ *                 NEVER deleted, so the audit trail, the foreign keys and the history survive
+ *                 and the change can be reversed by hand. This task works ONLY on
+ *                 `WHERE "tenantId" IS NULL AND "role" <> 'SUPER_ADMIN'`, prints no email,
+ *                 username or name, and writes no `tenantId` at all.
+ *                 The default task is nameable explicitly so that asking for both is an ERROR
+ *                 rather than a silent choice of one.
+ *
+ * MODES (both tasks)
+ *   (default)     report — read-only. Lists every candidate row and a verdict. Exit 0.
  *   --dry-run     report + the exact parameterized UPDATE statements `--live` would run, with
  *                 their bound values. Still read-only. Exit 0.
  *   --live        report + typed confirmation, then ONE transaction of id-pinned UPDATEs.
  *                 Requires `--backup-attested "<free text naming the fresh backup>"`.
+ *                 The confirmation phrase is `BACKFILL <n> ROWS` for the tenant task and
+ *                 `DEACTIVATE <n> USERS` for the orphan-user task.
  *   --json        print the report as JSON instead of prose (for the owner's records).
  *   --help        usage, exit 0.
  *
@@ -49,7 +65,7 @@
  *   0  report / dry-run printed, or `--live` applied every ok row
  *   1  error — no database URL, connection or query failure, transaction error
  *   2  argument refusal, raised BEFORE any connection is opened (notably `--live` with no
- *      `--backup-attested`)
+ *      `--backup-attested`, and naming both tasks at once)
  *   3  `--live` confirmation refused — stdin is not a TTY, or the typed text did not match
  *   4  `--live` rolled back — a row changed under us (its guarded UPDATE returned no row)
  *
@@ -68,42 +84,66 @@
  *   - Report/`--dry-run` set `default_transaction_read_only = on` for the whole session, so the
  *     server itself rejects a write; `--live` lifts it only after the confirmation, and says so.
  *   - Output discipline: ids, tenant ids, credit-note numbers and enum statuses only. Never a
- *     business name, an email, an amount, `PaymentCounter.next`, or the connection URL.
+ *     business name, an email, an amount, `PaymentCounter.next`, or the connection URL. The
+ *     orphan-user task holds the same line: id, role, status and timestamps — the `User`
+ *     listing does not even SELECT `email`, `username` or a name.
  */
 import { createRequire } from "node:module";
 import readline from "node:readline";
 import { resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
 import {
+  buildOrphanUserUpdates,
   buildUpdates,
   classifyCreditNote,
+  classifyOrphanUser,
   classifyPaymentCounter,
   classifyRouteRun,
   classifyRouteRunStop,
+  SUPER_ADMIN_ROLE,
   VERDICT_OK,
 } from "./lib/legacy-tenant-backfill.mjs";
 
 const HELP = `backfill-legacy-tenant-ids.mjs — repair rows whose tenantId IS NULL
 
-Usage: node apps/api/scripts/backfill-legacy-tenant-ids.mjs [--dry-run | --live] [--json]
-                                                            [--backup-attested "<text>"]
+Usage: node apps/api/scripts/backfill-legacy-tenant-ids.mjs
+         [--backfill-tenants | --deactivate-orphan-users]
+         [--dry-run | --live] [--json] [--backup-attested "<text>"]
 
-Modes:
-  (none)      read-only report: every NULL-tenant row, its parents, the derived tenant, a verdict
-  --dry-run   the report plus the exact UPDATE statements --live would execute (still read-only)
+Tasks (exactly one; naming both is refused with exit 2):
+  --backfill-tenants        (default) derive and write the missing tenantId on legacy rows
+  --deactivate-orphan-users deactivate NULL-tenant, non-SUPER_ADMIN User rows (never delete them)
+
+Modes (either task):
+  (none)      read-only report: every candidate row and a verdict
+  --dry-run   the report plus the exact statements --live would execute (still read-only)
   --live      apply them in one transaction; requires --backup-attested AND a typed confirmation
   --json      print the report as JSON instead of prose
   --help      print this help and exit 0
 
-Tables, in write order: RouteRun, RouteRunStop, PaymentCounter, CreditNote. A NULL-tenant RouteRun
-is repaired from its Route first, and its NULL-tenant stops are then derived from that tenant —
-one cascade level, in the same transaction, parents before children.
+--backfill-tenants
+  Tables, in write order: RouteRun, RouteRunStop, PaymentCounter, CreditNote. A NULL-tenant
+  RouteRun is repaired from its Route first, and its NULL-tenant stops are then derived from that
+  tenant — one cascade level, in the same transaction, parents before children.
+  Verdicts:
+    ok                            tenant derived unambiguously from the parent row(s)
+    refuse: parent missing        a parent row is absent or its own tenantId is NULL
+    refuse: parents disagree      the parents name different tenants
+    refuse: singleton             PaymentCounter id is the literal "singleton", or matches no Tenant
+    refuse: unique-pair collision another CreditNote already holds (tenantId, creditNoteNumber)
+  Confirmation phrase: BACKFILL <n> ROWS
 
-Verdicts:
-  ok                            tenant derived unambiguously from the parent row(s)
-  refuse: parent missing        a parent row is absent or its own tenantId is NULL
-  refuse: parents disagree      the parents name different tenants
-  refuse: singleton             PaymentCounter id is the literal "singleton", or matches no Tenant
-  refuse: unique-pair collision another CreditNote already holds (tenantId, creditNoteNumber)
+--deactivate-orphan-users
+  Owner decision 2026-09-05: a NULL-tenant, non-SUPER_ADMIN User is unreachable through the
+  product (it would 401 at login), so it is DEACTIVATED — status set to the schema's inactive
+  value — and NEVER deleted. Reads and writes only rows matching
+  tenantId IS NULL AND role <> '${SUPER_ADMIN_ROLE}'; no tenantId is written. Ids, roles,
+  statuses and timestamps are printed — never an email, a username or a name.
+  Verdicts:
+    ok                            the row is active and can be deactivated
+    refuse: already inactive      its status is not the active value; nothing to do
+    refuse: super admin           defensive — the listing already excludes the role
+    refuse: deleted               deletedAt is set; the row is already soft-deleted
+  Confirmation phrase: DEACTIVATE <n> USERS
 
 DATABASE_URL resolution (Railway proxy vars win over DATABASE_URL) — see lib/railway-db-url.mjs.
 
@@ -122,6 +162,8 @@ function parseArgs(argv) {
     dryRun: false,
     live: false,
     json: false,
+    backfillTenants: false,
+    deactivateOrphanUsers: false,
     backupAttested: null,
     errors: [],
   };
@@ -131,12 +173,24 @@ function parseArgs(argv) {
     else if (arg === "--dry-run") opts.dryRun = true;
     else if (arg === "--live") opts.live = true;
     else if (arg === "--json") opts.json = true;
+    else if (arg === "--backfill-tenants") opts.backfillTenants = true;
+    else if (arg === "--deactivate-orphan-users") opts.deactivateOrphanUsers = true;
     else if (arg === "--backup-attested") opts.backupAttested = argv[++i] ?? "";
     else if (arg.startsWith("--backup-attested="))
       opts.backupAttested = arg.slice("--backup-attested=".length);
     else opts.errors.push(`unknown argument "${arg}"`);
   }
   if (opts.dryRun && opts.live) opts.errors.push("--dry-run and --live are mutually exclusive");
+  // ONE task per invocation. The tenant backfill is the default, so the only way to ask for both
+  // is to name it explicitly alongside the user task — and that is an error, never a silent
+  // choice: the two write different columns on different tables under different confirmations,
+  // and an owner who typed both did not mean either.
+  if (opts.backfillTenants && opts.deactivateOrphanUsers) {
+    opts.errors.push(
+      "--backfill-tenants and --deactivate-orphan-users are mutually exclusive — this tool runs " +
+        "exactly one repair per invocation",
+    );
+  }
   if (opts.live && !String(opts.backupAttested ?? "").trim()) {
     opts.errors.push(
       '--live requires --backup-attested "<free text naming the fresh backup>" — take the ' +
@@ -158,6 +212,7 @@ if (opts.errors.length > 0) {
 }
 
 const mode = opts.live ? "live" : opts.dryRun ? "dry-run" : "report";
+const task = opts.deactivateOrphanUsers ? "orphan-users" : "tenants";
 const say = opts.json ? () => {} : (...args) => console.log(...args);
 
 let databaseUrl;
@@ -290,6 +345,21 @@ const TABLES = [
   },
 ];
 
+// ─── the orphan-user listing (--deactivate-orphan-users) ──────────────────────────────────────
+//
+// The WHERE is the contract, not a filter: this task may only ever SEE a NULL-tenant,
+// non-SUPER_ADMIN row, so a platform account cannot be deactivated even by a bug in the
+// classifier (which refuses the role again anyway). The SELECT list is the output-discipline
+// contract in the same way — `email`, `username` and any name column are deliberately absent, so
+// nothing this task prints can carry one. `isAdmin` and `lockedUntil` are read for the owner's
+// `--json` record; `role`, `status`, `createdAt` and `updatedAt` are what the prose line shows.
+const ORPHAN_USER_SQL = `SELECT u."id", u."role", u."status", u."isAdmin", u."deletedAt",
+                                u."lockedUntil", u."createdAt", u."updatedAt"
+                           FROM "User" u
+                          WHERE u."tenantId" IS NULL
+                            AND u."role" <> '${SUPER_ADMIN_ROLE}'
+                          ORDER BY u."createdAt"`;
+
 // ─── formatting ───────────────────────────────────────────────────────────────────────────────
 
 const show = (value) => {
@@ -309,6 +379,25 @@ function reportLine(report) {
     // tenant above is the one this same batch will write to it.
     (report.note ? ` ${report.note}` : "")
   );
+}
+
+/** The orphan-user report line. Id, role, status and the two timestamps — nothing that could
+ *  identify a person, and the verdict last so the column is scannable. */
+function orphanUserLine(report) {
+  return (
+    `User ${show(report.id)} role=${show(report.role)} status=${show(report.status)} ` +
+    `created=${show(report.createdAt)} updated=${show(report.updatedAt)} -> ${report.verdict}`
+  );
+}
+
+/** The `--dry-run` listing, shared by both tasks: one numbered statement, then each bound value
+ *  on its own line. Driven by `params.length`, so the user task's third parameter (the status the
+ *  row must still have) prints without a second copy of this loop. */
+function printStatements(updates) {
+  updates.forEach((update, index) => {
+    say(`  [${index + 1}] ${update.sql}`);
+    update.params.forEach((value, i) => say(`        $${i + 1} = ${value}`));
+  });
 }
 
 // ─── main ─────────────────────────────────────────────────────────────────────────────────────
@@ -355,15 +444,62 @@ function ask(question) {
   });
 }
 
-async function main() {
-  client = connect(databaseUrl);
-  await client.connect();
+/**
+ * The ONE write path, shared by both tasks: typed confirmation, then a single transaction of
+ * guarded statements whose RETURNING is checked row by row. It is factored out precisely so the
+ * two tasks cannot drift apart on the half that can destroy data — neither can grow a looser
+ * confirmation, a second transaction, or an unchecked UPDATE by being edited on its own.
+ *
+ * `applied` is filled in place (table → count). Returns an exit code: 0 applied, 3 confirmation
+ * refused, 4 rolled back because a row no longer matched its guarded WHERE.
+ */
+async function confirmAndApply(updates, phrase, applied, rollbackReason) {
+  const injected = confirmTokenOverride();
+  if (injected === undefined && !process.stdin.isTTY) {
+    console.error(
+      "backfill-legacy-tenant-ids: refused — --live needs an interactive TTY for the typed " +
+        "confirmation, and stdin is not one",
+    );
+    return 3;
+  }
+  const answer = injected ?? (await ask(`Type "${phrase}" to proceed: `));
+  if (answer.trim() !== phrase) {
+    console.error("backfill-legacy-tenant-ids: refused — confirmation text did not match");
+    return 3;
+  }
 
-  // Read-only for the whole session first, in every mode. `--live` lifts it explicitly, after
-  // the report has been printed and the confirmation typed — never before.
-  await client.query("SET default_transaction_read_only = on");
-  await client.query("SET statement_timeout = '60s'");
+  say("\n  session read-only flag lifted for this repair; opening one transaction");
+  await client.query("SET default_transaction_read_only = off");
+  await client.query("BEGIN");
+  try {
+    // Already ordered by the builder (BACKFILL_TABLES for the tenant task, report order for the
+    // user task, which has one table), inside this ONE transaction — so a row that changed under
+    // us rolls back everything written beside it.
+    for (const update of updates) {
+      const res = await client.query(update.sql, update.params);
+      if (res.rows.length !== 1) {
+        await client.query("ROLLBACK");
+        console.error(
+          `backfill-legacy-tenant-ids: ROLLED BACK — ${update.table} ${update.id} ` +
+            `${rollbackReason} (it changed under us); nothing was written`,
+        );
+        return 4;
+      }
+      applied[update.table] = (applied[update.table] ?? 0) + 1;
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw e;
+  }
 
+  say("\n=== APPLIED ===");
+  for (const [table, n] of Object.entries(applied)) say(`  ${table.padEnd(16)} ${n}`);
+  say(`  ${"TOTAL".padEnd(16)} ${updates.length}\n`);
+  return 0;
+}
+
+async function runTenantBackfill() {
   say(`\n=== LEGACY NULL-tenantId BACKFILL — ${mode} — ${target} ===`);
   say("    session is READ ONLY; ids and verdicts only, no business data\n");
 
@@ -434,11 +570,7 @@ async function main() {
         ? "=== DRY RUN — BLOCKED, no write list could be built; nothing to show ==="
         : `=== DRY RUN — the ${updates.length} statement(s) --live would execute ===`,
     );
-    updates.forEach((update, index) => {
-      say(`  [${index + 1}] ${update.sql}`);
-      say(`        $1 = ${update.params[0]}`);
-      say(`        $2 = ${update.params[1]}`);
-    });
+    printStatements(updates);
     say(
       `\n  ${Object.entries(countsByTable(updates))
         .map(([table, n]) => `${table}=${n}`)
@@ -453,49 +585,16 @@ async function main() {
     if (updates.length === 0) {
       say("=== LIVE — no ok rows to repair; nothing to do ===\n");
     } else {
-      const injected = confirmTokenOverride();
-      if (injected === undefined && !process.stdin.isTTY) {
-        console.error(
-          "backfill-legacy-tenant-ids: refused — --live needs an interactive TTY for the typed " +
-            "confirmation, and stdin is not one",
-        );
-        return 3;
-      }
-      const phrase = `BACKFILL ${updates.length} ROWS`;
-      const answer = injected ?? (await ask(`Type "${phrase}" to proceed: `));
-      if (answer.trim() !== phrase) {
-        console.error("backfill-legacy-tenant-ids: refused — confirmation text did not match");
-        return 3;
-      }
-
-      say("\n  session read-only flag lifted for this repair; opening one transaction");
-      await client.query("SET default_transaction_read_only = off");
-      await client.query("BEGIN");
-      try {
-        // `buildUpdates` already ordered these by BACKFILL_TABLES, so every RouteRun repair
-        // precedes the stop repairs that depend on it — inside this ONE transaction, so a stop
-        // that changed under us rolls the parent run back with it.
-        for (const update of updates) {
-          const res = await client.query(update.sql, update.params);
-          if (res.rows.length !== 1) {
-            await client.query("ROLLBACK");
-            console.error(
-              `backfill-legacy-tenant-ids: ROLLED BACK — ${update.table} ${update.id} was no ` +
-                "longer NULL-tenant (it changed under us); nothing was written",
-            );
-            return 4;
-          }
-          applied[update.table] = (applied[update.table] ?? 0) + 1;
-        }
-        await client.query("COMMIT");
-      } catch (e) {
-        await client.query("ROLLBACK").catch(() => {});
-        throw e;
-      }
-
-      say("\n=== APPLIED ===");
-      for (const [table, n] of Object.entries(applied)) say(`  ${table.padEnd(16)} ${n}`);
-      say(`  ${"TOTAL".padEnd(16)} ${updates.length}\n`);
+      // `buildUpdates` already ordered these by BACKFILL_TABLES, so every RouteRun repair
+      // precedes the stop repairs that depend on it — inside the one transaction below, so a
+      // stop that changed under us rolls the parent run back with it.
+      const code = await confirmAndApply(
+        updates,
+        `BACKFILL ${updates.length} ROWS`,
+        applied,
+        "was no longer NULL-tenant",
+      );
+      if (code !== 0) return code;
     }
   }
 
@@ -504,6 +603,7 @@ async function main() {
       JSON.stringify(
         {
           mode,
+          task,
           target,
           generatedAt: new Date().toISOString(),
           backupAttested: opts.live ? opts.backupAttested : null,
@@ -524,6 +624,117 @@ async function main() {
     );
   }
   return 0;
+}
+
+// ─── --deactivate-orphan-users ────────────────────────────────────────────────────────────────
+
+async function runOrphanUsers() {
+  say(`\n=== NULL-tenant ORPHAN USER DEACTIVATION — ${mode} — ${target} ===`);
+  say("    session is READ ONLY; ids, roles, statuses and timestamps only — never a name\n");
+
+  const { rows } = await client.query(ORPHAN_USER_SQL);
+  const reports = [];
+  let ok = 0;
+  for (const row of rows) {
+    const { verdict, status, reason } = classifyOrphanUser(row);
+    const report = {
+      table: "User",
+      id: row.id,
+      role: row.role,
+      // The status the row has NOW, which is what the report line prints; `newStatus` below is
+      // the value --live would write (always the inactive one, and null for every refusal).
+      status: row.status,
+      isAdmin: row.isAdmin === true,
+      deletedAt: row.deletedAt ?? null,
+      lockedUntil: row.lockedUntil ?? null,
+      createdAt: row.createdAt ?? null,
+      updatedAt: row.updatedAt ?? null,
+      verdict,
+      newStatus: status,
+      reason,
+    };
+    if (verdict === VERDICT_OK) ok++;
+    reports.push(report);
+    say(`  ${orphanUserLine(report)}`);
+  }
+  if (rows.length === 0) say("  User  (no NULL-tenantId rows outside SUPER_ADMIN)");
+  say("");
+
+  const refused = rows.length - ok;
+  const perTable = [{ table: "User", ok, refused }];
+  say("=== SUMMARY ===");
+  say(`  ${"User".padEnd(16)} ok=${ok} refused=${refused}`);
+  say(`  ${"TOTAL".padEnd(16)} ok=${ok} refused=${refused}\n`);
+
+  // No `batchError` twin of the tenant path here on purpose: `buildOrphanUserUpdates` throws only
+  // on a malformed report, and this function is its only caller, so a throw would be a programmer
+  // error rather than a shape production can present — it becomes exit 1 with a message, which is
+  // the right outcome for one.
+  const updates = buildOrphanUserUpdates(reports);
+
+  if (mode === "dry-run") {
+    say(`=== DRY RUN — the ${updates.length} statement(s) --live would execute ===`);
+    printStatements(updates);
+    say(`\n  User=${updates.length}`);
+    say("\n=== END — nothing was modified ===\n");
+  }
+
+  const applied = {};
+
+  if (mode === "live") {
+    if (updates.length === 0) {
+      say("=== LIVE — no active orphan users to deactivate; nothing to do ===\n");
+    } else {
+      const code = await confirmAndApply(
+        updates,
+        `DEACTIVATE ${updates.length} USERS`,
+        applied,
+        "was no longer an active NULL-tenant non-super-admin",
+      );
+      if (code !== 0) return code;
+    }
+  }
+
+  if (opts.json) {
+    const iso = (value) => value?.toISOString?.() ?? null;
+    console.log(
+      JSON.stringify(
+        {
+          mode,
+          task,
+          target,
+          generatedAt: new Date().toISOString(),
+          backupAttested: opts.live ? opts.backupAttested : null,
+          rows: reports.map((r) => ({
+            ...r,
+            deletedAt: iso(r.deletedAt),
+            lockedUntil: iso(r.lockedUntil),
+            createdAt: iso(r.createdAt),
+            updatedAt: iso(r.updatedAt),
+          })),
+          perTable,
+          summary: { ok, refused },
+          updates: mode === "report" ? null : updates,
+          applied: mode === "live" ? applied : null,
+        },
+        null,
+        2,
+      ),
+    );
+  }
+  return 0;
+}
+
+async function main() {
+  client = connect(databaseUrl);
+  await client.connect();
+
+  // Read-only for the whole session first, in every mode and BOTH tasks. Only `confirmAndApply`
+  // lifts it, after the report has been printed and the confirmation typed — never before.
+  await client.query("SET default_transaction_read_only = on");
+  await client.query("SET statement_timeout = '60s'");
+
+  return task === "orphan-users" ? runOrphanUsers() : runTenantBackfill();
 }
 
 main()
