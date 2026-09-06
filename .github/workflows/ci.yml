@@ -39,6 +39,16 @@
 #      Railway builds — it starts when Railway SAYS the deploy succeeded. The poll
 #      loop is still there, because it is the correctness gate; it just exits on
 #      its first attempt now instead of being paid to sleep through the build.
+#   5. Dependabot PRs open while the repo is PRIVATE (that is when Dependabot
+#      runs), so every one of their `verify` runs bills against the private
+#      allowance same as a human PR — measured 16 runs/14 days, ~19 min each,
+#      pure waste since nobody reviews a Dependabot PR off a red run they never
+#      look at until merge time anyway. APPLIED 2026-09-05: the `verify` job's
+#      `if:` skips `pull_request` events actored by `dependabot[bot]`. It still
+#      gets a real verify — via manual `workflow_dispatch` on the PR's branch
+#      inside a brief public window right before merge, the same rebuild
+#      routine already used for schema-migration pushes (see
+#      docs/runbooks/deploy-visibility-flip.md) — just not run twice for free.
 #
 # ═══ LOCAL GATE IS AUTHORITATIVE ════════════════════════════════════════════════
 # `.husky/pre-push` runs `npm run verify` — the SAME command this workflow runs —
@@ -157,9 +167,19 @@ jobs:
     # is not `push`, so the negative form would have run the entire correctness
     # suite on every production deploy — the exact opposite of this file's point.
     # Add an event here deliberately or it does not reach this job.
+    #
+    # ALSO excludes dependabot[bot] pull_request actors (2026-09-05, private-
+    # minutes cut). Dependabot PRs open while the repo is PRIVATE, so their
+    # verify runs bill against the 2,000 min/mo allowance same as any other —
+    # 16 runs/14 days measured, ~19 min each. They get their real verify by a
+    # manual `workflow_dispatch` off the PR branch inside a brief public window
+    # before merge (the same rebuild routine used for schema-migration pushes —
+    # see docs/runbooks/deploy-visibility-flip.md), not by running twice for
+    # free here.
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && github.event.pull_request.draft != true)
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.draft != true)) &&
+      (github.event_name != 'pull_request' || github.actor != 'dependabot[bot]')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -168,6 +188,14 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
+          # Default key: actions/setup-node hashes **/package-lock.json itself
+          # (no explicit cache-dependency-path needed for a single root lock).
+          # This caches only npm's download cache, not node_modules or .turbo —
+          # `npm ci` still runs for real every time, so this is NOT a turbo/build
+          # cache and does not reintroduce the false-green risk noted below (the
+          # Actions cache store measured 11.27 GB / 20 caches on 2026-09-05,
+          # already over the 10 GB per-repo cap, so evictions are cold-install
+          # noise, not a correctness risk — left as-is, just documented).
           cache: npm
 
       # ── PRE-INSTALL lockfile gate ────────────────────────────────────────────
