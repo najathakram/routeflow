@@ -726,3 +726,18 @@ id, so **L-046** (domain), the following qualifying entry, is archived instead.
   needs at job level.** A job whose steps are all skipped is not a passing run ([[L-041]]).
 - **Guard:** `ci-freshness-guard-script.spec.ts` T1 executes the workflow's own step under a fake
   `gh`.
+
+## Archived 2026-09-07 — headroom for L-087 (docs/650-f23-bookkeeping, #650 follow-up)
+
+### L-075 · 2026-09-04 · deploy · PR-2b `imp-02b-cron-leader-lock`
+
+- **Symptom:** a leader lock held for a whole cron tick sits on a SOCKET-IDLE connection for
+  minutes — the tick's own work runs on a different pool.
+- **Root cause:** an advisory lock lives with the SESSION, and an idle TCP session can be reaped
+  anywhere on the path (NAT, LB, platform network). The reap ends the session, Postgres releases
+  the lock, and a rival replica wins an election for a job still running.
+- **Lesson:** **any connection pinned for a long-held lock needs TCP keepalive, and a lock whose
+  loss allows a duplicate money run must be sized and monitored as a SESSION, not a statement** —
+  pool `max` covers its family's concurrent HOLDERS, not its call rate.
+- **Guard:** `db-locks.spec.ts` (p) pins `keepAlive: true` / `keepAliveInitialDelayMillis: 30_000`
+  on both lock pools, and their per-family `max`.

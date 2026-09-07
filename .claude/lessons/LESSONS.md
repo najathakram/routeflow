@@ -380,6 +380,19 @@ grep` every writer and reader of that field before the build plan is cut and put
 
 ## testing
 
+### L-087 · 2026-09-07 · testing · #650
+
+- **Symptom:** a passing "leaves INTERNAL untouched" assertion in a new NO_TRANSPORT test proved
+  nothing — every INTERNAL event is already NO_TRIGGER, so the `channel !== INTERNAL` exemption
+  was unreachable and it passed on precedence alone (reviewer's mutation probe).
+- **Root cause:** written from the design's intent (INTERNAL is exempt), not the tree's current
+  state (every INTERNAL event is already NO_TRIGGER, so the exemption line never runs).
+- **Lesson:** **pin the CURRENT state behaviourally — every INTERNAL cell under a no-transport
+  provider reports NO_TRIGGER — so the first wired INTERNAL event turns it red; a reviewer's probe
+  must judge every "untouched" claim before it counts as coverage.**
+- **Guard:** the rewritten pin in `messaging-config.service.spec.ts`'s "NO_TRANSPORT — provider
+  declares no transports" describe block; F23's round-2 review finding (`result.json`).
+
 ### L-076 · 2026-09-05 · testing · F13
 
 - **Symptom:** an E2E toast assertion via bare `getByText` hit a strict-mode violation
@@ -478,19 +491,6 @@ grep` every writer and reader of that field before the build plan is cut and put
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
 ## deploy
-
-### L-075 · 2026-09-04 · deploy · PR-2b `imp-02b-cron-leader-lock`
-
-- **Symptom:** a leader lock held for a whole cron tick sits on a SOCKET-IDLE connection for
-  minutes — the tick's own work runs on a different pool.
-- **Root cause:** an advisory lock lives with the SESSION, and an idle TCP session can be reaped
-  anywhere on the path (NAT, LB, platform network). The reap ends the session, Postgres releases
-  the lock, and a rival replica wins an election for a job still running.
-- **Lesson:** **any connection pinned for a long-held lock needs TCP keepalive, and a lock whose
-  loss allows a duplicate money run must be sized and monitored as a SESSION, not a statement** —
-  pool `max` covers its family's concurrent HOLDERS, not its call rate.
-- **Guard:** `db-locks.spec.ts` (p) pins `keepAlive: true` / `keepAliveInitialDelayMillis: 30_000`
-  on both lock pools, and their per-family `max`.
 
 ### L-077 · 2026-09-05 · deploy · close-out re-check
 

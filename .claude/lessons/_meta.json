@@ -1,10 +1,10 @@
 {
-  "nextId": 87,
+  "nextId": 88,
   "activeCount": 39,
-  "archivedCount": 43,
+  "archivedCount": 44,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-07T03:22:40.902Z",
+  "updatedAt": "2026-09-07T05:00:00.000Z",
   "schemaVersion": 1,
-  "note": "docs/647-lesson-l086: added L-086 (testing — post-deploy money oracles are read from the API with a > 0 vacuity guard, never fixture arithmetic; dashboard heading locators scope to #main-content; spec-29 fix #647). Archived L-058 (guarded by ci-freshness-guard-script.spec.ts T1) for byte headroom."
+  "note": "docs/650-f23-bookkeeping: added L-087 (testing -- pin the CURRENT state behaviourally, not the design's intent; a reviewer's mutation probe judges every 'untouched' claim; PR #650 messaging-engine NO_TRANSPORT test). Archived L-075 (deploy, guarded by db-locks.spec.ts) for byte headroom -- oldest active entry with a landed automated-artifact guard that is uncited outside .claude/pipeline and .claude/lessons (L-072, dated earlier, is guarded by enum-parity.spec.ts but is cited by name in root CLAUDE.md's enum-mirror convention, so skipped; L-046/L-047 are cited by 'See L-0xx' prose in code-map's api.md/mobile.md/web.md, so also skipped)."
 }
