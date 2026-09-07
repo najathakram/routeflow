@@ -349,6 +349,20 @@ grep` every writer and reader of that field before the build plan is cut and put
 - **Guard:** self-test `liveness:` checks (a2) and the dead-holder `observed gone` assertion, run on
   both platforms; CI run 33938718344 is the red that proved it.
 
+### L-086 · 2026-09-07 · testing · #647
+
+- **Symptom:** F08's two new post-deploy Playwright rows failed on their first deployed run while
+  every other test passed: one expected the returns KPI to move by a hard-coded 10 (order line)
+  when the deployed billed basis gave 15; the other's heading locator matched two `h1`s.
+- **Root cause:** T2 rows are written without any run, so one encoded an order-line oracle for a
+  value the fix had moved to the invoice, and one used an unscoped role locator on a layout whose
+  header bar repeats every page title.
+- **Lesson:** **a post-deploy money oracle is read from the API at test time — the created record's
+  own billed figure, asserted `> 0` first so the row cannot pass vacuously — never computed from
+  fixture arithmetic; and heading locators on dashboard pages are scoped to `#main-content`.**
+- **Guard:** spec 29's `refundEstimate` fetch + vacuity guard; the T2 harness note in each
+  bug-test-plan; a T2 row stays `proven-pending-deploy` until its deploy-triggered run is green.
+
 ### L-082 · 2026-09-06 · testing · bugs.mjs self-test
 
 - **Symptom:** the registry self-test's pid-reuse fixture failed on an ubuntu runner (four checks in a
@@ -433,19 +447,6 @@ grep` every writer and reader of that field before the build plan is cut and put
   report, never a spec to ship as-is — and "we only add tests" is not a reason to leave one red.
 - **Guard:** the RED BAR block now asserts `code: "P2025"` (Prisma's own not-found shape), so a
   regression that returns the row — or throws something else — fails the DB lane.
-
-### L-058 · 2026-09-04 · testing · REG-E2EGUARD-403
-
-- **Symptom:** the deploy-triggered E2E job reported success for days with every test step
-  skipped.
-- **Root cause:** the freshness guard's `latest=$(gh api … --jq '.[0].sha' 2>/dev/null || true)`
-  treated a 403 error body as the newest sha — non-empty, so the emptiness check never fired — and
-  the run token never had `deployments:read` (it worked only while the repo was public).
-- **Lesson:** **A guard that skips work must decide on the command's exit status and the payload's
-  shape, never on string emptiness, and must fail OPEN; declare every permission a job's API call
-  needs at job level.** A job whose steps are all skipped is not a passing run ([[L-041]]).
-- **Guard:** `ci-freshness-guard-script.spec.ts` T1 executes the workflow's own step under a fake
-  `gh`.
 
 ### L-050 · 2026-09-02 · testing · #598
 
