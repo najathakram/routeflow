@@ -41,9 +41,9 @@
  * Role: OPERATOR (reads its token out of the pre-authenticated session, same
  * as 21-destructive-guards / 22-payment-truth). Tenant: the approved
  * e2e-routeflow regression seed (assertTestTenant, helpers/constants.ts).
- * Every fixture created here (`E2E B144 …` customer + 25 orders, one
- * throwaway invoice + payment) is fully self-provisioned and left behind —
- * the same residue tolerance 21/22/24's own throwaway fixtures already take.
+ * Every fixture created here (one `E2E B144 …` customer carrying 25 separate
+ * orders, one throwaway invoice + payment) is fully self-provisioned and left
+ * behind — the same residue tolerance 21/22/24's own throwaway fixtures take.
  */
 
 import { test, expect, type Page } from "@playwright/test";
@@ -237,7 +237,17 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     // "Payment not found." is what the buggy page renders once the id falls
     // outside the 200-row page it fetched — this must not appear once the
     // page is fetching by id instead.
-    await expect(page.getByText(paymentDetail.paymentNumber)).toBeVisible({ timeout: 15_000 });
+    //
+    // The receipt renders the number TWICE — the page heading
+    // (`<h2 className="font-mono text-2xl font-bold text-navy">{payment.paymentNumber ?? "Payment"}</h2>`,
+    // finance/payments/[id]/page.tsx:107) and the receipt document's
+    // "<number> · <date>" subline (same file, :147) — so a bare getByText is a
+    // strict-mode violation, not a product failure (L-086: heading locators are
+    // pinned by role, never by loose text). The heading's whole accessible name
+    // is the payment number, so an exact role match resolves to that one node.
+    await expect(
+      page.getByRole("heading", { name: paymentDetail.paymentNumber, exact: true }),
+    ).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("Payment not found.")).toHaveCount(0);
 
     expect(
@@ -254,6 +264,11 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     page,
     request,
   }) => {
+    // 26 provisioning round-trips against the deployed API (1 customer, 25
+    // orders) do not fit the 60 s per-test default in playwright.config.ts once
+    // Railway is cold — the assertions below keep their own 15 s budgets.
+    test.setTimeout(120_000);
+
     await openApp(page);
     const headers = await apiHeaders(page);
     expect(
@@ -263,7 +278,19 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     const api = apiBase(page.url());
 
     const suffix = String(Date.now());
+    // `search` is matched by the API against the order NUMBER or the customer's
+    // businessName (`orders.service.ts:336-341`, the B144 where-clause), and
+    // order numbers are server-minted, so the suffix has to live in the business
+    // name. ONE customer owns all 25 orders, so every matching row on either
+    // page carries exactly this name — the page-2 assertion below matches
+    // whichever of the 25 the second page happens to hold.
     const businessName = `E2E B144 ${suffix}`;
+
+    // ONE customer, 25 orders — one more than the default page size (20) — so a
+    // match on page 2 is only reachable if the search actually narrowed the
+    // SERVER query rather than only ever filtering whatever the first page
+    // happened to already hold. One customer rather than 25 keeps this spec's
+    // residue on the shared e2e-routeflow tenant to a single customer per run.
     const customerRes = await request.post(`${api}/api/v1/customers`, {
       headers: headers!,
       data: {
@@ -276,16 +303,27 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     const customer: { id: string } = (await customerRes.json()).customer;
     expect(customer?.id, "POST /customers response carried no customer.id").toBeTruthy();
 
-    // 25 orders — one more than the default page size (20) — so a match on
-    // page 2 is only reachable if the search actually narrowed the SERVER
-    // query rather than only ever filtering whatever the first page happened
-    // to already hold.
+    // From the 2nd order on this customer already holds an open PENDING order,
+    // and a staff create that carries no merge decision is refused with 409
+    // `MERGE_CHOICE_REQUIRED` (`orders.controller.ts:110-127`, via
+    // `findActiveOrder`). `mergeChoice: "separate"` is the operator's explicit
+    // choice — a declared `@IsEnum(["merge", "separate"])` field on
+    // CreateOrderDto (`create-order.dto.ts:103`), so the global
+    // `forbidNonWhitelisted` ValidationPipe (`main.ts:145-149`) passes it
+    // through — and it satisfies the guard legitimately: the controller falls
+    // through to `ordersService.create(…, { skipAutoMerge: choice ===
+    // "separate" })` (`orders.controller.ts:278-282`), which INSERTs a new
+    // order flagged `skipAutoMerge` (`orders.service.ts:2268`) instead of
+    // folding these items into the existing one. The post-create
+    // `mergeAllPendingForCustomer` consolidation is staff-exempt
+    // (`orders.controller.ts:285`, `if (!isStaff …)`), so the 25 stay distinct.
     for (let i = 0; i < 25; i++) {
       const orderRes = await request.post(`${api}/api/v1/orders`, {
         headers: headers!,
         data: {
           customerId: customer.id,
           status: "PENDING",
+          mergeChoice: "separate",
           items: [{ name: `E2E B144 item ${i}`, qty: 1, unitPrice: 10 }],
         },
       });
