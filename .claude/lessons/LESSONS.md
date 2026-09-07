@@ -11,6 +11,24 @@
 
 ## process
 
+### L-084 · 2026-09-06 · process · F18
+
+- **Symptom:** F18's engine ended with every gate green and 3/3 probes caught, yet its final pass
+  found 12 live defects in files outside the build radius — platform-admin plan writers, Stripe
+  subscription webhooks, the period-end cron, alias and custom-plan paths — after the engine's
+  round cap had already stopped it.
+- **Root cause:** the fix was the FIRST product caller to arm a dormant persisted state (the
+  downgrade markers), which turned every other writer's and consumer's latent weakness into a
+  live defect; the radius was seeded from the build plan's file list, so those files were never
+  in scope until the final pass, and the pass's ordered reads could not feed a fix round.
+- **Lesson:** **when a fix arms, first-consumes, or first-clears a persisted state field, `git
+grep` every writer and reader of that field before the build plan is cut and put them in the
+  radius; treat the final pass's "reads worth their cost" as a fix round's input, never as the
+  run's end.**
+- **Guard:** bug-pipeline S5 checklist line ("state fields this fix arms → grep writers/readers →
+  radius"); knob candidate recorded in RUN-LOG 2026-09-06 (ledger evidence required before the
+  engine changes).
+
 ### L-080 · 2026-09-06 · process · registry-guards
 
 - **Symptom:** three PRs (#612/#617/#618) landed bug-ledger rows while the per-bug records still
@@ -257,22 +275,6 @@
 - **Guard:** `apps/web/jest.config.js`'s inline comment on `testMatch`; the web suite count (19
   spec files) pinned in `.claude/code-map/web.md`.
 
-### L-056 · 2026-09-04 · tooling · #609
-
-- **Symptom:** the `Fail on critical production advisories` CI step (`npm audit --omit=dev
---audit-level=critical`) blew its 20-minute `timeout-minutes` twice in one day, 8 minutes
-  apart; the non-blocking high-severity step hit the same failure masked by `|| true`.
-- **Root cause:** npm's registry started returning 500 on the quick-audit endpoint ("This
-  endpoint is being retired. Use the bulk advisory endpoint instead."), and npm's own client
-  retries internally for ~12 minutes before giving up — the gate had no way to tell an upstream
-  outage apart from a real finding.
-- **Lesson:** a CI gate that depends on a third-party service must distinguish a finding from an
-  outage: fail on findings, warn-and-skip on unavailability with a bounded retry — otherwise an
-  upstream deprecation blocks every merge.
-- **Guard:** `scripts/ci-audit-critical.mjs` (bounded 3-attempt retry, registry/transport-error
-  detection, `::warning::…SKIPPED` + exit 0 on outage, fail-closed otherwise); contract spec
-  `apps/api/src/common/ci-audit-script.spec.ts`.
-
 ### L-062 · 2026-09-04 · tooling · imp-04
 
 - **Symptom:** dropping `@routeflow/api#test` (forbidden by package-shape.spec.ts) left
@@ -485,23 +487,6 @@
   to check it.**
 - **Guard:** `runGh`'s 60s timeout + `visibility-watchdog-script.spec.ts` (reachable-delay list,
   `root=` on the start line, gated overrides); the runbook names the marker path.
-
-### L-064 · 2026-09-04 · deploy · imp-04
-
-- **Symptom:** the local E2E lane's browser login against the Docker-built web image was
-  CSP-blocked with no HTTP response at all (`POST http://localhost:3000/api/v1/auth/login`
-  from `http://localhost:3001`, `status -1`); the login page's no-response fallback rendered
-  it as "Invalid username or password" even though API, CORS, seed, and throttle were all fine.
-- **Root cause:** `next.config.mjs`'s CSP gated the `connect-src` localhost relaxation on
-  `isDev = NODE_ENV !== "production"`, which is always `false` in a **built** image — `next
-build` forces production — so that branch was dead in every Docker image, not just prod.
-- **Lesson:** **never gate a build-time artifact (a CSP header, a routes manifest) on
-  `NODE_ENV` — every built image reports `production` regardless of its actual deployment
-  target. Derive the decision from the build input it must actually match instead** (here,
-  whether the baked `NEXT_PUBLIC_API_URL` itself is `http:`), and pin the production output
-  byte-identical in a spec so the fix can't silently change what ships.
-- **Guard:** `apps/web/csp.mjs` (`apiConnectSources`) + `apps/web/lib/csp.test.ts` (prod-identity
-  case pins the exact production `Content-Security-Policy` string).
 
 ### L-057 · 2026-09-04 · deploy · #609
 
