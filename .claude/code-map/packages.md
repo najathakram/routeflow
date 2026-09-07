@@ -63,6 +63,17 @@ string` (B20 — free-form intake note, e.g. "DAMAGED_BOX") and its `restock?` d
   `windowsChecked`, `RouteVariant.windowViolations`, the `WindowViolation` shape itself) are NOT
   here — they live only in web's own `lib/api/routes.ts` (not shared with mobile, which does not
   consume the window signal — see api.md's F12 bullet and registry row B226).
+- **`api/invoices.ts` (NEW, F16 2026-09-07, #656)** — `InvoiceKpiSummary` (the invoices page's six
+  KPI tiles: `totalOutstanding/overdue/dueToday/dueIn30/avgDays/awaitingConfirmationCount`), the
+  response shape of the new `GET /invoices/kpi-summary?today=` endpoint (B12) — replaces the old
+  `useInvoices({ limit: 999 })` fetch-all-then-reduce, which silently dropped any tenant with more
+  than 999 invoices. Re-exported from `index.ts`.
+- **`api/buyer.ts` — F16 (2026-09-07, #656):** `BuyerStatement` gains `lifetimeInvoiced`/
+  `lifetimeReceived` (DB-side aggregates over the whole invoice/payment history, never a reduce
+  over the capped `transactions` ledger) and `transactionsTruncated: boolean` (true when that
+  ledger read hit its own `take` cap) — B110. Mirrored by `apps/mobile/lib/api/customers.ts`
+  `CustomerStatement`/`AccountSummary` (not shared — mobile predates the shared-DTO sweep for this
+  file) and `apps/web/lib/api/customers.ts` `CustomerStatement`.
 - **Enums** (synced with Prisma): `UserRole`, `UserStatus`; `OrderStatus`, `ItemStatus`;
   `RouteRunStatus`, `RouteRunStopStatus`; `TxnStatus`, `PaymentMethod` (2026-08-21: backfilled
   from a stale 4 values to all 8 — `CASH,CHECK,ACH,OTHER,CREDIT_NOTE,ADVANCE,CREDIT_CARD,ZELLE`
