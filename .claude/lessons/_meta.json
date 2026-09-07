@@ -1,10 +1,10 @@
 {
-  "nextId": 90,
-  "activeCount": 39,
-  "archivedCount": 46,
+  "nextId": 91,
+  "activeCount": 38,
+  "archivedCount": 48,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-07T15:45:00.000Z",
+  "updatedAt": "2026-09-07T18:30:00.000Z",
   "schemaVersion": 1,
-  "note": "docs/656-f16-bookkeeping: added L-089 (domain -- a take/limit chosen as a rendering budget was reused as an arithmetic boundary across six sites; a total/lookup/match/search is computed by the DB over the whole (open) set or labelled partial, every paginated order carries an id tiebreaker; PR #656 REG-B12/B80/B110/B117/B144/B169). Archived L-080 (process, guarded by scripts/campaign/bugs.mjs self-test's sync --check T13/T13b + move --tier T14, which npm run verify runs before every push) for byte headroom -- the next-oldest active entry after L-079 with a landed automated-artifact guard that is uncited outside .claude/pipeline and .claude/lessons (confirmed via grep: every L-080 hit outside this repo lives under .claude/pipeline/**, .claude/lessons/** or code-map/CHANGELOG.md; L-079 landed in #631, L-080 in #635, and #653's note already established no entry between them qualifies)."
+  "note": "docs/f16-hotfix-followup: added L-090 (testing -- a server-side KPI port narrowed the client memo's basis while pinning the NEW basis in its own spec, so the pin agreed with the port, not the memo; transcribe the client's basis verbatim into the server pin FIRST, then port; PR #659, deployment E2E spec 22 REG-B11). Archived L-084 + L-085 (both process, 2026-09-06 -- bug-pipeline engine-stall and radius-gap lessons, guarded by the bug-pipeline skill's S5 checklist line / RESUME cards / probe-stage rule) for byte + entry headroom -- the two oldest active entries with a landed automated-artifact guard that are uncited outside .claude/pipeline/**, .claude/lessons/** or code-map/CHANGELOG.md (confirmed via grep across the whole repo, not just the code map: every entry dated ahead of them either carries no automated-artifact guard at all, or is cited from code-map/api.md, code-map/web.md, code-map/INDEX.md, HANDOFF.md, docs/adr/0003-bugflow-github-native-bug-tracking.md, tools/bugflow/docs/*, a live .claude/campaign/bugs/ record, or -- L-063 only -- scripts/campaign-check.mjs itself)."
 }
