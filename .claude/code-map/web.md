@@ -1232,4 +1232,13 @@ layout and the enum-parity guard. Key entries:
   growing by exactly $10 per Playwright retry — consistent with the KPI/fixture not being isolated
   per attempt (each retry's setup adds another billed return without the prior attempt's being
   cleaned up or excluded). Neither failure has been root-caused to a fix; F08's T2 rows
-  (B166/B75/B21) are NOT discharged pending a clean re-run.
+  (B166/B75/B21) are NOT discharged pending a clean re-run. **T13 root cause + fix (#654,
+  2026-09-07, B234):** the race was the KPI baseline, not the fixture — `returns/page.tsx` paints
+  a fully formatted "$0.00" with no loading branch while `useReturns({ limit: 500 })` is still in
+  flight, so a `toBeVisible` + DOM `textContent` read of the tile cannot tell loading-zero from
+  loaded-zero. T13's `before` now comes from the API sum (#654) — `GET /returns?limit=500`,
+  `refundEstimate` summed over every row excluding REJECTED/CANCELLED, mirroring the tile's own
+  definition — never the DOM (L-086: a post-deploy money oracle comes from the API). Confirmed
+  green post-fix: GitHub Actions run 34099966904 (deployment_status, headSha 05b6c805), job E2E
+  (Playwright), project `returns-lifecycle`, test #160 REG-B75 PASSED; 139 passed / 0 failed / 26
+  skipped.
