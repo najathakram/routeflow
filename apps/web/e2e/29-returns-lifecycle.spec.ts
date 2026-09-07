@@ -210,13 +210,36 @@ test.describe("Returns lifecycle (F08)", () => {
     // exists — the tile sums return value across the WHOLE tenant and this
     // spec leaves its fixture behind (residue tolerance, same as 22/23/27), so
     // only the movement THIS fixture causes can discriminate a fix from B75.
+    //
+    // The baseline is read from the API, never off the tile: page.tsx renders
+    // `${totalReturnValue.toFixed(2)}` with NO loading branch, so while
+    // `useReturns({ limit: 500 })` is still in flight `allReturns` is `[]` and
+    // the tile paints a fully formatted "$0.00" that the DOM cannot tell apart
+    // from a loaded zero. A `toBeVisible` + `textContent` baseline therefore
+    // parses 0 whenever the read lands in that window, and the "delta" becomes
+    // the tenant's whole accumulated KPI — the false red on the deployed run
+    // (expected 10, received 105, i.e. a real 95 baseline read as 0). Per
+    // L-086 a post-deploy money oracle comes from the API, so `before`
+    // reproduces the tile's OWN definition against the same endpoint: the
+    // newest 500 returns (findAll orders `createdAt desc` with `take: limit`),
+    // minus the statuses page.tsx excludes, summing each row's
+    // `refundEstimate`.
     const kpiValue = page
       .locator("text=Total Return Value")
       .locator("xpath=ancestor::div[contains(@class,'rounded-lg')][1]")
       .getByText(/^\$[\d,.]+$/);
-    await expect(kpiValue).toBeVisible({ timeout: 15_000 });
-    const beforeText = (await kpiValue.textContent()) ?? "$0";
-    const before = Number(beforeText.replace(/[^0-9.]/g, ""));
+    const baselineRes = await request.get(`${api}/api/v1/returns?limit=500`, {
+      headers: headers!,
+    });
+    expect(baselineRes.ok(), `GET /returns?limit=500 returned ${baselineRes.status()}`).toBe(true);
+    const baselineBody: { data?: { status: string; refundEstimate?: number }[] } =
+      await baselineRes.json();
+    // page.tsx's NON_VALUE_STATUSES — a rejected or cancelled return settles
+    // nothing, so the tile leaves it out of the sum.
+    const nonValueStatuses = ["REJECTED", "CANCELLED"];
+    const before = (baselineBody.data ?? [])
+      .filter((r) => !nonValueStatuses.includes(r.status))
+      .reduce((sum, r) => sum + (Number(r.refundEstimate) || 0), 0);
 
     // ── The tile only ever sums the NEWEST 500 returns (page.tsx's summary
     // query is `useReturns({ limit: 500 })`, and findAll orders `createdAt
