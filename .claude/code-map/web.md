@@ -1282,4 +1282,18 @@ layout and the enum-parity guard. Key entries:
   B80/B144/B110 (T2 tier) are therefore left `queued`, not discharged, pending a harness fix
   (move each `operatorAccessToken` call to after the test's first navigation) and a clean re-run;
   B12 (T2) is `done` on its own passing leg. See `.claude/campaign/bugs/B80.md` /`B144.md`/`B110.md`
-  History for the full note.
+  History for the full note. **Both root causes fixed (#659, 2026-09-07, master `4d977168`, L-090):**
+  REG-B11's cause was confirmed as diagnosed above — `m7` scoped the awaiting-confirmation count to
+  the money tiles' OPEN basis instead of the memo's own (none); the count now carries no
+  invoice-status scope for staff, exactly the memo's basis, and `{ not: DRAFT }` for a buyer (see
+  `api.md`'s F16-hotfix bullet). The "never invalidated after a mutation" half of the diagnosis did
+  NOT need a code fix — `useInvoiceKpiSummary`'s query key was already `["invoices", "kpi-summary",
+today]`, under the shared `["invoices"]`-prefix invalidation every payment mutation already fires,
+  since #656; new `apps/web/lib/api/invoices.kpi-summary.test.tsx` now pins that behaviourally
+  through a real `QueryClient` so a future re-key would fail here first. The harness ordering bug
+  is also fixed: new `openApp()` (navigates to `/invoices`, waits on the "New Invoice" button) and
+  `apiHeaders()` (calls `operatorAccessToken` only after `openApp`) helpers replace the three bare
+  pre-navigation token reads that failed REG-B80/REG-B144/REG-B110. Deployed api `4495be33` + web
+  `690cd7b7`, both SUCCESS 2026-09-07. **T2 proof for B80/B110/B144 still awaits this deployment's
+  own E2E run** — do not discharge from this bullet alone; confirm the spec-37 REG lines PASSED on
+  master `4d977168` first.

@@ -1152,6 +1152,10 @@ lastAt}` state).
   `Invalid call ... process.env.EXPO_ROUTER_APP_ROOT` — the same babel-preset-expo/expo-router
   resolution class the Dockerfile already pins with `ENV NODE_PATH` (commits fdf60a49/7cab3863). A
   warm Metro cache masks it; `--clear` exposes it. Not a defect in this change.
+- **Registry: B202 closed via #562 (2026-09-07 bookkeeping).** This section already documented the
+  fix in full; the bug-registry row itself carried no ledger entry until this bookkeeping pass —
+  `move`/`prove`/`discharge` added F30.jsonl's missing B202 row (tier T1, proof REG-B202 +
+  REG-B202/CUE1-14) and moved it `done` against PR #562. See `.claude/campaign/bugs/B202.md`.
 
 ### 2026-08-31 — Native-only launch blockers found by running the first APK (B203/B204)
 
