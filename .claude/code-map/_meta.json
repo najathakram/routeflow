@@ -1,7 +1,7 @@
 {
-  "mappedSha": "f2a27368",
-  "generatedAt": "2026-09-07T06:50:00.000Z",
+  "mappedSha": "1b413d07",
+  "generatedAt": "2026-09-07T08:30:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 1014,
-  "notes": "**2026-09-07** — (branch `docs/650-f23-bookkeeping`, Option-B bookkeeping follow-up for PR #650, mapped at `f2a27368`) — F23 (messaging engine honesty: transport seam, seeding, honest copy) mapped surgically across api.md/web.md; registry proved B145/B160/B180/B182/B183 (all T1) and discharged F23; B181 refuted (dead `|| true` push check); B37 noted as a deferred feature (D5), left queued; filed 3 new unbatched rows; L-087 appended, L-075 archived for headroom. See CHANGELOG.md's top entry for the full session note. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "**2026-09-07** — (branch `docs/652-f12-bookkeeping`, Option-B bookkeeping follow-up for PR #652, mapped at `1b413d07`) — F12 (window-feasible route optimization on every branch) mapped surgically across api.md/web.md/packages.md; registry proved B147/B161(T1 leg)/B177/B31 against PR #652; B161's Playwright leg (spec 35, pending-deploy) recorded via `bugs.mjs note` (its ledger tier is T1, not T2 — `--pending-deploy` refused); B29 noted as a deferred feature (D5), left queued; filed 7 new unbatched rows (B226-B232); L-088 appended, L-079 archived for headroom. F12 NOT yet discharged — awaits the deployment_status E2E for B161's web leg. See CHANGELOG.md's top entry for the full session note. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

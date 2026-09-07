@@ -741,3 +741,24 @@ id, so **L-046** (domain), the following qualifying entry, is archived instead.
   pool `max` covers its family's concurrent HOLDERS, not its call rate.
 - **Guard:** `db-locks.spec.ts` (p) pins `keepAlive: true` / `keepAliveInitialDelayMillis: 30_000`
   on both lock pools, and their per-family `max`.
+
+## Archived 2026-09-07 — headroom for L-088 (docs/652-f12-bookkeeping, #652 follow-up)
+
+### L-079 · 2026-09-06 · tooling · #627 `chore/ci-private-minutes`
+
+- **Symptom:** three unrelated api specs refused pre-push verifies on 2026-09-05/06 with
+  "Exceeded timeout of 5000 ms" (upload-routes.security, visibility-watchdog-script,
+  import-customer-cap) — each green standalone (import-customer-cap: 4/4 in 49 s cold, 6.7 s
+  warm); two Run B pushes and one CI-branch push lost ~35 min.
+- **Root cause:** Jest's default `testTimeout` of 5 s was never set for the api workspace; a cold
+  ts-jest worker charges module/Nest-testing-module init to the first test, and beside a parallel
+  verify, an engine run, or a Docker build that first test exceeds 5 s. Per-spec budgets fixed one
+  site at a time (whack-a-mole).
+- **Lesson:** **a flake class needs a class-level fix — set the per-workspace Jest `testTimeout`
+  (≥ 30 s; the `.db.spec` lane already ran at 30 s) instead of hardening specs one by one; keep
+  explicit larger budgets only where a test legitimately does long I/O (multipart round-trips
+  60 s).**
+- **Guard:** `apps/api/package.json` jest `testTimeout: 30000` (#627, master `0ee2672e`);
+  watchdog spec's "rejects promptly" bound 15 s; `upload-routes.security.spec.ts` 60 s.
+  Regression signal: any "Exceeded timeout of 5000 ms" in an api spec again means the config was
+  dropped.
