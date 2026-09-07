@@ -25,4 +25,14 @@ export const MESSAGE_PROVIDER = "MESSAGE_PROVIDER";
 export interface MessageProvider {
   /** Must NEVER throw — return `{ status: "failed" }` on internal error. */
   send(input: SendInput): Promise<SendResult>;
+  /**
+   * Capability declaration (F23/B145, cause-ruling.md §2): does this provider
+   * actually transport `channel` to a real destination? The engine treats a
+   * `"sent"` outcome as a promise that something left the building — it must
+   * NOT infer that from `send()`'s `status` (e.g. `"queued"` is not a
+   * delivery outcome). A provider that cannot yet deliver a channel MUST
+   * declare it here so the engine can skip honestly (`NO_TRANSPORT`) instead
+   * of fabricating a sent outcome.
+   */
+  transports(channel: MessageChannel): boolean;
 }

@@ -10,12 +10,20 @@ import { isQuietHours, renderTemplate } from "./messaging.helpers";
 describe("MessagingService (P6-2 engine)", () => {
   let service: MessagingService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let provider: { send: jest.Mock };
+  let provider: { send: jest.Mock; transports: jest.Mock };
   let meter: { increment: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    provider = { send: jest.fn().mockResolvedValue({ providerMsgId: "stub-1", status: "queued" }) };
+    provider = {
+      send: jest.fn().mockResolvedValue({ providerMsgId: "stub-1", status: "queued" }),
+      // F23/B145 (cause-ruling.md §2): sendMessage() now asks the provider whether it actually
+      // transports a channel before recording a "sent" outcome. These tests are about the
+      // record/meter/notify contract GIVEN a transport exists, not about transport honesty
+      // itself (that's messaging.transport-honesty.spec.ts against the REAL StubProvider, which
+      // declares none) — so this mock declares every channel it uses transportable.
+      transports: jest.fn().mockReturnValue(true),
+    };
     meter = { increment: jest.fn().mockResolvedValue(undefined) };
 
     const mod = await Test.createTestingModule({
@@ -179,6 +187,56 @@ describe("MessagingService (P6-2 engine)", () => {
       });
       expect(outcomes).toHaveLength(0);
       expect(provider.send).not.toHaveBeenCalled();
+    });
+
+    it("REG-B182 T7: seeds the default matrix for a never-visited tenant (empty rule table), then dispatches from it", async () => {
+      // Today notificationRule.findMany([]) → notify() just sees zero enabled rules and gives up;
+      // there is no seed call and no outcome, even though INVOICE_SENT:EMAIL is documented as
+      // enabled by default. Once notify() seeds an empty tenant before reading rules, the SAME
+      // call sequence must both seed once and go on to dispatch.
+      prisma.notificationRule.findMany
+        .mockResolvedValueOnce([]) // never-visited tenant: nothing seeded yet
+        .mockResolvedValue([{ channel: MessageChannel.EMAIL }]); // re-read after the seed
+      prisma.notificationRule.createMany.mockResolvedValue({ count: 1 });
+      prisma.messageTemplate.createMany.mockResolvedValue({ count: 1 });
+      prisma.messageTemplate.findFirst.mockResolvedValue({
+        body: "Hi {{customerName}}, invoice {{invoiceNumber}} for {{invoiceTotal}} is ready. Due {{dueDate}}.",
+        isActive: true,
+        waTemplateName: null,
+      });
+
+      const outcomes = await service.notify(NotificationEvent.INVOICE_SENT, {
+        customerId: "cust-1",
+        senderId: "op-1",
+        vars: {
+          customerName: "Acme",
+          invoiceNumber: "INV-1",
+          invoiceTotal: "$10.00",
+          dueDate: "2026-10-01",
+        },
+      });
+
+      expect(prisma.notificationRule.createMany).toHaveBeenCalledTimes(1);
+      expect(prisma.notificationRule.createMany.mock.calls[0][0]).toMatchObject({
+        skipDuplicates: true,
+      });
+      const seeded = prisma.notificationRule.createMany.mock.calls[0][0].data;
+      expect(seeded).toContainEqual(
+        expect.objectContaining({
+          eventKey: NotificationEvent.INVOICE_SENT,
+          channel: MessageChannel.EMAIL,
+          enabled: true,
+        }),
+      );
+      expect(seeded).toContainEqual(
+        expect.objectContaining({
+          eventKey: NotificationEvent.ORDER_CONFIRMED,
+          channel: MessageChannel.WHATSAPP,
+          enabled: false,
+        }),
+      );
+      expect(outcomes.length).toBeGreaterThanOrEqual(1);
+      expect(outcomes[0]).toMatchObject({ channel: "EMAIL", outcome: "sent" });
     });
   });
 });

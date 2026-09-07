@@ -1,8 +1,14 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { MessageChannel, MeterKey, NotificationEvent, WaApprovalStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { MeterService } from "../billing/meter.service";
-import { extractVariables, isInvoicePolicyViolation, renderTemplate } from "./messaging.helpers";
+import {
+  extractVariables,
+  isInvoicePolicyViolation,
+  renderTemplate,
+  requiresConsent,
+} from "./messaging.helpers";
+import { MESSAGE_PROVIDER, type MessageProvider } from "./providers/message-provider.interface";
 
 const { INTERNAL, WHATSAPP, SMS, EMAIL, PORTAL } = MessageChannel;
 const CUSTOMER_CHANNELS: MessageChannel[] = [WHATSAPP, SMS, EMAIL, PORTAL];
@@ -73,16 +79,26 @@ export const DEFAULT_TEMPLATES: Record<NotificationEvent, { label: string; body:
   },
 };
 
-/** Cells seeded enabled=true — PORTAL/EMAIL (free, un-metered, consent-less) +
- *  the internal alerts. Every metered/consented channel (WA/SMS) seeds OFF. */
+/** Cells seeded enabled=true — PORTAL/EMAIL (free, un-metered, consent-less).
+ *  Every metered/consented channel (WA/SMS) seeds OFF, and so does every
+ *  INTERNAL ops alert below (NO_TRIGGER_EVENTS) — seeding a key ON that can
+ *  never fire is B180 (cause-ruling.md §2/Check). */
 export const DEFAULT_ON = new Set<string>([
   `${NotificationEvent.OUT_FOR_DELIVERY}:${PORTAL}`,
   `${NotificationEvent.DELIVERED}:${PORTAL}`,
   `${NotificationEvent.INVOICE_SENT}:${EMAIL}`,
-  `${NotificationEvent.URGENT_ORDER_PLACED}:${INTERNAL}`,
-  `${NotificationEvent.LOW_STOCK}:${INTERNAL}`,
-  `${NotificationEvent.FAILED_DELIVERY}:${INTERNAL}`,
-  `${NotificationEvent.PAYMENT_FAILED_NSF}:${INTERNAL}`,
+]);
+
+/** Events with no firing site anywhere in `apps/api/src` outside `messaging/` today (S3 check on
+ *  12cdc26a, cause-ruling.md §2/Check — `default-on-is-wired.spec.ts` re-proves this by walking
+ *  the tree). Their cells render `unavailable: "NO_TRIGGER"` and are excluded from `DEFAULT_ON`.
+ *  Re-add a key here (and to `DEFAULT_ON`) only in the same PR that adds its firing site —
+ *  FAILED_DELIVERY specifically: B146/F11 reconciles a skipped stop but never emits the event. */
+const NO_TRIGGER_EVENTS = new Set<NotificationEvent>([
+  NotificationEvent.URGENT_ORDER_PLACED,
+  NotificationEvent.LOW_STOCK,
+  NotificationEvent.FAILED_DELIVERY,
+  NotificationEvent.PAYMENT_FAILED_NSF,
 ]);
 
 export interface TemplateView {
@@ -99,6 +115,10 @@ export interface MatrixCell {
   ruleId: string | null;
   locked: boolean;
   template: TemplateView | null;
+  /** F23/B180+B182+B183a (cause-ruling.md §2): why this cell can't be turned on today —
+   *  no transport bound for the channel, no consent-writer for WA/SMS, or no firing site
+   *  for the event. Undefined = the cell is a normal, enableable switch. */
+  unavailable?: "NO_TRANSPORT" | "NO_CONSENT_WRITER" | "NO_TRIGGER";
 }
 export interface MatrixEvent {
   eventKey: NotificationEvent;
@@ -127,6 +147,7 @@ export class MessagingConfigService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly meter: MeterService,
+    @Inject(MESSAGE_PROVIDER) private readonly provider: MessageProvider,
   ) {}
 
   async getMatrix(): Promise<MessagingConfigView> {
@@ -136,7 +157,7 @@ export class MessagingConfigService {
       db.notificationRule.findMany({}),
       db.messageTemplate.findMany({}),
     ]);
-    const seeded = await this.seedMissing(db, rules, templates);
+    const seeded = await seedDefaultsFor(db, rules, templates);
     if (seeded)
       [rules, templates] = await Promise.all([
         db.notificationRule.findMany({}),
@@ -151,12 +172,14 @@ export class MessagingConfigService {
         const channels: MatrixCell[] = EVENT_CHANNELS[eventKey].map((channel) => {
           const rule = ruleBy.get(`${eventKey}:${channel}`);
           const tpl = tplBy.get(`${eventKey}:${channel}`);
+          const unavailable = this.unavailabilityReason(eventKey, channel);
           return {
             channel,
-            enabled: rule?.enabled ?? false,
+            enabled: unavailable ? false : (rule?.enabled ?? false),
             ruleId: rule?.id ?? null,
             locked: false,
             template: tpl ? this.templateView(tpl) : null,
+            unavailable,
           };
         });
         for (const channel of [WHATSAPP, SMS]) {
@@ -189,6 +212,8 @@ export class MessagingConfigService {
     if (!rule) throw new NotFoundException("Notification rule not found");
     if (enabled && isInvoicePolicyViolation(rule.eventKey, rule.channel))
       throw new BadRequestException("Invoices cannot be sent over WhatsApp/SMS");
+    if (enabled && this.unavailabilityReason(rule.eventKey, rule.channel))
+      throw new BadRequestException("This notification channel is not available yet");
     const updated = await db.notificationRule.update({ where: { id }, data: { enabled } });
     return {
       id: updated.id,
@@ -225,7 +250,9 @@ export class MessagingConfigService {
     const tenantId = this.requireTenant();
     const row = await this.prisma.forTenant().messagingSettings.findUnique({ where: { tenantId } });
     return {
-      quietHoursEnabled: row?.quietHoursEnabled ?? true,
+      // F23/B160 (cause-ruling.md §2): default to the ENGINE's default (quiet hours are
+      // recorded, not enforced, in P6-2) — the UI must not claim a hold the engine never does.
+      quietHoursEnabled: row?.quietHoursEnabled ?? false,
       quietHoursStart: row?.quietHoursStart ?? "21:00",
       quietHoursEnd: row?.quietHoursEnd ?? "07:00",
       timezone: row?.timezone ?? null,
@@ -252,45 +279,23 @@ export class MessagingConfigService {
     return this.getSettings();
   }
 
-  private async seedMissing(
-    db: PrismaService,
-    rules: Array<{ eventKey: NotificationEvent; channel: MessageChannel }>,
-    templates: Array<{ eventKey: NotificationEvent; channel: MessageChannel }>,
-  ): Promise<boolean> {
-    const haveRule = new Set(rules.map((r) => `${r.eventKey}:${r.channel}`));
-    const haveTpl = new Set(templates.map((t) => `${t.eventKey}:${t.channel}`));
-    const ruleData: Array<{
-      eventKey: NotificationEvent;
-      channel: MessageChannel;
-      enabled: boolean;
-    }> = [];
-    const tplData: Array<{
-      eventKey: NotificationEvent;
-      channel: MessageChannel;
-      body: string;
-      variables: string[];
-      isActive: boolean;
-    }> = [];
-    for (const eventKey of Object.keys(EVENT_CHANNELS) as NotificationEvent[]) {
-      for (const channel of EVENT_CHANNELS[eventKey]) {
-        const key = `${eventKey}:${channel}`;
-        if (!haveRule.has(key)) ruleData.push({ eventKey, channel, enabled: DEFAULT_ON.has(key) });
-        if (!haveTpl.has(key))
-          tplData.push({
-            eventKey,
-            channel,
-            body: DEFAULT_TEMPLATES[eventKey].body,
-            variables: extractVariables(DEFAULT_TEMPLATES[eventKey].body),
-            isActive: true,
-          });
-      }
-    }
-    if (ruleData.length === 0 && tplData.length === 0) return false;
-    if (ruleData.length > 0)
-      await db.notificationRule.createMany({ data: ruleData, skipDuplicates: true });
-    if (tplData.length > 0)
-      await db.messageTemplate.createMany({ data: tplData, skipDuplicates: true });
-    return true;
+  /** F23/B180+B182+B183a (cause-ruling.md §2): the ONE capability seam consulted by both
+   *  getMatrix()/setRuleEnabled() here and sendMessage() in messaging.service.ts. NO_TRIGGER
+   *  takes priority (an INTERNAL-only ops alert with no firing site — its channel is always
+   *  "transported" since INTERNAL is exempt below), then NO_TRANSPORT (the bound provider
+   *  doesn't declare this channel), then NO_CONSENT_WRITER (WA/SMS with no consent writer yet). */
+  private unavailabilityReason(
+    eventKey: NotificationEvent,
+    channel: MessageChannel,
+  ): MatrixCell["unavailable"] {
+    if (NO_TRIGGER_EVENTS.has(eventKey)) return "NO_TRIGGER";
+    // The `channel !== INTERNAL` exemption is currently unreachable: every INTERNAL event is
+    // in NO_TRIGGER_EVENTS above, so this line never sees channel === INTERNAL today. Kept for
+    // the first wired INTERNAL event; pinned by the NO_TRANSPORT spec in
+    // messaging-config.service.spec.ts.
+    if (channel !== INTERNAL && !this.provider.transports(channel)) return "NO_TRANSPORT";
+    if (requiresConsent(channel)) return "NO_CONSENT_WRITER";
+    return undefined;
   }
 
   private requireTenant(): string {
@@ -316,4 +321,54 @@ export class MessagingConfigService {
       isActive: t.isActive,
     };
   }
+}
+
+/**
+ * F23/B182 (cause-ruling.md §2): the shared seeder — was private to this service and reachable
+ * only via getMatrix() (⇐ GET /messaging/config, the settings tab), so a tenant that never opened
+ * the tab had an empty notificationRule table forever. Exported so messaging.service.ts's
+ * notify() can call it too, seeding the documented default matrix on first real use. Takes the
+ * caller's already-fetched full rule/template lists (no query inside) so getMatrix()'s existing
+ * "seed only if something's missing, re-read once if so" call shape — and its findMany call
+ * count — is unchanged; a caller with no pre-fetched lists (notify()) fetches them first.
+ */
+export async function seedDefaultsFor(
+  db: PrismaService,
+  rules: Array<{ eventKey: NotificationEvent; channel: MessageChannel }>,
+  templates: Array<{ eventKey: NotificationEvent; channel: MessageChannel }>,
+): Promise<boolean> {
+  const haveRule = new Set(rules.map((r) => `${r.eventKey}:${r.channel}`));
+  const haveTpl = new Set(templates.map((t) => `${t.eventKey}:${t.channel}`));
+  const ruleData: Array<{
+    eventKey: NotificationEvent;
+    channel: MessageChannel;
+    enabled: boolean;
+  }> = [];
+  const tplData: Array<{
+    eventKey: NotificationEvent;
+    channel: MessageChannel;
+    body: string;
+    variables: string[];
+    isActive: boolean;
+  }> = [];
+  for (const eventKey of Object.keys(EVENT_CHANNELS) as NotificationEvent[]) {
+    for (const channel of EVENT_CHANNELS[eventKey]) {
+      const key = `${eventKey}:${channel}`;
+      if (!haveRule.has(key)) ruleData.push({ eventKey, channel, enabled: DEFAULT_ON.has(key) });
+      if (!haveTpl.has(key))
+        tplData.push({
+          eventKey,
+          channel,
+          body: DEFAULT_TEMPLATES[eventKey].body,
+          variables: extractVariables(DEFAULT_TEMPLATES[eventKey].body),
+          isActive: true,
+        });
+    }
+  }
+  if (ruleData.length === 0 && tplData.length === 0) return false;
+  if (ruleData.length > 0)
+    await db.notificationRule.createMany({ data: ruleData, skipDuplicates: true });
+  if (tplData.length > 0)
+    await db.messageTemplate.createMany({ data: tplData, skipDuplicates: true });
+  return true;
 }
