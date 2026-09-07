@@ -222,6 +222,17 @@ describe("BillingCronService", () => {
     expect(tx.user.updateMany).not.toHaveBeenCalled();
   });
 
+  it("applyScheduledDowngrades only selects ACTIVE, non-deleted tenants (round 3, finding 8)", async () => {
+    const { svc, prisma } = make({ downgrades: [] });
+    await svc.applyScheduledDowngrades();
+    // Without this filter the sweep applies a schedule left on a tenant that has already
+    // churned (SUSPENDED/CANCELLED — its −MRR delta booked), booking a SECOND PLAN_CHANGED
+    // delta the Σ-amountDelta rollup never heals, and deactivating a deleted tenant's staff.
+    // Same clause applyScheduledCancellations carries in this file.
+    const where = prisma.tenantSubscription.findMany.mock.calls[0][0].where;
+    expect(where.tenant).toEqual({ status: "ACTIVE", deletedAt: null });
+  });
+
   it("applyScheduledCancellations flips cancelled+expired subs to READ_ONLY + emits a NEGATIVE churn delta", async () => {
     const { svc, prisma, events, tenantStatus } = make({
       cancellations: [{ tenantId: "t1", basePriceSnapshot: 349, discount: 10 }],

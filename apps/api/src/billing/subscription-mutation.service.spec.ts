@@ -1,15 +1,37 @@
-import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Logger } from "@nestjs/common";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
+
+/** A same-cycle ACTIVE period straddling "now" (mid-cycle, so proration is partial and > 0). */
+function activePeriod() {
+  const now = Date.now();
+  const DAY = 24 * 60 * 60 * 1000;
+  return {
+    periodStart: new Date(now - 15 * DAY),
+    periodEnd: new Date(now + 15 * DAY),
+  };
+}
 
 function catalog() {
   return {
     id: "v7",
     definitions: [
-      { planKey: "STARTER", name: "Starter", monthlyPrice: 59, isCustom: false },
-      { planKey: "TEAM", name: "Team", monthlyPrice: 149, isCustom: false },
-      { planKey: "BUSINESS", name: "Business", monthlyPrice: 349, isCustom: false },
-      { planKey: "ENTERPRISE", name: "Enterprise", monthlyPrice: null, isCustom: true },
+      { planKey: "STARTER", name: "Starter", monthlyPrice: 59, isCustom: false, seatsIncluded: 3 },
+      { planKey: "TEAM", name: "Team", monthlyPrice: 149, isCustom: false, seatsIncluded: 10 },
+      {
+        planKey: "BUSINESS",
+        name: "Business",
+        monthlyPrice: 349,
+        isCustom: false,
+        seatsIncluded: 15,
+      },
+      {
+        planKey: "ENTERPRISE",
+        name: "Enterprise",
+        monthlyPrice: null,
+        isCustom: true,
+        seatsIncluded: null,
+      },
     ],
     addonSkus: [
       { sku: "SEAT_EXTRA", name: "Extra seat", monthlyPrice: 12 },
@@ -25,27 +47,88 @@ function catalog() {
   };
 }
 
-/** Post-rename catalog (v8) — GROWTH/SCALE have NO matching Prisma TenantPlan enum member. */
+/**
+ * Post-rename catalog (v8) — GROWTH/SCALE have NO matching Prisma TenantPlan enum member.
+ *
+ * RANK BASIS (the oracle the legacy-rename cases are judged against): rank is `planRank()` —
+ * the `PLAN_KEYS` index of the key after `normalizePlanKey()` resolves `LEGACY_PLAN_KEY_ALIASES`
+ * (TEAM → GROWTH, BUSINESS → SCALE). It is ORDER-based and price-INDEPENDENT: no catalog price
+ * is read to decide UPGRADE vs DOWNGRADE. The renamed-away keys are RETAINED here only so
+ * `planMonthly()` can still PRICE a tenant pinned to `TEAM`/`BUSINESS` — never to rank one:
+ *   TEAM → GROWTH (rank 1) vs SCALE (rank 2) = strictly higher → UPGRADE
+ *   BUSINESS → SCALE (rank 2) vs SCALE (rank 2) = equal, keys differ → SUBSCRIBE (never NOOP)
+ * The prices below happen to AGREE with that order, so they cannot tell the two oracles apart;
+ * the "PIN: rank is planRank, not catalog price" case below inverts them so they can.
+ */
 function catalogV8() {
   return {
     id: "v8",
     definitions: [
-      { planKey: "STARTER", name: "Starter", monthlyPrice: 99, isCustom: false },
-      { planKey: "GROWTH", name: "Growth", monthlyPrice: 249, isCustom: false },
-      { planKey: "SCALE", name: "Scale", monthlyPrice: 499, isCustom: false },
-      { planKey: "ENTERPRISE", name: "Enterprise", monthlyPrice: null, isCustom: true },
+      { planKey: "STARTER", name: "Starter", monthlyPrice: 99, isCustom: false, seatsIncluded: 3 },
+      { planKey: "GROWTH", name: "Growth", monthlyPrice: 249, isCustom: false, seatsIncluded: 10 },
+      { planKey: "SCALE", name: "Scale", monthlyPrice: 499, isCustom: false, seatsIncluded: 25 },
+      {
+        planKey: "ENTERPRISE",
+        name: "Enterprise",
+        monthlyPrice: null,
+        isCustom: true,
+        seatsIncluded: null,
+      },
+      // Retained legacy keys (renamed to GROWTH / SCALE respectively).
+      {
+        planKey: "TEAM",
+        name: "Team (legacy)",
+        monthlyPrice: 249,
+        isCustom: false,
+        seatsIncluded: 10,
+      },
+      {
+        planKey: "BUSINESS",
+        name: "Business (legacy)",
+        monthlyPrice: 499,
+        isCustom: false,
+        seatsIncluded: 25,
+      },
     ],
     addonSkus: [],
   };
 }
 
+/**
+ * A copy of the v7 catalog with ONE plan's `seatsIncluded` overridden — used to make the
+ * tenant's PINNED version disagree with the PUBLISHED one, which is the only way to tell
+ * apart "the warning read the published catalog" from "the warning read the cron's source".
+ */
+function catalogWithSeats(
+  id: string,
+  planKey: string,
+  seatsIncluded: number,
+): ReturnType<typeof catalog> {
+  const v = catalog();
+  return {
+    ...v,
+    id,
+    definitions: v.definitions.map((d) => (d.planKey === planKey ? { ...d, seatsIncluded } : d)),
+  } as ReturnType<typeof catalog>;
+}
+
 interface Opts {
   catalog?: ReturnType<typeof catalog>;
   tenantStatus?: string;
+  /** The legacy `Tenant.plan` enum — the ONLY place a pre-plans-as-data tenant's plan lives. */
+  tenantPlan?: string | null;
   sub?: any;
   priorAddons?: any[];
   existingAddon?: any;
   addonRow?: any;
+  /** ACTIVE TENANT_ADMIN/OPERATOR/DRIVER count, as the DOWNGRADE seat warning reads it. */
+  activeTeam?: number;
+  /**
+   * The tenant's PINNED catalog version (`getVersionForTenant`) — what billing-cron
+   * `applyScheduledDowngrades` prices and caps a scheduled downgrade from (grandfathering).
+   * Defaults to the published one; set it to a DIFFERENT version to tell the two apart.
+   */
+  pinnedCatalog?: ReturnType<typeof catalog>;
 }
 
 function make(opts: Opts = {}) {
@@ -62,7 +145,11 @@ function make(opts: Opts = {}) {
     },
   };
   const prisma = {
-    tenant: { findUnique: jest.fn().mockResolvedValue({ status: opts.tenantStatus ?? "TRIAL" }) },
+    tenant: {
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ status: opts.tenantStatus ?? "TRIAL", plan: opts.tenantPlan ?? null }),
+    },
     tenantSubscription: {
       findUnique: jest.fn().mockResolvedValue(opts.sub ?? null),
     },
@@ -71,10 +158,14 @@ function make(opts: Opts = {}) {
       findUnique: jest.fn().mockResolvedValue(opts.existingAddon ?? null),
       findFirst: jest.fn().mockResolvedValue(opts.addonRow ?? null),
     },
+    user: { count: jest.fn().mockResolvedValue(opts.activeTeam ?? 0) },
     $transaction: jest.fn(async (fn: any) => fn(tx)),
   } as any;
   const cat = {
     getPublishedCatalog: jest.fn().mockResolvedValue(opts.catalog ?? catalog()),
+    getVersionForTenant: jest
+      .fn()
+      .mockResolvedValue(opts.pinnedCatalog ?? opts.catalog ?? catalog()),
   } as any;
   const proration = {
     quote: jest.fn().mockResolvedValue({ subtotalMonthly: 173, lines: [] }),
@@ -93,7 +184,7 @@ function make(opts: Opts = {}) {
     events,
     tenantStatus,
   );
-  return { svc, prisma, tx, events, entitlements };
+  return { svc, prisma, tx, events, entitlements, cat };
 }
 
 const deltaOf = (events: any, type: string) => {
@@ -127,10 +218,10 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
     expect(entitlements.invalidate).toHaveBeenCalledWith("t1");
   });
 
-  it("re-subscribe to a LOWER plan emits a NEGATIVE plan delta and disables dropped add-ons", async () => {
+  it("PIN T10: ACTIVE cycle switch to a LOWER plan (ANNUAL→MONTHLY) still nets a NEGATIVE plan delta and disables dropped add-ons — the B58 guard must NOT fire on a cycle switch", async () => {
     const { svc, tx, events } = make({
       tenantStatus: "ACTIVE",
-      sub: { planKey: "BUSINESS" },
+      sub: { planKey: "BUSINESS", cycle: "ANNUAL" },
       priorAddons: [
         {
           id: "a1",
@@ -235,6 +326,90 @@ describe("SubscriptionMutationService.upgrade", () => {
       currentPlan: "BUSINESS",
     });
     expect(tx.tenant.update.mock.calls[0][0].data).toMatchObject({ plan: "BUSINESS" });
+  });
+});
+
+describe("SubscriptionMutationService — plan-less rows are not subscriptions (REG-B58)", () => {
+  it("REG-B58 upgrade() still refuses a planKey-NULL row on a TRIAL tenant — subscribe() owns trial conversion", async () => {
+    const { svc, tx, events } = make({
+      catalog: catalogV8(),
+      tenantStatus: "TRIAL",
+      tenantPlan: "STARTER",
+      // The stub shape shipped code mints on a tenant that never subscribed (Stripe-customer
+      // creation / the customer-cap grace window): no planKey, no period.
+      sub: { planKey: null, cycle: "MONTHLY", periodStart: null, periodEnd: null },
+    });
+    await expect(svc.upgrade("t1", "SCALE", "admin")).rejects.toThrow(/subscribe first/);
+    await expect(svc.upgrade("t1", "SCALE", "admin")).rejects.toBeInstanceOf(BadRequestException);
+    // Nothing stamped, nothing booked: no plan, no trialConvertedAt, no PLAN_CHANGED.
+    expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("REG-B58 downgrade() refuses the same planKey-NULL TRIAL row", async () => {
+    const { svc, tx } = make({
+      catalog: catalogV8(),
+      tenantStatus: "TRIAL",
+      // BUSINESS → SCALE (rank 2), so STARTER (rank 0) IS a real downgrade: the refusal has to
+      // come from the plan-less-row precondition, not from the rank check.
+      tenantPlan: "BUSINESS",
+      sub: { planKey: null, cycle: "MONTHLY", periodStart: null, periodEnd: new Date() },
+    });
+    await expect(svc.downgrade("t1", "STARTER", [], "admin")).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+  });
+
+  it("REG-B58 upgrade() allows a planKey-NULL row on an ACTIVE tenant (manual activation) and books the FULL base", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc, tx, events } = make({
+      catalog: catalogV8(),
+      tenantStatus: "ACTIVE",
+      // platform-admin activateManualSubscription: tenant.plan set, subscription planKey NULL.
+      tenantPlan: "TEAM",
+      sub: { planKey: null, cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const res: any = await svc.upgrade("t1", "SCALE", "admin");
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toMatchObject({
+      planKey: null,
+    });
+    // A planKey-NULL row contributes 0 to MrrService's snapshot (`planKey: { not: null }`),
+    // so gaining a planKey books the FULL 499 — netting to 250 would strand the ledger.
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(499);
+    // The CHARGE still nets against the entitlement the tenant already holds (499 − 249).
+    expect(res.proratedNow).toBeGreaterThan(0);
+    expect(res.proratedNow).toBeLessThan(250);
+  });
+
+  it("REG-B58 subscribe() on a planKey-NULL ACTIVE row books the FULL base, not a self-netted 0", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc, events } = make({
+      tenantStatus: "ACTIVE",
+      tenantPlan: "BUSINESS",
+      sub: { planKey: null, cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(349);
+  });
+
+  it("REG-B58 subscribe() on an ACTIVE row that DOES carry a planKey is refused for its own plan (round 3, finding 5)", async () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc, tx, events } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    // Re-subscribing to the plan you already hold books a 0 delta and buys nothing — while
+    // resetting periodStart/periodEnd (the B58 harm). The netting arithmetic it used to pin
+    // (ACTIVE + a stored planKey nets against the old plan) stays covered by PIN T10's
+    // ACTIVE cycle switch, which is the remaining route through this branch.
+    await expect(
+      svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin"),
+    ).rejects.toThrow(/already on this plan/);
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 
@@ -345,5 +520,811 @@ describe("SubscriptionMutationService.subscribe self-service gate (SELF_SERVICE_
     await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
     expect(tx.tenantAddon.update).not.toHaveBeenCalled(); // MSRP stays active
     expect(emitted(events)).not.toContain(BILLING_EVENTS.ADDON_DISABLED);
+  });
+});
+
+describe("SubscriptionMutationService.subscribe ACTIVE plan-change guard (REG-B58 T1)", () => {
+  it("REG-B58 T1 refuses an ACTIVE same-cycle plan change", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc, tx, events } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "TEAM", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const attempt = svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" });
+    // Message oracle first — the class alone is shared with several other guards in this
+    // service, so it would not distinguish THIS refusal from an unrelated 409.
+    await expect(attempt).rejects.toThrow(/use upgrade or downgrade/);
+    await expect(attempt).rejects.toBeInstanceOf(ConflictException);
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+});
+
+// PIN T13 REWRITTEN (round-3 ruling on finding 5, superseding Amendment 2): a legacy alias
+// tenant re-picking its OWN renamed plan is not a re-pin opportunity, it is a no-op — and
+// letting it through subscribe() paid for the pin with a periodStart/periodEnd reset, the exact
+// B58 harm. The old pin asserted the upsert ran; it never asserted the period, so nothing
+// caught the reset. No REG token, so `-t "REG-B(58|73|107)"` never collects it (L-060).
+describe("SubscriptionMutationService.subscribe — legacy alias re-pick pins", () => {
+  it("PIN T13: a legacy same-rank re-pick (BUSINESS→SCALE) is REFUSED, so the period is never reset", async () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc, tx, events } = make({
+      catalog: catalogV8(),
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const attempt = svc.subscribe("t1", { planKey: "SCALE", cycle: "MONTHLY" });
+    // Message oracle: the class alone would not tell this refusal apart from the
+    // different-rank one, which carries a different instruction ("use upgrade or downgrade").
+    await expect(attempt).rejects.toThrow(/already on this plan/);
+    await expect(attempt).rejects.toBeInstanceOf(ConflictException);
+    // The harm the old pin missed: the upsert's update branch writes periodStart/periodEnd.
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("PIN T13b: the same alias re-pick previews NOOP — the chooser never routes it to subscribe()", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      catalog: catalogV8(),
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const preview = await svc.planChangePreview("t1", "SCALE", "MONTHLY");
+    expect(preview.action).toBe("NOOP");
+    // The chooser marks the current card from the NORMALIZED key — "BUSINESS" matches no
+    // listed catalog key, which is why the alias tenant saw SCALE as a plain, pickable plan.
+    expect(preview.fromPlanKey).toBe("SCALE");
+  });
+});
+
+describe("SubscriptionMutationService.planChangePreview (REG-B58 T2)", () => {
+  it("REG-B58 T2 ACTIVE same-cycle UPGRADE: proratedNow = half the monthly delta, keepsRenewalAt = periodEnd", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "TEAM", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    // Existence is its own oracle: without it a missing method reports as an identical
+    // `Received: undefined` in every T2 case, proving the wiring instead of the defect.
+    expect(typeof (svc as any).planChangePreview).toBe("function");
+    const preview: any = await (svc as any).planChangePreview("t1", "BUSINESS", "MONTHLY");
+    expect(preview).toBeDefined();
+    expect(preview?.action).toBe("UPGRADE");
+    // VALUE ORACLE (this is the figure choose-plan renders as "Due today", so it is pinned to
+    // the cent, not just to > 0): the charge is the remaining fraction of the MONTHLY DELTA.
+    // Fixture = TEAM 149 -> BUSINESS 349 (delta 200) over an exact 30-day period with 15 days
+    // left => 200 x 0.5 = 100.00. The un-prorated delta (200), the full new price (349) and the
+    // prorated new price (174.50) are all wrong and all used to pass here.
+    expect(preview.proratedNow).toBeCloseTo(100, 1);
+    expect(preview.proratedNow).toBeLessThan(200);
+    expect(preview?.keepsRenewalAt).toEqual(periodEnd);
+  });
+
+  it("REG-B58 T2 ACTIVE same-cycle DOWNGRADE: effectiveAt = periodEnd, proratedNow null", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const preview: any = await (svc as any).planChangePreview("t1", "STARTER", "MONTHLY");
+    expect(preview).toBeDefined();
+    expect(preview?.action).toBe("DOWNGRADE");
+    expect(preview?.effectiveAt).toEqual(periodEnd);
+    expect(preview?.proratedNow).toBeNull();
+  });
+
+  it("REG-B58 T2 DOWNGRADE over the target seat cap warns with the counts", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodStart, periodEnd },
+      activeTeam: 8, // > STARTER's seatsIncluded (3) -> the cron would deactivate the staff
+    });
+    const preview: any = await (svc as any).planChangePreview("t1", "STARTER", "MONTHLY");
+    expect(preview).toBeDefined();
+    expect(preview?.action).toBe("DOWNGRADE");
+    // The tenant has to see BOTH numbers before this is committable (the web half gates the
+    // commit button on this warning): "8 active users" vs. the plan's "3 seats".
+    expect(preview?.warning).toMatch(/8 active users/);
+    expect(preview?.warning).toMatch(/3 seats/);
+  });
+
+  it("REG-B58 T2 DOWNGRADE within the target seat cap carries no warning", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodStart, periodEnd },
+      activeTeam: 2, // <= STARTER's seatsIncluded (3) -> no seat sweep, so no warning
+    });
+    const preview: any = await (svc as any).planChangePreview("t1", "STARTER", "MONTHLY");
+    expect(preview).toBeDefined();
+    expect(preview?.action).toBe("DOWNGRADE");
+    expect(preview?.warning).toBeUndefined();
+  });
+
+  it("REG-B58 T2 DOWNGRADE seat warning reads the tenant's PINNED version, not the published one", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc, cat } = make({
+      tenantStatus: "ACTIVE",
+      // Published raised STARTER to 25 seats; this tenant is still pinned to the version that
+      // caps it at 3 — and billing-cron applyScheduledDowngrades sweeps against the PINNED cap.
+      catalog: catalogWithSeats("v-published", "STARTER", 25),
+      pinnedCatalog: catalogWithSeats("v-pinned", "STARTER", 3),
+      sub: {
+        planKey: "BUSINESS",
+        planVersionId: "v-pinned",
+        cycle: "MONTHLY",
+        periodStart,
+        periodEnd,
+      },
+      activeTeam: 8,
+    });
+    const preview: any = await svc.planChangePreview("t1", "STARTER", "MONTHLY");
+    expect(preview.action).toBe("DOWNGRADE");
+    // Published (25) would have said "no warning"; the sweep the tenant will actually get is
+    // priced off the pinned cap (3), so the warning must fire and quote THAT number.
+    expect(preview.warning).toMatch(/8 active users/);
+    expect(preview.warning).toMatch(/3 seats/);
+    expect(cat.getVersionForTenant).toHaveBeenCalledWith("v-pinned");
+  });
+
+  it("REG-B58 T2 DOWNGRADE within the PINNED seat cap carries no warning even when the published cap is lower", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc, cat } = make({
+      tenantStatus: "ACTIVE",
+      catalog: catalogWithSeats("v-published", "STARTER", 3),
+      pinnedCatalog: catalogWithSeats("v-pinned", "STARTER", 25),
+      sub: {
+        planKey: "BUSINESS",
+        planVersionId: "v-pinned",
+        cycle: "MONTHLY",
+        periodStart,
+        periodEnd,
+      },
+      activeTeam: 8,
+    });
+    const preview: any = await svc.planChangePreview("t1", "STARTER", "MONTHLY");
+    expect(preview.action).toBe("DOWNGRADE");
+    // The cron would not sweep (8 <= 25), so warning-and-acknowledge would be a false alarm.
+    expect(preview.warning).toBeUndefined();
+    expect(cat.getVersionForTenant).toHaveBeenCalledWith("v-pinned");
+  });
+
+  it("REG-B58 T2 a TRIAL tenant always previews SUBSCRIBE", async () => {
+    const { svc } = make({ tenantStatus: "TRIAL" });
+    const preview: any = await (svc as any).planChangePreview("t1", "TEAM", "MONTHLY");
+    expect(preview).toBeDefined();
+    expect(preview?.action).toBe("SUBSCRIBE");
+  });
+
+  it("REG-B58 T2 no prior subscription (planKey null) previews SUBSCRIBE", async () => {
+    const { svc } = make({ tenantStatus: "ACTIVE", sub: null });
+    const preview: any = await (svc as any).planChangePreview("t1", "TEAM", "MONTHLY");
+    expect(preview).toBeDefined();
+    expect(preview?.action).toBe("SUBSCRIBE");
+  });
+
+  it("REG-B58 T2 ACTIVE cycle switch (same plan) previews SUBSCRIBE with a warning", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "TEAM", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const preview: any = await (svc as any).planChangePreview("t1", "TEAM", "ANNUAL");
+    expect(preview).toBeDefined();
+    expect(preview?.action).toBe("SUBSCRIBE");
+    expect(preview?.warning).toBeTruthy();
+  });
+
+  it("REG-B58 T2 same plan and cycle previews NOOP", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "TEAM", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const preview: any = await (svc as any).planChangePreview("t1", "TEAM", "MONTHLY");
+    expect(preview).toBeDefined();
+    expect(preview?.action).toBe("NOOP");
+  });
+
+  it("REG-B58 T2 legacy key rename with a DIFFERENT rank (TEAM→SCALE) previews UPGRADE", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      catalog: catalogV8(),
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "TEAM", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const preview: any = await (svc as any).planChangePreview("t1", "SCALE", "MONTHLY");
+    expect(preview).toBeDefined();
+    expect(preview?.action).toBe("UPGRADE");
+  });
+
+  it("PIN: rank is planRank, not catalog price", async () => {
+    // Catalog prices deliberately CONTRADICT PLAN_KEYS order (GROWTH 999 > SCALE 499). If rank
+    // were the catalog `monthlyPrice`, GROWTH→SCALE would classify as a DOWNGRADE; planRank
+    // (order-based) still says UPGRADE. This is the only case that distinguishes the two.
+    const inverted = catalogV8();
+    inverted.definitions = inverted.definitions.map((d) =>
+      d.planKey === "GROWTH" ? { ...d, monthlyPrice: 999 } : d,
+    );
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      catalog: inverted,
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "GROWTH", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const preview: any = await (svc as any).planChangePreview("t1", "SCALE", "MONTHLY");
+    expect(preview).toBeDefined();
+    expect(preview?.action).toBe("UPGRADE");
+  });
+
+  // Amendment 2 (equal rank → SUBSCRIBE) is SUPERSEDED by the round-3 ruling on finding 5:
+  // routing an alias re-pick to subscribe() reset the period (B58) and wiped a pending
+  // downgrade. Equal rank IS the same plan, so it previews NOOP — or KEEP_CURRENT, which is
+  // the undo the alias tenant could never reach while the compare used the raw stored key.
+  it("REG-B58 T2 an alias tenant (BUSINESS) with a downgrade armed previews KEEP_CURRENT for its own plan (SCALE)", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      catalog: catalogV8(),
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "BUSINESS",
+        cycle: "MONTHLY",
+        periodStart,
+        periodEnd,
+        downgradeToPlanKey: "STARTER",
+        downgradeEffectiveAt: periodEnd,
+      },
+    });
+    const preview = await svc.planChangePreview("t1", "SCALE", "MONTHLY");
+    expect(preview.action).toBe("KEEP_CURRENT");
+    expect(preview.warning).toBeTruthy();
+    expect(preview.keepsRenewalAt).toEqual(periodEnd);
+  });
+});
+
+describe("SubscriptionMutationService.planChangePreview — pending cancellation (round 3, findings 3/12)", () => {
+  it("UPGRADE with a cancellation armed warns that committing keeps the subscription alive", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "TEAM",
+        cycle: "MONTHLY",
+        periodStart,
+        periodEnd,
+        cancelAtPeriodEnd: true,
+      },
+    });
+    const preview = await svc.planChangePreview("t1", "BUSINESS", "MONTHLY");
+    expect(preview.action).toBe("UPGRADE");
+    // upgrade() writes cancelAtPeriodEnd:false — silently revoking a cancellation the tenant
+    // made for price reasons, and applyScheduledCancellations then never fires.
+    expect(preview.warning).toMatch(/cancellation is pending/i);
+  });
+
+  it("UPGRADE with NO cancellation armed carries no warning", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "TEAM", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const preview = await svc.planChangePreview("t1", "BUSINESS", "MONTHLY");
+    expect(preview.action).toBe("UPGRADE");
+    expect(preview.warning).toBeUndefined();
+  });
+
+  it("DOWNGRADE with a cancellation armed warns, and still carries the seat warning alongside it", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "BUSINESS",
+        cycle: "MONTHLY",
+        periodStart,
+        periodEnd,
+        cancelAtPeriodEnd: true,
+      },
+      activeTeam: 8, // > STARTER's 3 seats → the seat warning fires too
+    });
+    const preview = await svc.planChangePreview("t1", "STARTER", "MONTHLY");
+    expect(preview.action).toBe("DOWNGRADE");
+    expect(preview.warning).toMatch(/cancellation is pending/i);
+    // Composed, not traded: losing the seat warning here would drop the "your staff will be
+    // deactivated" notice the web half gates the commit button on.
+    expect(preview.warning).toMatch(/8 active users/);
+  });
+
+  it("DOWNGRADE with NO cancellation armed and within the seat cap carries no warning", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodStart, periodEnd },
+      activeTeam: 2,
+    });
+    const preview = await svc.planChangePreview("t1", "STARTER", "MONTHLY");
+    expect(preview.action).toBe("DOWNGRADE");
+    expect(preview.warning).toBeUndefined();
+  });
+});
+
+describe("SubscriptionMutationService — custom (Enterprise) plans are never self-service (round 3, findings 4/6/11)", () => {
+  it("a custom TARGET previews CONTACT_SALES, never UPGRADE with a negative proratedNow", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const preview = await svc.planChangePreview("t1", "ENTERPRISE", "MONTHLY");
+    // ENTERPRISE ranks 3 (> BUSINESS) with a NULL catalog price, so ranking it answered
+    // UPGRADE with proratedNow ≈ −174.50 — a negative "Due today" the commit path then 400s.
+    expect(preview.action).toBe("CONTACT_SALES");
+    expect(preview.proratedNow).toBeNull();
+    expect(preview.effectiveAt).toBeNull();
+    expect(preview.warning).toMatch(/contact sales/i);
+  });
+
+  it("a custom SOURCE picking a different plan previews CONTACT_SALES, never DOWNGRADE", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "ENTERPRISE", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const preview = await svc.planChangePreview("t1", "BUSINESS", "MONTHLY");
+    // DOWNGRADE promised "$0 due today" and the cron then booked a POSITIVE delta (the custom
+    // side prices 0 from the catalog) and overwrote the negotiated basePriceSnapshot.
+    expect(preview.action).toBe("CONTACT_SALES");
+    expect(preview.effectiveAt).toBeNull();
+  });
+
+  it("a custom source re-picking its OWN plan still reaches NOOP (the screen never eats the undo)", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "ENTERPRISE", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const preview = await svc.planChangePreview("t1", "ENTERPRISE", "MONTHLY");
+    expect(preview.action).toBe("NOOP");
+  });
+
+  it("downgrade() refuses a custom SOURCE with the same message upgrade() uses", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc, tx } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "ENTERPRISE", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const attempt = svc.downgrade("t1", "STARTER", [], "admin");
+    await expect(attempt).rejects.toThrow(/custom plan — contact sales/);
+    await expect(attempt).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("SubscriptionMutationService — an unrankable plan key is refused at the seam (round 3, finding 13)", () => {
+  /** The published catalog is DATA: nothing constrains a definition's planKey to PLAN_KEYS. */
+  function catalogWithOffListKey() {
+    const v = catalog();
+    (v.definitions as any[]).push({
+      planKey: "PRO",
+      name: "Pro",
+      monthlyPrice: 199,
+      isCustom: false,
+      seatsIncluded: 5,
+    });
+    return v;
+  }
+
+  it("planChangePreview throws instead of ranking an off-list key as −1 (a DOWNGRADE from everything)", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      catalog: catalogWithOffListKey(),
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    // planRank("PRO") = −1 < rank(STARTER) = 0, so the preview answered DOWNGRADE — from the
+    // CHEAPEST plan — and the cron would then write basePriceSnapshot: null (a free tenant).
+    await expect(svc.planChangePreview("t1", "PRO", "MONTHLY")).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it("downgrade() refuses an off-list key that IS in the published catalog", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc, tx } = make({
+      catalog: catalogWithOffListKey(),
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    // The definition exists, so the "Unknown plan" catalog check passes; only the rank check
+    // catches it — `-1 >= planRank(BUSINESS)` is false, so the schedule used to be written.
+    await expect(svc.downgrade("t1", "PRO", [], "admin")).rejects.toThrow(/Unknown plan/);
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("SubscriptionMutationService — one armed transition at a time (REG-B58 T10)", () => {
+  it("REG-B58 T10 upgrade() disarms a pending downgrade and cancellation in the same transaction", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc, tx, events } = make({
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart,
+        periodEnd,
+        cancelAtPeriodEnd: true,
+        downgradeToPlanKey: "STARTER",
+        downgradeEffectiveAt: periodEnd,
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    // Left armed, billing-cron applyScheduledDowngrades (which filters on
+    // downgradeEffectiveAt alone) drops the tenant back off the plan they just paid for.
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].data).toMatchObject({
+      planKey: "BUSINESS",
+      cancelAtPeriodEnd: false,
+      downgradeToPlanKey: null,
+      downgradeEffectiveAt: null,
+    });
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(290); // 349 − 59, unchanged
+  });
+
+  it("REG-B58 T10 downgrade() replaces a pending cancellation rather than stacking on it", async () => {
+    const periodEnd = new Date("2026-08-01");
+    const { svc, tx } = make({
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd, cancelAtPeriodEnd: true },
+    });
+    await svc.downgrade("t1", "STARTER", [], "admin");
+    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+      downgradeToPlanKey: "STARTER",
+      downgradeEffectiveAt: periodEnd,
+      cancelAtPeriodEnd: false,
+    });
+  });
+
+  it("REG-B58 T10 cancel() supersedes a scheduled downgrade instead of stacking on it", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc, tx } = make({
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "BUSINESS",
+        cycle: "MONTHLY",
+        periodStart,
+        periodEnd,
+        downgradeToPlanKey: "STARTER",
+        downgradeEffectiveAt: periodEnd,
+        retainedUserIds: ["u1"],
+      },
+    });
+    await svc.cancel("t1", "admin");
+    // Both armed, applyScheduledDowngrades would re-price basePriceSnapshot onto STARTER
+    // before applyScheduledCancellations books the churn delta from it — so the negative MRR
+    // delta would depend on which daily/hourly cron happened to run first.
+    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+      cancelAtPeriodEnd: true,
+      downgradeToPlanKey: null,
+      downgradeEffectiveAt: null,
+      retainedUserIds: [],
+    });
+  });
+
+  it("REG-B58 T10 resume() clears a scheduled downgrade too, without touching the plan or period", async () => {
+    const { svc, tx } = make({
+      sub: {
+        planKey: "BUSINESS",
+        cycle: "MONTHLY",
+        downgradeToPlanKey: "STARTER",
+        downgradeEffectiveAt: new Date("2026-08-01"),
+      },
+    });
+    await svc.resume("t1", "admin");
+    const data = tx.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data).toMatchObject({
+      cancelAtPeriodEnd: false,
+      downgradeToPlanKey: null,
+      downgradeEffectiveAt: null,
+    });
+    expect(data).not.toHaveProperty("planKey");
+    expect(data).not.toHaveProperty("periodStart");
+    expect(data).not.toHaveProperty("periodEnd");
+  });
+});
+
+describe("SubscriptionMutationService — legacy rows and null periods (REG-B58 T1/T2)", () => {
+  it("REG-B58 T1 refuses an ACTIVE same-cycle plan change on a legacy row (planKey NULL, plan enum only)", async () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc, tx, events } = make({
+      tenantStatus: "ACTIVE",
+      tenantPlan: "BUSINESS", // → SCALE; the subscription itself predates plans-as-data
+      sub: { planKey: null, cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    await expect(
+      svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+    // A handled 4xx is invisible otherwise (Sentry captures >= 500 only, no access log).
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it("REG-B58 T2 a legacy row (planKey NULL, plan enum BUSINESS) previews DOWNGRADE, not SUBSCRIBE", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      tenantPlan: "BUSINESS",
+      sub: { planKey: null, cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const preview: any = await svc.planChangePreview("t1", "STARTER", "MONTHLY");
+    expect(preview.action).toBe("DOWNGRADE");
+    expect(preview.effectiveAt).toEqual(periodEnd);
+  });
+
+  it("REG-B58 T2 an ACTIVE subscription with NO periodEnd previews SUBSCRIBE (the cron could never apply a downgrade)", async () => {
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+    });
+    const preview: any = await svc.planChangePreview("t1", "STARTER", "MONTHLY");
+    expect(preview.action).toBe("SUBSCRIBE");
+  });
+
+  it("REG-B58 T1 a subscription with NO periodEnd is NOT refused — subscribe() is what heals it", async () => {
+    const { svc, tx } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+    });
+    await expect(
+      svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }),
+    ).resolves.toBeDefined();
+    expect(tx.tenantSubscription.upsert).toHaveBeenCalled();
+  });
+
+  it("REG-B58 T10 downgrade() refuses a subscription with no periodEnd instead of writing an unappliable schedule", async () => {
+    const { svc, tx } = make({
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd: null },
+    });
+    await expect(svc.downgrade("t1", "STARTER", [], "admin")).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("SubscriptionMutationService.planChangePreview — KEEP_CURRENT undo (REG-B58 T2)", () => {
+  it("REG-B58 T2 same plan + cycle with a downgrade armed previews KEEP_CURRENT, not a dead NOOP", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "TEAM",
+        cycle: "MONTHLY",
+        periodStart,
+        periodEnd,
+        downgradeToPlanKey: "STARTER",
+        downgradeEffectiveAt: periodEnd,
+      },
+    });
+    const preview: any = await svc.planChangePreview("t1", "TEAM", "MONTHLY");
+    expect(preview.action).toBe("KEEP_CURRENT");
+    expect(preview.warning).toBeTruthy();
+    expect(preview.keepsRenewalAt).toEqual(periodEnd);
+  });
+
+  it("REG-B58 T2 same plan + cycle with a cancellation armed previews KEEP_CURRENT", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "TEAM", cycle: "MONTHLY", periodStart, periodEnd, cancelAtPeriodEnd: true },
+    });
+    const preview: any = await svc.planChangePreview("t1", "TEAM", "MONTHLY");
+    expect(preview.action).toBe("KEEP_CURRENT");
+  });
+
+  it("REG-B58 T2 the SUBSCRIBE / NOOP paths never fetch the published catalog", async () => {
+    const { svc, cat } = make({ tenantStatus: "TRIAL" });
+    const preview: any = await svc.planChangePreview("t1", "TEAM", "MONTHLY");
+    expect(preview.action).toBe("SUBSCRIBE");
+    // proration.quote() already runs this uncached query on every /billing/quote — only the
+    // UPGRADE branch needs it, so the preview must not run it a second time.
+    expect(cat.getPublishedCatalog).not.toHaveBeenCalled();
+  });
+});
+
+describe("SubscriptionMutationService.planChangePreview — seatAckRequired (round 4, hazard 1)", () => {
+  /**
+   * The seat consequence is its OWN field because `warning` composes unrelated notices. The
+   * chooser gates "I understand these users will be deactivated" on this flag; keying it on
+   * `!!warning` made a cancellation-only DOWNGRADE demand consent to a deactivation that
+   * billing-cron's `applyScheduledDowngrades` would never perform (it acts only over cap).
+   */
+  it("PIN: DOWNGRADE with a cancellation armed but UNDER the target cap warns yet keeps seatAckRequired false", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "BUSINESS",
+        cycle: "MONTHLY",
+        periodStart,
+        periodEnd,
+        cancelAtPeriodEnd: true,
+      },
+      activeTeam: 2, // <= STARTER's 3 seats — nothing is deactivated
+    });
+    const preview = await svc.planChangePreview("t1", "STARTER", "MONTHLY");
+    expect(preview.action).toBe("DOWNGRADE");
+    // The cancellation notice is still delivered...
+    expect(preview.warning).toMatch(/cancellation is pending/i);
+    // ...and it must NOT be readable as a seat consequence.
+    expect(preview.seatAckRequired).toBe(false);
+    expect(preview.warning).not.toMatch(/deactivated/i);
+  });
+
+  it("PIN: DOWNGRADE OVER the target cap sets seatAckRequired true", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodStart, periodEnd },
+      activeTeam: 8, // > STARTER's 3 seats
+    });
+    const preview = await svc.planChangePreview("t1", "STARTER", "MONTHLY");
+    expect(preview.action).toBe("DOWNGRADE");
+    expect(preview.seatAckRequired).toBe(true);
+    expect(preview.warning).toMatch(/8 active users/);
+  });
+
+  it("PIN: a DOWNGRADE within the cap with nothing armed is false, never undefined", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodStart, periodEnd },
+      activeTeam: 2,
+    });
+    const preview = await svc.planChangePreview("t1", "STARTER", "MONTHLY");
+    expect(preview.seatAckRequired).toBe(false);
+  });
+
+  it("PIN: EVERY non-DOWNGRADE action carries seatAckRequired: false (the web mirror requires it)", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const active = (sub: any) => ({ tenantStatus: "ACTIVE", sub });
+    // [expected action, make() opts, planKey, cycle]
+    const cases: Array<[string, Opts, string, string]> = [
+      ["SUBSCRIBE", { tenantStatus: "TRIAL" }, "TEAM", "MONTHLY"],
+      [
+        "NOOP",
+        active({ planKey: "TEAM", cycle: "MONTHLY", periodStart, periodEnd }),
+        "TEAM",
+        "MONTHLY",
+      ],
+      [
+        "KEEP_CURRENT",
+        active({
+          planKey: "TEAM",
+          cycle: "MONTHLY",
+          periodStart,
+          periodEnd,
+          downgradeToPlanKey: "STARTER",
+        }),
+        "TEAM",
+        "MONTHLY",
+      ],
+      [
+        "SUBSCRIBE",
+        active({ planKey: "TEAM", cycle: "MONTHLY", periodStart, periodEnd }),
+        "TEAM",
+        "ANNUAL",
+      ],
+      [
+        "UPGRADE",
+        active({ planKey: "TEAM", cycle: "MONTHLY", periodStart, periodEnd }),
+        "BUSINESS",
+        "MONTHLY",
+      ],
+      [
+        "CONTACT_SALES",
+        active({ planKey: "BUSINESS", cycle: "MONTHLY", periodStart, periodEnd }),
+        "ENTERPRISE",
+        "MONTHLY",
+      ],
+    ];
+    for (const [action, opts, planKey, cycle] of cases) {
+      const { svc } = make(opts);
+      const preview = await svc.planChangePreview("t1", planKey, cycle as never);
+      expect(preview.action).toBe(action);
+      expect(preview.seatAckRequired).toBe(false);
+    }
+  });
+});
+
+describe("SubscriptionMutationService.planChangePreview — a cycle switch says what it disarms (round 4, hazard 2)", () => {
+  /**
+   * The cycle switch commits through subscribe(), whose upsert `update` branch writes
+   * cancelAtPeriodEnd:false / downgradeToPlanKey:null / downgradeEffectiveAt:null — the same
+   * silent revocation the UPGRADE and DOWNGRADE branches already warn about.
+   */
+  const cycleSwitchSub = (extra: Record<string, unknown> = {}) => {
+    const { periodStart, periodEnd } = activePeriod();
+    return { planKey: "TEAM", cycle: "MONTHLY", periodStart, periodEnd, ...extra };
+  };
+
+  it("PIN: a cycle switch with a cancellation armed warns it is revoked, alongside the proration notice", async () => {
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: cycleSwitchSub({ cancelAtPeriodEnd: true }),
+    });
+    const preview = await svc.planChangePreview("t1", "TEAM", "ANNUAL");
+    expect(preview.action).toBe("SUBSCRIBE");
+    expect(preview.warning).toMatch(/not prorated/i);
+    expect(preview.warning).toMatch(/cancellation is pending/i);
+  });
+
+  it("PIN: a cycle switch with a downgrade armed warns that switching cycle cancels it", async () => {
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: cycleSwitchSub({ downgradeToPlanKey: "STARTER" }),
+    });
+    const preview = await svc.planChangePreview("t1", "TEAM", "ANNUAL");
+    expect(preview.action).toBe("SUBSCRIBE");
+    expect(preview.warning).toMatch(/not prorated/i);
+    expect(preview.warning).toMatch(/scheduled downgrade is pending/i);
+  });
+
+  it("PIN: both armed at once compose, never trade", async () => {
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: cycleSwitchSub({ cancelAtPeriodEnd: true, downgradeToPlanKey: "STARTER" }),
+    });
+    const preview = await svc.planChangePreview("t1", "TEAM", "ANNUAL");
+    expect(preview.warning).toMatch(/cancellation is pending/i);
+    expect(preview.warning).toMatch(/scheduled downgrade is pending/i);
+  });
+
+  it("PIN: a cycle switch with nothing armed carries only the proration notice", async () => {
+    const { svc } = make({ tenantStatus: "ACTIVE", sub: cycleSwitchSub() });
+    const preview = await svc.planChangePreview("t1", "TEAM", "ANNUAL");
+    expect(preview.warning).toBe(
+      "Switching billing cycle takes effect immediately and is not prorated.",
+    );
+  });
+});
+
+describe("SubscriptionMutationService.planChangePreview — the off-list refusal is scoped to the ranking paths (round 4, hazard 6)", () => {
+  /** The published catalog is DATA: nothing constrains a definition's planKey to PLAN_KEYS. */
+  function catalogWithOffListKey() {
+    const v = catalog();
+    (v.definitions as Array<Record<string, unknown>>).push({
+      planKey: "PRO",
+      name: "Pro",
+      monthlyPrice: 199,
+      isCustom: false,
+      seatsIncluded: 5,
+    });
+    return v;
+  }
+
+  it("PIN: a TRIAL tenant quoting an off-list published key still previews SUBSCRIBE", async () => {
+    // The refusal used to sit above the tenant/status branch, so ONE mis-published definition
+    // 400'd the entire /billing/quote for every tenant on that card — including the fresh
+    // subscribe path, which never ranks and prices the definition correctly from the catalog.
+    const { svc } = make({ catalog: catalogWithOffListKey(), tenantStatus: "TRIAL", sub: null });
+    const preview = await svc.planChangePreview("t1", "PRO", "MONTHLY");
+    expect(preview.action).toBe("SUBSCRIBE");
+    expect(preview.seatAckRequired).toBe(false);
+  });
+
+  it("PIN: an ACTIVE tenant quoting the same off-list key still gets the 400", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      catalog: catalogWithOffListKey(),
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    await expect(svc.planChangePreview("t1", "PRO", "MONTHLY")).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 });
