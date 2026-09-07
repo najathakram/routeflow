@@ -62,13 +62,16 @@ after every attempt failed, and clears it itself on the next confirmed flip.
    `gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`
 2. **Push, let CI go green, merge the PR to `master`** (squash). The `master` push triggers
    Railway's own auto-deploy — nothing in this routine drives that.
-3. **Wait until the deploy reaches `BUILDING`** — never flip during `INITIALIZING`, which IS the
-   snapshot-clone window:
+3. **Wait until BOTH deployments (`@routeflow/api` and `@routeflow/web`) reach `SUCCESS`** — never
+   flip on `BUILDING` (see Failure modes: that is not a safe flip point, only timing luck made it
+   look like one). `SUCCESS` typically lands ≈2.5 minutes after the merge:
    ```bash
-   until railway deployment list --service @routeflow/api | sed -n '2p' | grep -qE 'BUILDING|DEPLOYING|SUCCESS'; do sleep 10; done
+   until railway deployment list --service @routeflow/api | sed -n '2p' | grep -qE 'SUCCESS|FAILED'; do sleep 10; done
+   until railway deployment list --service @routeflow/web | sed -n '2p' | grep -qE 'SUCCESS|FAILED'; do sleep 10; done
    ```
-   Do not include `FAILED` in that pattern — a failure is precisely the case where you must not
-   conclude the snapshot succeeded.
+   Do not include `BUILDING`/`DEPLOYING` in that pattern — a mid-build state is precisely the case
+   where you must not conclude the snapshot succeeded. A `FAILED` result means the deploy did not
+   go out; see the recovery steps below before flipping.
 4. **Make the repo private again — as a `finally`.** Run this even if CI failed, the merge failed,
    or the deploy failed:
    `gh repo edit najathakram/routeflow --visibility private --accept-visibility-change-consequences`
@@ -88,6 +91,14 @@ after every attempt failed, and clears it itself on the next confirmed flip.
   (verified the hard way on #376 — both services FAILED at that stage).
 - **`gh repo edit` fails over the network** and leaves the repo public with no clear error (#374).
   Fix: step 5's read-back-and-retry, always.
+- **`BUILDING` is not a safe flip point** — both 1b413d07 deployments (#652, 2026-09-07) FAILED at
+  the code snapshot with no build log when the flip came 7 seconds after reaching `BUILDING`;
+  #650's 3-second flip at `BUILDING` had succeeded, but that was timing luck, not a rule.
+  `railway redeploy` refuses to redeploy a `FAILED` deployment, and `railway up` is unsafe here (no
+  `.railwayignore`, and this repo's worktrees live under the root checkout, so a raw upload risks
+  shipping worktree content). Recovery: from a spare worktree, push an empty
+  `chore(deploy): retrigger …` commit as `master` while the repo is still public, wait for
+  `SUCCESS` (never `BUILDING`), then flip private. Fix: flip only after step 3's `SUCCESS`.
 
 ## Retirement checklist
 
