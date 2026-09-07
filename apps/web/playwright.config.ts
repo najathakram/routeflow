@@ -550,5 +550,28 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+
+    // ── Route delivery-window dispatch warning (F12, spec 35) ──────────────
+    // REG-B161 web leg (T2/T4): the template page's Optimize toast must name
+    // the stop(s) that miss their delivery window, and the Dispatch modal
+    // must warn about them and gate "Dispatch" behind an explicit
+    // acknowledge. Mutating but self-contained: creates its own throwaway
+    // `E2E B161 …` route + two customers (one with an always-infeasible
+    // delivery window) on the approved seed tenant and cleans up nothing,
+    // the same tolerance 21/22/23/24's own throwaway fixtures already take.
+    // NOT part of F12's local red gate (apps/api's jest lane proves T1-T3) —
+    // runs only against the DEPLOYED site and is expected red until F12
+    // ships.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "route-windows",
+      testMatch: /35-route-windows\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
   ],
 });

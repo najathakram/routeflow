@@ -1,0 +1,161 @@
+{
+  "api": {
+    "filesTouched": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api/src/route-optimization/route-optimization.service.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api/src/route-optimization/route-optimization.service.spec.ts"
+    ],
+    "perItem": [
+      {
+        "item": "finding 1 (result.json remainingFindings[1]) — ORS vehicle time_window makes an unreachable-window stop `unassigned`, parser throws, route silently degrades to nearest-neighbour under a misleading ORS_NETWORK_ERROR",
+        "status": "fixed",
+        "what": "In `callOrsOptimization` (route-optimization.service.ts, ORS parser block): the response type now also declares `unassigned?: Array<{ id?: number }>` (vroom shape). The step-derived ids became `assignedIds`; `unassignedIds` maps `data.unassigned` job ids (sorted ascending = the original relative stop order, since jobs are emitted as `i + 1`) back to stop ids, dropping nulls, out-of-range ids and any id already scheduled (an `assigned` Set that grows as ids are accepted, so a stop reported twice — or both scheduled and reported — is persisted exactly once). `optimizedIds = [...assignedIds, ...unassignedIds]`, so the unassigned stops are APPENDED as late stops and the primary solver is kept; the existing `optimizedIds.length !== stops.length` throw now fires only on a TRUE mismatch (a stop ORS neither scheduled nor reported), with its message and counts unchanged. Nothing else in the ORS path changed: the vehicle `time_window` is kept, job windows untouched, `fallbackReason` stays unset because no exception is raised, and the post-solve `applyWindowPass` reports the appended stops in `windowViolations` (late by construction — the repair loop finds no feasible position, so it re-inserts each at its original relative index, which is last).",
+        "pin": "REG-B177: an ORS response with unassigned jobs keeps the primary solver — 3 stops on the ORS branch (no Google key, `ors.apiKey` = 'ors-key'), fetch resolves `routes[0].steps` for jobs 1 and 2 plus `unassigned: [{ id: 3 }]` where stop 3 (`stop-late`, 0.3 deg north of a (0,0) depot, window 08:00-08:30) is unreachable before its close from an 08:00 departure in any order. Asserts `result.stopOrder` = [stop-ors-a, stop-ors-b, stop-late] (3 stops, unassigned last), `windowViolations` has length 1 with `stopId === 'stop-late'` and `windowEnd === '08:30'`, `usedFallback === false`, `fallbackReason === undefined`, and `fetch` called exactly once. Pre-fix this test fails on values, not existence: steps(2) !== stops(3) threw, so usedFallback would be true and fallbackReason 'ORS_NETWORK_ERROR' with a nearest-neighbour order. Companion pin: REG-B177: an ORS response that neither schedules nor reports a stop still throws — calls the parser directly with 3 stops, `steps: [job 1]`, `unassigned: []`, and asserts `rejects.toThrow(\"ORS stop count mismatch: expected 3, got 1\")` so appending the unassigned cannot soften a real mismatch."
+      },
+      {
+        "item": "red-gate hardening — REG-B161 asserted existence (`toBeDefined`) rather than a value",
+        "status": "fixed",
+        "what": "In `REG-B161: reports a stop whose window closes before its reachable ETA under any order` the `find(...)` + `toBeDefined()` + `objectContaining` triple was replaced by a value oracle: `windowViolations` must have length exactly 1; the single violation's `stopId === 'stop-late'`, `windowStart === '08:00'`, `windowEnd === '08:30'`; its `eta` is a string matching /^\\d{2}:\\d{2}$/ and is exactly '08:40'; and a local `minutesFromMidnight` helper proves the ETA is strictly later than `windowEnd` (520 > 510). `result.startTime === '08:00'` is kept. The fixture id `stop-late` and its 08:00-08:30 window appear in no REG-B147 test (those use stop-near/mid/far and stop-a/b/c with 08:20/08:45/09:00 closes), so the two cannot pass on each other's order. DEVIATION from the literal ruling: fix-round-3.md names `violation.windowEnd === \"09:00\"`, but the shipped REG-B161 fixture (single stop 0.3 deg out, reachable at 08:40) closes at 08:30 — a 09:00 close would make the stop feasible and delete the violation the test exists to pin. The ruled oracle SHAPE (stopId value, windowEnd value, HH:mm-shaped eta, eta later than windowEnd) is implemented against the fixture's real values 08:30 / 08:40.",
+        "pin": "REG-B161: reports a stop whose window closes before its reachable ETA under any order (hardened in place — same title, value oracle instead of the existence check)"
+      }
+    ],
+    "gates": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api && npx tsc -p tsconfig.build.json --noEmit",
+        "pass": true,
+        "summary": "Clean — no output, exit 0."
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api && npx jest src/route-optimization src/routes --runInBand",
+        "pass": true,
+        "summary": "13 suites / 243 tests passed, 0 failed (127 s). Green on the first iteration — no repair rounds needed. Targeted re-runs confirm the new tests are actually collected and pass, not skipped: -t \"unassigned\" → 1 passed / 39 skipped; -t \"REG-B161\" → 1 passed / 39 skipped (the spec file now holds 40 tests, up from 38)."
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry && npx prettier --check apps/api/src/route-optimization/route-optimization.service.ts apps/api/src/route-optimization/route-optimization.service.spec.ts",
+        "pass": true,
+        "summary": "Read-only style verification beyond the two named gates: 'All matched files use Prettier code style!' (semicolons, double quotes, printWidth 100, trailing commas)."
+      }
+    ],
+    "notes": "Scope respected: only the two files named in the brief were edited, both by targeted Edit calls; no git write command, no install, no docker/playwright, no full `npx jest` was run, and the engine's other uncommitted output in rf-registry was left untouched (`git diff --stat` over the area shows the pre-existing engine changes to route-analysis.service.ts and route-optimization.controller.ts, which I did not touch). Finding 0 (web seed effect) is the web executor's, untouched. Two things for the reviewer/probe: (1) the deviation above — REG-B161's ruled literal windowEnd \\\"09:00\\\" is implemented as the fixture's real \\\"08:30\\\"/eta \\\"08:40\\\", because 09:00 would make the pinned stop feasible and erase the violation; the ruled oracle shape is otherwise implemented exactly. (2) The chosen degrade path is the ruling's \\\"append the unassigned\\\" branch, not the fixHint's alternative of widening the vehicle window — the vehicle `time_window` is deliberately unchanged, so the existing REG-B177 request-body pins ([28800, 72000] and the underway-run no-time_window pin) still hold. Dedupe detail worth a reviewer's eye: an id that appears in BOTH `steps` and `unassigned` is accepted once (via the growing `assigned` Set), which means such a response now takes the true-mismatch throw only if it is genuinely short a stop — the intended behaviour, but it is the one place the new code is stricter than a naive length sum would be. The mutation probe (checksum-revert of the applyWindowPass call site) is a separate Opus task and was not run here."
+  },
+  "web": {
+    "filesTouched": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/web/app/(dashboard)/routes/page.tsx",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/web/app/(dashboard)/routes/templates/[id]/page.tsx"
+    ],
+    "perItem": [
+      {
+        "item": "finding 0 (minor) — seed effect keeps `startTime` in its deps, so clearing Departure Time snaps back to the tenant default; the two dispatch modals diverge",
+        "status": "fixed",
+        "what": "One-shot seed per open in BOTH dispatch modals, exactly as fix-round-3.md rules it. Added `const seededRef = React.useRef(false);` next to `analyzeSeq` in each modal and replaced each seed effect. routes/page.tsx (was deps `[open, routeSettings?.defaultStartTime, startTime]` with guard `!startTime`) is now:\n\n  // Seed the default departure time once route settings arrive — one shot per\n  // open, so an emptied field stays empty instead of snapping back to the\n  // tenant default (see templates/[id]/page.tsx for the same shape).\n  React.useEffect(() => {\n    if (!open) {\n      seededRef.current = false;\n      return;\n    }\n    if (seededRef.current || !routeSettings?.defaultStartTime) return;\n    seededRef.current = true;\n    setStartTime(routeSettings.defaultStartTime);\n  }, [open, routeSettings?.defaultStartTime]);\n\ntemplates/[id]/page.tsx (was `React.useEffect(() => { if (routeSettings?.defaultStartTime && !startTime) { setStartTime(routeSettings.defaultStartTime); } }, [routeSettings?.defaultStartTime]);` — no `open` guard, `startTime` read but not a dep) is now byte-identical apart from the cross-reference comment naming routes/page.tsx:\n\n  React.useEffect(() => {\n    if (!open) {\n      seededRef.current = false;\n      return;\n    }\n    if (seededRef.current || !routeSettings?.defaultStartTime) return;\n    seededRef.current = true;\n    setStartTime(routeSettings.defaultStartTime);\n  }, [open, routeSettings?.defaultStartTime]);\n\nTrace on the clear path: operator empties the <input type=\"time\"> → setStartTime(\"\") → the seed effect's deps ([open, defaultStartTime]) are unchanged, so it does not re-run → the field stays empty and handleDispatch sends `startTime: startTime || undefined`. The debounced analyze effect (deps [open, routeId, startTime]) fires exactly once for the cleared value instead of twice, and `acknowledged` is reset once, not twice. On close the ref clears, so the next open re-seeds. Only the two briefed files were touched; no other hunk in either file was modified. Re the brief's \"remove the eslint-disable there\": the templates seed effect carried NO `// eslint-disable-next-line react-hooks/exhaustive-deps` in this tree (the only disable in that file is at the analyze effect, now line 375, and is untouched) — the new deps are exhaustive, so none was needed or added.",
+        "pin": "None added — fix-round-3.md D1: apps/web has no unit runner for page components; the reviewer traces both effects (traced above) and T4 (Playwright, pending-deploy) keeps its assertions."
+      }
+    ],
+    "gates": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/web && npx tsc --noEmit -p tsconfig.json",
+        "pass": true,
+        "summary": "Exit 0, no output."
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/web && npx eslint \"app/(dashboard)/routes/page.tsx\" \"app/(dashboard)/routes/templates/[id]/page.tsx\" --max-warnings 0",
+        "pass": false,
+        "summary": "Exit 2 — ESLint crashed before linting anything, for a PRE-EXISTING node_modules version skew in this worktree, not for my edit: \"ESLint: 8.57.1 / TypeError: Error while loading rule '@typescript-eslint/no-unused-expressions': Cannot read properties of undefined (reading 'allowShortCircuit')\", thrown from the ROOT node_modules/eslint/lib/rules/no-unused-expressions.js while apps/web/node_modules/eslint runs the linter. apps/web/node_modules/eslint is 8.57.1, root node_modules/eslint is 9.39.4, and @typescript-eslint resolves the v9 base rule into the v8 linter. Proved environmental by running the same command on an UNTOUCHED file (app/(dashboard)/routes/create/page.tsx): identical crash, exit 2. Fixing it needs an npm install, which my brief forbids, so I did not attempt it (0 of the 3 allowed fix iterations were spent — there was nothing of mine to fix)."
+      },
+      {
+        "command": "[diagnostic, not in brief] cd .../apps/web && node ../../node_modules/eslint/bin/eslint.js \"app/(dashboard)/routes/page.tsx\" \"app/(dashboard)/routes/templates/[id]/page.tsx\" --max-warnings 0",
+        "pass": false,
+        "summary": "Exit 1, 10 problems (8 errors, 2 warnings) — ALL pre-existing and none in my hunks: routes/page.tsx 25:3 'cn' unused, 296:30 `(d: any)`, 425:7 ternary-as-statement; templates 210:9 + 703:9 exhaustive-deps useMemo warnings, 214/225/265/487/797 no-explicit-any. Ran the root eslint 9 binary only to get a real lint signal past the crash; its rule severities are not necessarily the workspace's. Load-bearing result: react-hooks/exhaustive-deps IS active in this run (it fires twice elsewhere in the templates file) and reports NOTHING on either new seed effect — the new deps are exhaustive."
+      },
+      {
+        "command": "[diagnostic, not in brief] cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry && npx prettier --check \"apps/web/app/(dashboard)/routes/page.tsx\" \"apps/web/app/(dashboard)/routes/templates/[id]/page.tsx\"",
+        "pass": true,
+        "summary": "Exit 0 — \"All matched files use Prettier code style!\" (semicolons, double quotes, printWidth 100, trailing commas honoured; every added line is under 100 columns)."
+      }
+    ],
+    "notes": "Two behavioural notes the reviewer should weigh, both inherent to the ruled \\\"one shot per open\\\" design, neither hidden:\\n\\n1. templates/[id]/page.tsx has NO reset-on-open effect (unlike routes/page.tsx, which clears date/driverId/startTime/acknowledged/lateStops on open) and its DispatchModal stays mounted (rendered with `open={dispatchOpen}` at line ~1250), so its form state survives a close. Previously the seed ran only when `defaultStartTime` changed AND `!startTime`, so a value the operator picked survived a close/reopen. With seededRef cleared on close, reopening now re-seeds the tenant default over that retained value. That is what \\\"seeded once per open, cleared on close\\\" means and it matches routes/page.tsx (which resets to \\\"\\\" then seeds), so the two modals are now identical — but it is a real change to the templates reopen path. Say the word and I will scope the ref-clear to unmount instead.\\n\\n2. Narrow race, unchanged in kind from the pre-fix code: if routeSettings is still loading when the modal opens and the operator clears the field before it arrives, the arriving `defaultStartTime` re-runs the effect with seededRef still false and seeds the default over the emptied field. Closing that would require reading `startTime` in the effect, which is exactly the dependency that caused finding 0.\\n\\nNo git write commands, installs, docker, playwright or full jest were run; the tree's uncommitted engine output is untouched apart from the two briefed files (git diff --stat: routes/page.tsx and templates/[id]/page.tsx only). The eslint gate is the one open item and it is blocked on the worktree's nested eslint 8.57.1 vs root 9.39.4 skew — a reinstall in this worktree (or running the gate from a tree with matching eslint versions) is needed before that gate can report on this change at all."
+  },
+  "regate": {
+    "results": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api && npx tsc -p tsconfig.build.json --noEmit",
+        "pass": true,
+        "summary": "TypeScript compilation check passed with no errors",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api && npx jest src/route-optimization src/routes --runInBand",
+        "pass": true,
+        "summary": "All 13 test suites and 243 tests passed",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/web && npx tsc --noEmit -p tsconfig.json",
+        "pass": true,
+        "summary": "TypeScript compilation check passed with no errors",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/web && npx eslint \"app/(dashboard)/routes/page.tsx\" \"app/(dashboard)/routes/templates/[id]/page.tsx\" --max-warnings 0",
+        "pass": false,
+        "summary": "ESLint rule configuration error during linting",
+        "failures": [
+          "TypeError: Error while loading rule '@typescript-eslint/no-unused-expressions': Cannot read properties of undefined (reading 'allowShortCircuit')"
+        ]
+      }
+    ],
+    "allPass": false
+  },
+  "probe": null,
+  "review": {
+    "perItem": [
+      {
+        "item": "finding 1 (result.json remainingFindings[1]) — ORS vehicle time_window makes an unreachable-window stop `unassigned`, parser throws, route silently degrades to nearest-neighbour under a misleading ORS_NETWORK_ERROR",
+        "verdict": "fixed",
+        "evidence": "Traced end to end in route-optimization.service.ts (read-only, git diff + sed).\n\nPARSER (callOrsOptimization, ~:1364-1405): the response type gains `unassigned?: Array<{ id?: number }>`. `assignedIds` = the old step-derived ids (unchanged). `unassignedIds` = `data.unassigned` → `.map(u => u.id)` → drop null → `.sort((a,b) => a-b)` → `stops[id-1]?.id` → filter through a growing `assigned` Set. The ascending sort IS original relative stop order because the request builds `jobs: stops.map((s,i) => ({ id: i+1, ... }))` (verified at :1346-1354), so job id n ⇔ stops[n-1]. `optimizedIds = [...assignedIds, ...unassignedIds]`.\n\nTRUE-MISMATCH THROW still fires (:1408-1412), byte-identical message/counts. I refuted three ways of softening it: (i) an out-of-range unassigned id (e.g. `{id: 99}` with 3 stops) → `stops[98]?.id` is undefined → filtered → length short → throws; (ii) an id already in `steps` → `assigned.has(id)` → filtered → length short → throws; (iii) `unassigned: []` with 1 of 3 steps → throws \"ORS stop count mismatch: expected 3, got 1\", which is exactly the companion pin at spec:1172. So the throw cannot be bought off by padding.\n\nAPPENDED ORDER → WINDOW PASS → RESULT: optimizeTemplate :549-558 maps optimizedIds back to StopWithCoords and runs applyWindowPass. For the pinned fixture (depot 0,0; stop-late at lat 0.3 = 33.36 km = 40.0 min at 50 km/h; window 08:00-08:30; departure 08:00) `calculateETAs` gives arrival > 08:30 in EVERY position, so the re-insertion loop finds no feasible slot; the not-inserted branch re-inserts at `Math.min(orderedStops.indexOf(stop)=2, remaining.length=2)` = index 2 → LAST. `repaired.length (1) <= violations.length (1)` and no new stopId, so the repaired order is kept. Persisted: the two-phase `$transaction` at :569-587 writes stopNumbers 1..3 over ALL three stops — the unassigned stop really is persisted, not dropped.\n\nfallbackReason: no exception is raised on this path, so `usedFallback` stays false and `fallbackReason` stays undefined (the only writers are the two catch blocks at :536 / :747). Confirmed the ORS branch is entered once — `fetch` is called exactly once, asserted at spec:1170.\n\nPin REG-B177 \"an ORS response with unassigned jobs keeps the primary solver\" (spec:1074-1171) asserts values, not existence: stopOrder === [stop-ors-a, stop-ors-b, stop-late], windowViolations length 1 with stopId/windowEnd values, usedFallback false, fallbackReason undefined, fetch called once. Pre-fix it fails on VALUES (steps 2 !== stops 3 threw → usedFallback true, ORS_NETWORK_ERROR, NN order), not on a missing field. Regate: api tsc clean, `npx jest src/route-optimization src/routes --runInBand` 13 suites / 243 tests green; no .only/.skip/xit/fit anywhere in the spec (grepped)."
+      },
+      {
+        "item": "red-gate hardening — REG-B161 asserted existence (`toBeDefined`) rather than a value",
+        "verdict": "fixed",
+        "evidence": "spec:855-914 is now a pure value oracle: `expect(result.windowViolations).toHaveLength(1)`, then `violation.stopId === \"stop-late\"`, `windowStart === \"08:00\"`, `windowEnd === \"08:30\"`, `typeof eta === \"string\"`, `eta` matches /^\\d{2}:\\d{2}$/, `eta === \"08:40\"`, plus a local minutesFromMidnight proof that 520 > 510, and `result.startTime === \"08:00\"`. No toBeDefined / objectContaining / find(...) survives in the test.\n\nThe eta value is independently derivable, so it is a real oracle: lat 0.3 → 0.3 * 111.195 km = 33.36 km; /50 km/h = 40.03 min from 08:00 → 08:40. A single-stop route has exactly one order, so no re-insertion can erase the violation.\n\nCross-contamination refuted by grep: `stop-late` appears at only four spec sites — REG-B161 (869, 905) and the REG-B177 unassigned test (1117, 1161-1164). NO REG-B147 test contains it: those use stop-a/stop-b/stop-c (twoWindowedRoute, spec:919-931) and stop-near/mid/far, with closes 08:20 / 08:45 / 09:00. REG-B161 therefore cannot pass on a REG-B147 order, and vice versa. The shared id with the REG-B177 test is harmless — different branch (Google-key + rejecting fetch vs the ORS branch), different assertions (1 stop / eta 08:40 vs a 3-stop order), and each test re-mocks prisma/config/fetch.\n\nDEVIATION accepted: fix-round-3.md's literal `windowEnd === \"09:00\"` is implemented as the fixture's real \"08:30\" (eta \"08:40\"). I checked the alternative and the executor is right — a 09:00 close on a stop reachable at 08:40 is FEASIBLE, `withinWindow` would be true, `windowViolations` would be empty, and the test would assert on a violation that no longer exists. The ruled oracle SHAPE (named stopId, named windowEnd, HH:mm-shaped eta, eta strictly later than windowEnd) is implemented exactly. Ruling text was wrong about the constant; the fix is right.\n\nNot verified here: the ruled mutation probe (checksum-revert of the applyWindowPass call site) is a separate Opus task and `probe` was null in my inputs, so \"REG-B147/B161 go red on their own values\" is argued, not executed."
+      },
+      {
+        "item": "finding 0 (minor) — seed effect keeps `startTime` in its deps, so clearing Departure Time snaps back to the tenant default; the two dispatch modals diverge",
+        "verdict": "fixed",
+        "evidence": "Both modals now carry `const seededRef = React.useRef(false)` and the identical one-shot effect (routes/page.tsx:134-142, templates/[id]/page.tsx:320-328), deps `[open, routeSettings?.defaultStartTime]` — `startTime` is gone from the deps.\n\nCLEAR PATH (both files): operator empties the <input type=\"time\"> → onChange → setStartTime(\"\") → neither dep changed → the seed effect does NOT re-run → the field stays empty. `handleDispatch` sends `startTime: startTime || undefined` (routes/page.tsx:200-206, templates:372-379), so an emptied field means \"use the server default\", and the debounced analyze effect re-runs once with `startTime: undefined`, so the warning and the dispatch describe the same clock. Pre-fix, templates' effect read `startTime` without declaring it and routes/page.tsx declared it — either way the `!startTime` guard re-seeded the emptied field. Refuted.\n\nREOPEN PATH: both DispatchModals are rendered unconditionally with an `open` prop (routes/page.tsx:744, templates:1250), so they stay MOUNTED and the ref genuinely needs the close-reset it has. On close the effect's `!open` branch sets seededRef.current = false; on the next open it re-seeds. Effect ordering on open in routes/page.tsx is safe: the reset effect (:119-127, deps [open, today]) sets startTime(\"\") and runs BEFORE the seed effect in declaration order, so the batched result is the tenant default, not \"\".\n\nDIVERGENCE closed: the two effects are now byte-identical apart from the cross-reference comment.\n\nGate caveat, not a fix defect: the ruled web eslint gate cannot report on this change in this worktree — apps/web/node_modules/eslint is 8.57.1 while the root is 9.39.4 (I confirmed both versions read-only), so @typescript-eslint loads the v9 base rule into the v8 linter and throws before linting anything. I independently checked that the change introduces no new lint surface: every problem the executor's root-eslint-9 diagnostic reported is pre-existing — `cn` is imported-and-unused on master too (`git show master:...` line 15), and `drivers.map((d: any)` is on master at line 148. react-hooks/exhaustive-deps fired twice elsewhere in the templates file and NOT on either new seed effect, which is the load-bearing signal: the new deps are exhaustive, and the brief's \"remove the eslint-disable\" was a no-op because that effect never carried one (the file's only disable sits on the analyze effect and is untouched)."
+      }
+    ],
+    "newHazards": [
+      {
+        "file": "apps/api/src/route-optimization/route-optimization.service.ts",
+        "line": 1388,
+        "severity": "minor",
+        "summary": "`unassigned` entries are not filtered by `type` the way `steps` are",
+        "detail": "The steps parser filters `s.type === \"job\"` before trusting `s.job`, but the new unassigned parser takes `u.id` from every entry regardless of type (the declared shape is `{ id?: number }`, with no `type`). Vroom's `unassigned` array can also carry `shipment` and `break` entries whose ids live in their own id spaces, so such an entry's id would be silently mapped onto `stops[id-1]` — a wrong stop appended, or (if out of range) a spurious count mismatch. RouteFlow sends only jobs today, so this is unreachable in practice; it is an asymmetry in defensiveness worth one `.filter(u => u.type === undefined || u.type === \"job\")` rather than a live defect. Not a land blocker."
+      },
+      {
+        "file": "apps/api/src/route-optimization/route-optimization.service.ts",
+        "line": 762,
+        "severity": "minor",
+        "summary": "Underway run with no caller clock: unassigned stops are appended with no window pass and no violation reported",
+        "detail": "In optimizeRoute, `windowClock` is null for an IN_PROGRESS run with no `startTimeOverride`, so the whole window pass is skipped (`if (windowClock)` at :762) and no vehicle `time_window` is sent. If vroom nevertheless returns `unassigned` entries (a job whose own absolute `time_windows` are infeasible), the new parser now APPENDS those stops in original relative order and the service persists that order untouched — no repair, `windowViolations: []`, and the only signal is `windowsChecked: false`. Before this round the same response threw and the run fell back to nearest-neighbour, which at least produced a geometrically sensible order. Failure scenario: a driver re-optimizes mid-run from the mobile app (no clock sent), one stop has an already-closed window, and that stop is driven last purely because vroom dropped it — with nothing in the result naming it. Narrow (needs an underway re-optimize AND a vroom drop with no vehicle window) and arguably still better than losing the whole ORS order, but the \"append as late\" design only pays off when a window pass follows it, and here none does."
+      },
+      {
+        "file": "apps/web/app/(dashboard)/routes/page.tsx",
+        "line": 119,
+        "severity": "minor",
+        "summary": "Reset effect can blank Departure Time with no re-seed now that `startTime` left the seed deps",
+        "detail": "The reset effect's deps are `[open, today]`; `today` is recomputed every render from `new Date()`. If the modal is open across midnight and anything re-renders it, `today` changes, the reset effect re-runs and calls `setStartTime(\"\")`, while the seed effect no longer re-runs (its deps `[open, routeSettings?.defaultStartTime]` are unchanged and `seededRef.current` is already true). The field is then silently empty until the operator retypes it — the dispatch would fall back to the server default rather than the shown value. Pre-fix, `startTime` in the seed deps re-seeded it. Vanishingly rare (a dispatch modal held open past midnight) and self-healing on close/reopen; noting it because it is a direct consequence of this round's dep change."
+      },
+      {
+        "file": "apps/web/app/(dashboard)/routes/templates/[id]/page.tsx",
+        "line": 320,
+        "severity": "minor",
+        "summary": "Templates modal now discards an operator-chosen departure time on reopen while date/driver still persist",
+        "detail": "templates/[id]/page.tsx has no reset-on-open effect and its DispatchModal stays mounted (rendered with `open={dispatchOpen}` at :1250), so `date` and `driverId` survive a close/reopen. Previously `startTime` survived too (the old effect only ran when `defaultStartTime` changed and `!startTime`). With seededRef cleared on close, reopening re-seeds the tenant default over a time the operator had picked — so the modal now resets one field and keeps two. That is exactly what \"seeded once per open, cleared on close\" means and it does match routes/page.tsx (which resets everything on open), so it is a design consequence of the ruling rather than an executor error; but on this page it reads as an inconsistency. Cheapest resolution if it bothers the owner: give templates the same reset-on-open block routes/page.tsx has, rather than scoping the ref-clear to unmount."
+      }
+    ],
+    "recommendation": "land",
+    "reasoning": "All three round-3 items survive refutation. Finding 1 is fixed at the level the ruling asked for and no softer: I traced an unassigned job from the vroom payload through the parser's sort/dedupe (job id = i+1 confirmed at the request builder, so ascending ids really are original relative order), through applyWindowPass (no feasible slot exists for the pinned fixture, so the not-inserted branch puts it back at min(index 2, len 2) = last), through the two-phase transaction that persists all three stopNumbers, to a result with windowViolations naming it and usedFallback/fallbackReason untouched because nothing throws. I attacked the count check three ways (out-of-range id, id present in both steps and unassigned, empty unassigned with short steps) and it still throws with the original message and counts in every one — the appended ids cannot pad a genuinely short response. REG-B161 is a real value oracle now, with an independently derivable eta (33.36 km / 50 km/h = 40 min → 08:40), and grep proves its `stop-late` fixture appears in no REG-B147 test, so the two cannot pass on each other's order. The documented deviation from the ruling's literal windowEnd \"09:00\" is correct and the ruling was wrong: a 09:00 close makes the stop feasible and deletes the violation the test exists to pin; the ruled oracle shape is implemented exactly. Finding 0 is fixed identically in both modals, `startTime` is out of the deps, and the clear path holds because neither dep changes on a keystroke; the reopen path works because both modals stay mounted and the close branch clears the ref, and the routes/page reset effect runs before the seed effect in declaration order so the open still lands on the default rather than \"\".\n\nNothing needs another fix round: the four new hazards are all minor, three of them are direct consequences of the ruled design rather than executor slips, and none of them changes a persisted value on the paths the batch is about. Two verification items should be closed before the PR merges, and neither is a code change: (1) the ruled mutation probe was NOT run (probe was null in my inputs) — \"REG-B147/B161 go red on their own values\" is currently argued, not executed, and that probe is the only evidence that the hardened oracles actually bite; (2) the web eslint gate is unverified for an environmental reason — apps/web/node_modules/eslint 8.57.1 against root 9.39.4 makes @typescript-eslint throw before linting anything, which I confirmed read-only from both package.json versions. I closed the substantive half of that gap myself: every problem the root-eslint-9 diagnostic reported exists on master too (`cn` unused at master line 15, `(d: any)` at master line 148), and exhaustive-deps fires elsewhere in the templates file but not on either new seed effect, so this change introduces no new lint surface — the gate needs to run in an installed tree or on CI, not another edit here."
+  },
+  "finalGate": null
+}

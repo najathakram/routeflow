@@ -433,11 +433,26 @@ export type OptimizeFallbackReason =
   // were used. The ORS pathway wasn't reached at all — don't offer ORS advice.
   | "GOOGLE_MATRIX_FALLBACK";
 
+export interface WindowViolation {
+  stopId: string;
+  eta: string;
+  windowStart: string;
+  windowEnd: string;
+}
+
 export interface OptimizeResult {
   stopOrder: Array<{ stopId: string; stopNumber: number }>;
   reorderedCount: number;
   usedFallback: boolean;
   fallbackReason?: OptimizeFallbackReason;
+  /** Stops whose window still can't be met after the server's deterministic repair pass.
+   *  Optional — older servers omit it, so always read it defensively. */
+  windowViolations?: WindowViolation[];
+  /** Vehicle departure clock the solver and the window pass both ran against.
+   *  Optional — older servers omit it. */
+  startTime?: string;
+  /** Whether the server actually ran the window pass. Optional — older servers omit it. */
+  windowsChecked?: boolean;
 }
 
 export interface RunPackingStop {
@@ -599,6 +614,9 @@ export interface RouteVariant {
   distanceMeters: number;
   hasTolls: boolean;
   encodedPolyline: string | null;
+  /** Stops this variant's order still can't reach in time, from the server's
+   *  window pass. Optional — older servers omit it. */
+  windowViolations?: WindowViolation[];
 }
 
 export interface RouteVariantsResult {
@@ -649,11 +667,18 @@ export function useApplyRouteVariant() {
 
 // ─── Route Analysis (AI + ETAs) ───────────────────────────────────────────────
 
+/** POST /routes/:id/analyze. `windowsOnly: true` returns the deterministic
+ *  ETA/window pass only — the server skips the metered Anthropic call, so the
+ *  dispatch modals can check window feasibility without any AI spend. */
 export function useAnalyzeRoute() {
-  return useMutation<RouteAnalysisResult, Error, { routeId: string; startTime?: string }>({
-    mutationFn: ({ routeId, startTime }) =>
+  return useMutation<
+    RouteAnalysisResult,
+    Error,
+    { routeId: string; startTime?: string; windowsOnly?: boolean }
+  >({
+    mutationFn: ({ routeId, startTime, windowsOnly }) =>
       apiClient
-        .post<RouteAnalysisResult>(`/routes/${routeId}/analyze`, { startTime })
+        .post<RouteAnalysisResult>(`/routes/${routeId}/analyze`, { startTime, windowsOnly })
         .then((r) => r.data),
   });
 }
