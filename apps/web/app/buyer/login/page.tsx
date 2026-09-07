@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Input, Button, PasswordInput } from "@routeflow/ui/web";
+import { BrandMark } from "@/components/brand";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { GoogleIcon, startGoogleSignIn } from "@/lib/google-oauth";
 import { usePortalPresence } from "@/lib/hooks/usePortalPresence";
@@ -101,7 +102,8 @@ function BuyerLoginInner() {
 
         <div className="relative z-10 max-w-md px-12 text-center">
           <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 backdrop-blur-sm p-2">
-            <img src="/logo-buyer.svg" alt="RouteFlow" className="h-full w-full object-contain" />
+            {/* Dark surface: `bg-gradient-to-br from-buyer-900 … to-buyer-700` (B2). */}
+            <BrandMark size={48} className="h-full w-full object-contain" tone="light" />
           </div>
           <h2
             style={{
@@ -142,7 +144,7 @@ function BuyerLoginInner() {
         <div className="w-full max-w-sm">
           {/* Mobile logo (hidden on large screens where left panel shows) */}
           <div className="mb-8 flex flex-col items-center gap-3 lg:hidden">
-            <img src="/logo-buyer.svg" alt="RouteFlow" className="h-12 w-12 object-contain" />
+            <BrandMark size={48} />
             <h1 className="text-2xl font-bold text-navy">RouteFlow</h1>
           </div>
 

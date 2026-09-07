@@ -43,6 +43,7 @@ tsconfig.tsbuildinfo
 coverage/
 .nyc_output/
 test-output.txt
+apps/web/test-output/
 
 # ─── Playwright ──────────────────────────────────────────────────────────────
 playwright-report/

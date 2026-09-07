@@ -55,26 +55,27 @@ Shared web primitives live in `packages/ui/src/web/` (barrel `index.ts`, importe
 `@routeflow/ui/web`). `apps/web/components/` holds app-specific composites; there is **no**
 `apps/web/components/ui/` shadcn folder.
 
-| Primitive | Path | Variants / sizes (actual cva or map keys) |
-|---|---|---|
-| `Button` | `web/Button.tsx` | cva `variant`: `primary`, `secondary`, `ghost`, `danger`, `link`; `size`: `sm` (h-7), `md` (h-[34px], default), `lg` (h-10), all `rounded-ctl`; compoundVariants flatten `link` to `h-auto p-0 rounded-none`. Extra props `loading`, `href`, `leftIcon`, `rightIcon`. |
-| `Badge` | `web/Badge.tsx` | `variant`: `success`,`warning`,`danger`,`info`,`neutral`; plus a `status` prop mapping ~40 domain statuses (`DRAFT`…`PROCESSED`) to variant+label. Pill: `h-[21px] rounded-full text-[11px] uppercase` with a 6px dot. |
-| `Input` / `Textarea` / `PasswordInput` | `web/Input.tsx` etc. | no variants; `label`, `error`, `register` (react-hook-form) props. |
-| `Select` | `web/Select.tsx` | native `<select>` + `ChevronDown`; `options`, `placeholder`, `error`, `register`. |
-| `Modal` | `web/Modal.tsx` | Radix Dialog; `title`, `description`, `footer`, `onEscapeKeyDown`. `rounded-xl … shadow-modal`, overlay `bg-black/40 backdrop-blur-sm`. |
-| `Table` | `web/Table.tsx` | TanStack Table; `isLoading`, `emptyState`, `onRowClick`. |
-| `Tabs` | `web/Tabs.tsx` | flat underline tabs; `tabs[{key,label,badge}]`. |
-| `Skeleton` / `SkeletonRows` | `web/Skeleton.tsx` | `shape`: `line`(default) \| `block` \| `circle`; `width`/`height`. |
-| `EmptyState` | `web/EmptyState.tsx` | `variant`: `orders`,`routes`,`customers`,`products`,`invoices`,`drivers`,`returns`,`inbox`,`data`,`custom` → SVG illustration from `web/illustrations.tsx`. |
-| `Toast` (`ToastProvider`/`useToast`) | `web/Toast.tsx` | `variant`: `success`,`error`,`warning`,`info`; optional `action` (Undo). |
-| `Avatar` | `web/Avatar.tsx` | `size`: `sm` h-8 / `md` h-10 / `lg` h-14. |
-| `Card`, `StatCard`, `PageHeader` | `web/` | no variants; `StatCard` takes `trend`/`trendLabel`. |
+| Primitive                              | Path                 | Variants / sizes (actual cva or map keys)                                                                                                                                                                                                                             |
+| -------------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Button`                               | `web/Button.tsx`     | cva `variant`: `primary`, `secondary`, `ghost`, `danger`, `link`; `size`: `sm` (h-7), `md` (h-[34px], default), `lg` (h-10), all `rounded-ctl`; compoundVariants flatten `link` to `h-auto p-0 rounded-none`. Extra props `loading`, `href`, `leftIcon`, `rightIcon`. |
+| `Badge`                                | `web/Badge.tsx`      | `variant`: `success`,`warning`,`danger`,`info`,`neutral`; plus a `status` prop mapping ~40 domain statuses (`DRAFT`…`PROCESSED`) to variant+label. Pill: `h-[21px] rounded-full text-[11px] uppercase` with a 6px dot.                                                |
+| `Input` / `Textarea` / `PasswordInput` | `web/Input.tsx` etc. | no variants; `label`, `error`, `register` (react-hook-form) props.                                                                                                                                                                                                    |
+| `Select`                               | `web/Select.tsx`     | native `<select>` + `ChevronDown`; `options`, `placeholder`, `error`, `register`.                                                                                                                                                                                     |
+| `Modal`                                | `web/Modal.tsx`      | Radix Dialog; `title`, `description`, `footer`, `onEscapeKeyDown`. `rounded-xl … shadow-modal`, overlay `bg-black/40 backdrop-blur-sm`.                                                                                                                               |
+| `Table`                                | `web/Table.tsx`      | TanStack Table; `isLoading`, `emptyState`, `onRowClick`.                                                                                                                                                                                                              |
+| `Tabs`                                 | `web/Tabs.tsx`       | flat underline tabs; `tabs[{key,label,badge}]`.                                                                                                                                                                                                                       |
+| `Skeleton` / `SkeletonRows`            | `web/Skeleton.tsx`   | `shape`: `line`(default) \| `block` \| `circle`; `width`/`height`.                                                                                                                                                                                                    |
+| `EmptyState`                           | `web/EmptyState.tsx` | `variant`: `orders`,`routes`,`customers`,`products`,`invoices`,`drivers`,`returns`,`inbox`,`data`,`custom` → SVG illustration from `web/illustrations.tsx`.                                                                                                           |
+| `Toast` (`ToastProvider`/`useToast`)   | `web/Toast.tsx`      | `variant`: `success`,`error`,`warning`,`info`; optional `action` (Undo).                                                                                                                                                                                              |
+| `Avatar`                               | `web/Avatar.tsx`     | `size`: `sm` h-8 / `md` h-10 / `lg` h-14.                                                                                                                                                                                                                             |
+| `Card`, `StatCard`, `PageHeader`       | `web/`               | no variants; `StatCard` takes `trend`/`trendLabel`.                                                                                                                                                                                                                   |
 
 **No Tooltip primitive exists** (`@radix-ui/react-tooltip` is not a dependency) — hover hints are
 native `title="…"` (497 occurrences in `apps/web/app` + `components`), e.g.
 `apps/web/app/(dashboard)/orders/[id]/page.tsx:1242` `title="Delete item"`.
 
 **Disabled treatment** — three consistent patterns:
+
 - `Button`: cva base carries `disabled:pointer-events-none disabled:opacity-50`; `isDisabled = disabled || loading`;
   the `href` branch adds `pointer-events-none opacity-50` + `aria-disabled` + `tabIndex={-1}` (`web/Button.tsx:9,73,79-81`).
 - `Input`/`Select`: `props.disabled && "opacity-50 cursor-not-allowed bg-surface-raised"` (`web/Input.tsx:30`, `web/Select.tsx:40`).
@@ -82,6 +83,7 @@ native `title="…"` (497 occurrences in `apps/web/app` + `components`), e.g.
   (`apps/web/app/(dashboard)/orders/[id]/page.tsx:206-207, 251-252, 287-288`).
 
 **Loading affordances actually in use** (3 real sites):
+
 1. `Button loading` → swaps `leftIcon` for `<Loader2 className="h-4 w-4 animate-spin" />` and sets
    `aria-busy` (`packages/ui/src/web/Button.tsx:83,96,99`); used ~15× on the order page, e.g.
    `loading={updateItems.isPending}` at `orders/[id]/page.tsx:2661`, `loading={deleteOrder.isPending}` at `:2128`.
@@ -154,33 +156,39 @@ native `title="…"` (497 occurrences in `apps/web/app` + `components`), e.g.
 
 ## Order-edit page notes
 
-`apps/web/app/(dashboard)/orders/[id]/page.tsx` (3482 lines). `EditableLineItems` is defined
-in-file at **:861** and rendered at **:2595**.
+`apps/web/app/(dashboard)/orders/[id]/page.tsx` (3538 lines). `EditableLineItems` is defined
+in-file at **:861** and rendered at **:2656**.
 
 Affordances already present on/near the add-product + substitute controls:
 
-- **Add-product / scan row** (`:1324-1356`): container
+- **Add-product / scan row** (`:1341-1385`): container
   `flex items-center gap-2 rounded-lg border border-dashed border-brand-300 bg-brand-50 px-3 py-2`.
-  Local `addLoading` state (`:902`) set in `handleScanEnter`'s `try/finally` (`:994`, `:1032`) swaps
+  Local `addLoading` state (`:907`) set in `handleScanEnter`'s `try/finally` (`:994`, `:1032`) swaps
   the leading icon: `addLoading ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-brand-400" />
-  : <Search className="h-4 w-4 shrink-0 text-brand-400" />` (`:1326-1330`). **The `<input>` itself is
+: <Search className="h-4 w-4 shrink-0 text-brand-400" />` (`:1344-1349`). **The `<input>` itself is
   never disabled and the dropdown stays clickable while `addLoading` is true** — the icon swap is the
   only gate today.
-- **Suggestion dropdown** (`:1357-1374`): rows are plain `<button type="button" onMouseDown={() => addProduct(p)}>`
+- **Suggestion dropdown** (`:1387-1405`): rows are plain `<button type="button" onMouseDown={() => addProduct(p)}>`
   with `hover:bg-brand-50` — no `disabled`, no `aria-busy`.
-- **Substitute trigger** (`:1205-1210`): `<button className="rounded px-2 py-1 text-xs text-navy/70
-  hover:bg-surface-raised hover:text-navy">Substitute</button>` — **no `disabled` prop at all**.
+- **Substitute trigger** (`:1222-1227`): `<button className="rounded px-2 py-1 text-xs text-navy/70
+hover:bg-surface-raised hover:text-navy disabled:opacity-50" disabled={!pricingReady}
+onClick={…}>Substitute</button>` — already gated with pattern (c) on pricing readiness
+  (`disabled={!pricingReady}` + `disabled:opacity-50`), but NOT on the add/scan busy state.
   Sibling row actions follow the same shape: Undo `text-brand-600 hover:bg-brand-50` with
-  `<RotateCcw className="h-3 w-3" />` (`:1213-1232`), "Not available" `text-danger hover:bg-danger-bg`
-  (`:1234-1239`), delete icon button with `title="Delete item"` (`:1240-1244`).
+  `<RotateCcw className="h-3 w-3" />` (`:1193-1218`; the second Undo is `:1230-1250`),
+  "Not available" `text-danger hover:bg-danger-bg` (`:1252-1257`), delete icon button with
+  `title="Delete item"` (`:1258-1264`).
 - **SubstitutePicker** (`:676-733`): 300ms debounce → `useProducts`; destructures only `{ data }`,
   so there is **no loading state** — it shows "No products found." (`:707`) during the first fetch.
-- **Save bar** (`:2654-2664`): `<Button size="sm" loading={updateItems.isPending}>Save Draft</Button>` —
+- **Save bar** (`Save Draft` `:2719-2726`, `Save Changes` `:2803-2805`; the DRAFT/CHANGES label
+  ternary is `:2644`): `<Button size="sm" loading={updateItems.isPending}>Save Draft</Button>` —
   the established busy affordance on this page (`Button.loading` → `Loader2` + `aria-busy` + `disabled`).
-- **Custom-item form** (`:1378-1451`) shows the inline-error convention: `<p className="text-xs text-danger">{customError}</p>`.
+- **Custom-item form** (`:1408-1481`) shows the inline-error convention: `<p className="text-xs text-danger">{customError}</p>`.
 
 **Reuse for a "pricing loading" gate**: the page's existing vocabulary is
 (a) `Button loading={…}` for anything that is already a `Button`, (b) the `addLoading` →
 `Loader2 h-4 w-4 animate-spin text-brand-400` icon swap in the scan row, and (c) raw buttons with
 `disabled={pending}` + `disabled:opacity-50` (pattern at `:206-207`, `:251-252`, `:287-288`).
-Gate the Substitute trigger and the dropdown rows with (c); keep (b) as the visible spinner.
+Extend the Substitute trigger's existing (c) condition to `disabled={!pricingReady || addLoading}`
+(never a second `disabled` attribute) and gate the dropdown rows with (c); keep (b) as the visible
+spinner.

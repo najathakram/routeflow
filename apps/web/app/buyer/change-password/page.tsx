@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, KeyRound } from "lucide-react";
 import { PasswordInput, Button } from "@routeflow/ui/web";
+import { BrandMark } from "@/components/brand";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import {
   buyerChangePassword,
@@ -130,7 +131,7 @@ export default function BuyerChangePasswordPage() {
         {/* Logo / Brand */}
         <div className="mb-8 flex flex-col items-center gap-3">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-buyer.svg" alt="RouteFlow" className="h-12 w-12 object-contain" />
+          <BrandMark size={48} />
           <h1 className="text-2xl font-bold text-navy">
             {hasPassword ? "Change Password" : "Set a Password"}
           </h1>

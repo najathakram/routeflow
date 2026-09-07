@@ -143,6 +143,7 @@ import { StandingOrderModal } from "./StandingOrderModal";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
+import { BrandMark } from "@/components/brand";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -3780,7 +3781,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
                 <div className="mb-6 flex items-start justify-between">
                   <div>
                     <div className="flex items-center gap-2">
-                      <img src="/logo.svg" alt="RouteFlow" className="h-7 w-7 object-contain" />
+                      <BrandMark size={28} />
                       <span className="text-base font-bold text-navy">RouteFlow</span>
                     </div>
                     <p className="mt-0.5 text-xs text-navy/70">Austin, TX · routeflow.io</p>

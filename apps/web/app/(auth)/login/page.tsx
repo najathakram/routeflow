@@ -12,6 +12,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useTenant } from "@/components/tenant-provider";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { GoogleIcon, startGoogleSignIn } from "@/lib/google-oauth";
+import { BrandSignature, BRAND_MARK_SRC } from "@/components/brand";
 import { tenantSlugFromHostname } from "@/lib/tenant-host";
 import { safeOperatorRedirect } from "@/lib/portal-routing";
 import { usePortalPresence } from "@/lib/hooks/usePortalPresence";
@@ -221,37 +222,14 @@ export default function LoginPage() {
             <ArrowLeft className="h-3.5 w-3.5" /> Back to home
           </Link>
 
-          {/* RouteFlow LogoLoop — dark-background variant. The shared
-              /logo.svg asset is the light-bg version (ink + teal on transparent),
-              which would render with poor contrast against this panel's
-              #0E1F36 gradient. Cream arc + teal accent + cream-filled origin +
-              teal-ringed ink destination match the design's `dark` tone. */}
-          <svg
-            width={48}
-            height={48}
-            viewBox="0 0 64 64"
-            fill="none"
-            aria-label="RouteFlow"
-            role="img"
-            className="mb-8"
-          >
-            <path
-              d="M 14 14 C 40 10, 56 24, 50 50"
-              stroke="#FAF6EE"
-              strokeWidth="3.2"
-              strokeLinecap="round"
-              fill="none"
-            />
-            <path
-              d="M 14 14 C 8 40, 24 54, 50 50"
-              stroke="#14a39f"
-              strokeWidth="3.2"
-              strokeLinecap="round"
-              fill="none"
-            />
-            <circle cx="14" cy="14" r="5.5" fill="#FAF6EE" />
-            <circle cx="50" cy="50" r="5.5" fill="#0E1F36" stroke="#14a39f" strokeWidth="3" />
-          </svg>
+          {/* One shared brand mark (R4) — the wordmark inherits this wrapper's
+              cream color; the period is overridden to the panel's teal accent
+              (`#7DDCD8`, matching the CheckCircle2 bullets below) since the
+              default `.brand-period` navy (ux-spec §2) would disappear against
+              this dark teal/navy gradient. */}
+          <div style={{ color: "#FAF6EE" }} className="mb-8">
+            <BrandSignature size={48} periodColor="#7DDCD8" standalone tone="light" />
+          </div>
 
           <h2
             style={{
@@ -303,7 +281,7 @@ export default function LoginPage() {
             <div className="flex items-center gap-3">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={logoUrl ?? "/logo.svg"}
+                src={logoUrl ?? BRAND_MARK_SRC}
                 alt={businessName}
                 className="h-10 w-10 object-contain"
               />

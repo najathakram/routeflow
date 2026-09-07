@@ -50,6 +50,7 @@ import {
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cn, Avatar, ToastProvider } from "@routeflow/ui/web";
 import { TenantLogo } from "@/components/TenantLogo";
+import { BRAND_MARK_SRC } from "@/components/brand";
 import { PortalSwitchLink } from "@/components/PortalSwitchLink";
 import { setLastPortalCookie } from "@/lib/presence-cookies";
 import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
@@ -1309,6 +1310,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             className="h-8 w-8"
             showName={!collapsed}
             nameClassName="text-lg font-bold text-white truncate"
+            tone="light"
           />
         </div>
 
@@ -1358,6 +1360,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
                 className="h-8 w-8"
                 showName
                 nameClassName="text-lg font-bold text-white truncate"
+                tone="light"
               />
               <button
                 onClick={() => setMobileNavOpen(false)}
@@ -1407,7 +1410,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
-      <PwaInstallPrompt logoSrc="/logo.svg" accentClass="bg-brand-600 hover:bg-brand-700" />
+      <PwaInstallPrompt logoSrc={BRAND_MARK_SRC} accentClass="bg-brand-600 hover:bg-brand-700" />
 
       {/* Keyboard shortcuts help modal */}
       {shortcutHelpOpen && (

@@ -11,6 +11,7 @@ import {
   clearOpPresenceCookie,
 } from "./auth";
 import { subscribeImpersonation } from "./impersonation";
+import { MARKETING_PAGE_PATHS } from "./marketing-routes";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -70,17 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Don't punt the user to /login if they're on a public marketing route —
       // they may not even know they were ever signed in. Marketing pages are
       // public and should keep rendering regardless of token state.
-      const MARKETING_ROUTES = new Set([
-        "/",
-        "/retailers",
-        "/wholesalers",
-        "/distributors",
-        "/buyer",
-        "/product",
-        "/pricing",
-        "/company",
-        "/contact",
-      ]);
+      const MARKETING_ROUTES = new Set<string>([...MARKETING_PAGE_PATHS, "/buyer"]);
       if (typeof window !== "undefined" && MARKETING_ROUTES.has(window.location.pathname)) {
         return;
       }

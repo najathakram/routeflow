@@ -1,0 +1,528 @@
+{
+  "w6": {
+    "executor": "Sonnet 5",
+    "status": "done",
+    "filesTouched": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/app/(marketing)/marketing.css",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/components/TenantLogo.tsx"
+    ],
+    "diffSummary": "marketing.css line 1361: `.rf-marketing .connection-center span { color: #697b94 }` -> `color: #4a5568` (6.46:1 on #eeedf2 ground per WCAG luminance calc). Confirmed the @media(max-width:480px) override at line 3296 only touches font-size, not color, so no color leak there. TenantLogo.tsx: moved `shrink-0` from the inner BrandMark className to the wrapping `<span role=\"img\" aria-label>` (now `className=\"shrink-0\"`); BrandMark className otherwise unchanged (`${className} rounded-lg object-contain`).",
+    "gateOutputs": "tsc --noEmit -p tsconfig.json: clean, no output. jest --silent: Test Suites 42/42 passed, Tests 338/338 passed. prettier --check on both files: \"All matched files use Prettier code style!\""
+  },
+  "drive": {
+    "branchBuildProven": true,
+    "serverStopped": true,
+    "notes": "Server: `npx next dev -p 3007` started from apps/web, log at apps/web/test-output/r6/dev-server.log. GET / returned 200 in 14748ms on first compile; branch-build proof: response body contained `<header` and all five nav labels (Platform, Distributors, Retailers, Pricing, Company). Stopped by killing PID 24208 (the actual node listener bound to :3007) plus wrapper shell PIDs 29444/14120/44916/46856; netstat confirms port 3007 is free afterward.\n\nTest harness: throwaway Playwright config+spec at apps/web/test-output/r6/playwright.config.ts and marketing.spec.ts (baseURL http://localhost:3007, no storageState, projects \"desktop\" 1440x900 Desktop Chrome and \"mobile\" using Desktop Chrome device forced to browserName:\"chromium\" with iPhone 13 viewport/UA — WebKit browser binary was not installed on this machine, only Chromium, so true device emulation used Chromium with iPhone 13's viewport/UA/touch settings rather than real WebKit). Full run: `npx playwright test --config test-output/r6/playwright.config.ts` — 20 passed, 20 skipped (each spec file registers both viewport variants per project; the non-matching one self-skips by design), 0 failed, 1.6m total. Raw facts dumped to apps/web/test-output/r6/facts-desktop.json and facts-mobile.json (one entry per flow with the full facts array — the notes below summarize each flow's `facts` field).\n\n@axe-core/playwright is NOT installed in this workspace (confirmed: no node_modules/@axe-core dir at either the worktree root or apps/web). Reported per-flow as \"axe not installed\"; instead I sampled contrast programmatically (relative-luminance WCAG formula) on the home page: header nav link 16.10:1, H1 13.98:1, footer link 14.79:1, primary button 14.93:1, eyebrow label 6.86:1 — all comfortably pass WCAG AA (4.5:1 normal / 3:1 large text) on the elements sampled.\n\nIMPORTANT cross-cutting fact found in flow 10 (404) at mobile viewport, unrelated to this round's marketing-port changes: apps/web/middleware.ts unconditionally proxies any UA matching `isMobileUserAgent` (regex: Mobi|Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini) to `MOBILE_WEB_URL` (defaults to https://routeflowmobile-production.up.railway.app) UNLESS the path is a known marketing path (`isMarketingPath`), a marketing asset, a marketing-auth path, `/api/`, `/_next/`, or `?desktop=1`/`prefer-desktop` cookie is set. `/nope` is not a recognized marketing path, so on mobile UA it is rewritten (`x-middleware-rewrite` header confirmed via curl) to the LIVE PRODUCTION mobile-web Railway app, which returns ITS OWN not-found screen (\"You need to enable JavaScript to run this app. / Unmatched Route / Page could not be found.\") with HTTP 200, not this branch's marketing 404 page. All 8 real marketing routes tested (home, product, wholesalers, retailers, pricing, company, contact, privacy) correctly bypassed this proxy on mobile UA and served the local marketing build — only the literal unmatched-route case is affected. Verified independently via curl with an iPhone UA (200 + x-middleware-rewrite header to routeflowmobile-production.up.railway.app) vs a desktop UA (proper 404 from this app, \"Let's get you back on track.\" heading). This is pre-existing middleware behavior, not something introduced in this round's port — flagging as an observed fact for judgment, not a verdict.\n\nTwo FAQ/accordion locator note: /retailers FAQ items are native `<details data-slot=\"accordion-item\">`/`<summary data-slot=\"accordion-trigger\">` elements, not ARIA-role buttons — spec now targets them directly. /wholesalers \"Routes\" tab is a Radix Tabs.Trigger with visible label \"Plan the route\" (step id=\"routes\"), not literal text \"Routes\" — spec matches on /route/i. Contact form is `apps/web/app/(marketing)/components/demo-form.tsx` — a client-side mailto: draft builder by design; it makes NO network request on submit (confirmed 0 POST requests captured); success state shows heading \"Your email draft is ready.\" and an \"Open email app\" link whose href starts with mailto: — this is expected behavior per the component's own code comment, not a broken form.",
+    "flows": [
+      {
+        "flow": "01-home",
+        "viewport": "desktop 1440x900",
+        "status": "passed",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-01-home-desktop.png",
+        "consoleErrors": [],
+        "failedRequests": [],
+        "facts": [
+          "header count: 1",
+          "hero H1 text: \"Turn scattered orders into organized deliveries.\"",
+          "story-related text found: true",
+          "footer legal links present: routeflow., hello@routeflow.info, Product overview, For distributors, For retailers, Pricing, About RouteFlow, Book a demo, Privacy, Terms, Distributor sign in, Create distributor account, Retailer sign in, Create retailer account"
+        ]
+      },
+      {
+        "flow": "01-home",
+        "viewport": "mobile iPhone 13 (375x812, Chromium)",
+        "status": "passed",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-01-home-mobile.png",
+        "consoleErrors": [],
+        "failedRequests": [],
+        "facts": [
+          "header count: 1",
+          "hero H1 text: \"Turn scattered orders into organized deliveries.\"",
+          "story-related text found: true",
+          "footer legal links present (same list as desktop)"
+        ]
+      },
+      {
+        "flow": "02-home-mobile-menu",
+        "viewport": "desktop 1440x900",
+        "status": "passed (no menu button on desktop, as expected)",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-02-home-mobile-menu-desktop.png",
+        "consoleErrors": [],
+        "failedRequests": [],
+        "facts": ["menu button found: false"]
+      },
+      {
+        "flow": "02-home-mobile-menu",
+        "viewport": "mobile iPhone 13 (375x812, Chromium)",
+        "status": "passed",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-02-home-mobile-menu-mobile.png (open-state also captured separately at r6-02-menu-open-mobile.png)",
+        "consoleErrors": [],
+        "failedRequests": [],
+        "facts": [
+          "menu button found: true",
+          "opened, screenshotted, then Escape pressed",
+          "dialog role visible after Escape: false (menu closed)"
+        ]
+      },
+      {
+        "flow": "03-product",
+        "viewport": "desktop 1440x900",
+        "status": "passed",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-03-product-desktop.png",
+        "consoleErrors": [],
+        "failedRequests": [],
+        "facts": ["HTTP status: 200", "body text length: 75718 chars"]
+      },
+      {
+        "flow": "03-product",
+        "viewport": "mobile iPhone 13 (375x812, Chromium)",
+        "status": "passed",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-03-product-mobile.png",
+        "consoleErrors": [],
+        "failedRequests": [],
+        "facts": ["HTTP status: 200", "body text length: 75718 chars"]
+      },
+      {
+        "flow": "04-wholesalers-routes-tab",
+        "viewport": "desktop 1440x900",
+        "status": "passed",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-04-wholesalers-routes-desktop.png",
+        "consoleErrors": [],
+        "failedRequests": [],
+        "facts": [
+          "HTTP status: 200",
+          "\"Routes\" tab is WorkflowTour's Radix Tabs.Trigger labeled 'Plan the route' (id=routes)",
+          "tab found: true",
+          "data-state after click: active"
+        ]
+      },
+      {
+        "flow": "04-wholesalers-routes-tab",
+        "viewport": "mobile iPhone 13 (375x812, Chromium)",
+        "status": "passed",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-04-wholesalers-routes-mobile.png",
+        "consoleErrors": [],
+        "failedRequests": [],
+        "facts": ["HTTP status: 200", "tab found: true", "data-state after click: active"]
+      },
+      {
+        "flow": "05-retailers",
+        "viewport": "desktop 1440x900",
+        "status": "passed",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-05-retailers-desktop.png",
+        "consoleErrors": [],
+        "failedRequests": [],
+        "facts": [
+          "HTTP status: 200",
+          "hero itself is an inline SVG illustration (RetailerArt component), not a raster <img>",
+          "content photo retailer-technology.webp present, naturalWidth 1448 (loaded)",
+          "FAQ items found: 4 (native <details>/<summary>)",
+          "opened FAQ item 2: confirmed open=true",
+          "opened FAQ item 3: confirmed open=true"
+        ]
+      },
+      {
+        "flow": "05-retailers",
+        "viewport": "mobile iPhone 13 (375x812, Chromium)",
+        "status": "passed",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-05-retailers-mobile.png",
+        "consoleErrors": [],
+        "failedRequests": [],
+        "facts": [
+          "HTTP status: 200",
+          "retailer-technology.webp present, naturalWidth 1448 (loaded)",
+          "FAQ items found: 4, item 2 and item 3 both confirmed open after click"
+        ]
+      },
+      {
+        "flow": "06-pricing",
+        "viewport": "desktop 1440x900",
+        "status": "passed",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-06-pricing-desktop.png",
+        "consoleErrors": [],
+        "failedRequests": [],
+        "facts": ["HTTP status: 200", "\"Growth\" text found on page: true"]
+      },
+      {
+        "flow": "06-pricing",
+        "viewport": "mobile iPhone 13 (375x812, Chromium)",
+        "status": "passed",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-06-pricing-mobile.png",
+        "consoleErrors": [],
+        "failedRequests": [],
+        "facts": ["HTTP status: 200", "\"Growth\" text found on page: true"]
+      },
+      {
+        "flow": "07-company",
+        "viewport": "desktop 1440x900",
+        "status": "passed",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-07-company-desktop.png",
+        "consoleErrors": [],
+        "failedRequests": [],
+        "facts": [
+          "HTTP status: 200",
+          "warehouse.webp present, naturalWidth 1400 (loaded)",
+          "photo credit link present: text 'Tiger Lily / Pexels'",
+          "credit href: https://www.pexels.com/photo/men-working-in-a-warehouse-4487362/"
+        ]
+      },
+      {
+        "flow": "07-company",
+        "viewport": "mobile iPhone 13 (375x812, Chromium)",
+        "status": "passed",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-07-company-mobile.png",
+        "consoleErrors": [],
+        "failedRequests": [],
+        "facts": [
+          "HTTP status: 200",
+          "warehouse.webp present, naturalWidth 1400 (loaded)",
+          "credit link href: https://www.pexels.com/photo/men-working-in-a-warehouse-4487362/"
+        ]
+      },
+      {
+        "flow": "08-contact-form-submit",
+        "viewport": "desktop 1440x900",
+        "status": "passed",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-08-contact-desktop.png",
+        "consoleErrors": [],
+        "failedRequests": [],
+        "facts": [
+          "HTTP status: 200",
+          "filled fields: name='QA Driver', email='qa@example.com', company='Acme Test', notes='QA test submission from automated driver.'",
+          "submit button text: 'Prepare my demo request'",
+          "POST requests made: none (0) — component is a client-side mailto: draft builder by design, per its own code comment; it never submits or stores data over the network",
+          "success state heading 'Your email draft is ready.' visible after submit: true",
+          "'Open email app' link href begins with mailto:: true"
+        ]
+      },
+      {
+        "flow": "08-contact-form-submit",
+        "viewport": "mobile iPhone 13 (375x812, Chromium)",
+        "status": "passed",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-08-contact-mobile.png",
+        "consoleErrors": [],
+        "failedRequests": [],
+        "facts": [
+          "HTTP status: 200",
+          "same fields filled, submit succeeded, no POST requests made",
+          "success heading and mailto: link confirmed same as desktop"
+        ]
+      },
+      {
+        "flow": "09-privacy",
+        "viewport": "desktop 1440x900",
+        "status": "passed",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-09-privacy-desktop.png",
+        "consoleErrors": [],
+        "failedRequests": [],
+        "facts": [
+          "HTTP status: 200",
+          "body text length: 15673 chars (substantial content present)",
+          "text does not literally contain 'interim'/'placeholder'/'coming soon'/'draft' (interim status likely conveyed differently, e.g. an effective-date note — not verified beyond the keyword check)",
+          "meta[name=robots] content: \"noindex, follow\"",
+          "noindex present: true"
+        ]
+      },
+      {
+        "flow": "09-privacy",
+        "viewport": "mobile iPhone 13 (375x812, Chromium)",
+        "status": "passed",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-09-privacy-mobile.png",
+        "consoleErrors": [],
+        "failedRequests": [],
+        "facts": [
+          "HTTP status: 200",
+          "body text length: 15673 chars",
+          "meta robots content: \"noindex, follow\", noindex present: true"
+        ]
+      },
+      {
+        "flow": "10-404",
+        "viewport": "desktop 1440x900",
+        "status": "passed",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-10-404-desktop.png",
+        "consoleErrors": [
+          "Failed to load resource: the server responded with a status of 404 (Not Found)"
+        ],
+        "failedRequests": [
+          "GET http://localhost:3007/nope :: HTTP 404 (expected — this is the 404 page's own navigation, not an error)"
+        ],
+        "facts": [
+          "HTTP status: 404 (correct not-found status)",
+          "eyebrow chip present: '404 · PAGE NOT FOUND'",
+          "H1 (display heading) present: true, text: \"Let's get you back on track.\"",
+          "body copy: \"The page you're looking for isn't here. Explore the platform or return to the homepage.\"",
+          "CTA link present: true ('Back to RouteFlow →')"
+        ]
+      },
+      {
+        "flow": "10-404",
+        "viewport": "mobile iPhone 13 (375x812, Chromium)",
+        "status": "passed (but rendered content is NOT this branch's 404 page — see notes)",
+        "screenshot": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-10-404-mobile.png",
+        "consoleErrors": [],
+        "failedRequests": [],
+        "facts": [
+          "HTTP status: 200 (not 404)",
+          "apps/web/middleware.ts detects the mobile User-Agent and, because /nope is not a recognized marketing path, rewrites the request (x-middleware-rewrite header, confirmed via curl) to the live production mobile-web app at https://routeflowmobile-production.up.railway.app/nope",
+          "rendered body is the PRODUCTION mobile-web app's own not-found screen: 'You need to enable JavaScript to run this app.' / 'Unmatched Route' / 'Page could not be found.' — not this branch's styled marketing 404 (eyebrow chip / display H1 / CTA)",
+          "h1 present via this branch's markup: false",
+          "CTA link (this branch's): not present (page is the proxied external app)",
+          "this is pre-existing middleware behavior (isMarketingPath carve-out excludes unmatched routes), unrelated to marketing-port round 6 changes — flagged for judgment, not verified as a bug"
+        ]
+      }
+    ]
+  },
+  "judge": {
+    "reasoning": "branchBuildProven CONFIRMED: the worktree is on feat/marketing-port with the ported chrome present (site-header.tsx, site-footer.tsx, faq.tsx, feature-catalog.tsx, workflow-tour.tsx) and the old chrome deleted (nav/logo/footer/mocks show as D in git status); every desktop capture shows the new header with all five nav labels. Only console error across all 20 flow-viewport runs is the intentional /nope 404 (verified from facts-desktop.json / facts-mobile.json).\n\nI opened all 21 PNGs and, because full-page captures compress to unreadable thumbnails, re-derived crops at native resolution with sharp, plus two measurement scripts (row-blankness scan and a WCAG relative-luminance sampler) so every legibility and opacity claim below is a measured pixel fact, not an impression.\n\nThree things the driver's DOM-level facts could not see:\n\n1. REAL DEFECT — /retailers hero art paints nothing at <=390px. The driver reported \"retailer-technology.webp present, naturalWidth 1448 (loaded)\" and passed the flow. The pixels disagree: a 700x700 device-px sample inside the hero figure on mobile contains 8 distinct colours spanning rgb(219,243,236)-rgb(222,245,238) — a flat wash of `.retailer-art{background:#def5ee}` (marketing.css:9512). The identical region on desktop has 20,476 distinct colours including rgb(0,1,2). The element still occupies ~280 CSS px of layout height (figure is ~415 CSS px tall: 20px padding + chip + img + figcaption), so this is a paint failure, not a layout collapse, and it is not the `retailer-arrive` entry animation (that runs 0.5 -> 1 opacity with `both` fill, so even frozen it would show half the image). The suspect pair is `.rf-marketing .retailer-art > img{mix-blend-mode:multiply}` (marketing.css:5188) interacting with the mobile-only `.retailer-art{display:flex;flex-direction:column}` block. That block is `@media (max-width:390px)` (opens at marketing.css:4226), so it is equally active at the 375 width I was asked to judge. The control case is /company, whose warehouse.webp has no mix-blend-mode and paints correctly on mobile.\n\n2. EVIDENCE IS NOT SOUND for 5 of 20 cells. The driver called `page.screenshot({fullPage:true})` with no `animations:\"disabled\"` and no scroll-through, which produces three distinct artifacts: (a) scroll-reveal targets below the fold stay at `.editorial-reveal.reveal-pending{opacity:0}` (marketing.css:9107) — /wholesalers desktop has a 500 CSS px void where the section-heading and FeatureCatalog belong, with the catalog's own trailing disclaimer painted below it; (b) entry animations freeze mid-flight — the /retailers desktop order-chip measures 1.54:1 and 1.31:1 while its sibling browser-chip, same `.art-chip` class, measures 8.90:1 at the full `#29456e`; (c) tall mobile pages silently truncate at Chromium's 16384px capture cap — I confirmed the cut lands mid-word on /product, so ~58% of home mobile, ~52% of product mobile and ~36% of wholesalers mobile were never captured and cannot be ruled on.\n\n3. Required viewport never exercised. The config uses `devices[\"iPhone 13\"]` = 390x844 DPR 3 (1170px-wide PNGs confirm it), not the 375 the brief specifies. Since the failing retailers block is `max-width:390px`, 375 shares the defect, but I am recording the gap rather than claiming a 375 pass.\n\nVerified positives worth stating: fix-round-5 R3 held under measurement — the connection diagram ground is exactly #eeedf2 with node labels at 7.69:1 (rgb(63,74,92)=#3f4a5c) and the caption at 6.46:1 (rgb(74,85,104)=#4a5568), the precise hexes R3 prescribed. The 404 renders fully styled at desktop, so the ux-spec §7 root-layout CSS deviation is doing its job. The mobile sheet, the retailers FAQ accordion and the pricing featured card all match their spec anatomy exactly, and Escape returns a 2px plum focus ring to the hamburger.\n\nSeparately, the whole \"charcoal wins\" late cascade layer flattens the redesign's coloured chrome — the distributor hero resolves to `background:transparent` (5123), `button-lime` and `button-green` both resolve to `var(--navy)` (9150), the footer is `#f5f5f7` (8750) and the brand period `#8a8496` (8387). ux-spec §3/§2 describe the pre-charcoal appearance (dark distributor hero, lime CTA, dark navy footer, `--primary` period). The port is internally faithful to the cascade it was told to preserve, so I am not calling this a defect — but it is the single biggest thing for the owner to adjudicate against their preview, and I have led the design notes with it.",
+    "verdicts": [
+      {
+        "flow": "01-home",
+        "viewport": "desktop 1440x900",
+        "verdict": "pass",
+        "evidence": "Full 1440x7665 capture painted end to end; blank-row scan finds one 65 CSS px band (y596-661) that is section spacing, trailing blank 0px. Header with all five nav labels, hero H1 \"Turn scattered orders into organized deliveries.\" with word spaces intact, DeliveryDemo, capability strip, 9-card FeatureCatalog, DifferenceSection, AudienceCards, FAQ and CTA all rendered. Footer complete: brand + \"Keep your delivery day on track.\" + mailto + Platform/Company/Your workspace columns + \"© 2026 RouteFlow\". Measured footer secondary text #5b5c63 on #f5f5f7 = 6.11:1. 0 console errors, 0 failed requests."
+      },
+      {
+        "flow": "02-home-mobile-menu",
+        "viewport": "desktop 1440x900",
+        "verdict": "fail",
+        "evidence": "Stated check passes (menu button found: false at desktop, correct). Fails the opacity-0 check: the capture holds four large unpainted bands at CSS y358-591 (233px), y851-1343 (492px), y1921-2110 (189px) and y2264-2430 (166px). Cause is `.rf-marketing .editorial-reveal.reveal-pending{opacity:0}` (marketing.css:9107) — EditorialMotion marks every REVEAL_SELECTOR node whose top exceeds innerHeight and the observer had not fired at capture time. The identical page painted fully in flow 01, so this is an evidence defect from screenshotting without `animations:\"disabled\"` or a scroll-through, not a shipped defect."
+      },
+      {
+        "flow": "03-product",
+        "viewport": "desktop 1440x900",
+        "verdict": "pass",
+        "evidence": "1440x7284, blank-band scan returns 0 bands and 0 trailing blank — every section painted. Spec §3 anatomy present: centred hero, full DeliveryDemo, CapabilityStrip, AISpotlight, FeatureCatalog on surface, \"Shared context. Clearer handoffs.\" with the connection diagram (mark centre, 4 nodes Office/Warehouse/Drivers/Retailers), DifferenceSection, BuyingConfidence, FAQ, CTA. Round-5 R3 re-measured from pixels: ground rgb(238,237,242)=#eeedf2, `.connection-nodes > div` rgb(63,74,92) = 7.69:1, `.connection-diagram > p` rgb(74,85,104) = 6.46:1 — both clear AA. 0 console errors."
+      },
+      {
+        "flow": "04-wholesalers-routes",
+        "viewport": "desktop 1440x900",
+        "verdict": "fail",
+        "evidence": "Tab interaction verified (WorkflowTour Radix trigger \"Plan the route\", data-state=active). Fails the opacity-0 check: a 500 CSS px void spans y342-842, exactly where `<div className=\"section-heading split-heading\">` and `<FeatureCatalog />` sit (wholesalers/page.tsx:68-82). The FeatureCatalog's own trailing block (\"Review feature availability…\" + \"Show us the features that matter to your team →\") IS painted directly beneath the void, so the section is present but its heading and cards are at `reveal-pending{opacity:0}`. The hero sits ~1000px tall, pushing the heading past the 900px viewport so EditorialMotion marked it pending. Re-capture with animations disabled and a scroll-through before this section can be judged."
+      },
+      {
+        "flow": "05-retailers",
+        "viewport": "desktop 1440x900",
+        "verdict": "fail",
+        "evidence": "FAQ anatomy PASSES: 4 styled `<details>` items, chevron down closed / chevron up open, no native disclosure triangle, hairline separators, single-open honoured (item 3 open, item 2 closed by `name=\"faq\"`). Hero art, benefit cards, 3-step block, RetailerDetail sample order and CTA all painted. Fails the text-legible check on the `.order-chip` glass badge: measured against its own painted ground rgb(207,227,229), `strong` (\"A clearer next restock.\") darkest rgb(161,184,202) = 1.54:1 and `small` (\"Catalogs, orders, and history.\") rgb(177,200,210) = 1.31:1, versus AA 4.5:1. Sibling `.browser-chip`, same `.art-chip` class, measures 8.90:1 at the full `#29456e` — so the order-chip is almost certainly frozen mid `chip-arrive` (1s, opacity 0->1) rather than resting there. Confirm on a settled re-capture."
+      },
+      {
+        "flow": "06-pricing",
+        "viewport": "desktop 1440x900",
+        "verdict": "pass",
+        "evidence": "1440x2608, 0 blank bands, 0 trailing blank. Featured-card anatomy matches ux-spec §3 exactly: Growth card carries the navy \"FOR GROWING DELIVERY TEAMS\" ribbon straddling the top edge, a tinted ground, a heavier border and the only filled CTA (\"Discuss Growth →\") against outlined \"Discuss Starter\"/\"Discuss Scale\". No numeric prices anywhere; all three CTAs route to /contact. \"Ordering as a retailer?\" callout, 4-item \"Before you choose\" checklist and CTA block all present. 0 console errors."
+      },
+      {
+        "flow": "07-company",
+        "viewport": "desktop 1440x900",
+        "verdict": "pass",
+        "evidence": "1440x2651, 0 blank bands. Spec §3 anatomy complete: hero with two paragraphs, full-width warehouse.webp (naturalWidth 1400) with the frosted overlay card (\"THE WORK BEHIND THE DELIVERY\" / \"Stock to move. Customers to look after.\"), Pexels credit as an external link with rel=\"noopener noreferrer\" to the pexels.com photo URL, 3 numbered principles, \"Tell us about your delivery day.\" mailto block, CTA. Overlay heading legible. Two sub-AA measurements noted as design notes, not failures: `.photo-credit` rgb(101,121,148) on white = 4.45:1 and the overlay eyebrow ~2.38:1 over the frosted panel."
+      },
+      {
+        "flow": "08-contact-form-submit",
+        "viewport": "desktop 1440x900",
+        "verdict": "pass",
+        "evidence": "1440x1354, 0 blank bands. Success state rendered per spec §3: green check, H2 \"Your email draft is ready.\", copy \"…Nothing has been sent yet.\", primary \"Open email app\" button with a mailto: href, plain-text fallback to hello@routeflow.info, and a \"← Start a new draft\" reset link. Left column keeps eyebrow, H1, body, the 3-item agenda and the \"Prefer to email?\" block. No CTA block, correct for /contact. 0 POST requests — the component is a client-side mailto draft builder by design, so this is expected, not a broken form. 0 console errors."
+      },
+      {
+        "flow": "09-privacy",
+        "viewport": "desktop 1440x900",
+        "verdict": "pass",
+        "evidence": "1440x928, 0 blank bands. Matches spec R9 verbatim: eyebrow \"ROUTEFLOW\", H1 \"Privacy information\", the interim paragraph \"Our privacy policy is being finalised. For any question about how RouteFlow handles your data, contact hello@routeflow.info.\" as an underlined mailto, and \"Return to RouteFlow →\". meta[name=robots] = \"noindex, follow\" confirmed. No placeholder legal clauses. 0 console errors."
+      },
+      {
+        "flow": "10-404",
+        "viewport": "desktop 1440x900",
+        "verdict": "pass",
+        "evidence": "HTTP 404 status correct. Fully STYLED, which proves the ux-spec §7 root-layout CSS-import deviation is working. Anatomy matches spec §3 exactly: brand signature, eyebrow \"404 · PAGE NOT FOUND\" with the copper dot, H1 \"Let’s get you back on track.\" (second line via `<em>`, painted navy upright per `.rf-marketing em{font-style:normal}`), body copy, and the \"Back to RouteFlow →\" pill CTA. Word spaces intact. The uniform grey band below y620 is page ground — not-found.tsx renders no footer by design. The single console error is the intentional GET /nope 404."
+      },
+      {
+        "flow": "01-home",
+        "viewport": "mobile 390x844 (iPhone 13, DPR 3) — NOT the 375 requested",
+        "verdict": "pass",
+        "evidence": "Pass on the captured region only. Top 5,461 CSS px are clean: sticky header with hamburger, eyebrow chip fitting with ~47px side margins (so 375 is safe), H1 wrapping to four lines with word spaces intact, body, both CTAs, assurance line, AI-scanning link, DeliveryDemo, problem cards, AI spotlight and FeatureCatalog all painted. Interior blank bands at CSS y1702-1801 and y3054-3184 verified as section spacing, not opacity-0. 0 console errors, 0 failed requests. CAVEAT: the PNG stops at device row 16383 (Chromium's 16384px capture cap) while the document is 13,053 CSS px tall, so ~7,592 CSS px (58% of the page, including the footer) was never captured and is not covered by this verdict."
+      },
+      {
+        "flow": "02-home-mobile-menu",
+        "viewport": "mobile 390x844 (iPhone 13, DPR 3)",
+        "verdict": "pass",
+        "evidence": "Sheet anatomy matches ux-spec §3 exactly: right-side sheet at ~3/4 width over a dimming overlay, close X, the five nav items (Platform, Distributors, Retailers, Pricing, Company) plus Contact, then Distributor sign in / Retailer sign in / Book a demo. Escape closes it (dialog role not visible afterwards) AND focus is restored to the trigger — the post-Escape capture shows a 2px plum focus ring on the hamburger, matching ux-spec §5's \"focus rings 2px plum offset 2px\" and §4's focus-restore requirement. The un-dimmed page below the fold is the expected fullPage artifact of a position:fixed overlay; the lower blank bands are the dialog scroll-lock plus the 16384px cap."
+      },
+      {
+        "flow": "03-product",
+        "viewport": "mobile 390x844 (iPhone 13, DPR 3)",
+        "verdict": "pass",
+        "evidence": "Pass on the captured region only. HTTP 200, top 5,461 CSS px painted with no opacity-0 gaps (single interior band y1570-1668 is spacing). 0 console errors, 0 failed requests. CAVEAT: PNG stops at device row 16383 against a 11,289 CSS px document — I confirmed the cut lands mid-glyph on the \"Regulated-goods workflows\" card heading, proving this is the 16384px capture cap and not a page defect, but ~5,828 CSS px (52% of the page) was never captured."
+      },
+      {
+        "flow": "04-wholesalers-routes",
+        "viewport": "mobile 390x844 (iPhone 13, DPR 3)",
+        "verdict": "fail",
+        "evidence": "Hero region is clean and legible (eyebrow, H1 \"Get your team out of the daily delivery scramble.\" with word spaces intact, lead, CTA, hero note, compact DeliveryDemo with the tab strip). Fails the opacity-0 check: a 3,708 CSS px void spans y1508-5216, covering the FeatureCatalog and WorkflowTour sections — the same `reveal-pending{opacity:0}` state seen on desktop. Tab interaction itself verified (data-state=active). Additionally truncated at the 16384px cap against an 8,499 CSS px document."
+      },
+      {
+        "flow": "05-retailers",
+        "viewport": "mobile 390x844 (iPhone 13, DPR 3)",
+        "verdict": "fail",
+        "evidence": "REAL DEFECT, not a capture artifact: the hero illustration paints nothing. A 700x700 device-px sample inside the figure yields 8 distinct colours spanning rgb(219,243,236)-rgb(222,245,238) — a flat wash of `.retailer-art{background:#def5ee}` (marketing.css:9512); the same region on desktop yields 20,476 distinct colours including rgb(0,1,2). The <img> still occupies ~280 CSS px of layout (figure ~415 CSS px tall), and the driver confirmed naturalWidth 1448, so the resource loaded and decoded but never painted. Not the entry animation: `retailer-arrive` runs opacity 0.5->1 with `both` fill. Suspects: `.retailer-art > img{mix-blend-mode:multiply}` (marketing.css:5188) against the mobile-only `.retailer-art{display:flex;flex-direction:column}` in `@media (max-width:390px)` (opens marketing.css:4226) — a block equally active at 375. Control: /company's warehouse.webp has no mix-blend-mode and paints correctly on mobile. FAQ items 2 and 3 did open correctly, and `.order-chip` is `display:none` here by design."
+      },
+      {
+        "flow": "06-pricing",
+        "viewport": "mobile 390x844 (iPhone 13, DPR 3)",
+        "verdict": "pass",
+        "evidence": "Full 13,026 CSS px page captured with no truncation and no opacity-0 gaps (four interior bands are card spacing). Cards stack cleanly at 390 with no horizontal overflow; the Growth featured card keeps its navy ribbon, tint, heavier border and the filled \"Discuss Growth →\" CTA against outlined siblings. Headings keep word spaces. 0 console errors, 0 failed requests."
+      },
+      {
+        "flow": "07-company",
+        "viewport": "mobile 390x844 (iPhone 13, DPR 3)",
+        "verdict": "pass",
+        "evidence": "Full 9,735 CSS px page captured, no truncation, no opacity-0 gaps. warehouse.webp (naturalWidth 1400) paints correctly on mobile — the useful control against /retailers, since this image carries no mix-blend-mode. Frosted overlay card legible, Pexels credit link present with the correct external href, principles list and CTA all rendered, layout sound at 390. 0 console errors."
+      },
+      {
+        "flow": "08-contact-form-submit",
+        "viewport": "mobile 390x844 (iPhone 13, DPR 3)",
+        "verdict": "pass",
+        "evidence": "Form filled and submitted; success heading \"Your email draft is ready.\" and the mailto: \"Open email app\" link confirmed, 0 POST requests (by design). Layout sound at 390. One capture artifact noted, not counted against the page: the fixed header is painted mid-document over the \"Discuss the next step\" agenda item with the top 131 CSS px left blank — the standard fullPage + position:fixed behaviour after the page scrolled during form entry. The same header renders correctly at the top of every other mobile capture."
+      },
+      {
+        "flow": "09-privacy",
+        "viewport": "mobile 390x844 (iPhone 13, DPR 3)",
+        "verdict": "pass",
+        "evidence": "Full 3,702 CSS px page captured. Eyebrow \"ROUTEFLOW\", H1 \"Privacy information\" wrapping to two lines with word spaces intact, the interim paragraph with the inline mailto, \"Return to RouteFlow →\", and the light footer. meta[name=robots]=\"noindex, follow\" confirmed. The two interior blank bands are section spacing. 0 console errors."
+      },
+      {
+        "flow": "10-404",
+        "viewport": "mobile 390x844 (iPhone 13, DPR 3)",
+        "verdict": "unverified",
+        "evidence": "This branch's 404 was never served, so there is nothing of the port to rule on. apps/web/middleware.ts gates the mobile-UA proxy on `isMarketingPath()`, which is an exact-match `MARKETING_PATHS.has(pathname)` (middleware.ts:33-41); /nope misses the Set, so `skipMobileRedirect` is false and the request is rewritten to MOBILE_WEB_URL (middleware.ts:110-129). I independently confirmed the rendered pixels are the production Expo mobile-web app's own dark \"Unmatched Route / Page could not be found.\" screen showing http://localhost:3007/nope, returned as HTTP 200 rather than 404. Pre-existing middleware behaviour, not introduced by this port — but it means the marketing 404 built in this port is unreachable on every mobile user agent. Ruled unverified, never pass."
+      }
+    ],
+    "blockers": [
+      "REAL DEFECT — /retailers hero illustration paints nothing at <=390px, including the 375 width this review targets. Measured: a 700x700 device-px sample inside the hero figure on mobile holds 8 distinct colours spanning rgb(219,243,236)-rgb(222,245,238), a flat wash of `.retailer-art{background:#def5ee}` (apps/web/app/(marketing)/marketing.css:9512); the identical region on desktop holds 20,476 distinct colours including rgb(0,1,2). The <img> still occupies ~280 CSS px of layout height and the driver confirmed naturalWidth 1448, so it loaded and decoded but never painted — a paint failure, not a layout collapse, and not the `retailer-arrive` entry animation (opacity 0.5->1 with `both` fill). Suspect pair: `.rf-marketing .retailer-art > img{mix-blend-mode:multiply}` (marketing.css:5188) interacting with the mobile-only `.retailer-art{display:flex;flex-direction:column}` inside `@media (max-width:390px)` (opens marketing.css:4226). Control case: /company's warehouse.webp carries no mix-blend-mode and paints correctly on the same viewport.",
+      "The marketing 404 is unreachable on every mobile user agent, so the port's 404 deliverable is unverified on mobile. apps/web/middleware.ts:33-41 gates the mobile proxy on an exact-match `MARKETING_PATHS.has(pathname)`; any unmatched path therefore fails `skipMobileRedirect` and is rewritten to MOBILE_WEB_URL (middleware.ts:110-129). Confirmed from pixels: /nope on a mobile UA renders the production Expo app's dark \"Unmatched Route\" screen at HTTP 200, not this branch's styled 404 at HTTP 404. PRE-EXISTING behaviour, not introduced by this round — needs an owner ruling on whether the 404 gets carved out of the proxy before this ships.",
+      "EVIDENCE NOT SOUND — captures were taken with `page.screenshot({fullPage:true})` and no `animations:\"disabled\"`, so scroll-reveal targets were photographed at `.editorial-reveal.reveal-pending{opacity:0}` (marketing.css:9107). /wholesalers desktop has a 500 CSS px void (y342-842) exactly where the section-heading and FeatureCatalog sit, with the catalog's own trailing disclaimer painted below it; /wholesalers mobile has a 3,708 CSS px void (y1508-5216); home mobile-menu desktop has four voids totalling ~1,080 CSS px. The FeatureCatalog on /wholesalers has therefore never been judged at either viewport. Re-capture with animations disabled plus a scroll-through and settle.",
+      "EVIDENCE INCOMPLETE — three tall mobile captures silently truncate at Chromium's 16384px cap: home mobile (13,053 CSS px doc, 58% uncaptured), product mobile (11,289 CSS px, 52%), wholesalers mobile (8,499 CSS px, 36%). I confirmed the cut lands mid-glyph on /product's \"Regulated-goods workflows\" heading, so this is the capture cap and not a page defect — but the footer and lower half of the three most important mobile pages carry no evidence at all. Capture these in viewport-height slices rather than fullPage.",
+      "The required 375 viewport was never exercised — the throwaway config uses `devices[\"iPhone 13\"]` = 390x844 DPR 3 (apps/web/test-output/r6/playwright.config.ts), which the 1170px-wide PNGs confirm, despite the run notes claiming 375x812. This matters concretely: the /retailers defect lives in `@media (max-width:390px)`, so 375 is inside the same block, and no narrower-width regression could have been seen. Re-run at 375."
+    ],
+    "designNotes": [
+      "Biggest owner call: the late \"charcoal\" cascade layer flattens the redesign's coloured chrome, so the built site does not look like ux-spec §3's prose. `.distributor-hero` resolves to `background:transparent; color:#243b5a` (marketing.css:5123) rather than the spec'd dark hero; `button-lime` and `button-green` are both overridden to `var(--navy)` (marketing.css:9150-9151), so the distributor and retailer CTAs are navy, not lime/green; the footer resolves to `#f5f5f7` with #5b5c63 text (marketing.css:8750), not the spec'd navy ground with cream text; and the brand period resolves to `#8a8496` (marketing.css:8387), not `var(--primary)`. ux-spec §1 says charcoal.css is meant to win, so the port is faithful to the cascade it was told to preserve — but §3 and §2 describe the pre-charcoal layer. Confirm against your preview which layer is final; this is one decision, not four.",
+      "The H1 \"italic second line\" in ux-spec §3 is markup, not paint. `<em>` is present in every hero and in not-found.tsx, but `.rf-marketing em{font-style:normal; color:var(--primary)}` (marketing.css:120) renders it upright navy. This is consistent everywhere and reads well — just don't expect italics.",
+      "`.photo-credit` sits marginally under AA: `#657994 !important` (marketing.css:6233-6238) measures 4.45:1 on white against the 4.5:1 threshold for normal text. The same declaration also covers `.card-eyebrow`, `.tour-example-label`, `.form-kicker`, `.retailer-art figcaption`, `.story-section figcaption`, `.scene-fallback > p` and `.footer-app-note` — one ~2% darkening (e.g. #63768f) clears all eight at once.",
+      "The /company photo overlay eyebrow (\"THE WORK BEHIND THE DELIVERY\") measures ~2.38:1 against the frosted panel. The heading beneath it is comfortably legible, so this is a decorative-label issue rather than a content one, but it is real text over a variable photographic ground.",
+      "Fix-round-5 R3 verified from pixels, not from the diff: the connection diagram's painted ground is exactly rgb(238,237,242)=#eeedf2, `.connection-nodes > div` measures 7.69:1 at rgb(63,74,92)=#3f4a5c and `.connection-diagram > p` measures 6.46:1 at rgb(74,85,104)=#4a5568 — the exact hexes R3 prescribed. That ruling is discharged.",
+      "Accessibility on the mobile sheet is genuinely good and worth keeping: Escape closes it and the 2px plum focus ring visibly returns to the hamburger trigger in the post-Escape capture, matching ux-spec §4 focus-restore and §5 focus-ring requirements. Header, nav, main#main-content and footer landmarks are in place and each page carries a single h1.",
+      "The contact form makes no network request by design — 0 POSTs captured at both viewports. It is a client-side mailto draft builder, and the success state (\"Your email draft is ready.\" / \"Nothing has been sent yet.\") is honest about that. Worth confirming this is the intended launch behaviour rather than a placeholder for a real endpoint, since nothing is stored or delivered if a prospect closes the tab.",
+      "Cleanliness signal: across all 20 flow-viewport runs the only console error and only failed request is the intentional GET /nope 404. No missing assets, no hydration errors, no same-origin failures anywhere in the ported surface. Word spaces are intact in every heading I read across all ten pages — that regression class is clear."
+    ],
+    "ownerReviewPack": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-01-home-desktop.png",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-01-home-mobile.png",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-03-product-desktop.png",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-06-pricing-desktop.png",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-05-retailers-desktop.png",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-07-company-desktop.png",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-08-contact-desktop.png",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-10-404-desktop.png"
+    ]
+  },
+  "review": {
+    "recommendation": "one-more-round",
+    "verdicts": [
+      {
+        "item": "W6 item 1 — `.rf-marketing .connection-center span` raised from #697b94 to a WCAG-AA colour",
+        "verdict": "fixed",
+        "evidence": "marketing.css:1359-1362 now reads `.rf-marketing .connection-center span { font-size: 0.8rem; color: #4a5568; }`; `grep -c 697b94 \"apps/web/app/(marketing)/marketing.css\"` = 0, so no remnant of the old value anywhere in the sheet. Override sweep confirms nothing later re-declares colour on that selector: the only other `.connection-center span` rule is marketing.css:3296 inside the @media block, and it sets `font-size: 0.75rem` only; the later cascade layers touch `.connection-center strong` (5103), `.connection-center > svg, strong` (8650-8652) and the card background, never the span. Contrast re-derived from the DECLARATIONS THAT ACTUALLY WIN, not from the executor's assumed ground: `.connection-diagram{background:#eeedf2}` (8642) with `.connection-center{background:#ffffffdb}` (8647) over it → composited ground = 219 + c*(36/255) per channel = rgb(253,252,253), relative luminance 0.9759. #4a5568 = rgb(74,85,104), L = 0.2126*0.06846 + 0.7152*0.09086 + 0.0722*0.13845 = 0.08953. Contrast = 1.02595/0.13953 = **7.35:1** on the real card ground, and **6.46:1** even against bare #eeedf2 (the executor's more conservative figure — his number is right, his ground was one layer too low). The superseded #697b94 (L=0.19313) was 4.22:1 on the card / 3.71:1 on #eeedf2 — genuinely sub-AA, so this was a real fix, not a no-op. Still AA at the 12px mobile size set by 3296 (normal text threshold 4.5:1). Independent corroboration: the UI judge sampled the shipped pixels of the sibling `.connection-diagram > p` (also #4a5568, marketing.css:5121) at exactly 6.46:1. `npx prettier --check` on the file: \"All matched files use Prettier code style!\""
+      },
+      {
+        "item": "W6 item 2 — `shrink-0` moved from the inner BrandMark to the wrapping `<span role=\"img\">` so it lands on the flex item",
+        "verdict": "fixed",
+        "evidence": "TenantLogo.tsx:56-58 is now `<span role=\"img\" aria-label={imgAlt} className=\"shrink-0\">` wrapping `<BrandMark tone={tone} className={`${className} rounded-lg object-contain`} />` — the inner mark carries no shrink class. TenantLogo returns a FRAGMENT, so that span is the direct child of the caller's container; I checked all three call sites and every one is a flex container, which is what makes the move load-bearing: apps/web/app/(dashboard)/layout.tsx:1303-1313 (`flex h-16 shrink-0 items-center ... gap-3`) and :1358-1364 (`flex h-16 shrink-0 items-center justify-between`) both put the logo next to a `truncate` name span that competes for width, and apps/web/app/(dashboard)/invoices/[id]/page.tsx:2317-2322 is `flex flex-col items-end gap-2`. Before the move, `flex-shrink:0` sat on a box that was never a flex item (BrandMark's <img> is a child of the span), so the span could still be squeezed — the fix is correctly targeted. The uploaded-logo branch (TenantLogo.tsx:47-51) keeps `shrink-0` on the <img>, which IS the flex item on that path. Regression probe on the extra wrapper: an inline span holding an inline replaced element would add a baseline/descender gap and shift the mark inside `items-center`; that does not occur here because Tailwind preflight is active (`@tailwind base` at apps/web/app/globals.css:1, no `corePlugins.preflight` override in apps/web/tailwind.config.ts), so the inner <img> is display:block and the blockified flex item's height equals the mark's. `role=\"img\" + aria-label` is a valid naming combination, and it restores the accessible name that BrandMark's `alt=\"\"`/`aria-hidden` drops. Gates I re-ran myself: `npx jest components/brand/BrandMark.test.tsx components/no-next-image.test.ts` → 2 suites / 21 tests passed; `npx prettier --check` on both W6 files → clean. (I did not re-run the full 338-test web suite or tsc; the executor's claim there is unverified by me but the change is a class move on one component with green targeted specs.)"
+      }
+    ],
+    "newHazards": [
+      {
+        "severity": "high",
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/app/(marketing)/marketing.css",
+        "line": 5188,
+        "summary": "UI judge fail (05-retailers, mobile): the /retailers hero illustration paints nothing at <=390px. Measured — a 700x700 device-px sample inside the figure holds 8 distinct colours spanning rgb(219,243,236)-rgb(222,245,238), a flat wash of `.retailer-art{background:#def5ee}` (marketing.css:9512), while the identical region on desktop holds 20,476 colours including rgb(0,1,2); the driver separately confirmed naturalWidth 1448, so the asset loaded and decoded but never painted. I independently ruled out the entry animation the executor might blame: `@keyframes retailer-arrive` (marketing.css:4311-4320) runs `opacity: 0.5 -> 1` with `both` fill, so even a frozen first frame paints the image at half opacity — a flat wash cannot be that. Suspect pair stands: `.rf-marketing .retailer-art > img{mix-blend-mode:multiply}` (5188, with `isolation:isolate` on the parent at 3655 and `overflow:hidden` at 5186) against the mobile-only `.retailer-art{display:flex;flex-direction:column}` + `> img{order:2}` (4252-4260) inside `@media (max-width:390px)` — a block equally active at the 375 width this round targets. Control: /company's warehouse.webp carries no mix-blend-mode and paints correctly at the same viewport. Root cause is NOT yet proven; a settled re-capture at 375 with the blend mode toggled off is the cheapest discriminator."
+      },
+      {
+        "severity": "high",
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/middleware.ts",
+        "line": 41,
+        "summary": "UI judge unverified (10-404, mobile): the port's marketing 404 is unreachable on every mobile user agent. I confirmed the mechanism in source — `isMarketingPath()` is an exact-match `MARKETING_PATHS.has(pathname)` (middleware.ts:39-41), so any unmatched path fails `skipMobileRedirect` (middleware.ts:113-119) and is rewritten to MOBILE_WEB_URL (middleware.ts:121-129). The judge's pixels agree: /nope on a mobile UA returns the production Expo app's dark \"Unmatched Route\" screen at HTTP 200, not this branch's styled 404 at HTTP 404. PRE-EXISTING behaviour, not introduced by W6 or by this port, but it means one of the port's ten deliverables has no mobile coverage at all and needs an owner ruling on whether the 404 gets carved out of the proxy before ship."
+      },
+      {
+        "severity": "medium",
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/app/(marketing)/marketing.css",
+        "line": 9107,
+        "summary": "EVIDENCE NOT SOUND — three of the five judge `fail` verdicts (02-home-mobile-menu desktop, 04-wholesalers desktop, 04-wholesalers mobile) are capture artifacts, not shipped defects: `page.screenshot({fullPage:true})` was called with no `animations:\"disabled\"` and no scroll-through, so scroll-reveal targets were photographed at `.editorial-reveal.reveal-pending{opacity:0}` (marketing.css:9107). /wholesalers desktop shows a 500 CSS px void at y342-842 exactly where the section-heading and FeatureCatalog sit, with the catalog's own trailing disclaimer painted below it; /wholesalers mobile shows a 3,708 CSS px void at y1508-5216; the same page painted fully in flow 01. Consequence: the FeatureCatalog on /wholesalers has never actually been judged at either viewport. Re-capture with animations disabled plus a scroll-and-settle before ruling."
+      },
+      {
+        "severity": "medium",
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/app/(marketing)/marketing.css",
+        "line": 4321,
+        "summary": "EVIDENCE NOT SOUND — the fifth judge `fail` (05-retailers desktop, `.order-chip` `strong` at 1.54:1 and `small` at 1.31:1) is almost certainly the same frozen-animation class, and I verified the keyframe that makes it so: `@keyframes chip-arrive` (marketing.css:4321-4330) starts at `opacity: 0`, applied via `.order-chip{animation: chip-arrive 1s ease both}` (4348-ish block), so a mid-flight capture legitimately measures near-ground. The sibling `.browser-chip`, same `.art-chip` class, measured 8.90:1 at the full #29456e in the same frame. Do not open a contrast fix on the order chip until a settled re-capture reproduces it."
+      },
+      {
+        "severity": "medium",
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/r6/playwright.config.ts",
+        "line": 24,
+        "summary": "EVIDENCE INCOMPLETE — the mandated 375 viewport was never exercised: the throwaway config spreads `devices[\"iPhone 13\"]` (line 24) = 390x844 DPR 3, which the 1170px-wide PNGs confirm, despite the run notes claiming 375x812. This matters concretely because the /retailers paint defect lives in `@media (max-width:390px)`, so no narrower-width-only regression could have been seen. Compounding it, three tall mobile captures silently truncate at Chromium's 16384px cap — home mobile (13,053 CSS px doc, ~58% uncaptured), product mobile (11,289 CSS px, ~52%, cut confirmed mid-glyph), wholesalers mobile (8,499 CSS px, ~36%) — so the footer and lower half of the three most important mobile pages carry no evidence. Re-run at 375 and capture in viewport-height slices, not fullPage."
+      },
+      {
+        "severity": "low",
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/app/(marketing)/marketing.css",
+        "line": 6238,
+        "summary": "Same defect class as the W6 fix, one round from being caught again: `color: #657994 !important` (marketing.css:6238) covers EIGHT selectors — `.eyebrow`, `.record-caption`, `.card-eyebrow`, `.tour-example-label`, `.form-kicker`, `.photo-credit`, `.retailer-art figcaption`, `.story-section figcaption`, `.scene-fallback > p`, `.footer-app-note` (6228-6237) — and I re-derived it at 4.454:1 on white (rgb(101,121,148), L=0.18575), just under the 4.5:1 AA threshold for normal text; the judge measured the shipped `.photo-credit` pixels at the same 4.45:1. One ~2% darkening (e.g. #63768f) clears all eight declarations at once. Also noted by the judge and not re-derived by me: the /company photo-overlay eyebrow at ~2.38:1 over a frosted photographic ground."
+      }
+    ],
+    "reasoning": "Both W6 items are genuinely fixed and I verified each against the code rather than the executor's summary. The colour change is real (the old #697b94 was 4.22:1 on the card ground it actually paints against, 3.71:1 on the bare diagram ground) and the new #4a5568 clears AA with margin — 7.35:1 re-derived against the winning `#ffffffdb over #eeedf2` composite, 6.46:1 even on the conservative ground the executor used, and still AA at the 12px size the max-width:480px block sets. I swept for later overrides and for remnants of the old hex: none. The `shrink-0` move is correctly targeted — TenantLogo returns a fragment, so the wrapper span is the direct child of the caller's flex container at all three call sites, and the class previously sat on a box that was never a flex item. I probed the one plausible regression from adding a wrapper (baseline/descender gap shifting the mark inside `items-center`) and it cannot occur, because Tailwind preflight is active and makes the inner <img> display:block. Targeted specs and prettier are green under my own hands. So W6 itself would land.\n\nIt cannot land yet for reasons outside W6. The judge produced one measured, non-artifact defect — /retailers' hero art painting nothing at <=390px, which includes the 375 width this review targets — and I strengthened rather than weakened it: the `retailer-arrive` keyframe starts at opacity 0.5 with `both` fill, so a frozen frame would still paint the image at half strength; a flat #def5ee wash cannot be the animation. Root cause is still unproven, so a fix cannot be designed this round. Second, five of twenty flow-viewport cells rest on unsound evidence (captures taken without `animations:\"disabled\"`, photographing `reveal-pending{opacity:0}`), which means /wholesalers' FeatureCatalog has never been judged at either viewport, and the /retailers order-chip contrast reading is very likely a frozen `chip-arrive` (from opacity 0, confirmed in source) rather than a shipped defect — chasing it now would burn a round on a phantom. Third, the required 375 viewport was never exercised at all (the config spreads iPhone 13 = 390) and three tall mobile pages truncated at the 16384px capture cap, so roughly half of home, product and wholesalers on mobile carries no evidence. Ruling \"land\" would be certifying pages nobody has actually looked at. Next round: re-capture at 375 in viewport slices with animations disabled and a scroll-settle, which simultaneously discharges hazards 3, 4 and 5 and either confirms or clears the retailers paint failure; the #657994 near-miss is a one-line change to fold in while there. The charcoal-cascade question the judge raised is an owner adjudication, not a defect, and I am not blocking on it."
+  },
+  "finalGate": {
+    "allPass": false,
+    "results": [
+      {
+        "command": "npx tsc --noEmit -p tsconfig.json",
+        "pass": true,
+        "summary": "TypeScript type check completed with no errors",
+        "failures": []
+      },
+      {
+        "command": "npx jest --silent",
+        "pass": true,
+        "summary": "Jest: 42 test suites passed, 338 tests passed",
+        "failures": []
+      },
+      {
+        "command": "npm run lint -w apps/web",
+        "pass": true,
+        "summary": "ESLint: 0 errors (43 warnings, pre-existing, not blocking)",
+        "failures": []
+      },
+      {
+        "command": "npx jest src/common/ci-freshness-guard-script.spec.ts --runInBand",
+        "pass": false,
+        "summary": "CI freshness guard spec: 1 test failed (11 passed, 12 total)",
+        "failures": [
+          "T1 · REG-E2EGUARD-403 · YAML-driven: FAILED at line 201 — expect(outputs.run).toBe('true') received undefined. The YAML-driven 403 error body handling is not properly setting the run output."
+        ]
+      },
+      {
+        "command": "node scripts/validate-lessons.mjs",
+        "pass": true,
+        "summary": "Lessons register: 39/40 entries · 39.7/40.0 KB · passed validation (cap warning: size constraint disagreement noted)",
+        "failures": []
+      },
+      {
+        "command": "git status --porcelain untracked filter",
+        "pass": false,
+        "summary": "Untracked files present outside exclusion patterns",
+        "failures": [
+          "?? apps/web/components/no-next-image.test.ts — test file not in exclusion pattern (only apps/web/no-next-image excluded, not .test.ts variant)",
+          "?? apps/web/lib/marketing-routes.test.ts — test file not in exclusion pattern (only apps/web/lib/marketing-routes.ts excluded, not .test.ts variant)"
+        ]
+      }
+    ]
+  }
+}
