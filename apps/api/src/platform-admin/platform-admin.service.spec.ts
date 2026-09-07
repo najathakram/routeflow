@@ -181,8 +181,18 @@ describe("PlatformAdminService — audit provenance", () => {
         planKey: "SCALE",
         planVersionId: "v-9",
         basePriceSnapshot: 499,
+        // A committing plan write disarms any scheduled downgrade (round 3, findings 2/9):
+        // the 02:00 sweep filters on downgradeEffectiveAt alone, so one left armed would undo
+        // this admin's change and deactivate every operator/driver over the target seat cap.
+        downgradeToPlanKey: null,
+        downgradeEffectiveAt: null,
+        retainedUserIds: [],
       },
     });
+    // …but it must NOT revoke a cancellation the tenant asked for — that is resume()'s job.
+    expect((prisma as any).tenantSubscription.upsert.mock.calls[0][0].update).not.toHaveProperty(
+      "cancelAtPeriodEnd",
+    );
     expect(entitlementsService.invalidate).toHaveBeenCalledWith(TENANT_ID);
 
     // The snapshot run-rate moved $99 → $499, so the append-only ledger must move with it —
@@ -305,6 +315,32 @@ describe("PlatformAdminService — audit provenance", () => {
     expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
     expect(entitlementsService.invalidate).not.toHaveBeenCalled();
     expect(billingEventService.emit).not.toHaveBeenCalled();
+  });
+
+  it("activateManualSubscription disarms every pending transition when it rolls the period (round 3, findings 2/9)", async () => {
+    prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.update.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      status: "ACTIVE",
+      plan: "PROFESSIONAL",
+    } as any);
+
+    await service.activateManualSubscription(
+      TENANT_ID,
+      { plan: "PROFESSIONAL", billingPeriodDays: 30, paymentMethod: "BANK_TRANSFER" } as any,
+      ADMIN_ID,
+    );
+
+    // A downgrade left armed now points at the OLD (already past) period end, so the very next
+    // 02:00 sweep fires it against the subscription this admin just activated — re-pricing the
+    // row and deactivating every operator/driver over the target plan's seat cap.
+    expect((prisma as any).tenantSubscription.upsert.mock.calls[0][0].update).toMatchObject({
+      cancelAtPeriodEnd: false,
+      downgradeToPlanKey: null,
+      downgradeEffectiveAt: null,
+      retainedUserIds: [],
+    });
   });
 
   it("price-override back-fills a null basePriceSnapshot for a custom plan and emits the run-rate delta", async () => {

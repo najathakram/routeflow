@@ -174,12 +174,24 @@ export default function BillingSettingsPage() {
       )}
 
       {s.downgradeToPlanKey && (
-        <div className="rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">
-          Scheduled to change to <strong>{s.downgradeToPlanKey}</strong> on{" "}
-          {s.downgradeEffectiveAt
-            ? new Date(s.downgradeEffectiveAt).toLocaleDateString()
-            : "period end"}
-          . Nothing is deleted — over-cap data becomes read-only.
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">
+          <span>
+            Scheduled to change to <strong>{s.downgradeToPlanKey}</strong> on{" "}
+            {s.downgradeEffectiveAt
+              ? new Date(s.downgradeEffectiveAt).toLocaleDateString()
+              : "period end"}
+            . Nothing is deleted — over-cap data becomes read-only.
+          </span>
+          {/* The only self-service undo: resume() clears downgradeToPlanKey without touching
+              the plan or the period (re-subscribing would reset periodStart/periodEnd). */}
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => resume.mutate()}
+            disabled={resume.isPending}
+          >
+            Keep current plan
+          </Button>
         </div>
       )}
 

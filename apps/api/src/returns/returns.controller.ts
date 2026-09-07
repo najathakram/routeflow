@@ -35,18 +35,19 @@ export class ReturnsController {
     @Query("customerId") customerId?: string,
     @Query("status") status?: string,
     @Query("reason") reason?: string,
+    @Query("search") search?: string,
     @Query("page") page?: string,
     @Query("limit") limit?: string,
   ) {
-    return this.returnsService.findAllForUser(
-      user,
+    return this.returnsService.findAllForUser(user, {
       orderId,
       customerId,
       status,
       reason,
-      page ? +page : 1,
-      limit ? +limit : 20,
-    );
+      search,
+      page: page ? +page : 1,
+      limit: limit ? +limit : 20,
+    });
   }
 
   /** RF-081: Restricted to OPERATOR | TENANT_ADMIN | CUSTOMER (no DRIVER).

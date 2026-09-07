@@ -122,7 +122,15 @@ export class BillingCronService {
   async applyScheduledDowngrades(): Promise<void> {
     const now = new Date();
     const subs = await this.prisma.tenantSubscription.findMany({
-      where: { downgradeEffectiveAt: { not: null, lte: now }, downgradeToPlanKey: { not: null } },
+      // Same tenant filter as applyScheduledCancellations below: a SUSPENDED / CANCELLED /
+      // soft-deleted tenant has already had its churn delta booked, so applying a schedule left
+      // on it would book a SECOND PLAN_CHANGED delta against a non-paying tenant (MRR = Σ
+      // amountDelta never self-heals) and deactivate the operators/drivers of a deleted tenant.
+      where: {
+        downgradeEffectiveAt: { not: null, lte: now },
+        downgradeToPlanKey: { not: null },
+        tenant: { status: "ACTIVE", deletedAt: null },
+      },
       select: {
         tenantId: true,
         planKey: true,

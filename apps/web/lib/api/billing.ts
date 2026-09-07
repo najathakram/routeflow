@@ -75,6 +75,30 @@ export interface QuoteLine {
   included: boolean;
 }
 
+export type PlanChangeAction =
+  "SUBSCRIBE" | "UPGRADE" | "DOWNGRADE" | "KEEP_CURRENT" | "CONTACT_SALES" | "NOOP";
+
+/** Mirrors apps/api/src/billing/subscription-mutation.service.ts's PlanChangePreview
+ * (dates serialize to ISO strings over the wire). `null` on the quote when the caller
+ * carries no tenant context (e.g. SUPER_ADMIN). */
+export interface PlanChange {
+  action: PlanChangeAction;
+  proratedNow: number | null;
+  effectiveAt: string | null;
+  keepsRenewalAt: string | null;
+  warning?: string;
+  /** TRUE only when the DOWNGRADE seat-cap check found users over the target plan's cap,
+   *  i.e. the one case where committing really does deactivate staff accounts. Never infer
+   *  that consequence from `warning` being non-empty — `warning` also carries unrelated
+   *  copy (a revoked cancellation, "not prorated", sales hand-off), and keying the
+   *  acknowledgement on it demands consent to a consequence that will not happen. */
+  seatAckRequired: boolean;
+  /** The tenant's CURRENT plan key, normalized past legacy aliases, so the chooser can
+   *  mark the plan they are on without re-deriving it from a stored (possibly aliased)
+   *  key. Absent when the caller carries no tenant context. */
+  fromPlanKey?: string | null;
+}
+
 export interface QuoteResult {
   planKey: string;
   planName: string;
@@ -85,6 +109,7 @@ export interface QuoteResult {
   dueToday: number;
   annualSaving: number;
   renewalAt: string;
+  change: PlanChange | null;
 }
 
 export interface PlanFit {
@@ -219,4 +244,72 @@ export function useDisableAddon() {
   return useBillingMutation<{ sku: string }>(({ sku }) =>
     apiClient.post(`/billing/addons/${sku}/disable`).then((r) => r.data),
   );
+}
+
+// ─── Shared plan-change dispatch (B58) ───────────────────────────────────────
+
+export interface PlanChangeMutateOptions {
+  onSuccess?: () => void;
+  /** Receives the rejected request so the caller can surface the SERVER's message
+   *  instead of a fixed "try again" (L-071). */
+  onError?: (error?: unknown) => void;
+}
+
+/** The subset of {@link useUpgrade}/{@link useDowngrade}/{@link useSubscribe}'s
+ * `mutate` functions dispatchPlanChange needs — pass the hooks' `.mutate` directly —
+ * plus the caller's LIVE billing cycle. */
+export interface PlanChangeMutations {
+  /** The cycle the caller's toggle shows RIGHT NOW, not `preview.cycle` (the cycle the
+   *  last successful quote echoed back). A commit fired after a cycle toggle but before
+   *  — or after a failed — re-quote would otherwise subscribe on the cycle the tenant
+   *  just moved away from, resetting the period onto the wrong term. */
+  cycle: Cycle;
+  upgrade: (body: { planKey: string }, options?: PlanChangeMutateOptions) => void;
+  downgrade: (
+    body: { targetPlanKey: string; retainedUserIds?: string[] },
+    options?: PlanChangeMutateOptions,
+  ) => void;
+  subscribe: (body: QuoteInput, options?: PlanChangeMutateOptions) => void;
+}
+
+/** What {@link dispatchPlanChange} did, so a caller can react without re-reading
+ *  `change.action`: `contact-sales` fired no request and needs the sales hand-off,
+ *  `none` fired nothing because the action is not a plan change, `dispatched` posted. */
+export type PlanChangeDispatch =
+  | { outcome: "contact-sales" }
+  | { outcome: "none"; action: "NOOP" | "KEEP_CURRENT" }
+  | { outcome: "dispatched"; action: "SUBSCRIBE" | "UPGRADE" | "DOWNGRADE" };
+
+/**
+ * Single routing point for committing a quote (ruling §2/§9 B58 web): a quote's
+ * `change.action` — never the raw "always subscribe" assumption — decides which
+ * mutation fires. Shared by `choose-plan/page.tsx` and any other entrance (e.g.
+ * PlanGates' upsell CTA) that lands on a quote and needs to commit it, so the
+ * ACTIVE-tenant guard in `subscribe()` is never the first thing a plan change hits.
+ * NOOP is a no-op by design — the caller is expected to disable its own commit
+ * control when `change.action === "NOOP"`. KEEP_CURRENT (undoing a scheduled
+ * downgrade/cancellation) is not a plan change either: it commits through the
+ * resume mutation at the caller, never through subscribe() — which would reset the
+ * current period — so it is a no-op here too. CONTACT_SALES (a custom plan on either
+ * side) posts nothing at all: the caller sends the tenant to sales.
+ *
+ * The billing cycle comes from `mutations.cycle` — the caller's LIVE toggle — never
+ * from `preview.cycle`, which is only the cycle the last successful quote was for.
+ */
+export function dispatchPlanChange(
+  preview: QuoteResult,
+  mutations: PlanChangeMutations,
+  options?: PlanChangeMutateOptions,
+): PlanChangeDispatch {
+  const action = preview.change?.action ?? "SUBSCRIBE";
+  if (action === "CONTACT_SALES") return { outcome: "contact-sales" };
+  if (action === "NOOP" || action === "KEEP_CURRENT") return { outcome: "none", action };
+  if (action === "UPGRADE") {
+    mutations.upgrade({ planKey: preview.planKey }, options);
+  } else if (action === "DOWNGRADE") {
+    mutations.downgrade({ targetPlanKey: preview.planKey, retainedUserIds: [] }, options);
+  } else {
+    mutations.subscribe({ planKey: preview.planKey, cycle: mutations.cycle }, options);
+  }
+  return { outcome: "dispatched", action };
 }

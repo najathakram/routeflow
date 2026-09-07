@@ -30,6 +30,10 @@ function buildFakeDb(opts: {
     adjustments: [] as any[],
   };
   const db: any = {
+    // B73 lock seam (runSync's `FOR UPDATE` on CommissionAccrual, keyed on invoiceId only).
+    // Every existing engine test needs this present once the fix calls it unconditionally;
+    // REG-B73 T5 below overrides it with a stateful mock to prove the lock's ordering.
+    $executeRaw: jest.fn().mockResolvedValue(0),
     invoice: { findUnique: jest.fn().mockResolvedValue(opts.invoice) },
     agentAssignment: { findFirst: jest.fn().mockResolvedValue(opts.assignment ?? null) },
     customerCommissionRate: { findMany: jest.fn().mockResolvedValue(opts.customerRates ?? []) },
@@ -123,11 +127,12 @@ describe("CommissionEngineService", () => {
   });
 
   describe("flag / tenant gating", () => {
-    it("flag OFF writes nothing and never touches the database", async () => {
+    it("flag OFF writes nothing and never touches the database (PIN T6: the B73 lock is never taken either — the early return precedes it)", async () => {
       entitlements.hasFlag.mockResolvedValue(false);
       const { db } = buildFakeDb({ invoice: baseInvoice() });
       await service.syncInvoiceCommission("inv-1", db);
       expect(db.invoice.findUnique).not.toHaveBeenCalled();
+      expect(db.$executeRaw).not.toHaveBeenCalled();
     });
 
     it("no tenant context (SUPER_ADMIN) writes nothing and never checks the flag", async () => {
@@ -394,6 +399,97 @@ describe("CommissionEngineService", () => {
       const second = buildFakeDb({ invoice: invoiceRound2, assignment, agentRates });
       await service.syncInvoiceCommission("inv-1", second.db);
       expect(second.calls.adjustments).toHaveLength(0);
+    });
+
+    it("REG-B73 T5 concurrent sync appends one CLAWBACK, not two, once the runSync lock serializes the read", async () => {
+      // Simulates the B73 race: a SECOND writer commits its own -40 CLAWBACK for this
+      // accrual the instant it acquires the `FOR UPDATE` lock. If runSync takes the lock
+      // BEFORE reading the invoice, it will see that committed adjustment and — since the
+      // drift is already fully accounted for — append nothing further. Today, with no
+      // lock at all, the read races ahead of the "other" writer's commit and reads an
+      // empty adjustments array, so runSync appends its OWN -40 CLAWBACK — a duplicate.
+      const committedByOther: Array<{ amount: number }> = [];
+      const callOrder: string[] = [];
+      const existingRow = {
+        id: "accrual-1",
+        agentId: "agent-1",
+        basisDate: new Date("2026-06-01T00:00:00.000Z"),
+        baseAmount: 1000,
+        ratePct: 10,
+        rateSource: "AGENT_DEFAULT",
+        accruedAmount: 100,
+        payableAmount: 100,
+        claimedAmount: 100, // accrual claimed 100
+        status: "SETTLED",
+      };
+      const invoice = baseInvoice({
+        payments: [{ id: "p1", amount: 600, method: "CASH", status: "PAID" }], // ratio 0.6 -> payable 60
+      });
+      const assignment = { agentId: "agent-1" };
+      const agentRates = [{ ratePct: 10, effectiveFrom: new Date("2026-01-01T00:00:00.000Z") }];
+      const { db, calls } = buildFakeDb({ invoice, assignment, agentRates });
+
+      // Acquiring the lock is the moment the "other" writer's CLAWBACK becomes visible.
+      db.$executeRaw = jest.fn(async (..._args: any[]) => {
+        callOrder.push("lock");
+        committedByOther.push({ amount: -40 });
+        return 0;
+      });
+      // Reads the CURRENT state of committedByOther — i.e. whatever has landed by the
+      // time this read actually runs, not a snapshot taken up front.
+      db.invoice.findUnique.mockImplementation(async () => {
+        callOrder.push("read");
+        return {
+          ...invoice,
+          commissionAccruals: [{ ...existingRow, adjustments: [...committedByOther] }],
+        };
+      });
+
+      await service.syncInvoiceCommission("inv-1", db);
+
+      // The lock made our own read see the other writer's -40 already applied, so the
+      // drift is fully accounted for and runSync appends NOTHING further.
+      expect(calls.adjustments).toHaveLength(0);
+      expect(callOrder.indexOf("lock")).toBeGreaterThanOrEqual(0);
+      expect(callOrder.indexOf("lock")).toBeLessThan(callOrder.indexOf("read"));
+
+      const [strings, ...values] = db.$executeRaw.mock.calls[0];
+      const sql = (strings as TemplateStringsArray).join("");
+      expect(sql).toContain('FROM "CommissionAccrual"');
+      expect(sql).toContain('"invoiceId" =');
+      expect(sql).toContain("FOR UPDATE");
+      expect(values).toEqual(["inv-1"]);
+    });
+
+    it("REG-B73 T5b a NON-transactional client is wrapped in a tenantTransaction, so the lock is never taken on an autocommit connection", async () => {
+      // The un-`tx`'d reconcileOrderDraftInvoice hook path (orders -> invoices ->
+      // syncInvoiceCommissionSafe) hands the engine a `forTenant()` client. A
+      // `FOR UPDATE` issued on that client commits with its own statement and
+      // releases the row before the invoice read, so the B73 race stays open. The
+      // sync must therefore run inside its OWN transaction instead.
+      const plain = buildFakeDb({ invoice: baseInvoice() });
+      const tx = buildFakeDb({ invoice: baseInvoice() });
+      // A base / `$extends`ed client exposes `$transaction`; a Prisma tx client does not.
+      plain.db.$transaction = jest.fn();
+      prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx.db));
+
+      await service.syncInvoiceCommission("inv-1", plain.db);
+
+      expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+      expect(tx.db.$executeRaw).toHaveBeenCalledTimes(1);
+      expect(tx.db.invoice.findUnique).toHaveBeenCalledTimes(1);
+      expect(plain.db.$executeRaw).not.toHaveBeenCalled();
+      expect(plain.db.invoice.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("REG-B73 T5b a transaction client is used as-is — no nested transaction is opened", async () => {
+      const { db } = buildFakeDb({ invoice: baseInvoice() }); // no `$transaction` => tx client
+
+      await service.syncInvoiceCommission("inv-1", db);
+
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      expect(db.$executeRaw).toHaveBeenCalledTimes(1);
+      expect(db.invoice.findUnique).toHaveBeenCalledTimes(1);
     });
 
     it("voiding an invoice with claimed commission emits a CLAWBACK, not a RATE_CHANGE", async () => {
