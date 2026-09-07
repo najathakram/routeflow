@@ -77,6 +77,9 @@ backups/
 # ─── Claude Code internals ───────────────────────────────────────────────────
 .claude/worktrees/
 .claude/scheduled_tasks.lock
+# Per-machine permission cache rewritten by Claude Code on every machine — never source.
+# Tracking it kept every worktree permanently "dirty" (M .claude/settings.local.json).
+.claude/settings.local.json
 
 # ─── Security audit report (lists unfixed vulns; repo goes public for CI) ────
 SECURITY_AUDIT.md

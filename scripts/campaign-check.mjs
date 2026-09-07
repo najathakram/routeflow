@@ -88,7 +88,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { normalizeEvidence } from "./campaign/normalize-evidence.mjs";
 import {
@@ -110,6 +110,8 @@ function main() {
   const onlyBatch = flag("batch"); // e.g. "F02" — undefined means "scan every shard"
   const explicitPipelineDir = flag("pipeline-dir");
   const runsDir = path.resolve(REPO_ROOT, flag("runs-dir") || ".campaign/runs");
+  // --freshness-only: R4's pre-step. Boolean, no value — checked by presence, not flag().
+  const freshnessOnly = args.includes("--freshness-only");
   // Overridable via CAMPAIGN_CHECK_STATUS_DIR (mirrors bugs.mjs's BUGS_ROOT
   // seam) so a self-test can drive this REAL command against a throwaway
   // fixture ledger instead of the repo's own .claude/campaign/status.
@@ -366,18 +368,365 @@ function main() {
   const t2NeedsPostDeploy = rows.some((r) => r.tier === "T2" && r.state === "done");
   const t3Needed = rows.some((r) => r.tier === "T3" && consultsArtifacts(r));
 
+  // ---- R1-R4: report freshness (a turbo cache HIT can leave a stale .campaign/runs/*.json
+  // on disk — L-034 — so both the full scan and the `--freshness-only` pre-step must refuse
+  // to trust a report older than the newest commit touching its own tests or the ledger). ----
+  const T1_WORKSPACES = [
+    {
+      ws: "api",
+      dir: "apps/api",
+      jsonPath: apiJsonPath,
+      testPathspecs: [":(glob)apps/api/**/*.spec.ts"],
+    },
+    {
+      ws: "mobile",
+      dir: "apps/mobile",
+      jsonPath: mobileJsonPath,
+      testPathspecs: [
+        ":(glob)apps/mobile/__tests__/**",
+        ":(glob)apps/mobile/**/*.test.ts",
+        ":(glob)apps/mobile/**/*.test.tsx",
+      ],
+    },
+    {
+      ws: "pricing",
+      dir: "packages/pricing",
+      jsonPath: pricingJsonPath,
+      testPathspecs: [":(glob)packages/pricing/**/*.spec.ts"],
+    },
+  ];
+
+  // Git root for freshness lookups is derived from statusDir, not REPO_ROOT — REPO_ROOT is
+  // this SCRIPT's own on-disk location (always the real monorepo), while statusDir may be a
+  // throwaway fixture repo (CAMPAIGN_CHECK_STATUS_DIR); its commits are what freshness must
+  // be judged against. Resolved once, memoized.
+  let gitRootCache;
+  function resolveGitRoot() {
+    if (gitRootCache !== undefined) return gitRootCache;
+    try {
+      const res = spawnSync("git", ["-C", statusDir, "rev-parse", "--show-toplevel"], {
+        encoding: "utf8",
+        shell: false,
+      });
+      gitRootCache = res.status === 0 && res.stdout ? res.stdout.trim() : null;
+    } catch {
+      gitRootCache = null;
+    }
+    return gitRootCache;
+  }
+
+  // newestCommit(gitRoot, pathspecs) -> { sha, ct, subject } for the newest commit touching
+  // any of `pathspecs`, or null when no commit touches them (imposes no bound — R1).
+  //
+  // F1: `--first-parent` is required. `git log -- <path>`'s default history simplification
+  // prunes a merge commit that is TREESAME to one of its parents for the given path and
+  // silently follows only that parent instead — a `git merge origin/master` on a branch that
+  // did not itself touch the path is TREESAME to the incoming (non-first) side, so plain
+  // `git log -1 -- <path>` reports the ORIGINAL upstream commit's %ct, not the merge's own —
+  // exactly the population of refusals this freshness rule exists to catch (see T15). With
+  // `--first-parent`, log only ever walks the branch's own line, so the merge itself is the
+  // commit reported whenever it changed the path relative to its first parent; it is a no-op
+  // on linear (non-merge) history, which is every other fixture in this file.
+  function newestCommit(gitRoot, pathspecs) {
+    try {
+      const res = spawnSync(
+        "git",
+        ["log", "-1", "--first-parent", "--format=%H%x1f%ct%x1f%s", "--", ...pathspecs],
+        {
+          cwd: gitRoot,
+          encoding: "utf8",
+          shell: false,
+        },
+      );
+      if (res.status !== 0 || !res.stdout || !res.stdout.trim()) return null;
+      const [sha, ctStr, subject] = res.stdout.trim().split("\x1f");
+      return { sha, ct: Number(ctStr), subject };
+    } catch {
+      return null;
+    }
+  }
+
+  // F3: a commit whose committer date is ahead of THIS machine's clock (a fast dev-box clock, a
+  // hand-set GIT_COMMITTER_DATE, a rewrite that lost --committer-date-is-author-date) must never
+  // hard-block every future report forever — a freshly regenerated report can never be "newer"
+  // than a moment that has not happened yet, so the refusal would repeat after every
+  // regeneration with no recoverable action. Clamp the bound to now before it is compared, and
+  // say so once per offending commit (skewNoted dedupes across this call's per-workspace loop,
+  // since the same ledger commit is re-fetched for every consulted workspace).
+  function clampCommitToNow(commit, skewNoted) {
+    if (!commit) return commit;
+    const nowMs = Date.now();
+    const rawMs = commit.ct * 1000;
+    if (rawMs <= nowMs) return commit;
+    if (!skewNoted.has(commit.sha)) {
+      skewNoted.add(commit.sha);
+      console.log(
+        `campaign-check: note — commit ${commit.sha.slice(0, 7)} is dated in the future ` +
+          `(${new Date(rawMs).toISOString()}); clock skew? treating it as now`,
+      );
+    }
+    return { ...commit, ct: Math.floor(nowMs / 1000) };
+  }
+
+  function formatGeneratedAt(reportTimeMs, viaMtime) {
+    const isoStr = new Date(reportTimeMs).toISOString();
+    return viaMtime
+      ? `${isoStr} (file mtime — the report carries no generatedAt; regenerate once to stamp it)`
+      : isoStr;
+  }
+
+  function staleBlock(wsInfo, reportTimeMs, viaMtime, newestCause) {
+    const causeIso = new Date(newestCause.commit.ct * 1000).toISOString();
+    const shortSha = newestCause.commit.sha.slice(0, 7);
+    return [
+      `campaign-check: ${wsInfo.jsonPath} is STALE — generated ${formatGeneratedAt(reportTimeMs, viaMtime)} ` +
+        `but ${newestCause.label} changed at ${causeIso} (${shortSha} ${newestCause.commit.subject}). ` +
+        `Regenerate it: cd ${wsInfo.dir} && npx jest --maxWorkers=2`,
+      `  rule: a report must be newer than the newest commit touching its workspace's tests or the ledger shards`,
+      `  ritual: after ANY ledger edit or master merge, run the regen command in every workspace with T1 claims, then push`,
+    ].join("\n");
+  }
+
+  // R9: a scoped jest run (a test path or name pattern) can leave a report that is FRESH by
+  // time but still not real full-suite evidence — the reporter stamps `partial: true` for
+  // exactly this case (L-063's twin: the gate's own scoped spec run overwrote api.json with an
+  // 11-test partial result — see wp-report.md §Gate 4a/4c). Same rule/ritual lines as staleBlock
+  // by design (R9: "plus the rule:/ritual: lines").
+  function partialBlock(wsInfo, patterns) {
+    const patternsStr =
+      patterns && patterns.length ? patterns.join(", ") : "(no patterns recorded)";
+    return [
+      `campaign-check: ${wsInfo.jsonPath} is PARTIAL — a scoped jest run wrote it (${patternsStr}); ` +
+        `regenerate with the full suite: cd ${wsInfo.dir} && npx jest --maxWorkers=2`,
+      `  rule: a report must be newer than the newest commit touching its workspace's tests or the ledger shards`,
+      `  ritual: after ANY ledger edit or master merge, run the regen command in every workspace with T1 claims, then push`,
+    ].join("\n");
+  }
+
+  // R6 test seam, mirroring apps/api/scripts/schema-drift.mjs's SCHEMA_CHECK_PRISMA_CLI shape:
+  // honoured ONLY inside a jest worker that also sets it; anywhere else it is ignored (loudly)
+  // and the real turbo binary is used, so a stray export can never fake a HIT/MISS verdict.
+  function resolvePkgName(gitRoot, wsInfo) {
+    if (gitRoot) {
+      try {
+        const pkgJsonPath = path.join(gitRoot, wsInfo.dir, "package.json");
+        if (fs.existsSync(pkgJsonPath)) {
+          const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
+          if (pkg && typeof pkg.name === "string" && pkg.name) return pkg.name;
+        }
+      } catch {
+        // fall through to the default below
+      }
+    }
+    return `@routeflow/${wsInfo.ws}`;
+  }
+
+  function resolveTurboBin(gitRoot) {
+    if (!gitRoot) return null;
+    const bin = process.platform === "win32" ? "turbo.cmd" : "turbo";
+    const p = path.join(gitRoot, "node_modules", ".bin", bin);
+    return fs.existsSync(p) ? p : null;
+  }
+
+  // Never `npx turbo` — npx can try to download turbo from a bare/throwaway repo with no
+  // node_modules (the fixtures used by this file's own spec). Binary absent => null => the
+  // fail-open branch below.
+  function spawnTurboDryRun(gitRoot, pkg) {
+    const bin = resolveTurboBin(gitRoot);
+    if (!bin) return null;
+    try {
+      const res = spawnSync(bin, ["run", "test", `--filter=${pkg}`, "--dry-run=json"], {
+        cwd: gitRoot,
+        encoding: "utf8",
+        shell: process.platform === "win32",
+      });
+      if (res.status !== 0 || !res.stdout) return null;
+      return res.stdout;
+    } catch {
+      return null;
+    }
+  }
+
+  function turboDryRunStatus(gitRoot, pkg) {
+    const override = process.env.CAMPAIGN_CHECK_TURBO_DRY_RUN;
+    let raw;
+    if (override && process.env.JEST_WORKER_ID) {
+      console.warn("WARNING: CAMPAIGN_CHECK_TURBO_DRY_RUN honoured inside a Jest worker");
+      try {
+        raw = fs.readFileSync(override, "utf8");
+      } catch {
+        return { status: "UNAVAILABLE", pkg };
+      }
+    } else {
+      if (override) {
+        console.log("campaign-check: CAMPAIGN_CHECK_TURBO_DRY_RUN ignored outside a Jest worker");
+      }
+      raw = spawnTurboDryRun(gitRoot, pkg);
+      if (raw === null) return { status: "UNAVAILABLE", pkg };
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { status: "UNAVAILABLE", pkg };
+    }
+    const task = (parsed.tasks || []).find(
+      (t) => t.package === pkg && typeof t.taskId === "string" && t.taskId.endsWith("#test"),
+    );
+    if (!task || !task.cache || !task.cache.status) return { status: "UNAVAILABLE", pkg };
+    return { status: task.cache.status, pkg };
+  }
+
+  // R1/R2 (full mode) + R4 (--freshness-only). Runs BEFORE any token indexing — a stale
+  // report must never let a claim be discharged (or refused with "no test titled") against
+  // proof the report doesn't actually carry any more.
+  function checkFreshness(mode) {
+    if (!t1Needed) {
+      if (mode === "freshness-only") process.exit(0);
+      return;
+    }
+
+    const gitRoot = resolveGitRoot();
+    let ledgerPathspec = null;
+    if (gitRoot) {
+      const rel = path.relative(gitRoot, statusDir).split(path.sep).join("/");
+      ledgerPathspec = rel || ".";
+    }
+
+    let anyStaleFull = false;
+    let anyHitRefusal = false;
+    const skewNoted = new Set(); // F3: sha -> printed once per checkFreshness call
+
+    for (const wsInfo of T1_WORKSPACES) {
+      const exists = fs.existsSync(wsInfo.jsonPath);
+      if (!exists) {
+        if (mode === "freshness-only") {
+          console.log(
+            `campaign-check: ${wsInfo.ws}.json missing — turbo will generate it — continuing`,
+          );
+        }
+        // full mode: leave missing reports to the existing artifact-missing check below.
+        continue;
+      }
+
+      const raw = loadJsonIfExists(wsInfo.jsonPath);
+      if (raw === "PARSE_ERROR") continue; // handled by the existing parse-error check below
+
+      let reportTimeMs;
+      let viaMtime = false;
+      const parsedGeneratedAt =
+        raw && typeof raw.generatedAt === "string" ? Date.parse(raw.generatedAt) : NaN;
+      if (!Number.isNaN(parsedGeneratedAt)) {
+        reportTimeMs = parsedGeneratedAt;
+      } else {
+        reportTimeMs = fs.statSync(wsInfo.jsonPath).mtimeMs;
+        viaMtime = true;
+      }
+
+      // R9: a report explicitly stamped `partial: true` (a scoped jest run) is refused
+      // regardless of how recently it was generated — checked before staleness, since a
+      // partial report is unacceptable evidence on its own terms, not because of its age. A
+      // report without the field (old reporter, or `partial: false`) falls through to the
+      // ordinary time-based staleness check below (R9: "judged by time only").
+      const isPartial = raw && raw.partial === true;
+      const partialPatterns =
+        isPartial && Array.isArray(raw.partialPatterns) ? raw.partialPatterns : [];
+
+      let block = null;
+      let reason = null; // "stale" | "partial" — only used in the freshness-only MISS message
+
+      if (isPartial) {
+        block = partialBlock(wsInfo, partialPatterns);
+        reason = "partial";
+      } else {
+        const testsCommit = clampCommitToNow(
+          gitRoot ? newestCommit(gitRoot, wsInfo.testPathspecs) : null,
+          skewNoted,
+        );
+        const ledgerCommit = clampCommitToNow(
+          gitRoot && ledgerPathspec ? newestCommit(gitRoot, [ledgerPathspec]) : null,
+          skewNoted,
+        );
+
+        let newestCause = null;
+        if (testsCommit) newestCause = { label: `${wsInfo.dir} test files`, commit: testsCommit };
+        if (ledgerCommit && (!newestCause || ledgerCommit.ct > newestCause.commit.ct)) {
+          newestCause = { label: "the ledger shards", commit: ledgerCommit };
+        }
+
+        const isStale = newestCause !== null && reportTimeMs < newestCause.commit.ct * 1000;
+        if (isStale) {
+          block = staleBlock(wsInfo, reportTimeMs, viaMtime, newestCause);
+          reason = "stale";
+        }
+      }
+
+      if (!block) {
+        console.log(
+          `campaign-check: ${wsInfo.ws}.json fresh (generated ${formatGeneratedAt(reportTimeMs, viaMtime)})`,
+        );
+        continue;
+      }
+
+      if (mode === "full") {
+        console.error(block);
+        anyStaleFull = true;
+        continue;
+      }
+
+      // --freshness-only: ask turbo whether replaying this workspace's #test task from cache
+      // would leave the report exactly as unusable as it is right now (stale, or partial —
+      // R9: treated identically here).
+      const pkg = resolvePkgName(gitRoot, wsInfo);
+      const dryRun = turboDryRunStatus(gitRoot, pkg);
+      if (dryRun.status === "HIT") {
+        console.error(block);
+        console.error(
+          `  turbo would replay ${dryRun.pkg}#test from cache, so this verify cannot refresh the report`,
+        );
+        anyHitRefusal = true;
+      } else if (dryRun.status === "MISS") {
+        console.log(
+          `campaign-check: ${wsInfo.ws}.json is ${reason} but turbo will regenerate it (cache miss) — continuing`,
+        );
+      } else {
+        console.log(
+          `campaign-check: turbo dry-run unavailable for ${dryRun.pkg} — fail open; the end-of-verify check still enforces freshness`,
+        );
+      }
+    }
+
+    if (mode === "full") {
+      if (anyStaleFull) process.exit(1);
+      return;
+    }
+    // mode === "freshness-only": R4 always exits here, before any token scan.
+    process.exit(anyHitRefusal ? 1 : 0);
+  }
+
+  if (freshnessOnly) {
+    checkFreshness("freshness-only");
+    // checkFreshness always exits in freshness-only mode; unreachable, but explicit for clarity.
+    return;
+  }
+  checkFreshness("full");
+
   let jestIndex = null;
   if (t1Needed) {
     const api = getApiJson();
     const mobile = getMobileJson();
     const pricing = getPricingJson();
     if (api === null && mobile === null && pricing === null) {
+      const regenerateLines = T1_WORKSPACES.map(
+        (w) => `  regenerate: cd ${w.dir} && npx jest --maxWorkers=2`,
+      ).join("\n");
       fail(
         `at least one T1 obligation is claimed, but none of ${apiJsonPath}, ` +
           `${mobileJsonPath} or ${pricingJsonPath} exists — run the JSON-reporter jest ` +
           `passes first (cd apps/api && npx jest --json --outputFile=${apiJsonPath}, ` +
           `cd apps/mobile && npx jest --json --outputFile=${mobileJsonPath}, ` +
-          `cd packages/pricing && npx jest --json --outputFile=${pricingJsonPath})`,
+          `cd packages/pricing && npx jest --json --outputFile=${pricingJsonPath})\n` +
+          regenerateLines,
       );
     } else if (api === "PARSE_ERROR" || mobile === "PARSE_ERROR" || pricing === "PARSE_ERROR") {
       fail(`a jest JSON report exists but failed to parse (api, mobile or pricing) — re-run it`);

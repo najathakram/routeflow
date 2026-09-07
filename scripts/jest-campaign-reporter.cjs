@@ -22,10 +22,77 @@
  */
 const fs = require("node:fs");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
+
+// Best-effort short git HEAD, for R0's provenance stamp — never throws, `null` on any
+// failure (binary missing, not a repo, non-zero exit). Read from `process.cwd()` at call
+// time (the workspace dir jest ran in), same as the reporter's own repo-root resolution.
+function gitHead() {
+  try {
+    const res = spawnSync("git", ["rev-parse", "--short", "HEAD"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      shell: false,
+    });
+    if (res.status === 0 && res.stdout && res.stdout.trim()) return res.stdout.trim();
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// R9: partial-report detection — true when jest ran scoped to a test path or name pattern, OR
+// scoped by any of `--onlyChanged`/`--changedSince`/`--shard`/`--findRelatedTests`, each of which
+// leaves this artifact covering only some of the tests, not the full workspace suite (a scoped
+// run can "launder" a stale report by making it fresh-by-time while still not being real
+// full-suite evidence — the L-063 twin R9 exists to close). Reads the installed Jest's
+// `globalConfig` defensively across versions: Jest 30 wraps path patterns in a `TestPathPatterns`
+// object from `@jest/pattern` (`.isSet()` / `.patterns`); older Jest exposes a plain
+// `testPathPattern` string. `testNamePattern` (a `-t` filter) is a plain string in every version.
+//
+// F2: `tpp.isSet()` being true is ITSELF the partial signal — the shape of `.patterns` is only
+// used to make the printed reason legible, never to decide `partial`. `TestPathPatternsExecutor`
+// (same `@jest/pattern` module) exposes `isSet()` with a non-array `.patterns`, so falling
+// through to `partial: false` on that shape (the pre-fix behaviour) is the fail-OPEN direction
+// R9 exists to close; a `<pattern>` placeholder is recorded instead of silently dropping the
+// reason. `onlyChanged`/`changedSince`/`shard`/`findRelatedTests` are booleans/strings/objects on
+// `globalConfig` directly (never wrapped), so each is its own independent trigger with a
+// synthetic label — a full `turbo run test` invocation sets none of them.
+function computePartial(globalConfig) {
+  const patterns = [];
+  const gc = globalConfig || {};
+
+  const tpp = gc.testPathPatterns;
+  if (tpp && typeof tpp.isSet === "function") {
+    if (tpp.isSet()) {
+      if (Array.isArray(tpp.patterns)) patterns.push(...tpp.patterns);
+      else patterns.push("<pattern>");
+    }
+  } else if (Array.isArray(tpp) && tpp.length > 0) {
+    patterns.push(...tpp);
+  }
+
+  if (typeof gc.testPathPattern === "string" && gc.testPathPattern) {
+    patterns.push(gc.testPathPattern);
+  }
+  if (typeof gc.testNamePattern === "string" && gc.testNamePattern) {
+    patterns.push(gc.testNamePattern);
+  }
+  if (gc.onlyChanged) patterns.push("onlyChanged");
+  if (gc.changedSince) patterns.push(`changedSince ${gc.changedSince}`);
+  if (gc.findRelatedTests) patterns.push("findRelatedTests");
+  if (gc.shard && typeof gc.shard === "object") {
+    const { shardIndex, shardCount } = gc.shard;
+    patterns.push(`shard ${shardIndex}/${shardCount}`);
+  }
+
+  return { partial: patterns.length > 0, partialPatterns: patterns };
+}
 
 class CampaignReporter {
   constructor(globalConfig, options) {
     this._name = (options && options.artifact) || "api";
+    this._globalConfig = globalConfig;
   }
   onRunComplete(_contexts, results) {
     try {
@@ -33,10 +100,19 @@ class CampaignReporter {
       const root = path.resolve(process.cwd(), "..", "..");
       const dir = path.join(root, ".campaign", "runs");
       fs.mkdirSync(dir, { recursive: true });
+      const { partial, partialPatterns } = computePartial(this._globalConfig);
       const out = {
         numTotalTests: results.numTotalTests,
         numPassedTests: results.numPassedTests,
         numFailedTests: results.numFailedTests,
+        // R0: provenance stamp so campaign-check.mjs can tell a fresh artifact from one a
+        // turbo cache replay left behind (L-034). Best-effort; every other field unchanged.
+        generatedAt: new Date().toISOString(),
+        gitHead: gitHead(),
+        // R9: true when this run was scoped (a test path or name pattern), so campaign-check
+        // must not accept it as full-suite evidence even when it is fresh by time.
+        partial,
+        partialPatterns,
         testResults: (results.testResults || []).map((suite) => ({
           name: suite.testFilePath,
           assertionResults: (suite.testResults || []).map((t) => ({
