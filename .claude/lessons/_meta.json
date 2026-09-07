@@ -1,10 +1,10 @@
 {
-  "nextId": 86,
+  "nextId": 87,
   "activeCount": 39,
-  "archivedCount": 42,
+  "archivedCount": 43,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-07T02:35:00.000Z",
+  "updatedAt": "2026-09-07T03:22:40.902Z",
   "schemaVersion": 1,
-  "note": "docs/645-f08-bookkeeping: added L-085 (process — an engine run stalled on a hung tool call holding a workflow barrier that no stop/resume could clear, plus a line-number probe that raced a sibling editor and deleted the wrong line; recovery was a lead-designed light loop from the tree as it stood, F08/#645). No entry archived: register is 39/40 entries at 39.7/40.0 KB (validate-lessons), UNDER the 40960-byte cap, so the byte cap did not force an archive this round -- headroom for a future append is effectively zero (~0 more entries fit at the current average size) but that binds the NEXT append, not this one."
+  "note": "docs/647-lesson-l086: added L-086 (testing — post-deploy money oracles are read from the API with a > 0 vacuity guard, never fixture arithmetic; dashboard heading locators scope to #main-content; spec-29 fix #647). Archived L-058 (guarded by ci-freshness-guard-script.spec.ts T1) for byte headroom."
 }

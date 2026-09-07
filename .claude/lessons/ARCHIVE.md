@@ -711,3 +711,18 @@ id, so **L-046** (domain), the following qualifying entry, is archived instead.
 - **Root cause:** a month-advance compared against a mutated date; a second writer priced lines outside the one buyer resolver; the cron advanced the schedule before it knew the outcome and never recorded it; the restore after failure was not conditioned on the claim that made it.
 - **Lesson:** **Every path that materialises an order or invoice from a saved shape is a pricing writer and a schedule writer: price through the shared resolver, record the outcome on the row you advanced, and undo a claim only by compare-and-set on the value the claim wrote — a miss means someone newer owns the row, so write nothing.**
 - **Guard:** REG-B48 T9–T16 through the real resolver; REG-B46 T1–T7b; REG-B106 T17/T17b/T17c/T18/T19 ([[L-030]]: a write and its record share one condition; [[L-045]]: release on the forward-path marker).
+
+## Archived 2026-09-07 — headroom for L-086 (fix/e2e-29-oracles, #647)
+
+### L-058 · 2026-09-04 · testing · REG-E2EGUARD-403
+
+- **Symptom:** the deploy-triggered E2E job reported success for days with every test step
+  skipped.
+- **Root cause:** the freshness guard's `latest=$(gh api … --jq '.[0].sha' 2>/dev/null || true)`
+  treated a 403 error body as the newest sha — non-empty, so the emptiness check never fired — and
+  the run token never had `deployments:read` (it worked only while the repo was public).
+- **Lesson:** **A guard that skips work must decide on the command's exit status and the payload's
+  shape, never on string emptiness, and must fail OPEN; declare every permission a job's API call
+  needs at job level.** A job whose steps are all skipped is not a passing run ([[L-041]]).
+- **Guard:** `ci-freshness-guard-script.spec.ts` T1 executes the workflow's own step under a fake
+  `gh`.
