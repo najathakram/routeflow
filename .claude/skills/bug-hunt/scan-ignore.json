@@ -32,7 +32,6 @@
     "apps/mobile/lib/api/orders.ts::export function useCreateAdminOrder() {",
     "apps/mobile/lib/api/orders.ts::export function useOrderTracking(orderId: string, orderStatus?: string) {",
     "apps/mobile/lib/api/products.ts::export function useProductByBarcode(barcode: string | null) {",
-    "apps/mobile/lib/api/returns.ts::export const useCancelReturn = () => useReturnTransition(\"cancel\");",
     "apps/mobile/lib/api/returns.ts::export function useMyReturns(params?: { status?: string }) {",
     "apps/mobile/lib/api/routes.ts::export function useAllRoutes() {",
     "apps/mobile/lib/api/routes.ts::export function useAnalyzeRouteRun() {",

@@ -1,0 +1,350 @@
+{
+  "assess": {
+    "integrity": {
+      "tscPass": true,
+      "returnsSpecsPass": true,
+      "raceDamageFound": "None surviving. The incident (agent a2e37b76a2e5c3d48's `sed -i '586d'` racing the live API executor on apps/api/src/returns/returns.service.ts) had already self-healed before this round: the FOR UPDATE statement is present at returns.service.ts:678, and the two REG-B69 cases now pin it explicitly (`expect(tx.$executeRaw).toHaveBeenCalledTimes(1)` plus an invocationCallOrder assertion that it precedes the in-tx findUnique) — the exact mutation the incident's probe exploited is now caught. Baseline before any of my edits: `npx tsc -p tsconfig.build.json --noEmit` clean, `npx jest src/returns src/credit-notes --runInBand` 9 suites / 131 tests passing. I also read every deletion in `git diff -U0 apps/api/src/returns/returns.service.ts` against the executors' recorded fixes in the journal: each removed line maps to a documented replacement (the `{ not: \"REJECTED\" }` quota clause -> B82 notIn, `restock: i.restock ?? true` -> defaultRestockForReason, the positional findAll/findAllForUser signatures -> the B166 options object, the two order-line `subtotal/qty` refund loops -> billedBasisFor/priceReturn, the F09 comment block + `notIn: CREDIT_SOURCE_EXCLUDED` select -> the in-code creditable decision). No orphaned deletion.",
+      "repaired": "Nothing needed repair — no repair was performed, and none was guessed at."
+    },
+    "deliveredQtyRemoval": [
+      "packages/types/api/returns.ts: removed the optional `deliveredQty?: number` field and its doc comment from CreateReturnItemDto (the shared DTO — it was shared, so the api has no separate copy to edit).",
+      "apps/api/src/returns/returns.service.ts (priceReturn, ~:513): removed the consuming branch — `item.deliveredQty != null ? Math.min(returnedQty, Math.max(0, billedQty - Number(item.deliveredQty))) : Math.min(returnedQty, billedQty)` collapsed to `const refundQty = Math.min(Number(item.qty), billedQty);`. Refund quantity is now unconditionally min(q, B) on the billed basis, per the ruling.",
+      "apps/api/src/returns/returns.service.ts (billedBasisFor doc block, :381-392): the deliveredQty paragraph replaced with a note that narrowing by delivered units needs a `ReturnItem.deliveredQty` column (migration) and is filed separately.",
+      "apps/api/src/returns/returns-refund.spec.ts: deleted test T1d in full — `it(\"REG-B53 undelivered units refund only what was billed (deliveredQty composition)\")`, 64 lines, both the (a) delivered-basis and (b) ordered-basis halves. Removed via a marker-bounded node splice (start = the T1d `it(` line, end = the T1e `it(` line) with a guard asserting the removed text contained `expect(dto.amount).toBe(40)`; no neighbouring test touched.",
+      "apps/api/src/returns/returns-refund.spec.ts: file header comment (:16-18) and the section divider (:406) reworded to drop the deliveredQty composition claim.",
+      "apps/mobile/lib/returns-logic.ts: `UndeliveredReturnPayload.items` narrowed from `(CreateReturnItemDto & { deliveredQty: number })[]` to `CreateReturnItemDto[]`, and `deliveredQty: delivered` removed from the `payload.items.push({...})` — this is the driver-screen field that was sent (the screen POSTs `payloads` verbatim).",
+      "apps/mobile/lib/returns-logic.ts: also removed the now-unconsumed `deliveredQty: number` from `UndeliveredReturnRow` and from the `rows.push({...})`. It existed only to feed the payload; the driver screen renders orderId/lineItemId/productId/qty/amount/reason only, so leaving it would have been an orphan.",
+      "apps/mobile/__tests__/returns-logic.test.ts: the payload-body test renamed to \"payload items are exactly the POST body the driver screen sends\" with `deliveredQty` dropped from both expected items; the row assertion `expect(rows.map(r => r.deliveredQty)).toEqual([6, 0])` removed (the derivation stays pinned by `qty` [4, 5] = ordered 10-6 and 5-0, with a comment saying so).",
+      "CONFIRMATION — T1d gone: `grep -n 'REG-B53 undelivered units refund'` over apps/api returns 0 hits; the api suite went 131 -> 130 tests, exactly one test fewer.",
+      "CONFIRMATION — T1e kept and green: `it(\"REG-B53 no creditable invoice refuses; no invoice at all falls back to the order line\")` is intact at returns-refund.spec.ts:603 (both halves: VOID-only order rejects BadRequest, zero-invoice order takes the legacy 100 order-line basis), passing in the final run.",
+      "CONFIRMATION — no orphans: the only surviving `deliveredQty` strings in the F08 radius are three prose comments (returns.service.ts:391, returns-refund.spec.ts:18, returns-logic.ts:131) that each explain why the composition is deferred to a column + migration. Zero DTO fields, zero code branches, zero payload keys, zero test assertions. Unrelated pre-existing `OrderItem.deliveredQty` usages (invoices/orders/routes/pricing) untouched."
+    ],
+    "mobileCompletion": [
+      {
+        "item": "Driver screen consumes the helper's `undeliveredReturnLines(...).payloads` (shaper relocated into returns-logic.ts and tested)",
+        "status": "already-present",
+        "where": "apps/mobile/app/(driver)/route/stop/[stopId]/return/index.tsx:104-119 destructures { rows, total, payloads, unlistedCount } from ONE `undeliveredReturnLines(toUndeliveredStop(stop, lineExtras), { damagedKeys })` call inside a useMemo, and issue() (:142) POSTs those payloads verbatim — the screen-local `payloadForOrder` the reviewer flagged is gone. `toUndeliveredStop` now lives in apps/mobile/lib/returns-logic.ts:178-208 and is covered by its own test (\"carries boxes/unitsPerBox through and coerces a Decimal-string subtotal to a number\")."
+      },
+      {
+        "item": "Per-row Damaged override",
+        "status": "already-present",
+        "where": "Screen: `damagedKeys` state + `toggleDamaged` (:92-99), a per-row Damaged chip keyed by `undeliveredRowKey(r.orderId, r.lineItemId)` (:238-247). Helper: returns-logic.ts:271-275 flips that row alone to reason DAMAGED with `restock: restockForReason(\"DAMAGED\")` = false. No global reason chip, as the ruling requires."
+      },
+      {
+        "item": "Real `promoFreeUnits` via apps/mobile/lib/api/orders.ts",
+        "status": "completed",
+        "where": "Already present: orders.ts exports the shared `orderQueryOptions(id)` (same queryKey as `useOrder`, so the same cache entry), and the screen fans out over the stop's orders with `useQueries` (:70-86) to build `lineExtras` (promoFreeUnits + unitsPerBox), threaded into `toUndeliveredStop`. I FINISHED one loose end the stuck executor left: `extrasReady` was computed in the `combine` and then never used, so the screen would let a driver submit before the promo facts landed — pricing a boxed BOGO line's free units as paid goods and minting a wrong credit server-side. Added the gate in two places: an early return + toast (\"Still loading line pricing - try again in a moment.\") at the top of issue() (:130-137) and `!extrasReady` in the Submit button's disabled/dimmed condition (:284-290). Empty-stop safe: `results.every(...)` on an empty array is true."
+      },
+      {
+        "item": "Null-productId exclusion",
+        "status": "already-present",
+        "where": "returns-logic.ts:296-300 — a line whose `li.productId ?? m.productId` is null is dropped from rows/total/payloads and counted into `unlistedCount` (create() matches payload items to order lines by productId, so an empty id would fail the whole order's return). The screen surfaces it at index.tsx:255-261 (\"N unlisted line(s) cannot be returned here - ask the office.\")."
+      },
+      {
+        "item": "`Promise.allSettled` submission with a submitted set",
+        "status": "already-present",
+        "where": "index.tsx:124-126 (`submittedOrderIds` state), :142 (pending = payloads not yet submitted), :147-172 (`Promise.allSettled` over per-order mutateAsync, folded through the tested `summarizeSubmissions` helper at returns-logic.ts:342-359, which counts a cumulative-over-return rejection as done so a retry can clear). Partial failure reports how many orders still need sending instead of stranding the driver."
+      },
+      {
+        "item": "Formatting side-effect worth knowing",
+        "status": "completed",
+        "where": "`npx prettier --check` failed on the driver screen — the stuck executor never formatted it (its `Promise.allSettled(...).then(...)` chain was mis-wrapped, independent of my edits). Ran `npx prettier --write` on that one file; all six touched files now pass `--check`. This inflates that file's diff stat but changes no behavior."
+      }
+    ],
+    "gates": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api && npx tsc -p tsconfig.build.json --noEmit",
+        "pass": true,
+        "summary": "Exit 0, no diagnostics. (Also clean on the pre-edit integrity run.)"
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api && npx jest src/returns src/credit-notes --runInBand",
+        "pass": true,
+        "summary": "9 suites / 130 tests passed (was 131 before T1d's removal — exactly one test fewer, as designed). Tripwires green: returns-refund.spec.ts F09-A2 zero-invoice pin, returns-ledger.spec.ts, returns.security.spec.ts, and all four credit-notes suites. The three red ERROR lines in the output are the deliberate B68 compensation-path logs from the passing REG-B68 tests, not failures."
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/mobile && npx tsc --noEmit",
+        "pass": true,
+        "summary": "Exit 0, no diagnostics — including after the UndeliveredReturnRow/Payload field removals and the extrasReady wiring."
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/mobile && npx jest returns-logic",
+        "pass": true,
+        "summary": "1 suite / 23 tests passed — T7 (restockForReason), T10 (undeliveredReturnLines: undelivered qty, box-safe amounts, DELIVERED skipped, zero-qty dropped, payload grouped by orderId, free-unit box axis, mixed-reason order), T11 (canCancel), toUndeliveredStop, and the rewritten buildReturnItems restock cases."
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web && npx tsc --noEmit -p tsconfig.json",
+        "pass": true,
+        "summary": "Exit 0, no diagnostics — the shared CreateReturnItemDto field removal does not touch the web callers."
+      }
+    ],
+    "filesTouched": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/packages/types/api/returns.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/returns/returns.service.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/returns/returns-refund.spec.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/mobile/lib/returns-logic.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/mobile/__tests__/returns-logic.test.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/mobile/app/(driver)/route/stop/[stopId]/return/index.tsx"
+    ],
+    "notes": "Result: all five perRound gates green in ONE iteration (of the three allowed); no gate was ever red after my edits, so nothing had to be un-broken.\n\nRuling 3 (integrity) first: the recorded race left no damage. tsc + the returns/credit-notes suites were already green before I touched anything, the FOR UPDATE row lock survives at returns.service.ts:678, and every deletion in the service's diff traces to a documented executor fix in the journal. Notably the incident's own mutation hole is now closed — a2e37b76's second fix added `toHaveBeenCalledTimes(1)` and an invocationCallOrder pin on `tx.$executeRaw` in both REG-B69 cases, so deleting the FOR UPDATE line (which the probe proved was invisible before) now turns the suite red.\n\nRuling 1 (option B) is complete in eight places across five files plus the two test-side removals. The design intent is preserved as prose rather than silently dropped: three comments now say the delivered-side cap needs a `ReturnItem.deliveredQty` column and is filed separately, so the close-out registry row for the B53xB128 composition has an anchor in the code it belongs to. Refund quantity is now unconditionally `min(returnedQty, billedQty)` on the billed basis. Judgment call to flag for the reviewer: I removed `deliveredQty` from `UndeliveredReturnRow` as well as from the payload. The ruling names only \"the driver-screen field that sends it\", but the row field had no remaining consumer once the payload dropped it (the screen renders qty/amount/reason only), and stage C is checking for orphans — the derivation it documented stays pinned by the `qty [4, 5]` assertion. Revert that one hunk if you would rather keep the row self-describing.\n\nRuling 2 (mobile): the stuck executor's 15 edits ALL landed before it hung — four of the five owed items were already complete and correct on disk, so I redid none of them. The single genuine gap was `extrasReady`: computed in the useQueries `combine` and then referenced nowhere, which is exactly the shape of an unfinished edit. Left as-is it was a live money defect, not just dead code — a driver tapping Issue before the order-detail queries resolve would submit with `promoFreeUnits` 0 next to a real `freeUnitSize`, over-crediting a boxed BOGO line, and the credit note is minted server-side. I gated it minimally (toast + early return in issue(), plus the disabled Submit button) rather than expanding scope.\n\nTwo things stage C should look at that are outside my brief and that I deliberately did NOT act on: (1) the round-1 reviewer's second finding — `billedBasisFor` sums headroom across ALL creditable invoices but mints against the LATEST one, while credit-notes.service.ts:141-151 caps per SINGLE invoice; an order with invoices A(100, uncredited) and B(60) and a basis of 90 passes headroom then throws the per-invoice cap, hitting the B68 compensation path and leaving that return unrefundable by any method. That is a live composition defect in the shipped path and it is untouched by ruling 1. (2) `processRefund` calls billedBasisFor BEFORE the EXTERNAL_REFUND branch, so the \"Nothing billed on this order can be refunded\" throw also blocks a cash refund on a VOID-only-invoice order — refuses before the claim, so nothing is stranded, but the return can never resolve. Both are pre-existing to this round; I raise them rather than fix them because neither falls under rulings 1-3 and routes/credit-notes/service redesign is out of my radius.\n\nHousekeeping: apps/api/src/routes/routes.service.ts was never opened or edited. No git write commands, no installs, no docker/playwright, no full `npx jest`. All six touched files pass `npx prettier --check` (semicolons, double quotes, printWidth 100, trailing commas); no client identifiers introduced; no money math added or moved outside @routeflow/pricing (the mobile helper still prices via `prorateLineSubtotal` + `roundMoney`)."
+  },
+  "regate": {
+    "results": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api && npx tsc -p tsconfig.build.json --noEmit",
+        "pass": true,
+        "summary": "TypeScript compilation successful for API (tsconfig.build.json)",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api && npx jest src/returns src/credit-notes --runInBand",
+        "pass": true,
+        "summary": "Jest tests passed: 130 tests across 9 test suites (credit-notes, returns-refund, credit-notes wallet-integrity, returns security, returns-overreturn, credit-notes security, credit-notes wallet-integrity pins, create-credit-note DTO, returns-ledger)",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/mobile && npx tsc --noEmit",
+        "pass": true,
+        "summary": "TypeScript compilation successful for mobile app",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/mobile && npx jest returns-logic",
+        "pass": true,
+        "summary": "Jest tests passed: 23 tests (returnActionFlags, canCancel, restockForReason, buildReturnItems, undeliveredReturnLines, toUndeliveredStop, returnPillFor)",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web && npx tsc --noEmit -p tsconfig.json",
+        "pass": true,
+        "summary": "TypeScript compilation successful for web app (tsconfig.json)",
+        "failures": []
+      }
+    ],
+    "allPass": true
+  },
+  "review": {
+    "executorClaims": [
+      {
+        "agent": "a6e34fe99f9e2a497",
+        "claim": "[#0] EXTERNAL_REFUND no longer runs the mint-time gates — processRefund prices with the pure priceReturn for EXTERNAL_REFUND and only calls billedBasisFor (which throws) on the CREDIT_NOTE path.",
+        "verdict": "confirmed",
+        "evidence": "apps/api/src/returns/returns.service.ts:574-577 is the ternary; the EXTERNAL_REFUND early return is at :601. Pinned by returns-refund.spec.ts:674 (\"REG-B53 EXTERNAL_REFUND on a VOID-only order still resolves\") which asserts one updateMany with refundMethod EXTERNAL_REFUND / refundAmount 0 and creditNotesCreate not called, against the same VOID-only fixture the CREDIT_NOTE sibling at :603 refuses. This REFUTES the assessor's own residual note (2) that billedBasisFor still runs before the EXTERNAL_REFUND branch."
+      },
+      {
+        "agent": "a6e34fe99f9e2a497",
+        "claim": "[#8] billedBasisFor also checks the SOURCE invoice's own remaining room before the claim, so credit-notes.create()'s per-invoice cap can no longer reject after the RECEIVED→REFUNDED claim committed.",
+        "verdict": "confirmed",
+        "evidence": "returns.service.ts:437-451 (second creditNote.aggregate on invoiceId, latestRoom, refusal naming the invoice) matches credit-notes.service.ts:141-151's cap exactly (Σ non-VOID credits on invoiceId + amount ≤ invoice.total + 0.001). Pinned by returns-refund.spec.ts:556 (inv-a $900 older / inv-b $100 latest, refund $500 → rejects, return.updateMany NOT called). This REFUTES the assessor's residual note (1). Caveat filed as a finding: the guard only runs when creditable.length >= 2 (:402)."
+      },
+      {
+        "agent": "a6e34fe99f9e2a497",
+        "claim": "[#2] findAll strips the computation-only relations before responding — order is rebuilt as { id, orderNumber }; findOne drops the invoices sub-object; findAllForUser gives a CUSTOMER with no Customer row an empty page.",
+        "verdict": "confirmed",
+        "evidence": "returns.service.ts:260-275 (order rebuilt to { id, orderNumber }), :783 (findOne destructures invoices out), :189-198 (the CUSTOMER-without-row empty page). Pinned by returns-refund.spec.ts:884-887 (not.toHaveProperty invoices/lineItems) and :949 (findMany never called for a customerless CUSTOMER). The customer guard is a genuine tenant-wide-leak fix that was not in the ruling."
+      },
+      {
+        "agent": "a6e34fe99f9e2a497",
+        "claim": "[#3]/[#7]/[#15] The per-row creditNote.aggregate fan-out is gone — findAll maps rows through the pure priceReturn, so a limit=500 KPI request issues exactly findMany + count.",
+        "verdict": "confirmed",
+        "evidence": "returns.service.ts:260-275 calls this.priceReturn per row with no await; billedBasisFor (the only aggregate caller) is unreachable from findAll. Pinned by returns-refund.spec.ts:878 (expect(prisma.creditNote.aggregate).not.toHaveBeenCalled()) with a 2+-invoice row present. Residual, filed as a finding: the joined invoice/lineItem graph is still fetched for all 500 rows."
+      },
+      {
+        "agent": "a6e34fe99f9e2a497",
+        "claim": "[#4] The headroom aggregate is order-scoped via the real CreditNote.orderLinks → OrderCreditNote relation, so unsourced credits linked to the order still reduce headroom.",
+        "verdict": "confirmed",
+        "evidence": "returns.service.ts:414-425; the relation exists at apps/api/prisma/schema/finance.prisma:497 (orderLinks OrderCreditNote[]), so the query is valid Prisma, not a runtime throw. Pinned by returns-refund.spec.ts:539-544. Semantics queried in a finding: OrderCreditNote is documented (finance.prisma:528-535) as an application INTENT, not a credit issued against the order."
+      },
+      {
+        "agent": "a6e34fe99f9e2a497",
+        "claim": "[#12] The B68 compensation is logged and guarded; the compensating updateMany runs in its own try/catch and `throw err` always rethrows the ORIGINAL mint error.",
+        "verdict": "confirmed",
+        "evidence": "returns.service.ts:615-643. Pinned by returns-refund.spec.ts:717 and :750 (\"a failed COMPENSATION never replaces the original mint error\" — compensation rejects with 'db down', processRefund still rejects with /cap exceeded/, updateMany called twice)."
+      },
+      {
+        "agent": "a2e37b76a2e5c3d48",
+        "claim": "[#1] Added `expect(tx.$executeRaw).toHaveBeenCalledTimes(1)` plus an invocationCallOrder pin to BOTH REG-B69 cases; mutation-probe verified the suite goes red when the FOR UPDATE statement is deleted.",
+        "verdict": "confirmed",
+        "evidence": "apps/api/src/returns/returns-refund.spec.ts:1063-1067 and :1100-1104 carry both assertions; the statement they pin is live at apps/api/src/returns/returns.service.ts:675. Deleting :675 now fails two tests, so the hole the agent's own probe exploited is closed. The incident it reported (its `sed -i '586d'` racing the live API executor) left no orphaned deletion: every removed line in `git diff apps/api/src/returns/returns.service.ts` maps to a documented replacement."
+      },
+      {
+        "agent": "a2e37b76a2e5c3d48",
+        "claim": "[#0] Renamed the F09 A2 tripwire and replaced its stale VOID-sole-invoice comment, because its fixture had been re-pointed to a zero-invoice order; no fixture or assertion changes.",
+        "verdict": "confirmed",
+        "evidence": "returns-refund.spec.ts:163 carries the renamed test and :179 the rewritten comment; the VOID-only case is now owned by \"REG-B53 no creditable invoice refuses\" at :603, whose part (a) asserts the refusal and part (b) the zero-invoice $100 fallback."
+      },
+      {
+        "agent": "ab97f53dc2320ef65",
+        "claim": "T1e's message oracle became `rejects.toBeInstanceOf(BadRequestException)` + `/billed/i`, and T1e now pins that the invoices select contains neither \"VOID\" nor \"WRITTEN_OFF\" (the creditable decision is made in code, not filtered at the DB).",
+        "verdict": "confirmed",
+        "evidence": "returns-refund.spec.ts:629-641. The implementation matches: returns.service.ts:551-560 selects every invoice with id/status/total/createdAt/items and no status filter, and priceReturn (:481-487) makes the CREDIT_SOURCE_EXCLUDED decision in code. Removing that select filter guard would let a VOID-only order be indistinguishable from a never-invoiced one."
+      },
+      {
+        "agent": "ab97f53dc2320ef65",
+        "claim": "T1c vacuity closed with `expect(prisma.creditNote.aggregate).toHaveBeenCalled()`, so an implementation that blanket-refuses every 2+-invoice refund cannot pass.",
+        "verdict": "confirmed",
+        "evidence": "returns-refund.spec.ts:528-544; the sibling at :456 (same 2-invoice shape, no aggregate stub) mints against inv-2, so the aggregate is the discriminator. The agent's own recorded residual (index 7, the where-clause unpinned) has since been closed by a6e34's [#4] — :539-544 now pins the orderLinks branch."
+      },
+      {
+        "agent": "ab97f53dc2320ef65",
+        "claim": "Red-gate scaffolding: inert namespace-import fallbacks and the `as unknown as` buildReturnItems cast were introduced so the mobile reds fail on their own oracles.",
+        "verdict": "confirmed",
+        "evidence": "Introduced then correctly removed by a72e0734d84a903c8 — apps/mobile/__tests__/returns-logic.test.ts:6-13 is now a plain named import of the six real exports, and grep for `as unknown as` / `import * as` / inert fallbacks over that file returns zero hits. Nothing scaffolding-shaped survives into the diff."
+      },
+      {
+        "agent": "a72e0734d84a903c8",
+        "claim": "Fixed: \"T10's payloads assertions test dead code — the driver screen ignores undeliveredReturnLines(...).payloads and builds the POST body with its own untested payloadForOrder.\"",
+        "verdict": "confirmed",
+        "evidence": "apps/mobile/app/(driver)/route/stop/[stopId]/return/index.tsx:104-119 destructures { rows, total, payloads, unlistedCount } from ONE undeliveredReturnLines(toUndeliveredStop(stop, lineExtras), { damagedKeys }) call, and issue() (:141) POSTs those payloads verbatim via mutateAsync. No `payloadForOrder` remains in the file."
+      },
+      {
+        "agent": "a481d4ee7b8b6dd24",
+        "claim": "T13's KPI-delta assertion is built on the `limit: 500` summary window and becomes permanently red once the regression tenant passes 500 returns.",
+        "verdict": "confirmed",
+        "evidence": "Finding real AND remediated in the shipped spec: apps/web/e2e/29-returns-lifecycle.spec.ts:224-231 reads the tenant return count up front into `kpiWindowSaturated`, and :272-283 downgrades only the delta leg (toBeGreaterThanOrEqual(10)) while the row-level `$10.00` oracle at :259 stays primary. The 500-row window is exactly page.tsx:404's useReturns({ limit: 500 })."
+      },
+      {
+        "agent": "adcb391c0d2e6f04c",
+        "claim": "SKIPPED (fixed: []) — `restockForReason` is a hand-written mirror of the API's NO_RESTOCK_REASONS with no mirror-identity pin; the shared-const design is unimplementable (a value import of @routeflow/types in apps/api crashes `node dist/main.js`, and mobile's jest maps @routeflow/types to a hand-written stub).",
+        "verdict": "confirmed",
+        "evidence": "Nothing landed (filesChanged: []) and the mirror is live and unpinned: apps/api/src/returns/returns.service.ts:19 vs apps/mobile/lib/returns-logic.ts:72 — two independent hand-typed copies of the same rule. The blocker the agent cites is real (apps/api/src/common/no-runtime-workspace-imports.spec.ts). Its proposed enum-parity-style pin is the right shape and is filed below as a finding, not treated as done."
+      }
+    ],
+    "removalComplete": true,
+    "findings": [
+      {
+        "file": "apps/web/app/(dashboard)/returns/[id]/page.tsx",
+        "line": 464,
+        "severity": "major",
+        "summary": "The web resolve-return handler reports the three NEW permanent B53 refusals as a retryable \"Please try again\", and nothing consumes refundEstimateReason.",
+        "detail": "handleResolveReturn's onError ignores the server payload and always toasts \"Failed to resolve return / Please try again.\" This round introduces three terminal BadRequests on that exact path — \"Nothing billed on this order can be refunded\" (returns.service.ts:389), \"Refund exceeds the remaining headroom on this order's billed invoices\" (:432), and \"Refund <x> exceeds the remaining room <y> on invoice <n>\" (:446). None of them clear on a retry, so the operator's only guidance is the one action that can never work; the correct exit (EXTERNAL_REFUND) is never suggested. The API even added `refundEstimateReason` (returns.service.ts:273, :791) specifically so a client could tell a refusal from a genuine $0 — no web or mobile code reads that field anywhere. The mobile operator screen already surfaces `e?.response?.data?.message` (apps/mobile/app/(operator)/returns/[id].tsx:52, :63), so web — the golden reference — is the weaker surface. Fix is one line per handler: pass the server message through as the toast description.",
+        "source": "consumer-read",
+        "failure_scenario": "An order with two SENT invoices ($900 + $100, latest $100) has a RECEIVED return worth $500. The operator clicks Resolve → Issue Store Credit. billedBasisFor refuses at returns.service.ts:445 before the claim. The UI says \"Failed to resolve return. Please try again.\" The operator retries indefinitely; the return sits at RECEIVED forever, and the message naming inv-b (which the code deliberately composed to be actionable) is discarded client-side."
+      },
+      {
+        "file": "apps/mobile/lib/returns-logic.ts",
+        "line": 333,
+        "severity": "major",
+        "summary": "summarizeSubmissions, the per-row damaged override, and the unlisted-line exclusion — three of ruling 2's five owed behaviours — ship with zero tests.",
+        "detail": "apps/mobile/__tests__/returns-logic.test.ts holds 23 tests; grep for `summarizeSubmissions`, `damagedKeys`, `unlistedCount`, and `undeliveredRowKey` over it returns zero hits. The test plan's harness note designates this helper as the ONLY oracle for the mobile leg (\"the driver screen rewire itself is not jest-provable — the helper is the oracle\"), so untested helper behaviour is untested shipped behaviour. The sharpest edge is summarizeSubmissions' classification rule: it decides a return already landed by lower-cased substring match on the server's error prose, `\"exceeds remaining returnable\"`, which is free text inside a template literal at apps/api/src/returns/returns.service.ts:140. Nothing pins that string on either side. Second: the per-row DAMAGED toggle (returns-logic.ts:271-275) is the only thing keeping damaged goods out of sellable stock on the driver path (restock:false) — B61's whole point — and no test exercises it. Third: the null-productId drop (:266-269) is what stops one unlisted ad-hoc line from failing an entire order's return, also untested.",
+        "source": "writer-read",
+        "failure_scenario": "Someone rewords returns.service.ts:140 (e.g. \"exceeds the remaining returnable qty\"). A driver submits an undelivered return for two orders; order A succeeds, order B is refused because the office already filed that return. summarizeSubmissions no longer matches, marks B failed, and B is left out of submittedOrderIds. The driver taps Submit again, B is refused again, and the screen can never reach the success path — with no test anywhere going red."
+      },
+      {
+        "file": "apps/api/src/returns/returns.service.ts",
+        "line": 402,
+        "severity": "minor",
+        "summary": "The pre-claim per-invoice room check runs only for 2+ creditable invoices; the far more common single-invoice case can still fail credit-notes' cap after the claim commits.",
+        "detail": "billedBasisFor returns early at :402 when `creditable.length < 2`, skipping the latestRoom guard added at :437-451. credit-notes.service.ts:141-151 caps on the source invoice regardless of how many invoices the order has, so a single-invoice order whose invoice already carries a credit note (an earlier partial return, or an operator-issued credit) still mints past the claim and throws inside create(). B68's compensation bounces the row back to RECEIVED so nothing is stranded — but the refund is then unachievable by CREDIT_NOTE, with the same non-actionable web toast as the finding above. Not a regression (pre-fix code behaved the same), but the round explicitly hardened the rarer branch and left the common one open; the fix is to hoist the latestRoom check above the `< 2` early return.",
+        "source": "diff",
+        "failure_scenario": "Order with one SENT invoice, total $100, already carrying a $70 credit note from an earlier partial return. A second RECEIVED return prices at $50 on the billed basis. billedBasisFor returns early (one creditable invoice), the RECEIVED→REFUNDED claim commits, credit-notes.create() throws (70 + 50 > 100), B68 compensates back to RECEIVED, and the operator sees \"Please try again.\" forever."
+      },
+      {
+        "file": "apps/api/src/returns/returns.service.ts",
+        "line": 260,
+        "severity": "minor",
+        "summary": "refundEstimate — a billed money figure — is now returned to DRIVER on GET /returns, which is role-allowed and not scoped to the driver.",
+        "detail": "apps/api/src/returns/returns.controller.ts:31 grants @Get() to OPERATOR, DRIVER and CUSTOMER, and findAllForUser (:185) scopes only CUSTOMER — a DRIVER gets the tenant-wide list. Before this round that list carried no money at all: ReturnItem has no price column (that is B75's own cause), so the old client-side `unitPrice ?? 0` reduce was structurally $0. The change correctly strips the invoice graph off the wire (:270), but the derived per-row money now ships to every DRIVER for every return in the tenant. The DRIVER-scoping row is already an agreed close-out follow-up; this change escalates it from list-metadata leakage to money leakage and should raise its priority.",
+        "source": "diff",
+        "failure_scenario": "Any authenticated DRIVER calls GET /api/v1/returns?limit=500 and receives refundEstimate for every return in the tenant — including customers they never serve — a figure derived from those customers' invoice subtotals."
+      },
+      {
+        "file": "apps/mobile/app/(driver)/route/stop/[stopId]/return/index.tsx",
+        "line": 83,
+        "severity": "minor",
+        "summary": "extrasReady requires every order-detail query to succeed, so one failed query permanently disables Submit behind a \"try again in a moment\" toast with no error state or retry control.",
+        "detail": "extrasReady = results.every(r => r.isSuccess) (:83) gates both issue() (:134-137) and the Submit button's disabled state (:284-290). A react-query error state is sticky until a refetch, and this screen offers no refresh affordance and no error copy — the driver sees a permanently dimmed button and a toast promising the wait is temporary. The gate itself is correct and necessary (submitting with promoFreeUnits 0 next to a real freeUnitSize over-credits a boxed BOGO line, and the credit is minted server-side), but the failure branch is unhandled. Note the access rule that makes this reachable: apps/api/src/orders/orders.service.ts findOne 403s a DRIVER unless order.routeRun.driverId matches, so any stop order attached to a different run fails outright, not transiently. Distinguish `isError` from `isPending` and give the driver either a retry or an explicit \"couldn't load pricing\" state.",
+        "source": "consumer-read",
+        "failure_scenario": "A stop carries two orders; one of them is not on the driver's own run and GET /orders/:id returns 403. extrasReady stays false for the life of the screen. The driver can never submit the undelivered return, and the only feedback is \"Still loading line pricing — try again in a moment.\""
+      },
+      {
+        "file": "apps/api/src/returns/returns.service.ts",
+        "line": 165,
+        "severity": "minor",
+        "summary": "Item-level `reason` is unvalidated but now decides restock, so a mistyped reason silently restocks unsellable goods — the exact defect B61 fixes.",
+        "detail": "create() validates only dto.reason against VALID_RETURN_REASONS (:67-71). The nested item map now derives the stock decision from `i.reason ?? dto.reason` (:165), and defaultRestockForReason (:55-57) returns true for any string outside the two-element NO_RESTOCK set. So an item carrying \"damaged\", \"Damaged\", or any unknown value on an otherwise-DAMAGED return restocks. The body is bound as `@Body() dto: any` (returns.controller.ts:25), so no class-validator layer catches it either. Validating item reasons against VALID_RETURN_REASONS in the same loop that already validates qty (:127) closes it.",
+        "source": "diff",
+        "failure_scenario": "A client (or an integration) posts { reason: \"DAMAGED\", items: [{ productId, qty: 3, reason: \"damaged\" }] }. defaultRestockForReason(\"damaged\") returns true, the item persists restock:true, and receive() puts three damaged units back into sellable stock — the precise B61 symptom, reintroduced through the one input the fix trusts."
+      },
+      {
+        "file": "apps/api/src/returns/returns.service.ts",
+        "line": 421,
+        "severity": "minor",
+        "summary": "The headroom aggregate counts OrderCreditNote-linked credits, which the schema documents as application INTENT rather than credits issued against the order.",
+        "detail": "creditedScope includes `{ orderLinks: { some: { orderId: order.id } } }` (:421), so any credit note an operator selected to apply to this order reduces the headroom — including a store credit that originated on a completely different order and was never issued against these invoices. credit-notes.service.ts:141-151, the cap this gate exists to anticipate, counts only `invoiceId: <source>`, so the gate is strictly more conservative than the thing it models and can refuse a refund the mint would have accepted. The schema is explicit about the distinction: finance.prisma:528-535 describes OrderCreditNote as \"apply this credit (up to `amount`, or its remaining balance when null) to this order's invoice(s)\" — \"Pure selection state\". The refusal happens before the claim so nothing is stranded, but the operator lands in the same non-actionable toast. Worth a ruling on whether the intent link belongs in the credited side at all.",
+        "source": "consumer-read",
+        "failure_scenario": "An order has two SENT invoices totalling $100 and no credits issued against them, but the customer's $60 wallet credit from an earlier order is linked to it via OrderCreditNote for application. A $50 return refunds: headroom computes 100 − 60 = 40, the refund is refused, yet credit-notes.create() would have accepted it ($0 credited against the latest invoice)."
+      },
+      {
+        "file": "apps/mobile/lib/returns-logic.ts",
+        "line": 72,
+        "severity": "minor",
+        "summary": "restockForReason is a hand-typed mirror of the server's NO_RESTOCK_REASONS with no parity pin — the class of mirror CLAUDE.md/L-072 names as the cause of three shipped bugs.",
+        "detail": "Two independent copies of one rule: NO_RESTOCK_REASONS = {\"DAMAGED\",\"QUALITY_ISSUE\"} at apps/api/src/returns/returns.service.ts:19, and `reason !== \"DAMAGED\" && reason !== \"QUALITY_ISSUE\"` at apps/mobile/lib/returns-logic.ts:72. They agree today; nothing keeps them agreeing. Executor adcb391c0d2e6f04c investigated this, confirmed the finding real, and skipped it with proof that the obvious shared-const fix is unavailable (a value import of @routeflow/types in apps/api violates apps/api/src/common/no-runtime-workspace-imports.spec.ts and crashes `node dist/main.js`; mobile's jest maps @routeflow/types to a stub exporting only UserRole and VENDOR_BILL_STATUS_VALUES). Its proposed alternative is the pattern this repo already uses for exactly this constraint: declare NO_RESTOCK_RETURN_REASONS in packages/types/api/returns.ts, value-import it from the two SPEC files (which the guard's regex exempts), and add the stub-vs-package set-equality pin next to enum-parity.spec.ts's existing X2 block. That is a close-out row, not a blocker.",
+        "source": "diff",
+        "failure_scenario": "A future ruling adds WRONG_ITEM to the server's no-restock set. The mobile driver and operator screens keep sending restock:true explicitly, which wins over the server default at returns.service.ts:165, so damaged-class goods restock from mobile while the same return restocks correctly from web — and no test in either workspace goes red."
+      },
+      {
+        "file": "apps/web/app/(dashboard)/returns/page.tsx",
+        "line": 414,
+        "severity": "minor",
+        "summary": "The \"Total Return Value\" KPI now sums refundEstimate across ALL statuses, so rejected and cancelled returns inflate reported return value.",
+        "detail": "totalReturnValue reduces over `allReturns` (:404, an unfiltered useReturns({ limit: 500 })) with no status filter. Before this round the reduce read item.unitPrice, a field the payload never carries, so the tile was structurally $0.00 and the defect was invisible. Now every REJECTED and CANCELLED return contributes its full billed basis to a tile an operator reads as money going back to customers. B82 makes this worse in the same batch: cancelling a mistaken return is now the encouraged corrective action (B21 ships the control), and every cancellation permanently adds to the KPI. Filter to the resolved/in-flight statuses the tile is meant to describe.",
+        "source": "consumer-read",
+        "failure_scenario": "An operator creates a $500 return by mistake, cancels it using the new Cancel Return button, and refiles it correctly for $500. The Total Return Value tile now reads $1,000 for a single $500 return."
+      },
+      {
+        "file": "apps/api/src/returns/returns.service.ts",
+        "line": 232,
+        "severity": "minor",
+        "summary": "findAll joins every row's full invoice + invoice-item + order-line graph purely to compute one scalar, and the web KPI calls it with limit 500 and no server-side cap.",
+        "detail": "The findMany include now pulls order.invoices (with each invoice's items) and order.lineItems for every returned row (:232-252), then discards all of it at :270 after priceReturn has run. The row-level fan-out of DB aggregates was correctly avoided, but the joined payload was not bounded: apps/web/app/(dashboard)/returns/page.tsx:404 requests limit 500 on every returns-page load, and returns.controller.ts:39 accepts any client-supplied limit with no clamp (executor a6e34's [#3] records \"No controller limit clamp (per design)\"). On a mature tenant that is 500 orders' worth of invoices and invoice items materialised per page view. The close-out already owes a server-side `limit` cap row; this makes it load-bearing rather than hygienic. A narrower fix is a dedicated summary aggregate for the KPI tile.",
+        "source": "diff",
+        "failure_scenario": "A tenant with 500+ returns, each on an order with a 30-line invoice, loads /returns. One request materialises on the order of 15,000 invoice-item rows plus the order lines, all to produce 500 numbers, on every page view and on every filter change."
+      }
+    ],
+    "regTokensPresent": [
+      "REG-B53",
+      "REG-B68",
+      "REG-B69",
+      "REG-B82",
+      "REG-B20",
+      "REG-B61",
+      "REG-B166",
+      "REG-B75",
+      "REG-B128",
+      "REG-B21"
+    ],
+    "recommendation": "one-more-round",
+    "reasoning": "The core of F08 is sound and I could not refute it. All ten REG tokens are present and each fix traces end to end: B53's billed basis with the in-code creditable decision (returns.service.ts:481-487, deliberately NOT a DB status filter, pinned at returns-refund.spec.ts:629-641), B68's compensation with the original error always rethrown (:615-643), B69's FOR UPDATE + fresh in-tx read now pinned by call-count AND invocation order so the lock cannot be deleted silently (:675, spec :1063-1067/:1100-1104), B82's notIn (:113), B20's condition/notes against real schema columns (sales.prisma:996-997), B61's reason-derived restock on both sides, B166's search wired controller→service→Prisma with the web already sending the param, B75's pure read-path pricing with the invoice graph stripped off the wire, B128's box-safe undelivered helper now actually consumed by the driver screen, and B21's cancel control on both web and mobile with the scan-ignore suppression removed. Ruling 1 is fully discharged: zero `deliveredQty` DTO fields, branches, payload keys or assertions survive in the F08 radius — only three prose comments explaining the deferral (returns.service.ts:391, returns-refund.spec.ts:18, returns-logic.ts:130); T1d is gone (the api suite went 131→130) and T1e is intact and green at returns-refund.spec.ts:603 with both halves. Ruling 3's race left no damage: every deletion in the service diff maps to a documented executor fix, and the incident's own mutation hole is now closed. `routes.service.ts` was never touched. Two of the assessor's three hand-off worries are already fixed in the tree and I refute them above.\n\nI am not recommending land, for two reasons that both live in the consumers — the F18 lesson this stage exists for. First, B53 introduces three genuinely new, permanently terminal refusals on the money path, and the primary operator surface reports every one of them as \\\"Please try again.\\\" (page.tsx:464) while the API's own `refundEstimateReason`, added for exactly this, has no reader anywhere. Mobile already passes the server message through; web does not. That is a one-line-per-handler fix and it converts a dead end into an actionable one. Second, three of ruling 2's five owed mobile behaviours — summarizeSubmissions, the per-row DAMAGED override, and the unlisted-line exclusion — shipped with zero tests, in the one file the test plan names as the mobile leg's only oracle. summarizeSubmissions decides \\\"this return already landed\\\" by substring-matching free-form server prose (returns.service.ts:140) with nothing pinning either end; the DAMAGED override is the sole guard keeping damaged goods out of sellable stock on the driver path. Three small tests close it.\n\nEverything else I found is close-out material, not gate material: the single-invoice asymmetry in the pre-claim room check, the DRIVER money leakage on GET /returns (an already-filed scoping row that this change escalates), the unvalidated item-level reason, the OrderCreditNote headroom scope, the mirror without a parity pin (which executor adcb391c proved cannot be fixed the obvious way and for which it supplied the right pattern), the all-statuses KPI, and the unbounded limit-500 join. Scope the round tightly to the two items above; the rest belong in registry rows and the lesson."
+  },
+  "finalGate": {
+    "results": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api && npx jest --silent",
+        "pass": true,
+        "summary": "Test Suites: 254 passed, 254 total | Tests: 4136 passed, 4136 total | Time: 85.887 s",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/mobile && npx jest --silent",
+        "pass": true,
+        "summary": "Test Suites: 111 passed, 111 total | Tests: 1411 passed, 1411 total | Time: 55.476 s",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web && npx jest --silent",
+        "pass": true,
+        "summary": "Test Suites: 30 passed, 30 total | Tests: 161 passed, 161 total | Time: 23.496 s",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25 && node scripts/validate-lessons.mjs",
+        "pass": true,
+        "summary": "Register is self-consistent: 40/40 entries, 40.0/40.0 KB, archived 38, nextId 83",
+        "failures": []
+      }
+    ],
+    "allPass": true
+  }
+}

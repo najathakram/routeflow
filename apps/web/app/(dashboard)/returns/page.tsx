@@ -411,9 +411,13 @@ export default function ReturnsPage() {
     const d = new Date(r.createdAt);
     return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
   }).length;
-  const totalReturnValue = allReturns.reduce((sum, r) => {
-    return sum + r.items.reduce((s, i) => s + (i.unitPrice ?? 0) * i.qty, 0);
-  }, 0);
+  // A rejected or cancelled return settles nothing with the customer, so its billed
+  // basis is not return value — counting it would double-count a mistaken return that
+  // was cancelled and refiled correctly.
+  const NON_VALUE_STATUSES: ReturnStatus[] = ["REJECTED", "CANCELLED"];
+  const totalReturnValue = allReturns
+    .filter((r) => !NON_VALUE_STATUSES.includes(r.status))
+    .reduce((sum, r) => sum + (r.refundEstimate ?? 0), 0);
 
   // Handle both paginated { data: [], meta: {} } and plain array responses
   const returns: Return[] = Array.isArray(data) ? (data as Return[]) : (data?.data ?? []);
@@ -469,7 +473,7 @@ export default function ReturnsPage() {
           <p className="mt-1.5 text-2xl font-semibold tabular-nums text-navy">
             ${totalReturnValue.toFixed(2)}
           </p>
-          <p className="text-xs text-navy/70">across all returns</p>
+          <p className="text-xs text-navy/70">excludes rejected and cancelled</p>
         </div>
         <div className="rounded-lg border border-surface-border bg-white p-4 shadow-card">
           <div className="flex items-center justify-between">
@@ -623,7 +627,7 @@ export default function ReturnsPage() {
                 </tr>
               ) : (
                 returns.map((ret: Return) => {
-                  const returnValue = ret.items.reduce((s, i) => s + (i.unitPrice ?? 0) * i.qty, 0);
+                  const returnValue = ret.refundEstimate ?? 0;
                   return (
                     <tr
                       key={ret.id}

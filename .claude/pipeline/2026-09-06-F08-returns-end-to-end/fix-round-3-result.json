@@ -1,0 +1,247 @@
+{
+  "api": {
+    "filesTouched": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/returns/returns.service.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/returns/returns-refund.spec.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/returns/returns-overreturn.spec.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/returns/returns-restock-parity.spec.ts"
+    ],
+    "perFinding": [
+      {
+        "i": 2,
+        "status": "fixed",
+        "what": "billedBasisFor: the `creditable.length < 2` early return is replaced by `creditable.length === 0` (the zero-invoice legacy-order-line case, which has no source invoice to cap against). `const latest` is hoisted above the branch; the ORDER-WIDE headroom block (totalBilled / order-scoped creditNote.aggregate / `headroom + 0.001`) is unchanged, only wrapped in `if (creditable.length >= 2) { ... }`; the SOURCE-invoice `latestRoom` guard now runs for every creditable shape, single invoice included, so a lone invoice already carrying a credit note refuses BEFORE the RECEIVED->REFUNDED claim instead of throwing inside credit-notes.create() after it. Single-invoice path issues exactly one aggregate (scoped by invoiceId); the 2+ path still issues the order-wide one first, so returns-refund.spec.ts:548's `mock.calls[0][0]` assertion is untouched. Read paths (findAll/findOne, priceReturn) are unaffected — the two specs asserting `aggregate` is never called on a list/detail read still pass.",
+        "pin": "returns-refund.spec.ts — \"REG-B53 a SINGLE creditable invoice is capped by its OWN remaining room too\": one $100 SENT invoice with $70 of existing non-VOID credit, return prices at $50 -> BadRequestException naming INV-060, `return.updateMany` never called, `creditNotes.create` never called, and exactly ONE aggregate whose where is `{ status: { not: \"VOID\" }, invoiceId: \"inv-only\" }` (proves the SOURCE-invoice check refused, not the order-wide one). Verified red on the mutated tree (`length < 2` restored)."
+      },
+      {
+        "i": 5,
+        "status": "fixed",
+        "what": "create(): the per-item loop that already validates qty now also validates the item-level `reason` — `if (item.reason != null && !VALID_RETURN_REASONS.includes(item.reason)) throw new BadRequestException(...)`, message naming the productId and the allowed set. `!= null` keeps `reason` optional (undefined/null still falls through to dto.reason for the restock default); anything present must be one of the five canonical reasons, so a mistyped \"damaged\" can no longer reach defaultRestockForReason and restock unsellable goods. Placed inside the transaction loop as the finding specifies, so it rejects before tx.return.create.",
+        "pin": "returns-overreturn.spec.ts — \"REG-B61 rejects an item-level reason outside the allowed set — a typo must never decide restock\": `{ reason: \"DAMAGED\", items: [{ reason: \"damaged\" }] }` -> BadRequestException with `txReturn.create` never called; second half proves the guard is a whitelist not a ban (item reason QUALITY_ISSUE on a CUSTOMER_REFUSED return still creates, with restock false). Verified red on the mutated tree (guard removed)."
+      },
+      {
+        "i": 7,
+        "status": "fixed",
+        "what": "New apps/api/src/returns/returns-restock-parity.spec.ts — a static-scan parity pin, no runtime import of either side (so the api's no-runtime-workspace-imports rule and mobile's @routeflow/types stub are both irrelevant). Modelled on enum-parity.spec.ts's regression layer: REPO_ROOT = path.resolve(__dirname, \"../../../..\"), both apps/api/src/returns/returns.service.ts and apps/mobile/lib/returns-logic.ts read with fs.readFileSync as TEXT; regexes extract the members of the server's `new Set([...])` and the body of mobile's `restockForReason`. Three cases: (1) non-vacuity — both extractions non-empty, so a renamed symbol fails loudly instead of silently passing on two empty sets; (2) shape — the normalized mobile body must match /^return reason !== \"[A-Z_]+\"( && reason !== \"[A-Z_]+\")*;$/, so a body that branched or used `===` cannot name the right strings while computing something else; (3) set-equality of the literals plus an equal count (a duplicated literal would otherwise pass a set diff). apps/mobile was NOT edited. Prettier --write applied to this file only (line-length); gates re-run green after.",
+        "pin": "returns-restock-parity.spec.ts — \"names exactly the server's no-restock reasons — no extra, none missing\". Verified red on the mutated tree (server set drifted to add WRONG_ITEM), with the other two parity cases still green, i.e. it fails on the drift itself and not on extraction noise."
+      }
+    ],
+    "gates": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api && npx tsc -p tsconfig.build.json --noEmit",
+        "pass": true,
+        "summary": "Exit 0, no output. Run twice — after the source/spec edits and again after the prettier --write on the new spec."
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api && npx jest src/returns src/credit-notes --runInBand",
+        "pass": true,
+        "summary": "10 suites passed / 10, 135 tests passed / 135 (was 132 before this round: +3 new pins), 0 failed, ~8.7 s. Includes returns-refund, returns-overreturn, returns-ledger, returns.security, the new returns-restock-parity, and all 5 credit-notes suites. The two ERROR log lines from Nest (ret-68 / ret-68b) are the B68 compensation specs asserting their own logging, not failures."
+      }
+    ],
+    "notes": "All three findings fixed on the first iteration; no gate ever went red, so no fix-what-you-broke rounds were needed.\\n\\nMutation evidence (each pin proven to fail on the defect's own wrong behavior): I backed returns.service.ts up to the scratchpad, applied three mutations at once — (A) `creditable.length === 0` reverted to `< 2`, (B) the item-reason guard deleted, (C) the server set drifted to `[\\\"DAMAGED\\\",\\\"QUALITY_ISSUE\\\",\\\"WRONG_ITEM\\\"]` — and `npx jest src/returns --runInBand` reported exactly 3 failed / 55 passed, the three failures being precisely my three new tests and nothing else. The file was then restored byte-for-byte (verified with `diff` against the backup) and both gates re-run green. The backup lives at the scratchpad path, not in the worktree.\\n\\nConstraints honoured: only the four named files were written; apps/api/src/routes/routes.service.ts untouched; apps/mobile untouched (the parity pin is a read-only static scan of it); no git write commands, no npm install/ci, no docker/playwright, no full `npx jest`. `git status --porcelain` on apps/api/src/returns shows M returns.service.ts, M returns-refund.spec.ts, M returns-overreturn.spec.ts, ?? returns-restock-parity.spec.ts — plus a pre-existing M on returns.controller.ts that I did not touch (round 2's uncommitted work).\\n\\nOne behavioural note for the reviewer: the single-invoice path now issues one `creditNote.aggregate` call it did not issue before. Every existing single-invoice fixture in returns-refund.spec.ts leaves `aggregate` unmocked (resolves undefined -> alreadyCredited 0) and prices at or under its invoice total, so none of them cross the new guard; the two read-path specs that assert `aggregate` is NEVER called (findAll / findOne, lines ~881 and ~948) go through the pure `priceReturn` and are unaffected. Deferred findings 3, 6 and 9 were left entirely untouched.\\n\\nPrettier: `--check` was clean on the three edited files; only the new spec needed `--write` (a long regex line), after which `--check` passes on all four."
+  },
+  "web": {
+    "filesTouched": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/app/(dashboard)/returns/[id]/page.tsx",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/app/(dashboard)/returns/page.tsx",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/lib/api/returns.ts"
+    ],
+    "perFinding": [
+      {
+        "i": 0,
+        "status": "fixed",
+        "what": "Two parts, both on the detail page. (a) handleResolveReturn's onError now reads the server message via the house pattern used everywhere else in apps/web (`(err as { response?: { data?: { message?: string } } })?.response?.data?.message`, same shape as invoices/[id]/page.tsx:1752 and credit-notes/[id]/page.tsx:278) and passes it as the toast description, falling back to \"Please try again.\" only when the payload carries no message — so the three permanent B53 refusals (nothing billed refundable / no headroom on the order's invoices / named-invoice out of room) now reach the operator with the invoice name and the EXTERNAL_REFUND exit intact. A comment above the handler records why the generic copy is wrong on this path. (b) refundEstimateReason is now consumed: `Return` in apps/web/lib/api/returns.ts gained `refundEstimateReason?: string | null` (mirrors the api exactly — returns.service.ts:273 findAll and :791 findOne both emit `refusal ?? null`, so `string | null`, L-072); the detail page threads `ret.refundEstimateReason` into ResolveReturnModal, which renders it as one muted line (`text-xs text-navy/70`) at the top of the modal body, gated on `!!refundEstimateReason && !refundEstimate` so it only appears beside a $0 estimate and a genuine $0 stays clean. Only the resolve modal surfaces refundEstimate on that page (grep: lines 92/98/106/769 pre-edit), so that is where the reason belongs.",
+        "pin": "Typecheck-only lane (D1, no web unit runner for these pages). Behavioural pin: an order whose latest billed invoice has $100 of room and a $500 RECEIVED return → POST /returns/:id/refund 400 \"Refund 500 exceeds the remaining room 100 on invoice <n>\" → toast description is that exact server string, not \"Please try again.\"; and a return whose basis is not creditable shows the muted refusal line under the modal title while the tile still reads $0.00."
+      },
+      {
+        "i": 8,
+        "status": "fixed",
+        "what": "apps/web/app/(dashboard)/returns/page.tsx: totalReturnValue now filters `allReturns` through `NON_VALUE_STATUSES: ReturnStatus[] = [\"REJECTED\", \"CANCELLED\"]` before the reduce (ReturnStatus was already imported at line 23, so no new import and no hand-typed string union). Comment records why: a rejected/cancelled return settles nothing, and B21's Cancel control makes cancel-then-refile the encouraged corrective path, which would otherwise double-count. Also corrected the tile caption from \"across all returns\" to \"excludes rejected and cancelled\" so the label no longer contradicts the math — same tile, same file, no other copy touched.",
+        "pin": "$500 return created by mistake → cancelled → refiled at $500: tile reads $500.00, not $1,000.00."
+      }
+    ],
+    "gates": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web && npx tsc --noEmit -p tsconfig.json",
+        "pass": true,
+        "summary": "Exit 0, no output, first iteration (0 fix iterations needed of the 3 allowed)."
+      },
+      {
+        "command": "npx prettier --check on the three touched files (repo root)",
+        "pass": true,
+        "summary": "Exit 0 — \"All matched files use Prettier code style!\". Run unprompted as a style self-check; no files were rewritten."
+      }
+    ],
+    "notes": "Scope held exactly: only findings 0 and 8, only the three allowed files, targeted Edits (no whole-file rewrites), no git write commands, no npm install, no jest/playwright/docker, and apps/api/src/routes/routes.service.ts untouched. The api was read read-only to mirror the response shape before typing refundEstimateReason.\\n\\nThree things the reviewer should know:\\n\\n1. The api emits `refundEstimateReason` on BOTH GET /returns (findAll, returns.service.ts:273) and GET /returns/:id (findOne, :791), always as `refusal ?? null`. I typed it `?: string | null` on the shared `Return` interface, which both the list and detail pages consume — so the list page could also surface it later with no type change. I did not add any list-page rendering of it: the ruling scoped the reason to the detail page.\\n\\n2. onError is typed `(err: unknown)`; useProcessRefund declares `useMutation<Return, Error, ProcessRefundDto>`, and a wider parameter type is assignable there (contravariance), which tsc confirmed. I deliberately did not widen the mutation's error generic to `AxiosError` — that would ripple through every returns mutation and is outside the ruling.\\n\\n3. Deliberate non-changes worth noting so the review does not read them as misses: the other five onError handlers on the detail page (approve/reject/in-transit/receive/cancel) still use the flat \\\"Please try again.\\\" copy. The ruling named only the resolve handler, and those five paths do not carry the new permanent B53 refusals. If the reviewer wants the same treatment across the page it is a one-line change per handler, but it is a new decision, not part of finding 0.\\n\\nThe caption edit on the KPI tile (\\\"across all returns\\\" → \\\"excludes rejected and cancelled\\\") is the one thing I did beyond the literal words of ruling 8; leaving the old caption would have made the tile assert something the fixed math no longer does. Flagging it explicitly in case the reviewer prefers different copy."
+  },
+  "mobile": {
+    "filesTouched": [
+      "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F25\\apps\\mobile\\__tests__\\returns-logic.test.ts",
+      "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F25\\apps\\mobile\\app\\(driver)\\route\\stop\\[stopId]\\return\\index.tsx"
+    ],
+    "perFinding": [
+      {
+        "i": 1,
+        "status": "fixed",
+        "what": "Tests only; apps/mobile/lib/returns-logic.ts untouched (read-only). Added 7 cases to apps/mobile/__tests__/returns-logic.test.ts (23 -> 30), imports extended with summarizeSubmissions + undeliveredRowKey. (a) New `describe(\"summarizeSubmissions\")` with 4 cases: a fulfilled result counts done with empty failed; the server's cumulative over-return refusal counts DONE (message is the real api prose from returns.service.ts:140 — \"Return qty (4) exceeds remaining returnable qty (0) for product p1. Already returned: 4 of 4.\" — asserted as `{done:[\"ord-1\",\"ord-2\"], failed:[]}`); any other rejection stays pending with its own message and a message-less rejection gets the \"Try again.\" fallback (exact returned counts asserted via toEqual on both arrays); an empty round yields `{done:[],failed:[]}`. (b) Inside the existing `undeliveredReturnLines (T10, REG-B128)` describe, `REG-B61 a damagedKeys row becomes DAMAGED / restock:false and its siblings are untouched` — damagedKeys = {undeliveredRowKey(\"ord-1\",\"li1\")} flips exactly p1 to reason DAMAGED / restock false, p2 stays CUSTOMER_REFUSED / restock true, the POST items carry the same override, and total stays 90 (credit math untouched); plus a non-matching-key case proving both rows keep their derived reasons. (c) `an unlisted line (no catalog product) is dropped from rows/total/payloads and counted` — a null-productId REFUSED line alongside a real PARTIAL line: unlistedCount 1, rows only [\"p2\"], total 40 (the dropped line's $40 excluded), one payload with exactly [{productId:\"p2\",qty:4,restock:true,reason:\"EXCESS_ORDER\"}]. REG tokens used only on the B61 oracle row, per the ruling; the summarize and unlisted titles carry none.",
+        "pin": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/mobile && npx jest returns-logic — 30 passed (7 new), including \"the server's cumulative over-return refusal counts DONE, so a retry can clear\", \"REG-B61 a damagedKeys row becomes DAMAGED / restock:false and its siblings are untouched\", and \"an unlisted line (no catalog product) is dropped from rows/total/payloads and counted\"."
+      },
+      {
+        "i": 4,
+        "status": "fixed",
+        "what": "apps/mobile/app/(driver)/route/stop/[stopId]/return/index.tsx only (finding 4 scope; no other finding touched in this file). The useQueries `combine` now also returns `extrasFailed: results.some((r) => r.isError)` and `retryExtras: () => { for (const r of results) { if (r.isError) void r.refetch(); } }` — refetch is called on the failed queries only, not the whole set. The `extrasReady` gate is unchanged (still `results.every((r) => r.isSuccess)`, still gating both `issue()` and the Submit button's `disabled`), so the over-credit hazard the gate exists for is untouched. When `extrasFailed`, an inline error line renders directly above the Submit button: \"Line pricing failed to load for this stop — submitting now could credit the wrong amount.\" with a \"Retry\" Pressable wired to `retryExtras`. Three new styles (errorInline / errorInlineText on ios.system.redWash + ios.system.red, retryBtn / retryBtnText on ios.brand); no new dependency, no new query, no change to issue()'s toast path or to the money math.",
+        "pin": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/mobile && npx tsc --noEmit — clean (proves combine's extra fields and the refetch call typecheck against the shipped orderQueryOptions results). No jest pin exists for this: mobile Jest is pure-logic only (`__tests__/*.test.ts`), the screen has no test runner, so the retry branch is verified by typecheck + read, not by a red-then-green test."
+      }
+    ],
+    "gates": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/mobile && npx tsc --noEmit",
+        "pass": true,
+        "summary": "Exit 0, no output — clean on the first iteration, no fix-ups needed."
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/mobile && npx jest returns-logic",
+        "pass": true,
+        "summary": "1 suite passed, 30/30 tests passed (was 23), 19.8 s. Green on the first iteration; all 7 new cases listed by name in the output."
+      }
+    ],
+    "notes": "Zero iterations needed — both gates green on the first run, nothing broken and nothing to fix up.\\n\\nScope discipline: apps/mobile/lib/returns-logic.ts was read only, never edited; apps/api/src/routes/routes.service.ts never opened. Only the two files my brief allows were changed. No stash/checkout/commit/install/docker/playwright, and no bare `npx jest` — only the two commands named in the brief.\\n\\nOracles were written against the shipped source, not against the finding's prose: the over-return message in the summarizeSubmissions test is the literal template output of apps/api/src/returns/returns.service.ts:140, so if someone rewords that string the api-side parity work is what must catch it — this test pins the mobile classifier's behaviour for the message shape as it exists today, which is exactly the ruling's scope (the cross-side string pin is not owned by this executor).\\n\\nOne honest caveat on finding 4: the ruling's fix is implemented and typechecks, but mobile Jest is pure-logic-only in this repo, so there is no automated red-then-green proof of the retry control — the reviewer should treat it as a read-verified UI change. The `extrasReady` gate itself is byte-for-byte unchanged, which was the ruling's explicit requirement.\\n\\nStyle: double quotes, semicolons, trailing commas throughout. Three lines in the test file exceed printWidth 100 (159 pre-existing at 106, plus my new 258 at 104 and 288 at 101) — all three are `it(\\\"<long title>\\\", () => {` headers, the one shape Prettier cannot break; the pre-existing line 159 confirms the repo's Prettier accepts it. No client identifiers introduced (fixtures use ord-N / li-N / p-N placeholders); no money math added or moved — @routeflow/pricing remains the only source, and the new assertions read its outputs rather than recomputing them."
+  },
+  "regate": {
+    "results": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api && npx tsc -p tsconfig.build.json --noEmit",
+        "pass": true,
+        "summary": "API TypeScript compilation check passed without errors",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api && npx jest src/returns src/credit-notes --runInBand",
+        "pass": true,
+        "summary": "API Jest tests passed: 135 tests across 10 suites (returns-refund, credit-notes service, wallet-integrity, overreturn, security, ledger, pins, restock-parity)",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/mobile && npx tsc --noEmit",
+        "pass": true,
+        "summary": "Mobile TypeScript compilation check passed without errors",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/mobile && npx jest returns-logic",
+        "pass": true,
+        "summary": "Mobile Jest tests passed: 30 tests in returns-logic.test.ts (returnActionFlags, restockForReason, buildReturnItems, undeliveredReturnLines, summarizeSubmissions, toUndeliveredStop, returnPillFor)",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web && npx tsc --noEmit -p tsconfig.json",
+        "pass": true,
+        "summary": "Web TypeScript compilation check passed without errors",
+        "failures": []
+      }
+    ],
+    "allPass": true
+  },
+  "review": {
+    "perFinding": [
+      {
+        "i": 0,
+        "verdict": "fixed",
+        "evidence": "apps/web/app/(dashboard)/returns/[id]/page.tsx:474-484 — handleResolveReturn's onError now reads `(err as {response?:{data?:{message?:string}}})?.response?.data?.message` and passes `message ?? \"Please try again.\"` as the description. Fallback is safe: optional chaining at every hop plus `??`, so a network error (no `response`), a non-JSON body, or a 400 with no `message` all yield the generic copy — no throw, no `undefined` description. The three permanent refusals (returns.service.ts:409, :444, :465) are Nest BadRequestExceptions, so axios exposes them at exactly that path. Part (b): `refundEstimateReason?: string | null` added to `Return` (apps/web/lib/api/returns.ts:68-74) mirroring the api's `refusal ?? null` on BOTH findAll (:282) and findOne (:810); the detail page threads `ret.refundEstimateReason` into ResolveReturnModal (:784) which renders it at :132 gated on `!!refundEstimateReason && !refundEstimate` — a genuine $0 (refusal undefined -> null) shows nothing. Two residues, filed as hazards, not refutations: the surfaced per-invoice message names a raw UUID in production (hazard 1), and the reason line renders the machine token NOTHING_CREDITABLE verbatim (hazard 2)."
+      },
+      {
+        "i": 1,
+        "verdict": "fixed",
+        "evidence": "apps/mobile/__tests__/returns-logic.test.ts grew 23 -> 30 and now covers all three owed behaviours. summarizeSubmissions: new describe at :319 with 4 cases — fulfilled counts done (:320), the cumulative over-return prose counts DONE with `{done:[\"ord-1\",\"ord-2\"], failed:[]}` asserted by toEqual (:330), any other rejection stays failed and a message-less one gets \"Try again.\" (:344), empty round (:359). Traced against returns-logic.ts:341 (`r.ok || message.toLowerCase().includes(\"exceeds remaining returnable\")`) — the fixture string does contain that substring, so the test is not vacuous. damagedKeys: :258 flips exactly ord-1/li1 to DAMAGED/restock:false, pins the sibling as CUSTOMER_REFUSED/restock:true, pins the POST body items AND total 90 (credit math untouched); :279 pins a non-matching key as a no-op. Unlisted drop: :288 asserts unlistedCount 1, rows only p2, total 40 (the $40 line excluded) and one payload. Note the finding's own failure_scenario is NOT closed by the ruling's scope: the api prose at returns.service.ts:147 is hand-copied into the mobile fixture, so rewording the server string still leaves both sides green — a cross-side pin (the same static-scan technique finding 7 just established) is a close-out row, not a refutation of the ruling."
+      },
+      {
+        "i": 2,
+        "verdict": "fixed",
+        "evidence": "returns.service.ts:413 — the early return is now `if (creditable.length === 0)` (only the never-invoiced legacy basis, where invoiceId is undefined and there is nothing to cap against). `const latest` is hoisted to :422; the order-wide headroom block is wrapped in `if (creditable.length >= 2)` (:424-449) with its aggregate unchanged and still issued FIRST, so returns-refund.spec.ts's `mock.calls[0][0]` assertion on the 2+ path is intact. The source-invoice guard (:459-469) now runs for every creditable shape. Refuted the over-refusal risk by comparing the guard to the thing it models: credit-notes.service.ts:146 rejects on `totalExisting + amount > invoiceTotal + 0.001`; the guard rejects on `amount > (total - existing) + 0.001` — algebraically identical, same 0.001 epsilon, same `status: { not: \"VOID\" }` scope, same `invoiceId` scope. So the guard is exactly as strict as the mint, never stricter: it can only convert a post-claim throw into a pre-claim refusal. `invoiceId` can never be undefined on this path (priceReturn returns creditable[0].id for 1 and latest.id for 2+), so `latest` is always found and the aggregate is always scoped. Pin at returns-refund.spec.ts:603 asserts BadRequestException, updateMany never called, creditNotesCreate never called, and exactly ONE aggregate scoped `{status:{not:\"VOID\"}, invoiceId:\"inv-only\"}` — proving it was the source-invoice check, not the order-wide one."
+      },
+      {
+        "i": 4,
+        "verdict": "fixed",
+        "evidence": "apps/mobile/app/(driver)/route/stop/[stopId]/return/index.tsx — the useQueries `combine` now returns `extrasFailed: results.some((r) => r.isError)` and `retryExtras: () => { for (const r of results) { if (r.isError) void r.refetch(); } }`. Verified the brief's two conditions directly: (a) refetch is called only on entries whose `isError` is true — successful queries are skipped, so a partial failure does not re-fetch the whole set; (b) `extrasReady` is byte-for-byte `results.every((r) => r.isSuccess)` and still gates BOTH `issue()`'s early return and the Submit Pressable's `disabled`/`primaryBtnDisabled`, so a query that is merely pending (isSuccess false, isError false) still blocks Submit and shows no error line — the over-credit hazard the gate exists for is untouched. The inline error block renders above Submit only when `extrasFailed`. Empty stopOrderIds degrades correctly: `some` false, `every` true. No jest proof exists (mobile Jest is pure-logic only), so this is read-verified plus the mobile tsc gate, which is what the ruling scoped."
+      },
+      {
+        "i": 5,
+        "verdict": "fixed",
+        "evidence": "returns.service.ts:135-138, inside the same transaction loop that validates qty and before `tx.return.create`: `if (item.reason != null && !VALID_RETURN_REASONS.includes(item.reason)) throw new BadRequestException(...)`. Checked the brief's specific risk — a MISSING item reason is not rejected: `!= null` short-circuits on both `undefined` and `null`, so the item falls through to `restock: i.restock ?? this.defaultRestockForReason(i.reason ?? dto.reason)` (:172) and the dto.reason fallback is unchanged. That fallback is pinned green by the pre-existing returns-overreturn.spec.ts:294-307 case (dto.reason DAMAGED, item carries neither reason nor restock -> restock false), which still passes in the regate. No in-repo client can trip the new guard: CreateReturnItemDto types `reason?: ReturnReason` (packages/types/api/returns.ts:12) and mobile derives it from REASON_FOR_MUTATION_TYPE. Only an empty-string reason changes behaviour (was silently restocked, now rejected) — strictly the correct direction. New pin at returns-overreturn.spec.ts:331 covers both halves: item reason \"damaged\" rejects with txReturn.create never called, and a valid item reason QUALITY_ISSUE on a CUSTOMER_REFUSED return still creates with restock false (whitelist, not blanket ban)."
+      },
+      {
+        "i": 7,
+        "verdict": "fixed",
+        "evidence": "New apps/api/src/returns/returns-restock-parity.spec.ts, a text-only static scan — no runtime import of either side, so the no-runtime-workspace-imports rule and mobile's @routeflow/types stub are both sidestepped. It follows the repo's existing precedent exactly: apps/api/src/common/enum-parity.spec.ts:31 uses the identical `REPO_ROOT = path.resolve(__dirname, \"../../../..\")` and already reads apps/mobile/lib/*.ts from an api spec (:190, :202). Reasoned through the brief's question (does it fail if EITHER side changes?) without mutating anything: add WRONG_ITEM to returns.service.ts:19 -> SERVER_REASONS is 3, mobile 2 -> the set-equality case fails; drop QUALITY_ISSUE from returns-logic.ts:73 -> mobile 1, server 2 -> fails; rename either symbol or move either file -> readSource returns \"\" (or the regex misses) -> the non-vacuity case fails loudly rather than passing on two empty sets; rewrite the mobile rule as a Set/branch while naming the same literals -> the shape case (`^return reason !== \"[A-Z_]+\"( && ...)*;$`) fails. Verified the actual mobile body (`return reason !== \"DAMAGED\" && reason !== \"QUALITY_ISSUE\";`) matches that regex, so the pin is live today. Residual it cannot catch (same limitation as enum-parity): an inversion of defaultRestockForReason's semantics while keeping the literals — covered instead by the behavioural pin at returns-overreturn.spec.ts:294."
+      },
+      {
+        "i": 8,
+        "verdict": "fixed",
+        "evidence": "apps/web/app/(dashboard)/returns/page.tsx:414-420 — `NON_VALUE_STATUSES: ReturnStatus[] = [\"REJECTED\", \"CANCELLED\"]` filters `allReturns` before the reduce, which now sums `r.refundEstimate ?? 0`. ReturnStatus already includes \"CANCELLED\" (apps/web/lib/api/returns.ts:15) and was already imported, so no hand-typed string union (L-072 respected). The stated failure scenario is closed: a $500 return cancelled then refiled contributes once. Caption changed \"across all returns\" -> \"excludes rejected and cancelled\" at :476; verified this does not break the E2E — apps/web/e2e/29-returns-lifecycle.spec.ts:211 anchors on \"Total Return Value\" (unchanged) and reads the money node via `getByText(/^\\$[\\d,.]+$/)`, and its fixture return is never REJECTED/CANCELLED so the $10.00 delta oracle still holds. Pre-existing residues untouched by this round: the tile still only covers the newest 500 rows (the spec already documents that) and still includes in-flight PENDING/APPROVED returns, which the new caption does not contradict."
+      },
+      {
+        "i": 3,
+        "verdict": "deferred-ok",
+        "evidence": "Untouched. Round 3's api executor changed only billedBasisFor (:403-470) and the create() item loop (:135-138). returns.controller.ts is unmodified by this round (its M in git status is round 2's uncommitted work; it is not in the round-3 filesTouched list), findAllForUser's CUSTOMER-only scoping (:191-206) is unchanged, and findAll still attaches refundEstimate/refundEstimateReason to every row (:280-282). The DRIVER money exposure is exactly as round 2 left it — correctly carried to the close-out as a HIGH tenancy row."
+      },
+      {
+        "i": 6,
+        "verdict": "deferred-ok",
+        "evidence": "Semantically untouched. The `creditedScope.push({ orderLinks: { some: { orderId: order.id } } })` line (:434) and the whole order-wide headroom aggregate moved verbatim inside the new `if (creditable.length >= 2)` block — and that block runs on exactly the same input set it ran on before (the old `creditable.length < 2` early return had already excluded 1 and 0). So the OrderCreditNote-intent-vs-issued asymmetry the finding describes is unchanged in reach and unchanged in math. Worth noting for the close-out: the round-3 source-invoice guard is now provably NOT over-strict (it mirrors credit-notes.service.ts:146 exactly), which sharpens the contrast — the order-wide block at :444 is the only remaining place the gate is stricter than the mint."
+      },
+      {
+        "i": 9,
+        "verdict": "deferred-ok",
+        "evidence": "Untouched. findAll's include still pulls order.invoices (with items) and order.lineItems per row (:246-257), the controller still accepts a client `limit` with no clamp, and apps/web/app/(dashboard)/returns/page.tsx:404 still calls `useReturns({ limit: 500 })` — round 3 changed only what that page does with the resulting `refundEstimate` (the reduce at :418), not how much is fetched. The `limit: 0` sentinel audit that must precede any clamp is correctly still pending."
+      }
+    ],
+    "newHazards": [
+      {
+        "file": "apps/api/src/returns/returns.service.ts",
+        "line": 571,
+        "severity": "major",
+        "summary": "The per-invoice refusal message names a raw invoice UUID in production — `invoiceNumber` is never selected — and the round's new pin is green only because its fixture invents that field.",
+        "detail": "The refusal composed at :465-468 reads `${latest?.invoiceNumber ?? invoiceId}`, but processRefund's query selects invoices as `{ id, status, total, createdAt, items }` (:571-579) — `invoiceNumber` is NOT in the select, and a grep of the whole service finds the identifier at exactly one place: the message template itself. So at runtime `latest?.invoiceNumber` is always undefined and the operator sees \"Refund 50 exceeds the remaining room 30 on invoice 3f2a9c1e-…\". This round made it matter twice over: finding 2 extended the message from the rare 2+-invoice branch to the common single-invoice branch, and finding 0 put that exact string in front of the operator as the toast description — the actionable invoice name the whole round was built to deliver is the one part that does not survive. The harness hides it: the new pin at returns-refund.spec.ts:603 mocks `prisma.return.findUnique` with a fixture object that supplies `invoiceNumber: \"INV-060\"` (:622 — the only occurrence of the field in the entire spec file) and then asserts `rejects.toThrow(/INV-060/)` at :638, so a green test asserts behaviour the production select cannot produce. Fix is one line — add `invoiceNumber: true` to the select at :572 — after which the existing fixture and assertion become honest rather than fabricated.",
+        "severity_note": ""
+      },
+      {
+        "file": "apps/web/app/(dashboard)/returns/[id]/page.tsx",
+        "line": 132,
+        "severity": "minor",
+        "summary": "The new muted refusal line renders the API's machine token NOTHING_CREDITABLE verbatim to the operator.",
+        "detail": "`refundEstimateReason` is not prose: priceReturn's only refusal value is the literal `\"NOTHING_CREDITABLE\"` (returns.service.ts:487, :510), passed through unchanged as `refusal ?? null` by findAll (:282) and findOne (:810). The resolve modal prints it straight into the DOM — `{showEstimateReason && <p className=\"text-xs text-navy/70\">{refundEstimateReason}</p>}` — so an operator resolving a return on an order whose invoices are all VOID/WRITTEN_OFF gets a SCREAMING_SNAKE enum token where the ruling asked for one muted explanatory line. The gating logic is right and the field plumbing is right; only the copy layer is missing. Two one-line options: map the token to prose on the client (a `Record<string, string>` beside `fmtMoney`, falling back to the raw value so a future token still says something), or have the api emit the sentence and keep the token for machines. Prefer whichever keeps the api's value machine-readable, since the field is documented as the thing that distinguishes a refusal from a genuine $0."
+      }
+    ],
+    "recommendation": "one-more-round",
+    "reasoning": "All seven in-scope findings (0, 1, 2, 4, 5, 7, 8) are genuinely fixed — I tried to refute each by tracing its own failure_scenario through the current tree and could not break any of them. The strongest confirmations: finding 2's new guard is algebraically identical to the credit-notes cap it models (`amount > total - existing + 0.001` vs `existing + amount > total + 0.001`, same epsilon, same VOID/invoiceId scope), so it converts a post-claim throw into a pre-claim refusal without ever over-refusing; finding 5's `!= null` genuinely preserves the dto.reason fallback, which the pre-existing pin at returns-overreturn.spec.ts:294 still proves green; finding 4's `extrasReady` is unchanged and still blocks on pending, with refetch hitting only errored entries; finding 7's parity spec fails on a change to EITHER side and fails loudly (not vacuously) on a rename or a shape change, following enum-parity.spec.ts's own precedent. Findings 3, 6 and 9 are code-untouched — the only motion near 6 is the headroom block moving inside an explicit `if (creditable.length >= 2)`, which runs on exactly the input set the old `< 2` early return already gave it.\n\nWhat stops me recommending land is one major hazard the round created by composition. `invoiceNumber` is not in processRefund's invoice select, so the per-invoice refusal names a raw UUID — and this round both widened that message to the common single-invoice path (finding 2) and routed it straight to the operator's toast (finding 0). The naming of the invoice was the entire point of finding 0's ruling, and it is the one part that does not survive to production. Worse, the round's own pin asserts `/INV-060/` against a fixture that supplies a field the real query never fetches, so the suite reports confidence it has not earned. That is precisely the class of defect a refute-first pass exists to stop, and it is a one-line fix (`invoiceNumber: true` at returns.service.ts:572), after which the existing fixture and assertion become honest with no spec edit. Pair it with the second hazard — the modal printing `NOTHING_CREDITABLE` verbatim, also a one-line copy fix — and the round is roughly four lines from landing clean, both inside files this round already owns and both re-gated by the same two api commands plus the web tsc.\n\nTwo residuals for the close-out rather than another round: the cross-side coupling on the api's \\\"exceeds remaining returnable\\\" prose is still unpinned (the mobile test hand-copies the string, so a server reword leaves both sides green) — round 3 has now established the static-scan technique that would close it; and mobile's local `Return` type carries `refundEstimate` but not `refundEstimateReason`, harmless today only because no mobile screen renders the estimate at all."
+  },
+  "finalGate": {
+    "results": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api && npx jest --silent",
+        "pass": true,
+        "summary": "API Jest: 255 test suites passed, 4141 tests passed, 108.905 s",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/mobile && npx jest --silent",
+        "pass": true,
+        "summary": "Mobile Jest: 111 test suites passed, 1418 tests passed, 50.458 s",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web && npx jest --silent",
+        "pass": true,
+        "summary": "Web Jest: 30 test suites passed, 161 tests passed, 22.075 s",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25 && node scripts/validate-lessons.mjs",
+        "pass": true,
+        "summary": "Lessons validation: 40/40 entries, 40.0/40.0 KB, self-consistent, at capacity",
+        "failures": []
+      }
+    ],
+    "allPass": true
+  }
+}

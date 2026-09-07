@@ -65,6 +65,13 @@ export interface Return {
    * resolve modal can show the amount before the operator commits to a method.
    */
   refundEstimate?: number;
+  /**
+   * Why `refundEstimate` is 0 when the basis is not creditable (nothing billed,
+   * no headroom left on the order's invoices). `null` on a genuine $0, so a
+   * refusal is distinguishable from a real zero. Mirrors the api's
+   * `refundEstimateReason` on both GET /returns and GET /returns/:id.
+   */
+  refundEstimateReason?: string | null;
 }
 
 interface PaginatedResponse<T> {
@@ -183,6 +190,17 @@ export function useProcessRefund() {
       qc.invalidateQueries({ queryKey: ["returns"] });
       qc.invalidateQueries({ queryKey: ["returns", id] });
       qc.invalidateQueries({ queryKey: ["credit-notes"] });
+    },
+  });
+}
+
+export function useCancelReturn() {
+  const qc = useQueryClient();
+  return useMutation<Return, Error, string>({
+    mutationFn: (id) => apiClient.post(`/returns/${id}/cancel`).then((r) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ["returns"] });
+      qc.invalidateQueries({ queryKey: ["returns", id] });
     },
   });
 }
