@@ -63,6 +63,39 @@ function fmtMoney(n: number): string {
   }).format(n);
 }
 
+type Headers = { authorization: string; "x-tenant-slug": string };
+
+/**
+ * Bearer + tenant headers for a direct API call, or null when unauthenticated —
+ * the same shape 29-returns-lifecycle.spec.ts uses.
+ *
+ * `operatorAccessToken` reads the token out of the PAGE's localStorage, which
+ * is per-ORIGIN: a fresh `page` sits on `about:blank`, whose storage is a
+ * different (opaque) origin from the app's, so the operator storageState's
+ * token is simply not there yet. Every caller must therefore navigate into the
+ * app FIRST — `openApp()` below — exactly as 22-payment-truth and
+ * 29-returns-lifecycle do before their own token reads. Reading before the
+ * first navigation is what failed REG-B80/B144/B110 with "carried no access
+ * token" while REG-B12 (which never reads a token) passed beside them.
+ */
+async function apiHeaders(page: Page): Promise<Headers | null> {
+  const token = await operatorAccessToken(page);
+  if (!token) return null;
+  return { authorization: `Bearer ${token}`, "x-tenant-slug": TENANT_SLUG };
+}
+
+/**
+ * Land on an app origin with the session applied, so `apiHeaders` can read the
+ * token. `/invoices` + its "New Invoice" toolbar button is the hydration signal
+ * REG-B12 above and 22-payment-truth both already rely on.
+ */
+async function openApp(page: Page): Promise<void> {
+  await page.goto("/invoices");
+  await expect(page.getByRole("button", { name: "New Invoice" })).toBeVisible({
+    timeout: 15_000,
+  });
+}
+
 /**
  * A stat tile's value cell — the invoices page's StatTile (label/value are
  * sibling <span>s) and the customer page's StatCard/Card idiom (sibling <p>s)
@@ -132,17 +165,20 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     page,
     request,
   }) => {
-    const token = await operatorAccessToken(page);
-    expect(token, "operator storageState carried no access token").toBeTruthy();
-    const headers = { authorization: `Bearer ${token}`, "x-tenant-slug": TENANT_SLUG };
-    const api = apiBase(BASE);
+    await openApp(page);
+    const headers = await apiHeaders(page);
+    expect(
+      headers,
+      "no operator access token in localStorage — operator storageState is stale or the setup project did not run",
+    ).toBeTruthy();
+    const api = apiBase(page.url());
 
     // Self-provisioned fixture: a throwaway customer + invoice + payment, so
     // this test never depends on whether the tenant's newest payment happens
     // to already sit within the first 200 rows useInvoicePayments would page.
     const suffix = Date.now();
     const customerRes = await request.post(`${api}/api/v1/customers`, {
-      headers,
+      headers: headers!,
       data: {
         username: `e2e_b80_${suffix}`,
         businessName: `E2E B80 Payment Detail ${suffix}`,
@@ -154,7 +190,7 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     expect(customer?.id, "POST /customers response carried no customer.id").toBeTruthy();
 
     const invoiceRes = await request.post(`${api}/api/v1/invoices`, {
-      headers,
+      headers: headers!,
       data: {
         customerId: customer.id,
         items: [{ description: "E2E B80 line", qty: 1, unitPrice: 4200 }],
@@ -164,7 +200,7 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     const invoice: { id: string } = await invoiceRes.json();
 
     const paymentRes = await request.post(`${api}/api/v1/invoices/${invoice.id}/payments`, {
-      headers,
+      headers: headers!,
       data: { amount: 4200, method: "CASH", status: "PAID" },
     });
     expect(paymentRes.ok(), `POST /invoices/:id/payments returned ${paymentRes.status()}`).toBe(
@@ -179,7 +215,7 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     const detailRes = await request.get(
       `${api}/api/v1/invoices/payments/${recorded.createdPaymentId}`,
       {
-        headers,
+        headers: headers!,
       },
     );
     expect(detailRes.ok(), `GET /invoices/payments/:id returned ${detailRes.status()}`).toBe(true);
@@ -218,15 +254,18 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     page,
     request,
   }) => {
-    const token = await operatorAccessToken(page);
-    expect(token, "operator storageState carried no access token").toBeTruthy();
-    const headers = { authorization: `Bearer ${token}`, "x-tenant-slug": TENANT_SLUG };
-    const api = apiBase(BASE);
+    await openApp(page);
+    const headers = await apiHeaders(page);
+    expect(
+      headers,
+      "no operator access token in localStorage — operator storageState is stale or the setup project did not run",
+    ).toBeTruthy();
+    const api = apiBase(page.url());
 
     const suffix = String(Date.now());
     const businessName = `E2E B144 ${suffix}`;
     const customerRes = await request.post(`${api}/api/v1/customers`, {
-      headers,
+      headers: headers!,
       data: {
         username: `e2e_b144_${suffix}`,
         businessName,
@@ -243,7 +282,7 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     // to already hold.
     for (let i = 0; i < 25; i++) {
       const orderRes = await request.post(`${api}/api/v1/orders`, {
-        headers,
+        headers: headers!,
         data: {
           customerId: customer.id,
           status: "PENDING",
@@ -286,15 +325,18 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     page,
     request,
   }) => {
-    const token = await operatorAccessToken(page);
-    expect(token, "operator storageState carried no access token").toBeTruthy();
-    const headers = { authorization: `Bearer ${token}`, "x-tenant-slug": TENANT_SLUG };
-    const api = apiBase(BASE);
+    await openApp(page);
+    const headers = await apiHeaders(page);
+    expect(
+      headers,
+      "no operator access token in localStorage — operator storageState is stale or the setup project did not run",
+    ).toBeTruthy();
+    const api = apiBase(page.url());
 
     const suffix = Date.now();
     const businessName = `E2E B110 Statement Parity ${suffix}`;
     const customerRes = await request.post(`${api}/api/v1/customers`, {
-      headers,
+      headers: headers!,
       data: {
         username: `e2e_b110_${suffix}`,
         businessName,
@@ -306,7 +348,7 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     expect(customer?.id, "POST /customers response carried no customer.id").toBeTruthy();
 
     const invoiceRes = await request.post(`${api}/api/v1/invoices`, {
-      headers,
+      headers: headers!,
       data: {
         customerId: customer.id,
         items: [{ description: "E2E B110 line", qty: 1, unitPrice: 250 }],
@@ -322,14 +364,14 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     // actually contributes to outstandingAmount and the test isn't a $0.00
     // == $0.00 tautology.
     const sendRes = await request.post(`${api}/api/v1/invoices/${invoice.id}/send`, {
-      headers,
+      headers: headers!,
     });
     expect(sendRes.ok(), `POST /invoices/:id/send returned ${sendRes.status()}`).toBe(true);
 
     // API oracle: the statement endpoint the customer detail page's
     // useCustomerStatement query itself reads.
     const statementRes = await request.get(`${api}/api/v1/customers/${customer.id}/statement`, {
-      headers,
+      headers: headers!,
     });
     expect(
       statementRes.ok(),

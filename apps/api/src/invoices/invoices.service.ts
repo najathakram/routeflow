@@ -2981,8 +2981,10 @@ export class InvoicesService {
 
     // A CUSTOMER sees only their OWN receivables — the same scope `findAll`
     // applies above, resolved the same way. Without it the tiles would hand a
-    // buyer the whole tenant's outstanding balance. (DRAFT needs no extra
-    // exclusion here: KPI_SUMMARY_EXCLUDED already drops it.)
+    // buyer the whole tenant's outstanding balance. (For the money tiles DRAFT
+    // needs no extra exclusion: KPI_SUMMARY_EXCLUDED already drops it. The
+    // awaiting-confirmation count is not on that set, so it carries findAll's
+    // buyer DRAFT rule itself — see m7 below.)
     let customerId: string | undefined;
     if (user?.role === UserRole.CUSTOMER) {
       const customer = await this.prisma
@@ -3013,17 +3015,24 @@ export class InvoicesService {
           payments: { select: { amount: true, status: true } },
         },
       }),
-      // m7: the awaiting-confirmation queue is a tile in the SAME bar as the
-      // money figures, so it counts DRAFT payments on the same OPEN set they
-      // sum — a draft payment sitting on a PAID/VOID/WRITTEN_OFF/DRAFT invoice
-      // is not an action the operator can take from these tiles.
+      // m7 (F16 hotfix): this tile is NOT on the money tiles' OPEN basis. It
+      // reproduces the client memo it replaced, which counted every DRAFT
+      // payment on every invoice `useInvoices({ limit: 999 })` returned —
+      // `for (const p of inv.payments ?? []) { if (p.status === "DRAFT")
+      // awaitingConfirmationCount++; }`, above and outside the memo's own
+      // status branches, so no invoice status was excluded. Scoping it to
+      // KPI_SUMMARY_EXCLUDED zeroed the tile for the commonest case there is:
+      // a payment recorded against a still-DRAFT invoice, which `recordPayment`
+      // deliberately leaves DRAFT (recomputeStatus treats DRAFT as terminal).
+      // The queue exists to make unconfirmed money visible wherever it sits;
+      // the invoice's own status is not what makes a draft payment actionable.
       this.prisma.forTenant().invoicePayment.count({
         where: {
           status: "DRAFT",
-          invoice: {
-            status: { notIn: KPI_SUMMARY_EXCLUDED },
-            ...(customerId ? { customerId } : {}),
-          },
+          // Staff: no invoice-status scope at all — the memo had none. A BUYER
+          // gets exactly `findAll`'s buyer scope instead: their own customer's
+          // invoices, minus the DRAFT ones a buyer is never shown.
+          ...(customerId ? { invoice: { customerId, status: { not: InvoiceStatus.DRAFT } } } : {}),
         },
       }),
       // Tenant id (and a buyer's customer id) reach the raw query as BOUND
