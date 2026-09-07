@@ -1,0 +1,229 @@
+{
+  "run": "campaign-check-freshness",
+  "branch": "fix/campaign-check-report-freshness",
+  "scale": "small",
+  "mode": "dev",
+  "clean": true,
+  "startedAt": "2026-09-06T17:10:00Z",
+  "endedAt": "2026-09-06T19:05:35Z",
+  "estimatedCostUsd": 25.27,
+  "pricesAsOf": "2026-06-24",
+  "riskSummary": "scripts + docs + one Jest spec; no runtime code; no deploy (scripts/ outside Railway watchPatterns); CI runs on scripts/",
+  "fixRouting": "Fable wrote discovery/spec/test plan/build plan; Sonnet authored tests then implemented; Opus refute-first review; Fable ruled fixes",
+  "fixRounds": 1,
+  "provenance": "lead-assigned, owner-approved 17:0xZ; dev-pipeline stages by hand (no Workflow engine on a peer request)",
+  "phaseReport": [
+    {
+      "phase": "Discovery + spec + test plan + build plan",
+      "ran": true,
+      "agents": 0,
+      "rawFindings": null,
+      "confirmed": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": "high",
+      "model": "claude-fable-5-1",
+      "overlappedWith": "reader",
+      "note": "rule: report stale when its generatedAt (or mtime) predates the newest commit touching the workspace's tests or the ledger shards; refuse before the token scan; --freshness-only pre-step refuses only on stale + turbo dry-run HIT; reporter stamps generatedAt/gitHead"
+    },
+    {
+      "phase": "Reader",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": 3,
+      "confirmed": 3,
+      "tokens": 256526,
+      "estUsd": 2.57,
+      "effort": "high",
+      "model": "claude-sonnet-5",
+      "overlappedWith": "spec drafting",
+      "note": "corrected three brief assumptions: the reporter carries no timestamp (→ R0 stamp + mtime fallback), four reports not three (pricing is T1 evidence), L-070 is not the GIT_* scrub lesson; found the trap LIVE on this tree (mobile.json stale + turbo HIT)"
+    },
+    {
+      "phase": "Author tests",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": null,
+      "confirmed": null,
+      "tokens": 246477,
+      "estUsd": 2.46,
+      "effort": "high",
+      "model": "claude-sonnet-5",
+      "overlappedWith": null,
+      "note": "TP-1: T1–T11 authored; red gate 10 red on their own values, T4 positive control green; harness = real script in temp git repos with controlled commit times"
+    },
+    {
+      "phase": "Red gate",
+      "ran": true,
+      "agents": 0,
+      "rawFindings": null,
+      "confirmed": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": null,
+      "model": null,
+      "overlappedWith": null,
+      "note": "properly red: 10/11 assertion failures on the table's expected values, no harness crash; T4 excluded as the positive control"
+    },
+    {
+      "phase": "Implement",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": null,
+      "confirmed": 1,
+      "tokens": 245957,
+      "estUsd": 2.46,
+      "effort": "high",
+      "model": "claude-sonnet-5",
+      "overlappedWith": null,
+      "note": "WP-0 reporter stamp, WP-1 rule+refusal+scoping, WP-2 --freshness-only + turbo dry-run (binary from the ledger's git root, never npx) + JEST_WORKER_ID seam, WP-3 verify wiring; 11/11; live oracle took the MISS branch because package.json (a turbo global dependency) invalidated the cache"
+    },
+    {
+      "phase": "Review",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": 10,
+      "confirmed": 6,
+      "tokens": 211802,
+      "estUsd": 5.3,
+      "effort": "high",
+      "model": "claude-opus-5",
+      "overlappedWith": null,
+      "note": "FIX-THEN-SHIP: F1 BLOCKER — git log default history simplification prunes a merge that only inherits the ledger change, so the rule read the older upstream commit (proved on the repo's own history) → --first-parent + merge fixture T15; F2 computePartial gaps (onlyChanged/changedSince/shard/findRelatedTests); F3 future-dated commit clamp; F4 docs drift (npx turbo, test counts, R9 missing); F5 test gaps (scoping T16); 4 informational"
+    },
+    {
+      "phase": "Docs + lesson + map",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": null,
+      "confirmed": null,
+      "tokens": 261241,
+      "estUsd": 2.61,
+      "effort": "low",
+      "model": "claude-sonnet-5",
+      "overlappedWith": null,
+      "note": "WP-4 in parallel: SKILL rule + ritual, L-083 (L-065/L-046 archived; register 39/40 at 39.4 KB), INDEX/api.md/CHANGELOG/_meta"
+    },
+    {
+      "phase": "Build round R9 (partial reports)",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": 1,
+      "confirmed": 1,
+      "tokens": 204556,
+      "estUsd": 2.05,
+      "effort": "high",
+      "model": "claude-sonnet-5",
+      "overlappedWith": null,
+      "note": "reporter stamps partial/partialPatterns (Jest 30 testPathPatterns.isSet()); campaign-check refuses partial in both modes; T12–T14 anti-vacuity probed live; 14/14"
+    },
+    {
+      "phase": "Gates (committed tree f07aab25)",
+      "ran": true,
+      "agents": 0,
+      "rawFindings": 0,
+      "confirmed": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": null,
+      "model": null,
+      "overlappedWith": "Opus review",
+      "note": "api tsc 0; prettier clean; validate-lessons 39/40 39.4 KB; pre-step BEFORE regen: api partial→MISS continue, mobile fresh, pricing fresh-by-mtime; regenerated api 4134/4134 (375 s), mobile 1398/1398, pricing 206/206 — all stamped partial=false gitHead f07aab25; pre-step AFTER: 3× fresh exit 0; full campaign-check 87/87; bugs self-test passed; sync --check 214"
+    },
+    {
+      "phase": "Fix round 1",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": null,
+      "confirmed": 6,
+      "tokens": 272818,
+      "estUsd": 2.73,
+      "effort": "high",
+      "model": "claude-sonnet-5",
+      "overlappedWith": null,
+      "note": "F1 --first-parent (+T15 merge fixture proving the pruning on real git), F2 computePartial reasons (+T12 case), F3 clock-skew clamp (+T17; the spec's own T0 anchor was 130 days in the future and had to move), F4 docs truth, F5 scoping pin (T16); 17/17, tsc, prettier, self-test, lessons; pre-step MISS→continuing; api report regenerated; commit df7494dd"
+    },
+    {
+      "phase": "Re-check",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": 2,
+      "confirmed": 0,
+      "tokens": 203585,
+      "estUsd": 5.09,
+      "effort": "high",
+      "model": "claude-opus-5",
+      "overlappedWith": "api report regeneration",
+      "note": "HOLDS: F1–F5 pinned by non-vacuous tests; --first-parent under-detection sweep found no hole (1194 commits / 41 merges / 0 non-monotonic parent edges); CI can never be refused (no cache, reports regenerated in-run); N1 info (a report stamped ≥ now is unconditionally fresh), N5 info (LESSONS.md 40,591/40,960 bytes)"
+    },
+    {
+      "phase": "Gates 8–10 (Fable)",
+      "ran": true,
+      "agents": 0,
+      "rawFindings": 0,
+      "confirmed": null,
+      "tokens": null,
+      "estUsd": null,
+      "effort": null,
+      "model": null,
+      "overlappedWith": null,
+      "note": "api regenerated 4137/4137 partial=false; pre-step 3× fresh exit 0; full campaign-check 87/87; fix commit df7494dd"
+    }
+  ],
+  "confirmedByPhase": {
+    "Reader": 3,
+    "Implement": 1,
+    "Build round R9 (partial reports)": 1,
+    "Review": 6,
+    "Fix round 1": 6
+  },
+  "redGate": {
+    "ran": true,
+    "remediateOn": "behavioral",
+    "properlyRed": true,
+    "structurallyRed": true,
+    "behaviorallyRed": true,
+    "attempts": 1,
+    "note": "10/11 red on own values; T4 positive control"
+  },
+  "verify": null,
+  "uiVerify": null,
+  "mutationProbe": {
+    "ran": false,
+    "skipped": "small light loop — mutations named per test in spec.md, not executed",
+    "targets": 0,
+    "probed": 0,
+    "allCaught": null,
+    "restoredVerified": null,
+    "skippedTargets": []
+  },
+  "finalPass": {
+    "ran": false,
+    "completed": null,
+    "skipped": "light loop — Fable ruled from the Opus brief",
+    "model": null,
+    "effort": null,
+    "fallback": null,
+    "files": [],
+    "findings": []
+  },
+  "overlap": null,
+  "cascadeAudit": null,
+  "escalation": null,
+  "remainingFindings": [
+    {
+      "severity": "nit",
+      "file": "scripts/campaign-check.mjs",
+      "summary": "N1: a report stamped at or after Date.now() is unconditionally fresh (intrinsic to the ruled clamp; needs a backwards clock correction to matter)"
+    },
+    {
+      "severity": "nit",
+      "file": ".claude/lessons/LESSONS.md",
+      "summary": "N5: the register sits at 40,591/40,960 bytes after L-083 — the next lesson archives two"
+    }
+  ],
+  "gate": {
+    "local": "green",
+    "final": "pre-push hook + CI"
+  }
+}

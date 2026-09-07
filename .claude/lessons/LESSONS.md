@@ -11,6 +11,24 @@
 
 ## process
 
+### L-084 · 2026-09-06 · process · F18
+
+- **Symptom:** F18's engine ended with every gate green and 3/3 probes caught, yet its final pass
+  found 12 live defects in files outside the build radius — platform-admin plan writers, Stripe
+  subscription webhooks, the period-end cron, alias and custom-plan paths — after the engine's
+  round cap had already stopped it.
+- **Root cause:** the fix was the FIRST product caller to arm a dormant persisted state (the
+  downgrade markers), which turned every other writer's and consumer's latent weakness into a
+  live defect; the radius was seeded from the build plan's file list, so those files were never
+  in scope until the final pass, and the pass's ordered reads could not feed a fix round.
+- **Lesson:** **when a fix arms, first-consumes, or first-clears a persisted state field, `git
+grep` every writer and reader of that field before the build plan is cut and put them in the
+  radius; treat the final pass's "reads worth their cost" as a fix round's input, never as the
+  run's end.**
+- **Guard:** bug-pipeline S5 checklist line ("state fields this fix arms → grep writers/readers →
+  radius"); knob candidate recorded in RUN-LOG 2026-09-06 (ledger evidence required before the
+  engine changes).
+
 ### L-080 · 2026-09-06 · process · registry-guards
 
 - **Symptom:** three PRs (#612/#617/#618) landed bug-ledger rows while the per-bug records still
@@ -139,6 +157,23 @@
 
 ## tooling
 
+### L-083 · 2026-09-06 · tooling · campaign-check freshness
+
+- **Symptom:** four pushes in one day were refused twelve minutes into `npm run verify` with "no test titled
+  with REG-B###", although the tests existed and passed — the machine-local Jest report campaign-check reads
+  was simply older than the ledger rows it was asked to prove.
+- **Root cause:** turbo replays a `test` task whose input tree it has seen before (a worktree whose workspace
+  matches master's after a merge), so the reporter never runs and `.campaign/runs/<ws>.json` keeps the tokens
+  of its last real run; the gate compared claims against that stale artifact as if it were current.
+- **Lesson:** **an artifact a gate consumes must carry its own provenance (its start time) and the gate must
+  compare it with the inputs it certifies — the newest commit touching the workspace's tests or the ledger —
+  and refuse a stale artifact by name, with the regeneration command, before it scans a single token.**
+- **Guard:** `scripts/campaign-check.mjs` freshness rule (full mode, before indexing) + `--freshness-only`
+  pre-step at the head of `npm run verify` that asks `turbo --dry-run=json` whether a replay is coming;
+  `apps/api/src/common/campaign-check-freshness.spec.ts` T1–T17 (T15–T17 added in fix-round 1: the
+  bound now uses `git log --first-parent` — a merge TREESAME to one parent for the path was judged
+  by the OLDER pre-merge commit otherwise — and clamps to `Date.now()` on a future-dated commit).
+
 ### L-079 · 2026-09-06 · tooling · #627 `chore/ci-private-minutes`
 
 - **Symptom:** three unrelated api specs refused pre-push verifies on 2026-09-05/06 with
@@ -168,17 +203,6 @@
   target from the variables the runner actually injects, print the resolved host before
   connecting, and treat "nothing set" as a loud fallback.**
 - **Guard:** `resolveDatabaseUrl` + its spec; the seed logs its target host.
-
-### L-065 · 2026-09-03 · tooling · PR-4 `imp-01`
-
-- **Symptom:** the review counted "four copies", the first plan promised a source-direct package
-  "exactly like `@routeflow/types`", and the repo's own comments already said that shape crashes
-  `node dist/main.js`.
-- **Lesson:** a workspace package the API imports at runtime must ship compiled JS — `nest build`
-  emits `require()` verbatim; source-direct packages are a client-only convenience. Build it on
-  `postinstall` so every `npm ci` (CI, Docker, dev) produces `dist` before anything typechecks.
-- **Guard:** `no-runtime-workspace-imports.spec.ts` (PR-1's engine already seeded the idea; this PR
-  makes it assert every `@routeflow/*` the API imports has a built `main`).
 
 ### L-073 · 2026-09-04 · tooling · wave E `imp-10a`
 
@@ -250,22 +274,6 @@
   dot-directory; use a relative `testMatch` scoped by `roots` instead.
 - **Guard:** `apps/web/jest.config.js`'s inline comment on `testMatch`; the web suite count (19
   spec files) pinned in `.claude/code-map/web.md`.
-
-### L-056 · 2026-09-04 · tooling · #609
-
-- **Symptom:** the `Fail on critical production advisories` CI step (`npm audit --omit=dev
---audit-level=critical`) blew its 20-minute `timeout-minutes` twice in one day, 8 minutes
-  apart; the non-blocking high-severity step hit the same failure masked by `|| true`.
-- **Root cause:** npm's registry started returning 500 on the quick-audit endpoint ("This
-  endpoint is being retired. Use the bulk advisory endpoint instead."), and npm's own client
-  retries internally for ~12 minutes before giving up — the gate had no way to tell an upstream
-  outage apart from a real finding.
-- **Lesson:** a CI gate that depends on a third-party service must distinguish a finding from an
-  outage: fail on findings, warn-and-skip on unavailability with a bounded retry — otherwise an
-  upstream deprecation blocks every merge.
-- **Guard:** `scripts/ci-audit-critical.mjs` (bounded 3-attempt retry, registry/transport-error
-  detection, `::warning::…SKIPPED` + exit 0 on outage, fail-closed otherwise); contract spec
-  `apps/api/src/common/ci-audit-script.spec.ts`.
 
 ### L-062 · 2026-09-04 · tooling · imp-04
 
@@ -480,23 +488,6 @@
 - **Guard:** `runGh`'s 60s timeout + `visibility-watchdog-script.spec.ts` (reachable-delay list,
   `root=` on the start line, gated overrides); the runbook names the marker path.
 
-### L-064 · 2026-09-04 · deploy · imp-04
-
-- **Symptom:** the local E2E lane's browser login against the Docker-built web image was
-  CSP-blocked with no HTTP response at all (`POST http://localhost:3000/api/v1/auth/login`
-  from `http://localhost:3001`, `status -1`); the login page's no-response fallback rendered
-  it as "Invalid username or password" even though API, CORS, seed, and throttle were all fine.
-- **Root cause:** `next.config.mjs`'s CSP gated the `connect-src` localhost relaxation on
-  `isDev = NODE_ENV !== "production"`, which is always `false` in a **built** image — `next
-build` forces production — so that branch was dead in every Docker image, not just prod.
-- **Lesson:** **never gate a build-time artifact (a CSP header, a routes manifest) on
-  `NODE_ENV` — every built image reports `production` regardless of its actual deployment
-  target. Derive the decision from the build input it must actually match instead** (here,
-  whether the baked `NEXT_PUBLIC_API_URL` itself is `http:`), and pin the production output
-  byte-identical in a spec so the fix can't silently change what ships.
-- **Guard:** `apps/web/csp.mjs` (`apiConnectSources`) + `apps/web/lib/csp.test.ts` (prod-identity
-  case pins the exact production `Content-Security-Policy` string).
-
 ### L-057 · 2026-09-04 · deploy · #609
 
 - **Symptom:** a process restart killed the agent session inside a public-repo CI window;
@@ -517,13 +508,6 @@ build` forces production — so that branch was dead in every Docker image, not 
 - **Root cause:** #475 put `@RequireAddon("ocr")` on live routes with no backfill and no plan bundling the add-on, and the web discarded the server's message.
 - **Lesson:** **A new entitlement gate on an existing route is an outage unless it ships observe-first: register the key with a review date, allow-and-log until the backfill exists, fail closed only for unregistered keys, and always surface the server's message.**
 - **Guard:** `ADDON_GATE_REGISTRY` pins P1a–P1h and REG-OCR-1 T1–T8; e2e OP-17g; the CLAUDE.md "Entitlement gates" rule and the PR-template line.
-
-### L-046 · 2026-09-04 · domain · F13
-
-- **Symptom:** a MONTHLY recurring invoice never advanced; a standing order billed list price; a failed cycle was silently skipped; a failed cycle's unconditional rollback could hand the schedule back for a cycle another run had already billed.
-- **Root cause:** a month-advance compared against a mutated date; a second writer priced lines outside the one buyer resolver; the cron advanced the schedule before it knew the outcome and never recorded it; the restore after failure was not conditioned on the claim that made it.
-- **Lesson:** **Every path that materialises an order or invoice from a saved shape is a pricing writer and a schedule writer: price through the shared resolver, record the outcome on the row you advanced, and undo a claim only by compare-and-set on the value the claim wrote — a miss means someone newer owns the row, so write nothing.**
-- **Guard:** REG-B48 T9–T16 through the real resolver; REG-B46 T1–T7b; REG-B106 T17/T17b/T17c/T18/T19 ([[L-030]]: a write and its record share one condition; [[L-045]]: release on the forward-path marker).
 
 ### L-047 · 2026-09-04 · domain · F25
 

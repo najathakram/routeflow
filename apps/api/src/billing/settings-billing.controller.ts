@@ -77,8 +77,15 @@ export class SettingsBillingController {
   @Post("quote")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Price a plan + add-on selection at a cycle (choose-plan)" })
-  quote(@Body() dto: QuoteDto) {
-    return this.proration.quote(dto);
+  async quote(@CurrentUser() user: AuthUser, @Body() dto: QuoteDto) {
+    // No role gate here beyond the class-level @Roles(OPERATOR): a SUPER_ADMIN satisfies that
+    // via the role hierarchy but carries no tenant context, so the plan-change preview is
+    // simply skipped (`change: null`) rather than 403ing a legitimate quote read.
+    const quote = await this.proration.quote(dto);
+    const change = user.tenantId
+      ? await this.mutations.planChangePreview(user.tenantId, dto.planKey, dto.cycle)
+      : null;
+    return { ...quote, change };
   }
 
   @Get("proration-preview")

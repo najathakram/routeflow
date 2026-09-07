@@ -1,10 +1,10 @@
 {
-  "nextId": 83,
-  "activeCount": 40,
-  "archivedCount": 38,
+  "nextId": 85,
+  "activeCount": 38,
+  "archivedCount": 42,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-06T09:37:58.771Z",
+  "updatedAt": "2026-09-07T01:30:00.000Z",
   "schemaVersion": 1,
-  "note": "fix/bugs-selftest-lock-liveness: merged master 3bc86627 (L-081 present, L-045 archived upstream). Added L-082 (testing — never forge a timestamp relative to now by a plausible machine uptime; per-fixture cleanup) and archived L-054 (domain, oldest active entry with an automated guard) for headroom; the Opus re-check follow-through (age-verdict regex, lockdir rm retries) carries no new lesson — L-082 covers this fix."
+  "note": "docs/643-f18-bookkeeping: added L-084 (process — a fix that first arms/consumes/clears a persisted state field must grep every writer and reader of that field into the build radius before the plan is cut, F18/#643) and archived L-056 (tooling) + L-064 (deploy), the oldest active entries with zero live citations outside frozen .claude/pipeline/ run records whose Guard names a landed automated check, for headroom. Note: the task brief for this follow-up named the new entry L-083, but master already carried an unrelated L-083 (campaign-check freshness) landed earlier the same day, and nextId was already 84 before this session started — filed as the actually-free L-084 instead."
 }

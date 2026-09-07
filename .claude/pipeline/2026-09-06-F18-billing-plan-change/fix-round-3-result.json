@@ -1,0 +1,308 @@
+{
+  "api": {
+    "filesTouched": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api/src/billing/subscription-mutation.service.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api/src/billing/subscription-mutation.service.spec.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api/src/billing/billing-cron.service.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api/src/billing/billing-cron.service.spec.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api/src/billing/billing.service.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api/src/billing/billing.service.spec.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api/src/platform-admin/platform-admin.service.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api/src/platform-admin/platform-admin.service.spec.ts"
+    ],
+    "perFinding": [
+      {
+        "index": 1,
+        "status": "fixed",
+        "what": "Trimmed the false second disjunct in upgrade()'s `!fromKey` comment (subscription-mutation.service.ts:~511): it now says only \"no tenant row at all\", matching resolveFromPlanKey's own docblock. Also corrected the class docblock's now-stale B58 sentence and extended its \"at most ONE transition armed\" claim to name the platform-admin and Stripe writers that this round enrolled.",
+        "pin": "n/a (comment-only). The behaviour the comment describes stays pinned by subscription-mutation.service.spec.ts › \"REG-B58 upgrade() allows a planKey-NULL row on an ACTIVE tenant (manual activation) and books the FULL base\" and \"REG-B58 upgrade() still refuses a planKey-NULL row on a TRIAL tenant\"."
+      },
+      {
+        "index": 2,
+        "status": "fixed",
+        "what": "platform-admin.service.ts updatePlan(): the subscription upsert's `update` branch now clears downgradeToPlanKey/downgradeEffectiveAt/retainedUserIds. cancelAtPeriodEnd is deliberately NOT touched (an admin plan edit must not revoke a tenant's cancellation), and the spec asserts that absence.",
+        "pin": "platform-admin.service.spec.ts › \"logs TENANT_PLAN_CHANGED with the previous and new plan in meta, writes planKey/planVersionId consistent with subscribe(), and invalidates entitlements\" — the exact-match upsert payload now carries the three cleared markers, plus a `not.toHaveProperty(\"cancelAtPeriodEnd\")` assertion."
+      },
+      {
+        "index": 9,
+        "status": "fixed",
+        "what": "platform-admin.service.ts activateManualSubscription(): the upsert's `update` branch now clears downgradeToPlanKey/downgradeEffectiveAt/retainedUserIds alongside the existing cancelAtPeriodEnd:false, so rolling the period forward cannot leave a schedule pointing at the old (past) period end for the next 02:00 sweep.",
+        "pin": "platform-admin.service.spec.ts › \"activateManualSubscription disarms every pending transition when it rolls the period (round 3, findings 2/9)\" (new)."
+      },
+      {
+        "index": 3,
+        "status": "fixed",
+        "what": "planChangePreview's UPGRADE and DOWNGRADE branches now return a warning when priorSub.cancelAtPeriodEnd is true: \"A cancellation is pending — this change keeps your subscription active.\" (module const CANCELLATION_REVOKED_WARNING, wording parallel to KEEP_CURRENT's).",
+        "pin": "subscription-mutation.service.spec.ts › \"SubscriptionMutationService.planChangePreview — pending cancellation (round 3, findings 3/12)\" › \"UPGRADE with a cancellation armed warns that committing keeps the subscription alive\" + \"UPGRADE with NO cancellation armed carries no warning\" (new)."
+      },
+      {
+        "index": 12,
+        "status": "fixed",
+        "what": "Same fix as finding 3 on the DOWNGRADE branch: warnings are now composed into a list, so the cancellation notice and the seat-cap notice are emitted together rather than one replacing the other; absent both, `warning` stays undefined.",
+        "pin": "subscription-mutation.service.spec.ts › \"DOWNGRADE with a cancellation armed warns, and still carries the seat warning alongside it\" + \"DOWNGRADE with NO cancellation armed and within the seat cap carries no warning\" (new); the pre-existing seat-cap and PINNED-version warning tests stay green."
+      },
+      {
+        "index": 4,
+        "status": "fixed",
+        "what": "downgrade() now refuses when the target OR the resolved source definition isCustom, with the same BadRequestException message upgrade() uses (\"Enterprise is a custom plan — contact sales.\", shared const CUSTOM_PLAN_MESSAGE), so an ENTERPRISE tenant can no longer schedule itself out of a negotiated contract.",
+        "pin": "subscription-mutation.service.spec.ts › \"custom (Enterprise) plans are never self-service (round 3, findings 4/6/11)\" › \"downgrade() refuses a custom SOURCE with the same message upgrade() uses\" (new; asserts message, class, and that no schedule row is written)."
+      },
+      {
+        "index": 6,
+        "status": "fixed",
+        "what": "planChangePreview screens isCustom on BOTH sides (published catalog, via findPlanDefinition) before ranking and returns the new action CONTACT_SALES with proratedNow:null, effectiveAt:null and the contact-sales message — replacing the old UPGRADE-with-a-negative-proratedNow answer for an ENTERPRISE target.",
+        "pin": "subscription-mutation.service.spec.ts › \"a custom TARGET previews CONTACT_SALES, never UPGRADE with a negative proratedNow\" (new; pins action, proratedNow null, effectiveAt null, message)."
+      },
+      {
+        "index": 11,
+        "status": "fixed",
+        "what": "Same screen catches the custom SOURCE: an ENTERPRISE tenant picking any different plan gets CONTACT_SALES instead of a DOWNGRADE promising \"$0 due today\" that the cron would apply as a POSITIVE MRR delta over the negotiated basePriceSnapshot. A custom source re-picking its own plan still reaches NOOP/KEEP_CURRENT (the screen sits after that branch).",
+        "pin": "subscription-mutation.service.spec.ts › \"a custom SOURCE picking a different plan previews CONTACT_SALES, never DOWNGRADE\" and \"a custom source re-picking its OWN plan still reaches NOOP (the screen never eats the undo)\" (new)."
+      },
+      {
+        "index": 5,
+        "status": "fixed",
+        "what": "planChangePreview is now alias-aware: toKey = normalizePlanKey(requested), fromKey = resolveFromPlanKey(...) (already normalized), samePlan = fromKey === toKey; the response carries the new normalized `fromPlanKey` so the chooser can mark the current card. The now-unreachable equal-rank SUBSCRIBE branch was removed (equal rank ⇔ same normalized plan, which same-cycle is NOOP/KEEP_CURRENT and different-cycle is the cycle-switch branch). subscribe()'s ACTIVE/live-period/same-cycle guard now also refuses an equal-rank pick with ConflictException \"You are already on this plan — nothing to change\" — never a period reset — with ONE carve-out: a row whose stored planKey is NULL (the manual-activation shape) still heals through subscribe(), since it contributes 0 to the MRR snapshot until it gains a planKey and upgrade() only moves up.",
+        "pin": "subscription-mutation.service.spec.ts › PIN T13 REWRITTEN: \"PIN T13: a legacy same-rank re-pick (BUSINESS→SCALE) is REFUSED, so the period is never reset\" (asserts message oracle, ConflictException, no upsert, no event) + \"PIN T13b: the same alias re-pick previews NOOP — the chooser never routes it to subscribe()\" (also pins fromPlanKey === \"SCALE\") + \"REG-B58 T2 an alias tenant (BUSINESS) with a downgrade armed previews KEEP_CURRENT for its own plan (SCALE)\" (replaces the superseded Amendment-2 SUBSCRIBE pin) + \"REG-B58 subscribe() on an ACTIVE row that DOES carry a planKey is refused for its own plan (round 3, finding 5)\"."
+      },
+      {
+        "index": 8,
+        "status": "fixed",
+        "what": "billing-cron.service.ts applyScheduledDowngrades' findMany where now carries `tenant: { status: \"ACTIVE\", deletedAt: null }`, mirroring applyScheduledCancellations in the same file, so a suspended/cancelled/soft-deleted tenant's armed schedule no longer double-books an MRR delta or deactivates its staff.",
+        "pin": "billing-cron.service.spec.ts › \"applyScheduledDowngrades only selects ACTIVE, non-deleted tenants (round 3, finding 8)\" (new; asserts where.tenant toEqual the filter)."
+      },
+      {
+        "index": 10,
+        "status": "fixed",
+        "what": "billing.service.ts onSubscriptionDeleted() now clears downgradeToPlanKey/downgradeEffectiveAt/retainedUserIds alongside cancelAtPeriodEnd:true (a cancellation supersedes a downgrade — cancel()'s own rule). onSubscriptionUpdated() clears those three ONLY when subscription.cancel_at_period_end === true and leaves them untouched otherwise, so an ordinary Stripe update (cycle roll, price sync, add-on item) cannot silently drop a tenant's scheduled downgrade.",
+        "pin": "billing.service.spec.ts › onSubscriptionDeleted › \"disarms a scheduled downgrade alongside cancelAtPeriodEnd (round 3, finding 10)\" and new describe \"onSubscriptionUpdated (round 3, finding 10)\" › \"clears the downgrade markers when the update ARMS a cancellation\" + \"leaves the downgrade markers untouched on an ordinary update\" (asserts the keys are absent from the update payload)."
+      },
+      {
+        "index": 13,
+        "status": "fixed",
+        "what": "planChangePreview refuses a key that normalizePlanKey cannot resolve (BadRequestException `Unknown plan \"X\"`) before any ranking, and downgrade() refuses `planRank(targetPlanKey) < 0` right after its catalog lookup — so a published catalog key outside PLAN_KEYS can no longer rank −1 and read as \"a DOWNGRADE from every plan\" that the cron applies with basePriceSnapshot: null.",
+        "pin": "subscription-mutation.service.spec.ts › \"an unrankable plan key is refused at the seam (round 3, finding 13)\" › \"planChangePreview throws instead of ranking an off-list key as −1 (a DOWNGRADE from everything)\" + \"downgrade() refuses an off-list key that IS in the published catalog\" (new; both use a catalog fixture carrying an off-list \"PRO\" definition, so the def-exists check passes and only the rank check can catch it)."
+      }
+    ],
+    "unionDeclarations": [
+      "apps/api/src/billing/subscription-mutation.service.ts:35 — `export type PlanChangeAction` — CHANGED: added \"CONTACT_SALES\" (and added `fromPlanKey: string | null` to the PlanChangePreview interface).",
+      "apps/web/lib/api/billing.ts:78 — `export type PlanChangeAction` (web's own copy, not imported from the API) — NOT CHANGED: apps/web is the web exec's file per the brief; it still needs \"CONTACT_SALES\" added and `fromPlanKey` consumed, or the web copy will not compile against a CONTACT_SALES response.",
+      "packages/types — NO declaration exists (grep \"KEEP_CURRENT\" across apps/api, apps/web, packages returns only the two files above plus their specs and apps/web/app/(dashboard)/choose-plan/page.tsx, which switches on the string literals). Nothing under packages/ was touched."
+    ],
+    "notes": "GATES (exactly the two commands in the brief, run from apps/api): `npx tsc -p tsconfig.build.json --noEmit` clean; `npx jest src/billing src/sales-agents src/platform-admin --runInBand` = 24 suites / 362 tests, all passing (one iteration was needed — see the carve-out below). `npx jest src/billing src/platform-admin -t \"REG-B\"` = 43 passed / 0 failed, so the REG-B58/B73/B107 set is green. Prettier --check is clean on all 8 touched files.\n\nDEVIATIONS / DECISIONS the reviewer should adjudicate:\n1. THREE existing tests were rewritten, all because they pinned behaviour the round-3 ruling reverses. (a) PIN T13 (rewritten as the design instructs). (b) \"REG-B58 T2 (Amendment 2) legacy key rename with an EQUAL rank (BUSINESS→SCALE) previews SUBSCRIBE, never NOOP\" — Amendment 2 is superseded by the finding-5 ruling (\"BUSINESS tenant picks SCALE same cycle → NOOP; with a schedule armed → KEEP_CURRENT\"); I replaced it with the KEEP_CURRENT case and added the NOOP case as PIN T13b. (c) \"REG-B58 subscribe() on an ACTIVE row that DOES carry a planKey still nets to 0 (regression guard)\" — it re-subscribed BUSINESS→BUSINESS on an ACTIVE tenant with a live same-cycle period, which the new guard refuses; I converted it into a refusal pin. Its netting arithmetic (ACTIVE + stored planKey nets against the old plan) remains covered by the untouched PIN T10 ACTIVE cycle-switch test.\n2. CARVE-OUT to the subscribe() guard, not stated in the design and worth a ruling: refusing EVERY equal-rank ACTIVE same-cycle pick broke \"REG-B58 subscribe() on a planKey-NULL ACTIVE row books the FULL base, not a self-netted 0\" (tenantPlan BUSINESS, sub.planKey NULL, picks BUSINESS = equal rank). Refusing that would strand a manual-activation row plan-less forever (it contributes 0 to the MRR snapshot until it gains a planKey, and upgrade() only moves up). So the same-rank refusal fires only when `priorSub.planKey != null`; a different-rank pick is still refused on a planKey-NULL row (that REG-B58 test is untouched and green). The consequence the owner may want to weigh: the equal-rank re-pick was previously the only self-service planVersionId re-pin route, and it is now closed — the re-pin is left to platform-admin updatePlan and the cron.\n3. CONTACT_SALES carries its sales message in the existing `warning` field (the design said \"a message naming sales\"); no new response field was invented, and the web page already renders `warning`. `proratedNow`/`effectiveAt`/`keepsRenewalAt` are all null on that action.\n4. planChangePreview now fetches the published catalog on the UPGRADE, DOWNGRADE, CONTACT_SALES and cycle-switch paths (one call, hoisted, reused by the UPGRADE branch). The SUBSCRIBE/NOOP/KEEP_CURRENT early returns still never touch it — the \"SUBSCRIBE / NOOP paths never fetch the published catalog\" pin is untouched and green.\n5. Removed the now-dead equal-rank SUBSCRIBE branch in planChangePreview: with normalized comparison, rankFrom === rankTo implies samePlan, which is handled above (same cycle) or by the cycle-switch branch.\n6. WEB SIDE STILL OWED (not mine): apps/web/lib/api/billing.ts must add \"CONTACT_SALES\" to its own PlanChangeAction copy and handle it in dispatchPlanChange, and the chooser should mark the current card from the new `preview.change.fromPlanKey`. Until then the web build will not typecheck against a CONTACT_SALES response.\n7. Out of scope, observed while editing: upgrade() still looks its target definition up with a raw `d.planKey === planKey` compare rather than findPlanDefinition, and still does not clear `retainedUserIds` when it clears the other two downgrade markers (downgrade markers are inert without downgradeEffectiveAt, so this is cosmetic). Neither is in the round-3 ruling; left alone.\nNo git write commands, no installs, no docker/playwright, no full `npx jest` were run; only the 8 files listed were modified."
+  },
+  "web": {
+    "filesTouched": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/lib/api/billing.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/lib/api/billing.test.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/app/(dashboard)/choose-plan/page.tsx"
+    ],
+    "perFinding": [
+      {
+        "index": 7,
+        "status": "fixed",
+        "what": "dispatchPlanChange no longer commits the quote's echoed cycle. PlanChangeMutations gained a required `cycle: Cycle` field (the caller's LIVE toggle) and the SUBSCRIBE branch now posts `{ planKey: preview.planKey, cycle: mutations.cycle }` instead of `preview.cycle`; choose-plan/page.tsx passes `cycle` (the React.useState toggle) into that object. The commit button's `disabled` now includes `quote.isPending` (a quote in flight = stale preview), and the MONTHLY/ANNUAL pills carry `disabled={isCommitting}` plus a cursor-not-allowed/opacity-50 style so the toggle cannot move under an in-flight commit. The old test that pinned the stale behaviour (\"...with the quoted cycle\") was rewritten to \"...with the caller's live cycle\".",
+        "pin": "apps/web/lib/api/billing.test.ts — \"subscribes on the LIVE cycle, not the cycle the quote echoed back\" (live cycle ANNUAL, quote echoing MONTHLY -> subscribe body cycle ANNUAL); plus \"uses the live cycle for a null `change` too (no tenant context)\" for the null-change SUBSCRIBE fallback, and the renamed \"routes SUBSCRIBE to the subscribe mutation with the caller's live cycle\"."
+      },
+      {
+        "index": 4,
+        "status": "fixed",
+        "what": "Web half only (the API refusal in downgrade() is the API executor's). `PlanChangeAction` in apps/web/lib/api/billing.ts gained \"CONTACT_SALES\"; dispatchPlanChange returns `{ outcome: \"contact-sales\" }` and posts NOTHING for it (checked before every mutation branch), so a custom-plan source can no longer reach useDowngrade/useSubscribe from the web dispatch. dispatchPlanChange now returns a typed PlanChangeDispatch (`contact-sales` | `none` | `dispatched`) instead of void.",
+        "pin": "apps/web/lib/api/billing.test.ts — \"fires nothing for CONTACT_SALES and reports the sales hand-off\" (asserts the returned `{ outcome: \"contact-sales\" }` and that upgrade/downgrade/subscribe were all never called)."
+      },
+      {
+        "index": 6,
+        "status": "fixed",
+        "what": "Web half only. The chooser now renders the CONTACT_SALES action honestly rather than an UPGRADE with a negative Due today: commit button label reads \"Contact sales\" and becomes a link (Button `href={SALES_CONTACT_HREF}`, which renders an <a> — no POST, no fabricated toast), onClick is dropped for that action, commit() early-returns on CONTACT_SALES as a second guard, and the \"Due today\" row renders `money(null)` = \"Custom\" instead of `preview.dueToday`. SALES_CONTACT_HREF reuses the app's existing sales mailto (hello@routeflow.info, as used in apps/web/app/(marketing)/components/footer.tsx and company/page.tsx) — no new route invented.",
+        "pin": "apps/web/lib/api/billing.test.ts — \"fires nothing for CONTACT_SALES and reports the sales hand-off\" (the dispatch-level oracle; the page's label/link is not unit-testable in this lane, which has no DOM tests for this page)."
+      },
+      {
+        "index": 11,
+        "status": "fixed",
+        "what": "Web half only (the money defect is the API/cron half). The web PlanChange interface gained optional `message?: string` (server copy for a CONTACT_SALES quote, rendered as-is under the summary, never composed client-side) and optional `fromPlanKey?: string | null`; the page marks the tenant's current plan card with a `<Badge variant=\"info\" label=\"Current plan\" />` from `preview.change?.fromPlanKey` (and suppresses the \"Best fit\" chip on that card), so a custom-plan tenant sees which plan they are actually on rather than a $0-due DOWNGRADE affordance. The DOWNGRADE-branch $0 rendering itself is unchanged for non-custom plans; a custom source now arrives as CONTACT_SALES and shows \"Custom\".",
+        "pin": "apps/web/lib/api/billing.test.ts — \"fires nothing for CONTACT_SALES and reports the sales hand-off\" (same dispatch pin; the CONTACT_SALES routing is what stops the web half from opening the cron path)."
+      }
+    ],
+    "unionDeclarations": [
+      "apps/web/lib/api/billing.ts:78 — PlanChangeAction declared here (web-local, NOT imported from @routeflow/types). CHANGED: added \"CONTACT_SALES\" (reformatted to one member per line for printWidth 100).",
+      "apps/api/src/billing/subscription-mutation.service.ts:35 — PlanChangeAction declared here. NOT CHANGED (API executor owns apps/api; still reads \"SUBSCRIBE\" | \"UPGRADE\" | \"DOWNGRADE\" | \"NOOP\" | \"KEEP_CURRENT\" as of my last read).",
+      "packages/** — NO declaration exists (grep -rn \"PlanChangeAction|KEEP_CURRENT\" over packages/ returned nothing), so nothing to change there and nothing was touched."
+    ],
+    "notes": "GATES (both run exactly as briefed, both GREEN):\n1. `cd apps/web && npx tsc --noEmit -p tsconfig.json` -> no output, exit 0. NO type error appeared from the missing union member, because the web copy of PlanChangeAction is declared inside apps/web (billing.ts:78) and I extended it there; nothing in apps/web imports the API/packages copy.\n2. `cd apps/web && npx jest --runInBand lib/api/billing.test.ts` -> 1 suite passed, 10/10 tests passed (was 7).\n\nCONTRACT RISKS FOR THE LEAD / API EXECUTOR (web mirrors the API shape, so these must match):\n- I put `fromPlanKey` and `message` on the web `PlanChange` interface, i.e. I expect them on the API's `PlanChangePreview` (the `change` object on the quote), read in the page as `preview.change?.fromPlanKey` / `preview.change?.message`. fix-round-3.md is ambiguous: ruling 5 says \"add `fromPlanKey` to the preview response\" (= PlanChangePreview -> `change.fromPlanKey`, which is what I implemented) while ruling 7 writes `preview.fromPlanKey` (which in page.tsx would be the QuoteResult top level). Both new fields are OPTIONAL on the web side, so tsc stays green either way, but if the API lands `fromPlanKey` on the quote root instead of on `change`, the \"Current plan\" badge silently never renders and one web line must move.\n- `message` vs `warning`: ruling 4/6/11 says CONTACT_SALES returns \"a `message` naming sales\" while ruling 3/12 uses `warning`. I added `message?: string` and render it; if the API reuses `warning` for CONTACT_SALES it still renders (in amber, via the existing warning line) and the `message` block is simply dead — worth one line of confirmation at review.\n\nSCOPE: no file outside the three allowed web files was edited; apps/api and packages/** untouched; no git write commands, no installs, no other jest/playwright/docker runs. No client identifiers added. No money math touched (the only monetary rendering change is CONTACT_SALES showing \"Custom\" instead of a number).\n\nSTYLE: every line I added is <= 100 columns; the four remaining over-100 lines across the three files are all pre-existing (billing.ts:4/153/192/251, billing.test.ts:115 old test title, page.tsx:109/219). Prettier was NOT run (not a briefed command) — formatting was matched by hand to the surrounding code (double quotes, semicolons, trailing commas)."
+  },
+  "regate": {
+    "results": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api && npx tsc -p tsconfig.build.json --noEmit",
+        "pass": true,
+        "summary": "TypeScript type-check in API passed with no errors",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api && npx jest src/billing src/sales-agents src/platform-admin --runInBand",
+        "pass": true,
+        "summary": "24 test suites, 362 tests passed (11.109 seconds)",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web && npx tsc --noEmit -p tsconfig.json",
+        "pass": true,
+        "summary": "TypeScript type-check in web passed with no errors",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web && npx jest --runInBand lib/api/billing.test.ts",
+        "pass": true,
+        "summary": "1 test suite, 10 tests passed (1.339 seconds)",
+        "failures": []
+      }
+    ],
+    "allPass": true
+  },
+  "review": {
+    "perFinding": [
+      {
+        "index": 0,
+        "verdict": "deferred-ok",
+        "evidence": "Out of F18 scope by the round-3 ruling (row 0). apps/api/src/orders/orders.controller.ts is untouched in the tree (git status shows no orders file modified) — correct: the deferral is an owner tradeoff question, to be filed as a registry row at close-out."
+      },
+      {
+        "index": 1,
+        "verdict": "fixed",
+        "evidence": "subscription-mutation.service.ts:586-587 now reads \"(`!fromKey` retained only for the one case it can still be null — no tenant row at all — which was refused before this guard existed, and it narrows the type.)\" — the false second disjunct is gone and it now agrees with resolveFromPlanKey's docblock at :143-147 (\"Null only when there is neither a subscription planKey nor a loaded tenant row\"). The class docblock's invariant at :116-118 was also widened to name platform-admin and the Stripe writers, and that claim is now true (verified below for findings 2/9/10). Comment-only, no behaviour change."
+      },
+      {
+        "index": 2,
+        "verdict": "fixed",
+        "evidence": "platform-admin.service.ts:448-457 — updatePlan()'s upsert `update` branch now carries downgradeToPlanKey: null, downgradeEffectiveAt: null, retainedUserIds: [], with cancelAtPeriodEnd deliberately absent. Replaying the finding's scenario: after a PATCH back to SCALE the row no longer carries downgradeEffectiveAt, so billing-cron.service.ts:129-131's `downgradeEffectiveAt: { not: null, lte: now }` cannot select it and the user.updateMany at :186-195 is unreachable. Pinned by an exact-match toHaveBeenCalledWith on the upsert payload plus `not.toHaveProperty(\"cancelAtPeriodEnd\")` (platform-admin.service.spec.ts:179-195) — a real oracle, not a toMatchObject that would pass with the field re-added."
+      },
+      {
+        "index": 3,
+        "verdict": "fixed",
+        "evidence": "subscription-mutation.service.ts:44-45 defines CANCELLATION_REVOKED_WARNING; :519-521 attaches it to the UPGRADE return when priorSub.cancelAtPeriodEnd, and :536-537 pushes it into the DOWNGRADE branch's `warnings` list rendered at :562. The state was already selected at :415. Refutation attempt: I checked that the warning is not swallowed when the seat warning also fires — :548 pushes the seat text onto the same array and :562 joins them, so both survive (pinned at subscription-mutation.service.spec.ts:820-839, which asserts BOTH /cancellation is pending/ and /8 active users/). Negative cases pinned at :809 and :841 (warning undefined). NOTE: this fix is what makes new hazard #1 below fire."
+      },
+      {
+        "index": 4,
+        "verdict": "fixed",
+        "evidence": "subscription-mutation.service.ts:674-680 — downgrade() now throws BadRequestException(CUSTOM_PLAN_MESSAGE) when `def.isCustom || findPlanDefinition(version.definitions, fromKey)?.isCustom`, i.e. either side. CUSTOM_PLAN_MESSAGE (:40) is byte-identical to upgrade()'s literal at :571. Traced the finding's scenario: an ENTERPRISE-stored tenant posting targetPlanKey SCALE now dies at :678, before the rank check at :681 and before the $transaction at :693, so no schedule row is written and billing-cron's +499 ledger delta is unreachable. Pinned at subscription-mutation.service.spec.ts:893-903 (message, BadRequestException class, and tx.tenantSubscription.update never called)."
+      },
+      {
+        "index": 5,
+        "verdict": "fixed",
+        "evidence": "Two halves, both present. (a) planChangePreview:398 `toKey = normalizePlanKey(planKey)`, :424 fromKey via resolveFromPlanKey (already normalized), :440 `samePlan = fromKey === toKey` — so a BUSINESS-stored tenant picking SCALE now reaches NOOP (:457) or KEEP_CURRENT (:448) instead of the old equal-rank SUBSCRIBE, and the dead equal-rank SUBSCRIBE branch is gone (SUBSCRIBE now only at :426 for non-ACTIVE/no-period and :493 for a cycle switch). `fromPlanKey` is on every return path. (b) subscribe():208-224 refuses an ACTIVE, live-period, same-cycle, same-rank pick with ConflictException(\"You are already on this plan — nothing to change\") before the upsert at :269, so periodStart/periodEnd can no longer be reset. Pins: spec:549 (T13 rewritten — asserts the refusal, no upsert, no event), :568 (T13b previews NOOP and fromPlanKey === \"SCALE\"), :768 (alias + armed downgrade → KEEP_CURRENT), :396 (ACTIVE row with a planKey refused for its own plan). The carve-out at :213 (`!sameRank || priorSub.planKey != null`) keeps the manual-activation heal path open and is pinned by the untouched spec:385 test — a deviation the executor declared and I judge correct: refusing it would strand a planKey-NULL row plan-less, since it contributes 0 to the MRR snapshot and upgrade() only moves up."
+      },
+      {
+        "index": 6,
+        "verdict": "fixed",
+        "evidence": "subscription-mutation.service.ts:470-486 — publishedTargetDef/publishedSourceDef are resolved with findPlanDefinition and a custom definition on EITHER side returns action CONTACT_SALES with proratedNow null, effectiveAt null, keepsRenewalAt null and warning = CUSTOM_PLAN_MESSAGE, placed after the NOOP/KEEP_CURRENT returns and before ranking. So the finding's { action: 'UPGRADE', proratedNow: -249.50 } is no longer producible. Refutation attempts that failed: (i) the screen does not eat the undo — a custom source re-picking its own plan returns above it at :443-463 (pinned spec:883); (ii) the web dispatch cannot route it anywhere — apps/web/lib/api/billing.ts:307 returns { outcome: \"contact-sales\" } before every mutation branch (pinned billing.test.ts:127). Union completeness verified by grep: PlanChangeAction is declared exactly twice (subscription-mutation.service.ts:35-36, apps/web/lib/api/billing.ts:78-84), both carry CONTACT_SALES, and nothing under packages/ or apps/mobile references the union."
+      },
+      {
+        "index": 7,
+        "verdict": "fixed",
+        "evidence": "apps/web/lib/api/billing.ts:263-275 adds a required `cycle: Cycle` to PlanChangeMutations and :314 posts `{ planKey: preview.planKey, cycle: mutations.cycle }` — the live toggle, never preview.cycle. choose-plan/page.tsx:150-157 passes the `cycle` useState. The commit button's disabled now includes `quote.isPending` (page.tsx:323) and the MONTHLY/ANNUAL pills carry `disabled={isCommitting}` (:176). The old test that pinned the stale behaviour is gone; billing.test.ts:82-88 drives live=ANNUAL against a quote echoing MONTHLY and asserts the subscribe body is ANNUAL, and :90 covers the null-change fallback. The finding's exact scenario (toggle ANNUAL, commit before the re-quote returns) is now blocked by quote.isPending. The residual half of the finding — preview.planKey staleness after a FAILED re-quote — is not closed; see new hazard #4."
+      },
+      {
+        "index": 8,
+        "verdict": "fixed",
+        "evidence": "billing-cron.service.ts:127-132 — the findMany where now carries `tenant: { status: \"ACTIVE\", deletedAt: null }` alongside the two downgrade predicates, matching applyScheduledCancellations in the same file. Pinned by billing-cron.service.spec.ts:225-234 with `expect(where.tenant).toEqual({ status: \"ACTIVE\", deletedAt: null })` (toEqual, so a loosened filter fails). The finding's double-book (suspend books −run-rate, then the 02:00 sweep books −400) is unreachable while the tenant is non-ACTIVE. The second half of the finding's hint — what to DO with a schedule stranded on a tenant that stopped paying — was not in the ruling and is not addressed; see new hazard #5."
+      },
+      {
+        "index": 9,
+        "verdict": "fixed",
+        "evidence": "platform-admin.service.ts:541-548 — activateManualSubscription's upsert `update` branch now clears downgradeToPlanKey/downgradeEffectiveAt/retainedUserIds alongside the pre-existing cancelAtPeriodEnd: false, in the same write that rolls periodStart/periodEnd (:539-540). The finding's scenario (periodEnd rolled to 2026-11-05 while downgradeEffectiveAt still points at the past 2026-10-01, so the next 02:00 tick fires) is closed. Pinned at platform-admin.service.spec.ts:320-344."
+      },
+      {
+        "index": 10,
+        "verdict": "fixed",
+        "evidence": "Fixed exactly as the ruling scoped it. billing.service.ts:676-686 — onSubscriptionDeleted's final update now sets cancelAtPeriodEnd: true together with downgradeToPlanKey: null, downgradeEffectiveAt: null, retainedUserIds: [], closing failure scenario A. billing.service.ts:703-713 — onSubscriptionUpdated spreads the three clears ONLY when `subscription.cancel_at_period_end === true`, so an ordinary Stripe update cannot drop a locally scheduled downgrade. Both pinned (billing.service.spec.ts:128-140, :143-172, the latter asserting the keys are ABSENT from the payload on a false event). Caveat the lead should record, not a defect against the ruling: the finding's failure scenario B is untouched — :709 still writes `cancelAtPeriodEnd: subscription.cancel_at_period_end` unconditionally, so a cancellation armed locally by cancel() (which never reaches Stripe) can still be flipped back to false by an unrelated subscription.updated, silently voiding the cancellation and the new KEEP_CURRENT undo. The ruling deliberately narrowed to the downgrade markers; I did not treat that as not-fixed."
+      },
+      {
+        "index": 11,
+        "verdict": "fixed",
+        "evidence": "The custom-source money path is closed on both the preview and the commit seam: subscription-mutation.service.ts:477-486 answers CONTACT_SALES for a custom source (pinned spec:870) and :678-680 makes downgrade() throw (pinned spec:893), so billing-cron.service.ts:154-156's `planMonthly(version,'SCALE') − planMonthly(version,'ENTERPRISE')` = +499 and :165's `basePriceSnapshot: targetDef?.monthlyPrice` overwrite of the negotiated fee are both unreachable from self-service. Web half: choose-plan/page.tsx:272-277 renders money(null) = \"Custom\" for CONTACT_SALES instead of the \"$0 due today\" the finding named, and :317 turns the control into a mailto link (packages/ui/src/web/Button.tsx:75-85 confirms href renders an <a> and honours disabled). Not fixed, and correctly out of the ruling: priceOverrideMonthly is still never cleared when a tenant leaves a custom plan — but no self-service route now reaches that state."
+      },
+      {
+        "index": 12,
+        "verdict": "fixed",
+        "evidence": "subscription-mutation.service.ts:536-555 composes the DOWNGRADE branch's notices into a `warnings: string[]` — cancellation first, seat-cap second — joined at :562, so the two are additive rather than one replacing the other; UPGRADE gets the same notice at :520. Pinned by spec:820-839 (both strings present in one preview) and the two negative cases. I tried to refute by looking for a path where `warnings` is non-empty but the return drops it: :562 spreads `...(warnings.length ? { warning: warnings.join(\" \") } : {})` on the single DOWNGRADE return — there is no second return in that branch."
+      },
+      {
+        "index": 13,
+        "verdict": "fixed",
+        "evidence": "subscription-mutation.service.ts:398-399 — planChangePreview normalizes first and throws BadRequestException(`Unknown plan \"X\"`) before any ranking, so planRank(-1) can never read as \"lower than every plan\"; downgrade():655-660 adds `if (planRank(targetPlanKey) < 0) throw` immediately after the catalog lookup, so an off-list key that IS published still cannot pass the rank check at :681. Pinned by spec:906-946 with a catalog fixture that pushes a real off-list \"PRO\" definition, so the def-exists check passes and only the rank check can catch it — the test would fail if the guard were removed. See new hazard #6 for the blast radius of throwing at the top of the method."
+      }
+    ],
+    "newHazards": [
+      {
+        "file": "apps/web/app/(dashboard)/choose-plan/page.tsx",
+        "line": 89,
+        "severity": "major",
+        "summary": "The new cancellation warning makes the chooser demand a FALSE \"users will be deactivated\" acknowledgement on a downgrade with no seat problem",
+        "detail": "Introduced by this round's finding 3/12 fix. page.tsx:89 infers the seat consequence from the mere presence of a string: `needsDowngradeAck = changeAction === \"DOWNGRADE\" && !!preview?.change?.warning`. Round 3 made the API push a SECOND, unrelated string into that same field — subscription-mutation.service.ts:537 pushes CANCELLATION_REVOKED_WARNING whenever priorSub.cancelAtPeriodEnd is true, independently of the seat check at :538-555. Scenario (the round's own headline case): an ACTIVE tenant on SCALE with a cancellation armed and a team of 2 picks STARTER (cap 3). warnings = [cancellation] only; preview.warning is set; needsDowngradeAck becomes true, so page.tsx:301-311 renders the checkbox \"I understand these users will be deactivated\" and page.tsx:325 blocks the commit until the tenant ticks it — asserting a consequence that will not happen (billing-cron.service.ts:183 only deactivates when activeTeam > seatCap). The tenant is made to consent to a false statement at a money decision point, and the acknowledgement gate loses its meaning for the case it was built for. Fix is small and belongs on the API side of the seam: return the seat consequence as its own signal (e.g. a boolean or a separate field) rather than making the page infer it from `warning` being non-empty."
+      },
+      {
+        "file": "apps/api/src/billing/subscription-mutation.service.ts",
+        "line": 493,
+        "severity": "minor",
+        "summary": "The cycle-switch SUBSCRIBE branch still revokes a pending cancellation and wipes a scheduled downgrade with no warning",
+        "detail": "Findings 3/12 named three branches that silently disarm a pending transition; the ruling covered two. The cycle-switch return at :493-500 carries only \"Switching billing cycle takes effect immediately and is not prorated.\" It commits through subscribe(), whose upsert `update` branch at :290-292 writes cancelAtPeriodEnd: false, downgradeToPlanKey: null, downgradeEffectiveAt: null. So a tenant who cancelled (or scheduled a downgrade) and then flips MONTHLY→ANNUAL on their own plan has the schedule silently called off, with the machinery to say so (CANCELLATION_REVOKED_WARNING, the composed `warnings` list) already sitting two branches below. One line of the same shape as :520 closes it; recording it as a residual is also defensible since the round's ruling scoped only UPGRADE/DOWNGRADE."
+      },
+      {
+        "file": "apps/web/lib/api/billing.ts",
+        "line": 97,
+        "severity": "minor",
+        "summary": "Web declares a `message` field on PlanChange that the API never sends, and documents it as server-provided",
+        "detail": "The web exec flagged this ambiguity and it resolved against them: the API's CONTACT_SALES return (subscription-mutation.service.ts:477-486) puts the sales copy in `warning`, not `message`. billing.ts:95-97 declares `message?: string` with a docblock asserting it is \"Set on CONTACT_SALES\", and page.tsx:298-300 renders a block that can never appear. Harmless at runtime (the copy still shows via the amber `warning` line at :294-296) but it is a false contract in the mirror interface — exactly the class of hand-mirrored-shape drift lesson L-072 is about. Either drop `message` from the web interface and its render block, or have the API populate it; do not leave both."
+      },
+      {
+        "file": "apps/web/app/(dashboard)/choose-plan/page.tsx",
+        "line": 78,
+        "severity": "minor",
+        "summary": "`preview` is never cleared and the re-quote has no onError, so a failed quote re-enables the commit button with a stale plan/action and a now-live cycle",
+        "detail": "Residual half of finding 7. Both quote calls (page.tsx:73 and :78) pass only onSuccess — a failed quote leaves `preview` holding the previous plan, action and cycle, and once the request settles `quote.isPending` goes false so the :319-326 disabled guard releases. Round 3 changed the commit body to take `cycle` live (billing.ts:314) while `planKey` and `changeAction` still come from the stale preview, so the committed body can now be a combination the server never quoted: {planKey: <previous selection>, cycle: <new toggle>}. Reachability requires a failed or still-pending-then-failed re-quote, and the button label does keep showing the stale plan name, which is why I score it minor. The ruling's own hint offered the closing move: clear `preview` (and `selected`'s quote) whenever cycle/selected change, or assert preview.planKey === selected before dispatching."
+      },
+      {
+        "file": "apps/api/src/billing/billing.service.ts",
+        "line": 592,
+        "severity": "minor",
+        "summary": "The new ACTIVE-only cron filter defers rather than clears a stale schedule: reinstating a suspended tenant re-arms a months-old downgrade",
+        "detail": "Finding 8's fix (billing-cron.service.ts:131) stops the sweep while the tenant is SUSPENDED/CANCELLED/soft-deleted, but nothing clears the markers, and the reinstatement paths do not either: onPaymentSucceeded (billing.service.ts:589-599) and onCheckoutCompleted (:541-549) flip the tenant back to ACTIVE and update the period without touching downgradeToPlanKey/downgradeEffectiveAt. The stale downgradeEffectiveAt is by then in the past, so the very next 02:00 tick applies a downgrade the tenant scheduled before they lapsed — rewriting basePriceSnapshot, booking a second PLAN_CHANGED delta, and deactivating every OPERATOR/DRIVER over the target cap (retainedUserIds is []). Pre-existing in shape (before the filter it fired while suspended, which was worse), so this is not a regression introduced by round 3 — but the finding's hint explicitly asked for the disposition decision and the ruling did not make it. Same clear the round already added to activateManualSubscription would close it."
+      },
+      {
+        "file": "apps/api/src/billing/subscription-mutation.service.ts",
+        "line": 399,
+        "severity": "minor",
+        "summary": "Refusing an off-list published key at the top of planChangePreview 400s the whole /billing/quote for every tenant, including the fresh-subscribe path that used to price it correctly",
+        "detail": "The guard sits before the tenant/status branch, so it fires on paths that never rank anything. settings-billing.controller.ts:85-87 calls planChangePreview unconditionally whenever the caller has a tenantId, so the throw takes the entire quote response down. Consequence: publish a catalog definition whose planKey is not in PLAN_KEYS and the chooser 400s for EVERY tenant on that card — including a TRIAL/new tenant whose commit route is subscribe(), which reads the definition from the published catalog and writes basePriceSnapshot: def.monthlyPrice correctly (finding 13 says so itself). One operational mistake now bricks the chooser rather than mis-pricing one downgrade. This is what the ruling asked for (\"refused at the seam\"), so it is a scope note for the owner, not a defect against the design — but if a softer answer is wanted, returning SUBSCRIBE for an unrankable key in the preview while keeping downgrade():658's hard refusal preserves the money guard and the working path."
+      }
+    ],
+    "regateVerdict": "Regate is trustworthy for what it covers, and I re-derived its claims rather than taking them: all four gate commands are green (api tsc clean; api jest src/billing src/sales-agents src/platform-admin = 24 suites / 362 tests; web tsc clean; web jest lib/api/billing.test.ts = 10 tests). The pins the executors cite exist and are real oracles, not tautologies — I opened each one: the platform-admin finding-2 pin is an exact toHaveBeenCalledWith plus not.toHaveProperty(\"cancelAtPeriodEnd\") (spec:170-195); the cron finding-8 pin uses toEqual on where.tenant (spec:233); the webhook finding-10 pins assert key ABSENCE on the false-cancel event (spec:169-171); the finding-13 pins push a genuine off-list \"PRO\" definition into the catalog fixture so only the rank check can catch it (spec:908-945); the finding-3/12 pin asserts both composed warnings in one preview (spec:835-838). The three rewritten tests are all justified — each pinned behaviour the round-3 ruling reverses (PIN T13 rewritten as instructed; the Amendment-2 equal-rank SUBSCRIBE pin is superseded by ruling 5; the ACTIVE-same-plan re-subscribe netting test became a refusal pin, with its arithmetic still covered by the untouched PIN T10 cycle-switch case). Gate blind spots the lead should know: the gate runs only three API path filters and ONE web test file, so nothing exercises apps/web/app/(dashboard)/choose-plan/page.tsx at all — new hazard #1 (the false deactivation acknowledgement) lives entirely in that unexercised file and no gate in this round could have caught it. The E2E spec apps/web/e2e/33-change-plan-routing.spec.ts still passes by inspection (its mocked DOWNGRADE quote carries no `warning`, so needsDowngradeAck stays false), but it too never runs in this lane. The Final gate (full `npx jest` both workspaces + validate-lessons) has not run yet.",
+    "recommendation": "one-more-round",
+    "reasoning": "All 13 in-scope findings are genuinely fixed — I tried to refute each by tracing its own failure scenario through the current code and could not break any of them, and every fix carries a pin that would fail if the fix were reverted. The union extension is complete (PlanChangeAction is declared exactly twice, both updated; nothing in packages/ or apps/mobile consumes it), the alias-aware samePlan and the subscribe() same-rank refusal are consistent with each other and leave the cycle-switch branch intact, the platform-admin clears do not fight their existing specs (the cancelAtPeriodEnd omission in updatePlan is deliberate and pinned), and the webhook clears are correctly conditional on Stripe's own arming flag. I recommend one more round for exactly one item: new hazard #1. The round's finding-3/12 fix pushes a second, unrelated string into `change.warning`, and choose-plan/page.tsx:89 uses \"warning is non-empty\" as its proxy for the seat consequence — so the round's own headline scenario (a tenant with a cancellation armed scheduling a downgrade while comfortably under the seat cap) now forces them to tick \"I understand these users will be deactivated\" when nobody will be deactivated, and blocks the commit until they do. That is a false statement demanded as consent on the money path, introduced by this round, in a file no gate in this lane exercises. The fix is small and belongs on the API side of the seam — return the seat consequence as its own field rather than making the page infer it from `warning` — plus the page reading that field at :89. Everything else I found is minor and recordable as residuals rather than blocking: the cycle-switch branch's missing cancellation notice (same class, out of the ruling's two-branch scope), the dead `message` field on the web mirror, the stale-preview-after-a-failed-quote window that finding 7's ruling left half-open, the schedule stranded on a lapsed-then-reinstated tenant (finding 8's undecided second half), and the blast radius of throwing on an off-list published key at the top of planChangePreview. If the lead prefers to land now, hazard #1 is the only one I would not ship without a note to the owner, and the Final gate (full jest in both workspaces + validate-lessons) still has to run either way."
+  },
+  "finalGate": {
+    "results": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api && npx jest --silent",
+        "pass": false,
+        "summary": "API Jest tests: 1 failing suite",
+        "failures": [
+          "src/common/ci-freshness-guard-script.spec.ts: T1 · REG-E2EGUARD-403 · YAML-driven test failed — expected outputs.run='true' but received undefined"
+        ]
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web && npx jest --silent",
+        "pass": true,
+        "summary": "Web Jest tests: 31 suites, 171 tests all passed",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog && node scripts/validate-lessons.mjs",
+        "pass": true,
+        "summary": "Lessons register validation: 40/40 entries, 40.0/40.0 KB, self-consistent",
+        "failures": []
+      }
+    ],
+    "allPass": false
+  }
+}

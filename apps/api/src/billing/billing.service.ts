@@ -673,9 +673,17 @@ export class BillingService {
     }
     this.tenantStatusGuard.invalidate(sub.tenantId);
 
+    // A cancellation SUPERSEDES any scheduled downgrade — the same rule the self-service
+    // cancel() applies (subscription-mutation.service.ts). Left armed, the 02:00 sweep would
+    // re-price basePriceSnapshot on an already-churned tenant and book a second MRR delta.
     await this.prisma.tenantSubscription.update({
       where: { tenantId: sub.tenantId },
-      data: { cancelAtPeriodEnd: true },
+      data: {
+        cancelAtPeriodEnd: true,
+        downgradeToPlanKey: null,
+        downgradeEffectiveAt: null,
+        retainedUserIds: [],
+      },
     });
 
     this.logger.log(`Subscription cancelled for tenant ${sub.tenantId} (customer ${customerId})`);
@@ -692,13 +700,19 @@ export class BillingService {
     });
     if (!sub) return;
 
-    // Update period dates and cancellation flag
+    // Update period dates and cancellation flag. The downgrade markers are cleared ONLY when
+    // this event ARMS a cancellation (a cancellation supersedes a scheduled downgrade, as
+    // cancel() rules): clearing them on every update would let an unrelated Stripe write (a
+    // cycle roll, a price sync, an add-on item) silently drop a schedule the tenant made here.
     await this.prisma.tenantSubscription.update({
       where: { tenantId: sub.tenantId },
       data: {
         periodStart: new Date(subscription.current_period_start * 1000),
         periodEnd: new Date(subscription.current_period_end * 1000),
         cancelAtPeriodEnd: subscription.cancel_at_period_end,
+        ...(subscription.cancel_at_period_end === true
+          ? { downgradeToPlanKey: null, downgradeEffectiveAt: null, retainedUserIds: [] }
+          : {}),
       },
     });
 

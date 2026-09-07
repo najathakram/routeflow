@@ -1,0 +1,134 @@
+{
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/.claude/pipeline/2026-09-06-F18-billing-plan-change/build-plan.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/.claude/pipeline/2026-09-06-F18-billing-plan-change/bug-test-plan.md",
+  "specPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/.claude/pipeline/2026-09-06-F18-billing-plan-change/cause-ruling.md",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/.claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-06T19:28:00Z",
+  "mode": "bugfix",
+  "scale": "major",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog",
+  "context": "F18 billing: B58 plan-change guard+routing (owner: bug, variant a), B73 clawback lock, B107 add-on/Stripe refusal. Ruling: cause-ruling.md. Option-B bookkeeping: no map/lessons/ledger edits.",
+  "formatCommand": "git ls-files -mo --exclude-standard | grep -E '[.](ts|tsx)$' | grep -v '^[.]claude/' | xargs -r npx prettier --write",
+  "radiusFiles": [
+    "apps/api/src/billing/proration.service.ts",
+    "apps/api/src/billing/plan-catalog.constants.ts",
+    "apps/api/src/billing/billing.service.ts",
+    "apps/web/app/(dashboard)/settings/billing/page.tsx"
+  ],
+  "siblingPatterns": [
+    {
+      "pattern": "subscriptionItems\\.(del|create)\\(",
+      "note": "Stripe item write without refusal"
+    },
+    {
+      "pattern": "catch \\(\\w+\\) \\{\\s*this\\.logger\\.(warn|error)",
+      "note": "swallowed money-side failure"
+    },
+    {
+      "pattern": "include: \\{ commissionAccruals",
+      "note": "unlocked accrual read"
+    }
+  ],
+  "testPackages": [
+    {
+      "id": "TP-API",
+      "files": [
+        "apps/api/src/billing/subscription-mutation.service.spec.ts",
+        "apps/api/src/billing/settings-billing.controller.spec.ts",
+        "apps/api/src/sales-agents/commission-engine.service.spec.ts",
+        "apps/api/src/billing/addon.service.spec.ts"
+      ],
+      "tests": ["T1", "T2", "T3", "T5", "T6", "T7", "T8", "T9", "T10", "T11", "T12"],
+      "effort": "high",
+      "brief": "bug-test-plan.md + Harness notes; implement nothing"
+    },
+    {
+      "id": "TP-E2E",
+      "files": ["apps/web/e2e/33-change-plan-routing.spec.ts", "apps/web/playwright.config.ts"],
+      "tests": ["T4"],
+      "effort": "medium",
+      "brief": "bug-test-plan.md T2 rows; project entry; no local Playwright"
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "cd apps/api && npx jest src/billing/subscription-mutation.service.spec.ts src/billing/settings-billing.controller.spec.ts src/sales-agents/commission-engine.service.spec.ts src/billing/addon.service.spec.ts --runInBand -t \"REG-B(58|73|107)\""
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "P1",
+      "files": ["apps/api/src/billing/addon.service.ts"],
+      "effort": "high",
+      "brief": "build-plan.md P1"
+    },
+    {
+      "id": "P2",
+      "files": ["apps/api/src/sales-agents/commission-engine.service.ts"],
+      "effort": "high",
+      "brief": "build-plan.md P2"
+    },
+    {
+      "id": "P3",
+      "files": [
+        "apps/api/src/billing/subscription-mutation.service.ts",
+        "apps/api/src/billing/settings-billing.controller.ts"
+      ],
+      "effort": "high",
+      "brief": "build-plan.md P3"
+    },
+    {
+      "id": "P4",
+      "files": [
+        "apps/web/lib/api/billing.ts",
+        "apps/web/app/(dashboard)/choose-plan/page.tsx",
+        "apps/web/app/(dashboard)/_components/gates/PlanGates.tsx"
+      ],
+      "effort": "medium",
+      "brief": "build-plan.md P4",
+      "dependsOn": ["P3"]
+    },
+    {
+      "id": "P5",
+      "files": ["apps/web/e2e/33-change-plan-routing.spec.ts", "apps/web/playwright.config.ts"],
+      "effort": "medium",
+      "brief": "build-plan.md P5",
+      "dependsOn": ["P4"]
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+      "cd apps/api && npx jest src/billing src/sales-agents --runInBand",
+      "cd apps/web && npx tsc --noEmit -p tsconfig.json"
+    ],
+    "final": [
+      "cd apps/api && npx jest --silent",
+      "cd apps/web && npx jest --silent",
+      "node scripts/validate-lessons.mjs"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/api/src/billing/subscription-mutation.service.ts",
+        "revertFix": true,
+        "behavior": "ACTIVE same-cycle change refused",
+        "test": "REG-B58"
+      },
+      {
+        "file": "apps/api/src/sales-agents/commission-engine.service.ts",
+        "revertFix": true,
+        "behavior": "one CLAWBACK under concurrency",
+        "test": "REG-B73"
+      },
+      {
+        "file": "apps/api/src/billing/addon.service.ts",
+        "revertFix": true,
+        "behavior": "entitlement follows Stripe",
+        "test": "REG-B107"
+      }
+    ]
+  }
+}

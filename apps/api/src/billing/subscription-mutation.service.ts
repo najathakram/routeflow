@@ -1,7 +1,9 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
@@ -16,7 +18,9 @@ import {
   BILLING_EVENTS,
   findPlanDefinition,
   planRank,
+  planKeyFromEnum,
   planKeyToEnum,
+  normalizePlanKey,
   addonSkuCode,
   SELF_SERVICE_ADDON_SKUS,
 } from "./plan-catalog.constants";
@@ -26,6 +30,49 @@ export interface SubscribeInput {
   planKey: string;
   cycle: Cycle;
   addons?: Array<{ sku: string; quantity?: number }>;
+}
+
+export type PlanChangeAction =
+  "SUBSCRIBE" | "UPGRADE" | "DOWNGRADE" | "NOOP" | "KEEP_CURRENT" | "CONTACT_SALES";
+
+/** Custom (Enterprise) plans are negotiated, never self-service — the same refusal
+ *  subscribe()/upgrade()/downgrade() throw, surfaced by the preview as an action. */
+const CUSTOM_PLAN_MESSAGE = "Enterprise is a custom plan — contact sales.";
+
+/** Committing an UPGRADE or a DOWNGRADE writes `cancelAtPeriodEnd: false`, so a tenant who
+ *  had cancelled must be told at the decision point that the cancellation is being called off. */
+const CANCELLATION_REVOKED_WARNING =
+  "A cancellation is pending — this change keeps your subscription active.";
+
+/**
+ * Read-only classification of what picking `planKey`/`cycle` would DO to an existing
+ * subscription — the choose-plan UI's routing decision (upgrade vs. downgrade vs. plain
+ * subscribe) computed server-side so the client never has to re-derive plan rank. Ranking
+ * uses the server's `planRank` (never a client-side sortOrder).
+ */
+export interface PlanChangePreview {
+  action: PlanChangeAction;
+  /** Prorated charge due now — set only for UPGRADE; null otherwise. */
+  proratedNow: number | null;
+  /** When a scheduled DOWNGRADE takes effect (period end); null otherwise. */
+  effectiveAt: Date | null;
+  /** For UPGRADE: the renewal date is unchanged (instant, same-period application). */
+  keepsRenewalAt: Date | null;
+  /** The plan the tenant is on, NORMALIZED (a stored legacy alias resolves to its current
+   *  key) — so the chooser marks the right card as "your plan" for an alias tenant, whose
+   *  stored key (BUSINESS) never matches a listed catalog key (SCALE). Null when there is
+   *  nothing to change from. */
+  fromPlanKey: string | null;
+  /** Set for an edge case worth surfacing (e.g. a cycle switch, or a pending
+   *  schedule KEEP_CURRENT would cancel), never a hard block. */
+  warning?: string;
+  /** TRUE only when committing this change WOULD deactivate staff: the DOWNGRADE seat-cap
+   *  check found the active team over the target plan's `seatsIncluded`. ALWAYS present, so
+   *  the chooser gates its "these users will be deactivated" acknowledgement on THIS flag and
+   *  never on `warning` being non-empty — `warning` composes unrelated notices (a revoked
+   *  cancellation, a cycle switch), and inferring the seat consequence from its mere presence
+   *  made the UI demand consent to a deactivation that would never happen. */
+  seatAckRequired: boolean;
 }
 
 /** Add whole months (or a year) to a UTC date, clamping the day to the target month's length
@@ -68,6 +115,14 @@ const ADMIN_ONLY_ADDON_MESSAGE =
  * and audit-emit are wrapped in ONE transaction (all-or-nothing). Upgrades apply
  * INSTANTLY (prorated); downgrades + cancels are SCHEDULED at period end (applied by
  * the Phase-5 cron); disabling an add-on keeps its row (history read-only, never deletes).
+ * subscribe() REFUSES an ACTIVE, same-cycle pick (B58): a different rank belongs on
+ * upgrade()/downgrade(), which apply/schedule correctly instead of resetting the period, and
+ * the same rank is the plan the tenant already has (under a renamed key) — nothing to change.
+ * planChangePreview() is the read-only classifier the choose-plan quote uses to route between
+ * those and resume() (KEEP_CURRENT), and it compares NORMALIZED plan keys, so a legacy alias
+ * reads as the plan it was renamed to. At most ONE transition is ever armed: every committing
+ * path here clears the markers the others write — as do platform-admin's plan writers and the
+ * Stripe webhook writers (platform-admin.service.ts, billing.service.ts).
  *
  * Payment rails (Stripe card capture) are orthogonal (BillingService/StripeService);
  * this service owns the internal entitlement state.
@@ -83,6 +138,27 @@ export class SubscriptionMutationService {
     private readonly events: BillingEventService,
     private readonly tenantStatus: TenantStatusGuard,
   ) {}
+
+  private readonly logger = new Logger(SubscriptionMutationService.name);
+
+  /**
+   * The plan the tenant is changing FROM. `TenantSubscription.planKey` is nullable — a
+   * subscription that predates plans-as-data carries its plan only in the legacy
+   * `Tenant.plan` enum — so resolve it the way `entitlements.service` and
+   * `platform-pricing.service` already do before ranking. Reading `planKey` alone reads a
+   * legacy row as "no plan at all" and drops it onto subscribe()'s period-resetting path,
+   * which is the exact harm the B58 guard exists to prevent. Null only when there is neither
+   * a subscription planKey nor a loaded tenant row — `Tenant.plan` is non-nullable
+   * (`@default(STARTER)`), so a loaded tenant always resolves to a key. Callers must NOT use
+   * its nullness as a "has a subscription" check: that is `sub.planKey` (plus the tenant's
+   * status for a legacy row that carries its plan only in the enum).
+   */
+  private resolveFromPlanKey(
+    subPlanKey: string | null | undefined,
+    tenantPlan: string | null | undefined,
+  ): string | null {
+    return normalizePlanKey(subPlanKey) ?? (tenantPlan ? planKeyFromEnum(tenantPlan) : null);
+  }
 
   private planMonthly(version: PlanVersionWithCatalog, planKey: string | null | undefined): number {
     if (!planKey) return 0;
@@ -104,11 +180,57 @@ export class SubscriptionMutationService {
 
     // Prior state — MRR is accounted as the CHANGE from this baseline.
     const [tenant, priorSub, priorAddons] = await Promise.all([
-      this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { status: true } }),
-      this.prisma.tenantSubscription.findUnique({ where: { tenantId }, select: { planKey: true } }),
+      this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { status: true, plan: true },
+      }),
+      this.prisma.tenantSubscription.findUnique({
+        where: { tenantId },
+        select: { planKey: true, cycle: true, periodEnd: true },
+      }),
       this.prisma.tenantAddon.findMany({ where: { tenantId, active: true } }),
     ]);
     if (!tenant) throw new NotFoundException("Tenant not found");
+
+    // The plan we are changing FROM — resolved through the legacy enum, so a subscription
+    // predating plans-as-data (planKey NULL) is ranked instead of read as "no plan".
+    const fromKey = this.resolveFromPlanKey(priorSub?.planKey, tenant.plan);
+
+    // An ACTIVE, same-cycle pick belongs anywhere but here — subscribe() resetting
+    // periodStart/periodEnd would silently re-bucket metering and jump the renewal date (B58).
+    // A DIFFERENT rank belongs on upgrade()/downgrade() (instant-prorated vs.
+    // scheduled-at-period-end). The SAME rank is the same plan under a renamed key (a v7
+    // BUSINESS re-picked as the v8 SCALE): there is nothing to change, and re-subscribing to
+    // "re-pin" the catalog version would pay for that pin with the same period reset — so it is
+    // refused too, and the re-pin is left to platform-admin / the cron that already write it.
+    // A subscription with NO periodEnd has no live cycle to protect (and downgrade() could not
+    // schedule against it), so it stays here: subscribe() is what heals the missing period.
+    if (
+      tenant.status === "ACTIVE" &&
+      priorSub &&
+      fromKey &&
+      priorSub.periodEnd != null &&
+      priorSub.cycle === input.cycle
+    ) {
+      const sameRank = planRank(input.planKey) === planRank(fromKey);
+      // The ONE same-rank pick that really is a change: a row with no stored planKey (the
+      // manual-activation shape) contributes 0 to the MRR snapshot until it gains one, and
+      // upgrade() only moves UP — so subscribe() is what heals it, and refusing it here would
+      // strand the row plan-less forever.
+      if (!sameRank || priorSub.planKey != null) {
+        // A handled 4xx is otherwise invisible — SentryExceptionFilter captures >= 500 only and
+        // there is no access log — so a money-path refusal logs like addon.guard.ts's denials.
+        this.logger.warn(
+          `B58 guard refused subscribe tenant=${tenantId} from=${fromKey} to=${input.planKey} cycle=${input.cycle} sameRank=${sameRank}`,
+        );
+        throw new ConflictException(
+          sameRank
+            ? "You are already on this plan — nothing to change"
+            : "Your subscription is active — use upgrade or downgrade to change plan",
+        );
+      }
+    }
+
     const wasTrial = tenant.status === "TRIAL";
     const now = new Date();
     const periodEnd = addCycle(now, input.cycle);
@@ -143,8 +265,12 @@ export class SubscriptionMutationService {
     // still carries its old planKey but contributes 0 to the run-rate — so re-entry is a full
     // +base delta, mirroring the negative delta emitted when access ended (billing-cron
     // applyScheduledCancellations). Only an already-ACTIVE tenant nets against its old plan.
+    // A row with a NULL planKey is excluded from `MrrService`'s snapshot the same way
+    // (`planKey: { not: null }`) — e.g. a manual platform-admin activation — so it too
+    // contributes 0 and writing a planKey onto it books the full base, even though `fromKey`
+    // resolves through the legacy enum for ranking.
     const oldPlanMonthly =
-      tenant.status === "ACTIVE" ? this.planMonthly(version, priorSub?.planKey) : 0;
+      tenant.status === "ACTIVE" && priorSub?.planKey ? this.planMonthly(version, fromKey) : 0;
 
     await this.prisma.$transaction(async (tx) => {
       await tx.tenantSubscription.upsert({
@@ -258,6 +384,218 @@ export class SubscriptionMutationService {
     return { quote, subscription: await this.subscription.getSubscription(tenantId) };
   }
 
+  /**
+   * Classify what picking `planKey`/`cycle` would DO to the tenant's current subscription,
+   * for /billing/quote's choose-plan routing (REG-B58): a fresh subscribe, an instant
+   * prorated upgrade, a scheduled-at-period-end downgrade, a no-op, or KEEP_CURRENT —
+   * re-picking the plan you are already on WHILE a downgrade or cancellation is armed,
+   * which is the tenant's self-service undo (it clears the schedule via resume(), never by
+   * re-subscribing, since that would reset the period). Never mutates anything — read-only,
+   * safe to call on every quote.
+   */
+  async planChangePreview(
+    tenantId: string,
+    planKey: string,
+    cycle: Cycle,
+  ): Promise<PlanChangePreview> {
+    const toKey = normalizePlanKey(planKey);
+
+    const [tenant, priorSub] = await Promise.all([
+      this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { status: true, plan: true },
+      }),
+      this.prisma.tenantSubscription.findUnique({
+        where: { tenantId },
+        select: {
+          planKey: true,
+          planVersionId: true,
+          cycle: true,
+          periodStart: true,
+          periodEnd: true,
+          downgradeToPlanKey: true,
+          cancelAtPeriodEnd: true,
+        },
+      }),
+    ]);
+
+    // Ranking reads the plan through the legacy enum (a pre-plans-as-data row has a NULL
+    // planKey). A subscription with no periodEnd has no cycle to upgrade within or schedule
+    // against — the cron only ever picks up a non-null downgradeEffectiveAt — so it routes to
+    // SUBSCRIBE, which is what sets the period.
+    const fromKey = this.resolveFromPlanKey(priorSub?.planKey, tenant?.plan);
+    if (tenant?.status !== "ACTIVE" || !priorSub || !fromKey || priorSub.periodEnd == null) {
+      return {
+        action: "SUBSCRIBE",
+        proratedNow: null,
+        effectiveAt: null,
+        keepsRenewalAt: null,
+        fromPlanKey: fromKey,
+        seatAckRequired: false,
+      };
+    }
+
+    // A key outside PLAN_KEYS ranks -1 — "lower than every plan" — so ranking it would
+    // classify it as a DOWNGRADE from anything, and downgrade() would accept the schedule the
+    // cron then applies with a NULL base price. A published definition whose key is not in
+    // PLAN_KEYS is a publishing error: refuse it at the seam instead of ranking it — but ONLY
+    // on the paths that actually RANK. Refusing above the branch took the whole /billing/quote
+    // down for every tenant on that card, including the fresh-subscribe path, which never ranks
+    // and prices the definition correctly from the published catalog.
+    if (!toKey) throw new BadRequestException(`Unknown plan "${planKey}"`);
+
+    // Same-plan compares NORMALIZED keys on both sides: a tenant whose stored key is a legacy
+    // alias (v7 BUSINESS) IS on the plan the catalog now lists as SCALE, so re-picking it is
+    // "your current plan", never a change. Comparing the raw stored key made that pick fall
+    // through to SUBSCRIBE, which resets periodStart/periodEnd (the B58 harm) and wipes a
+    // pending downgrade — and left an alias tenant unable to reach NOOP/KEEP_CURRENT at all.
+    const samePlan = fromKey === toKey;
+    const sameCycle = priorSub.cycle === cycle;
+
+    if (samePlan && sameCycle) {
+      // Re-picking your own plan with a transition armed is the ONLY self-service way to call
+      // one off: subscribe() used to clear these fields as a side effect, and nothing else
+      // clears downgradeToPlanKey except the cron that applies it.
+      if (priorSub.downgradeToPlanKey != null || priorSub.cancelAtPeriodEnd) {
+        return {
+          action: "KEEP_CURRENT",
+          proratedNow: null,
+          effectiveAt: null,
+          keepsRenewalAt: priorSub.periodEnd,
+          fromPlanKey: fromKey,
+          seatAckRequired: false,
+          warning: "A scheduled change is pending — keeping your current plan cancels it.",
+        };
+      }
+      return {
+        action: "NOOP",
+        proratedNow: null,
+        effectiveAt: null,
+        keepsRenewalAt: null,
+        fromPlanKey: fromKey,
+        seatAckRequired: false,
+      };
+    }
+
+    // Fetched HERE, not at the top: `getPublishedCatalog()` is uncached and `proration.quote`
+    // already runs it on every /billing/quote — the SUBSCRIBE/NOOP/KEEP_CURRENT returns above
+    // must not pay for it a second time. Every branch below reads it.
+    const version = await this.catalog.getPublishedCatalog();
+    const publishedTargetDef = findPlanDefinition(version.definitions, toKey);
+    const publishedSourceDef = findPlanDefinition(version.definitions, fromKey);
+    // Custom (Enterprise) plans are negotiated, on BOTH sides: subscribe() and upgrade() already
+    // refuse a custom target, and downgrade() now refuses a custom source — whose negotiated fee
+    // lives in `priceOverrideMonthly` with a NULL catalog price, so ranking it would quote a
+    // negative "due today" going in and book a POSITIVE MRR delta coming out. Screened before
+    // ranking; a same-plan custom source still reaches NOOP/KEEP_CURRENT above.
+    if (publishedTargetDef?.isCustom || publishedSourceDef?.isCustom) {
+      return {
+        action: "CONTACT_SALES",
+        proratedNow: null,
+        effectiveAt: null,
+        keepsRenewalAt: null,
+        fromPlanKey: fromKey,
+        seatAckRequired: false,
+        warning: CUSTOM_PLAN_MESSAGE,
+      };
+    }
+
+    if (!sameCycle) {
+      // A cycle switch is a residual (no self-service credited path yet) — routed through
+      // subscribe() like a fresh pick, flagged so the UI can warn the tenant. Equal-rank pairs
+      // reach SUBSCRIBE only HERE now: same rank means the same normalized plan, which with the
+      // same cycle is NOOP/KEEP_CURRENT above.
+      // subscribe()'s upsert `update` branch writes `cancelAtPeriodEnd: false`,
+      // `downgradeToPlanKey: null` and `downgradeEffectiveAt: null`, so committing a cycle
+      // switch disarms whatever transition was armed — the same silent revocation the
+      // UPGRADE/DOWNGRADE branches warn about. Composed with the proration notice, never traded.
+      const cycleWarnings = [
+        "Switching billing cycle takes effect immediately and is not prorated.",
+      ];
+      if (priorSub.cancelAtPeriodEnd) cycleWarnings.push(CANCELLATION_REVOKED_WARNING);
+      if (priorSub.downgradeToPlanKey != null) {
+        cycleWarnings.push("A scheduled downgrade is pending — switching cycle cancels it.");
+      }
+      return {
+        action: "SUBSCRIBE",
+        proratedNow: null,
+        effectiveAt: null,
+        keepsRenewalAt: null,
+        fromPlanKey: fromKey,
+        seatAckRequired: false,
+        warning: cycleWarnings.join(" "),
+      };
+    }
+
+    const rankFrom = planRank(fromKey);
+    const rankTo = planRank(toKey);
+    if (rankTo > rankFrom) {
+      const oldMonthly = this.planMonthly(version, fromKey);
+      const newMonthly =
+        publishedTargetDef?.monthlyPrice != null ? Number(publishedTargetDef.monthlyPrice) : 0;
+      const proratedNow = this.proratedDiff(
+        { cycle: priorSub.cycle, periodStart: priorSub.periodStart, periodEnd: priorSub.periodEnd },
+        newMonthly - oldMonthly,
+      );
+      return {
+        action: "UPGRADE",
+        proratedNow,
+        effectiveAt: null,
+        keepsRenewalAt: priorSub.periodEnd,
+        fromPlanKey: fromKey,
+        seatAckRequired: false,
+        // upgrade() writes `cancelAtPeriodEnd: false` — say so before the tenant commits.
+        ...(priorSub.cancelAtPeriodEnd ? { warning: CANCELLATION_REVOKED_WARNING } : {}),
+      };
+    }
+    // Seat consequence, surfaced at the decision point: a scheduled downgrade is applied by
+    // billing-cron.service.ts `applyScheduledDowngrades`, which — when the active team is over
+    // the target plan's cap — deactivates every OPERATOR/DRIVER not in `retainedUserIds` (the
+    // self-service path schedules with an empty list). BOTH sides of the warning read the cron's
+    // sources: the same activeTeam where-clause, and the same catalog version — the tenant's
+    // PINNED `planVersionId` via `getVersionForTenant` (grandfathering), never the published one,
+    // which for a tenant pinned to an older version quotes a different seat cap than the sweep
+    // enforces. So the warning fires exactly when the sweep would, with that version's numbers.
+    const downgradeVersion = await this.catalog.getVersionForTenant(priorSub.planVersionId);
+    const targetDef = findPlanDefinition(downgradeVersion.definitions, toKey);
+    const seatsIncluded = targetDef?.seatsIncluded ?? null;
+    // downgrade() writes `cancelAtPeriodEnd: false` — the same silent revocation the UPGRADE
+    // branch warns about. Both notices can apply at once, so they are composed, never traded.
+    const warnings: string[] = [];
+    // The seat consequence as its OWN signal: true only here, so a preview carrying an
+    // unrelated warning (a revoked cancellation) never reads as "staff will be deactivated".
+    let seatAckRequired = false;
+    if (priorSub.cancelAtPeriodEnd) warnings.push(CANCELLATION_REVOKED_WARNING);
+    if (seatsIncluded != null) {
+      const activeTeam = await this.prisma.user.count({
+        where: {
+          tenantId,
+          role: { in: ["TENANT_ADMIN", "OPERATOR", "DRIVER"] },
+          status: "ACTIVE",
+          deletedAt: null,
+        },
+      });
+      if (activeTeam > seatsIncluded) {
+        seatAckRequired = true;
+        warnings.push(
+          `Your team has ${activeTeam} active users but the ${targetDef?.name ?? planKey} plan ` +
+            `includes ${seatsIncluded} seats — every operator and driver account will be ` +
+            `deactivated when the downgrade takes effect. Contact support before then to choose ` +
+            `which users to keep.`,
+        );
+      }
+    }
+    return {
+      action: "DOWNGRADE",
+      proratedNow: null,
+      effectiveAt: priorSub.periodEnd,
+      keepsRenewalAt: null,
+      fromPlanKey: fromKey,
+      seatAckRequired,
+      ...(warnings.length ? { warning: warnings.join(" ") } : {}),
+    };
+  }
+
   /** Upgrade to a higher plan — instant, with the prorated price difference charged now. */
   async upgrade(tenantId: string, planKey: string, actorId?: string) {
     const version = await this.catalog.getPublishedCatalog();
@@ -265,20 +603,42 @@ export class SubscriptionMutationService {
     if (!def) throw new BadRequestException(`Unknown plan "${planKey}"`);
     if (def.isCustom) throw new BadRequestException("Enterprise is a custom plan — contact sales.");
 
-    const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
-    if (!sub?.planKey) throw new BadRequestException("No active subscription — subscribe first.");
-    if (planRank(planKey) <= planRank(sub.planKey)) {
+    const [sub, tenant] = await Promise.all([
+      this.prisma.tenantSubscription.findUnique({ where: { tenantId } }),
+      this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { plan: true, status: true },
+      }),
+    ]);
+    const fromKey = this.resolveFromPlanKey(sub?.planKey, tenant?.plan);
+    // `fromKey` is never null for a loaded tenant (Tenant.plan defaults to STARTER), so it is
+    // NOT the precondition. A row with no planKey of its own is only a real subscription when
+    // the tenant is already ACTIVE (the manual-activation shape); otherwise it is a stub minted
+    // by Stripe-customer creation or the customer-cap grace window on a tenant that never
+    // subscribed — upgrading that would convert a trial without ever setting a period.
+    // (`!fromKey` retained only for the one case it can still be null — no tenant row at all —
+    // which was refused before this guard existed, and it narrows the type.)
+    if (!sub || !fromKey || (!sub.planKey && tenant?.status !== "ACTIVE")) {
+      throw new BadRequestException("No active subscription — subscribe first.");
+    }
+    if (planRank(planKey) <= planRank(fromKey)) {
       throw new BadRequestException("Target is not an upgrade — use downgrade for a lower plan.");
     }
 
-    const oldMonthly = this.planMonthly(version, sub.planKey);
+    const oldMonthly = this.planMonthly(version, fromKey);
     const newMonthly = def.monthlyPrice != null ? Number(def.monthlyPrice) : 0;
-    const amountDelta = roundMoney(newMonthly - oldMonthly);
+    // The ledger nets against what the MRR snapshot actually counted, which excludes rows with
+    // a NULL planKey (`MrrService` filters `planKey: { not: null }`) — such a row contributes 0
+    // to the run-rate, so gaining a planKey books the FULL base. The prorated charge nets against
+    // the entitlement instead: the tenant already holds `fromKey` and owes only the difference.
+    const ledgerOldMonthly = sub.planKey ? oldMonthly : 0;
+    const amountDelta = roundMoney(newMonthly - ledgerOldMonthly);
     const proratedNow = this.proratedDiff(sub, newMonthly - oldMonthly);
 
     await this.prisma.$transaction(async (tx) => {
       // Optimistic guard: only apply if still on the expected plan (blocks a concurrent
-      // double-upgrade from re-emitting the delta).
+      // double-upgrade from re-emitting the delta). Matches the STORED key (null matches
+      // IS NULL), never the resolved one.
       const applied = await tx.tenantSubscription.updateMany({
         where: { tenantId, planKey: sub.planKey },
         data: {
@@ -286,6 +646,14 @@ export class SubscriptionMutationService {
           currentPlan: planKeyToEnum(planKey),
           planVersionId: version.id,
           basePriceSnapshot: def.monthlyPrice,
+          // Committing a plan change disarms every OTHER pending transition — the same fields
+          // subscribe() clears. Leaving a downgrade armed would silently drop the tenant back
+          // off the plan they just paid to upgrade to (billing-cron applyScheduledDowngrades
+          // filters on downgradeEffectiveAt alone, never on rank or current plan), and a left
+          // cancellation would take them READ_ONLY at period end.
+          cancelAtPeriodEnd: false,
+          downgradeToPlanKey: null,
+          downgradeEffectiveAt: null,
         },
       });
       if (applied.count === 0) {
@@ -298,7 +666,7 @@ export class SubscriptionMutationService {
       await this.events.emit(
         tenantId,
         BILLING_EVENTS.PLAN_CHANGED,
-        { fromPlan: sub.planKey, toPlan: planKey, instant: true, prorated: proratedNow },
+        { fromPlan: fromKey, toPlan: planKey, instant: true, prorated: proratedNow },
         { amountDelta, actorId, tx },
       );
     });
@@ -317,10 +685,42 @@ export class SubscriptionMutationService {
     const version = await this.catalog.getPublishedCatalog();
     const def = version.definitions.find((d) => d.planKey === targetPlanKey);
     if (!def) throw new BadRequestException(`Unknown plan "${targetPlanKey}"`);
-    const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
-    if (!sub?.planKey) throw new BadRequestException("No active subscription.");
-    if (planRank(targetPlanKey) >= planRank(sub.planKey)) {
+    // A published key outside PLAN_KEYS ranks -1, which passes the rank check below against
+    // every plan and schedules a downgrade the cron applies with a NULL base price (free
+    // tenant). Refuse it here rather than letting -1 read as "the lowest plan".
+    if (planRank(targetPlanKey) < 0) {
+      throw new BadRequestException(`Unknown plan "${targetPlanKey}"`);
+    }
+    const [sub, tenant] = await Promise.all([
+      this.prisma.tenantSubscription.findUnique({ where: { tenantId } }),
+      this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { plan: true, status: true },
+      }),
+    ]);
+    const fromKey = this.resolveFromPlanKey(sub?.planKey, tenant?.plan);
+    // Same precondition as upgrade() (see there): a planKey-NULL row is a real subscription
+    // only on an already-ACTIVE tenant, never a stub on one that never subscribed.
+    if (!sub || !fromKey || (!sub.planKey && tenant?.status !== "ACTIVE")) {
+      throw new BadRequestException("No active subscription.");
+    }
+    // Custom (Enterprise) on EITHER side is negotiated, exactly as subscribe()/upgrade() already
+    // refuse a custom target. A custom SOURCE prices from `priceOverrideMonthly` with a NULL
+    // catalog price, so the cron would book `0 − 0 = +targetPrice` as the "downgrade" delta and
+    // overwrite the negotiated basePriceSnapshot with the catalog's.
+    if (def.isCustom || findPlanDefinition(version.definitions, fromKey)?.isCustom) {
+      throw new BadRequestException(CUSTOM_PLAN_MESSAGE);
+    }
+    if (planRank(targetPlanKey) >= planRank(fromKey)) {
       throw new BadRequestException("Target is not a downgrade — use upgrade for a higher plan.");
+    }
+    // A null periodEnd would persist `downgradeEffectiveAt: null`, which
+    // applyScheduledDowngrades filters OUT — a schedule the UI reports as accepted and the
+    // cron can never apply. Refuse instead of writing one.
+    if (!sub.periodEnd) {
+      throw new BadRequestException(
+        "This subscription has no billing period end — subscribe to set one before scheduling a downgrade.",
+      );
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -330,6 +730,9 @@ export class SubscriptionMutationService {
           downgradeToPlanKey: targetPlanKey,
           downgradeEffectiveAt: sub.periodEnd,
           retainedUserIds,
+          // Exactly one transition may be armed: scheduling a downgrade replaces a pending
+          // cancellation rather than stacking on top of it.
+          cancelAtPeriodEnd: false,
         },
       });
       await this.events.emit(
@@ -350,7 +753,16 @@ export class SubscriptionMutationService {
     await this.prisma.$transaction(async (tx) => {
       await tx.tenantSubscription.update({
         where: { tenantId },
-        data: { cancelAtPeriodEnd: true },
+        // A cancellation SUPERSEDES any scheduled downgrade — leaving one armed would let
+        // applyScheduledDowngrades re-price the row (rewriting basePriceSnapshot) before
+        // applyScheduledCancellations books the churn delta from it, so the negative MRR
+        // delta would depend on which cron ran first. Book it from the plan the tenant is on.
+        data: {
+          cancelAtPeriodEnd: true,
+          downgradeToPlanKey: null,
+          downgradeEffectiveAt: null,
+          retainedUserIds: [],
+        },
       });
       await this.events.emit(
         tenantId,
@@ -362,14 +774,23 @@ export class SubscriptionMutationService {
     return this.subscription.getSubscription(tenantId);
   }
 
-  /** Undo a scheduled cancellation. */
+  /**
+   * Undo a scheduled transition — a cancellation OR a scheduled downgrade. Nothing else
+   * clears `downgradeToPlanKey` except the cron that applies it, so this is the tenant's
+   * only self-service "keep my current plan"; it never touches planKey or the period.
+   */
   async resume(tenantId: string, actorId?: string) {
     const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
     if (!sub) throw new NotFoundException("No subscription.");
     await this.prisma.$transaction(async (tx) => {
       await tx.tenantSubscription.update({
         where: { tenantId },
-        data: { cancelAtPeriodEnd: false },
+        data: {
+          cancelAtPeriodEnd: false,
+          downgradeToPlanKey: null,
+          downgradeEffectiveAt: null,
+          retainedUserIds: [],
+        },
       });
       await this.events.emit(tenantId, BILLING_EVENTS.SUBSCRIPTION_RESUMED, {}, { actorId, tx });
     });

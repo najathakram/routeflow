@@ -124,6 +124,52 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
       await (svc as any).onSubscriptionDeleted({ customer: "cus_1" });
       expect(events.emit).not.toHaveBeenCalled();
     });
+
+    it("disarms a scheduled downgrade alongside cancelAtPeriodEnd (round 3, finding 10)", async () => {
+      const { svc, prisma } = make({ transitionCount: 1 });
+      await (svc as any).onSubscriptionDeleted({ customer: "cus_1" });
+      // A cancellation SUPERSEDES a scheduled downgrade — cancel()'s own rule. Left armed, the
+      // 02:00 sweep re-prices basePriceSnapshot on an already-churned tenant and books a second
+      // PLAN_CHANGED delta on top of the churn delta emitted here.
+      expect(prisma.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+        cancelAtPeriodEnd: true,
+        downgradeToPlanKey: null,
+        downgradeEffectiveAt: null,
+        retainedUserIds: [],
+      });
+    });
+  });
+
+  describe("onSubscriptionUpdated (round 3, finding 10)", () => {
+    const evt = (cancelAtPeriodEnd: boolean) => ({
+      customer: "cus_1",
+      current_period_start: 1_700_000_000,
+      current_period_end: 1_702_000_000,
+      cancel_at_period_end: cancelAtPeriodEnd,
+    });
+
+    it("clears the downgrade markers when the update ARMS a cancellation", async () => {
+      const { svc, prisma } = make();
+      await (svc as any).onSubscriptionUpdated(evt(true));
+      expect(prisma.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+        cancelAtPeriodEnd: true,
+        downgradeToPlanKey: null,
+        downgradeEffectiveAt: null,
+        retainedUserIds: [],
+      });
+    });
+
+    it("leaves the downgrade markers untouched on an ordinary update", async () => {
+      const { svc, prisma } = make();
+      await (svc as any).onSubscriptionUpdated(evt(false));
+      // A cycle roll, a price sync or an add-on item arrives as subscription.updated too —
+      // clearing the markers there would silently drop a downgrade the tenant scheduled.
+      const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+      expect(data.cancelAtPeriodEnd).toBe(false);
+      expect(data).not.toHaveProperty("downgradeToPlanKey");
+      expect(data).not.toHaveProperty("downgradeEffectiveAt");
+      expect(data).not.toHaveProperty("retainedUserIds");
+    });
   });
 
   describe("suspendOverdueTenants (→ SUSPENDED)", () => {

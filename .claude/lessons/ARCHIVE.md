@@ -634,3 +634,80 @@ suite) rather than judgment/none/runbook.
   reachable (a SKIPPED stop on a COMPLETED run), ship the refusal for it in the same PR ([[L-030]]).
 - **Guard:** `REG-B129 (T5 path: cancel → un-cancel → re-dispatch)`, `REG-B211 (T12 path:
 complete-with-skipped → reopen refused)`; mutation probes in the F11 PR body.
+
+## Archived 2026-09-06 — headroom for L-084 (F18 bookkeeping follow-up, #643)
+
+Landing L-084 (process — a fix that first arms/consumes/clears a persisted state field must grep
+every writer and reader of that field into the build radius before the plan is cut) at 40 of 40
+active entries (40,591 B) required archiving first — adding the new entry without archiving would
+have pushed the file past the 40,960-byte cap. Both entries below have zero live citations
+anywhere in the tree outside `.claude/pipeline/` frozen run records (checked via `git grep`,
+excluding `.claude/lessons/*.md` and `.claude/pipeline/**`) and are guarded by a landed, automated
+mechanical check rather than a procedure, a runbook pointer, or "Guard: none — judgment": **L-056**
+(`scripts/ci-audit-critical.mjs` + its contract spec) and **L-064** (`apps/web/csp.mjs` +
+`apps/web/lib/csp.test.ts`'s prod-identity pin). Both are dated 2026-09-04; L-056 was minted first
+(lower id). Note the task brief for this follow-up named the new entry L-083, but master already
+carried an unrelated L-083 (`campaign-check freshness`, landed earlier the same day) and
+`_meta.json.nextId` was already `84` before this session started — the new entry is filed as the
+actually-free L-084 instead.
+
+### L-056 · 2026-09-04 · tooling · #609
+
+- **Symptom:** the `Fail on critical production advisories` CI step (`npm audit --omit=dev
+--audit-level=critical`) blew its 20-minute `timeout-minutes` twice in one day, 8 minutes
+  apart; the non-blocking high-severity step hit the same failure masked by `|| true`.
+- **Root cause:** npm's registry started returning 500 on the quick-audit endpoint ("This
+  endpoint is being retired. Use the bulk advisory endpoint instead."), and npm's own client
+  retries internally for ~12 minutes before giving up — the gate had no way to tell an upstream
+  outage apart from a real finding.
+- **Lesson:** a CI gate that depends on a third-party service must distinguish a finding from an
+  outage: fail on findings, warn-and-skip on unavailability with a bounded retry — otherwise an
+  upstream deprecation blocks every merge.
+- **Guard:** `scripts/ci-audit-critical.mjs` (bounded 3-attempt retry, registry/transport-error
+  detection, `::warning::…SKIPPED` + exit 0 on outage, fail-closed otherwise); contract spec
+  `apps/api/src/common/ci-audit-script.spec.ts`.
+
+### L-064 · 2026-09-04 · deploy · imp-04
+
+- **Symptom:** the local E2E lane's browser login against the Docker-built web image was
+  CSP-blocked with no HTTP response at all (`POST http://localhost:3000/api/v1/auth/login`
+  from `http://localhost:3001`, `status -1`); the login page's no-response fallback rendered
+  it as "Invalid username or password" even though API, CORS, seed, and throttle were all fine.
+- **Root cause:** `next.config.mjs`'s CSP gated the `connect-src` localhost relaxation on
+  `isDev = NODE_ENV !== "production"`, which is always `false` in a **built** image — `next
+build` forces production — so that branch was dead in every Docker image, not just prod.
+- **Lesson:** **never gate a build-time artifact (a CSP header, a routes manifest) on
+  `NODE_ENV` — every built image reports `production` regardless of its actual deployment
+  target. Derive the decision from the build input it must actually match instead** (here,
+  whether the baked `NEXT_PUBLIC_API_URL` itself is `http:`), and pin the production output
+  byte-identical in a spec so the fix can't silently change what ships.
+- **Guard:** `apps/web/csp.mjs` (`apiConnectSources`) + `apps/web/lib/csp.test.ts` (prod-identity
+  case pins the exact production `Content-Security-Policy` string).
+
+## Archived 2026-09-06 — headroom for L-083 (campaign-check freshness)
+
+Landing L-083 (tooling — campaign-check must refuse a stale run artifact by name, with the regen
+command, before scanning a single token) at 40 of 40 active entries required archiving first.
+Both entries below archived 2026-09-06 for headroom (L-083 added; register at its byte cap) —
+guard automated: **L-065** (tooling) is the oldest active entry whose Guard names a landed
+automated spec (`no-runtime-workspace-imports.spec.ts`) rather than judgment/none/runbook; the
+next-oldest by that rule, L-072, stays active because `CLAUDE.md`'s Conventions cite it inline by
+id, so **L-046** (domain), the following qualifying entry, is archived instead.
+
+### L-065 · 2026-09-03 · tooling · PR-4 `imp-01`
+
+- **Symptom:** the review counted "four copies", the first plan promised a source-direct package
+  "exactly like `@routeflow/types`", and the repo's own comments already said that shape crashes
+  `node dist/main.js`.
+- **Lesson:** a workspace package the API imports at runtime must ship compiled JS — `nest build`
+  emits `require()` verbatim; source-direct packages are a client-only convenience. Build it on
+  `postinstall` so every `npm ci` (CI, Docker, dev) produces `dist` before anything typechecks.
+- **Guard:** `no-runtime-workspace-imports.spec.ts` (PR-1's engine already seeded the idea; this PR
+  makes it assert every `@routeflow/*` the API imports has a built `main`).
+
+### L-046 · 2026-09-04 · domain · F13
+
+- **Symptom:** a MONTHLY recurring invoice never advanced; a standing order billed list price; a failed cycle was silently skipped; a failed cycle's unconditional rollback could hand the schedule back for a cycle another run had already billed.
+- **Root cause:** a month-advance compared against a mutated date; a second writer priced lines outside the one buyer resolver; the cron advanced the schedule before it knew the outcome and never recorded it; the restore after failure was not conditioned on the claim that made it.
+- **Lesson:** **Every path that materialises an order or invoice from a saved shape is a pricing writer and a schedule writer: price through the shared resolver, record the outcome on the row you advanced, and undo a claim only by compare-and-set on the value the claim wrote — a miss means someone newer owns the row, so write nothing.**
+- **Guard:** REG-B48 T9–T16 through the real resolver; REG-B46 T1–T7b; REG-B106 T17/T17b/T17c/T18/T19 ([[L-030]]: a write and its record share one condition; [[L-045]]: release on the forward-path marker).
