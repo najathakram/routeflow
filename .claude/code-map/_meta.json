@@ -1,7 +1,7 @@
 {
-  "mappedSha": "99d5b87a",
-  "generatedAt": "2026-09-07T02:45:00.000Z",
+  "mappedSha": "f2a27368",
+  "generatedAt": "2026-09-07T06:50:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 1014,
-  "notes": "**2026-09-06** — (branch `docs/645-f08-bookkeeping`, Option-B bookkeeping follow-up for PR #645, mapped at `99d5b87a`) — F08 (returns end-to-end) mapped surgically across api.md/packages.md/web.md/mobile.md; registry proved all 10 rows against PR #645 but F08 was NOT discharged — the post-deploy E2E run (34075878788) failed on T13/REG-B75 and T14/REG-B21 (T12/REG-B166 passed); filed B220–B225; L-085 appended. See CHANGELOG.md's top entry for the full session note. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "**2026-09-07** — (branch `docs/650-f23-bookkeeping`, Option-B bookkeeping follow-up for PR #650, mapped at `f2a27368`) — F23 (messaging engine honesty: transport seam, seeding, honest copy) mapped surgically across api.md/web.md; registry proved B145/B160/B180/B182/B183 (all T1) and discharged F23; B181 refuted (dead `|| true` push check); B37 noted as a deferred feature (D5), left queued; filed 3 new unbatched rows; L-087 appended, L-075 archived for headroom. See CHANGELOG.md's top entry for the full session note. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
