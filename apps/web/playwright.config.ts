@@ -508,5 +508,23 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+
+    // ── Choose-plan routing (F18, spec 33) ─────────────────────────────────────
+    // REG-B58: the /choose-plan chooser must route an in-place plan change
+    // through POST /billing/subscription (upgrade) or
+    // /billing/subscription/downgrade (downgrade) per the quote's `change`
+    // classification, never through the fresh-subscribe endpoint. Fully
+    // mocked — no writes to any tenant. Uses operator auth state.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "change-plan-routing",
+      testMatch: /33-change-plan-routing\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
   ],
 });

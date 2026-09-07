@@ -447,6 +447,15 @@ ${paymentSection}
           planKey: definition.planKey,
           planVersionId: version.id,
           basePriceSnapshot: baseSnapshot,
+          // A committing plan write disarms any scheduled downgrade — the same invariant every
+          // self-service writer holds (subscription-mutation.service.ts). Left armed, the 02:00
+          // sweep (which filters on downgradeEffectiveAt alone, never on rank or current plan)
+          // would silently undo this admin's change and deactivate the tenant's staff.
+          // `cancelAtPeriodEnd` is deliberately NOT touched: an admin plan edit must not revoke
+          // a cancellation the tenant asked for — that is resume()'s job.
+          downgradeToPlanKey: null,
+          downgradeEffectiveAt: null,
+          retainedUserIds: [],
         },
       });
 
@@ -529,7 +538,13 @@ ${paymentSection}
           currentPlan: dto.plan,
           periodStart: now,
           periodEnd,
+          // Rolling the period forward disarms every pending transition. A downgrade left armed
+          // now points at the OLD (already past) period end, so the very next 02:00 sweep would
+          // fire it against the subscription this admin just activated.
           cancelAtPeriodEnd: false,
+          downgradeToPlanKey: null,
+          downgradeEffectiveAt: null,
+          retainedUserIds: [],
           externalPayment: true,
           externalPaymentMethod: dto.paymentMethod,
           externalPaymentRef: dto.paymentRef ?? null,
