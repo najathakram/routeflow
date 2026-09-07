@@ -11,6 +11,23 @@
 
 ## process
 
+### L-085 · 2026-09-06 · process · F08
+
+- **Symptom:** F08's engine stalled 90 minutes inside its fix wave — one executor's `Edit` tool
+  call never returned, the parallel barrier waited on it, `TaskStop` marked the run killed but its
+  loop never released, and `resumeFromRunId` was refused three times; separately, an executor's
+  line-number probe (`sed -i 'Nd'`) on `returns.service.ts` raced another executor editing the
+  same file and deleted a different line.
+- **Root cause:** a hung in-process tool call holds a workflow barrier that no stop or resume can
+  clear; and a line-number probe assumes a file nobody else is editing.
+- **Lesson:** **when an engine run stalls (journal silent, no processes in its worktree, an
+  agent's last entry is a tool call with no result), do not wait or resume it — stop it and
+  continue by a NEW lead-designed light loop from the tree as it stands (integrity check first,
+  then the owed work); and an executor/probe must never mutate a shared file by line number —
+  revert by checksum against a backup only.**
+- **Guard:** bug-pipeline RESUME cards carry the stall recipe; the engine's probe stage forbids
+  line-number mutations (knob candidate recorded in RUN-LOG 2026-09-07).
+
 ### L-084 · 2026-09-06 · process · F18
 
 - **Symptom:** F18's engine ended with every gate green and 3/3 probes caught, yet its final pass

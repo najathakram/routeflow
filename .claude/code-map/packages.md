@@ -52,6 +52,11 @@ Shared DTO/enum definitions. Entry: `index.ts` (no `src/`), re-exports `./api/*`
   (collapsed into `change-requests.ts`, re-exported from `@routeflow/types`; `ChangeRequestResolution`
   and the richer buyer-facing `ChangeRequest` interface stay local — NOT deduped, a real divergence
   the sweep undercounted).
+- **`api/returns.ts` — F08 (2026-09-06, #645):** `CreateReturnItemDto` gains optional `condition?:
+string` (B20 — free-form intake note, e.g. "DAMAGED_BOX") and its `restock?` doc comment is
+  corrected ("defaults from the reason" — B61 — not the old "default true"). No `deliveredQty` field
+  was added — that composition (B53×B128) was ruled OUT of this wave; see api.md's returns/ F08 entry
+  and registry row B220.
 - **Enums** (synced with Prisma): `UserRole`, `UserStatus`; `OrderStatus`, `ItemStatus`;
   `RouteRunStatus`, `RouteRunStopStatus`; `TxnStatus`, `PaymentMethod` (2026-08-21: backfilled
   from a stale 4 values to all 8 — `CASH,CHECK,ACH,OTHER,CREDIT_NOTE,ADVANCE,CREDIT_CARD,ZELLE`

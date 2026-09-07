@@ -1,7 +1,7 @@
 {
-  "mappedSha": "7a2b112b",
-  "generatedAt": "2026-09-07T01:30:00.000Z",
+  "mappedSha": "99d5b87a",
+  "generatedAt": "2026-09-07T02:45:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
-  "fileCount": 1012,
-  "notes": "**2026-09-06** — (branch `docs/643-f18-bookkeeping`, Option-B bookkeeping follow-up for PR #643, mapped at `7a2b112b`) — F18 (plan-change routing, clawback lock, add-on refusal) mapped surgically: `api.md` gains bullets for `addon.service.ts` enable/disableAddon entitlement-follows-Stripe (B107), `subscription-mutation.service.ts` planChangePreview()/one-armed-transition (B58), `billing-cron.service.ts` applyScheduledDowngrades's ACTIVE/non-deleted filter, a sentence on `platform-admin.service.ts` updatePlan/activateManualSubscription clearing the same downgrade markers, and a clause on `commission-engine.service.ts`'s unconditional tenantTransaction-wrapped accrual lock (B73); `web.md` gains a new Plan-change routing bullet (`lib/api/billing.ts` dispatchPlanChange, `choose-plan/page.tsx`, `settings/billing/page.tsx`'s Keep-current-plan button) and a `33-change-plan-routing.spec.ts` e2e table row. See CHANGELOG.md's top entry for the full session note (registry prove/discharge outcome, filed bug ids, L-084). || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "fileCount": 1014,
+  "notes": "**2026-09-06** — (branch `docs/645-f08-bookkeeping`, Option-B bookkeeping follow-up for PR #645, mapped at `99d5b87a`) — F08 (returns end-to-end) mapped surgically across api.md/packages.md/web.md/mobile.md; registry proved all 10 rows against PR #645 but F08 was NOT discharged — the post-deploy E2E run (34075878788) failed on T13/REG-B75 and T14/REG-B21 (T12/REG-B166 passed); filed B220–B225; L-085 appended. See CHANGELOG.md's top entry for the full session note. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }
