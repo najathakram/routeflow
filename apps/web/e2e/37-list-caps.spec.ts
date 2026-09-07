@@ -41,9 +41,9 @@
  * Role: OPERATOR (reads its token out of the pre-authenticated session, same
  * as 21-destructive-guards / 22-payment-truth). Tenant: the approved
  * e2e-routeflow regression seed (assertTestTenant, helpers/constants.ts).
- * Every fixture created here (`E2E B144 …` customer + 25 orders, one
- * throwaway invoice + payment) is fully self-provisioned and left behind —
- * the same residue tolerance 21/22/24's own throwaway fixtures already take.
+ * Every fixture created here (25 `E2E B144 …` customers carrying one order
+ * each, one throwaway invoice + payment) is fully self-provisioned and left
+ * behind — the same residue tolerance 21/22/24's own throwaway fixtures take.
  */
 
 import { test, expect, type Page } from "@playwright/test";
@@ -237,7 +237,17 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     // "Payment not found." is what the buggy page renders once the id falls
     // outside the 200-row page it fetched — this must not appear once the
     // page is fetching by id instead.
-    await expect(page.getByText(paymentDetail.paymentNumber)).toBeVisible({ timeout: 15_000 });
+    //
+    // The receipt renders the number TWICE — the page heading
+    // (`<h2 className="font-mono text-2xl font-bold text-navy">{payment.paymentNumber ?? "Payment"}</h2>`,
+    // finance/payments/[id]/page.tsx:107) and the receipt document's
+    // "<number> · <date>" subline (same file, :147) — so a bare getByText is a
+    // strict-mode violation, not a product failure (L-086: heading locators are
+    // pinned by role, never by loose text). The heading's whole accessible name
+    // is the payment number, so an exact role match resolves to that one node.
+    await expect(
+      page.getByRole("heading", { name: paymentDetail.paymentNumber, exact: true }),
+    ).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("Payment not found.")).toHaveCount(0);
 
     expect(
@@ -254,6 +264,11 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     page,
     request,
   }) => {
+    // 50 provisioning round-trips against the deployed API (25 customers, 25
+    // orders) do not fit the 60 s per-test default in playwright.config.ts once
+    // Railway is cold — the assertions below keep their own 15 s budgets.
+    test.setTimeout(120_000);
+
     await openApp(page);
     const headers = await apiHeaders(page);
     expect(
@@ -263,24 +278,40 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     const api = apiBase(page.url());
 
     const suffix = String(Date.now());
+    // `search` is matched by the API against the order NUMBER or the customer's
+    // businessName (`orders.service.ts:336-341`, the B144 where-clause), and
+    // order numbers are server-minted, so the suffix has to live in the business
+    // name. This value is the shared PREFIX every fixture customer's name starts
+    // with, so the page-2 assertion below (a substring match) matches any of the
+    // 25 regardless of which of them the second page happens to hold.
     const businessName = `E2E B144 ${suffix}`;
-    const customerRes = await request.post(`${api}/api/v1/customers`, {
-      headers: headers!,
-      data: {
-        username: `e2e_b144_${suffix}`,
-        businessName,
-        contactName: "E2E Tester",
-      },
-    });
-    expect(customerRes.ok(), `POST /customers returned ${customerRes.status()}`).toBe(true);
-    const customer: { id: string } = (await customerRes.json()).customer;
-    expect(customer?.id, "POST /customers response carried no customer.id").toBeTruthy();
 
     // 25 orders — one more than the default page size (20) — so a match on
     // page 2 is only reachable if the search actually narrowed the SERVER
     // query rather than only ever filtering whatever the first page happened
     // to already hold.
+    //
+    // ONE order per customer, 25 customers — NOT 25 orders on one customer: a
+    // staff create for a customer that already holds an open DRAFT/PENDING
+    // order is refused with 409 `MERGE_CHOICE_REQUIRED`
+    // (`orders.controller.ts:110-127`, via `findActiveOrder`), so a
+    // single-customer 25-order fixture cannot be provisioned through the API at
+    // all — the 2nd POST /orders never lands.
     for (let i = 0; i < 25; i++) {
+      const customerRes = await request.post(`${api}/api/v1/customers`, {
+        headers: headers!,
+        data: {
+          username: `e2e_b144_${suffix}_${i}`,
+          businessName: `${businessName} ${i}`,
+          contactName: "E2E Tester",
+        },
+      });
+      expect(customerRes.ok(), `POST /customers (#${i}) returned ${customerRes.status()}`).toBe(
+        true,
+      );
+      const customer: { id: string } = (await customerRes.json()).customer;
+      expect(customer?.id, `POST /customers (#${i}) response carried no customer.id`).toBeTruthy();
+
       const orderRes = await request.post(`${api}/api/v1/orders`, {
         headers: headers!,
         data: {
