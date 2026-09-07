@@ -19,7 +19,7 @@ import {
 } from "@routeflow/pricing";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { CONFIRMED_PAYMENT, sumConfirmed } from "./payment-predicates";
-import { PAYABLE } from "./invoice-status-sets";
+import { PAYABLE, KPI_SUMMARY_EXCLUDED } from "./invoice-status-sets";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { loadMsrpMap } from "../common/msrp";
@@ -29,8 +29,10 @@ import {
   CreditNoteStatus,
   InvoiceStatus,
   NotificationEvent,
+  Prisma,
   UserRole,
 } from "@prisma/client";
+import type { InvoiceKpiSummary } from "@routeflow/types";
 import {
   CreateInvoiceDto,
   RecordInvoicePaymentDto,
@@ -54,7 +56,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
-import { startOfCalendarDay } from "../common/calendar-date";
+import { startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -73,6 +75,25 @@ export function addCalendarDays(date: Date, days: number): Date {
   const out = new Date(date);
   out.setUTCDate(out.getUTCDate() + days);
   return out;
+}
+
+/**
+ * Normalise a date query param to the `YYYY-MM-DD` calendar day it names,
+ * BEFORE it is concatenated into a literal instant (`${day}T23:59:59.999Z`).
+ * The list DTOs accept `@IsDateString()`/`@IsString()`, so a full ISO-8601
+ * datetime is a valid input — concatenating one raw would yield an
+ * `Invalid Date` bound that silently reaches Prisma. An unparsable value is
+ * rejected here with a 400 instead of becoming a broken filter.
+ */
+function calendarDayOf(raw: string, field: string): string {
+  const day = raw.slice(0, 10);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(day) ||
+    Number.isNaN(new Date(`${day}T00:00:00.000Z`).getTime())
+  ) {
+    throw new BadRequestException(`${field} must be a calendar date (YYYY-MM-DD)`);
+  }
+  return day;
 }
 
 /**
@@ -213,6 +234,36 @@ export class InvoicesService {
       terms: cfg?.invoiceTerms ?? null,
       timezone: cfg?.timezone ?? null,
     };
+  }
+
+  /**
+   * The real tenant-local midnight instant that BEGINS the calendar day
+   * `dateStr` (a `YYYY-MM-DD` value, e.g. a `dateFrom` query param) encodes —
+   * the paidAt/settledAt-window counterpart to `endOfCalendarDay` (B89,
+   * L-047: paidAt is a real instant, so its day bounds must be evaluated in
+   * the TENANT's own timezone, never the host clock's). Composed from the
+   * shared `endOfCalendarDay` helper rather than re-deriving the UTC-offset
+   * math a second time (L-047/L-072): the instant 1ms after the PREVIOUS
+   * calendar day's tenant-local end is exactly this day's tenant-local start.
+   */
+  private tenantCalendarDayStart(dateStr: string, timeZone: string | null): Date {
+    const prevDay = new Date(`${calendarDayOf(dateStr, "dateFrom")}T00:00:00.000Z`);
+    prevDay.setUTCDate(prevDay.getUTCDate() - 1);
+    return new Date(endOfCalendarDay(prevDay, timeZone).getTime() + 1);
+  }
+
+  /**
+   * The real tenant-local instant that ENDS the calendar day `dateStr` encodes
+   * — the `dateTo` counterpart to `tenantCalendarDayStart`. The param is
+   * normalised through `calendarDayOf` FIRST so an unparsable value is
+   * rejected with a 400 instead of reaching Prisma as an `Invalid Date` bound,
+   * and a full ISO datetime resolves to the same window as its date-only form.
+   */
+  private tenantCalendarDayEnd(dateStr: string, timeZone: string | null): Date {
+    return endOfCalendarDay(
+      new Date(`${calendarDayOf(dateStr, "dateTo")}T00:00:00.000Z`),
+      timeZone,
+    );
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -2796,12 +2847,14 @@ export class InvoicesService {
     }
     if (dateFrom || dateTo) {
       where.issueDate = {};
-      if (dateFrom) where.issueDate.gte = new Date(dateFrom);
-      if (dateTo) {
-        const end = new Date(dateTo);
-        end.setHours(23, 59, 59, 999);
-        where.issueDate.lte = end;
-      }
+      if (dateFrom)
+        where.issueDate.gte = new Date(`${calendarDayOf(dateFrom, "dateFrom")}T00:00:00.000Z`);
+      // B89/L-047: issueDate is a UTC-midnight calendar stamp, so its day-end
+      // bound is the LITERAL UTC instant of the date string — never a
+      // host-local `setHours` mutation, which silently disagrees with the
+      // UTC-midnight convention off a UTC host.
+      if (dateTo)
+        where.issueDate.lte = new Date(`${calendarDayOf(dateTo, "dateTo")}T23:59:59.999Z`);
     }
     // Due-soon window (Due today / Due tomorrow / Next 7 days chips). MERGE into any
     // dueDate clause `isOverdue` already set — the two intersect, they don't override
@@ -2809,12 +2862,11 @@ export class InvoicesService {
     // value truncates to midnight and drops invoices due later that same day.
     if (dueFrom || dueTo) {
       where.dueDate = { ...(where.dueDate ?? {}) };
-      if (dueFrom) where.dueDate.gte = new Date(dueFrom);
-      if (dueTo) {
-        const dueEnd = new Date(dueTo);
-        dueEnd.setHours(23, 59, 59, 999);
-        where.dueDate.lte = dueEnd;
-      }
+      if (dueFrom)
+        where.dueDate.gte = new Date(`${calendarDayOf(dueFrom, "dueFrom")}T00:00:00.000Z`);
+      // B89/L-047: dueDate is also a UTC-midnight calendar stamp — same literal
+      // UTC instant convention as issueDate above.
+      if (dueTo) where.dueDate.lte = new Date(`${calendarDayOf(dueTo, "dueTo")}T23:59:59.999Z`);
     }
 
     // Build orderBy from sortBy/sortOrder params
@@ -2828,9 +2880,17 @@ export class InvoicesService {
       status: "status",
       invoiceNumber: "invoiceNumber",
     };
-    const orderField = validSortFields[sortBy ?? ""] ?? "issueDate";
+    // m9: Object.hasOwn (not a bare index) so prototype keys — `constructor`,
+    // `__proto__`, `toString`, `valueOf`… — can't resolve to an INHERITED value
+    // and reach Prisma as a malformed orderBy (→ 500). Unknown OR inherited
+    // falls back to the safe issueDate default.
+    const orderField =
+      sortBy && Object.hasOwn(validSortFields, sortBy) ? validSortFields[sortBy] : "issueDate";
     const orderDir = sortOrder === "asc" ? "asc" : "desc";
-    const orderBy: any = { [orderField]: orderDir };
+    // B169: `id` tiebreaker — issueDate/createdAt ties are STRUCTURAL (bulk
+    // imports, UTC-midnight stamps sharing a value), so a single-key orderBy
+    // leaves page order unstable across identical requests.
+    const orderBy: any = [{ [orderField]: orderDir }, { id: orderDir }];
 
     const [data, total] = await Promise.all([
       this.prisma.forTenant().invoice.findMany({
@@ -2880,6 +2940,151 @@ export class InvoicesService {
     return {
       data: computedData,
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  /**
+   * B12: the invoices page's six KPI tiles, computed by the DATABASE over the
+   * whole OPEN set — never a client `useInvoices({ limit: 999 })`
+   * fetch-all-then-reduce, which silently drops whichever rows page 1000+
+   * would have held (exactly the oldest, most delinquent invoices).
+   *
+   * `today` is the VIEWER's calendar day (`YYYY-MM-DD`), passed by the client
+   * so the tiles agree with the same due-soon chips the list page renders —
+   * the server never derives "today" from its own clock (L-047).
+   */
+  async getKpiSummary(today: string, user: JwtPayload): Promise<InvoiceKpiSummary> {
+    // The DTO's regex pins the SHAPE; this pins the CALENDAR. `2026-13-01`
+    // matches the regex and would blow up on `.toISOString()` below — after
+    // three queries had already run — and `2026-02-30` would silently roll to
+    // Mar 2 and bucket the tiles against a day the caller never asked for.
+    const todayInstant = new Date(`${today}T00:00:00.000Z`);
+    if (Number.isNaN(todayInstant.getTime()) || todayInstant.toISOString().slice(0, 10) !== today) {
+      throw new BadRequestException("today must be a real calendar date (YYYY-MM-DD)");
+    }
+
+    const tenantId = this.prisma.getTenantId();
+    // No tenant context (SUPER_ADMIN / unset): `forTenant()` would read UNSCOPED
+    // while the raw query's `"tenantId" = NULL` matches nothing — one response
+    // mixing all-tenant totals with a zeroed average. Return the zeroed summary
+    // instead, the same guard `resolveTenantInvoiceDefaults` uses.
+    if (!tenantId) {
+      return {
+        totalOutstanding: 0,
+        overdue: 0,
+        dueToday: 0,
+        dueIn30: 0,
+        avgDays: 0,
+        awaitingConfirmationCount: 0,
+      };
+    }
+
+    // A CUSTOMER sees only their OWN receivables — the same scope `findAll`
+    // applies above, resolved the same way. Without it the tiles would hand a
+    // buyer the whole tenant's outstanding balance. (DRAFT needs no extra
+    // exclusion here: KPI_SUMMARY_EXCLUDED already drops it.)
+    let customerId: string | undefined;
+    if (user?.role === UserRole.CUSTOMER) {
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub } });
+      // No customer profile: `findAll` returns an empty page, so the tiles zero out.
+      if (!customer) {
+        return {
+          totalOutstanding: 0,
+          overdue: 0,
+          dueToday: 0,
+          dueIn30: 0,
+          avgDays: 0,
+          awaitingConfirmationCount: 0,
+        };
+      }
+      customerId = customer.id;
+    }
+
+    const [invoices, awaitingConfirmationCount, avgDaysRows] = await Promise.all([
+      // No `take` — the OPEN set is read whole, not capped like a rendering page.
+      this.prisma.forTenant().invoice.findMany({
+        where: { status: { notIn: KPI_SUMMARY_EXCLUDED }, ...(customerId ? { customerId } : {}) },
+        select: {
+          total: true,
+          status: true,
+          dueDate: true,
+          payments: { select: { amount: true, status: true } },
+        },
+      }),
+      // m7: the awaiting-confirmation queue is a tile in the SAME bar as the
+      // money figures, so it counts DRAFT payments on the same OPEN set they
+      // sum — a draft payment sitting on a PAID/VOID/WRITTEN_OFF/DRAFT invoice
+      // is not an action the operator can take from these tiles.
+      this.prisma.forTenant().invoicePayment.count({
+        where: {
+          status: "DRAFT",
+          invoice: {
+            status: { notIn: KPI_SUMMARY_EXCLUDED },
+            ...(customerId ? { customerId } : {}),
+          },
+        },
+      }),
+      // Tenant id (and a buyer's customer id) reach the raw query as BOUND
+      // values, never string-interpolated.
+      this.prisma.$queryRaw<{ avgDays: number | null }[]>`
+        SELECT AVG(EXTRACT(EPOCH FROM ("paidAt" - "sentAt")) / 86400)::float AS "avgDays"
+        FROM "Invoice"
+        WHERE "tenantId" = ${tenantId}
+          ${customerId ? Prisma.sql`AND "customerId" = ${customerId}` : Prisma.empty}
+          AND status = 'PAID'
+          AND "paidAt" IS NOT NULL
+          AND "sentAt" IS NOT NULL
+          -- A PAID invoice re-sent as a receipt re-stamps sentAt AFTER paidAt
+          -- (send(), sendEmail()), which would feed a large negative duration
+          -- into the average. The client memo this replaced discarded those
+          -- rows with "days >= 0"; so does this.
+          AND "paidAt" >= "sentAt"
+      `,
+    ]);
+
+    // RF-202 convention: ISO date-string comparison (YYYY-MM-DD), never raw
+    // Date objects — a due date is a UTC-midnight calendar stamp, `today` is
+    // the viewer's own calendar day, so the comparison must stay date-only.
+    const cutoff = addCalendarDays(new Date(`${today}T00:00:00.000Z`), 30)
+      .toISOString()
+      .slice(0, 10);
+
+    let totalOutstanding = 0;
+    let overdue = 0;
+    let dueToday = 0;
+    let dueIn30 = 0;
+    for (const inv of invoices) {
+      // Same balance basis as findAll's enrichment above: CONFIRMED (PAID)
+      // payments only reduce the outstanding figure.
+      const balance = Math.max(0, Number(inv.total) - sumConfirmed(inv.payments as any));
+      totalOutstanding += balance;
+      const dueDateIso = inv.dueDate
+        ? (inv.dueDate instanceof Date ? inv.dueDate : new Date(inv.dueDate))
+            .toISOString()
+            .slice(0, 10)
+        : null;
+      // m5: the client memo's own basis was `status === "OVERDUE" || (due <
+      // today)` — a disjunct, not a date-only rule. An invoice the server has
+      // already flipped to OVERDUE is overdue whatever its dueDate says (null,
+      // or moved into the future by an edit), so it must not fall into
+      // dueIn30 or out of every bucket.
+      if (inv.status === InvoiceStatus.OVERDUE) overdue += balance;
+      // No dueDate and not flagged OVERDUE: totalOutstanding only, no bucket.
+      else if (dueDateIso == null) continue;
+      else if (dueDateIso < today) overdue += balance;
+      else if (dueDateIso === today) dueToday += balance;
+      else if (dueDateIso <= cutoff) dueIn30 += balance;
+    }
+
+    return {
+      totalOutstanding: roundMoney(totalOutstanding),
+      overdue: roundMoney(overdue),
+      dueToday: roundMoney(dueToday),
+      dueIn30: roundMoney(dueIn30),
+      avgDays: avgDaysRows[0]?.avgDays ?? 0,
+      awaitingConfirmationCount,
     };
   }
 
@@ -4181,12 +4386,18 @@ export class InvoicesService {
     const invDiscount = Number(inv.discount ?? 0);
     const shipping = Number(inv.shippingFee ?? 0);
     const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
+    // B89/L-047: stamp issueDate explicitly as UTC-midnight of today (tenant
+    // calendar day) — every other issueDate write in this file holds this
+    // invariant; omitting it here left it to whatever the schema default
+    // (`now()`) resolves to, a real instant rather than a calendar stamp.
+    const tenantDefaults = await this.resolveTenantInvoiceDefaults();
 
     return this.prisma.forTenant().invoice.create({
       data: {
         invoiceNumber: await this.nextInvoiceNumber(),
         customerId: inv.customerId,
         status: InvoiceStatus.DRAFT,
+        issueDate: startOfCalendarDay(new Date(), tenantDefaults.timezone),
         subtotal,
         taxAmount: taxTotal,
         discount: invDiscount,
@@ -4246,13 +4457,14 @@ export class InvoicesService {
     if (method) where.method = method;
     if (status) where.status = status;
     if (dateFrom || dateTo) {
+      // B89/L-047: paidAt is a REAL instant (not a UTC-midnight calendar
+      // stamp), so its day-window bounds are evaluated in the TENANT's own
+      // timezone — never the host clock's `setHours`.
+      const tenantDefaults = await this.resolveTenantInvoiceDefaults();
       where.paidAt = {};
-      if (dateFrom) where.paidAt.gte = new Date(dateFrom);
-      if (dateTo) {
-        const end = new Date(dateTo);
-        end.setHours(23, 59, 59, 999);
-        where.paidAt.lte = end;
-      }
+      if (dateFrom)
+        where.paidAt.gte = this.tenantCalendarDayStart(dateFrom, tenantDefaults.timezone);
+      if (dateTo) where.paidAt.lte = this.tenantCalendarDayEnd(dateTo, tenantDefaults.timezone);
     }
     if (search) {
       where.OR = [
@@ -4262,14 +4474,24 @@ export class InvoicesService {
       ];
     }
 
+    // B169: `id` tiebreaker — paidAt/settledAt ties are common (bulk imports,
+    // same-day batches), so a single-key orderBy leaves page order unstable.
+    const sortDirection = sortDir === "asc" ? "asc" : "desc";
     const validSortFields: Record<string, any> = {
-      paidAt: { paidAt: sortDir === "asc" ? "asc" : "desc" },
-      settledAt: { settledAt: sortDir === "asc" ? "asc" : "desc" },
-      amount: { amount: sortDir === "asc" ? "asc" : "desc" },
-      createdAt: { createdAt: sortDir === "asc" ? "asc" : "desc" },
-      paymentNumber: { paymentNumber: sortDir === "asc" ? "asc" : "desc" },
+      paidAt: [{ paidAt: sortDirection }, { id: sortDirection }],
+      settledAt: [{ settledAt: sortDirection }, { id: sortDirection }],
+      amount: [{ amount: sortDirection }, { id: sortDirection }],
+      createdAt: [{ createdAt: sortDirection }, { id: sortDirection }],
+      paymentNumber: [{ paymentNumber: sortDirection }, { id: sortDirection }],
     };
-    const orderBy = validSortFields[sortBy ?? ""] ?? { paidAt: "desc" };
+    // m9: Object.hasOwn (not a bare index) so prototype keys — `constructor`,
+    // `__proto__`, `toString`, `valueOf`… — can't resolve to an INHERITED value
+    // and reach Prisma as a malformed orderBy (→ 500). Unknown OR inherited
+    // falls back to the safe paidAt-desc default.
+    const orderBy =
+      sortBy && Object.hasOwn(validSortFields, sortBy)
+        ? validSortFields[sortBy]
+        : [{ paidAt: "desc" }, { id: "desc" }];
 
     const include = {
       invoice: {
@@ -5374,13 +5596,14 @@ export class InvoicesService {
     if (method) where.method = method;
     if (status) where.status = status;
     if (dateFrom || dateTo) {
+      // B89/L-047: paidAt is a REAL instant, so its day-window bounds are
+      // evaluated in the TENANT's own timezone — same convention as
+      // listAllPayments above.
+      const tenantDefaults = await this.resolveTenantInvoiceDefaults();
       where.paidAt = {};
-      if (dateFrom) where.paidAt.gte = new Date(dateFrom);
-      if (dateTo) {
-        const end = new Date(dateTo);
-        end.setHours(23, 59, 59, 999);
-        where.paidAt.lte = end;
-      }
+      if (dateFrom)
+        where.paidAt.gte = this.tenantCalendarDayStart(dateFrom, tenantDefaults.timezone);
+      if (dateTo) where.paidAt.lte = this.tenantCalendarDayEnd(dateTo, tenantDefaults.timezone);
     }
     if (search) {
       where.OR = [
@@ -5390,14 +5613,23 @@ export class InvoicesService {
       ];
     }
 
+    // B169: `id` tiebreaker — same convention as listAllPayments above.
+    const sortDirection = sortDir === "asc" ? "asc" : "desc";
     const validSortFields: Record<string, any> = {
-      paidAt: { paidAt: sortDir === "asc" ? "asc" : "desc" },
-      settledAt: { settledAt: sortDir === "asc" ? "asc" : "desc" },
-      amount: { amount: sortDir === "asc" ? "asc" : "desc" },
-      createdAt: { createdAt: sortDir === "asc" ? "asc" : "desc" },
-      paymentNumber: { paymentNumber: sortDir === "asc" ? "asc" : "desc" },
+      paidAt: [{ paidAt: sortDirection }, { id: sortDirection }],
+      settledAt: [{ settledAt: sortDirection }, { id: sortDirection }],
+      amount: [{ amount: sortDirection }, { id: sortDirection }],
+      createdAt: [{ createdAt: sortDirection }, { id: sortDirection }],
+      paymentNumber: [{ paymentNumber: sortDirection }, { id: sortDirection }],
     };
-    const orderBy = validSortFields[sortBy ?? ""] ?? { paidAt: "desc" };
+    // m9: Object.hasOwn (not a bare index) so prototype keys — `constructor`,
+    // `__proto__`, `toString`, `valueOf`… — can't resolve to an INHERITED value
+    // and reach Prisma as a malformed orderBy (→ 500). Unknown OR inherited
+    // falls back to the safe paidAt-desc default.
+    const orderBy =
+      sortBy && Object.hasOwn(validSortFields, sortBy)
+        ? validSortFields[sortBy]
+        : [{ paidAt: "desc" }, { id: "desc" }];
 
     const rows = await this.prisma.forTenant().invoicePayment.findMany({
       where,

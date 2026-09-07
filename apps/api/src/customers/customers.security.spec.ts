@@ -5,6 +5,11 @@
  * a caller could inject an unknown/relation field name (Prisma throws → 500 DoS)
  * or probe relation ordering. findAll now allowlists scalar sort columns and
  * falls back to a safe default for anything else.
+ *
+ * REG-B169: findAll now emits Prisma's ARRAY orderBy form — the allowlisted (or
+ * default) column followed by an `id` tiebreaker in the same direction — so the
+ * expectations below pin the array. The allowlist oracle is unchanged: an
+ * unknown/injected/prototype key must still never reach the first slot.
  */
 import { Test } from "@nestjs/testing";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
@@ -64,12 +69,12 @@ describe("CustomersService — F4-002 sort-field allowlist", () => {
 
   it("falls back to the safe default for a NON-scalar column (receivables)", async () => {
     await service.findAll({ sortBy: "receivables", sortDir: "asc" } as ListCustomersDto);
-    expect(orderByFromCall()).toEqual({ createdAt: "desc" });
+    expect(orderByFromCall()).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
   });
 
   it("falls back to the safe default for an injected/unknown field name", async () => {
     await service.findAll({ sortBy: "id); DROP TABLE customers;--" } as ListCustomersDto);
-    expect(orderByFromCall()).toEqual({ createdAt: "desc" });
+    expect(orderByFromCall()).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
   });
 
   it.each(["__proto__", "constructor", "toString", "valueOf", "hasOwnProperty"])(
@@ -78,23 +83,23 @@ describe("CustomersService — F4-002 sort-field allowlist", () => {
       await service.findAll({ sortBy: key } as ListCustomersDto);
       // Without the Object.hasOwn guard, a bare index would resolve the inherited
       // prototype value and reach Prisma as a malformed orderBy → 500.
-      expect(orderByFromCall()).toEqual({ createdAt: "desc" });
+      expect(orderByFromCall()).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
     },
   );
 
   it("honors an allowlisted scalar column + direction", async () => {
     await service.findAll({ sortBy: "businessName", sortDir: "asc" } as ListCustomersDto);
-    expect(orderByFromCall()).toEqual({ businessName: "asc" });
+    expect(orderByFromCall()).toEqual([{ businessName: "asc" }, { id: "asc" }]);
   });
 
   it("defaults the direction to desc for an allowlisted column with no dir", async () => {
     await service.findAll({ sortBy: "contactName" } as ListCustomersDto);
-    expect(orderByFromCall()).toEqual({ contactName: "desc" });
+    expect(orderByFromCall()).toEqual([{ contactName: "desc" }, { id: "desc" }]);
   });
 
   it("uses the default order when no sortBy is supplied", async () => {
     await service.findAll({} as ListCustomersDto);
-    expect(orderByFromCall()).toEqual({ createdAt: "desc" });
+    expect(orderByFromCall()).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
   });
 });
 

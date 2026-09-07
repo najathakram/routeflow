@@ -3,12 +3,8 @@ import { randomUUID } from "crypto";
 import { PaymentMethod } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { roundMoney } from "@routeflow/pricing";
-import { normalizeInvoiceNumber } from "../import/duplicate-match.service";
-import {
-  matchStatementLines,
-  type MatchableBill,
-  type StatementLineMatch,
-} from "./statement-matcher";
+import { matchStatementLines, type StatementLineMatch } from "./statement-matcher";
+import { fetchMatchableBills } from "./matchable-bills";
 import type { ParsedStatementLine } from "./dto/statement.dto";
 
 /** House convention (CLAUDE.md): cents-level rounding noise on a stored balance. */
@@ -175,7 +171,7 @@ export class StatementApplyService {
 
     const supplierId = scan.supplierId;
     const lines = this.parseStatementLines(scan.extractedPayload);
-    const matchableBills = await this.fetchMatchableBills(supplierId);
+    const matchableBills = await fetchMatchableBills(this.prisma, supplierId);
     const matches = matchStatementLines(lines, matchableBills);
     const paymentGroupId = randomUUID();
 
@@ -430,41 +426,5 @@ export class StatementApplyService {
   private parseStatementLines(payload: unknown): ParsedStatementLine[] {
     const raw = (payload as any)?.lines;
     return Array.isArray(raw) ? raw : [];
-  }
-
-  /**
-   * The candidate bills `matchStatementLines` needs, fetched fresh (never
-   * from the scan's own snapshot) so a confirmed amount is checked against
-   * the statement line the tenant's bills match TODAY. Mirrors
-   * `SupplierStatementsService.fetchMatchableBills` (WP2) exactly — VOID
-   * bills excluded, `supplierInvoiceNumber` re-normalized rather than
-   * trusted as stored. Duplicated rather than imported: that method is
-   * private to WP2's service, and the query is small enough that copying it
-   * is cheaper than exporting a new cross-file contract for it.
-   */
-  private async fetchMatchableBills(supplierId: string | null): Promise<MatchableBill[]> {
-    if (!supplierId) return [];
-    const bills = await this.prisma.forTenant().vendorBill.findMany({
-      where: { supplierId, status: { not: "VOID" } },
-      select: {
-        id: true,
-        billNumber: true,
-        supplierInvoiceNumber: true,
-        totalOwed: true,
-        billDate: true,
-        status: true,
-      },
-      take: 500,
-    });
-    return bills.map((b: any) => ({
-      id: b.id,
-      billNumber: b.billNumber,
-      supplierInvoiceNumber: b.supplierInvoiceNumber
-        ? normalizeInvoiceNumber(b.supplierInvoiceNumber)
-        : null,
-      totalOwed: Number(b.totalOwed),
-      billDate: b.billDate,
-      status: b.status,
-    }));
   }
 }

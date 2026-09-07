@@ -382,6 +382,89 @@ describe("OrdersService", () => {
     });
   });
 
+  // ─── T3 (REG-B144) — search composes with customerId/role scope instead of
+  // being swallowed by an `else if` chain, and matches order NUMBER as well as
+  // customer businessName.
+  describe("REG-B144 — search composes with customerId/role scope", () => {
+    it("OPERATOR: search alone produces an OR across orderNumber and customer.businessName", async () => {
+      prisma.order.findMany.mockResolvedValue([]);
+      prisma.order.count.mockResolvedValue(0);
+
+      await service.findAll({ page: 1, limit: 20, search: "ORD-77" } as any, operatorPayload);
+
+      // Assert the WHOLE `where`: today it is `{ customer: { businessName: … } }`
+      // (the documented wrong shape), so the failure names the real value rather
+      // than reading `undefined` off a key that does not exist yet.
+      const where = prisma.order.findMany.mock.calls.at(-1)?.[0].where;
+      expect(where).toEqual({
+        OR: [
+          { orderNumber: { contains: "ORD-77", mode: "insensitive" } },
+          { customer: { businessName: { contains: "ORD-77", mode: "insensitive" } } },
+        ],
+      });
+    });
+
+    it("OPERATOR: customerId AND search compose — neither swallows the other", async () => {
+      prisma.order.findMany.mockResolvedValue([]);
+      prisma.order.count.mockResolvedValue(0);
+
+      await service.findAll(
+        { page: 1, limit: 20, customerId: "c1", search: "ORD-77" } as any,
+        operatorPayload,
+      );
+
+      const where = prisma.order.findMany.mock.calls.at(-1)?.[0].where;
+      // Control (passes today): the customer scope is applied either way.
+      expect(where.customerId).toBe("c1");
+      // Distinguisher: today the whole `where` is `{ customerId: "c1" }` — the
+      // `else if` chain drops `search` entirely.
+      expect(where).toEqual({
+        customerId: "c1",
+        OR: [
+          { orderNumber: { contains: "ORD-77", mode: "insensitive" } },
+          { customer: { businessName: { contains: "ORD-77", mode: "insensitive" } } },
+        ],
+      });
+    });
+
+    it("CUSTOMER role: search stays scoped to the caller's own orders AND composes the OR", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.order.findMany.mockResolvedValue([]);
+      prisma.order.count.mockResolvedValue(0);
+
+      await service.findAll({ page: 1, limit: 20, search: "ORD-77" } as any, customerPayload);
+
+      const where = prisma.order.findMany.mock.calls.at(-1)?.[0].where;
+      // Control (passes today): the caller stays scoped to their own orders.
+      expect(where.customerId).toBe("cust-1");
+      // Distinguisher: today the whole `where` is `{ customerId: "cust-1" }` —
+      // the CUSTOMER branch swallows `search`.
+      expect(where).toEqual({
+        customerId: "cust-1",
+        OR: [
+          { orderNumber: { contains: "ORD-77", mode: "insensitive" } },
+          { customer: { businessName: { contains: "ORD-77", mode: "insensitive" } } },
+        ],
+      });
+    });
+  });
+
+  // ─── T2 (REG-B169) — orderBy carries an id tiebreaker (createdAt ties are
+  // structural: every line in one bulk create/import shares the same tx clock).
+  describe("REG-B169 — orderBy carries an id tiebreaker", () => {
+    it("default sort orders by createdAt desc, id desc", async () => {
+      prisma.order.findMany.mockResolvedValue([]);
+      prisma.order.count.mockResolvedValue(0);
+
+      await service.findAll({ page: 1, limit: 20 } as any, operatorPayload);
+
+      expect(prisma.order.findMany.mock.calls.at(-1)?.[0].orderBy).toEqual([
+        { createdAt: "desc" },
+        { id: "desc" },
+      ]);
+    });
+  });
+
   // ─── findOne ──────────────────────────────────────────────────────────────
 
   describe("findOne", () => {

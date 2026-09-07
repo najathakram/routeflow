@@ -132,8 +132,20 @@ export function useUpdateCustomerStatus() {
   });
 }
 
-export function useCustomerOrders(id: string) {
-  return useQuery({
+/**
+ * `GET /customers/:id/orders` response. The server returns at most 50 rows —
+ * a DISPLAY budget — alongside an honest `meta.total` counted over the
+ * customer's WHOLE order history, so every count the UI renders must read
+ * `meta.total`; `data.length` silently stops at the cap. `meta` is optional
+ * only so an older response shape degrades to 0 instead of throwing.
+ */
+export interface CustomerOrdersResponse<T = unknown> {
+  data: T[];
+  meta?: { total: number; page: number; limit: number; totalPages: number };
+}
+
+export function useCustomerOrders<T = unknown>(id: string) {
+  return useQuery<CustomerOrdersResponse<T>>({
     queryKey: ["customers", id, "orders"],
     queryFn: () => apiClient.get(`/customers/${id}/orders`).then((r) => r.data),
     enabled: !!id,
@@ -225,6 +237,13 @@ export interface CustomerStatement {
   availableCredit: number;
   advanceBalance: number;
   pendingOrdersAmount?: number;
+  /** Lifetime billed total, summed by the DATABASE over the whole history —
+   *  never a reduce over the capped `transactions` ledger below. */
+  lifetimeInvoiced: number;
+  /** Lifetime money received (CONFIRMED payments only), summed by the
+   *  DATABASE over the whole history. */
+  lifetimeReceived: number;
+  transactionsTruncated: boolean;
   transactions: StatementTransaction[];
 }
 

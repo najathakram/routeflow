@@ -6,6 +6,7 @@ import type {
   CreateInvoiceItem,
   CreatePartialInvoiceDto,
   CreateRecurringInvoiceDto,
+  InvoiceKpiSummary,
   PaymentListParams,
   PaymentListResponse,
   PriceType,
@@ -232,6 +233,23 @@ export function useInvoices(
     queryKey: ["invoices", params],
     queryFn: () => apiClient.get("/invoices", { params }).then((r) => r.data),
     ...options,
+  });
+}
+
+/**
+ * B12: the invoices page's six KPI tiles, computed server-side over the
+ * tenant's whole OPEN set — replaces `useInvoices({ limit: 999 })` +
+ * client-side reduce, which silently dropped whichever invoices page 1000+
+ * would have held. `today` is the VIEWER's own calendar day (`YYYY-MM-DD`)
+ * so the tiles agree with the due-soon chips (L-047 — never derived from the
+ * server's clock).
+ */
+export function useInvoiceKpiSummary(today: string) {
+  return useQuery<InvoiceKpiSummary>({
+    queryKey: ["invoices", "kpi-summary", today],
+    queryFn: () =>
+      apiClient.get("/invoices/kpi-summary", { params: { today } }).then((r) => r.data),
+    enabled: !!today,
   });
 }
 

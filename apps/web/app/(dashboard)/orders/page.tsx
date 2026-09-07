@@ -153,7 +153,7 @@ export default function OrdersPage() {
 
   // Customer search is URL-backed like the chips above, so drilling into an order
   // and pressing Back returns to the search that found it.
-  const [customerSearch, setCustomerSearch] = useUrlSearch();
+  const [customerSearch, setCustomerSearch, debouncedCustomerSearch] = useUrlSearch();
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   // Draft resume state (pos-cost-roles-spec §2): which parked draft to hydrate and
   // an optional barcode to add on open.
@@ -284,6 +284,7 @@ export default function OrdersPage() {
     dateTo,
     productIdFilter,
     fulfillPathFilter,
+    debouncedCustomerSearch,
   ]);
 
   // REG-B154 class fix: selection used to accumulate across page/search/filter
@@ -344,6 +345,7 @@ export default function OrdersPage() {
     deliveryDateTo: dateTo || undefined,
     productId: productIdFilter || undefined,
     fulfillPath: (fulfillPathFilter as "ROUTE" | "SHIP" | "") || undefined,
+    search: debouncedCustomerSearch || undefined,
     page,
     limit,
   });
@@ -352,18 +354,13 @@ export default function OrdersPage() {
   const meta = data?.meta;
   useClampPage(setPage, page, meta?.totalPages);
 
+  // B144: `search` is now sent to the server and composes with the other
+  // filters there (role scope, `customerId`) — this page no longer re-filters
+  // the current PAGE's rows client-side (that silently hid matches on every
+  // page but the one the operator happened to be viewing). Only the in-page
+  // sort stays local.
   const filtered = React.useMemo(() => {
-    const q = customerSearch.toLowerCase();
-    const list = orders.filter((o) => {
-      if (
-        q &&
-        !o.customer?.businessName?.toLowerCase().includes(q) &&
-        !o.orderNumber?.toLowerCase().includes(q)
-      )
-        return false;
-      return true;
-    });
-    return [...list].sort((a, b) => {
+    return [...orders].sort((a, b) => {
       // Urgent always floats to top regardless of sort column
       if (a.urgent && !b.urgent) return -1;
       if (!a.urgent && b.urgent) return 1;
@@ -379,7 +376,7 @@ export default function OrdersPage() {
       // default: createdAt
       return dir * (new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     });
-  }, [orders, customerSearch, sortCol, sortDir]);
+  }, [orders, sortCol, sortDir]);
 
   const urgentCount = orders.filter((o) => o.urgent).length;
 
@@ -396,23 +393,15 @@ export default function OrdersPage() {
           urgent: urgentOnly || undefined,
           deliveryDateFrom: dateFrom || undefined,
           deliveryDateTo: dateTo || undefined,
+          productId: productIdFilter || undefined,
           fulfillPath: fulfillPathFilter || undefined,
+          search: debouncedCustomerSearch || undefined,
           page: 1,
           limit: EXPORT_LIMIT,
         },
       });
       const payload = res.data as { data: Order[]; meta?: { total?: number } };
-      const allOrders = payload.data ?? [];
-      const q = customerSearch.toLowerCase();
-      const rows = allOrders.filter((o) => {
-        if (
-          q &&
-          !o.customer?.businessName?.toLowerCase().includes(q) &&
-          !o.orderNumber?.toLowerCase().includes(q)
-        )
-          return false;
-        return true;
-      });
+      const rows = payload.data ?? [];
       downloadCsv(
         `orders-${new Date().toISOString().split("T")[0]}.csv`,
         [
@@ -973,49 +962,39 @@ export default function OrdersPage() {
         {meta && (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-surface-border px-4 py-3 text-[12.5px] text-navy/70">
             <span>
-              {customerSearch ? (
-                filtered.length > 0 ? (
-                  <>
-                    Showing{" "}
-                    <span className="font-mono tabular-nums text-navy">{filtered.length}</span> of{" "}
-                    <span className="font-mono tabular-nums text-navy">{meta.total}</span> order
-                    {meta.total !== 1 ? "s" : ""} (filtered)
-                  </>
-                ) : (
-                  "No orders match your search"
-                )
-              ) : meta.total > 0 ? (
+              {meta.total > 0 ? (
                 <>
                   Showing{" "}
                   <span className="font-mono tabular-nums text-navy">
                     {(page - 1) * limit + 1} to {Math.min(page * limit, meta.total)}
                   </span>{" "}
                   of <span className="font-mono tabular-nums text-navy">{meta.total}</span>
+                  {customerSearch ? " (filtered)" : ""}
                 </>
+              ) : customerSearch ? (
+                "No orders match your search"
               ) : (
                 "No orders found"
               )}
             </span>
-            {!customerSearch && (
-              <div className="flex items-center gap-1.5">
-                <span>Per page</span>
-                <select
-                  value={limit}
-                  onChange={(e) => {
-                    setLimit(Number(e.target.value));
-                    setPage(1);
-                  }}
-                  className="h-7 rounded-ctl border border-surface-border bg-white px-2 font-mono text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                >
-                  {[10, 20, 50, 100].map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            {!customerSearch && (meta.totalPages ?? 1) > 1 && (
+            <div className="flex items-center gap-1.5">
+              <span>Per page</span>
+              <select
+                value={limit}
+                onChange={(e) => {
+                  setLimit(Number(e.target.value));
+                  setPage(1);
+                }}
+                className="h-7 rounded-ctl border border-surface-border bg-white px-2 font-mono text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              >
+                {[10, 20, 50, 100].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {(meta.totalPages ?? 1) > 1 && (
               <div className="ml-auto flex items-center gap-0.5">
                 <button
                   disabled={page <= 1}

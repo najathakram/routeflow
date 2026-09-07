@@ -103,9 +103,23 @@ export default function FinancesPage() {
   // page's own load/error state on it. If it fails or is still loading, the rest
   // of Finances renders normally and the wallet simply shows nothing.
   const { data: statement } = useBuyerStatement();
-  const activeCredits = (statement?.transactions ?? [])
-    .filter((t) => t.type === "CREDIT_NOTE" && t.runningBalance > 0.001)
-    .slice(0, 6);
+  // H5: TWO caps stack on this list — the ledger's own server-side take cap
+  // (`transactionsTruncated`) and this page's 6-row display budget — so both
+  // are disclosed below. `creditRows` is what the (possibly capped) ledger
+  // actually carried; `activeCredits` is the six rows this card renders.
+  const ACTIVE_CREDIT_DISPLAY_CAP = 6;
+  const creditRows = (statement?.transactions ?? []).filter(
+    (t) => t.type === "CREDIT_NOTE" && t.runningBalance > 0.001,
+  );
+  const activeCredits = creditRows.slice(0, ACTIVE_CREDIT_DISPLAY_CAP);
+  // M3: "active" presence and the sub-label read the uncapped `availableCredit`
+  // total, never a count of `activeCredits` — that list is a capped, partial
+  // view (at most the 6 most recent rows out of the ledger's own take cap).
+  const hasActiveCredit = (statement?.availableCredit ?? 0) > 0;
+  // The card shows fewer credits than exist whenever EITHER cap bit: the
+  // server truncated the ledger, or the 6-row budget dropped rows it did send.
+  const ledgerTruncated = statement?.transactionsTruncated === true;
+  const activeCreditsTruncated = ledgerTruncated || creditRows.length > activeCredits.length;
 
   if (isLoading) {
     return (
@@ -179,7 +193,7 @@ export default function FinancesPage() {
           icon={Wallet}
           label="Store Credit"
           value={fmt(statement?.availableCredit ?? 0)}
-          sub={activeCredits.length > 0 ? `${activeCredits.length} active` : "None available"}
+          sub={hasActiveCredit ? "Available" : "None available"}
           color="bg-buyer-50 text-buyer-600"
         />
       </div>
@@ -216,12 +230,18 @@ export default function FinancesPage() {
       </div>
 
       {/* Active credits (P5-13) */}
-      {activeCredits.length > 0 && (
+      {hasActiveCredit && (
         <div className="rounded-xl border border-surface-border bg-white p-5 shadow-sm">
           <div className="flex items-center gap-2 mb-4">
             <Wallet className="h-4 w-4 text-buyer-500" />
             <h2 className="text-sm font-semibold text-navy">Active Credits</h2>
           </div>
+          {activeCreditsTruncated && (
+            <p className="mb-2 text-xs text-navy/70">
+              Showing {activeCredits.length} of {ledgerTruncated ? "the latest" : creditRows.length}{" "}
+              active credits; the wallet total includes everything.
+            </p>
+          )}
           <div className="divide-y divide-surface-border">
             {activeCredits.map((c) => (
               <div key={c.id} className="flex items-center justify-between py-2.5">

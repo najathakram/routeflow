@@ -73,6 +73,8 @@ export interface CustomerStatement {
   availableCredit: number;
   advanceBalance: number;
   pendingOrdersAmount: number;
+  /** True when the transactions ledger below is a capped partial view of the full history. */
+  transactionsTruncated: boolean;
   transactions: Array<{
     id: string;
     type: string;
@@ -320,6 +322,8 @@ export interface AccountSummary {
   outstandingAmount: number;
   overdueAmount: number;
   availableCredit: number;
+  /** True when the transactions ledger below is a capped partial view of the full history. */
+  transactionsTruncated: boolean;
   transactions: AccountTransaction[];
 }
 

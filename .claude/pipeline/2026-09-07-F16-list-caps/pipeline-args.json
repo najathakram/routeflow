@@ -1,0 +1,176 @@
+{
+  "mode": "bugfix",
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-07-F16-list-caps/build-plan.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-07-F16-list-caps/bug-test-plan.md",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-07T09:50:00Z",
+  "scale": "major",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry",
+  "context": "F16 batch (B12 B80 B89 B110 B117 B144 B169; B100 split out). Design of record = cause-ruling.md section 2 (read with the plan). Option-B bookkeeping: no map/lessons/ledger edits. Never run Playwright.",
+  "formatCommand": "git ls-files -mo --exclude-standard | grep -E '[.](ts|tsx|json)$' | grep -v '^[.]claude/' | xargs -r npx prettier --write",
+  "radiusFiles": [
+    "apps/api/src/common/pagination.ts",
+    "apps/api/src/common/calendar-date.ts",
+    "apps/api/src/invoices/invoice-status-sets.ts",
+    "apps/api/src/buyer/statement.service.ts",
+    "apps/api/src/buyer/buyer.controller.ts",
+    "apps/web/lib/api/invoices.ts",
+    "apps/web/lib/api/orders.ts",
+    "apps/mobile/app/(customer)/payments.tsx",
+    "apps/mobile/app/(operator)/customers/[id]/statement.tsx",
+    "packages/types/api/invoices.ts"
+  ],
+  "siblingPatterns": [
+    {
+      "regex": "limit: 999",
+      "note": "fetch-all idiom; siblings are FILED not fixed"
+    },
+    {
+      "regex": "setHours\\(23, 59",
+      "note": "host-local day-end on a date column; FILE"
+    },
+    {
+      "regex": "take: (50|100|200|500),",
+      "note": "cap feeding arithmetic/lookup = defect; display budget = fine"
+    }
+  ],
+  "testPackages": [
+    {
+      "id": "TP-API",
+      "title": "api repro tests",
+      "files": [
+        "apps/api/src/invoices/invoices.service.spec.ts",
+        "apps/api/src/orders/orders.service.spec.ts",
+        "apps/api/src/orders/dto/list-orders.dto.spec.ts",
+        "apps/api/src/customers/customers.service.spec.ts",
+        "apps/api/src/supplier-statements/supplier-statements.service.spec.ts",
+        "apps/api/src/supplier-statements/matchable-bills.guard.spec.ts"
+      ],
+      "brief": "test-plan T1 T1-pin T2 T3 T3-pin T4 T5 T5-guard T6; harness notes; implement nothing",
+      "effort": "high"
+    },
+    {
+      "id": "TP-WEB",
+      "title": "web RTL",
+      "files": [
+        "apps/web/app/(dashboard)/finance/payments/[id]/payment-receipt.test.tsx",
+        "apps/web/app/(dashboard)/orders/orders-page.test.tsx"
+      ],
+      "brief": "test-plan T7 (+T9 if harness exists); implement nothing",
+      "effort": "medium"
+    },
+    {
+      "id": "TP-E2E",
+      "title": "post-deploy Playwright",
+      "files": ["apps/web/e2e/37-list-caps.spec.ts", "apps/web/playwright.config.ts"],
+      "brief": "test-plan T8; project list-caps; post-deploy only",
+      "effort": "medium"
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "cd apps/api && npx jest src/invoices src/orders src/customers src/supplier-statements --runInBand -t \"REG-B(12|89|110|117|144|169)\"",
+      "cd apps/web && npx jest --runInBand -t \"REG-B80\""
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "P1",
+      "title": "api invoices",
+      "files": [
+        "apps/api/src/invoices/invoices.service.ts",
+        "apps/api/src/invoices/invoices.controller.ts",
+        "apps/api/src/invoices/dto/kpi-summary.dto.ts",
+        "apps/api/src/invoices/invoice-status-sets.ts",
+        "packages/types/api/invoices.ts"
+      ],
+      "brief": "build-plan P1",
+      "effort": "high"
+    },
+    {
+      "id": "P2",
+      "title": "api orders",
+      "files": [
+        "apps/api/src/orders/orders.service.ts",
+        "apps/api/src/orders/dto/list-orders.dto.ts"
+      ],
+      "brief": "build-plan P2",
+      "effort": "medium"
+    },
+    {
+      "id": "P3",
+      "title": "api customers + supplier-statements",
+      "files": [
+        "apps/api/src/customers/customers.service.ts",
+        "apps/api/src/supplier-statements/matchable-bills.ts",
+        "apps/api/src/supplier-statements/supplier-statements.service.ts",
+        "apps/api/src/supplier-statements/statement-apply.service.ts"
+      ],
+      "brief": "build-plan P3",
+      "effort": "high"
+    },
+    {
+      "id": "P4",
+      "title": "web",
+      "files": [
+        "apps/web/app/(dashboard)/invoices/page.tsx",
+        "apps/web/lib/api/invoices.ts",
+        "apps/web/app/(dashboard)/finance/payments/[id]/page.tsx",
+        "apps/web/app/(dashboard)/orders/page.tsx",
+        "apps/web/lib/api/orders.ts",
+        "apps/web/app/(dashboard)/customers/[id]/page.tsx",
+        "apps/web/e2e/22-payment-truth.spec.ts"
+      ],
+      "brief": "build-plan P4",
+      "effort": "medium",
+      "dependsOn": ["P1", "P2", "P3"]
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+      "cd apps/api && npx jest src/invoices src/orders src/customers src/supplier-statements --runInBand",
+      "cd apps/web && npx tsc --noEmit -p tsconfig.json"
+    ],
+    "final": [
+      "cd apps/api && npx jest --silent",
+      "cd apps/web && npx jest --silent",
+      "node scripts/validate-lessons.mjs"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/api/src/invoices/invoices.service.ts",
+        "behavior": "paidAt window is tenant-local",
+        "test": "REG-B89 REG-B169",
+        "revertFix": true
+      },
+      {
+        "file": "apps/api/src/orders/orders.service.ts",
+        "behavior": "search composes and matches orderNumber",
+        "test": "REG-B144",
+        "revertFix": true
+      },
+      {
+        "file": "apps/api/src/customers/customers.service.ts",
+        "behavior": "statement figures over the uncapped open set",
+        "test": "REG-B110",
+        "revertFix": true
+      },
+      {
+        "file": "apps/api/src/supplier-statements/supplier-statements.service.ts",
+        "behavior": "matchable pool uncapped and ordered",
+        "test": "REG-B117",
+        "revertFix": true
+      },
+      {
+        "file": "apps/web/app/(dashboard)/finance/payments/[id]/page.tsx",
+        "behavior": "receipt uses the id endpoint",
+        "test": "REG-B80",
+        "revertFix": true
+      }
+    ]
+  }
+}

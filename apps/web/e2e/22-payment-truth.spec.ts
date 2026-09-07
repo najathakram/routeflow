@@ -59,14 +59,16 @@ function awaitingConfirmationValue(page: Page) {
 }
 
 /**
- * The PaymentSummaryBar's own list query (`useInvoices({ limit: 999 })`). Every
- * tile is derived from it and the bar renders zeros until it resolves, so a
- * value read straight after hydration can capture a transient 0 instead of the
- * tenant's real count. Arm this BEFORE navigating, await it after.
+ * The PaymentSummaryBar's own summary query (B12: `useInvoiceKpiSummary`,
+ * `GET /invoices/kpi-summary`, replacing the old `useInvoices({ limit: 999 })`
+ * fetch-all-then-reduce). Every tile is derived from it and the bar renders
+ * zeros until it resolves, so a value read straight after hydration can
+ * capture a transient 0 instead of the tenant's real count. Arm this BEFORE
+ * navigating, await it after.
  */
 function summaryBarQuery(page: Page) {
   return page.waitForResponse(
-    (r) => r.request().method() === "GET" && /\/invoices\?.*\blimit=999\b/.test(r.url()) && r.ok(),
+    (r) => r.request().method() === "GET" && /\/invoices\/kpi-summary\b/.test(r.url()) && r.ok(),
     { timeout: 30_000 },
   );
 }
