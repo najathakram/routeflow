@@ -1259,9 +1259,18 @@ layout and the enum-parity guard. Key entries:
   PASSED (test #168, 974ms); REG-B80/REG-B144/REG-B110 all FAILED (all 3 attempts each) on
   `Error: operator storageState carried no access token`** (`:136`/`:222`/`:290` —
   `expect(token, "operator storageState carried no access token").toBeTruthy()`). Run totals: 140
-  passed / 4 failed / 25 skipped (the fourth failure is a pre-existing, unrelated `REG-B11` flake
-  in `22-payment-truth.spec.ts`). **This reads as a TEST bug in the new spec, not a product
-  regression** — same class as spec 28/29's `#main-content` trap immediately above: REG-B80,
+  passed / 4 failed / 25 skipped. **The fourth failure is `REG-B11` in `22-payment-truth.spec.ts`
+  — a REAL, LIVE regression, not a flake:** the "Awaiting confirmation" KPI tile reads 0 after a
+  DRAFT payment is recorded. Cause (team-board diagnosis, unconfirmed in this session): `m7`
+  scoped `getKpiSummary`'s `awaitingConfirmationCount` to the OPEN-invoice set (the old client
+  memo counted DRAFT payments across every loaded invoice, open or not), and/or the new
+  `kpi-summary` query is never invalidated after a payment mutation, so the bar reads stale until
+  a reload. **A hotfix light loop was already launched separately** (`fix-round-5-hotfix.md`:
+  restores the memo's basis, keys the summary query under the invoices cache prefix, fixes the
+  spec-37 `operatorAccessToken` ordering below) — not touched in this bookkeeping session; do not
+  re-attribute this failure to a pre-existing cause. REG-B80/REG-B144/REG-B110 separately **reads
+  as a TEST bug in the new spec, not a product regression** — same class as spec 28/29's
+  `#main-content` trap immediately above: REG-B80,
   REG-B144 and REG-B110 each call `operatorAccessToken(page)` (`helpers/api.ts` — reads
   `localStorage` in the CURRENT page) as their first statement, before any `page.goto(...)`, so it
   evaluates on an unnavigated page; Playwright only restores a `storageState`'s `localStorage`
