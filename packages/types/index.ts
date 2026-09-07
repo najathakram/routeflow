@@ -151,6 +151,7 @@ export * from "./api/regulated";
 export * from "./api/routes";
 export * from "./api/buyer";
 export * from "./api/misc";
+export * from "./api/invoices";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 

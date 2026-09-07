@@ -17,11 +17,8 @@ import { StorageService } from "../storage/storage.service";
 import { matchSupplier } from "../import/supplier-match";
 import { roundMoney } from "@routeflow/pricing";
 import { hashFile } from "../vendor-bills/invoice-scan.fingerprint";
-import {
-  matchStatementLines,
-  type MatchableBill,
-  type StatementLineMatch,
-} from "./statement-matcher";
+import { matchStatementLines, type StatementLineMatch } from "./statement-matcher";
+import { fetchMatchableBills } from "./matchable-bills";
 import {
   STATEMENT_LINE_KINDS,
   type ParsedStatementLine,
@@ -531,40 +528,18 @@ IMPORTANT: "amount" is always a positive magnitude — use "kind" to say whether
     openingBalance: unknown,
     closingBalance: unknown,
   ): Promise<StatementLineMatch[]> {
-    const bills = await this.fetchMatchableBills(supplierId);
+    // REG-B117: the shared, uncapped helper (matchable-bills.ts) — this
+    // service's own capped copy of the candidate-pool query is retired; the
+    // guard spec fails if it ever grows back. The injected normalizer is
+    // passed through so the existing DI-based coverage on this path is
+    // undisturbed.
+    const bills = await fetchMatchableBills(this.prisma, supplierId, (raw) =>
+      this.duplicateMatch.normalizeNumber(raw),
+    );
     return matchStatementLines(lines, bills, {
       openingBalance: this.numberOrNull(openingBalance),
       closingBalance: this.numberOrNull(closingBalance),
     });
-  }
-
-  private async fetchMatchableBills(supplierId: string | null): Promise<MatchableBill[]> {
-    if (!supplierId) return [];
-    const bills = await this.prisma.forTenant().vendorBill.findMany({
-      where: { supplierId, status: { not: "VOID" } },
-      select: {
-        id: true,
-        billNumber: true,
-        supplierInvoiceNumber: true,
-        totalOwed: true,
-        billDate: true,
-        status: true,
-      },
-      take: 500,
-    });
-    return bills.map((b: any) => ({
-      id: b.id,
-      billNumber: b.billNumber,
-      // Stored normalized already, but re-normalized here too — the matcher
-      // must never trust a value it didn't itself put through the one
-      // canonical rule (`DuplicateMatchService.normalizeNumber`).
-      supplierInvoiceNumber: b.supplierInvoiceNumber
-        ? this.duplicateMatch.normalizeNumber(b.supplierInvoiceNumber)
-        : null,
-      totalOwed: Number(b.totalOwed),
-      billDate: b.billDate,
-      status: b.status,
-    }));
   }
 
   private normalizeLines(raw: unknown): ParsedStatementLine[] {

@@ -33,6 +33,7 @@ import {
 } from "./dto/create-invoice.dto";
 import { CreatePartialInvoiceDto } from "./dto/create-partial-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
+import { KpiSummaryDto } from "./dto/kpi-summary.dto";
 import { PriceAdjustmentDto } from "./dto/price-adjustment.dto";
 import { UpdateInvoiceTermsDto } from "./dto/update-invoice-terms.dto";
 import { UpdateShipmentDto } from "../orders/dto/update-shipment.dto";
@@ -73,6 +74,21 @@ export class InvoicesController {
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
   findAll(@Query() query: ListInvoicesDto, @CurrentUser() user: JwtPayload) {
     return this.invoicesService.findAll(query, user);
+  }
+
+  /**
+   * B12: the invoices page's six KPI tiles, aggregated server-side over the
+   * whole OPEN set. Declared BEFORE any `:id` route — a literal segment
+   * ("kpi-summary") registered after `:id` would be swallowed as an id value.
+   *
+   * Open to CUSTOMER like `findAll` above: the bar renders on `/invoices`,
+   * which buyers are allowed to open, and the service scopes a buyer's
+   * summary to their OWN invoices.
+   */
+  @Get("kpi-summary")
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
+  getKpiSummary(@Query() query: KpiSummaryDto, @CurrentUser() user: JwtPayload) {
+    return this.invoicesService.getKpiSummary(query.today, user);
   }
 
   @Get("payments/export")

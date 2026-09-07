@@ -35,6 +35,12 @@ const CHANNEL_LABELS: Record<MessageChannel, string> = {
   PORTAL: "Portal",
 };
 
+const UNAVAILABLE_COPY: Record<NonNullable<MatrixCell["unavailable"]>, string> = {
+  NO_TRANSPORT: "Not available: no transport configured",
+  NO_CONSENT_WRITER: "Not available: needs customer consent",
+  NO_TRIGGER: "Not available: no trigger yet",
+};
+
 const WA_STATUS_BADGE: Record<
   WaApprovalStatus,
   { variant: "success" | "warning" | "danger" | "neutral"; label: string }
@@ -217,6 +223,15 @@ export function NotificationsSettingsTab() {
                             className="inline-flex text-navy/40"
                           >
                             <Lock className="h-4 w-4" aria-hidden="true" />
+                          </span>
+                        </td>
+                      );
+                    }
+                    if (cell.unavailable) {
+                      return (
+                        <td key={channel} className="px-2 py-2 text-center align-top">
+                          <span className="text-[11px] leading-tight text-navy/50">
+                            {UNAVAILABLE_COPY[cell.unavailable]}
                           </span>
                         </td>
                       );
@@ -516,7 +531,7 @@ function QuietHoursCard({ settings, isAdmin }: { settings: MessagingSettings; is
   return (
     <Card title="Quiet hours">
       <p className="mb-3 text-xs text-navy/70">
-        Customer-facing messages are held outside this window; internal alerts still send.
+        The window is recorded for reporting; messages are not yet held or delayed during it.
       </p>
       <div className="flex flex-wrap items-center gap-4">
         <div className="flex items-center gap-2">

@@ -140,6 +140,7 @@ import {
   type OrderTemplate,
 } from "@/lib/api/order-templates";
 import { StandingOrderModal } from "./StandingOrderModal";
+import { LedgerTruncationNote } from "./ledger-truncation-note";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
@@ -1934,7 +1935,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
 
   const { data: customer, isLoading } = useCustomer(params.id);
   const { data: tierLabels } = useTierLabels();
-  const { data: ordersResult, isError: ordersError } = useCustomerOrders(params.id);
+  const { data: ordersResult, isError: ordersError } = useCustomerOrders<ApiOrder>(params.id);
   const { data: customerRoutes } = useCustomerRoutes(params.id);
   const { data: orderTemplates } = useOrderTemplates(params.id);
   const updateStatus = useUpdateCustomerStatus();
@@ -2025,6 +2026,11 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
   const taxDocInputRef = React.useRef<HTMLInputElement>(null);
 
   const allOrders: ApiOrder[] = ordersResult?.data ?? [];
+  // H1: `allOrders` is a capped page (the endpoint's take:50 display budget),
+  // so every COUNT the UI shows reads the server's own `meta.total` over the
+  // customer's whole order history — a customer with 120 orders must not read
+  // "Orders (50)". The list below stays the display budget it always was.
+  const orderCount = ordersResult?.meta?.total ?? 0;
   const addresses = customer?.addresses ?? [];
   const currentStatus: CustomerStatus = (customer?.user?.status as CustomerStatus) ?? "ACTIVE";
 
@@ -2342,9 +2348,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
       <Tabs.Root value={activeTab} onValueChange={setActiveTab} className="flex flex-col">
         <Tabs.List className="flex border-b border-surface-border">
           <TabTrigger value="profile">Profile</TabTrigger>
-          <TabTrigger value="orders">
-            Orders{allOrders.length > 0 ? ` (${allOrders.length})` : ""}
-          </TabTrigger>
+          <TabTrigger value="orders">Orders{orderCount > 0 ? ` (${orderCount})` : ""}</TabTrigger>
           <TabTrigger value="addresses">Addresses ({addresses.length})</TabTrigger>
           <TabTrigger value="standing-orders">
             Standing Orders
@@ -2383,7 +2387,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <StatCard
                 label="Orders"
-                value={ordersError ? "—" : allOrders.length}
+                value={ordersError ? "—" : orderCount}
                 icon={<FileText className="h-5 w-5" />}
               />
               <StatCard
@@ -3229,6 +3233,11 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
                 />
               </div>
             </div>
+            {orderCount > allOrders.length && (
+              <p className="mb-2 text-xs text-navy/70">
+                Showing the latest {allOrders.length} of {orderCount} orders.
+              </p>
+            )}
             <div className="-mx-6 -mb-6">
               <Table
                 data={filteredOrders}
@@ -3529,14 +3538,18 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
           {/* Summary bar */}
           {(() => {
             const allInvoices = invoicesData?.data ?? [];
-            const outstanding = allInvoices.filter((inv) =>
-              ["SENT", "VIEWED", "PARTIAL", "OVERDUE"].includes(inv.status),
-            );
-            const overdueCount = allInvoices.filter((inv) => inv.status === "OVERDUE").length;
-            const outstandingTotal = outstanding.reduce(
-              (sum, inv) => sum + (inv.balanceDue ?? inv.total),
-              0,
-            );
+            // B110: the Outstanding card reads the statement's own
+            // `outstandingAmount` — computed server-side over the customer's
+            // WHOLE open invoice set — instead of reducing this tab's paged
+            // `invoicesData` (which silently undercounted once a customer had
+            // more open invoices than fit one page). Matches the Overview
+            // tile above (both read the same `statement`), never a second,
+            // page-scoped basis.
+            // m8: "Overdue" is a money figure too — read the statement's
+            // `overdueAmount` (the server's uncapped sum over the customer's
+            // whole open set), never a count over this tab's 50-row page.
+            const outstandingTotal = statement?.outstandingAmount ?? 0;
+            const overdueTotal = statement?.overdueAmount ?? 0;
             return (
               <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-3">
                 <Card>
@@ -3554,9 +3567,9 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
                     Overdue
                   </p>
                   <p
-                    className={`mt-1 text-xl font-bold ${overdueCount > 0 ? "text-danger" : "text-navy"}`}
+                    className={`mt-1 text-xl font-bold ${overdueTotal > 0 ? "text-danger" : "text-navy"}`}
                   >
-                    {overdueCount} invoice{overdueCount !== 1 ? "s" : ""}
+                    {fmt(overdueTotal)}
                   </p>
                 </Card>
                 <Card>
@@ -3822,31 +3835,17 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
                       valueClass: "text-navy",
                     },
                     {
-                      // Server types are UPPERCASE; the old lowercase filters
-                      // never matched and these tiles computed $0.00 forever.
+                      // B110/M1: lifetime totals come from the server's
+                      // DB-side aggregate over the WHOLE invoice/payment
+                      // history, never a reduce over the capped `transactions`
+                      // ledger below (which stops at one page).
                       label: "Invoiced Amount",
-                      value: fmt(
-                        statement?.transactions
-                          .filter((tx) => tx.type === "INVOICE")
-                          .reduce((s, tx) => s + Math.abs(tx.amount), 0) ?? 0,
-                      ),
+                      value: fmt(statement?.lifetimeInvoiced ?? 0),
                       valueClass: "text-navy",
                     },
                     {
-                      // Payments are folded into invoices (never rows):
-                      // received = invoiced − still-owed on the listed rows.
                       label: "Amount Received",
-                      value: fmt(
-                        Math.max(
-                          0,
-                          (statement?.transactions
-                            .filter((tx) => tx.type === "INVOICE")
-                            .reduce((s, tx) => s + Math.abs(tx.amount), 0) ?? 0) -
-                            (statement?.transactions
-                              .filter((tx) => tx.type === "INVOICE")
-                              .reduce((s, tx) => s + Math.abs(tx.runningBalance), 0) ?? 0),
-                        ),
-                      ),
+                      value: fmt(statement?.lifetimeReceived ?? 0),
                       valueClass: "text-success",
                     },
                     {
@@ -3869,6 +3868,8 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
                     </div>
                   ))}
                 </div>
+
+                <LedgerTruncationNote truncated={statement?.transactionsTruncated} />
 
                 {!statement || statement.transactions.length === 0 ? (
                   <p className="text-sm text-navy/70">No transactions on record.</p>

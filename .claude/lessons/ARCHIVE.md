@@ -711,3 +711,54 @@ id, so **L-046** (domain), the following qualifying entry, is archived instead.
 - **Root cause:** a month-advance compared against a mutated date; a second writer priced lines outside the one buyer resolver; the cron advanced the schedule before it knew the outcome and never recorded it; the restore after failure was not conditioned on the claim that made it.
 - **Lesson:** **Every path that materialises an order or invoice from a saved shape is a pricing writer and a schedule writer: price through the shared resolver, record the outcome on the row you advanced, and undo a claim only by compare-and-set on the value the claim wrote — a miss means someone newer owns the row, so write nothing.**
 - **Guard:** REG-B48 T9–T16 through the real resolver; REG-B46 T1–T7b; REG-B106 T17/T17b/T17c/T18/T19 ([[L-030]]: a write and its record share one condition; [[L-045]]: release on the forward-path marker).
+
+## Archived 2026-09-07 — headroom for L-086 (fix/e2e-29-oracles, #647)
+
+### L-058 · 2026-09-04 · testing · REG-E2EGUARD-403
+
+- **Symptom:** the deploy-triggered E2E job reported success for days with every test step
+  skipped.
+- **Root cause:** the freshness guard's `latest=$(gh api … --jq '.[0].sha' 2>/dev/null || true)`
+  treated a 403 error body as the newest sha — non-empty, so the emptiness check never fired — and
+  the run token never had `deployments:read` (it worked only while the repo was public).
+- **Lesson:** **A guard that skips work must decide on the command's exit status and the payload's
+  shape, never on string emptiness, and must fail OPEN; declare every permission a job's API call
+  needs at job level.** A job whose steps are all skipped is not a passing run ([[L-041]]).
+- **Guard:** `ci-freshness-guard-script.spec.ts` T1 executes the workflow's own step under a fake
+  `gh`.
+
+## Archived 2026-09-07 — headroom for L-087 (docs/650-f23-bookkeeping, #650 follow-up)
+
+### L-075 · 2026-09-04 · deploy · PR-2b `imp-02b-cron-leader-lock`
+
+- **Symptom:** a leader lock held for a whole cron tick sits on a SOCKET-IDLE connection for
+  minutes — the tick's own work runs on a different pool.
+- **Root cause:** an advisory lock lives with the SESSION, and an idle TCP session can be reaped
+  anywhere on the path (NAT, LB, platform network). The reap ends the session, Postgres releases
+  the lock, and a rival replica wins an election for a job still running.
+- **Lesson:** **any connection pinned for a long-held lock needs TCP keepalive, and a lock whose
+  loss allows a duplicate money run must be sized and monitored as a SESSION, not a statement** —
+  pool `max` covers its family's concurrent HOLDERS, not its call rate.
+- **Guard:** `db-locks.spec.ts` (p) pins `keepAlive: true` / `keepAliveInitialDelayMillis: 30_000`
+  on both lock pools, and their per-family `max`.
+
+## Archived 2026-09-07 — headroom for L-088 (docs/652-f12-bookkeeping, #652 follow-up)
+
+### L-079 · 2026-09-06 · tooling · #627 `chore/ci-private-minutes`
+
+- **Symptom:** three unrelated api specs refused pre-push verifies on 2026-09-05/06 with
+  "Exceeded timeout of 5000 ms" (upload-routes.security, visibility-watchdog-script,
+  import-customer-cap) — each green standalone (import-customer-cap: 4/4 in 49 s cold, 6.7 s
+  warm); two Run B pushes and one CI-branch push lost ~35 min.
+- **Root cause:** Jest's default `testTimeout` of 5 s was never set for the api workspace; a cold
+  ts-jest worker charges module/Nest-testing-module init to the first test, and beside a parallel
+  verify, an engine run, or a Docker build that first test exceeds 5 s. Per-spec budgets fixed one
+  site at a time (whack-a-mole).
+- **Lesson:** **a flake class needs a class-level fix — set the per-workspace Jest `testTimeout`
+  (≥ 30 s; the `.db.spec` lane already ran at 30 s) instead of hardening specs one by one; keep
+  explicit larger budgets only where a test legitimately does long I/O (multipart round-trips
+  60 s).**
+- **Guard:** `apps/api/package.json` jest `testTimeout: 30000` (#627, master `0ee2672e`);
+  watchdog spec's "rejects promptly" bound 15 s; `upload-routes.security.spec.ts` 60 s.
+  Regression signal: any "Exceeded timeout of 5000 ms" in an api spec again means the config was
+  dropped.

@@ -269,8 +269,10 @@ Full rationale, failure modes, and the retirement checklist:
 3. **Push + CI green + merge the PR to master** (squash) — Railway auto-deploys from the push.
    Right after the merge, the coordinator opens the follow-up bookkeeping PR in the same public
    window (docs-only; audited `SKIP_VERIFY` allowed per the owner 2026-09-05).
-4. **Wait until the deploy reaches `BUILDING`** (never `INITIALIZING`), **then flip private as a
-   `finally`** — even if CI or the merge failed — and read visibility back to confirm `PRIVATE`.
+4. **Wait until BOTH deployments reach `SUCCESS`** (never flip on `BUILDING` — both 1b413d07
+   deployments failed at the code snapshot when flipped there on 2026-09-07, #652), **then flip
+   private as a `finally`** — even if CI or the merge failed — and read visibility back to confirm
+   `PRIVATE`.
 5. **Watch the deploy to SUCCESS**, then `npm run post-deploy-check` — E2E fires itself off the
    deploy signal; do not dispatch it. The deploy-triggered E2E's freshness guard
    (`scripts/ci-freshness-guard.mjs`) fails OPEN on any API error and needs `deployments: read`

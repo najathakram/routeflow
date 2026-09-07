@@ -22,6 +22,7 @@ import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import { downloadCsv, csvDate } from "@/lib/export";
 import {
   useInvoices,
+  useInvoiceKpiSummary,
   useDeleteInvoice,
   type Invoice,
   type InvoiceStatus,
@@ -232,86 +233,21 @@ function PaymentSummaryBar({
   dueTodayActive: boolean;
   onDueTodayClick: () => void;
 }) {
-  const { data: allData } = useInvoices({ limit: 999 });
-  const all: Invoice[] = allData?.data ?? [];
-
-  const kpis = React.useMemo(() => {
-    // Calendar-date basis, as YYYY-MM-DD strings (lexicographic = chronological):
-    // dueDate is stored at UTC midnight, so compare its UTC calendar day — the
-    // one the table renders via fmtCalendarDate — against the viewer's LOCAL
-    // calendar day, the same anchor the due-soon chips send to the server.
-    // Local-midnight Date math on a UTC-midnight timestamp shifts the day for
-    // every negative-UTC-offset viewer, which made this tile disagree with the
-    // chip it triggers.
-    const today = todayLocalIso();
-    const in30 = addDaysIso(today, 30);
-
-    let totalOutstanding = 0;
-    let dueToday = 0;
-    let dueIn30 = 0;
-    let overdue = 0;
-    let paidInvoiceCount = 0;
-    let totalDaysToPay = 0;
-    // F03/R2 (REG-B11) — payments recorded with status "DRAFT" are unconfirmed
-    // money the server excludes from every CONFIRMED_PAYMENT sum (balanceDue,
-    // the bookkeeping dashboards, PDF, email). Surface that queue here so a
-    // draft payment isn't invisible outside the invoice detail's own badge.
-    let awaitingConfirmationCount = 0;
-
-    for (const inv of all) {
-      const total = Number(inv.total);
-      const paid =
-        inv.paidAmount ??
-        (inv.payments ?? []).reduce((s: number, p: any) => s + Number(p.amount), 0);
-      const balance =
-        inv.balanceDue !== undefined ? Number(inv.balanceDue) : Math.max(0, total - paid);
-      const due = inv.dueDate ? inv.dueDate.slice(0, 10) : null;
-
-      for (const p of inv.payments ?? []) {
-        if (p.status === "DRAFT") awaitingConfirmationCount++;
-      }
-
-      if (
-        inv.status !== "PAID" &&
-        inv.status !== "VOID" &&
-        inv.status !== "WRITTEN_OFF" &&
-        inv.status !== "DRAFT"
-      ) {
-        totalOutstanding += balance;
-      }
-
-      // Draft pending-mirror invoices and written-off balances must not count as
-      // collectible — exclude them from overdue/due-today/due-in-30 alongside
-      // the existing PAID/VOID exclusions.
-      const openForCollection =
-        inv.status !== "PAID" &&
-        inv.status !== "VOID" &&
-        inv.status !== "DRAFT" &&
-        inv.status !== "WRITTEN_OFF";
-
-      if (inv.status === "OVERDUE" || (due && due < today && openForCollection)) {
-        overdue += balance;
-      } else if (due && due === today && openForCollection) {
-        dueToday += balance;
-      } else if (due && due <= in30 && due > today && openForCollection) {
-        dueIn30 += balance;
-      }
-
-      if (inv.status === "PAID" && inv.sentAt && inv.paidAt) {
-        const sent = new Date(inv.sentAt);
-        const paidAt = new Date(inv.paidAt);
-        const days = Math.round((paidAt.getTime() - sent.getTime()) / (1000 * 60 * 60 * 24));
-        if (days >= 0) {
-          totalDaysToPay += days;
-          paidInvoiceCount++;
-        }
-      }
-    }
-
-    const avgDays = paidInvoiceCount > 0 ? Math.round(totalDaysToPay / paidInvoiceCount) : 0;
-
-    return { totalOutstanding, dueToday, dueIn30, overdue, avgDays, awaitingConfirmationCount };
-  }, [all]);
+  // Calendar-date basis: the VIEWER's local calendar day, the same anchor the
+  // due-soon chips send to the server (L-047 — never derived from the
+  // server's own clock). B12: the six tiles are now computed server-side over
+  // the tenant's whole OPEN set — `useInvoices({ limit: 999 })` silently
+  // dropped whichever invoices page 1000+ would have held.
+  const today = todayLocalIso();
+  const { data: summary } = useInvoiceKpiSummary(today);
+  const kpis = summary ?? {
+    totalOutstanding: 0,
+    dueToday: 0,
+    dueIn30: 0,
+    overdue: 0,
+    avgDays: 0,
+    awaitingConfirmationCount: 0,
+  };
 
   const items = [
     {
@@ -356,7 +292,7 @@ function PaymentSummaryBar({
     },
     {
       label: "Avg. Days to Get Paid",
-      value: kpis.avgDays > 0 ? `${kpis.avgDays} Days` : "N/A",
+      value: kpis.avgDays > 0 ? `${Math.round(kpis.avgDays)} Days` : "N/A",
       hint: undefined as string | undefined,
       money: false,
       valueClass: undefined as string | undefined,

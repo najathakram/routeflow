@@ -551,6 +551,50 @@ export default defineConfig({
       },
     },
 
+    // ── Route delivery-window dispatch warning (F12, spec 35) ──────────────
+    // REG-B161 web leg (T2/T4): the template page's Optimize toast must name
+    // the stop(s) that miss their delivery window, and the Dispatch modal
+    // must warn about them and gate "Dispatch" behind an explicit
+    // acknowledge. Mutating but self-contained: creates its own throwaway
+    // `E2E B161 …` route + two customers (one with an always-infeasible
+    // delivery window) on the approved seed tenant and cleans up nothing,
+    // the same tolerance 21/22/23/24's own throwaway fixtures already take.
+    // NOT part of F12's local red gate (apps/api's jest lane proves T1-T3) —
+    // runs only against the DEPLOYED site and is expected red until F12
+    // ships.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "route-windows",
+      testMatch: /35-route-windows\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── List caps / silent truncation (F16, spec 37) ───────────────────────────
+    // REG-B12 / REG-B80 / REG-B144 / REG-B110: the invoices KPI bar, the
+    // payment receipt page, orders search, and the customer statement tiles
+    // must all stop silently truncating past a hardcoded fetch-everything
+    // limit. Mutating but self-contained: throwaway `E2E B144 …` / `E2E B80
+    // …` / `E2E B110 …` customer/invoice/order fixtures on the approved seed
+    // tenant, left behind like 21/22/24/27/28's own throwaway fixtures. NOT
+    // part of F16's local red gate (apps/api's jest lane proves T1-T6) — runs
+    // only against the DEPLOYED site and is expected red until F16 ships.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "list-caps",
+      testMatch: /37-list-caps\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
     // ── Marketing site port (spec 36) ──────────────────────────────────────────
     // Signed-out throughout — no storageState, no "setup" dependency. Proves T1
     // (per-route chrome/copy), T2 (mobile sheet/sign-in/contact-form/tabs/FAQ),

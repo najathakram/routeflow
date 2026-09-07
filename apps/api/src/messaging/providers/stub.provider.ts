@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { MessageChannel } from "@prisma/client";
 import { MessageProvider, SendInput, SendResult } from "./message-provider.interface";
 
 /**
@@ -19,5 +20,16 @@ export class StubProvider implements MessageProvider {
         `tmpl=${input.templateName ?? "-"} body="${input.body.slice(0, 80)}" -> ${providerMsgId}`,
     );
     return { providerMsgId, status: "queued" };
+  }
+
+  /**
+   * F23/B145: the stub has no real transport for ANY channel yet — it only
+   * logs and returns a synthetic id, never actually delivering anywhere.
+   * Declaring none here (instead of `true`) makes the engine skip honestly
+   * with `NO_TRANSPORT` rather than fabricating a `"sent"` outcome. Real
+   * Meta-WA/Twilio adapters flip this to `true` per channel when they land.
+   */
+  transports(_channel: MessageChannel): boolean {
+    return false;
   }
 }

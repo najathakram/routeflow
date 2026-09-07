@@ -19,6 +19,9 @@ export interface StopETA {
   deliveryWindowStart?: string | null;
   deliveryWindowEnd?: string | null;
   withinWindow: boolean | null;
+  /** Minutes the vehicle waits when it arrives before the window opens.
+   *  Only present when there was a wait. */
+  waitMinutes?: number;
 }
 
 export interface RouteAnalysisResult {

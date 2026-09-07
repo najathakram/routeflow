@@ -183,6 +183,12 @@ export function useOrders(
     limit?: number;
     deliveryDateFrom?: string;
     deliveryDateTo?: string;
+    /**
+     * B144: composes with `customerId` and role scope (never swallowed by
+     * either) — matches against order number OR the customer's business
+     * name.
+     */
+    search?: string;
   },
   options?: { refetchInterval?: number },
 ) {

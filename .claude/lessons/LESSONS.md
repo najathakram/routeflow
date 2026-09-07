@@ -191,25 +191,6 @@ grep` every writer and reader of that field before the build plan is cut and put
   bound now uses `git log --first-parent` — a merge TREESAME to one parent for the path was judged
   by the OLDER pre-merge commit otherwise — and clamps to `Date.now()` on a future-dated commit).
 
-### L-079 · 2026-09-06 · tooling · #627 `chore/ci-private-minutes`
-
-- **Symptom:** three unrelated api specs refused pre-push verifies on 2026-09-05/06 with
-  "Exceeded timeout of 5000 ms" (upload-routes.security, visibility-watchdog-script,
-  import-customer-cap) — each green standalone (import-customer-cap: 4/4 in 49 s cold, 6.7 s
-  warm); two Run B pushes and one CI-branch push lost ~35 min.
-- **Root cause:** Jest's default `testTimeout` of 5 s was never set for the api workspace; a cold
-  ts-jest worker charges module/Nest-testing-module init to the first test, and beside a parallel
-  verify, an engine run, or a Docker build that first test exceeds 5 s. Per-spec budgets fixed one
-  site at a time (whack-a-mole).
-- **Lesson:** **a flake class needs a class-level fix — set the per-workspace Jest `testTimeout`
-  (≥ 30 s; the `.db.spec` lane already ran at 30 s) instead of hardening specs one by one; keep
-  explicit larger budgets only where a test legitimately does long I/O (multipart round-trips
-  60 s).**
-- **Guard:** `apps/api/package.json` jest `testTimeout: 30000` (#627, master `0ee2672e`);
-  watchdog spec's "rejects promptly" bound 15 s; `upload-routes.security.spec.ts` 60 s.
-  Regression signal: any "Exceeded timeout of 5000 ms" in an api spec again means the config was
-  dropped.
-
 ### L-074 · 2026-09-05 · tooling
 
 - **Symptom:** a prod-capable seed run through `railway run --service postgres` wrote to the LOCAL
@@ -349,6 +330,20 @@ grep` every writer and reader of that field before the build plan is cut and put
 - **Guard:** self-test `liveness:` checks (a2) and the dead-holder `observed gone` assertion, run on
   both platforms; CI run 33938718344 is the red that proved it.
 
+### L-086 · 2026-09-07 · testing · #647
+
+- **Symptom:** F08's two new post-deploy Playwright rows failed on their first deployed run while
+  every other test passed: one expected the returns KPI to move by a hard-coded 10 (order line)
+  when the deployed billed basis gave 15; the other's heading locator matched two `h1`s.
+- **Root cause:** T2 rows are written without any run, so one encoded an order-line oracle for a
+  value the fix had moved to the invoice, and one used an unscoped role locator on a layout whose
+  header bar repeats every page title.
+- **Lesson:** **a post-deploy money oracle is read from the API at test time — the created record's
+  own billed figure, asserted `> 0` first so the row cannot pass vacuously — never computed from
+  fixture arithmetic; and heading locators on dashboard pages are scoped to `#main-content`.**
+- **Guard:** spec 29's `refundEstimate` fetch + vacuity guard; the T2 harness note in each
+  bug-test-plan; a T2 row stays `proven-pending-deploy` until its deploy-triggered run is green.
+
 ### L-082 · 2026-09-06 · testing · bugs.mjs self-test
 
 - **Symptom:** the registry self-test's pid-reuse fixture failed on an ubuntu runner (four checks in a
@@ -365,6 +360,19 @@ grep` every writer and reader of that field before the build plan is cut and put
   (`scripts/campaign/bugs.mjs` self-test, step 6 of `npm run verify`).
 
 ## testing
+
+### L-087 · 2026-09-07 · testing · #650
+
+- **Symptom:** a passing "leaves INTERNAL untouched" assertion in a new NO_TRANSPORT test proved
+  nothing — every INTERNAL event is already NO_TRIGGER, so the `channel !== INTERNAL` exemption
+  was unreachable and it passed on precedence alone (reviewer's mutation probe).
+- **Root cause:** written from the design's intent (INTERNAL is exempt), not the tree's current
+  state (every INTERNAL event is already NO_TRIGGER, so the exemption line never runs).
+- **Lesson:** **pin the CURRENT state behaviourally — every INTERNAL cell under a no-transport
+  provider reports NO_TRIGGER — so the first wired INTERNAL event turns it red; a reviewer's probe
+  must judge every "untouched" claim before it counts as coverage.**
+- **Guard:** the rewritten pin in `messaging-config.service.spec.ts`'s "NO_TRANSPORT — provider
+  declares no transports" describe block; F23's round-2 review finding (`result.json`).
 
 ### L-076 · 2026-09-05 · testing · F13
 
@@ -434,19 +442,6 @@ grep` every writer and reader of that field before the build plan is cut and put
 - **Guard:** the RED BAR block now asserts `code: "P2025"` (Prisma's own not-found shape), so a
   regression that returns the row — or throws something else — fails the DB lane.
 
-### L-058 · 2026-09-04 · testing · REG-E2EGUARD-403
-
-- **Symptom:** the deploy-triggered E2E job reported success for days with every test step
-  skipped.
-- **Root cause:** the freshness guard's `latest=$(gh api … --jq '.[0].sha' 2>/dev/null || true)`
-  treated a 403 error body as the newest sha — non-empty, so the emptiness check never fired — and
-  the run token never had `deployments:read` (it worked only while the repo was public).
-- **Lesson:** **A guard that skips work must decide on the command's exit status and the payload's
-  shape, never on string emptiness, and must fail OPEN; declare every permission a job's API call
-  needs at job level.** A job whose steps are all skipped is not a passing run ([[L-041]]).
-- **Guard:** `ci-freshness-guard-script.spec.ts` T1 executes the workflow's own step under a fake
-  `gh`.
-
 ### L-050 · 2026-09-02 · testing · #598
 
 - **Symptom:** two new e2e specs went red post-deploy AND dragged an unrelated, previously-green
@@ -478,19 +473,6 @@ grep` every writer and reader of that field before the build plan is cut and put
 
 ## deploy
 
-### L-075 · 2026-09-04 · deploy · PR-2b `imp-02b-cron-leader-lock`
-
-- **Symptom:** a leader lock held for a whole cron tick sits on a SOCKET-IDLE connection for
-  minutes — the tick's own work runs on a different pool.
-- **Root cause:** an advisory lock lives with the SESSION, and an idle TCP session can be reaped
-  anywhere on the path (NAT, LB, platform network). The reap ends the session, Postgres releases
-  the lock, and a rival replica wins an election for a job still running.
-- **Lesson:** **any connection pinned for a long-held lock needs TCP keepalive, and a lock whose
-  loss allows a duplicate money run must be sized and monitored as a SESSION, not a statement** —
-  pool `max` covers its family's concurrent HOLDERS, not its call rate.
-- **Guard:** `db-locks.spec.ts` (p) pins `keepAlive: true` / `keepAliveInitialDelayMillis: 30_000`
-  on both lock pools, and their per-family `max`.
-
 ### L-077 · 2026-09-05 · deploy · close-out re-check
 
 - **Symptom:** an unattended retry loop whose header promised "total <= ~8 min" had no upper
@@ -518,6 +500,19 @@ grep` every writer and reader of that field before the build plan is cut and put
   `docs/runbooks/deploy-visibility-flip.md` and the `rebuild` skill.
 
 ## domain
+
+### L-088 · 2026-09-07 · domain · #652
+
+- **Symptom:** delivery windows were mapped into the request and then dropped before a cost-only
+  solver on one branch, while another branch handed a clock-less solver a "hard" window with no
+  start time — three bugs, one class.
+- **Root cause:** a constraint verified inside individual solver branches instead of once at the
+  seam every branch shares.
+- **Lesson:** **enforce a cross-branch constraint at the shared seam AFTER any solver returns
+  (re-time against the real clock, repair, then persist), give every solver the same clock the
+  verifier uses, and pin it with a fixture where cost order and window order disagree.**
+- **Guard:** `REG-B147` / `REG-B161` / `REG-B177` in `route-optimization.service.spec.ts`
+  (mutation-probed: seven pins red with the window pass disabled).
 
 ### L-071 · 2026-09-04 · domain · OCR gate
 

@@ -1,7 +1,7 @@
 {
-  "mappedSha": "99d5b87a",
-  "generatedAt": "2026-09-07T02:45:00.000Z",
+  "mappedSha": "05b6c805",
+  "generatedAt": "2026-09-07T08:55:00.000Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 1014,
-  "notes": "**2026-09-06** — (branch `docs/645-f08-bookkeeping`, Option-B bookkeeping follow-up for PR #645, mapped at `99d5b87a`) — F08 (returns end-to-end) mapped surgically across api.md/packages.md/web.md/mobile.md; registry proved all 10 rows against PR #645 but F08 was NOT discharged — the post-deploy E2E run (34075878788) failed on T13/REG-B75 and T14/REG-B21 (T12/REG-B166 passed); filed B220–B225; L-085 appended. See CHANGELOG.md's top entry for the full session note. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
+  "notes": "**2026-09-07** — (branch `docs/654-spec29-bookkeeping`, Option-B bookkeeping follow-up for PR #654, mapped at `05b6c805`) — spec 29's REG-B75 KPI-baseline race mapped: web.md's e2e-table row for `e2e/29-returns-lifecycle.spec.ts` gains a closing note that #654 fixed T13's baseline read (DOM → API sum of refundEstimate, L-086), confirmed green via GitHub Actions run 34099966904 (139 passed / 0 failed / 26 skipped). Registry: filed B234, moved to shard F32 (T2, precedent B213), proved + discharged against PR #654. Lessons: no new entry (L-086 instance) — _meta.json.updatedAt bumped + note annotated. See CHANGELOG.md's top entry for the full session note. || History in CHANGELOG.md (this directory). New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it — never accumulate history here."
 }

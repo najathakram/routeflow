@@ -1,10 +1,10 @@
 {
-  "nextId": 86,
+  "nextId": 89,
   "activeCount": 39,
-  "archivedCount": 42,
+  "archivedCount": 45,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-07T02:35:00.000Z",
+  "updatedAt": "2026-09-07T08:52:00.000Z",
   "schemaVersion": 1,
-  "note": "docs/645-f08-bookkeeping: added L-085 (process — an engine run stalled on a hung tool call holding a workflow barrier that no stop/resume could clear, plus a line-number probe that raced a sibling editor and deleted the wrong line; recovery was a lead-designed light loop from the tree as it stood, F08/#645). No entry archived: register is 39/40 entries at 39.7/40.0 KB (validate-lessons), UNDER the 40960-byte cap, so the byte cap did not force an archive this round -- headroom for a future append is effectively zero (~0 more entries fit at the current average size) but that binds the NEXT append, not this one."
+  "note": "docs/652-f12-bookkeeping: added L-088 (domain -- a cross-branch constraint (delivery windows) must be enforced once at the shared seam after any solver returns, never inside individual solver branches; PR #652 route-optimization REG-B147/B161/B177 window pass). Archived L-079 (tooling, guarded by apps/api/package.json jest testTimeout:30000 + watchdog/upload-routes.security.spec.ts bounds) for byte headroom -- oldest active entry with a landed automated-artifact guard that is uncited outside .claude/pipeline and .claude/lessons (confirmed by commit order: L-079 landed in #631 before L-080 in #635, and no entry between them qualifies -- L-060/L-061/L-062/L-063/L-066/L-067/L-068/L-069/L-070/L-073/L-074/L-081/L-082/L-083 are all cited by name in code-map/*.md, scripts/campaign/*, or apps/*; L-057/L-077/L-078 are cited in HANDOFF.md; L-072/L-046/L-047 already established cited in CLAUDE.md/code-map prose). #654: L-086 instance (spec 29 KPI baseline) -- no new entry."
 }

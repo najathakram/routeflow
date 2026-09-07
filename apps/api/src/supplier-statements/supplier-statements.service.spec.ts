@@ -391,4 +391,72 @@ describe("SupplierStatementsService", () => {
       expect(statementScan.update).not.toHaveBeenCalled();
     });
   });
+
+  // ─── T5 (REG-B117) — fetchMatchableBills must not cap the candidate pool: a
+  // supplier with >500 open bills silently lost every bill past the 500th to
+  // `take: 500` with no `orderBy`, so a real match for a newer bill came back
+  // UNMATCHED whenever insertion/heap order didn't happen to favor it.
+  describe("REG-B117 — fetchMatchableBills reads the WHOLE candidate pool, ordered", () => {
+    it("matches a statement line against the 501st bill — the pool is not capped at 500", async () => {
+      prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1", name: "Acme Foods" }]);
+
+      const bills: any[] = Array.from({ length: 500 }, (_, i) => ({
+        id: `bill-${i + 1}`,
+        billNumber: `BILL-2026-${String(i + 1).padStart(4, "0")}`,
+        supplierInvoiceNumber: `INV${i + 1}`,
+        totalOwed: 999,
+        billDate: new Date(2026, 0, 1 + i),
+        status: "RECEIVED",
+      }));
+      // The 501st bill — the one a `take: 500` (no orderBy) query would never
+      // see, since it sits past the cap in whatever order the DB happens to
+      // return rows.
+      bills.push({
+        id: "bill-501",
+        billNumber: "BILL-2026-0501",
+        supplierInvoiceNumber: "INV501",
+        totalOwed: 250,
+        billDate: new Date("2026-07-31T00:00:00.000Z"),
+        status: "RECEIVED",
+      });
+      // A `take`-honouring mock — one that ignores `take` would make this test
+      // vacuous (harness note: it would "pass" even with the cap still there).
+      prisma.vendorBill.findMany.mockImplementation((args: any = {}) => {
+        const skip = args?.skip ?? 0;
+        const take = args?.take ?? bills.length;
+        return Promise.resolve(bills.slice(skip, skip + take));
+      });
+
+      const statement = {
+        supplier: "Acme Foods",
+        periodStart: "2026-07-01",
+        periodEnd: "2026-07-31",
+        openingBalance: 0,
+        closingBalance: 250,
+        lines: [
+          {
+            date: "2026-07-31",
+            kind: "INVOICE",
+            refNumber: "INV501",
+            amount: 250,
+            runningBalance: 250,
+          },
+        ],
+        notes: null,
+      };
+      mockAnthropicCreate.mockResolvedValue({
+        content: [{ type: "text", text: JSON.stringify(statement) }],
+      });
+
+      const result = await service.scanStatement([jpegPage]);
+
+      expect(result.matches).toHaveLength(1);
+      expect(result.matches[0]).toMatchObject({ tier: "EXACT_REF", billId: "bill-501" });
+
+      // No `take` at all — the whole pool, not a capped page.
+      const call = prisma.vendorBill.findMany.mock.calls[0][0];
+      expect(call).not.toHaveProperty("take");
+      expect(call.orderBy).toEqual([{ billDate: "desc" }, { id: "desc" }]);
+    });
+  });
 });
