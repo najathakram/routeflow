@@ -312,6 +312,21 @@
 
 ## testing
 
+### L-091 · 2026-09-07 · testing · #661
+
+- **Symptom:** two deployed-E2E regression tests for real fixes stayed red for two deploys on
+  harness defects — a `getByText` on a value the page renders twice (strict-mode violation) and
+  a fixture that provisioned 25 pending orders for one customer through an API whose staff-create
+  path demands an explicit merge choice (409).
+- **Root cause:** the harness modelled the product from its own assumptions instead of through
+  the product's real contracts — an identifier's role on the page, and the API's guard for
+  repeated entities.
+- **Lesson:** **assert identifiers by ROLE (`getByRole("heading", …)`) never `getByText` when a
+  value can render more than once, and provision E2E fixtures THROUGH the product's own guards
+  (send the explicit choice the API demands — `mergeChoice: "separate"` — rather than multiplying
+  entities to dodge the guard, which pollutes the tenant).**
+- **Guard:** spec 37 REG-B80/B144 as landed; the register's T2 discharge needs the run id.
+
 ### L-090 · 2026-09-07 · testing · #659
 
 - **Symptom:** a server-side KPI replacing a client memo passed every unit test and failed the

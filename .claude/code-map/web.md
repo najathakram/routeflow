@@ -1296,4 +1296,19 @@ today]`, under the shared `["invoices"]`-prefix invalidation every payment mutat
   pre-navigation token reads that failed REG-B80/REG-B144/REG-B110. Deployed api `4495be33` + web
   `690cd7b7`, both SUCCESS 2026-09-07. **T2 proof for B80/B110/B144 still awaits this deployment's
   own E2E run** — do not discharge from this bullet alone; confirm the spec-37 REG lines PASSED on
-  master `4d977168` first.
+  master `4d977168` first. **A second, deeper harness defect surfaced on that very run (34146107042)
+  and was fixed in #661 (2026-09-07, master `92cb0fb6`, L-091):** REG-B80's `getByText(paymentNumber)`
+  hit Playwright's strict-mode violation because the receipt page renders the payment number twice —
+  once in the `<h2>` heading, once in a meta `<p>` (`finance/payments/[id]/page.tsx:107-109`) — fixed
+  by asserting the heading through `getByRole("heading", { name, exact: true })`, which resolves the
+  element by ROLE instead of by a text value that appears more than once. REG-B144's fixture provisioned
+  25 pending orders for ONE customer through the staff-create endpoint, whose 2nd-and-later POST hits
+  the customer-level auto-merge guard (`orders.controller.ts:110-127`, 409 `MERGE_CHOICE_REQUIRED`) —
+  fixed by sending each order with `mergeChoice: "separate"` (`create-order.dto.ts:103` →
+  `orders.controller.ts:107-108,273-282` sets `skipAutoMerge=true`), the API's own documented escape
+  hatch, rather than working around the guard; `test.setTimeout(120_000)` added for the 25-order
+  provisioning. Both are spec-only changes — `apps/web/e2e/37-list-caps.spec.ts` is the only file #661
+  touched. Confirmed green: deployment E2E run 34154308035 (master `92cb0fb6`, web deployed SUCCESS
+  2026-09-07 19:06Z, api SKIPPED — no api change) — REG-B12/REG-B80/REG-B144/REG-B110 all PASSED
+  (list-caps project, attempt 1); run totals 143 passed / 0 failed / 26 skipped. B80/B144 (T2)
+  discharged on this run; B110 (T2) was already discharged in the #659 follow-up (#660).
