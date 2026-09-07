@@ -30,10 +30,13 @@
  * Every fixture is self-provisioned and named `E2E B### …`: a throwaway
  * product + customer + order per test, taken PENDING → CONFIRMED → DELIVERED
  * (the auto-invoice fires synchronously on that last transition — F08's B53
- * billed-basis fix and this spec's $10.00 both depend on that invoice
- * existing before the return is created). Nothing is deleted afterward: a
- * DELIVERED order with an invoice and a return against it is not staff-deletable
- * anyway, and this is the same residue tolerance 21/22/24/27 already take.
+ * billed-basis fix depends on that invoice existing before the return is
+ * created; T13's oracle is the return's own `refundEstimate`, read back from
+ * the API after the invoice exists, never a hand-derived qty × unitPrice
+ * figure, since tax/shipping/rounding are tenant settings, not this spec's
+ * business). Nothing is deleted afterward: a DELIVERED order with an invoice
+ * and a return against it is not staff-deletable anyway, and this is the
+ * same residue tolerance 21/22/24/27 already take.
  */
 
 import { test, expect, type Page, type APIRequestContext } from "@playwright/test";
@@ -219,17 +222,22 @@ test.describe("Returns lifecycle (F08)", () => {
     // query is `useReturns({ limit: 500 })`, and findAll orders `createdAt
     // desc` with `take: limit`). Since this spec leaves its fixtures behind,
     // once the regression tenant holds 500+ returns this run's fixture evicts
-    // an older one and the delta stops being exactly $10.00. Read the tenant's
-    // return count up front and downgrade only the delta leg when that day
-    // comes — the row's billed-basis $10.00 below stays the primary oracle.
+    // an older one and the delta stops being exactly this fixture's value.
+    // Read the tenant's return count up front and downgrade only the delta
+    // leg when that day comes — the row's billed-basis value below stays the
+    // primary oracle.
     const countRes = await request.get(`${api}/api/v1/returns?limit=1`, { headers: headers! });
     expect(countRes.ok(), `GET /returns?limit=1 returned ${countRes.status()}`).toBe(true);
     const countBody: { meta?: { total?: number } } = await countRes.json();
     const kpiWindowSaturated = (countBody.meta?.total ?? 0) + 3 > 500;
 
-    // 2 units × $5.00/unit billed = a $10.00 return: not a round number that
-    // could collide with an order count, a qty, or any other figure the page
-    // renders, and distinct from every other fixture's own value.
+    // 2 units of a fresh $5.00/unit product: a small, distinctive quantity —
+    // not a round number that could collide with an order count or any other
+    // figure the page renders. The actual billed amount is NOT assumed here:
+    // tax/shipping/rounding are tenant settings, not this test's business, so
+    // the return's own `refundEstimate` (read below, straight from the API
+    // that priced it against the invoice) is the oracle, not a hand-derived
+    // qty × unitPrice figure.
     const { orderId, productId } = await buildDeliveredOrder(request, api, headers!, suffix, 2);
 
     const returnRes = await request.post(`${api}/api/v1/returns`, {
@@ -244,6 +252,22 @@ test.describe("Returns lifecycle (F08)", () => {
     const ret: { id: string; returnNumber: string } = await returnRes.json();
     expect(ret?.returnNumber, "POST /returns response carried no returnNumber").toBeTruthy();
 
+    // ── The oracle: the return's own billed-basis estimate, read straight
+    // from the API (returns.service.ts findOne prices it off the invoice via
+    // priceReturn/billedBasisFor). Asserting it's > 0 first is the vacuity
+    // guard — without it, a test that compares the list/KPI against a $0.00
+    // estimate would pass right alongside B75's all-$0.00 bug.
+    const getReturnRes = await request.get(`${api}/api/v1/returns/${ret.id}`, {
+      headers: headers!,
+    });
+    expect(getReturnRes.ok(), `GET /returns/:id returned ${getReturnRes.status()}`).toBe(true);
+    const returnDetail: { refundEstimate: number } = await getReturnRes.json();
+    const refundEstimate = Number(returnDetail.refundEstimate);
+    expect(
+      refundEstimate,
+      "fixture return's refundEstimate must be billed and non-zero, or this oracle is vacuous",
+    ).toBeGreaterThan(0);
+
     await page.goto("/returns");
     await expect(page.getByRole("button", { name: "New Return" })).toBeVisible({
       timeout: 15_000,
@@ -253,16 +277,20 @@ test.describe("Returns lifecycle (F08)", () => {
     await expect(returnRow).toBeVisible({ timeout: 15_000 });
 
     // The row's Value column (7th of 9 columns: #, Customer, Order, Reason,
-    // Date, Items, Value, Status, actions) must read the billed $10.00, not
+    // Date, Items, Value, Status, actions) must read the billed amount, not
     // the $0.00 an unset `item.unitPrice` produces today.
-    await expect(returnRow.locator("td").nth(6)).toHaveText("$10.00", { timeout: 15_000 });
+    await expect(returnRow.locator("td").nth(6)).toHaveText(`$${refundEstimate.toFixed(2)}`, {
+      timeout: 15_000,
+    });
 
-    // The KPI tile must have grown by EXACTLY this fixture's $10.00 — proven
-    // against the pre-fixture baseline read above, never a bare non-zero check
-    // a stale cached $0.00-plus-something could also satisfy. Only once the
-    // 500-row KPI window is saturated (eviction makes the exact delta
-    // unknowable) does this fall back to "the tile is at least this fixture's
-    // $10.00", which still reads red on B75's all-$0.00 sum.
+    // The KPI tile must have grown by EXACTLY this fixture's billed amount —
+    // proven against the pre-fixture baseline read above, never a bare
+    // non-zero check a stale cached $0.00-plus-something could also satisfy.
+    // Only once the 500-row KPI window is saturated (eviction makes the exact
+    // delta unknowable) does this fall back to "the tile is at least this
+    // fixture's billed amount" — still valid since the fixture is always the
+    // newest row and any evicted row's value is bounded by the pre-fixture
+    // baseline, and it still reads red on B75's all-$0.00 sum.
     await page.goto("/returns");
     await expect(kpiValue).toBeVisible({ timeout: 15_000 });
     const readKpi = async () => {
@@ -274,9 +302,9 @@ test.describe("Returns lifecycle (F08)", () => {
         type: "warning",
         description: "KPI window (newest 500) saturated — delta leg downgraded",
       });
-      await expect.poll(readKpi, { timeout: 15_000 }).toBeGreaterThanOrEqual(10);
+      await expect.poll(readKpi, { timeout: 15_000 }).toBeGreaterThanOrEqual(refundEstimate);
     } else {
-      await expect.poll(readKpi, { timeout: 15_000 }).toBeCloseTo(before + 10, 2);
+      await expect.poll(readKpi, { timeout: 15_000 }).toBeCloseTo(before + refundEstimate, 2);
     }
   });
 
@@ -316,7 +344,12 @@ test.describe("Returns lifecycle (F08)", () => {
     // cancel it. Absent today (B21 — no `canCancel` wiring), so this fails on
     // the button never appearing rather than on anything downstream of it.
     await page.goto(`/returns/${ret.id}`);
-    await expect(page.getByRole("heading", { name: ret.returnNumber })).toBeVisible({
+    // Scoped to #main-content: the dashboard header bar (role=banner) also
+    // renders an <h1> with the same returnNumber once usePageTitle sets it, so
+    // an unscoped heading lookup is a strict-mode violation (2 matches).
+    await expect(
+      page.locator("#main-content").getByRole("heading", { name: ret.returnNumber }),
+    ).toBeVisible({
       timeout: 15_000,
     });
     const cancelButton = page.getByRole("button", { name: "Cancel Return", exact: true });
