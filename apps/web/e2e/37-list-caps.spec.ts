@@ -41,8 +41,8 @@
  * Role: OPERATOR (reads its token out of the pre-authenticated session, same
  * as 21-destructive-guards / 22-payment-truth). Tenant: the approved
  * e2e-routeflow regression seed (assertTestTenant, helpers/constants.ts).
- * Every fixture created here (25 `E2E B144 …` customers carrying one order
- * each, one throwaway invoice + payment) is fully self-provisioned and left
+ * Every fixture created here (one `E2E B144 …` customer carrying 25 separate
+ * orders, one throwaway invoice + payment) is fully self-provisioned and left
  * behind — the same residue tolerance 21/22/24's own throwaway fixtures take.
  */
 
@@ -264,7 +264,7 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     page,
     request,
   }) => {
-    // 50 provisioning round-trips against the deployed API (25 customers, 25
+    // 26 provisioning round-trips against the deployed API (1 customer, 25
     // orders) do not fit the 60 s per-test default in playwright.config.ts once
     // Railway is cold — the assertions below keep their own 15 s budgets.
     test.setTimeout(120_000);
@@ -281,42 +281,49 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     // `search` is matched by the API against the order NUMBER or the customer's
     // businessName (`orders.service.ts:336-341`, the B144 where-clause), and
     // order numbers are server-minted, so the suffix has to live in the business
-    // name. This value is the shared PREFIX every fixture customer's name starts
-    // with, so the page-2 assertion below (a substring match) matches any of the
-    // 25 regardless of which of them the second page happens to hold.
+    // name. ONE customer owns all 25 orders, so every matching row on either
+    // page carries exactly this name — the page-2 assertion below matches
+    // whichever of the 25 the second page happens to hold.
     const businessName = `E2E B144 ${suffix}`;
 
-    // 25 orders — one more than the default page size (20) — so a match on
-    // page 2 is only reachable if the search actually narrowed the SERVER
-    // query rather than only ever filtering whatever the first page happened
-    // to already hold.
-    //
-    // ONE order per customer, 25 customers — NOT 25 orders on one customer: a
-    // staff create for a customer that already holds an open DRAFT/PENDING
-    // order is refused with 409 `MERGE_CHOICE_REQUIRED`
-    // (`orders.controller.ts:110-127`, via `findActiveOrder`), so a
-    // single-customer 25-order fixture cannot be provisioned through the API at
-    // all — the 2nd POST /orders never lands.
-    for (let i = 0; i < 25; i++) {
-      const customerRes = await request.post(`${api}/api/v1/customers`, {
-        headers: headers!,
-        data: {
-          username: `e2e_b144_${suffix}_${i}`,
-          businessName: `${businessName} ${i}`,
-          contactName: "E2E Tester",
-        },
-      });
-      expect(customerRes.ok(), `POST /customers (#${i}) returned ${customerRes.status()}`).toBe(
-        true,
-      );
-      const customer: { id: string } = (await customerRes.json()).customer;
-      expect(customer?.id, `POST /customers (#${i}) response carried no customer.id`).toBeTruthy();
+    // ONE customer, 25 orders — one more than the default page size (20) — so a
+    // match on page 2 is only reachable if the search actually narrowed the
+    // SERVER query rather than only ever filtering whatever the first page
+    // happened to already hold. One customer rather than 25 keeps this spec's
+    // residue on the shared e2e-routeflow tenant to a single customer per run.
+    const customerRes = await request.post(`${api}/api/v1/customers`, {
+      headers: headers!,
+      data: {
+        username: `e2e_b144_${suffix}`,
+        businessName,
+        contactName: "E2E Tester",
+      },
+    });
+    expect(customerRes.ok(), `POST /customers returned ${customerRes.status()}`).toBe(true);
+    const customer: { id: string } = (await customerRes.json()).customer;
+    expect(customer?.id, "POST /customers response carried no customer.id").toBeTruthy();
 
+    // From the 2nd order on this customer already holds an open PENDING order,
+    // and a staff create that carries no merge decision is refused with 409
+    // `MERGE_CHOICE_REQUIRED` (`orders.controller.ts:110-127`, via
+    // `findActiveOrder`). `mergeChoice: "separate"` is the operator's explicit
+    // choice — a declared `@IsEnum(["merge", "separate"])` field on
+    // CreateOrderDto (`create-order.dto.ts:103`), so the global
+    // `forbidNonWhitelisted` ValidationPipe (`main.ts:145-149`) passes it
+    // through — and it satisfies the guard legitimately: the controller falls
+    // through to `ordersService.create(…, { skipAutoMerge: choice ===
+    // "separate" })` (`orders.controller.ts:278-282`), which INSERTs a new
+    // order flagged `skipAutoMerge` (`orders.service.ts:2268`) instead of
+    // folding these items into the existing one. The post-create
+    // `mergeAllPendingForCustomer` consolidation is staff-exempt
+    // (`orders.controller.ts:285`, `if (!isStaff …)`), so the 25 stay distinct.
+    for (let i = 0; i < 25; i++) {
       const orderRes = await request.post(`${api}/api/v1/orders`, {
         headers: headers!,
         data: {
           customerId: customer.id,
           status: "PENDING",
+          mergeChoice: "separate",
           items: [{ name: `E2E B144 item ${i}`, qty: 1, unitPrice: 10 }],
         },
       });
