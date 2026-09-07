@@ -509,6 +509,48 @@ export default defineConfig({
       },
     },
 
+    // ── Returns lifecycle (F08, spec 29) ───────────────────────────────────────
+    // REG-B166: the returns list search box must actually filter (return #,
+    // order #, or customer). REG-B75: the list's Value column and the "Total
+    // Return Value" KPI must read the billed refund estimate, not $0.00.
+    // REG-B21 + REG-B82: a PENDING return can be cancelled from the detail
+    // page, and a cancelled return releases its quota so a second return
+    // against the same order succeeds. Mutating but self-contained: throwaway
+    // `E2E B08 …` product/customer/order/return fixtures on the approved seed
+    // tenant, same residue tolerance 21/22/24/27/28 already take (a DELIVERED
+    // order with an invoice and returns against it isn't staff-deletable
+    // anyway). NOT part of F08's red gate — it runs only against the DEPLOYED
+    // site (no local Playwright — test-plan.md) and is expected red until F08
+    // ships. WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "returns-lifecycle",
+      testMatch: /29-returns-lifecycle\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Choose-plan routing (F18, spec 33) ─────────────────────────────────────
+    // REG-B58: the /choose-plan chooser must route an in-place plan change
+    // through POST /billing/subscription (upgrade) or
+    // /billing/subscription/downgrade (downgrade) per the quote's `change`
+    // classification, never through the fresh-subscribe endpoint. Fully
+    // mocked — no writes to any tenant. Uses operator auth state.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "change-plan-routing",
+      testMatch: /33-change-plan-routing\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
     // ── Route delivery-window dispatch warning (F12, spec 35) ──────────────
     // REG-B161 web leg (T2/T4): the template page's Optimize toast must name
     // the stop(s) that miss their delivery window, and the Dispatch modal

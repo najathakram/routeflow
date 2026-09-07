@@ -96,21 +96,25 @@ describe("ReturnsService.create → cumulative over-return / double-refund race 
     expect(txReturn.create).not.toHaveBeenCalled();
   });
 
-  it("ignores a REJECTED return's qty when computing remaining (findMany filters status != REJECTED)", async () => {
-    // The transaction's read itself excludes REJECTED returns — assert the query
-    // shape didn't change when it moved onto `tx`.
+  it("REG-B82 CANCELLED returns release quota — the cumulative-qty read excludes REJECTED and CANCELLED returns", async () => {
+    // A CANCELLED return has zero in-force effects (nothing was ever refunded or
+    // kept), so it must not count against remaining quota any more than a
+    // REJECTED one does. Before the fix the query only excluded REJECTED
+    // (`status: { not: "REJECTED" }`), so a cancelled return still consumed the
+    // customer's ability to return the same qty again.
     txReturn.findMany.mockResolvedValue([]);
     txReturn.create.mockResolvedValue({ id: "ret-ok", items: [] });
 
     await service.create(
-      { orderId: "ord-1", reason: "DAMAGED", items: [{ productId: "p1", qty: 4 }] },
+      { orderId: "ord-1", reason: "DAMAGED", items: [{ productId: "p1", qty: 10 }] },
       "user-1",
     );
 
     expect(txReturn.findMany).toHaveBeenCalledWith({
-      where: { orderId: "ord-1", status: { not: "REJECTED" } },
+      where: { orderId: "ord-1", status: { notIn: ["REJECTED", "CANCELLED"] } },
       include: { items: { select: { productId: true, qty: true } } },
     });
+    expect(txReturn.create).toHaveBeenCalled();
   });
 
   it("wraps the existingReturns read and the create inside the SAME transaction — proving no read-then-write gap survives for a concurrent create to race through", async () => {
@@ -250,5 +254,132 @@ describe("ReturnsService.create → cumulative over-return / double-refund race 
     ).rejects.toBeInstanceOf(BadRequestException);
 
     expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+  });
+
+  it("REG-B20 persists an item's condition and notes on create", async () => {
+    // The nested item map wrote only productId/qty/reason/restock/tenantId — an
+    // office user's damage note and condition selection ("dented case" /
+    // "DAMAGED_BOX") were silently dropped even though the schema columns exist
+    // and the detail page already renders them.
+    txReturn.findMany.mockResolvedValue([]);
+    txReturn.create.mockResolvedValue({ id: "ret-cond", items: [] });
+
+    await service.create(
+      {
+        orderId: "ord-1",
+        reason: "DAMAGED",
+        items: [{ productId: "p1", qty: 1, notes: "dented case", condition: "DAMAGED_BOX" }],
+      },
+      "user-1",
+    );
+
+    expect(txReturn.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          items: expect.objectContaining({
+            create: expect.arrayContaining([
+              expect.objectContaining({
+                productId: "p1",
+                qty: 1,
+                notes: "dented case",
+                condition: "DAMAGED_BOX",
+              }),
+            ]),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("REG-B61 restock defaults from the reason: DAMAGED -> false, CUSTOMER_REFUSED -> true, explicit true wins", async () => {
+    // Before the fix every item defaulted to `restock: i.restock ?? true`
+    // regardless of reason, so DAMAGED/QUALITY_ISSUE returns restocked
+    // unsellable goods into inventory.
+    txReturn.findMany.mockResolvedValue([]);
+
+    // 1) dto.reason DAMAGED, item has neither its own reason nor restock: the
+    //    reason-derived default for DAMAGED (false) applies.
+    txReturn.create.mockResolvedValueOnce({ id: "ret-restock-1", items: [] });
+    await service.create(
+      { orderId: "ord-1", reason: "DAMAGED", items: [{ productId: "p1", qty: 1 }] },
+      "user-1",
+    );
+    expect(txReturn.create.mock.calls[0][0].data.items.create[0].restock).toBe(false);
+
+    // 2) the ITEM's own reason (CUSTOMER_REFUSED) overrides the return-level
+    //    DAMAGED reason: CUSTOMER_REFUSED's default (true) applies.
+    txReturn.create.mockResolvedValueOnce({ id: "ret-restock-2", items: [] });
+    await service.create(
+      {
+        orderId: "ord-1",
+        reason: "DAMAGED",
+        items: [{ productId: "p1", qty: 1, reason: "CUSTOMER_REFUSED" }],
+      },
+      "user-1",
+    );
+    expect(txReturn.create.mock.calls[1][0].data.items.create[0].restock).toBe(true);
+
+    // 3) an explicit restock:true on a DAMAGED item wins over the reason default.
+    txReturn.create.mockResolvedValueOnce({ id: "ret-restock-3", items: [] });
+    await service.create(
+      { orderId: "ord-1", reason: "DAMAGED", items: [{ productId: "p1", qty: 1, restock: true }] },
+      "user-1",
+    );
+    expect(txReturn.create.mock.calls[2][0].data.items.create[0].restock).toBe(true);
+  });
+
+  it("REG-B61 rejects an item-level reason outside the allowed set — a typo must never decide restock", async () => {
+    // create() validated only dto.reason; the ITEM's reason then decided the restock
+    // default, and anything outside {DAMAGED, QUALITY_ISSUE} defaults to restock TRUE.
+    // So { reason: "DAMAGED", items: [{ reason: "damaged" }] } persisted restock:true
+    // and receive() put unsellable goods back into sellable stock — the B61 symptom,
+    // reintroduced through the one input the fix trusts.
+    txReturn.findMany.mockResolvedValue([]);
+
+    await expect(
+      service.create(
+        {
+          orderId: "ord-1",
+          reason: "DAMAGED",
+          items: [{ productId: "p1", qty: 1, reason: "damaged" }],
+        },
+        "user-1",
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(txReturn.create).not.toHaveBeenCalled();
+
+    // The guard is a whitelist, not a blanket ban: a VALID item reason still creates,
+    // and still drives the restock default (QUALITY_ISSUE -> false).
+    txReturn.create.mockResolvedValueOnce({ id: "ret-reason-ok", items: [] });
+    await service.create(
+      {
+        orderId: "ord-1",
+        reason: "CUSTOMER_REFUSED",
+        items: [{ productId: "p1", qty: 1, reason: "QUALITY_ISSUE" }],
+      },
+      "user-1",
+    );
+    expect(txReturn.create.mock.calls[0][0].data.items.create[0].restock).toBe(false);
+  });
+
+  it("REG-B166 findAll searches by return number, order number and customer business name", async () => {
+    // The controller binds a `search` query param, but `findAll` only accepted
+    // orderId/customerId/status/reason/page/limit — no `OR` clause ever reached
+    // Prisma, so typing a return number into the web search box did nothing.
+    prisma.return.findMany.mockResolvedValue([]);
+
+    await service.findAll({ search: "RET-1" });
+
+    expect(prisma.return.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [
+            { returnNumber: { contains: "RET-1", mode: "insensitive" } },
+            { order: { orderNumber: { contains: "RET-1", mode: "insensitive" } } },
+            { customer: { businessName: { contains: "RET-1", mode: "insensitive" } } },
+          ],
+        }),
+      }),
+    );
   });
 });

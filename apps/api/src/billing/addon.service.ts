@@ -4,6 +4,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { StripeService } from "./stripe.service";
@@ -12,11 +13,29 @@ import { PlanCatalogService } from "./plan-catalog.service";
 import { LEGACY_ADDON_KEY_TO_SKU } from "./plan-catalog.constants";
 
 /**
+ * A Stripe `resource_missing` / 404 error means the item we tried to act on is
+ * already gone (e.g. a deleted subscription item) — treat that ONE case as a
+ * no-op success. Every other Stripe failure must be surfaced to the caller
+ * (B107): never widen this predicate.
+ */
+function isStripeResourceMissing(err: unknown): boolean {
+  const e = err as { code?: string; statusCode?: number } | undefined;
+  return e?.code === "resource_missing" || e?.statusCode === 404;
+}
+
+/**
  * Manages add-on features for tenants.
  *
  * Each add-on is a key-value pair (e.g. "ai_scanning", "advanced_routes")
  * that can be toggled on/off per tenant. When Stripe is configured, enabling
  * an add-on also creates a Stripe subscription item for billing.
+ *
+ * Entitlement and billing must move together: `enableAddon`/`disableAddon` never
+ * activate or deactivate an add-on that has a Stripe price attached unless the
+ * matching Stripe write actually succeeded (or the Stripe side is already gone —
+ * see `isStripeResourceMissing`). A Stripe failure refuses the whole call instead
+ * of logging and continuing, so a tenant is never billed for something disabled
+ * only in our database, or granted something never billed in Stripe (B107).
  */
 @Injectable()
 export class AddonService {
@@ -73,8 +92,10 @@ export class AddonService {
 
   /**
    * Enable an add-on for a tenant.
-   * If Stripe is configured and a stripePriceId is provided, it also creates
-   * a Stripe subscription item for billing.
+   * If Stripe is configured and a stripePriceId is provided, the tenant MUST
+   * already have an active Stripe subscription and the Stripe subscription-item
+   * create MUST succeed — otherwise the call is refused and no row is written.
+   * With no stripePriceId (free-grant path) Stripe is never touched.
    */
   async enableAddon(tenantId: string, addonKey: string, stripePriceId?: string) {
     // Check tenant exists
@@ -113,29 +134,44 @@ export class AddonService {
       }
     }
 
-    // Add Stripe subscription item if configured
+    // Add Stripe subscription item if configured. A price means this add-on is
+    // billed — the entitlement and the Stripe item must move together, so any
+    // failure here refuses the whole call instead of silently granting an
+    // unbilled add-on.
     let stripeItemId: string | null = null;
     if (stripePriceId && this.stripe.isConfigured) {
       const sub = await this.prisma.tenantSubscription.findUnique({
         where: { tenantId },
       });
-      if (sub?.stripeSubId) {
-        try {
-          const item = await this.stripe.client.subscriptionItems.create({
-            subscription: sub.stripeSubId,
-            price: stripePriceId,
-            quantity: 1,
-          });
-          stripeItemId = item.id;
-          this.logger.log(
-            `Stripe subscription item ${item.id} added for add-on "${addonKey}" on tenant ${tenant.slug}`,
-          );
-        } catch (err) {
-          this.logger.error(
-            `Failed to add Stripe item for add-on "${addonKey}": ${(err as Error).message}`,
-          );
-          // Continue — don't block add-on activation over Stripe failure
-        }
+      if (!sub?.stripeSubId) {
+        // A handled 4xx leaves no other trace — Sentry captures >= 500 only and there is no
+        // access log — so the refusal is logged like addon.guard.ts's denials.
+        this.logger.warn(
+          `Add-on "${addonKey}" refused for tenant ${tenant.slug} — priced add-on with no Stripe subscription`,
+        );
+        throw new ConflictException(
+          `Tenant ${tenant.slug} has no active Stripe subscription — cannot bill add-on ` +
+            `"${addonKey}"; subscribe the tenant to a paid plan first`,
+        );
+      }
+      try {
+        const item = await this.stripe.client.subscriptionItems.create({
+          subscription: sub.stripeSubId,
+          price: stripePriceId,
+          quantity: 1,
+        });
+        stripeItemId = item.id;
+        this.logger.log(
+          `Stripe subscription item ${item.id} added for add-on "${addonKey}" on tenant ${tenant.slug}`,
+        );
+      } catch (err) {
+        this.logger.error(
+          `Failed to add Stripe item for add-on "${addonKey}" on tenant ${tenant.slug}: ${(err as Error).message}`,
+        );
+        throw new ServiceUnavailableException(
+          `Could not create the Stripe subscription item for add-on "${addonKey}" — the add-on ` +
+            `was not enabled; retry, or check the tenant's Stripe subscription`,
+        );
       }
     }
 
@@ -163,7 +199,10 @@ export class AddonService {
 
   /**
    * Disable an add-on for a tenant.
-   * If the add-on has a Stripe subscription item, it will be removed.
+   * If the add-on has a Stripe subscription item, it must actually be removed
+   * (or already gone) before the entitlement is turned off — a Stripe failure
+   * other than "already deleted" refuses the call so we never keep billing for
+   * an add-on the tenant no longer has.
    */
   async disableAddon(tenantId: string, addonKey: string) {
     const addon = await this.prisma.tenantAddon.findUnique({
@@ -182,8 +221,20 @@ export class AddonService {
           `Stripe subscription item ${addon.stripeItemId} removed for add-on "${addonKey}"`,
         );
       } catch (err) {
-        this.logger.error(
-          `Failed to remove Stripe item ${addon.stripeItemId}: ${(err as Error).message}`,
+        if (!isStripeResourceMissing(err)) {
+          this.logger.error(
+            `Failed to remove Stripe item ${addon.stripeItemId} for add-on "${addonKey}": ${(err as Error).message}`,
+          );
+          throw new ServiceUnavailableException(
+            `Could not remove the Stripe subscription item ${addon.stripeItemId} for add-on ` +
+              `"${addonKey}" — the add-on was not disabled; retry, or remove the item in Stripe ` +
+              `directly and try again`,
+          );
+        }
+        // Already gone in Stripe — treat as success and clear the pointer below.
+        this.logger.warn(
+          `Stripe subscription item ${addon.stripeItemId} for add-on "${addonKey}" was already ` +
+            `removed; clearing the local pointer`,
         );
       }
     }

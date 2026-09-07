@@ -1,0 +1,114 @@
+{
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/.claude/pipeline/2026-09-06-F23-messaging-engine/build-plan.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/.claude/pipeline/2026-09-06-F23-messaging-engine/bug-test-plan.md",
+  "specPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/.claude/pipeline/2026-09-06-F23-messaging-engine/cause-ruling.md",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/.claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-07T02:55:00Z",
+  "mode": "bugfix",
+  "scale": "small",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09",
+  "context": "F23 messaging engine honesty (B145 B160 B180 B182 B183a; B181 refuted; B37 deferred). ONE capability seam. Ruling: cause-ruling.md. Option-B bookkeeping: no map/lessons/ledger edits.",
+  "radiusFiles": [
+    "apps/api/src/messages/messages.service.ts",
+    "apps/api/src/messaging/messaging.helpers.ts",
+    "apps/api/src/notifications/notifications.service.ts",
+    "apps/api/prisma/schema/sales.prisma",
+    "apps/api/prisma/schema/platform.prisma"
+  ],
+  "siblingPatterns": [
+    { "pattern": "status: \"queued\"", "note": "provider status that is not a delivery outcome" },
+    {
+      "pattern": "\\?\\? true",
+      "note": "UI default contradicting the engine default (messaging-config)"
+    }
+  ],
+  "testPackages": [
+    {
+      "id": "TP-API",
+      "files": [
+        "apps/api/src/messaging/messaging.transport-honesty.spec.ts",
+        "apps/api/src/messaging/messaging-config.service.spec.ts",
+        "apps/api/src/messaging/messaging.service.spec.ts",
+        "apps/api/src/messaging/default-on-is-wired.spec.ts"
+      ],
+      "tests": ["T1", "T2", "T3", "T5", "T6", "T7", "T8", "T10"],
+      "effort": "high",
+      "brief": "bug-test-plan.md + Harness notes; implement nothing"
+    },
+    {
+      "id": "TP-WEB",
+      "files": ["apps/web/app/(dashboard)/settings/notifications-settings.test.tsx"],
+      "tests": ["T4", "T9"],
+      "effort": "medium",
+      "brief": "bug-test-plan.md RTL rows per settings-users.test.tsx; implement nothing"
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "cd apps/api && npx jest src/messaging --runInBand -t \"REG-B(145|160|180|182|183)\"",
+      "cd apps/web && npx jest --runInBand -t \"REG-B(160|180)\""
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "P1",
+      "files": [
+        "apps/api/src/messaging/providers/message-provider.interface.ts",
+        "apps/api/src/messaging/providers/stub.provider.ts",
+        "apps/api/src/messaging/messaging.service.ts"
+      ],
+      "effort": "high",
+      "brief": "build-plan.md P1"
+    },
+    {
+      "id": "P2",
+      "files": [
+        "apps/api/src/messaging/messaging-config.service.ts",
+        "apps/api/src/messaging/messaging.service.ts"
+      ],
+      "effort": "high",
+      "brief": "build-plan.md P2 (+ the Check)",
+      "dependsOn": ["P1"]
+    },
+    {
+      "id": "P3",
+      "files": ["apps/api/src/messaging/default-on-is-wired.spec.ts"],
+      "effort": "low",
+      "brief": "build-plan.md P3",
+      "dependsOn": ["P2"]
+    },
+    {
+      "id": "P4",
+      "files": [
+        "apps/web/app/(dashboard)/settings/NotificationsSettingsTab.tsx",
+        "apps/web/lib/api/messaging.ts"
+      ],
+      "effort": "medium",
+      "brief": "build-plan.md P4 (locate the real tab path)",
+      "dependsOn": ["P2"]
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+      "cd apps/api && npx jest src/messaging src/messages src/notifications --runInBand",
+      "cd apps/web && npx tsc --noEmit -p tsconfig.json"
+    ],
+    "final": [
+      "cd apps/api && npx jest --silent",
+      "cd apps/web && npx jest --silent",
+      "node scripts/validate-lessons.mjs"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/api/src/messaging/messaging.service.ts",
+        "revertFix": true,
+        "behavior": "no transport => skipped, no row",
+        "test": "REG-B145"
+      }
+    ]
+  }
+}

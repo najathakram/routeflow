@@ -224,12 +224,22 @@ export function useMyOrders(params?: { status?: string; page?: number; limit?: n
   });
 }
 
-export function useOrder(id: string) {
-  return useQuery<Order>({
-    queryKey: ["orders", id],
-    queryFn: () => apiClient.get(`/orders/${id}`).then((r) => r.data),
+/**
+ * The ONE order-detail query definition. `useOrder` and any `useQueries` fan-out
+ * over several orders (the driver return screen reads a stop's orders at once)
+ * must share it, so both land on the same cache entry instead of a second,
+ * silently divergent fetch.
+ */
+export function orderQueryOptions(id: string) {
+  return {
+    queryKey: ["orders", id] as const,
+    queryFn: (): Promise<Order> => apiClient.get(`/orders/${id}`).then((r) => r.data),
     enabled: !!id,
-  });
+  };
+}
+
+export function useOrder(id: string) {
+  return useQuery<Order>(orderQueryOptions(id));
 }
 
 /**

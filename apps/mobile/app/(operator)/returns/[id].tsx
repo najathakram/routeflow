@@ -6,6 +6,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import {
   useApproveReturn,
+  useCancelReturn,
   useMarkReturnInTransit,
   useReceiveReturn,
   useRefundReturn,
@@ -42,6 +43,7 @@ export default function ReturnDetailScreen() {
   const inTransitMut = useMarkReturnInTransit();
   const receiveMut = useReceiveReturn();
   const refundMut = useRefundReturn();
+  const cancelMut = useCancelReturn();
 
   const run = (mut: { mutate: (id: string, opts: any) => void }, okMsg: string) => {
     if (!id) return;
@@ -111,7 +113,8 @@ export default function ReturnDetailScreen() {
     rejectMut.isPending ||
     inTransitMut.isPending ||
     receiveMut.isPending ||
-    refundMut.isPending;
+    refundMut.isPending ||
+    cancelMut.isPending;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -197,6 +200,22 @@ export default function ReturnDetailScreen() {
                   label="Resolve return"
                   disabled={anyPending}
                   onPress={openResolveChoice}
+                />
+              ) : null}
+              {flags.canCancel ? (
+                <ActionTile
+                  icon="ban-outline"
+                  label="Cancel return"
+                  tone="danger"
+                  disabled={anyPending}
+                  onPress={() =>
+                    confirm(
+                      "Cancel return?",
+                      "This return will be cancelled and any restock/quota effects undone.",
+                      () => run(cancelMut, "Return cancelled"),
+                      { confirmText: "Cancel return", destructive: true },
+                    )
+                  }
                 />
               ) : null}
             </View>

@@ -1,10 +1,10 @@
 {
-  "nextId": 84,
+  "nextId": 87,
   "activeCount": 39,
-  "archivedCount": 40,
+  "archivedCount": 43,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-06T19:14:12.020Z",
+  "updatedAt": "2026-09-07T03:22:40.902Z",
   "schemaVersion": 1,
-  "note": "fix/campaign-check-report-freshness: added L-083 (tooling — campaign-check must refuse a stale run artifact by name, with the regen command, before scanning a single token) and archived L-065 (tooling) + L-046 (domain), the oldest active entries whose Guard names a landed automated artifact, for headroom (L-072 skipped — cited inline by CLAUDE.md); b28e8d65 (restore --first-parent after a concurrent probe mutation was captured by df7494dd) carries no new register entry — the rule that a tree-mutating probe runs alone already exists in the model-routing skill and the incident is recorded in the dev-pipeline RUN-LOG."
+  "note": "docs/647-lesson-l086: added L-086 (testing — post-deploy money oracles are read from the API with a > 0 vacuity guard, never fixture arithmetic; dashboard heading locators scope to #main-content; spec-29 fix #647). Archived L-058 (guarded by ci-freshness-guard-script.spec.ts T1) for byte headroom."
 }

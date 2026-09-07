@@ -33,6 +33,18 @@ import {
  * drift < −ε it appends exactly one CommissionAdjustment (append-only) whose
  * amount self-limits drift back to ~0. Positive drift needs no adjustment —
  * it is simply unclaimed payable the next statement generation will sweep.
+ *
+ * "Exactly one" is only true under concurrency because `runSync` opens with
+ * a `FOR UPDATE` row lock on this invoice's CommissionAccrual (keyed on
+ * invoiceId — see `runSync`'s own docblock). Without it, two READ COMMITTED
+ * callers (the hourly reconciliation cron and a hook call site) can each
+ * read zero prior adjustments and both append the same CLAWBACK (B73).
+ * That lock holds for EVERY caller, not just the ones that hand over a
+ * transaction: `syncInvoiceCommission` wraps a non-transactional `db` (a
+ * `forTenant()` client — what the un-`tx`'d `reconcileOrderDraftInvoice`
+ * hook path passes) in its own `tenantTransaction` first, so the lock can
+ * never be released between the read and the append. Residual, filed not
+ * fixed: `removeInvoiceCommission` takes no lock.
  */
 @Injectable()
 export class CommissionEngineService {
@@ -47,18 +59,34 @@ export class CommissionEngineService {
   /**
    * Derive-from-current-state sync for one invoice. Idempotent: unchanged
    * state writes nothing. `db` = a tenantTransaction tx or forTenant()
-   * client; when omitted, opens its own tenantTransaction.
+   * client; when omitted — OR when the caller hands over a non-transactional
+   * client — it opens its own tenantTransaction, so `runSync`'s B73
+   * `FOR UPDATE` lock always spans that sync's read-then-append (B73: a
+   * lock taken on an autocommit client is released one statement later and
+   * protects nothing).
    */
   async syncInvoiceCommission(invoiceId: string, db?: any): Promise<void> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return;
     if (!(await this.entitlements.hasFlag(tenantId, "flag.sales_agents"))) return;
 
-    if (db) {
+    if (db && this.isTransactionClient(db)) {
       await this.runSync(invoiceId, db);
     } else {
       await this.prisma.tenantTransaction((tx: any) => this.runSync(invoiceId, tx));
     }
+  }
+
+  /**
+   * True when `db` is an interactive-transaction client. Prisma's tx client —
+   * and the tenant-scoping Proxy `tenantTransaction` wraps it in, which passes
+   * `$`-prefixed keys straight through — omits `$transaction`; a base or
+   * `$extends`ed client (what `forTenant()` returns) exposes it. Callers that
+   * pass the latter therefore get wrapped in a real transaction rather than
+   * silently losing the B73 row lock.
+   */
+  private isTransactionClient(db: any): boolean {
+    return typeof db?.$transaction !== "function";
   }
 
   /**
@@ -181,7 +209,25 @@ export class CommissionEngineService {
 
   // ─── internal sync algorithm (not part of the pinned public surface) ────
 
+  /**
+   * B73: serializes concurrent syncs of the SAME invoice's commission
+   * accrual with a `FOR UPDATE` row lock, taken BEFORE the invoice read so
+   * a caller that acquires it second observes every adjustment the first
+   * caller already committed — this is what makes "append exactly one
+   * CommissionAdjustment per drift" (see the class docblock) hold even when
+   * two READ COMMITTED callers race. Keyed on invoiceId ONLY:
+   * CommissionAccrual.tenantId is nullable (legacy rows), so a tenant
+   * predicate would let those rows escape the lock, and invoiceId is a
+   * UUID, so a cross-tenant collision is impossible. Contract: `runSync` is
+   * only ever reached with a transactional client — `recomputeCommissionRange`
+   * opens its own `tenantTransaction`, and `syncInvoiceCommission` wraps a
+   * non-transactional `db` in one before calling through. On an autocommit
+   * client the lock would be released before the read below and protect
+   * nothing. Residual: `removeInvoiceCommission` has no lock, filed not fixed.
+   */
   private async runSync(invoiceId: string, db: any): Promise<void> {
+    await db.$executeRaw`SELECT id FROM "CommissionAccrual" WHERE "invoiceId" = ${invoiceId} FOR UPDATE`;
+
     const invoice = await db.invoice.findUnique({
       where: { id: invoiceId },
       include: {
