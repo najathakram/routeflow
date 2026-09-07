@@ -1,0 +1,1062 @@
+{
+  "plan": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-06-F12-route-windows/build-plan.md",
+  "mode": "bugfix",
+  "artifacts": {
+    "plan": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-06-F12-route-windows/build-plan.md",
+    "discovery": "",
+    "spec": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-06-F12-route-windows/cause-ruling.md",
+    "uxSpec": "",
+    "testPlan": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-06-F12-route-windows/bug-test-plan.md",
+    "designSystem": ""
+  },
+  "scale": "small",
+  "startedAt": "2026-09-07T01:50:00Z",
+  "estimatedCostUsd": 27.02,
+  "pricesAsOf": "2026-06-24",
+  "overlap": {
+    "verifyWithUiVerify": false,
+    "finalGateWithFinalPass": false,
+    "redAuditWithImplement": null
+  },
+  "verify": {
+    "ran": false,
+    "mode": "on-dispute",
+    "lazy": true,
+    "judged": 0,
+    "dropped": 0,
+    "votesCast": 0,
+    "firstVoteRefuted": 0,
+    "firstVoteRefutedRate": null,
+    "tieBreaks": 0,
+    "locationChecked": 0,
+    "locationInvalid": 0,
+    "preRefuted": 0,
+    "deferredToFixer": 0,
+    "disputed": 0,
+    "disputesDropped": 0,
+    "disputesUpheld": 0,
+    "corroborated": 0,
+    "corroboratedSkipped": 0
+  },
+  "baseline": {
+    "ran": true,
+    "note": "Baseline = the working tree exactly as the caller left it, uncommitted work included; that tree is what the commands ran against.",
+    "commands": [
+      "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+      "cd apps/api && npx jest src/route-optimization src/routes --runInBand",
+      "cd apps/web && npx tsc --noEmit -p tsconfig.json",
+      "cd apps/api && npx jest --silent",
+      "cd apps/web && npx jest --silent",
+      "node scripts/validate-lessons.mjs"
+    ],
+    "badCommands": [],
+    "gate": {
+      "ran": true,
+      "completed": true,
+      "pass": true,
+      "results": [
+        {
+          "command": "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+          "pass": true,
+          "summary": "TypeScript compilation successful",
+          "executed": -1
+        },
+        {
+          "command": "cd apps/api && npx jest src/route-optimization src/routes --runInBand",
+          "pass": true,
+          "summary": "13 test suites passed, 223 tests passed",
+          "executed": 223
+        },
+        {
+          "command": "cd apps/web && npx tsc --noEmit -p tsconfig.json",
+          "pass": true,
+          "summary": "TypeScript compilation successful",
+          "executed": -1
+        },
+        {
+          "command": "cd apps/api && npx jest --silent",
+          "pass": true,
+          "summary": "255 test suites passed, 4137 tests passed",
+          "executed": 4137
+        },
+        {
+          "command": "cd apps/web && npx jest --silent",
+          "pass": true,
+          "summary": "30 test suites passed, 161 tests passed",
+          "executed": 161
+        },
+        {
+          "command": "node scripts/validate-lessons.mjs",
+          "pass": true,
+          "summary": "Lessons register self-consistent: 39/40 entries · 39.6/40.0 KB",
+          "executed": -1
+        }
+      ]
+    },
+    "grounding": {
+      "ran": true,
+      "completed": true,
+      "artifacts": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-06-F12-route-windows/build-plan.md",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-06-F12-route-windows/cause-ruling.md",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-06-F12-route-windows/bug-test-plan.md"
+      ],
+      "findings": [
+        {
+          "file": "(artifact)",
+          "line": 34,
+          "severity": "minor",
+          "summary": "Line number reference for matrixCache is off by one",
+          "detail": "bug-test-plan.md line 34 claims: 'matrixCache (`cost-matrix.ts:44`) leaks between tests only for real Google matrices'. However, the actual const declaration is on line 43 of cost-matrix.ts, not line 44. Line 44 is blank.",
+          "fixComplexity": "mechanical",
+          "fixHint": "Change '`cost-matrix.ts:44`' to '`cost-matrix.ts:43`' in the Harness notes section of bug-test-plan.md",
+          "phase": "Baseline"
+        }
+      ]
+    }
+  },
+  "manifest": {
+    "ran": true,
+    "completed": true,
+    "note": "Facts gathered before any agent wrote anything. Unknown or unreadable files are classified HIGH.",
+    "files": [
+      {
+        "path": "apps/api/src/route-optimization/route-optimization.service.spec.ts",
+        "status": "modified",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/route-optimization/route-analysis.service.spec.ts",
+        "status": "modified",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/e2e/35-route-windows.spec.ts",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/playwright.config.ts",
+        "status": "modified",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/route-optimization/route-optimization.service.ts",
+        "status": "modified",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/route-optimization/route-analysis.service.ts",
+        "status": "modified",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/lib/api/routes.ts",
+        "status": "modified",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/routes/templates/[id]/page.tsx",
+        "status": "modified",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/routes/page.tsx",
+        "status": "modified",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/routes/_components/CreateRouteModal.tsx",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/routes/_components/CreateRouteModal.test.tsx",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      }
+    ],
+    "validCommands": [
+      "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+      "cd apps/api && npx jest src/route-optimization src/routes --runInBand",
+      "cd apps/web && npx tsc --noEmit -p tsconfig.json",
+      "cd apps/api && npx jest --silent",
+      "cd apps/web && npx jest --silent",
+      "node scripts/validate-lessons.mjs"
+    ],
+    "artifacts": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-06-F12-route-windows/build-plan.md",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-06-F12-route-windows/cause-ruling.md",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-06-F12-route-windows/bug-test-plan.md"
+    ]
+  },
+  "riskSummary": {
+    "high": 6,
+    "low": 5
+  },
+  "fixRouting": {
+    "mechanical": 1,
+    "sonnetDesigned": 1,
+    "judgment": 9
+  },
+  "fixPlanning": {
+    "enabled": true,
+    "rounds": [
+      {
+        "round": 1,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 14,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 2,
+          "sonnet": 2,
+          "opus": 10
+        },
+        "waves": [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]],
+        "note": "Round 1 fixes all fourteen findings in a single wave (the engine serializes by file; several files are shared across findings so no split is possible). API: make applyWindowPass monotone (full-candidate check plus reject-if-worse net, #0), run the same seam over both getRouteVariants branches with windowViolations on the variant (#2/#13), give a started run an honest clock via a body startTime and skip the pass rather than guess (#6), model early-arrival waiting in calculateETAs so only late is a violation (#10), and add a windows-only analyze flag so the dispatch modals never hit Anthropic (#4). Web: both dispatch modals always analyze fresh (drop the lastOptimizeResult short-circuit, #3), track the departure time with a debounce and sequence guard (#5), disable Dispatch while checking and announce a failed check without gating (#9), move the late-stop helpers out of page.tsx (#8), and relax the T4 checkbox locator to the rendered label (#1). Tests: two-windowed-stop and no-newly-late cases (T7), analyzeRouteRun precedence, windows-only no-AI (T8), variants (T9), mid-run clock (T10), waiting model (T11), plus REG-B147 re-pinned to the feasibility invariant with the two-phase persist slice removed. Red gate: option (B) — T4 stays a pending-deploy row and the plan states the four-jest denominator; the cost-matrix citation is corrected. Option-B bookkeeping honoured: no map/lessons/ledger edits."
+      },
+      {
+        "round": 2,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 5,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 1,
+          "sonnet": 2,
+          "opus": 2
+        },
+        "waves": [[0, 1, 2, 3, 4]],
+        "note": "Round 2 fixes all five findings in one wave. The two API findings share route-optimization.service.ts and go to Opus: #0 threads the solver's cost matrices through to getRouteVariants so the >10-intermediate branch and the Google-failure fallback re-sum totals along the window-repaired order (the one invariant: a variant's totals describe its own stopIds), and #1 stops handing ORS the stale scheduled departure when there is no honest clock (omit the vehicle time_window, pass windowClock) and adds windowsChecked to OptimizeResult so an unchecked run is distinguishable from a clean one. On the web: #2 restores the dispatch modal's reset effect to [open, today] and seeds defaultStartTime in a separate guarded effect (templates-modal shape); #3 makes OptimizeResult.windowViolations/startTime optional (plus windowsChecked?) and guards the templates page toast; #4 deletes the dead lateStopsFromOptimize helper and its tests. Each fix names the spec to strengthen; no map/lessons/ledger edits per Option B."
+      }
+    ],
+    "deferred": []
+  },
+  "cascadeAudit": null,
+  "escalation": null,
+  "lensesRun": ["correctness", "test-quality"],
+  "radiusPack": {
+    "built": true,
+    "truncated": false,
+    "files": [
+      "apps/api/src/route-optimization/route-analysis.service.ts",
+      "apps/api/src/route-optimization/cost-matrix.ts",
+      "apps/api/src/routes/routes.service.ts",
+      "apps/web/lib/api/routes.ts"
+    ],
+    "skipped": null
+  },
+  "siblingSweep": {
+    "ran": true,
+    "patterns": 2,
+    "hits": 3,
+    "findings": 1,
+    "skipped": null,
+    "truncated": [],
+    "verdicts": {
+      "defect": 1,
+      "guarded": 1,
+      "unrelated": 1,
+      "unjudged": 0
+    }
+  },
+  "harnessCheck": {
+    "ran": true,
+    "issues": [
+      {
+        "file": "apps/api/src/route-optimization/route-analysis.service.spec.ts",
+        "line": 64,
+        "issue": "The build plan lifts a shared resolveStartTime helper 'used by both services' (P1) from the precedence chain currently inlined in analyzeRoute/analyzeRouteRun (route-analysis.service.ts:70-76 and :243-247). Since RouteAnalysisService already holds RouteOptimizationService as this.optimizationService, the natural placement is a method on RouteOptimizationService that RouteAnalysisService calls via this.optimizationService.resolveStartTime(...) - consistent with T6's 'assert the helper is called from analyze' (a call on the injected, mockable service is what makes that assertion possible). The spec's mock RouteOptimizationService provider only stubs resolveDepot and calculateETAs (lines 64-68); it has no resolveStartTime method. If P1 routes analyzeRoute through that call, every existing test in this file (all four it(...) blocks, which all invoke service.analyzeRoute('route-1')) will throw TypeError: this.optimizationService.resolveStartTime is not a function before reaching any assertion.",
+        "remedy": "Add resolveStartTime: jest.fn().mockReturnValue('08:00') (or equivalent) to the mocked RouteOptimizationService provider so the existing four tests keep resolving a start time once P1 routes analyzeRoute through the shared helper."
+      }
+    ],
+    "skipped": null,
+    "note": ""
+  },
+  "testAuthoring": {
+    "ran": true,
+    "packages": [
+      {
+        "package": "TP-API",
+        "status": "done",
+        "filesChanged": [
+          "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api/src/route-optimization/route-optimization.service.spec.ts",
+          "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api/src/route-optimization/route-analysis.service.spec.ts"
+        ],
+        "deviations": "None. Wrote exactly T1 (REG-B147), T2 (REG-B161), T3 (REG-B177) into route-optimization.service.spec.ts, and T6 into route-analysis.service.spec.ts, plus the harness-notes fix (added `resolveStartTime` to the mocked RouteOptimizationService provider so the 4 pre-existing analyze tests won't TypeError once P1 lands). T5 required no edit (plan explicitly says it's an unchanged pin). T4 (Playwright, spec 35) and the CreateRouteModal deletion (REG-B31) are outside this package's file list (apps/web) and were not touched, per the task's file restriction."
+      },
+      {
+        "package": "TP-E2E",
+        "status": "done",
+        "filesChanged": ["apps/web/e2e/35-route-windows.spec.ts", "apps/web/playwright.config.ts"],
+        "deviations": "None from the assigned files. Per bug-test-plan.md's harness note, this spec/project has no local runner (\"no local Playwright\") — verification here is limited to `npx playwright test --project=route-windows --list` (resolves cleanly, 1 test) and `npx tsc --noEmit -p apps/web/tsconfig.json` (exit 0, no errors in the touched files). The test was NOT executed against a live/deployed site (none available in this worktree), so I cannot directly observe its red-bar failure; its assertions are built to fail on the plan's named conditions (toast never mentions a missed window; Dispatch modal has no late-stop warning element; the Dispatch button is never disabled) against the current, pre-fix templates/[id]/page.tsx, which I read and confirmed contains none of those behaviors today."
+      }
+    ]
+  },
+  "redGate": {
+    "ran": true,
+    "remediateOn": "behavioral",
+    "properlyRed": false,
+    "structurallyRed": false,
+    "behaviorallyRed": false,
+    "attempts": 2,
+    "audits": [
+      {
+        "attempt": 1,
+        "ran": true,
+        "structurallyRed": false,
+        "behaviorallyRed": false,
+        "properlyRed": false,
+        "tests": [
+          {
+            "test": "REG-B147: persists a window-feasible order on the cost-matrix branch — apps/api/src/route-optimization/route-optimization.service.spec.ts:571",
+            "outcome": "assertion-failure",
+            "note": "Verified in the worktree run. Failed on a DISTINGUISHING value: Expected \"stop-far\", Received \"stop-near\" — exactly the plan's predicted TODAY failure. Strongest of the four. Caveat: the follow-on `toEqual([far, near, mid])` and the persisted-stopNumber assertion never executed, and they over-specify — [near, far, mid] is also window-feasible under the plan's own numbers (near 08:13 + 15 min service, far at 08:55 < 09:00 close) yet would fail this test, so it pins one repair tie-break rather than the stated invariant."
+          },
+          {
+            "test": "REG-B161: reports a stop whose window closes before its reachable ETA under any order — apps/api/src/route-optimization/route-optimization.service.spec.ts:632",
+            "outcome": "assertion-failure",
+            "note": "Verified. Failed at `expect(violation).toBeDefined()` with Received: undefined, because `OptimizeResult` carries no `windowViolations` field today — this is the plan's predicted TODAY failure, but it is an existence check. The distinguishing oracles on the next two lines (eta \"08:40\", windowEnd \"08:30\", startTime \"08:00\") were never reached, so this run proved wiring, not the oracle."
+          },
+          {
+            "test": "REG-B177: the ORS request carries the vehicle's departure clock as its time_window — apps/api/src/route-optimization/route-optimization.service.spec.ts:708",
+            "outcome": "assertion-failure",
+            "note": "Verified. Failed with Expected [28800, 72000], Received undefined — `vehicleDef` has no `time_window` today. The expected value is derived from the plan's formula (timeToSec(\"08:00\")=28800 + WORKDAY_SEC 43200 = 72000), not from an implementation, but because the property is absent any fix that adds a `time_window` at all flips it green; the exact-seconds oracle is unexercised until a mutation probe changes the value."
+          },
+          {
+            "test": "T6: resolves the start time via the shared resolveStartTime helper and still returns {configured:false, etas} without an API key — apps/api/src/route-optimization/route-analysis.service.spec.ts:161",
+            "outcome": "assertion-failure",
+            "note": "Verified, but ONLY because I ran the whole `src/route-optimization` directory. Failed on `expect(resolveStartTime).toHaveBeenCalled()` — Expected >= 1, Received 0. Two weaknesses: (a) the `expect(result).toEqual({configured:false, etas})` half is tautological — `calculateETAs` is mocked at line 80 to return the same `etas` const the assertion compares against (the plan itself flags this L-081 hazard); (b) the load-bearing half asserts only that a test-configured mock was called, never its arguments nor that its return value reaches the ETA pass, so an implementation that calls `resolveStartTime()` and discards the result would pass."
+          },
+          {
+            "test": "REG-B161 the Optimize toast names the stop(s) that miss their window, and Dispatch stays disabled until the late-stop warning is acknowledged (T2 / T4) — apps/web/e2e/35-route-windows.spec.ts:70",
+            "outcome": "not-run",
+            "note": "NOT EXECUTED in this session. `npx playwright test --project=route-windows --list` confirms it is collected (1 test + the 3 setup tests) and `npx tsc --noEmit` in apps/web is clean, so it is not dead — but it is filtered out of the plan's own `redGate.commands` (api jest lane only), targets the deployed site (default BASE = the Railway web URL), and would create throwaway customers/routes on the shared e2e-routeflow tenant. I did not run it: it is mutating against a live deployment and memory records this machine's route to the Railway edge as dead since 07:56Z. Static evidence that it WOULD be red: `templates/[id]/page.tsx` has no `role=\"alert\"` window warning, no acknowledge checkbox, an always-enabled Dispatch, and its optimize toast (lines 516-523) emits only \"Route optimized\" / \"N stops reordered\" with no window text — so all four of the spec's key assertions target elements that do not exist. That is inference, not execution; its redness is unproven."
+          }
+        ],
+        "blockers": [
+          "STRUCTURAL: T4 (apps/web/e2e/35-route-windows.spec.ts:70) never executed — it is excluded by the plan's own `redGate.commands` and can only run against the deployed site, so its red state is inferred from source inspection, not proven.",
+          "STRUCTURAL: T6 (route-analysis.service.spec.ts:154) is filtered OUT by the documented red-gate command — `-t \"REG-B(147|161|177)\"` does not match its title, so under the gate as written it never runs; it only failed because I widened the run to the whole `src/route-optimization` directory. The attempt-1 runner output confirms this: 3 failed / 57 skipped, T6 among the skipped.",
+          "BEHAVIORAL: T2 stopped at `expect(violation).toBeDefined()` against an absent `windowViolations` field — its distinguishing oracles (eta \"08:40\", windowEnd \"08:30\", startTime \"08:00\") were never executed, so the run proved the field is missing, not that the ETA math is right.",
+          "BEHAVIORAL: T3's single assertion compares [28800, 72000] against an absent property, so any implementation that adds a `time_window` of any value turns it green — the exact seconds oracle is unproven until a mutation probe perturbs it.",
+          "BEHAVIORAL: T6's `expect(result).toEqual({configured:false, etas})` half is vacuous — `calculateETAs` is mocked to return the very `etas` const being asserted — and its live half asserts only that a test-supplied mock was called, never with what arguments or that the resolved clock reaches the ETA pass.",
+          "BEHAVIORAL: T1's full-order `toEqual([far, near, mid])` and persisted-stopNumber assertions over-specify the repair tie-break; [near, far, mid] is also window-feasible under the fixture's own numbers but would fail, so the test can drift from the invariant the ruling states."
+        ]
+      },
+      {
+        "attempt": 2,
+        "ran": true,
+        "structurallyRed": false,
+        "behaviorallyRed": false,
+        "properlyRed": false,
+        "tests": [
+          {
+            "test": "REG-B147: persists a window-feasible order on the cost-matrix branch — apps/api/src/route-optimization/route-optimization.service.spec.ts:565",
+            "outcome": "assertion-failure",
+            "note": "VERIFIED by my own re-run. Fails at line 571 on a distinguishing value: expected \"stop-far\", received \"stop-near\" — exactly the row the test plan predicted. The SUT ran end-to-end (fetch rejected -> haversine fallback, a stopOrder was produced), so this is real behavior, not a stub. Flag: the follow-up toEqual pins the FULL order [far, near, mid]; I checked calculateETAs (route-optimization.service.ts:193-234) by hand and [near, far, mid] is also window-feasible (far arrives 08:55 vs the 09:00 close) and cheaper, so an implementation that satisfies the ruling's invariant but picks a different valid order goes red for the wrong reason. Second flag: `finalPass = stopUpdates.slice(stopUpdates.length / 2)` hard-assumes a two-phase update with equal call counts."
+          },
+          {
+            "test": "REG-B161: reports a stop whose window closes before its reachable ETA under any order — apps/api/src/route-optimization/route-optimization.service.spec.ts:588",
+            "outcome": "assertion-failure",
+            "note": "VERIFIED. Fails at line 632 on `expect(violation).toBeDefined()` receiving undefined — an ABSENCE, not a value. `OptimizeResult` has no windowViolations field today (cause-ruling.md section 1 confirms), so the test never reaches its own oracle at line 633 ({ eta: \"08:40\", windowEnd: \"08:30\" }) or line 634 (startTime === \"08:00\"). Those two oracles are currently unproven."
+          },
+          {
+            "test": "REG-B177: the ORS request carries the vehicle's departure clock as its time_window — apps/api/src/route-optimization/route-optimization.service.spec.ts:637",
+            "outcome": "assertion-failure",
+            "note": "VERIFIED. Fails at line 708: expected [28800, 72000], received undefined. I confirmed the absence is genuine — grep of route-optimization.service.ts shows `time_windows` only on jobs (:1078) and nothing on vehicleDef. The expected pair is arithmetically consistent with the ruling (08:00 = 28800s, WORKDAY_SEC 12h = 43200s), but because the field does not exist the assertion cannot yet discriminate a wrong-but-present value."
+          },
+          {
+            "test": "REG-B177: analyzeRoute runs its ETA pass on the clock resolveStartTime returned, and returns configured:false without an API key — apps/api/src/route-analysis... (apps/api/src/route-optimization/route-analysis.service.spec.ts:173)",
+            "outcome": "assertion-failure",
+            "note": "VERIFIED, and the strongest oracle in the set. Fails at line 181 on a distinguishing VALUE: third calculateETAs arg expected \"06:45\", received \"08:00\". I confirmed the source of the received value — route-analysis.service.ts:76 inlines `startTime ?? defaultStartTimeRaw ?? \"08:00\"`. Flag: `expect(resolveStartTime).toHaveBeenCalled()` (line 187) asserts only on a mock the test itself configured and would pass on a call whose result is discarded; the load-bearing work is done by the third-argument oracle, which is fine. Minor: avgSpeedKmh/serviceTimeMinutes are pinned only as expect.any(Number)."
+          },
+          {
+            "test": "REG-B161 the Optimize toast names the stop(s) that miss their window, and Dispatch stays disabled until the late-stop warning is acknowledged (T2 / T4) — apps/web/e2e/35-route-windows.spec.ts:70",
+            "outcome": "not-run",
+            "note": "Filtered out of the red gate: redGate.commands is the apps/api jest lane only, and the plan (bug-test-plan.md T4) and the spec header (lines 17-23) both place it OUTSIDE the gate as a pending-deploy Playwright project. I did verify it is not DEAD: `npx playwright test --list --project=route-windows` collects it (1 test under the new `route-windows` project, imports and TS parse clean), so the playwright.config.ts entry works. But no assertion of it has ever executed, so there is zero evidence it fails on behavior rather than on a fixture or environment fault."
+          }
+        ],
+        "blockers": [
+          "STRUCTURAL: apps/web/e2e/35-route-windows.spec.ts (T4, REG-B161) is a new test that never ran — the red gate command is the apps/api jest lane only. It collects cleanly (verified with playwright --list) but has produced no assertion evidence, so its four behavioral oracles (toast names the count, dialog alert warning, Dispatch disabled, acknowledge checkbox) are unproven. This is a deliberate design choice recorded in bug-test-plan.md T4 and the spec header, not an accident — but by the gate's own rule it makes structurallyRed false, and the lead should either bring it into the gate or record it explicitly as an out-of-gate pending-deploy row so the gate's denominator is the 4 jest tests.",
+          "BEHAVIORAL: REG-B161 (route-optimization.service.spec.ts:632) fails on an absence (`toBeDefined()` -> undefined) because OptimizeResult has no windowViolations field today, so its real oracles — eta \"08:40\", windowEnd \"08:30\", startTime \"08:00\" — are never reached and remain unproven. A mutation probe must confirm the test fails on a WRONG eta/windowEnd, not just on a missing field.",
+          "BEHAVIORAL: REG-B177 ORS (route-optimization.service.spec.ts:708) compares [28800, 72000] against undefined — vehicleDef carries no time_window at all today — so the specific pair (start seconds + WORKDAY_SEC) is unproven; the test currently only proves the field is absent. A mutation probe should set a wrong window (e.g. [0, 43200]) and confirm it goes red.",
+          "BEHAVIORAL: REG-B147 (route-optimization.service.spec.ts:572) over-pins the exact repaired order [far, near, mid]. I computed the ETAs against the real calculateETAs and [near, far, mid] is equally window-feasible and cheaper, so a correct implementation of the ruling's invariant that picks the earliest-cost feasible order instead of the front-insert would fail this test for the wrong reason. The invariant is 'window-feasible', not 'this permutation'.",
+          "BEHAVIORAL: REG-B147's persistence check slices `stopUpdates.slice(stopUpdates.length / 2)` to isolate the 'final pass', which hard-codes today's two-phase equal-count update shape; a legitimate single-pass or transaction-array persist would make it fail on the harness rather than on behavior.",
+          "BEHAVIORAL: REG-B177 analyze (route-analysis.service.spec.ts:187) includes `expect(resolveStartTime).toHaveBeenCalled()`, an assertion purely on a mock the test configured — it would pass on a call whose return value is thrown away. It is harmless only because the third-argument oracle on line 181 carries the proof."
+        ]
+      }
+    ],
+    "remediation": {
+      "fixed": [
+        "STRUCTURAL (blocker #2) — T6 is now collected by the documented red gate: retitled `T6: resolves the start time via…` to `REG-B177: analyzeRoute runs its ETA pass on the clock resolveStartTime returned, and returns configured:false without an API key` (auditor's preferred option (a)). Verified: `cd apps/api && npx jest src/route-optimization --runInBand -t \"REG-B(147|161|177)\"` now reports `Tests: 4 failed, 56 skipped, 60 total` and names T6 among the failures — it reported 3 failures before this edit.",
+        "BEHAVIORAL (blocker #5) — T6's wrong-reason gap closed. The `calculateETAs` mock is hoisted into a `calculateETAs` variable and passed to the RouteOptimizationService provider; `resolveStartTime` now returns `RESOLVED_START_TIME = \"06:45\"` (deliberately NOT the `\"08:00\"` analyzeRoute inlines at route-analysis.service.ts:76); the load-bearing assertion is `expect(calculateETAs).toHaveBeenCalledWith(null, expect.any(Array), RESOLVED_START_TIME, expect.any(Number), expect.any(Number))` — the real 5-arg signature (depot, stops, startTime, avgSpeed, serviceTime), not the 2-arg shape the remediation text sketched. It is placed FIRST so the test fails on a value, not an absence. Verified run output: `Expected: null, Any<Array>, \"06:45\", Any<Number>, Any<Number>` / `Received: null, [{...}], \"08:00\", 50, 15`. The tautological `expect(result).toEqual({configured:false, etas})` (comparing against the very const the mock returns) is dropped for `expect(result.configured).toBe(false)` + `expect(mockAnthropicCreate).not.toHaveBeenCalled()`. resolveStartTime's own argument shape is deliberately NOT pinned: the ruling leaves `resolveStartTime(run?, route?)` free (and `defaultStartTime` is a SystemConfig key, not a Route column — `grep defaultStartTime` confirms), so `toHaveBeenCalledWith(undefined, objectContaining({id:'route-1'}))` would have produced a false red against a correct fix; the flow oracle above proves the same invariant without pinning a signature.",
+        "Doc drift from the retitle closed in `.claude/pipeline/2026-09-06-F12-route-windows/bug-test-plan.md`: T6's row text updated and an amendment note added saying T6 now carries the REG-B177 token and sits INSIDE the red gate (T5 stays a pin outside it); the Commands line's `REG-B177 (T1)` corrected to `REG-B177 (T3 + T6)` — T3 is the ORS test that carries that token, T1 does not. No `redGate.commands` change was needed (option (a), not (b)). No implementation/production file was touched."
+      ],
+      "skipped": [
+        {
+          "index": 1,
+          "summary": "STRUCTURAL: T4 (apps/web/e2e/35-route-windows.spec.ts:70) never executed — excluded by the plan's own redGate.commands and only runnable against the deployed site.",
+          "reason": "The auditor's own remediation item 3 states T4 needs NO test-authoring edit, so I made none. I also did not run it: it is mutating (creates throwaway customers/routes) against the DEPLOYED site, and this machine's route to the Railway edge is recorded dead since 07:56Z, so a run here would be a false red. Its non-execution is a scope decision (same pending-deploy convention as specs 22-27/30); discharge is `npx playwright test --project=route-windows` after F12 ships. apps/web/e2e/35-route-windows.spec.ts and apps/web/playwright.config.ts are unchanged by me."
+        },
+        {
+          "index": 3,
+          "summary": "BEHAVIORAL: T2 stopped at expect(violation).toBeDefined() against an absent windowViolations field — its eta \"08:40\" / windowEnd \"08:30\" oracles never executed.",
+          "reason": "Not fixable in a pre-implementation round: `OptimizeResult` carries no `windowViolations` field today (cause-ruling §1, route-optimization.service.ts:51-56), so ANY assertion about it can only fail on absence — there is no value to be wrong. The oracle is still enforced the moment the field exists: `expect(violation).toEqual(expect.objectContaining({ eta: \"08:40\", windowEnd: \"08:30\" }))` sits on the next line and an implementation that reports the wrong ETA fails there. Weakening or re-shaping it would not add a value to compare against. The auditor's own remediation lists this as a mutation-probe target, not remediation."
+        },
+        {
+          "index": 4,
+          "summary": "BEHAVIORAL: T3's [28800, 72000] compares against an absent property, so any time_window value turns it green.",
+          "reason": "Same reason as #3 and same auditor classification (mutation-probe target, explicitly 'not remediation'). `vehicleDef` (route-optimization.service.ts:1059-1070) has no `time_window` today, so the only possible failure is `Received: undefined` — verified in my run. The exact-seconds oracle (28800 = timeToSec(\"08:00\"), 72000 = +WORKDAY_SEC) is already written as an exact `toEqual`, so a wrong value fails as soon as the property exists; nothing in the test can be strengthened further before implementation."
+        }
+      ],
+      "disputed": [
+        {
+          "index": 6,
+          "summary": "BEHAVIORAL: T1's full-order `toEqual([far, near, mid])` and persisted-stopNumber assertions over-specify the repair tie-break; [near, far, mid] is also window-feasible under the fixture's own numbers but would fail, so the test can drift from the invariant the ruling states.",
+          "reason": "The order T1 pins IS the design of record, not an arbitrary tie-break. cause-ruling.md §2 specifies the repair exactly: \"stable re-insert of violating windowed stops in ascending windowEnd at the earliest position that keeps them feasible; unwindowed stops keep cost order\", and build-plan.md P2 repeats it (\"deterministic repair (ascending windowEnd re-insert)\"). Applied to this fixture: the pure-cost order is [near, mid, far]; `far` is the only violating windowed stop; removing it gives [near, mid]; the EARLIEST re-insertion position that keeps `far` feasible is index 0 (ETA 08:40 <= 09:00 close), which yields exactly [far, near, mid]. The auditor's counter-example [near, far, mid] is re-insertion at index 1 — feasible, but not the earliest feasible position, so it is excluded by the ruling the implementer must follow. Relaxing T1 to \"far is not last\" would drop a pin on the specified algorithm without adding any coverage. T1 also already fails today on the strongest distinguishing value in the set (Expected \"stop-far\", Received \"stop-near\"), so it is left byte-identical."
+        }
+      ],
+      "filesChanged": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api/src/route-optimization/route-analysis.service.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-06-F12-route-windows/bug-test-plan.md"
+      ]
+    }
+  },
+  "implementation": [
+    {
+      "package": "P1",
+      "status": "done",
+      "filesChanged": [
+        "apps/api/src/route-optimization/route-optimization.service.ts",
+        "apps/api/src/route-optimization/route-analysis.service.ts"
+      ],
+      "deviations": ""
+    },
+    {
+      "package": "P4",
+      "status": "done",
+      "filesChanged": [
+        "apps/web/app/(dashboard)/routes/_components/CreateRouteModal.tsx (deleted)",
+        "apps/web/app/(dashboard)/routes/_components/CreateRouteModal.test.tsx (deleted)"
+      ],
+      "deviations": ""
+    },
+    {
+      "package": "P2",
+      "status": "done",
+      "filesChanged": ["apps/api/src/route-optimization/route-optimization.service.ts"],
+      "deviations": ""
+    },
+    {
+      "package": "P3",
+      "status": "done",
+      "filesChanged": [
+        "apps/web/lib/api/routes.ts",
+        "apps/web/app/(dashboard)/routes/templates/[id]/page.tsx",
+        "apps/web/app/(dashboard)/routes/page.tsx"
+      ],
+      "deviations": "None. Note: there is no web unit test for this package per bug-test-plan.md (D1 — \"no web unit runner exists\"); the only test that exercises this behavior is T4 (Playwright, spec 35), which is P5's package, run outside the local red gate. So this package had no RED test of its own to turn green — I implemented per the ruling's §2 web bullet and cross-checked field names/shapes (OptimizeResult.windowViolations/startTime, RouteAnalysisResult.etas[].withinWindow) against the already-implemented apps/api/src/route-optimization/route-optimization.service.ts (P1/P2) to keep the web types honest."
+    },
+    {
+      "package": "P5",
+      "status": "done",
+      "filesChanged": [],
+      "deviations": "No edits were made because both target files (apps/web/e2e/35-route-windows.spec.ts and apps/web/playwright.config.ts) were already present in the worktree, fully implementing T4 exactly per bug-test-plan.md and build-plan.md P5: the spec covers both the toast-count assertion and the Dispatch-modal warning/acknowledge gate on the templates/[id] page, and the playwright.config.ts `route-windows` project (operator storageState, dependencies:['setup']) is correctly appended as the last entry in the projects array. Verified: helper imports (setTenantCookie, TENANT_SLUG, apiBase, operatorAccessToken) all resolve to real exports; `npx tsc --noEmit -p tsconfig.json` in apps/web produced no errors for either file; `npx prettier --check` on both files passed clean. No local test run was performed per instructions (a later gate stage handles that, and this spec is explicitly outside the local red gate / only runs against the deployed site)."
+    }
+  ],
+  "gate": {
+    "pass": true,
+    "skipped": false,
+    "results": [
+      {
+        "command": "cd apps/api && npx jest --silent",
+        "pass": true,
+        "summary": "Test Suites: 255 passed, 255 total | Tests: 4155 passed, 4155 total | Time: 180.628 s",
+        "executed": 4155
+      },
+      {
+        "command": "cd apps/web && npx jest --silent",
+        "pass": true,
+        "summary": "Test Suites: 30 passed, 30 total | Tests: 163 passed, 163 total | Time: 25.934 s",
+        "executed": 163
+      },
+      {
+        "command": "node scripts/validate-lessons.mjs",
+        "pass": true,
+        "summary": "Register is self-consistent. 39/40 entries · 39.6/40.0 KB · archived 40 · nextId 84",
+        "executed": -1
+      }
+    ]
+  },
+  "buildFix": null,
+  "uiVerify": {
+    "ran": false,
+    "completed": false,
+    "viewports": [],
+    "findings": []
+  },
+  "mutationProbe": {
+    "ran": false,
+    "targets": 0,
+    "results": [],
+    "allCaught": true,
+    "allRestored": true,
+    "restoredVerified": null,
+    "checksumMismatches": [],
+    "baselineDisturbed": [],
+    "skippedTargets": [],
+    "skipped": "small-scale"
+  },
+  "finalPass": {
+    "ran": false,
+    "completed": false,
+    "skipped": "small-scale",
+    "reader": null,
+    "model": null,
+    "effort": null,
+    "fallback": false,
+    "files": [],
+    "candidates": 0,
+    "gaps": [],
+    "secondRead": false,
+    "decision": "",
+    "findings": []
+  },
+  "confirmedFindings": [
+    {
+      "file": "apps/api/src/route-optimization/route-optimization.service.ts",
+      "line": 331,
+      "severity": "blocker",
+      "summary": "The window-repair pass only checks the re-inserted stop's own window, so it can push a previously on-time stop out of its window and miss a feasible order that exists — violating the ruling's §2 invariant.",
+      "detail": "Verified by running the transcribed algorithm (calculateETAs :229-270 + applyWindowPass :298-352 + haversineKm :1484, copied verbatim into a scratch script). Depot (0,0); A=lat 0.1 window 08:00-08:20; B=lat 0.2 no window; C=lat 0.3 window 08:00-09:00; start 08:00, 50 km/h, 15 min service. Cost order [A,B,C] -> A@08:13 ok, C@09:10 LATE (1 violation). A fully feasible order exists: [A,C,B] -> A@08:13 ok, C@08:55 ok, 0 violations. The repair instead pulls C out, re-inserts it at the earliest position where C alone is feasible (i=0) and persists [C,A,B] -> C@08:40 ok, A@09:21 LATE. Net effect of the fix: stop A, which was ON TIME before optimize, is now delivered outside its window, and the reported violations move from C to A. The insertion loop at :331-336 tests only `stopEta` for the stop being inserted, never re-checks the stops already placed, and there is no guard that discards a repair whose re-evaluation (:347) has more/other violations than the pre-repair order.",
+      "fixHint": "After the single re-evaluation at :347, compare against the pre-repair violation set and keep whichever order has fewer violations (or reject any repair that turns a previously-feasible windowed stop infeasible); alternatively require the candidate's FULL eta set — not just `stop.id`'s — to introduce no new `withinWindow === false`.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/web/e2e/35-route-windows.spec.ts",
+      "line": 266,
+      "severity": "blocker",
+      "summary": "T4's acknowledge-checkbox locator matches nothing that the implementation renders, so spec 35 can never pass even with the fix deployed.",
+      "detail": "The spec looks up `dialog.getByRole(\"checkbox\", { name: /acknowledge/i })`. The checkbox implemented in apps/web/app/(dashboard)/routes/templates/[id]/page.tsx:420-429 is a bare `<input type=\"checkbox\">` wrapped in a `<label>` whose only text is the span at :428, \"I understand these stops may be delivered outside their window.\" — no aria-label, no aria-labelledby, and the word \"acknowledge\" appears nowhere in the rendered markup (grep over both page files returns only the `acknowledged` state identifier and the Dispatch button's `title` attribute, which is not the checkbox's name). The accessible name is therefore \"I understand these stops may be delivered outside their window.\", `/acknowledge/i` does not match, and both `expect(acknowledgeCheckbox).toBeVisible()` (:267-271) and the following `.check()` fail. Since spec 35 is the sole proof of B161's web half and the registry `prove --pending-deploy` row hangs off it, the web leg is unprovable as written.",
+      "fixHint": "Either relax the locator to the rendered label (e.g. /outside their window/i) or add `aria-label=\"Acknowledge late-stop warning\"` to the checkbox in BOTH modals (templates/[id]/page.tsx:421 and routes/page.tsx:208) so the T4 locator and the duplicate modal agree.",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/route-optimization/route-optimization.service.ts",
+      "line": 897,
+      "severity": "major",
+      "summary": "getRouteVariants (and therefore applyRouteVariant, which persists a chosen variant) never runs the window pass, so B147's symptom survives on the route-variants path the ruling said would inherit the fix.",
+      "detail": "cause-ruling.md §2 states \"`getRouteVariants` inherits the pass (same seam)\" and build-plan P2 repeats it. In the implemented code `applyWindowPass` is referenced only at :298 (definition), :510 (optimizeTemplate) and :694 (optimizeRoute). getRouteVariants (:864) calls `solveWithCostMatrix` directly at :897 and :940 and returns the raw cost-only `matrix.stopIds`; `applyRouteVariant` (:988) then persists exactly those stopIds as the route's (and optionally the run's) stopNumbers. Failure scenario: on /routes/[id] (apps/web/app/(dashboard)/routes/[id]/page.tsx:495 calls useRouteVariants) an operator picks \"Fastest\"; the persisted order is window-blind and no `windowViolations` are computed or surfaced — the same wrong behavior B147 describes, on a UI path that is one click away from the fixed one. Neither T1-T6 nor any existing spec covers it (T5 only pins the pre-existing variant tests).",
+      "fixHint": "Run the same `resolveStartTime` + `resolveSpeedAndService` + `applyWindowPass` seam over each variant's `matrix.stopIds` before building the RouteVariant (both the per-config loop at :897 and the solver-only fallback at :940), or run it inside applyRouteVariant before persisting.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/web/app/(dashboard)/routes/templates/[id]/page.tsx",
+      "line": 350,
+      "severity": "major",
+      "summary": "The dispatch gate reuses `lastOptimizeResult` forever, so after any manual stop edit the warning is stale — and in the dangerous direction the acknowledge gate silently disappears.",
+      "detail": "`setLastOptimizeResult` is written only in handleOptimize's onSuccess (:603) and is never cleared by handleRemoveStop (:625), the drag-reorder mutation (:654) or the add-stop path. DispatchModal's effect (:348-360) short-circuits on it: `if (lastOptimizeResult) { setLateStops(lateStopsFromOptimize(lastOptimizeResult)); return; }`. Failure scenario: operator clicks Optimize on a route whose stops are all window-feasible (windowViolations: []), then drags the last stop to a position that makes it arrive after its window closes; opening Dispatch shows NO warning and the Dispatch button is enabled — the B161 gate is gone for a route that now genuinely misses a window. The reverse also happens: optimize reports a late stop, the operator drags it to the front to fix it, and Dispatch is still gated behind an acknowledge for a violation that no longer exists.",
+      "fixHint": "Clear `lastOptimizeResult` (setLastOptimizeResult(null)) in every handler that mutates the stop set/order — remove, add, reorder — so the modal falls through to the fresh feasibility read.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/web/app/(dashboard)/routes/page.tsx",
+      "line": 128,
+      "severity": "major",
+      "summary": "Both dispatch modals fire POST /routes/:id/analyze on open, which is the metered Anthropic endpoint, to obtain window data that is computed without any AI.",
+      "detail": "routes/page.tsx:126-146 calls `analyzeRoute.mutate` on every modal open unconditionally; templates/[id]/page.tsx:355 does the same whenever no prior optimize result exists. That endpoint (route-optimization.controller.ts:73-77 -> RouteAnalysisService.analyzeRoute) computes `etas` deterministically and then, whenever an Anthropic key resolves, builds a prompt and calls `anthropic.messages.create` and records an AiUsageEvent (route-analysis.service.ts:99-140; the metering is asserted by the existing 'records a tenant-tagged AiUsageEvent' spec). Consequences per modal open, not per dispatch: (a) a billed LLM call and a metered usage row for data the modal never reads beyond `etas`; (b) multi-second latency during which `lateStops` is [] so `needsAcknowledge` is false and the operator can dispatch past the gate; (c) the endpoint carries @Throttle({ttl:60_000, limit:10}) shared with optimize/variants, so an operator dispatching a morning's routes from the list page can exhaust it and the analyze silently 429s.",
+      "fixHint": "Read the window signal from a non-AI source — e.g. an `etas`-only response/flag on the analyze endpoint, or reuse the optimize result's windowViolations — instead of invoking the Anthropic-backed analysis to open a modal.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/web/app/(dashboard)/routes/page.tsx",
+      "line": 146,
+      "severity": "major",
+      "summary": "The late-stop warning is computed against a departure time that is not the one being dispatched: it never recomputes when the operator edits Departure Time, and on re-open it sends the previous session's value.",
+      "detail": "The analyze effect's deps are `[open, routeId]` (:146), while the new Departure Time input (:222-233) writes `startTime` and `handleDispatch` (:151-157) sends that same `startTime` to createRun. Failure scenario 1: operator opens Dispatch (analysis runs at the tenant default 08:00, no late stops), types 18:00 as the departure, and dispatches — every windowed stop is late, and no warning ever appeared or gated the button. Failure scenario 2: operator opens the modal, sets 16:00, cancels; on the next open the reset effect (:120-127, declared first) queues startTime back to the tenant default, but the analyze effect in the SAME commit reads the stale closure value \"16:00\" and analyzes at 16:00 while the form shows 08:00 — the warning list describes a departure the operator cannot see. The templates modal has the same class of mismatch: it passes no startTime at all (:355-358) and its `lastOptimizeResult` was computed at the tenant default.",
+      "fixHint": "Include `startTime` in the analyze effect's dependency list (debounced) so the warning tracks the field the operator is actually dispatching with, and read it from state after the reset rather than from the open-render closure.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/route-optimization/route-optimization.service.ts",
+      "line": 694,
+      "severity": "major",
+      "summary": "Mid-run re-optimization evaluates delivery windows against the run's original scheduled departure, so a driver optimizing from their current GPS gets window verdicts that are wrong by however long they have been on the road.",
+      "detail": "optimizeRoute resolves `startTime = await this.resolveStartTime(undefined, run.startTime)` (:576) and passes it to applyWindowPass (:694-700) together with `start ?? null`, where `start = origin ?? depot` (:658). The controller explicitly supports `origin` as the driver's current GPS mid-run (route-optimization.controller.ts:35-44, @Roles(OPERATOR, DRIVER), and the comment at :655-657 says so). Failure scenario: a run departs 08:00, the driver re-optimizes at 12:30 from their current location; every ETA is computed as if the vehicle left that location at 08:00, so afternoon windows look comfortably reachable, `windowViolations` comes back empty (a false all-clear the toast and dispatch gate then trust), and — where the stale clock does flag something — the persisted stop order is reordered on ETAs that are hours off. Before this change the run order was cost-only, so the stale clock could not move stops.",
+      "fixHint": "When `origin` is supplied, resolve the window-pass clock from the current time (or an explicit `startTime` on the optimize body) rather than the run's snapshotted departure — or skip the repair and report violations only.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/route-optimization/route-optimization.service.spec.ts",
+      "line": 479,
+      "severity": "minor",
+      "summary": "The new API tests only exercise routes with a single windowed stop, so the multi-stop re-insertion loop — the only non-trivial new algorithm — has no test, which is why the repair regression above ships green.",
+      "detail": "T1 (:517) has one windowed stop among three; T2 (:559) is a one-stop route; T3 (:606) has no windows at all. Nothing exercises two or more windowed stops, so no test covers: the `violatingStops` ascending-windowEnd sort (:325-327), the multi-iteration insertion loop, or the final re-evaluation returning a DIFFERENT stop than the one repaired. A three-stop fixture with two windowed stops (A window 08:00-08:20 at lat 0.1, C window 08:00-09:00 at lat 0.3, B unwindowed at lat 0.2) fails today — it persists [C,A,B] with A late — and would have caught the blocker. Separately, `analyzeRouteRun` (route-analysis.service.ts:242, changed by this diff) has no test at all: swapping the helper's arguments there (`resolveStartTime(run.startTime, startTime)`) would silently make an operator-supplied startTime lose to the run snapshot and the suite would stay green, since T6 only covers `analyzeRoute`.",
+      "fixHint": "Add a two-windowed-stop optimize test asserting no stop that was within its window before the pass is outside it after, plus a route-run analyze test pinning the explicit-override precedence.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/web/app/(dashboard)/routes/templates/[id]/page.tsx",
+      "line": 76,
+      "severity": "minor",
+      "summary": "`lateStopsFromOptimize` / `lateStopsFromAnalysis` are exported from a Next.js App Router `page.tsx`, which Next's generated route types reject as invalid page exports.",
+      "detail": "Next 14.2.35's type-guard generator (node_modules/next/dist/build/webpack/plugins/next-types-plugin/index.js:36-56) emits `checkFields<Diff<{ default: Function; config?; generateStaticParams?; revalidate?; dynamic?; ...; metadata?; generateMetadata?; viewport?; generateViewport? }, TEntry, ''>>()` where `Diff` is `Omit<TEntry, keyof Base>` and `checkFields` requires every remaining key to be `never` — so any extra value export from a page module is a TS2344 rendered as 'Page \"...\" does not match the required types of a Next.js Page'. apps/web/tsconfig.json includes `.next/types/**/*.ts`, so `npm run build -w apps/web` followed by `npm run check-types` (or a turbo cache restore of the `.next/**` build output) turns the typecheck red on a tree that is otherwise green. Every other named export from a page.tsx in this repo is a recognized segment config (`dynamic`, `metadata`) — this is the only arbitrary one. Not reproduced by running `next build` in this session (next.config.mjs sets `typescript.ignoreBuildErrors: true`, and CI's `npm run verify` never builds web first, so the deploy build and current CI are unaffected).",
+      "fixHint": "Move both helpers and the `LateStop` interface into a sibling module (e.g. app/(dashboard)/routes/_components/late-stops.ts) and import them from both dispatch modals — which also removes the duplicated LateStop/label logic re-declared at apps/web/app/(dashboard)/routes/page.tsx:84-87,132-143.",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/web/app/(dashboard)/routes/page.tsx",
+      "line": 129,
+      "severity": "minor",
+      "summary": "The analyze mutation has no onError, so any failure of the feasibility read leaves the dispatch gate silently open.",
+      "detail": "routes/page.tsx:128-145 and templates/[id]/page.tsx:355-358 pass only `onSuccess`. On a 429 from the shared OPTIMIZE_THROTTLE (10/60s, route-optimization.controller.ts:9), a 403 from AddonGuard, or any 5xx, `lateStops` stays `[]`, `needsAcknowledge` is false, and the modal renders exactly like a route with no window problems — the operator gets a clean Dispatch button and no indication the check never ran. A warning gate that fails open should say so.",
+      "fixHint": "Add an onError that surfaces an inline 'couldn't check delivery windows' notice (and decide deliberately whether that state gates Dispatch).",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/route-optimization/route-optimization.service.ts",
+      "line": 251,
+      "severity": "minor",
+      "summary": "`withinWindow` is false for arriving BEFORE the window opens, so early arrivals are now reported and rendered as 'misses its window' and gate dispatch.",
+      "detail": "calculateETAs sets `withinWindow = arrivalSec >= windowStartSec && arrivalSec <= windowEndSec` (:251); applyWindowPass treats every `withinWindow === false` as a violation (:305-312) and the web copy calls them stops that 'miss their delivery window' (routes/page.tsx:203-206, templates/[id]/page.tsx:410-413) with a mandatory acknowledge. Failure scenario: a customer with an afternoon window (14:00-15:00) on an 08:00 route. Reachable at 08:40, the driver simply waits; the optimize toast now reads 'Route optimized — 1 stop miss their window', the Dispatch button is disabled until acknowledged, and the repair pass will search for a later slot for that stop — while calculateETAs models no waiting at all, so any order it 'fixes' this way is achieved by detouring rather than waiting. This was harmless while withinWindow only fed the advisory analysis panel; it now steers the persisted order and a dispatch gate.",
+      "fixHint": "Distinguish 'too early' from 'too late' in the violation set (repair/gate on late only, or label early arrivals separately) — and note the toast string is also ungrammatical for the singular case: '1 stop miss their window'.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "(artifact)",
+      "line": 34,
+      "severity": "minor",
+      "summary": "Line number reference for matrixCache is off by one",
+      "detail": "bug-test-plan.md line 34 claims: 'matrixCache (`cost-matrix.ts:44`) leaks between tests only for real Google matrices'. However, the actual const declaration is on line 43 of cost-matrix.ts, not line 44. Line 44 is blank.",
+      "fixComplexity": "mechanical",
+      "fixHint": "Change '`cost-matrix.ts:44`' to '`cost-matrix.ts:43`' in the Harness notes section of bug-test-plan.md",
+      "phase": "Baseline"
+    },
+    {
+      "file": "(red-gate)",
+      "severity": "blocker",
+      "phase": "Red gate",
+      "summary": "Red gate never went properly RED — the new tests are not proven able to fail",
+      "detail": "A test that has never failed proves nothing. Auditor notes: [\"STRUCTURAL: apps/web/e2e/35-route-windows.spec.ts (T4, REG-B161) is a new test that never ran — the red gate command is the apps/api jest lane only. It collects cleanly (verified with playwright --list) but has produced no assertion evidence, so its four behavioral oracles (toast names the count, dialog alert warning, Dispatch disabled, acknowledge checkbox) are unproven. This is a deliberate design choice recorded in bug-test-plan.md T4 and the spec header, not an accident — but by the gate's own rule it makes structurallyRed false, and the lead should either bring it into the gate or record it explicitly as an out-of-gate pending-deploy row so the gate's denominator is the 4 jest tests.\",\"BEHAVIORAL: REG-B161 (route-optimization.service.spec.ts:632) fails on an absence (`toBeDefined()` -> undefined) because OptimizeResult has no windowViolations field today, so its real oracles — eta \\\"08:40\\\", windowEnd \\\"08:30\\\", startTime \\\"08:00\\\" — are never reached and remain unproven. A mutation probe must confirm the test fails on a WRONG eta/windowEnd, not just on a missing field.\",\"BEHAVIORAL: REG-B177 ORS (route-optimization.service.spec.ts:708) compares [28800, 72000] against undefined — vehicleDef carries no time_window at all today — so the specific pair (start seconds + WORKDAY_SEC) is unproven; the test currently only proves the field is absent. A mutation probe should set a wrong window (e.g. [0, 43200]) and confirm it goes red.\",\"BEHAVIORAL: REG-B147 (route-optimization.service.spec.ts:572) over-pins the exact repaired order [far, near, mid]. I computed the ETAs against the real calculateETAs and [near, far, mid] is equally window-feasible and cheaper, so a correct implementation of the ruling's invariant that picks the earliest-cost feasible order instead of the front-insert would fail this test for the wrong reason. The invariant is 'window-feasible', not 'this permutation'.\",\"BEHAVIORAL: REG-B147's persistence check slices `stopUpdates.slice(stopUpdates.length / 2)` to isolate the 'final pass', which hard-codes today's two-phase equal-count update shape; a legitimate single-pass or transaction-array persist would make it fail on the harness rather than on behavior.\",\"BEHAVIORAL: REG-B177 analyze (route-analysis.service.spec.ts:187) includes `expect(resolveStartTime).toHaveBeenCalled()`, an assertion purely on a mock the test configured — it would pass on a call whose return value is thrown away. It is harmless only because the third-argument oracle on line 181 carries the proof.\"]. Per-test outcomes: [{\"test\":\"REG-B147: persists a window-feasible order on the cost-matrix branch — apps/api/src/route-optimization/route-optimization.service.spec.ts:565\",\"outcome\":\"assertion-failure\",\"note\":\"VERIFIED by my own re-run. Fails at line 571 on a distinguishing value: expected \\\"stop-far\\\", received \\\"stop-near\\\" — exactly the row the test plan predicted. The SUT ran end-to-end (fetch rejected -> haversine fallback, a stopOrder was produced), so this is real behavior, not a stub. Flag: the follow-up toEqual pins the FULL order [far, near, mid]; I checked calculateETAs (route-optimization.service.ts:193-234) by hand and [near, far, mid] is also window-feasible (far arrives 08:55 vs the 09:00 close) and cheaper, so an implementation that satisfies the ruling's invariant but picks a different valid order goes red for the wrong reason. Second flag: `finalPass = stopUpdates.slice(stopUpdates.length / 2)` hard-assumes a two-phase update with equal call counts.\"},{\"test\":\"REG-B161: reports a stop whose window closes before its reachable ETA under any order — apps/api/src/route-optimization/route-optimization.service.spec.ts:588\",\"outcome\":\"assertion-failure\",\"note\":\"VERIFIED. Fails at line 632 on `expect(violation).toBeDefined()` receiving undefined — an ABSENCE, not a value. `OptimizeResult` has no windowViolations field today (cause-ruling.md section 1 confirms), so the test never reaches its own oracle at line 633 ({ eta: \\\"08:40\\\", windowEnd: \\\"08:30\\\" }) or line 634 (startTime === \\\"08:00\\\"). Those two oracles are currently unproven.\"},{\"test\":\"REG-B177: the ORS request carries the vehicle's departure clock as its time_window — apps/api/src/route-optimization/route-optimization.service.spec.ts:637\",\"outcome\":\"assertion-failure\",\"note\":\"VERIFIED. Fails at line 708: expected [28800, 72000], received undefined. I confirmed the absence is genuine — grep of route-optimization.service.ts shows `time_windows` only on jobs (:1078) and nothing on vehicleDef. The expected pair is arithmetically consistent with the ruling (08:00 = 28800s, WORKDAY_SEC 12h = 43200s), but because the field does not exist the assertion cannot yet discriminate a wrong-but-present value.\"},{\"test\":\"REG-B177: analyzeRoute runs its ETA pass on the clock resolveStartTime returned, and returns configured:false without an API key — apps/api/src/route-analysis... (apps/api/src/route-optimization/route-analysis.service.spec.ts:173)\",\"outcome\":\"assertion-failure\",\"note\":\"VERIFIED, and the strongest oracle in the set. Fails at line 181 on a distinguishing VALUE: third calculateETAs arg expected \\\"06:45\\\", received \\\"08:00\\\". I confirmed the source of the received value — route-analysis.service.ts:76 inlines `startTime ?? defaultStartTimeRaw ?? \\\"08:00\\\"`. Flag: `expect(resolveStartTime).toHaveBeenCalled()` (line 187) asserts only on a mock the test itself configured and would pass on a call whose result is discarded; the load-bearing work is done by the third-argument oracle, which is fine. Minor: avgSpeedKmh/serviceTimeMinutes are pinned only as expect.any(Number).\"},{\"test\":\"REG-B161 the Optimize toast names the stop(s) that miss their window, and Dispatch stays disabled until the late-stop warning is acknowledged (T2 / T4) — apps/web/e2e/35-route-windows.spec.ts:70\",\"outcome\":\"not-run\",\"note\":\"Filtered out of the red gate: redGate.commands is the apps/api jest lane only, and the plan (bug-test-plan.md T4) and the spec header (lines 17-23) both place it OUTSIDE the gate as a pending-deploy Playwright project. I did verify it is not DEAD: `npx playwright test --list --project=route-windows` collects it (1 test under the new `route-windows` project, imports and TS parse clean), so the playwright.config.ts entry works. But no assertion of it has ever executed, so there is zero evidence it fails on behavior rather than on a fixture or environment fault.\"}]. Remediation asked for: Only one STRUCTURAL problem, and it is T4 (apps/web/e2e/35-route-windows.spec.ts) being filtered out of the gate. Two mutually exclusive fixes; pick one.\n\n(A) Bring it into the gate against the local Docker stack:\n1. Root `package.json` line 35 (`\"local:e2e\"`): append `--project=route-windows` to the project allow-list, so the command reads `... --project=cancelled-edit-banner --project=route-windows --workers=1`.\n2. Add to `.claude/pipeline/2026-09-06-F12-route-windows/bug-test-plan.md` \"Commands\" a second red-gate line: `npm run local:up && npm run local:seed && npm run local:e2e` (T4 expects red today).\n3. Caveat to check before choosing (A): the spec provisions customers via `POST /customers` and relies on synchronous geocoding to produce address lat/lng. If the local stack has no Google geocoding key, the stops come back without coordinates and T4 would fail as an ERROR-class fixture failure (or on `expect(addOnTimeStopRes.ok())`), not on the behavioral assertion — which would be a worse gate result than not running it. Verify geocoding works on the compose stack first; if it does not, choose (B).\n\n(B) Keep it out of the gate and make that explicit rather than implicit: in `bug-test-plan.md`, move the T4 row out of the \"Red set (REG-tagged; in the red gate)\" table into a new \"Pending-deploy proofs (outside the red gate)\" table alongside the existing \"Pins\" section, and state in `redGate.commands` that the gate's denominator is the four apps/api jest tests (T1, T2, T3, T6). No test-file edits are needed for (B); T4 is already correct, collects, and is honestly labelled in its own header.\n\nNo other structural edits are required — all four in-gate tests ran and failed on assertions, none passed, none errored, none was skipped.",
+      "fixHint": "Strengthen the vacuous tests, or rewrite the requirement if the behavior already exists.",
+      "fixComplexity": "judgment"
+    },
+    {
+      "file": "apps/api/src/route-optimization/route-optimization.service.ts",
+      "line": 814,
+      "severity": "major",
+      "summary": "apps/api/src/route-optimization/route-optimization.service.ts:814 carries the same defect as the bug being fixed — getRouteVariants calls solveWithCostMatrix at :897 and :940 without applyWindowPass (grep shows the pass only at its definition :298 and the",
+      "detail": "Found by the sibling sweep with pattern //points: LatLng\\[\\] = \\[//. Matching line: const points: LatLng[] = [start, ...stops.map((s) => ({ lat: s.lat, lng: s.lng }))];. Judge's evidence: getRouteVariants calls solveWithCostMatrix at :897 and :940 without applyWindowPass (grep shows the pass only at its definition :298 and the two optimize seams :510/:694), so a route whose stop is windowed 09:00-10:00 gets a cost-only FASTEST variant that applyRouteVariant persists as the stop order with no windowViolations returned and no late-stop warning - B147/B161 live in the variants path, contrary to ruling §2's claim that getRouteVariants inherits the pass.. This is a SECOND occurrence of the defect this run is fixing; it was not pre-refuted, so verify it in the code before changing anything.",
+      "fixHint": "Apply the same fix (or the same guard) here, in the same shape as the primary fix, and cover it with a test.",
+      "fixComplexity": "judgment",
+      "source": "sibling-sweep",
+      "phase": "Verify"
+    }
+  ],
+  "confirmedByPhase": {
+    "Baseline": 1,
+    "Author tests": 0,
+    "Red gate": 1,
+    "Implement": 0,
+    "Gate & Review": 11,
+    "Verify": 1,
+    "UI verify": 0,
+    "Mutation probe": 0,
+    "Fix": 0,
+    "Final pass": 0
+  },
+  "phaseReport": [
+    {
+      "phase": "Baseline",
+      "ran": true,
+      "agents": 4,
+      "rawFindings": 1,
+      "tokens": 33341,
+      "model": "claude-haiku-4-5 (gate/grounding/manifest) + claude-sonnet-5 (harness check)",
+      "effort": "low / low harness check",
+      "estUsd": 0.17,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Author tests",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": 0,
+      "tokens": 89627,
+      "model": "claude-sonnet-5",
+      "effort": "medium (a package's own effort wins)",
+      "estUsd": 0.9,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Red gate",
+      "ran": true,
+      "agents": 5,
+      "rawFindings": 1,
+      "tokens": 89069,
+      "model": "claude-haiku-4-5 (run) + claude-opus-5 (audit/remediate)",
+      "effort": "low run / high audit / high remediation",
+      "estUsd": 2.23,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Implement",
+      "ran": true,
+      "agents": 5,
+      "rawFindings": 0,
+      "tokens": 159778,
+      "model": "claude-sonnet-5",
+      "effort": "medium (a package's own effort wins)",
+      "estUsd": 1.6,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Gate & Review",
+      "ran": true,
+      "agents": 3,
+      "rawFindings": 11,
+      "tokens": 97621,
+      "model": "claude-haiku-4-5 (gate/regate) + claude-opus-5 (build-fix, lenses) + claude-sonnet-5 (radius pack)",
+      "effort": "low gate / high build-fix / deep lenses high (xhigh when any file is HIGH risk) / pattern lenses medium / low radius pack",
+      "estUsd": 2.44,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Verify",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": 1,
+      "tokens": 24873,
+      "model": "claude-sonnet-5 (location check) + claude-opus-5 (refuters, per file) + claude-fable-5-1 (split-vote tie-break) + claude-sonnet-5 (sibling grep) + claude-opus-5 (sibling judge)",
+      "effort": "location check low / refuters medium (high on HIGH-risk findings) / tie-break high / low sibling grep / medium sibling judge",
+      "estUsd": 0.62,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "UI verify",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-sonnet-5 (driver) + claude-opus-5 (judge)",
+      "effort": "medium driver / high judge",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Mutation probe",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-haiku-4-5 (checksums) + claude-opus-5 (probes)",
+      "effort": "low checksums / medium probes",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Fix",
+      "ran": true,
+      "agents": 20,
+      "rawFindings": 0,
+      "tokens": 762477,
+      "model": "claude-sonnet-5 (brief) + claude-fable-5-1 (plans every fix in the round; claude-opus-5 if it declines) + claude-sonnet-5 (mechanical executors) + claude-sonnet-5 (designed LOW-risk executors) + claude-opus-5 (HIGH-risk and broad-key executors, recheck) + claude-haiku-4-5 (regate)",
+      "effort": "low brief / high plan (xhigh on the fallback planner) / low mechanical / medium designed LOW-risk / high HIGH-risk and broad keys / high re-check / low gates",
+      "estUsd": 19.06,
+      "overlappedWith": null,
+      "note": "Fable-planned fixes (Sonnet brief -> Fable plan -> executors implementing the design)"
+    },
+    {
+      "phase": "Final pass",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-sonnet-5 (diff digest) + claude-opus-5 (adversarial read → candidates) + claude-fable-5-1 (decides; claude-opus-5 if it declines)",
+      "effort": "low digest / xhigh read / high decide (xhigh on the fallback decider)",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    }
+  ],
+  "fixRounds": 2,
+  "fixReports": [
+    {
+      "round": 1,
+      "plan": {
+        "round": 1,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 14,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 2,
+          "sonnet": 2,
+          "opus": 10
+        },
+        "waves": [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]],
+        "note": "Round 1 fixes all fourteen findings in a single wave (the engine serializes by file; several files are shared across findings so no split is possible). API: make applyWindowPass monotone (full-candidate check plus reject-if-worse net, #0), run the same seam over both getRouteVariants branches with windowViolations on the variant (#2/#13), give a started run an honest clock via a body startTime and skip the pass rather than guess (#6), model early-arrival waiting in calculateETAs so only late is a violation (#10), and add a windows-only analyze flag so the dispatch modals never hit Anthropic (#4). Web: both dispatch modals always analyze fresh (drop the lastOptimizeResult short-circuit, #3), track the departure time with a debounce and sequence guard (#5), disable Dispatch while checking and announce a failed check without gating (#9), move the late-stop helpers out of page.tsx (#8), and relax the T4 checkbox locator to the rendered label (#1). Tests: two-windowed-stop and no-newly-late cases (T7), analyzeRouteRun precedence, windows-only no-AI (T8), variants (T9), mid-run clock (T10), waiting model (T11), plus REG-B147 re-pinned to the feasibility invariant with the two-phase persist slice removed. Red gate: option (B) — T4 stays a pending-deploy row and the plan states the four-jest denominator; the cost-matrix citation is corrected. Option-B bookkeeping honoured: no map/lessons/ledger edits."
+      },
+      "reports": [
+        {
+          "target": "apps/api/src/route-optimization/route-optimization.service.ts",
+          "route": "opus",
+          "fixed": [
+            "[#0] Window-repair pass could push an on-time stop out of its window and miss a feasible order — applyWindowPass now evaluates the FULL candidate order at each insertion position (rejecting any position that turns a previously-feasible stop infeasible) and, after the single re-evaluation, keeps the repair only if it has no more violations than the input order and no violation on a stop that was fine before the pass; otherwise it returns the solver's order and its own violation set.",
+            "[#1] getRouteVariants never ran the window pass — it now resolves the same clock (resolveStartTime) and travel model (resolveSpeedAndService) before solving, runs applyWindowPass over each variant's ordered stops in BOTH the per-config Google loop and the catch-block solver-only fallback, computes the polyline/duration on the repaired order, returns the repaired stopIds, and carries the violations on a new optional RouteVariant.windowViolations (mirrored on apps/web/lib/api/routes.ts).",
+            "[#2] Mid-run re-optimize judged windows against the run's scheduled departure — POST /route-runs/:id/optimize now accepts an optional HH:mm `startTime` (validated with the repo's /^\\d{2}:\\d{2}$/ shape) threaded into optimizeRoute; the window clock is `startTimeOverride ?? (run.status === IN_PROGRESS ? null : scheduledStartTime)`, and a null clock skips applyWindowPass entirely (solver order persisted unchanged, windowViolations []), while a run that has not departed keeps its scheduled clock exactly as before.",
+            "[#3] Early arrivals were reported as window misses — calculateETAs now models waiting: an arrival before the window opens is withinWindow true, records waitMinutes, and departs at windowStart + service time (so downstream ETAs follow the wait); only a late arrival is a violation. `waitMinutes?: number` added to StopETA in the service and to its shared mirror in packages/types/api/routes.ts. The optimize toast in templates/[id]/page.tsx was also fixed to read '1 stop misses its window' / 'N stops miss their window'.",
+            "[#4] Sibling-sweep duplicate of [#1] (same getRouteVariants defect, cited at solveWithCostMatrix:814) — fixed by the [#1] change at both call sites; solveWithCostMatrix itself was NOT touched and stays a pure cost solver."
+          ],
+          "skipped": [
+            {
+              "index": 2,
+              "summary": "Mid-run re-optimization evaluates delivery windows against the run's original scheduled departure, so a driver optimizing from their current GPS gets window verdicts that are wrong by however long they have been on the road.",
+              "reason": "API half is FIXED; only the design's web half was not applied, and it has no target: `useOptimizeRoute` (apps/web/lib/api/routes.ts:502) posts NO body at all and its mutation variable is a bare `string`, and neither caller (routes/[id]/page.tsx:469, routes/[id]/dispatch/page.tsx:436) passes an origin. The design says to add `startTime` 'ONLY where the origin sent is a live geolocation for an underway run' — web never sends a live origin, so the condition is never met. Only mobile sends originLat/originLng, and the design says mobile stays untouched (the server's skip-the-pass fallback covers it). Also a small design-vs-code note: the design says to read the started status from a shared RouteRun enum in packages/types/api/enums.ts, but no RouteRunStatus mirror exists there — the file already imports RouteRunStatus from @prisma/client and uses it elsewhere, so `RouteRunStatus.IN_PROGRESS` was used."
+            }
+          ],
+          "filesChanged": [
+            "apps/api/src/route-optimization/route-optimization.service.ts",
+            "apps/api/src/route-optimization/route-optimization.controller.ts",
+            "apps/api/src/route-optimization/route-optimization.service.spec.ts",
+            "apps/web/lib/api/routes.ts",
+            "apps/web/app/(dashboard)/routes/templates/[id]/page.tsx",
+            "packages/types/api/routes.ts"
+          ]
+        },
+        {
+          "target": "apps/web/e2e/35-route-windows.spec.ts",
+          "route": "opus",
+          "fixed": [
+            "T4's acknowledge-checkbox locator matches nothing that the implementation renders, so spec 35 can never pass even with the fix deployed."
+          ],
+          "skipped": [],
+          "filesChanged": ["apps/web/e2e/35-route-windows.spec.ts"]
+        },
+        {
+          "target": "apps/web/app/(dashboard)/routes/templates/[id]/page.tsx",
+          "route": "opus",
+          "fixed": [
+            "The dispatch gate reuses `lastOptimizeResult` forever, so after any manual stop edit the warning is stale — and in the dangerous direction the acknowledge gate silently disappears.",
+            "`lateStopsFromOptimize` / `lateStopsFromAnalysis` are exported from a Next.js App Router `page.tsx`, which Next's generated route types reject as invalid page exports."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "apps/web/app/(dashboard)/routes/templates/[id]/page.tsx",
+            "apps/web/app/(dashboard)/routes/page.tsx",
+            "apps/web/app/(dashboard)/routes/_components/late-stops.ts",
+            "apps/web/app/(dashboard)/routes/_components/late-stops.test.ts"
+          ],
+          "disputed": []
+        },
+        {
+          "target": "apps/web/app/(dashboard)/routes/page.tsx",
+          "route": "opus",
+          "fixed": [
+            "[#0] Both dispatch modals fire the metered Anthropic analyze endpoint on open. Added a windows-only mode end to end: RouteAnalysisService.analyzeRoute now takes options?: { windowsOnly?: boolean } and returns { configured: false, etas } immediately after the deterministic ETA pass — before the Anthropic key resolve, client construction, prompt build and AiUsageEvent write; RouteTemplateOptimizationController.analyze accepts windowsOnly on the body and passes it (analyzeRouteRun, the throttle and the AI path are untouched); useAnalyzeRoute's input gains windowsOnly and both dispatch modals send windowsOnly: true. DEVIATION FROM THE DESIGN (shape only, not behaviour): the design says to add @IsOptional() @IsBoolean() windowsOnly to 'the analyze request body DTO' — POST /routes/:id/analyze has NO DTO class, it declares an inline @Body() body?: { startTime?: string } type (route-optimization.controller.ts), so the flag was added to that inline type. Introducing a first DTO class there would newly subject startTime to the global ValidationPipe (whitelist + forbidNonWhitelisted, main.ts:145-149) and is a larger change than the fix needs. The design's conditional packages/types change does not apply either: packages/types/api/routes.ts holds only the RouteAnalysisResult response type, no analyze request type. New test T8 in route-analysis.service.spec.ts (API key configured, the existing metering harness): analyzeRoute('route-1', undefined, { windowsOnly: true }) returns the ETA pass and calls neither messages.create nor recordAiUsage — it fails without the fix, since the unmocked model call would land in the catch and record a success:false usage row.",
+            "[#1] The late-stop warning was computed against a departure time that was not the one being dispatched. Both dispatch modals' analyze effects now key on [open, routeId, startTime]: the effect sets 'checking' and clears lateStops synchronously, then fires the analyze after a 300 ms setTimeout that the cleanup clears, so the stale-closure run on open (the reset effect queues startTime back to the tenant default in the same commit) is debounced away and only the effective value is analyzed. A useRef sequence counter is incremented per fire and captured by both callbacks, so only the newest in-flight result may write state. DEVIATIONS, both forced by what the code/plan actually contains: (a) the design says to leave the acknowledged reset unchanged, but its own T4 assertion requires Dispatch to be 'disabled again until re-acknowledged' after a departure edit — the templates modal's effect ALREADY calls setAcknowledged(false) on every fire, so I added the same one line to routes/page.tsx's analyze effect rather than inventing a new mechanism; an acknowledgement of a warning for one departure time must not carry to another. (b) the design's instruction to extend rather than duplicate applied: a concurrent executor had already removed the templates modal's lastOptimizeResult short-circuit and extracted lateStopsFromAnalysis/LateStop into app/(dashboard)/routes/_components/late-stops.ts, so both modals were already the same shape and both took the identical end state; the shared WindowCheckState type was added to that same helper file rather than declared twice.",
+            "[#1 test] Strengthened T4 in apps/web/e2e/35-route-windows.spec.ts: after the acknowledge step it fills the modal's Departure Time input with 23:30, asserts the warning now names TWO stops, asserts Dispatch is disabled again, then re-acknowledges and asserts it is enabled. FIXTURE CHANGE REQUIRED BY THAT ORACLE: the 'OnTime' customer had NO delivery window at all, so it could never be flagged late at any departure time and 'the warning now lists BOTH stops' was unreachable as written. It is now PATCHed to a deliberately wide 05:00-22:00 window — open at any plausible tenant default departure (so the existing count-of-1 toast and first-check assertions still hold) and closed by 23:30. The 1 -> 2 count is the load-bearing oracle: a warning still computed at the opening clock stays at 1. This spec is a pending-deploy project entry and was NOT run locally (Playwright is never run locally per the build plan); it typechecks under apps/web tsc.",
+            "[#2] The analyze mutation had no onError, leaving the dispatch gate silently open on a 429/403/5xx. Both modals now carry a windowCheck state ('idle' | 'checking' | 'ok' | 'failed', exported as WindowCheckState from the shared late-stops helper): the effect sets 'checking' synchronously, onSuccess sets 'ok', the new onError sets 'failed' (both guarded by the sequence counter), and it resets to 'idle' on close. While 'checking', Dispatch is disabled (disabled={needsAcknowledge || windowCheck === 'checking'}, with a matching title) and a muted 'Checking delivery windows...' line renders; while 'failed', an inline role=alert notice reads \"Couldn't check delivery windows - stops may be delivered outside their window.\" and Dispatch stays ENABLED — the deliberate fail-open-but-visible behaviour, so a throttled or addon-gated tenant is never locked out. needsAcknowledge is unchanged. The failed-check behaviour is documented in the spec 35 header, as the design requires (there is no unit seam: neither modal is exported)."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "apps/api/src/route-optimization/route-analysis.service.ts",
+            "apps/api/src/route-optimization/route-optimization.controller.ts",
+            "apps/api/src/route-optimization/route-analysis.service.spec.ts",
+            "apps/web/lib/api/routes.ts",
+            "apps/web/app/(dashboard)/routes/page.tsx",
+            "apps/web/app/(dashboard)/routes/templates/[id]/page.tsx",
+            "apps/web/app/(dashboard)/routes/_components/late-stops.ts",
+            "apps/web/e2e/35-route-windows.spec.ts"
+          ]
+        },
+        {
+          "target": "apps/api/src/route-optimization/route-optimization.service.spec.ts",
+          "route": "opus",
+          "fixed": [
+            "[#0] Added the two missing tests for the multi-stop window-repair loop and analyzeRouteRun's clock precedence. (1) route-optimization.service.spec.ts: new `REG-B147: repairing a late windowed stop never pushes another windowed stop out of its window` — A(lat 0.1, window 08:00-08:20) / B(lat 0.2, unwindowed) / C(lat 0.3, window 08:00-09:00), cost-matrix branch, asserts `windowViolations` is `[]` and the persisted order is the unique feasible `[stop-a, stop-c, stop-b]`. It is RED today exactly as the finding predicted: the current `applyWindowPass` pulls C to the front and strands A (received `[{stopId: 'stop-a', eta: '09:21', windowStart: '08:00', windowEnd: '08:20'}]`). Per Fable's design this test is expected to go green when the repair-loop finding (the 'repair regression above', not in my finding list, owned by whoever fixes route-optimization.service.ts) lands; I did not touch the service. (2) route-analysis.service.spec.ts: new `REG-B177: analyzeRouteRun resolves its clock with the explicit override ahead of the run's snapshot` — pins `resolveStartTime('09:15', '07:30')` argument order plus the third `calculateETAs` argument equal to the mocked helper's distinguishing `\"06:45\"`. Mutation-probed: swapping the arguments in route-analysis.service.ts made it fail with `Expected: \"09:15\", \"07:30\" / Received: \"07:30\", \"09:15\"`; the swap was reverted and the file diff re-verified byte-for-byte against its pre-probe build-stage state."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api/src/route-optimization/route-optimization.service.spec.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api/src/route-optimization/route-analysis.service.spec.ts"
+          ]
+        },
+        {
+          "target": "(artifact)",
+          "route": "mechanical",
+          "fixed": ["Line number reference for matrixCache is off by one"],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-06-F12-route-windows/bug-test-plan.md"
+          ]
+        },
+        {
+          "target": "(red-gate)",
+          "route": "opus",
+          "fixed": [
+            "Red gate never went properly RED — the new tests are not proven able to fail: applied Fable's design (B). (1) bug-test-plan.md — T4 moved out of the 'Red set (REG-tagged; in the red gate)' table into a new 'Pending-deploy proofs (outside the red gate)' section (with the reason: no compose/deploy target is provisioned for Playwright in the gate, and the spec's POST /customers fixture depends on geocoding, so an in-gate run would fail ERROR-class rather than behaviourally), and the Commands section now states explicitly that the gate's denominator is the four apps/api jest tests T1, T2, T3, T6. (2) REG-B147 (route-optimization.service.spec.ts:662) — the exact permutation pin `expect(result.stopOrder).toEqual([far, near, mid])` is replaced by the ruling's real invariant: re-run the SUT's own `service.calculateETAs` over the PERSISTED order and require no windowed stop to be `withinWindow === false`. (3) REG-B147 persistence — `stopUpdates.slice(stopUpdates.length / 2)` is replaced by 'the LAST stopNumber written per stop id', sorted into an order and compared to `result.stopOrder`, so a single-pass or differently-shaped transaction persist is judged on behaviour, not on today's two-phase equal-count harness. Verified: mutation probe (temporary spec, run then deleted) proved the new feasibility invariant discriminates — on the pre-fix pure-cost order [near, mid, far] it goes RED with ['stop-far'] late (arrival 09:10 vs 09:00 close), and green on the repaired order. Gates re-run green: `cd apps/api && npx tsc -p tsconfig.build.json --noEmit` (exit 0), `npx tsc -p tsconfig.json --noEmit` (exit 0, covers specs), `npx jest src/route-optimization src/routes --runInBand` (13 suites / 237 tests passed), `npx jest src/route-optimization --runInBand -t \"REG-B\"` (13 passed). Both touched files re-formatted with the repo's Prettier and `prettier --check` is clean."
+          ],
+          "skipped": [
+            {
+              "index": 0,
+              "summary": "Red gate never went properly RED — the new tests are not proven able to fail (residual sub-items Fable's design explicitly told me to leave alone)",
+              "reason": "Not a skip of the finding (it is fixed above) — recording the parts of the auditor's note I deliberately did NOT touch because Fable's design says so verbatim: 'Leave REG-B161, REG-B177 and the T6 toHaveBeenCalled line as they are — their value oracles become reachable once the fields exist.' So REG-B161's absence-based `toBeDefined()` entry assertion, REG-B177's `time_window` absence assertion, and route-analysis.service.spec.ts's `expect(resolveStartTime).toHaveBeenCalled()` are unchanged. I verified those value oracles are now reachable on the implemented tree (all 13 REG tests pass), but I did not mutation-probe them, so their discriminating power on a WRONG-but-present value remains unproven by me. Also noted: I kept `expect(result.stopOrder[0].stopId).toBe(\"stop-far\")` in REG-B147 — Fable permitted keeping it 'only if it is still the deterministic output', and it is (the test passes on the current implementation, and it is the T1 oracle in the plan of record); it is a mild over-pin the auditor flagged, now backed by the shape-agnostic feasibility invariant."
+            }
+          ],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api/src/route-optimization/route-optimization.service.spec.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-06-F12-route-windows/bug-test-plan.md"
+          ]
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "plan": {
+        "round": 2,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 5,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 1,
+          "sonnet": 2,
+          "opus": 2
+        },
+        "waves": [[0, 1, 2, 3, 4]],
+        "note": "Round 2 fixes all five findings in one wave. The two API findings share route-optimization.service.ts and go to Opus: #0 threads the solver's cost matrices through to getRouteVariants so the >10-intermediate branch and the Google-failure fallback re-sum totals along the window-repaired order (the one invariant: a variant's totals describe its own stopIds), and #1 stops handing ORS the stale scheduled departure when there is no honest clock (omit the vehicle time_window, pass windowClock) and adds windowsChecked to OptimizeResult so an unchecked run is distinguishable from a clean one. On the web: #2 restores the dispatch modal's reset effect to [open, today] and seeds defaultStartTime in a separate guarded effect (templates-modal shape); #3 makes OptimizeResult.windowViolations/startTime optional (plus windowsChecked?) and guards the templates page toast; #4 deletes the dead lateStopsFromOptimize helper and its tests. Each fix names the spec to strengthen; no map/lessons/ledger edits per Option B."
+      },
+      "reports": [
+        {
+          "target": "apps/api/src/route-optimization/route-optimization.service.ts",
+          "route": "opus",
+          "fixed": [
+            "getRouteVariants now returns a window-repaired stopIds list alongside durationSec/distanceMeters that were summed along the solver's PRE-repair order, so a variant advertises totals for a path it does not describe — and dedupeVariants/applyTollContrast then judge variants on those wrong numbers.",
+            "An underway run with no caller clock still hands the ORS solver the run's stale scheduled departure as the vehicle time_window, so the solver reorders on exactly the stale clock the new doc comment says it refuses to use."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "apps/api/src/route-optimization/route-optimization.service.ts",
+            "apps/api/src/route-optimization/route-optimization.service.spec.ts"
+          ],
+          "disputed": []
+        },
+        {
+          "target": "apps/web/app/(dashboard)/routes/page.tsx",
+          "route": "sonnet",
+          "fixed": [
+            "The dispatch modal's reset effect gained `routeSettings?.defaultStartTime` as a dependency, so a late-arriving route-settings response now wipes the date and driver the operator already picked."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/web/app/(dashboard)/routes/page.tsx"
+          ]
+        },
+        {
+          "target": "apps/web/lib/api/routes.ts",
+          "route": "opus",
+          "fixed": [
+            "[#0] Web's `OptimizeResult.windowViolations` is declared required while the sibling `RouteVariant.windowViolations` is optional \"because older servers omit it\", and the optimize toast dereferences it unguarded — a web-ahead-of-api deploy window throws inside onSuccess. FIXED per Fable's design: in apps/web/lib/api/routes.ts `windowViolations?: WindowViolation[]` and `startTime?: string` are now optional with the same \"older servers omit it\" comment RouteVariant carries, plus a new optional `windowsChecked?: boolean`; apps/web/app/(dashboard)/routes/templates/[id]/page.tsx:623 now reads `result.windowViolations?.length ?? 0` with a two-line comment naming the separate api/web deploy. Server-side OptimizeResult, RouteVariant and the setStops-before-toast order are untouched. VERIFIED: `cd apps/web && npx tsc --noEmit -p tsconfig.json` exits clean with the fields optional, so it surfaced no other unguarded reader (the only other dereference, lateStopsFromOptimize in _components/late-stops.ts, had already been removed by the concurrent fix for finding #4 — I did not touch that file); `npx jest --silent late-stops edit-run-modal` = 2 suites / 6 tests passed; `npx prettier --write` on both touched files reports \"(unchanged)\". NOT DONE — the test Fable's design asked for: the templates page has no test file and the toast branch is inline in the page component, so a unit test \"around the toast branch\" would require extracting it into a new module, which contradicts the same design's \"targeted edits only\" (build-plan P3) and its instruction to change only line 623. With the field optional, tsc itself is now the standing guard: any future unguarded `.length` on it is a compile error. NOTE — `windowsChecked` does not exist on the API's OptimizeResult as of my check (grep for `windowsChecked` across apps/ and packages/ returned nothing); I added it as the optional forward-compatible field Fable's design specified for the API change finding #1 makes, so if #1 lands without it, this web field is unused."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "apps/web/lib/api/routes.ts",
+            "apps/web/app/(dashboard)/routes/templates/[id]/page.tsx"
+          ]
+        },
+        {
+          "target": "apps/web/app/(dashboard)/routes/_components/late-stops.ts",
+          "route": "opus",
+          "fixed": [
+            "`lateStopsFromOptimize` is dead production code: the fix that removed the `lastOptimizeResult` short-circuit left no caller, so only its own unit test references it."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "apps/web/app/(dashboard)/routes/_components/late-stops.ts",
+            "apps/web/app/(dashboard)/routes/_components/late-stops.test.ts"
+          ]
+        }
+      ]
+    }
+  ],
+  "remainingFindings": [
+    {
+      "file": "apps/web/app/(dashboard)/routes/page.tsx",
+      "line": 136,
+      "severity": "minor",
+      "summary": "The new seed effect keeps `startTime` in its dependency list, so clearing the Departure Time field immediately snaps it back to the tenant default — the field cannot be emptied, and the two dispatch modals now diverge in the opposite direction from the one the fix was aligning.",
+      "detail": "The fix replaced the reset-effect dependency with a guarded seed effect (page.tsx:132-136): `if (open && routeSettings?.defaultStartTime && !startTime) setStartTime(routeSettings.defaultStartTime)` with deps `[open, routeSettings?.defaultStartTime, startTime]`. Because `startTime` is a dependency, the operator clearing the `<input type=\"time\">` (onChange with `\"\"` at :274-277) sets startTime to `\"\"`, which re-runs the effect, whose guard `!startTime` is now true, which writes the default straight back. Failure scenario: a tenant with `route.defaultStartTime = \"08:00\"`; the operator opens Dispatch on /routes, wants to dispatch with no departure time (handleDispatch sends `startTime: startTime || undefined`, so empty is a supported value), clears the field, and it visibly refills with 08:00 — there is no way to dispatch without a departure clock from this modal. Each snap-back also re-fires the debounced analyze effect (deps include startTime) and resets `acknowledged` to false twice. The sibling modal it was aligned to does NOT do this: templates/[id]/page.tsx:315-319 uses deps `[routeSettings?.defaultStartTime]` (which is why lint reports the missing-dependency warning there), so the field stays clearable on that page. Verified by reading both effects; no test covers the clear path (apps/web jest is green, 163 tests).",
+      "fixHint": "Make the seed one-shot rather than value-driven: keep the deps at `[open, routeSettings?.defaultStartTime]` with the sibling's `// eslint-disable-next-line react-hooks/exhaustive-deps`, or gate on a `seededRef` that is cleared when the modal opens, so an operator-emptied field stays empty.",
+      "fixComplexity": "judgment"
+    },
+    {
+      "file": "apps/api/src/route-optimization/route-optimization.service.ts",
+      "line": 1333,
+      "severity": "minor",
+      "summary": "Pinning the ORS vehicle `time_window` to the departure clock makes any stop whose window closes before it can be reached unassignable, so ORS returns fewer steps than stops, the parser throws a stop-count mismatch, and the whole route silently falls back to the local nearest-neighbour solver under a misleading `ORS_NETWORK_ERROR` reason.",
+      "detail": "The fix round narrowed this block to `if (startTime !== null) vehicleDef.time_window = [departureSec, departureSec + WORKDAY_SEC]` (:1333-1336), which correctly resolves the stale-clock case, but on every branch where a clock DOES exist the vehicle is now bounded while jobs still carry absolute `time_windows` (:1348-1352). Vroom leaves a job whose window falls outside the vehicle window in `unassigned`; the parser only reads `data.routes[0].steps` (:1370-1374) and then throws `ORS stop count mismatch` (:1376-1380). Failure scenario: a route with no Google Maps key OR no resolvable depot (the ORS branch is `!(apiKey && depot)` — optimizeTemplate:521-532), default departure 08:00, and one stop with a 06:00-07:00 window (exactly the B147 population this change targets). Before the vehicle window existed, ORS could schedule the vehicle to leave early and returned a full assignment; now the job is dropped, the mismatch throws, `classifyOrsError` maps that message to `ORS_NETWORK_ERROR` (:101-107, no branch matches it), and the operator sees \"Route optimized (local fallback)\" with a network diagnosis for what is a modelling infeasibility — for every optimize of that route, permanently. The resulting order is still window-repaired by applyWindowPass, so nothing is numerically wrong; the cost is the loss of the primary solver plus a wrong fallbackReason. No spec covers an ORS response with unassigned jobs (the ORS specs at :985 and :1310-1326 assert only the request body).",
+      "fixHint": "Either widen the vehicle window to cover the jobs' windows (e.g. `[Math.min(departureSec, ...jobWindowStarts), departureSec + WORKDAY_SEC]`), or read `data.unassigned` and append those stops in their original relative order instead of throwing, so an infeasible window degrades to \"this stop is late\" (which the window pass already reports) rather than to \"ORS is broken\"; if the throw is kept, add a distinct FallbackReason for the mismatch so the operator is not told it was a network error.",
+      "fixComplexity": "judgment"
+    }
+  ],
+  "clean": false
+}

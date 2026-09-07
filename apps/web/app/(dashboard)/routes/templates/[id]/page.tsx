@@ -61,6 +61,11 @@ import {
   type RouteTemplateStop,
   type RouteAnalysisResult,
 } from "@/lib/api/routes";
+import {
+  lateStopsFromAnalysis,
+  type LateStop,
+  type WindowCheckState,
+} from "../../_components/late-stops";
 import { TemplateRouteMap } from "./TemplateRouteMap";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -294,17 +299,86 @@ function DispatchModal({
   const drivers = driversResult?.data ?? [];
   const createRun = useCreateRouteRun();
   const { data: routeSettings } = useRouteSettings();
+  const analyzeRoute = useAnalyzeRoute();
 
   const today = new Date().toISOString().split("T")[0];
   const [date, setDate] = React.useState(today);
   const [driverId, setDriverId] = React.useState("");
   const [startTime, setStartTime] = React.useState("");
+  const [lateStops, setLateStops] = React.useState<LateStop[]>([]);
+  const [acknowledged, setAcknowledged] = React.useState(false);
+  const [windowCheck, setWindowCheck] = React.useState<WindowCheckState>("idle");
+  // Only the newest analysis may write state: editing Departure Time can leave
+  // an earlier request in flight.
+  const analyzeSeq = React.useRef(0);
+  // The default departure time is seeded at most once per open, so an operator
+  // who clears the field keeps it empty (dispatch sends `startTime || undefined`).
+  const seededRef = React.useRef(false);
+  // Mirrors `startTime` so the seed effect can read the latest value without
+  // depending on it (a `startTime` dep would re-seed on every keystroke,
+  // including a clear).
+  const startTimeRef = React.useRef(startTime);
+  startTimeRef.current = startTime;
+
+  // Seed the default departure time once route settings arrive — one shot per
+  // open, and only into an empty field, so an emptied field stays empty
+  // (round 3) and a time the operator chose survives a reopen (round 4; see
+  // routes/page.tsx for the same shape). This modal has no reset-on-open
+  // effect and stays mounted while closed, so `startTimeRef` reflects
+  // whatever the operator last left in the field. `startTimeRef` is read
+  // here deliberately instead of `startTime` so this effect does not re-run
+  // on every keystroke — adding `startTime` to the deps would re-seed a
+  // field the operator just cleared.
+  React.useEffect(() => {
+    if (!open) {
+      seededRef.current = false;
+      return;
+    }
+    if (seededRef.current || !routeSettings?.defaultStartTime || startTimeRef.current) return;
+    seededRef.current = true;
+    setStartTime(routeSettings.defaultStartTime);
+  }, [open, routeSettings?.defaultStartTime]);
 
   React.useEffect(() => {
-    if (routeSettings?.defaultStartTime && !startTime) {
-      setStartTime(routeSettings.defaultStartTime);
-    }
-  }, [routeSettings?.defaultStartTime]);
+    if (!open) setWindowCheck("idle");
+  }, [open]);
+
+  // Late-stop warning: always ask the analyzer, so the operator sees the window
+  // feasibility of the stops as they are persisted right now — a cached optimize
+  // result goes stale the moment a stop is added, removed or reordered. It
+  // re-runs (debounced) on every Departure Time edit, so the warning and the
+  // acknowledge gate describe the clock this dispatch will actually use, and
+  // `windowsOnly` keeps the check on the deterministic ETA pass — no AI call,
+  // no metered usage.
+  React.useEffect(() => {
+    if (!open) return;
+    const seq = ++analyzeSeq.current;
+    // A different departure time is a different warning — an acknowledgement of
+    // the previous one never carries over.
+    setAcknowledged(false);
+    setLateStops([]);
+    setWindowCheck("checking");
+    const timer = setTimeout(() => {
+      analyzeRoute.mutate(
+        { routeId, startTime: startTime || undefined, windowsOnly: true },
+        {
+          onSuccess: (result) => {
+            if (seq !== analyzeSeq.current) return;
+            setLateStops(lateStopsFromAnalysis(result));
+            setWindowCheck("ok");
+          },
+          onError: () => {
+            if (seq !== analyzeSeq.current) return;
+            setWindowCheck("failed");
+          },
+        },
+      );
+    }, 300);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, routeId, startTime]);
+
+  const needsAcknowledge = lateStops.length > 0 && !acknowledged;
 
   const handleDispatch = () => {
     createRun.mutate(
@@ -336,13 +410,64 @@ function DispatchModal({
           <Button variant="secondary" onClick={onClose} disabled={createRun.isPending}>
             Cancel
           </Button>
-          <Button onClick={handleDispatch} loading={createRun.isPending}>
+          <Button
+            onClick={handleDispatch}
+            loading={createRun.isPending}
+            disabled={needsAcknowledge || windowCheck === "checking"}
+            title={
+              needsAcknowledge
+                ? "Acknowledge the late-stop warning to dispatch"
+                : windowCheck === "checking"
+                  ? "Checking delivery windows…"
+                  : undefined
+            }
+          >
             Dispatch
           </Button>
         </>
       }
     >
       <div className="space-y-4">
+        {windowCheck === "checking" && (
+          <p className="text-sm text-navy/70">Checking delivery windows…</p>
+        )}
+        {windowCheck === "failed" && (
+          <div
+            role="alert"
+            className="flex items-start gap-1.5 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              Couldn&apos;t check delivery windows — stops may be delivered outside their window.
+            </span>
+          </div>
+        )}
+        {lateStops.length > 0 && (
+          <div
+            role="alert"
+            className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+          >
+            <p className="flex items-center gap-1.5 font-medium">
+              <AlertTriangle className="h-4 w-4" />
+              {lateStops.length} stop{lateStops.length === 1 ? "" : "s"} may miss its delivery
+              window
+            </p>
+            <ul className="list-disc space-y-0.5 pl-5">
+              {lateStops.map((s) => (
+                <li key={s.stopId}>{s.label}</li>
+              ))}
+            </ul>
+            <label className="flex cursor-pointer items-start gap-2 pt-1">
+              <input
+                type="checkbox"
+                checked={acknowledged}
+                onChange={(e) => setAcknowledged(e.target.checked)}
+                className="mt-0.5 h-4 w-4 cursor-pointer rounded border-amber-400 accent-brand-500"
+              />
+              <span>I understand these stops may be delivered outside their window.</span>
+            </label>
+          </div>
+        )}
         <div>
           <label className="mb-1 block text-sm font-medium text-navy">Scheduled Date</label>
           <input
@@ -513,13 +638,24 @@ export default function RouteTemplateDetailPage({ params }: { params: { id: stri
           }));
           return [...remapped].sort((a, b) => a.stopNumber - b.stopNumber);
         });
+        const titleBase = result.usedFallback
+          ? "Route optimized (local fallback)"
+          : "Route optimized";
+        // Optional on the wire: an older API build (web and api deploy separately)
+        // returns no windowViolations — treat that as "none reported", never throw.
+        const violationCount = result.windowViolations?.length ?? 0;
         toast({
-          title: result.usedFallback ? "Route optimized (local fallback)" : "Route optimized",
+          title:
+            violationCount === 0
+              ? titleBase
+              : violationCount === 1
+                ? `${titleBase} — 1 stop misses its window`
+                : `${titleBase} — ${violationCount} stops miss their window`,
           description:
             result.reorderedCount > 0
               ? `${result.reorderedCount} stop${result.reorderedCount === 1 ? "" : "s"} reordered`
               : "Stops are already in optimal order",
-          variant: "success",
+          variant: violationCount > 0 ? "warning" : "success",
         });
       },
       onError: (err) =>

@@ -4,7 +4,17 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Eye, Play, Calendar, CheckSquare, X, Trash2, Pencil, Ban } from "lucide-react";
+import {
+  Eye,
+  Play,
+  Calendar,
+  CheckSquare,
+  X,
+  Trash2,
+  Pencil,
+  Ban,
+  AlertTriangle,
+} from "lucide-react";
 import {
   PageHeader,
   Badge,
@@ -22,12 +32,19 @@ import {
   useCreateRouteRun,
   useDeleteRoute,
   useUpdateRouteRunStatus,
+  useAnalyzeRoute,
+  useRouteSettings,
   type Route,
   type RouteRun,
 } from "@/lib/api/routes";
 import { useDrivers } from "@/lib/api/drivers";
 import { useQueryClient } from "@tanstack/react-query";
 import { EditRunModal } from "./_components/EditRunModal";
+import {
+  lateStopsFromAnalysis,
+  type LateStop,
+  type WindowCheckState,
+} from "./_components/late-stops";
 import { formatDate } from "@/lib/format";
 // Calendar dates stored at UTC midnight (run `scheduledDate`) need the UTC
 // renderer; `formatDate` above is the local-time one, correct for `createdAt`.
@@ -82,23 +99,106 @@ function DispatchModal({
   const { data: driversResult } = useDrivers({ status: "ACTIVE", limit: 100 });
   const drivers = driversResult?.data ?? [];
   const createRun = useCreateRouteRun();
+  const { data: routeSettings } = useRouteSettings();
+  const analyzeRoute = useAnalyzeRoute();
 
   const today = new Date().toISOString().split("T")[0];
   const [date, setDate] = React.useState(today);
   const [driverId, setDriverId] = React.useState("");
+  const [startTime, setStartTime] = React.useState("");
+  const [lateStops, setLateStops] = React.useState<LateStop[]>([]);
+  const [acknowledged, setAcknowledged] = React.useState(false);
+  const [windowCheck, setWindowCheck] = React.useState<WindowCheckState>("idle");
+  // Only the newest analysis may write state: editing Departure Time can leave
+  // an earlier request in flight.
+  const analyzeSeq = React.useRef(0);
+  // The default departure time is seeded at most once per open, so an operator
+  // who clears the field keeps it empty (dispatch sends `startTime || undefined`).
+  const seededRef = React.useRef(false);
+  // Mirrors `startTime` so the seed effect can read the latest value without
+  // depending on it (a `startTime` dep would re-seed on every keystroke,
+  // including a clear).
+  const startTimeRef = React.useRef(startTime);
+  startTimeRef.current = startTime;
 
   // Reset form when modal opens
   React.useEffect(() => {
     if (open) {
       setDate(today);
       setDriverId("");
+      setStartTime("");
+      // Keep the ref in lockstep so the seed effect below (same commit,
+      // declared after this one) sees the cleared value immediately instead
+      // of the stale pre-open startTime the render captured it with.
+      startTimeRef.current = "";
+      setAcknowledged(false);
+      setLateStops([]);
+    } else {
+      setWindowCheck("idle");
     }
   }, [open, today]);
+
+  // Seed the default departure time once route settings arrive — one shot per
+  // open, and only into an empty field, so an emptied field stays empty
+  // (round 3) and a time the operator chose survives a reopen (round 4; see
+  // templates/[id]/page.tsx for the same shape). `startTimeRef` is read here
+  // deliberately instead of `startTime` so this effect does not re-run on
+  // every keystroke — adding `startTime` to the deps would re-seed a field
+  // the operator just cleared.
+  React.useEffect(() => {
+    if (!open) {
+      seededRef.current = false;
+      return;
+    }
+    if (seededRef.current || !routeSettings?.defaultStartTime || startTimeRef.current) return;
+    seededRef.current = true;
+    setStartTime(routeSettings.defaultStartTime);
+  }, [open, routeSettings?.defaultStartTime]);
+
+  // No optimize step happens on this page before dispatch, so the late-stop
+  // warning always comes fresh from the analyzer — re-run (debounced) whenever
+  // the operator edits Departure Time, so the warning and the acknowledge gate
+  // describe the clock this dispatch will actually use. `windowsOnly` keeps the
+  // check on the deterministic ETA pass — no AI call, no metered usage.
+  React.useEffect(() => {
+    if (!open || !routeId) return;
+    const seq = ++analyzeSeq.current;
+    setWindowCheck("checking");
+    setLateStops([]);
+    // A different departure time is a different warning — an acknowledgement of
+    // the previous one never carries over.
+    setAcknowledged(false);
+    const timer = setTimeout(() => {
+      analyzeRoute.mutate(
+        { routeId, startTime: startTime || undefined, windowsOnly: true },
+        {
+          onSuccess: (result) => {
+            if (seq !== analyzeSeq.current) return;
+            setLateStops(lateStopsFromAnalysis(result));
+            setWindowCheck("ok");
+          },
+          onError: () => {
+            if (seq !== analyzeSeq.current) return;
+            setWindowCheck("failed");
+          },
+        },
+      );
+    }, 300);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, routeId, startTime]);
+
+  const needsAcknowledge = lateStops.length > 0 && !acknowledged;
 
   const handleDispatch = () => {
     if (!routeId) return;
     createRun.mutate(
-      { routeId, scheduledDate: date, driverId: driverId || undefined },
+      {
+        routeId,
+        scheduledDate: date,
+        driverId: driverId || undefined,
+        startTime: startTime || undefined,
+      },
       {
         onSuccess: (run) => {
           toast({ title: "Route run dispatched", variant: "success" });
@@ -121,13 +221,64 @@ function DispatchModal({
           <Button variant="secondary" onClick={onClose} disabled={createRun.isPending}>
             Cancel
           </Button>
-          <Button onClick={handleDispatch} loading={createRun.isPending}>
+          <Button
+            onClick={handleDispatch}
+            loading={createRun.isPending}
+            disabled={needsAcknowledge || windowCheck === "checking"}
+            title={
+              needsAcknowledge
+                ? "Acknowledge the late-stop warning to dispatch"
+                : windowCheck === "checking"
+                  ? "Checking delivery windows…"
+                  : undefined
+            }
+          >
             Dispatch
           </Button>
         </>
       }
     >
       <div className="space-y-4">
+        {windowCheck === "checking" && (
+          <p className="text-sm text-navy/70">Checking delivery windows…</p>
+        )}
+        {windowCheck === "failed" && (
+          <div
+            role="alert"
+            className="flex items-start gap-1.5 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              Couldn&apos;t check delivery windows — stops may be delivered outside their window.
+            </span>
+          </div>
+        )}
+        {lateStops.length > 0 && (
+          <div
+            role="alert"
+            className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+          >
+            <p className="flex items-center gap-1.5 font-medium">
+              <AlertTriangle className="h-4 w-4" />
+              {lateStops.length} stop{lateStops.length === 1 ? "" : "s"} may miss its delivery
+              window
+            </p>
+            <ul className="list-disc space-y-0.5 pl-5">
+              {lateStops.map((s) => (
+                <li key={s.stopId}>{s.label}</li>
+              ))}
+            </ul>
+            <label className="flex cursor-pointer items-start gap-2 pt-1">
+              <input
+                type="checkbox"
+                checked={acknowledged}
+                onChange={(e) => setAcknowledged(e.target.checked)}
+                className="mt-0.5 h-4 w-4 cursor-pointer rounded border-amber-400 accent-brand-500"
+              />
+              <span>I understand these stops may be delivered outside their window.</span>
+            </label>
+          </div>
+        )}
         <div>
           <label className="mb-1 block text-sm font-medium text-navy">Scheduled Date</label>
           <input
@@ -136,6 +287,16 @@ function DispatchModal({
             onChange={(e) => setDate(e.target.value)}
             className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-navy">Departure Time</label>
+          <input
+            type="time"
+            value={startTime}
+            onChange={(e) => setStartTime(e.target.value)}
+            className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+          <p className="mt-1 text-xs text-navy/70">When the driver leaves the depot</p>
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-navy">Driver (optional)</label>

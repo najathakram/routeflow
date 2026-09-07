@@ -36,7 +36,11 @@ export class RouteAnalysisService {
    * Analyze a route template for delivery window compliance.
    * Calculates ETAs and optionally uses Claude for natural language insights.
    */
-  async analyzeRoute(routeId: string, startTime?: string): Promise<RouteAnalysisResult> {
+  async analyzeRoute(
+    routeId: string,
+    startTime?: string,
+    options?: { windowsOnly?: boolean },
+  ): Promise<RouteAnalysisResult> {
     // Load route with stops + customer delivery windows
     const route = await this.prisma.forTenant().route.findUnique({
       where: { id: routeId },
@@ -69,11 +73,10 @@ export class RouteAnalysisService {
     // Load route settings
     const avgSpeedRaw = await this.systemConfig.get("route.averageSpeedKmh");
     const serviceTimeRaw = await this.systemConfig.get("route.serviceTimeMinutes");
-    const defaultStartTimeRaw = await this.systemConfig.get("route.defaultStartTime");
 
     const avgSpeed = avgSpeedRaw != null ? parseFloat(avgSpeedRaw) : 50;
     const serviceTime = serviceTimeRaw != null ? parseFloat(serviceTimeRaw) : 15;
-    const effectiveStartTime = startTime ?? defaultStartTimeRaw ?? "08:00";
+    const effectiveStartTime = await this.optimizationService.resolveStartTime(startTime, null);
 
     // Build stop data
     const stopsWithCoords = route.stops
@@ -96,6 +99,14 @@ export class RouteAnalysisService {
       avgSpeed,
       serviceTime,
     );
+
+    // Window-feasibility callers (the dispatch modals) need only the
+    // deterministic ETA pass above — never the metered Anthropic call. Return
+    // through the same shape the missing-API-key branch below uses, BEFORE any
+    // client construction, prompt build or AiUsageEvent write.
+    if (options?.windowsOnly) {
+      return { configured: false, etas };
+    }
 
     // Resolve Anthropic API key
     const tenantKey = await this.systemConfig.get("anthropic.apiKey");
@@ -240,11 +251,10 @@ Status guide:
         ? { lat: run.depotLat, lng: run.depotLng, address: run.depotAddress ?? "" }
         : await this.optimizationService.resolveDepot(run.routeId);
 
-    const effectiveStartTime =
-      startTime ??
-      run.startTime ??
-      (await this.systemConfig.get("route.defaultStartTime")) ??
-      "08:00";
+    const effectiveStartTime = await this.optimizationService.resolveStartTime(
+      startTime,
+      run.startTime,
+    );
 
     // Delegate to analyzeRoute logic using the run's route
     // But since the run has its own stop order, we use its stops directly

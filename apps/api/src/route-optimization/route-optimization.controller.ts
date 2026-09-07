@@ -35,12 +35,22 @@ export class RouteOptimizationController {
   @Post(":id/optimize")
   @Throttle(OPTIMIZE_THROTTLE)
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
-  optimize(@Param("id") id: string, @Body() body?: { originLat?: number; originLng?: number }) {
+  optimize(
+    @Param("id") id: string,
+    @Body() body?: { originLat?: number; originLng?: number; startTime?: string },
+  ) {
     const origin =
       typeof body?.originLat === "number" && typeof body?.originLng === "number"
         ? { lat: body.originLat, lng: body.originLng }
         : null;
-    return this.service.optimizeRoute(id, origin);
+    // The caller's CURRENT departure clock, for a mid-run re-optimize: without
+    // it an underway run's windows would be judged against its scheduled
+    // departure. Same "HH:mm" shape the route-settings/run DTOs validate.
+    const startTime =
+      typeof body?.startTime === "string" && /^\d{2}:\d{2}$/.test(body.startTime)
+        ? body.startTime
+        : undefined;
+    return this.service.optimizeRoute(id, origin, startTime);
   }
 
   @Post(":id/analyze")
@@ -72,8 +82,12 @@ export class RouteTemplateOptimizationController {
 
   @Post(":id/analyze")
   @Throttle(OPTIMIZE_THROTTLE)
-  analyze(@Param("id") id: string, @Body() body?: { startTime?: string }) {
-    return this.analysisService.analyzeRoute(id, body?.startTime);
+  // `windowsOnly` returns the deterministic ETA/window pass and skips the
+  // Anthropic call entirely — what the dispatch modals need, with no AI spend.
+  analyze(@Param("id") id: string, @Body() body?: { startTime?: string; windowsOnly?: boolean }) {
+    return this.analysisService.analyzeRoute(id, body?.startTime, {
+      windowsOnly: body?.windowsOnly === true,
+    });
   }
 
   @Post(":id/variants")

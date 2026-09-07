@@ -39,6 +39,14 @@ function timeToSec(t: string): number {
   return h * 3600 + m * 60;
 }
 
+/**
+ * Assumed vehicle workday length (12h) used to bound the ORS vehicle's
+ * `time_window` from its departure clock — jobs may still carry tighter
+ * windows of their own; this only caps how long after departure the vehicle
+ * is modeled as available at all.
+ */
+const WORKDAY_SEC = 12 * 60 * 60;
+
 export type FallbackReason =
   | "ORS_NOT_CONFIGURED"
   | "ORS_RATE_LIMITED"
@@ -49,11 +57,26 @@ export type FallbackReason =
   // used instead. Distinct from ORS_* — the ORS pathway wasn't reached at all.
   | "GOOGLE_MATRIX_FALLBACK";
 
+export interface WindowViolation {
+  stopId: string;
+  eta: string;
+  windowStart: string;
+  windowEnd: string;
+}
+
 export interface OptimizeResult {
   stopOrder: Array<{ stopId: string; stopNumber: number }>;
   reorderedCount: number;
   usedFallback: boolean;
   fallbackReason?: FallbackReason;
+  /** Stops whose window still can't be met after the deterministic repair pass. */
+  windowViolations: WindowViolation[];
+  /** Vehicle departure clock the solver and the window pass both ran against. */
+  startTime: string;
+  /** False when there was no honest departure clock to judge windows against
+   *  (an underway run with no caller override): no solver was given a window
+   *  and `windowViolations` is "not checked", NOT "checked and clean". */
+  windowsChecked: boolean;
 }
 
 export interface RouteVariant {
@@ -63,6 +86,10 @@ export interface RouteVariant {
   distanceMeters: number;
   hasTolls: boolean;
   encodedPolyline: string | null;
+  /** Stops this variant's order still can't get to in time, after the same
+   *  window pass optimizeTemplate/optimizeRoute run. Optional so existing
+   *  consumers keep compiling; always set by `getRouteVariants`. */
+  windowViolations?: WindowViolation[];
 }
 
 interface PlanningFields {
@@ -101,6 +128,9 @@ export interface StopETA {
   deliveryWindowStart?: string | null;
   deliveryWindowEnd?: string | null;
   withinWindow: boolean | null;
+  /** Minutes the vehicle waits when it arrives before the window opens.
+   *  Only present when there was a wait. */
+  waitMinutes?: number;
 }
 
 /** Convert seconds from midnight to "HH:mm" */
@@ -188,6 +218,23 @@ export class RouteOptimizationService {
     };
   }
 
+  // ─── Start-time resolution ──────────────────────────────────────────────────
+
+  /**
+   * Resolve the vehicle's departure clock with one precedence, shared by the
+   * solver (ORS vehicle clock, cost-matrix branches) and the ETA/analysis
+   * pass: an explicit override → a run's snapshotted `startTime` → the
+   * tenant's configured default → `"08:00"`. Lifted out of
+   * `route-analysis.service.ts` so both sides of B177's invariant (the
+   * solver's clock equals the ETA pass's clock) read the same value.
+   */
+  async resolveStartTime(explicit?: string | null, runStartTime?: string | null): Promise<string> {
+    if (explicit) return explicit;
+    if (runStartTime) return runStartTime;
+    const defaultStartTime = await this.systemConfig.get("route.defaultStartTime");
+    return defaultStartTime ?? "08:00";
+  }
+
   // ─── ETA calculation ───────────────────────────────────────────────────────
 
   calculateETAs(
@@ -206,13 +253,24 @@ export class RouteOptimizationService {
       const travelKm = this.haversineKm(currentLoc, stop);
       const travelTimeSec = (travelKm / avgSpeedKmh) * 3600;
       const arrivalSec = currentTimeSec + travelTimeSec;
-      const departureSec = arrivalSec + serviceTimeMinutes * 60;
+      let departureSec = arrivalSec + serviceTimeMinutes * 60;
 
       let withinWindow: boolean | null = null;
+      let waitMinutes: number | undefined;
       if (stop.deliveryWindowStart && stop.deliveryWindowEnd) {
         const windowStartSec = timeToSec(stop.deliveryWindowStart);
         const windowEndSec = timeToSec(stop.deliveryWindowEnd);
-        withinWindow = arrivalSec >= windowStartSec && arrivalSec <= windowEndSec;
+        if (arrivalSec < windowStartSec) {
+          // Arriving before the window opens is not a miss: the vehicle waits
+          // and is served when the window opens. Only a LATE arrival violates
+          // a window — so neither the repair pass below nor the dispatch gate
+          // fires on a stop the driver simply reaches early.
+          withinWindow = true;
+          waitMinutes = Math.round((windowStartSec - arrivalSec) / 60);
+          departureSec = windowStartSec + serviceTimeMinutes * 60;
+        } else {
+          withinWindow = arrivalSec <= windowEndSec;
+        }
       }
 
       etas.push({
@@ -225,6 +283,7 @@ export class RouteOptimizationService {
         deliveryWindowStart: stop.deliveryWindowStart ?? null,
         deliveryWindowEnd: stop.deliveryWindowEnd ?? null,
         withinWindow,
+        ...(waitMinutes !== undefined ? { waitMinutes } : {}),
       });
 
       currentTimeSec = departureSec;
@@ -232,6 +291,106 @@ export class RouteOptimizationService {
     }
 
     return etas;
+  }
+
+  /** Same speed/service-time precedence `RouteAnalysisService` reads, so the
+   *  solver's window pass and the ETA/analysis pass agree on both the clock
+   *  (`resolveStartTime`) and the travel model. */
+  private async resolveSpeedAndService(): Promise<{
+    avgSpeedKmh: number;
+    serviceTimeMinutes: number;
+  }> {
+    const avgSpeedRaw = await this.systemConfig.get("route.averageSpeedKmh");
+    const serviceTimeRaw = await this.systemConfig.get("route.serviceTimeMinutes");
+    return {
+      avgSpeedKmh: avgSpeedRaw != null ? parseFloat(avgSpeedRaw) : 50,
+      serviceTimeMinutes: serviceTimeRaw != null ? parseFloat(serviceTimeRaw) : 15,
+    };
+  }
+
+  /**
+   * Post-solve window pass (B147/B161): evaluate the solver's order against
+   * the real departure clock and, when any windowed stop misses its window,
+   * apply one deterministic repair — pull the violating windowed stops out
+   * (ascending by window close) and stably re-insert each at the earliest
+   * position among the remaining, cost-ordered stops where the WHOLE order
+   * still holds — the stop makes its own window and no stop that was already
+   * on time is pushed out of its; unwindowed and already-feasible stops keep
+   * their cost order. Re-evaluates once after the repair and keeps it only if
+   * it is an improvement, so the pass can never hand back a worse order than
+   * the solver gave it. Returns whatever still violates (empty when a
+   * window-feasible order existed).
+   */
+  private applyWindowPass(
+    orderedStops: StopWithCoords[],
+    depot: { lat: number; lng: number } | null,
+    startTime: string,
+    avgSpeedKmh: number,
+    serviceTimeMinutes: number,
+  ): { order: StopWithCoords[]; violations: WindowViolation[] } {
+    const toViolations = (etas: StopETA[]): WindowViolation[] =>
+      etas
+        .filter((e) => e.withinWindow === false)
+        .map((e) => ({
+          stopId: e.stopId,
+          eta: e.arrivalTime,
+          windowStart: e.deliveryWindowStart!,
+          windowEnd: e.deliveryWindowEnd!,
+        }));
+
+    const evaluate = (order: StopWithCoords[]) =>
+      this.calculateETAs(depot, order, startTime, avgSpeedKmh, serviceTimeMinutes);
+
+    const violations = toViolations(evaluate(orderedStops));
+    if (violations.length === 0) return { order: orderedStops, violations };
+
+    const violatingIds = new Set(violations.map((v) => v.stopId));
+    const byId = new Map(orderedStops.map((s) => [s.id, s]));
+    const violatingStops = [...violatingIds]
+      .map((id) => byId.get(id)!)
+      .sort((a, b) => timeToSec(a.deliveryWindowEnd!) - timeToSec(b.deliveryWindowEnd!));
+    let remaining = orderedStops.filter((s) => !violatingIds.has(s.id));
+
+    for (const stop of violatingStops) {
+      // A position is only acceptable when the WHOLE candidate order holds up:
+      // re-inserting on the inserted stop's own window alone can push a stop
+      // that was on time out of its window — and skip past the position where
+      // every window is met.
+      const feasibleBefore = new Set(
+        evaluate(remaining)
+          .filter((e) => e.withinWindow !== false)
+          .map((e) => e.stopId),
+      );
+      let inserted = false;
+      for (let i = 0; i <= remaining.length; i++) {
+        const candidate = [...remaining.slice(0, i), stop, ...remaining.slice(i)];
+        const etas = evaluate(candidate);
+        const stopEta = etas.find((e) => e.stopId === stop.id);
+        if (!stopEta || stopEta.withinWindow === false) continue;
+        if (etas.some((e) => e.withinWindow === false && feasibleBefore.has(e.stopId))) continue;
+        remaining = candidate;
+        inserted = true;
+        break;
+      }
+      if (!inserted) {
+        // No position makes this stop feasible — keep it at its original
+        // relative position so the re-evaluation below still names it.
+        const at = Math.min(
+          orderedStops.findIndex((s) => s.id === stop.id),
+          remaining.length,
+        );
+        remaining = [...remaining.slice(0, at), stop, ...remaining.slice(at)];
+      }
+    }
+
+    const repaired = toViolations(evaluate(remaining));
+    // The repair is only ever an improvement: never more violations than the
+    // solver's own order, and never a violation on a stop that was fine before
+    // the pass. Otherwise keep the solver order and report what it misses.
+    if (repaired.length > violations.length || repaired.some((v) => !violatingIds.has(v.stopId))) {
+      return { order: orderedStops, violations };
+    }
+    return { order: remaining, violations: repaired };
   }
 
   // ─── Route optimization ─────────────────────────────────────────────────────
@@ -341,8 +500,16 @@ export class RouteOptimizationService {
 
   async optimizeTemplate(routeId: string): Promise<OptimizeResult> {
     const { route, stops } = await this.loadRouteStops(routeId);
+    const startTime = await this.resolveStartTime();
     if (stops.length === 0) {
-      return { stopOrder: [], reorderedCount: 0, usedFallback: false };
+      return {
+        stopOrder: [],
+        reorderedCount: 0,
+        usedFallback: false,
+        windowViolations: [],
+        startTime,
+        windowsChecked: true,
+      };
     }
 
     // Resolve depot for route-aware optimization
@@ -364,7 +531,7 @@ export class RouteOptimizationService {
       if (usedFallback) fallbackReason = "GOOGLE_MATRIX_FALLBACK";
     } else {
       try {
-        optimizedIds = await this.callOrsOptimization(stops, depot);
+        optimizedIds = await this.callOrsOptimization(stops, depot, startTime);
       } catch (err: unknown) {
         fallbackReason = classifyOrsError(err);
         this.logger.warn(
@@ -375,6 +542,20 @@ export class RouteOptimizationService {
         usedFallback = true;
       }
     }
+
+    // Post-solve window pass (B147/B161) — see applyWindowPass. Runs after
+    // EVERY branch above and before persisting, so the persisted order is
+    // window-feasible against the real departure clock whenever one exists.
+    const { avgSpeedKmh, serviceTimeMinutes } = await this.resolveSpeedAndService();
+    const orderedStops = optimizedIds.map((stopId) => stops.find((s) => s.id === stopId)!);
+    const { order: finalOrder, violations: windowViolations } = this.applyWindowPass(
+      orderedStops,
+      depot,
+      startTime,
+      avgSpeedKmh,
+      serviceTimeMinutes,
+    );
+    optimizedIds = finalOrder.map((s) => s.id);
 
     const stopOrder = optimizedIds.map((stopId, idx) => ({
       stopId,
@@ -411,12 +592,34 @@ export class RouteOptimizationService {
       ({ stopId, stopNumber }) => originalOrder.get(stopId) !== stopNumber,
     ).length;
 
-    return { stopOrder, reorderedCount, usedFallback, fallbackReason };
+    return {
+      stopOrder,
+      reorderedCount,
+      usedFallback,
+      fallbackReason,
+      windowViolations,
+      startTime,
+      windowsChecked: true,
+    };
   }
 
+  /**
+   * `startTimeOverride` is the caller's CURRENT clock ("HH:mm"), sent when a
+   * driver re-optimizes mid-run from their present location. Without it a run
+   * that has already departed is judged against its scheduled departure — the
+   * ETAs would be off by however long the vehicle has been on the road — so an
+   * underway run with no override skips the window pass entirely (order left as
+   * the solver returned it, no violations claimed) rather than reorder stops on
+   * a stale clock — and the ORS vehicle `time_window` is omitted for the same
+   * reason, so no solver on any branch is handed the stale departure. The result
+   * says so via `windowsChecked: false`, which is how a caller tells an
+   * unchecked run from a checked-and-clean one. A run that has not started keeps
+   * its scheduled departure.
+   */
   async optimizeRoute(
     routeRunId: string,
     origin?: { lat: number; lng: number } | null,
+    startTimeOverride?: string | null,
   ): Promise<OptimizeResult> {
     const run = await this.prisma.forTenant().routeRun.findUnique({
       where: { id: routeRunId },
@@ -445,8 +648,20 @@ export class RouteOptimizationService {
     });
 
     if (!run) throw new NotFoundException("Route run not found");
+    const scheduledStartTime = await this.resolveStartTime(undefined, run.startTime);
+    const underway = run.status === RouteRunStatus.IN_PROGRESS;
+    // null = no honest clock to judge windows against (see the doc comment).
+    const windowClock = startTimeOverride ?? (underway ? null : scheduledStartTime);
+    const startTime = windowClock ?? scheduledStartTime;
     if (run.stops.length === 0) {
-      return { stopOrder: [], reorderedCount: 0, usedFallback: false };
+      return {
+        stopOrder: [],
+        reorderedCount: 0,
+        usedFallback: false,
+        windowViolations: [],
+        startTime,
+        windowsChecked: windowClock !== null,
+      };
     }
 
     // For stops where the run stop has no address FK, fall back to the customer's default address.
@@ -527,7 +742,7 @@ export class RouteOptimizationService {
       if (usedFallback) fallbackReason = "GOOGLE_MATRIX_FALLBACK";
     } else {
       try {
-        optimizedIds = await this.callOrsOptimization(stops, start);
+        optimizedIds = await this.callOrsOptimization(stops, start, windowClock);
       } catch (err: unknown) {
         fallbackReason = classifyOrsError(err);
         this.logger.warn(
@@ -537,6 +752,25 @@ export class RouteOptimizationService {
         optimizedIds = this.nearestNeighborFallback(stops, start);
         usedFallback = true;
       }
+    }
+
+    // Post-solve window pass (B147/B161) — see applyWindowPass. Runs after
+    // EVERY branch above and before persisting, so the persisted order is
+    // window-feasible against the real departure clock whenever one exists —
+    // and is skipped when there is no honest clock (underway, no override).
+    let windowViolations: WindowViolation[] = [];
+    if (windowClock) {
+      const { avgSpeedKmh, serviceTimeMinutes } = await this.resolveSpeedAndService();
+      const orderedStops = optimizedIds.map((stopId) => stops.find((s) => s.id === stopId)!);
+      const { order: finalOrder, violations } = this.applyWindowPass(
+        orderedStops,
+        start ?? null,
+        windowClock,
+        avgSpeedKmh,
+        serviceTimeMinutes,
+      );
+      optimizedIds = finalOrder.map((s) => s.id);
+      windowViolations = violations;
     }
 
     const stopOrder = optimizedIds.map((stopId, idx) => ({
@@ -577,7 +811,15 @@ export class RouteOptimizationService {
       ({ stopId, stopNumber }) => originalOrder.get(stopId) !== stopNumber,
     ).length;
 
-    return { stopOrder, reorderedCount, usedFallback, fallbackReason };
+    return {
+      stopOrder,
+      reorderedCount,
+      usedFallback,
+      fallbackReason,
+      windowViolations,
+      startTime,
+      windowsChecked: windowClock !== null,
+    };
   }
 
   // ─── Cost-matrix-based solver (Google Routes API, primary) ────────────────
@@ -649,6 +891,10 @@ export class RouteOptimizationService {
     durationSec: number;
     distanceMeters: number;
     usedHaversineFallback: boolean;
+    /** Totals for an ARBITRARY visit order over the same matrices this solve used —
+     *  so a caller that repairs the order (the window pass) can re-cost it without a
+     *  second billable call, instead of publishing the cost-only order's totals. */
+    totalsFor: (visitOrder: StopWithCoords[]) => { durationSec: number; distanceMeters: number };
   }> {
     const points: LatLng[] = [start, ...stops.map((s) => ({ lat: s.lat, lng: s.lng }))];
     const hasFixedEnd =
@@ -675,19 +921,25 @@ export class RouteOptimizationService {
     const endIndex = hasFixedEnd ? points.length - 1 : undefined;
     const order = this.solveOrder(cost, permutable, endIndex);
 
-    const pathIndices = [0, ...order, ...(hasFixedEnd ? [endIndex!] : [])];
-    let durationSec = 0;
-    let distanceMeters = 0;
-    for (let i = 0; i < pathIndices.length - 1; i++) {
-      durationSec += matrices.durationSec[pathIndices[i]][pathIndices[i + 1]];
-      distanceMeters += matrices.distanceMeters[pathIndices[i]][pathIndices[i + 1]];
-    }
+    const sumPath = (visitIndices: number[]) => {
+      const pathIndices = [0, ...visitIndices, ...(hasFixedEnd ? [endIndex!] : [])];
+      let durationSec = 0;
+      let distanceMeters = 0;
+      for (let i = 0; i < pathIndices.length - 1; i++) {
+        durationSec += matrices.durationSec[pathIndices[i]][pathIndices[i + 1]];
+        distanceMeters += matrices.distanceMeters[pathIndices[i]][pathIndices[i + 1]];
+      }
+      return { durationSec, distanceMeters };
+    };
+    const matrixIndexById = new Map(stops.map((s, i) => [s.id, i + 1]));
+    const { durationSec, distanceMeters } = sumPath(order);
 
     return {
       stopIds: order.map((idx) => stops[idx - 1].id),
       durationSec,
       distanceMeters,
       usedHaversineFallback: !trivialOrder && matrices.source === "haversine",
+      totalsFor: (visitOrder) => sumPath(visitOrder.map((s) => matrixIndexById.get(s.id)!)),
     };
   }
 
@@ -706,6 +958,13 @@ export class RouteOptimizationService {
 
     const depot = await this.resolveDepot(routeId);
     if (!depot) return { variants: [] };
+
+    // Same post-solve window pass optimizeTemplate/optimizeRoute run: every
+    // variant here is one `applyRouteVariant` click away from being persisted
+    // as the route's (and a run's) stop order, so it must be window-feasible
+    // and carry its own violations rather than the solver's cost-only order.
+    const startTime = await this.resolveStartTime();
+    const { avgSpeedKmh, serviceTimeMinutes } = await this.resolveSpeedAndService();
 
     const apiKey = this.config.get<string>("googleMaps.apiKey") || undefined;
     const endPoint =
@@ -740,29 +999,26 @@ export class RouteOptimizationService {
           apiKey,
         );
         const orderedStops = matrix.stopIds.map((id) => stops.find((s) => s.id === id)!);
+        const { order: finalOrder, violations: windowViolations } = this.applyWindowPass(
+          orderedStops,
+          depot,
+          startTime,
+          avgSpeedKmh,
+          serviceTimeMinutes,
+        );
         // Cost guard: past 10 intermediates computeRoutes bills at the Pro
         // tier, and this loop makes one call per variant. Above the threshold
-        // keep the solver's own totals and let the client draw the path.
-        const intermediateCount = endPoint
-          ? orderedStops.length
-          : Math.max(orderedStops.length - 1, 0);
+        // keep the solver's own totals — re-summed along the REPAIRED order, so
+        // the totals always describe this variant's own stopIds — and let the
+        // client draw the path.
+        const intermediateCount = endPoint ? finalOrder.length : Math.max(finalOrder.length - 1, 0);
         const computed =
           intermediateCount > MAX_POLYLINE_INTERMEDIATES
-            ? {
-                durationSec: matrix.durationSec,
-                distanceMeters: matrix.distanceMeters,
-                encodedPolyline: null,
-              }
-            : await this.computeRoutePolyline(
-                depot,
-                orderedStops,
-                endPoint,
-                cfg.avoidTolls,
-                apiKey,
-              );
+            ? { ...matrix.totalsFor(finalOrder), encodedPolyline: null }
+            : await this.computeRoutePolyline(depot, finalOrder, endPoint, cfg.avoidTolls, apiKey);
         results.push({
           key: cfg.key,
-          stopIds: matrix.stopIds,
+          stopIds: finalOrder.map((s) => s.id),
           durationSec: computed.durationSec,
           distanceMeters: computed.distanceMeters,
           // Placeholder — computeRoutePolyline deliberately never requests toll
@@ -770,6 +1026,7 @@ export class RouteOptimizationService {
           // in this batch has been computed.
           hasTolls: false,
           encodedPolyline: computed.encodedPolyline,
+          windowViolations,
         });
       }
       this.applyTollContrast(results);
@@ -788,6 +1045,16 @@ export class RouteOptimizationService {
         },
         apiKey ?? "",
       );
+      const fallbackOrderedStops = matrix.stopIds.map((id) => stops.find((s) => s.id === id)!);
+      const { order: fallbackOrder, violations: fallbackViolations } = this.applyWindowPass(
+        fallbackOrderedStops,
+        depot,
+        startTime,
+        avgSpeedKmh,
+        serviceTimeMinutes,
+      );
+      // Same rule as the branch above: totals must describe the repaired order.
+      const fallbackTotals = matrix.totalsFor(fallbackOrder);
       const fallbackKey: RouteVariant["key"] =
         route.optimizeBy === RouteOptimizeMetric.DISTANCE
           ? "SHORTEST"
@@ -798,11 +1065,12 @@ export class RouteOptimizationService {
         variants: [
           {
             key: fallbackKey,
-            stopIds: matrix.stopIds,
-            durationSec: matrix.durationSec,
-            distanceMeters: matrix.distanceMeters,
+            stopIds: fallbackOrder.map((s) => s.id),
+            durationSec: fallbackTotals.durationSec,
+            distanceMeters: fallbackTotals.distanceMeters,
             hasTolls: false,
             encodedPolyline: null,
+            windowViolations: fallbackViolations,
           },
         ],
       };
@@ -1051,7 +1319,10 @@ export class RouteOptimizationService {
 
   private async callOrsOptimization(
     stops: StopWithCoords[],
-    depot?: { lat: number; lng: number } | null,
+    depot: { lat: number; lng: number } | null | undefined,
+    // null = no honest departure clock (see optimizeRoute's doc comment): the
+    // vehicle window is omitted entirely rather than pinned to a stale one.
+    startTime: string | null,
   ): Promise<string[]> {
     const apiKey = this.config.get<string>("ors.apiKey") ?? "";
     if (!apiKey) throw new Error("ORS_API_KEY not configured");
@@ -1060,6 +1331,10 @@ export class RouteOptimizationService {
       id: 1,
       profile: "driving-car",
     };
+    if (startTime !== null) {
+      const departureSec = timeToSec(startTime);
+      vehicleDef.time_window = [departureSec, departureSec + WORKDAY_SEC];
+    }
 
     if (depot) {
       vehicleDef.start = [depot.lng, depot.lat]; // ORS: [lng, lat]
@@ -1091,13 +1366,46 @@ export class RouteOptimizationService {
 
     const data = (await res.json()) as {
       routes: Array<{ steps: Array<{ type: string; job?: number }> }>;
+      // Vroom does not fail a request it cannot fully schedule: a job whose
+      // window falls outside the vehicle's is reported here as
+      // `{ id, type, ... }`, with `id` the job id we sent. `type` also carries
+      // `shipment` / `break` entries, whose ids live in their OWN id spaces.
+      unassigned?: Array<{ id?: number; type?: string }>;
     };
 
     const steps = data.routes?.[0]?.steps ?? [];
-    const optimizedIds = steps
+    const assignedIds = steps
       .filter((s) => s.type === "job" && s.job != null)
       .map((s) => stops[s.job! - 1].id);
 
+    // An unassigned job means "this stop can't make its window", not "the
+    // solver is broken": keep ORS's order for everything it DID schedule and
+    // append the rest as late stops, in their original relative order. The
+    // post-solve window pass then names them in `windowViolations` (they are
+    // late by construction) instead of the whole route silently degrading to
+    // the nearest-neighbour fallback under a misleading network diagnosis.
+    const assigned = new Set(assignedIds);
+    const unassignedIds = (data.unassigned ?? [])
+      // Only job entries index into `stops`: vroom emits `shipment` and
+      // `break` entries here too, numbered in their own id spaces, so an
+      // untyped map would resolve a break id onto an unrelated stop.
+      .filter((u) => u.type == null || u.type === "job")
+      .map((u) => u.id)
+      .filter((id): id is number => id != null)
+      .sort((a, b) => a - b)
+      .map((id) => stops[id - 1]?.id)
+      // `assigned` grows as we accept ids, so a stop reported twice (or both
+      // scheduled and reported) is still persisted exactly once.
+      .filter((id): id is string => {
+        if (id == null || assigned.has(id)) return false;
+        assigned.add(id);
+        return true;
+      });
+
+    const optimizedIds = [...assignedIds, ...unassignedIds];
+
+    // Only a TRUE mismatch — stops ORS neither scheduled nor reported — is an
+    // error worth losing the primary solver over.
     if (optimizedIds.length !== stops.length) {
       throw new Error(
         `ORS stop count mismatch: expected ${stops.length}, got ${optimizedIds.length}`,

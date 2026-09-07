@@ -11,11 +11,13 @@ describe("RouteOptimizationService", () => {
   let service: RouteOptimizationService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let configGet: jest.Mock;
+  let systemConfigGet: jest.Mock;
 
   beforeEach(async () => {
     jest.clearAllMocks();
     prisma = createMockPrisma();
     configGet = jest.fn().mockReturnValue(undefined);
+    systemConfigGet = jest.fn().mockResolvedValue(null);
 
     const mod = await Test.createTestingModule({
       providers: [
@@ -24,7 +26,7 @@ describe("RouteOptimizationService", () => {
         { provide: ConfigService, useValue: { get: configGet } },
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue(null), set: jest.fn() },
+          useValue: { get: systemConfigGet, set: jest.fn() },
         },
       ],
     }).compile();
@@ -252,6 +254,113 @@ describe("RouteOptimizationService", () => {
       };
     }
 
+    /** Depot (0,0), stops due north; only the far one carries a window
+     *  (08:00-09:00), which the pure-cost order [near, mid, far] misses at
+     *  09:10 — the same geometry REG-B147 pins on optimizeTemplate. */
+    function windowedRoute() {
+      return {
+        id: "route-1",
+        depotLat: 0,
+        depotLng: 0,
+        depotAddress: "Depot",
+        avoidTolls: false,
+        optimizeBy: RouteOptimizeMetric.TIME,
+        endKind: RouteEndKind.NONE,
+        endLat: null,
+        endLng: null,
+        tenantId: "tenant-1",
+        stops: [
+          {
+            id: "stop-near",
+            stopNumber: 1,
+            customerId: "cust-near",
+            customer: {
+              id: "cust-near",
+              businessName: "Near",
+              deliveryWindowStart: null,
+              deliveryWindowEnd: null,
+            },
+            customerAddress: { id: "addr-near", lat: 0.1, lng: 0 },
+          },
+          {
+            id: "stop-mid",
+            stopNumber: 2,
+            customerId: "cust-mid",
+            customer: {
+              id: "cust-mid",
+              businessName: "Mid",
+              deliveryWindowStart: null,
+              deliveryWindowEnd: null,
+            },
+            customerAddress: { id: "addr-mid", lat: 0.2, lng: 0 },
+          },
+          {
+            id: "stop-far",
+            stopNumber: 3,
+            customerId: "cust-far",
+            customer: {
+              id: "cust-far",
+              businessName: "Far",
+              deliveryWindowStart: "08:00",
+              deliveryWindowEnd: "09:00",
+            },
+            customerAddress: { id: "addr-far", lat: 0.3, lng: 0 },
+          },
+        ],
+      };
+    }
+
+    // REG-B147: a variant is one applyRouteVariant click from being persisted
+    // as the route's stop order, so it runs the same window pass optimize does.
+    it("REG-B147: the solver-only fallback variant is window-feasible and reports its violations", async () => {
+      prisma.forTenant().route.findUnique.mockResolvedValue(windowedRoute());
+      configGet.mockReturnValue(undefined); // no Google key → solver-only fallback
+      systemConfigGet.mockImplementation((key: string) =>
+        Promise.resolve(key === "route.defaultStartTime" ? "08:00" : null),
+      );
+
+      const result = await service.getRouteVariants("route-1");
+
+      expect(result.variants.length).toBeGreaterThan(0);
+      for (const variant of result.variants) {
+        expect(variant.stopIds[0]).toBe("stop-far");
+        expect(variant.windowViolations).toEqual([]);
+      }
+    });
+
+    it("REG-B147: every variant from the per-config Google loop is window-feasible", async () => {
+      prisma.forTenant().route.findUnique.mockResolvedValue(windowedRoute());
+      configGet.mockImplementation((key: string) =>
+        key === "googleMaps.apiKey" ? "test-key" : undefined,
+      );
+      systemConfigGet.mockImplementation((key: string) =>
+        Promise.resolve(key === "route.defaultStartTime" ? "08:00" : null),
+      );
+      // computeRouteMatrix fails (haversine matrix), computeRoutes answers — so
+      // the per-config loop runs rather than the catch-block fallback.
+      (global as any).fetch = jest.fn().mockImplementation((url: string) =>
+        String(url).includes("computeRouteMatrix")
+          ? Promise.reject(new Error("matrix down"))
+          : Promise.resolve({
+              ok: true,
+              status: 200,
+              json: async () => ({
+                routes: [
+                  { polyline: { encodedPolyline: "abc" }, distanceMeters: 1000, duration: "600s" },
+                ],
+              }),
+            }),
+      );
+
+      const result = await service.getRouteVariants("route-1");
+
+      expect(result.variants.length).toBeGreaterThan(0);
+      for (const variant of result.variants) {
+        expect(variant.stopIds[0]).toBe("stop-far");
+        expect(variant.windowViolations).toEqual([]);
+      }
+    });
+
     it("falls back to a single solver-only variant (encodedPolyline null) when Google is entirely unavailable, never throwing", async () => {
       prisma.forTenant().route.findUnique.mockResolvedValue(mockRoute());
       configGet.mockImplementation((key: string) =>
@@ -452,6 +561,138 @@ describe("RouteOptimizationService", () => {
       }
     });
 
+    // ─── variant totals must describe the variant's own order ─────────────
+    //
+    // Index-linear matrices over [depot, ...stops]: `100+|i-j|` seconds and
+    // `500*|i-j|` metres. The solver's cost order is then the identity, and
+    // ANY reordering changes both totals — which is what makes a
+    // window-repaired order's totals distinguishable from the cost-only
+    // order's, the exact pair the pre-fix code could publish side by side.
+    const legDurationSec = (i: number, j: number) => 100 + Math.abs(i - j);
+    const legDistanceMeters = (i: number, j: number) => 500 * Math.abs(i - j);
+
+    function linearMatrixElements(pointCount: number) {
+      const elements: unknown[] = [];
+      for (let i = 0; i < pointCount; i++) {
+        for (let j = 0; j < pointCount; j++) {
+          if (i === j) continue;
+          elements.push({
+            originIndex: i,
+            destinationIndex: j,
+            duration: `${legDurationSec(i, j)}s`,
+            distanceMeters: legDistanceMeters(i, j),
+            condition: "ROUTE_EXISTS",
+          });
+        }
+      }
+      return elements;
+    }
+
+    /** Sum a leg cost along [depot, ...stopIds] using the SAME matrix the
+     *  service walked — stop `stop-N` is matrix index N+1. */
+    function sumAlong(stopIds: string[], leg: (i: number, j: number) => number) {
+      const path = [0, ...stopIds.map((id) => Number(id.split("-")[1]) + 1)];
+      let total = 0;
+      for (let k = 0; k < path.length - 1; k++) total += leg(path[k], path[k + 1]);
+      return total;
+    }
+
+    /** `count` stops due north of a (0,0) depot at `latStep` intervals, so the
+     *  cost order is [stop-0 … stop-(count-1)]. Only the farthest is windowed,
+     *  and it closes long before that order reaches it — the repair pulls it
+     *  to the FRONT, a strictly longer path. */
+    function windowedLineStops(count: number, latStep: number) {
+      return Array.from({ length: count }, (_, i) => ({
+        id: `stop-${i}`,
+        stopNumber: i + 1,
+        customerId: `cust-${i}`,
+        customer: {
+          id: `cust-${i}`,
+          businessName: `C${i}`,
+          deliveryWindowStart: i === count - 1 ? "08:00" : null,
+          deliveryWindowEnd: i === count - 1 ? "09:00" : null,
+        },
+        customerAddress: { id: `addr-${i}`, lat: latStep * (i + 1), lng: 0 },
+      }));
+    }
+
+    it("re-sums the solver totals along the window-repaired order past 10 intermediates", async () => {
+      // 12 stops, no end point = 11 intermediates: no computeRoutes call, so
+      // the solver's matrix walk supplies the totals — and the window pass has
+      // moved a stop since that walk.
+      const route = mockRoute();
+      route.depotLat = 0;
+      route.depotLng = 0;
+      route.stops = windowedLineStops(12, 0.02);
+      const costOnlyOrder = route.stops.map((s) => s.id);
+      prisma.forTenant().route.findUnique.mockResolvedValue(route);
+      configGet.mockImplementation((key: string) =>
+        key === "googleMaps.apiKey" ? "test-key" : undefined,
+      );
+      systemConfigGet.mockImplementation((key: string) =>
+        Promise.resolve(key === "route.defaultStartTime" ? "08:00" : null),
+      );
+      const matrixElements = linearMatrixElements(13); // depot + 12 stops
+      (global as any).fetch = jest.fn(async (url: string) => {
+        if (url.includes("computeRouteMatrix")) {
+          return { ok: true, status: 200, json: async () => matrixElements };
+        }
+        throw new Error("computeRoutes must not be called above the intermediate cap");
+      });
+
+      const result = await service.getRouteVariants("route-1");
+
+      // All three configs repair to the same order and the same totals, so
+      // dedupe collapses them — it cannot be fooled by pre-repair numbers.
+      expect(result.variants).toHaveLength(1);
+      const variant = result.variants[0];
+      expect(variant.encodedPolyline).toBeNull();
+      expect(variant.hasTolls).toBe(false);
+      expect(variant.stopIds[0]).toBe("stop-11"); // the repair moved it
+      expect(variant.stopIds).not.toEqual(costOnlyOrder);
+      // The totals describe the order the variant actually publishes …
+      expect(variant.durationSec).toBe(sumAlong(variant.stopIds, legDurationSec));
+      expect(variant.distanceMeters).toBe(sumAlong(variant.stopIds, legDistanceMeters));
+      // … not the cost-only order the solver returned before the repair.
+      expect(variant.durationSec).not.toBe(sumAlong(costOnlyOrder, legDurationSec));
+      expect(variant.distanceMeters).not.toBe(sumAlong(costOnlyOrder, legDistanceMeters));
+    });
+
+    it("re-sums the Google-failure fallback variant's totals along its repaired order", async () => {
+      // 4 stops = 3 intermediates, so the polyline call IS attempted — and
+      // fails, dropping into the solver-only fallback, which publishes totals
+      // of its own next to a repaired order.
+      const route = mockRoute();
+      route.depotLat = 0;
+      route.depotLng = 0;
+      route.stops = windowedLineStops(4, 0.1);
+      const costOnlyOrder = route.stops.map((s) => s.id);
+      prisma.forTenant().route.findUnique.mockResolvedValue(route);
+      configGet.mockImplementation((key: string) =>
+        key === "googleMaps.apiKey" ? "test-key" : undefined,
+      );
+      systemConfigGet.mockImplementation((key: string) =>
+        Promise.resolve(key === "route.defaultStartTime" ? "08:00" : null),
+      );
+      const matrixElements = linearMatrixElements(5); // depot + 4 stops
+      (global as any).fetch = jest.fn(async (url: string) => {
+        if (url.includes("computeRouteMatrix")) {
+          return { ok: true, status: 200, json: async () => matrixElements };
+        }
+        throw new Error("computeRoutes down");
+      });
+
+      const result = await service.getRouteVariants("route-1");
+
+      expect(result.variants).toHaveLength(1);
+      const variant = result.variants[0];
+      expect(variant.encodedPolyline).toBeNull();
+      expect(variant.stopIds[0]).toBe("stop-3");
+      expect(variant.durationSec).toBe(sumAlong(variant.stopIds, legDurationSec));
+      expect(variant.distanceMeters).toBe(sumAlong(variant.stopIds, legDistanceMeters));
+      expect(variant.durationSec).not.toBe(sumAlong(costOnlyOrder, legDurationSec));
+    });
+
     it("returns no variants when the route has no stops", async () => {
       const route = mockRoute();
       route.stops = [];
@@ -476,6 +717,810 @@ describe("RouteOptimizationService", () => {
 
       const result = await service.getRouteVariants("route-1");
       expect(result.variants).toEqual([]);
+    });
+  });
+
+  // ─── optimizeTemplate — delivery windows (F12: B147/B161/B177) ─────────
+  //
+  // Coordinates below are colinear along latitude at 0.1/0.2/0.3 degrees from
+  // a depot at (0,0), so the pure-cost nearest-neighbour + 2-opt order is
+  // always [near, mid, far] (monotonically increasing distance) — verified
+  // against the haversine matrix (cost-matrix.ts's synthetic 11.1 m/s) via
+  // the exact same formula this suite's other haversine-fallback tests rely
+  // on. ETAs below use the same default avgSpeedKmh=50 / serviceTimeMinutes=15
+  // that route-analysis.service.ts falls back to when SystemConfig has
+  // nothing configured — `systemConfigGet` here resolves null for both, so
+  // the analysis/optimize passes share those same defaults (B177's
+  // invariant: one clock for the solver and the ETA pass).
+
+  describe("optimizeTemplate — delivery windows (F12)", () => {
+    function windowedTemplateRoute() {
+      return {
+        id: "route-1",
+        avoidTolls: false,
+        optimizeBy: RouteOptimizeMetric.TIME,
+        endKind: RouteEndKind.NONE,
+        endLat: null,
+        endLng: null,
+        depotLat: 0,
+        depotLng: 0,
+        depotAddress: "Depot",
+        tenantId: "tenant-1",
+        stops: [
+          {
+            id: "stop-near",
+            stopNumber: 1,
+            customerId: "cust-near",
+            customer: {
+              id: "cust-near",
+              businessName: "Near",
+              deliveryWindowStart: null,
+              deliveryWindowEnd: null,
+            },
+            customerAddress: { id: "addr-near", lat: 0.1, lng: 0 },
+          },
+          {
+            id: "stop-mid",
+            stopNumber: 2,
+            customerId: "cust-mid",
+            customer: {
+              id: "cust-mid",
+              businessName: "Mid",
+              deliveryWindowStart: null,
+              deliveryWindowEnd: null,
+            },
+            customerAddress: { id: "addr-mid", lat: 0.2, lng: 0 },
+          },
+          {
+            id: "stop-far",
+            stopNumber: 3,
+            customerId: "cust-far",
+            // Only this stop carries a window. Under the pure-cost order
+            // [near, mid, far] a vehicle leaving the depot at 08:00 (50 km/h,
+            // 15 min service) reaches "far" third at 09:10 — past the 09:00
+            // close. Reached FIRST instead, it arrives 08:40 — within window.
+            customer: {
+              id: "cust-far",
+              businessName: "Far",
+              deliveryWindowStart: "08:00",
+              deliveryWindowEnd: "09:00",
+            },
+            customerAddress: { id: "addr-far", lat: 0.3, lng: 0 },
+          },
+        ],
+      };
+    }
+
+    it("REG-B147: persists a window-feasible order on the cost-matrix branch", async () => {
+      const route = windowedTemplateRoute();
+      prisma.forTenant().route.findUnique.mockResolvedValue(route);
+      prisma.$transaction = jest.fn().mockResolvedValue([]);
+      configGet.mockImplementation((key: string) =>
+        key === "googleMaps.apiKey" ? "test-key" : undefined,
+      );
+      systemConfigGet.mockImplementation((key: string) =>
+        Promise.resolve(key === "route.defaultStartTime" ? "08:00" : null),
+      );
+      // Google's computeRouteMatrix rejects — buildCostMatrices falls back to
+      // the deterministic haversine matrix (cost-matrix.ts:30-33), never the
+      // module-level cache (real-Google-only).
+      (global as any).fetch = jest.fn().mockRejectedValue(new Error("network down"));
+
+      const result: any = await service.optimizeTemplate("route-1");
+
+      expect(result.stopOrder[0].stopId).toBe("stop-far");
+      expect(result.windowViolations).toEqual([]);
+
+      // Persisted order = the LAST stopNumber written per stop id, so a
+      // single-pass persist (or any other transaction shape) is judged on the
+      // behaviour, not on today's two-phase equal-count update.
+      const lastWritten = new Map<string, number>();
+      for (const [arg] of prisma.forTenant().routeStop.update.mock.calls as any[]) {
+        lastWritten.set(arg.where.id, arg.data.stopNumber);
+      }
+      const persistedIds = [...lastWritten.entries()]
+        .sort((a, b) => a[1] - b[1])
+        .map(([stopId]) => stopId);
+      expect(persistedIds).toEqual(result.stopOrder.map((s: any) => s.stopId));
+
+      // The ruling's invariant is window FEASIBILITY, not one permutation
+      // ([near, far, mid] is feasible too, and cheaper) — so re-run the real
+      // ETA pass over the PERSISTED order and require that nothing windowed
+      // arrives late. Under the pure-cost order [near, mid, far] "far" arrives
+      // 09:10, past its 09:00 close, which is what this pins red.
+      const coordsById = new Map(
+        route.stops.map((s: any) => [
+          s.id,
+          {
+            id: s.id,
+            stopNumber: s.stopNumber,
+            customerName: s.customer.businessName,
+            lat: s.customerAddress.lat,
+            lng: s.customerAddress.lng,
+            deliveryWindowStart: s.customer.deliveryWindowStart,
+            deliveryWindowEnd: s.customer.deliveryWindowEnd,
+          },
+        ]),
+      );
+      const etas = service.calculateETAs(
+        { lat: 0, lng: 0 },
+        persistedIds.map((id) => coordsById.get(id)!),
+        "08:00",
+        50,
+        15,
+      );
+      expect(etas.filter((e) => e.withinWindow === false).map((e) => e.stopId)).toEqual([]);
+    });
+
+    it("REG-B161: reports a stop whose window closes before its reachable ETA under any order", async () => {
+      prisma.forTenant().route.findUnique.mockResolvedValue({
+        id: "route-1",
+        avoidTolls: false,
+        optimizeBy: RouteOptimizeMetric.TIME,
+        endKind: RouteEndKind.NONE,
+        endLat: null,
+        endLng: null,
+        depotLat: 0,
+        depotLng: 0,
+        depotAddress: "Depot",
+        tenantId: "tenant-1",
+        stops: [
+          {
+            id: "stop-late",
+            stopNumber: 1,
+            customerId: "cust-late",
+            // ~33.36 km from the depot — the ONLY possible order (a single
+            // stop) still arrives at 08:40 (50 km/h from 08:00), past the
+            // 08:30 window close. No re-insertion can fix a one-stop route.
+            customer: {
+              id: "cust-late",
+              businessName: "Late",
+              deliveryWindowStart: "08:00",
+              deliveryWindowEnd: "08:30",
+            },
+            customerAddress: { id: "addr-late", lat: 0.3, lng: 0 },
+          },
+        ],
+      });
+      prisma.$transaction = jest.fn().mockResolvedValue([]);
+      configGet.mockImplementation((key: string) =>
+        key === "googleMaps.apiKey" ? "test-key" : undefined,
+      );
+      systemConfigGet.mockImplementation((key: string) =>
+        Promise.resolve(key === "route.defaultStartTime" ? "08:00" : null),
+      );
+      (global as any).fetch = jest.fn().mockRejectedValue(new Error("network down"));
+
+      const result: any = await service.optimizeTemplate("route-1");
+
+      // Value oracle, never an existence check: the report must name THIS
+      // stop (a fixture id no other test's order contains), its OWN window
+      // close, and a real "HH:mm" ETA that is genuinely later than that close.
+      const minutesFromMidnight = (t: string) => {
+        const [h, m] = t.split(":").map(Number);
+        return h * 60 + m;
+      };
+      expect(result.windowViolations).toHaveLength(1);
+      const violation = result.windowViolations[0];
+      expect(violation.stopId).toBe("stop-late");
+      expect(violation.windowStart).toBe("08:00");
+      expect(violation.windowEnd).toBe("08:30");
+      expect(typeof violation.eta).toBe("string");
+      expect(violation.eta).toMatch(/^\d{2}:\d{2}$/);
+      expect(violation.eta).toBe("08:40");
+      expect(minutesFromMidnight(violation.eta)).toBeGreaterThan(
+        minutesFromMidnight(violation.windowEnd),
+      );
+      expect(result.startTime).toBe("08:00");
+    });
+
+    /** Depot (0,0) with three stops due north. Cost order is always
+     *  [near, mid, far] (11.12 km hops); the windows are the only thing that
+     *  can move a stop. Callers set the two windowed stops' hours. */
+    function twoWindowedRoute(nearWindow: [string, string], farWindow: [string, string]) {
+      const route: any = windowedTemplateRoute();
+      route.stops[0].id = "stop-a";
+      route.stops[0].customer.deliveryWindowStart = nearWindow[0];
+      route.stops[0].customer.deliveryWindowEnd = nearWindow[1];
+      route.stops[1].id = "stop-b";
+      route.stops[2].id = "stop-c";
+      route.stops[2].customer.deliveryWindowStart = farWindow[0];
+      route.stops[2].customer.deliveryWindowEnd = farWindow[1];
+      return route;
+    }
+
+    function costMatrixBranch() {
+      prisma.$transaction = jest.fn().mockResolvedValue([]);
+      configGet.mockImplementation((key: string) =>
+        key === "googleMaps.apiKey" ? "test-key" : undefined,
+      );
+      systemConfigGet.mockImplementation((key: string) =>
+        Promise.resolve(key === "route.defaultStartTime" ? "08:00" : null),
+      );
+      // computeRouteMatrix rejects — the deterministic haversine matrix answers.
+      (global as any).fetch = jest.fn().mockRejectedValue(new Error("network down"));
+    }
+
+    it("REG-B147: when no order meets every window, never moves the violation onto an on-time stop", async () => {
+      // c can only make its 08:45 close by going first — which makes a late.
+      // One violation either way, so the solver's own order stands and the
+      // report still names c, never the stop that was fine to begin with.
+      const route = twoWindowedRoute(["08:00", "08:20"], ["08:00", "08:45"]);
+      prisma.forTenant().route.findUnique.mockResolvedValue(route);
+      costMatrixBranch();
+
+      const result: any = await service.optimizeTemplate("route-1");
+
+      expect(result.windowViolations.map((v: any) => v.stopId)).toEqual(["stop-c"]);
+      expect(result.stopOrder).toEqual([
+        { stopId: "stop-a", stopNumber: 1 },
+        { stopId: "stop-b", stopNumber: 2 },
+        { stopId: "stop-c", stopNumber: 3 },
+      ]);
+    });
+
+    it("REG-B147: an EARLY arrival waits for the window to open — it is not a violation", async () => {
+      // Reachable at 08:13 against a 14:00-15:00 window: the driver waits, is
+      // served at 14:00, and every later ETA follows from that departure.
+      const etas = service.calculateETAs(
+        { lat: 0, lng: 0 },
+        [
+          {
+            id: "stop-early",
+            stopNumber: 1,
+            customerName: "Early",
+            lat: 0.1,
+            lng: 0,
+            deliveryWindowStart: "14:00",
+            deliveryWindowEnd: "15:00",
+          },
+          { id: "stop-next", stopNumber: 2, customerName: "Next", lat: 0.2, lng: 0 },
+        ],
+        "08:00",
+        50,
+        15,
+      );
+
+      expect(etas[0].arrivalTime).toBe("08:13");
+      expect(etas[0].withinWindow).toBe(true);
+      expect(etas[0].waitMinutes).toBeGreaterThan(0);
+      expect(etas[0].departureTime).toBe("14:15");
+      expect(etas[1].arrivalTime).toBe("14:28");
+
+      const route: any = windowedTemplateRoute();
+      route.stops[2].customer.deliveryWindowStart = "14:00";
+      route.stops[2].customer.deliveryWindowEnd = "15:00";
+      prisma.forTenant().route.findUnique.mockResolvedValue(route);
+      costMatrixBranch();
+
+      const result: any = await service.optimizeTemplate("route-1");
+      expect(result.windowViolations).toEqual([]);
+    });
+
+    it("REG-B177: the ORS request carries the vehicle's departure clock as its time_window", async () => {
+      prisma.forTenant().route.findUnique.mockResolvedValue({
+        id: "route-1",
+        avoidTolls: false,
+        optimizeBy: RouteOptimizeMetric.TIME,
+        endKind: RouteEndKind.NONE,
+        endLat: null,
+        endLng: null,
+        depotLat: 0,
+        depotLng: 0,
+        depotAddress: "Depot",
+        tenantId: "tenant-1",
+        stops: [
+          {
+            id: "stop-a",
+            stopNumber: 1,
+            customerId: "cust-a",
+            customer: {
+              id: "cust-a",
+              businessName: "A",
+              deliveryWindowStart: null,
+              deliveryWindowEnd: null,
+            },
+            customerAddress: { id: "addr-a", lat: 0.1, lng: 0 },
+          },
+          {
+            id: "stop-b",
+            stopNumber: 2,
+            customerId: "cust-b",
+            customer: {
+              id: "cust-b",
+              businessName: "B",
+              deliveryWindowStart: null,
+              deliveryWindowEnd: null,
+            },
+            customerAddress: { id: "addr-b", lat: 0.2, lng: 0 },
+          },
+        ],
+      });
+      prisma.$transaction = jest.fn().mockResolvedValue([]);
+      // No Google key — falls through to the ORS branch. ORS jobs carry
+      // absolute seconds-from-midnight windows but (today) no vehicle clock,
+      // so a job's window is meaningless without knowing when the vehicle
+      // actually departs (B177).
+      configGet.mockImplementation((key: string) =>
+        key === "googleMaps.apiKey" ? undefined : key === "ors.apiKey" ? "ors-key" : undefined,
+      );
+      systemConfigGet.mockImplementation((key: string) =>
+        Promise.resolve(key === "route.defaultStartTime" ? "08:00" : null),
+      );
+      (global as any).fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          routes: [
+            {
+              steps: [
+                { type: "job", job: 1 },
+                { type: "job", job: 2 },
+              ],
+            },
+          ],
+        }),
+      });
+
+      await service.optimizeTemplate("route-1");
+
+      const fetchMock = global.fetch as jest.Mock;
+      const [, init] = fetchMock.mock.calls[0];
+      const body = JSON.parse(init.body as string);
+      // 08:00 = 28800s from midnight; WORKDAY_SEC (12h workday) = 43200s.
+      expect(body.vehicles[0].time_window).toEqual([28800, 72000]);
+    });
+
+    it("REG-B177: an ORS response with unassigned jobs keeps the primary solver", async () => {
+      // The vehicle clock (above) makes a stop whose window has already
+      // closed unschedulable, so vroom returns it in `unassigned` instead of
+      // failing: two of three stops come back as steps. That is "this stop is
+      // late", not "ORS is broken" — the stop must still be persisted (last),
+      // named in windowViolations, with NO fallback claimed.
+      prisma.forTenant().route.findUnique.mockResolvedValue({
+        id: "route-1",
+        avoidTolls: false,
+        optimizeBy: RouteOptimizeMetric.TIME,
+        endKind: RouteEndKind.NONE,
+        endLat: null,
+        endLng: null,
+        depotLat: 0,
+        depotLng: 0,
+        depotAddress: "Depot",
+        tenantId: "tenant-1",
+        stops: [
+          {
+            id: "stop-ors-a",
+            stopNumber: 1,
+            customerId: "cust-ors-a",
+            customer: {
+              id: "cust-ors-a",
+              businessName: "A",
+              deliveryWindowStart: null,
+              deliveryWindowEnd: null,
+            },
+            customerAddress: { id: "addr-ors-a", lat: 0.1, lng: 0 },
+          },
+          {
+            id: "stop-ors-b",
+            stopNumber: 2,
+            customerId: "cust-ors-b",
+            customer: {
+              id: "cust-ors-b",
+              businessName: "B",
+              deliveryWindowStart: null,
+              deliveryWindowEnd: null,
+            },
+            customerAddress: { id: "addr-ors-b", lat: 0.2, lng: 0 },
+          },
+          {
+            id: "stop-late",
+            stopNumber: 3,
+            customerId: "cust-ors-late",
+            // 33.36 km out: unreachable before its 08:30 close from an 08:00
+            // departure in ANY order, which is exactly why vroom drops it.
+            customer: {
+              id: "cust-ors-late",
+              businessName: "Late",
+              deliveryWindowStart: "08:00",
+              deliveryWindowEnd: "08:30",
+            },
+            customerAddress: { id: "addr-ors-late", lat: 0.3, lng: 0 },
+          },
+        ],
+      });
+      prisma.$transaction = jest.fn().mockResolvedValue([]);
+      configGet.mockImplementation((key: string) =>
+        key === "googleMaps.apiKey" ? undefined : key === "ors.apiKey" ? "ors-key" : undefined,
+      );
+      systemConfigGet.mockImplementation((key: string) =>
+        Promise.resolve(key === "route.defaultStartTime" ? "08:00" : null),
+      );
+      (global as any).fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          routes: [
+            {
+              steps: [
+                { type: "job", job: 1 },
+                { type: "job", job: 2 },
+              ],
+            },
+          ],
+          // Job 3 = the third stop we sent.
+          unassigned: [{ id: 3 }],
+        }),
+      });
+
+      const result: any = await service.optimizeTemplate("route-1");
+
+      expect(result.stopOrder.map((s: any) => s.stopId)).toEqual([
+        "stop-ors-a",
+        "stop-ors-b",
+        "stop-late",
+      ]);
+      expect(result.windowViolations).toHaveLength(1);
+      expect(result.windowViolations[0].stopId).toBe("stop-late");
+      expect(result.windowViolations[0].windowEnd).toBe("08:30");
+      // ORS answered — the local solver never ran and no reason is claimed.
+      expect(result.usedFallback).toBe(false);
+      expect(result.fallbackReason).toBeUndefined();
+      expect(global.fetch as jest.Mock).toHaveBeenCalledTimes(1);
+    });
+
+    it("REG-B177: an ORS response that neither schedules nor reports a stop still throws", async () => {
+      configGet.mockImplementation((key: string) => (key === "ors.apiKey" ? "ors-key" : undefined));
+      (global as any).fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          routes: [{ steps: [{ type: "job", job: 1 }] }],
+          unassigned: [],
+        }),
+      });
+
+      // A TRUE mismatch (steps + unassigned < stops) is still an error, and
+      // still names the counts — appending the unassigned must not soften it.
+      await expect(
+        (service as any).callOrsOptimization(
+          [
+            { id: "stop-1", stopNumber: 1, customerName: "One", lat: 0.1, lng: 0 },
+            { id: "stop-2", stopNumber: 2, customerName: "Two", lat: 0.2, lng: 0 },
+            { id: "stop-3", stopNumber: 3, customerName: "Three", lat: 0.3, lng: 0 },
+          ],
+          { lat: 0, lng: 0 },
+          "08:00",
+        ),
+      ).rejects.toThrow("ORS stop count mismatch: expected 3, got 1");
+    });
+
+    it("REG-B177: only `job` entries of an ORS unassigned array index into the stop list", async () => {
+      configGet.mockImplementation((key: string) => (key === "ors.apiKey" ? "ors-key" : undefined));
+      const stops = [
+        { id: "stop-1", stopNumber: 1, customerName: "One", lat: 0.1, lng: 0 },
+        { id: "stop-2", stopNumber: 2, customerName: "Two", lat: 0.2, lng: 0 },
+        { id: "stop-3", stopNumber: 3, customerName: "Three", lat: 0.3, lng: 0 },
+      ];
+
+      // Vroom numbers `shipment` and `break` entries in their OWN id spaces,
+      // so a break's id says nothing about job N: only the job entry may be
+      // mapped onto a stop, and it is appended exactly once.
+      (global as any).fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          routes: [
+            {
+              steps: [
+                { type: "job", job: 1 },
+                { type: "job", job: 2 },
+              ],
+            },
+          ],
+          unassigned: [
+            { id: 1, type: "break" },
+            { id: 3, type: "job" },
+          ],
+        }),
+      });
+
+      await expect(
+        (service as any).callOrsOptimization(stops, { lat: 0, lng: 0 }, "08:00"),
+      ).resolves.toEqual(["stop-1", "stop-2", "stop-3"]);
+
+      // The same id carried by a NON-job entry is no report about job 3: the
+      // stop stays unaccounted for and the true-mismatch throw fires, rather
+      // than a break silently standing in for the missing job.
+      (global as any).fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          routes: [
+            {
+              steps: [
+                { type: "job", job: 1 },
+                { type: "job", job: 2 },
+              ],
+            },
+          ],
+          unassigned: [{ id: 3, type: "break" }],
+        }),
+      });
+
+      await expect(
+        (service as any).callOrsOptimization(stops, { lat: 0, lng: 0 }, "08:00"),
+      ).rejects.toThrow("ORS stop count mismatch: expected 3, got 2");
+    });
+
+    // T7 (F12, REG-B147): the multi-stop half of the repair — the only branch
+    // where the re-insertion loop actually runs more than once and where a
+    // repair can push a DIFFERENT stop out of its window. Under pure cost
+    // [A, B, C] only C is late (09:10 vs a 09:00 close); pulling C to the
+    // front fixes C but strands A (09:21 vs an 08:20 close). The one feasible
+    // order is [A, C, B] (A 08:13, C 08:55), so an empty `windowViolations`
+    // is the distinguishing oracle: a repair that only checks the stop it
+    // just moved reports A instead.
+    it("REG-B147: repairing a late windowed stop never pushes another windowed stop out of its window", async () => {
+      prisma.forTenant().route.findUnique.mockResolvedValue({
+        id: "route-1",
+        avoidTolls: false,
+        optimizeBy: RouteOptimizeMetric.TIME,
+        endKind: RouteEndKind.NONE,
+        endLat: null,
+        endLng: null,
+        depotLat: 0,
+        depotLng: 0,
+        depotAddress: "Depot",
+        tenantId: "tenant-1",
+        stops: [
+          {
+            id: "stop-a",
+            stopNumber: 1,
+            customerId: "cust-a",
+            customer: {
+              id: "cust-a",
+              businessName: "A",
+              deliveryWindowStart: "08:00",
+              deliveryWindowEnd: "08:20",
+            },
+            customerAddress: { id: "addr-a", lat: 0.1, lng: 0 },
+          },
+          {
+            id: "stop-b",
+            stopNumber: 2,
+            customerId: "cust-b",
+            customer: {
+              id: "cust-b",
+              businessName: "B",
+              deliveryWindowStart: null,
+              deliveryWindowEnd: null,
+            },
+            customerAddress: { id: "addr-b", lat: 0.2, lng: 0 },
+          },
+          {
+            id: "stop-c",
+            stopNumber: 3,
+            customerId: "cust-c",
+            customer: {
+              id: "cust-c",
+              businessName: "C",
+              deliveryWindowStart: "08:00",
+              deliveryWindowEnd: "09:00",
+            },
+            customerAddress: { id: "addr-c", lat: 0.3, lng: 0 },
+          },
+        ],
+      });
+      prisma.$transaction = jest.fn().mockResolvedValue([]);
+      configGet.mockImplementation((key: string) =>
+        key === "googleMaps.apiKey" ? "test-key" : undefined,
+      );
+      systemConfigGet.mockImplementation((key: string) =>
+        Promise.resolve(key === "route.defaultStartTime" ? "08:00" : null),
+      );
+      (global as any).fetch = jest.fn().mockRejectedValue(new Error("network down"));
+
+      const result: any = await service.optimizeTemplate("route-1");
+
+      // A was inside its window before the pass; it must still be inside it after.
+      expect(result.windowViolations).toEqual([]);
+      expect(result.stopOrder.map((s: any) => s.stopId)).toEqual(["stop-a", "stop-c", "stop-b"]);
+    });
+  });
+
+  // ─── optimizeRoute — mid-run clock ──────────────────────────────────────
+
+  describe("optimizeRoute — delivery windows (F12)", () => {
+    /** A run of three stops due north of a (0,0) depot; only the far one is
+     *  windowed (08:00-09:00). Against the SCHEDULED 08:00 departure the cost
+     *  order [near, mid, far] misses that window at 09:10 — but a driver who
+     *  is hours into the run is nowhere near 08:00, so that verdict is only
+     *  honest when the caller says what time it actually is. */
+    function windowedRun(status: RouteRunStatus) {
+      return {
+        id: "run-1",
+        routeId: "route-1",
+        startTime: "08:00",
+        status,
+        route: {
+          id: "route-1",
+          avoidTolls: false,
+          optimizeBy: RouteOptimizeMetric.TIME,
+          endKind: RouteEndKind.NONE,
+          endLat: null,
+          endLng: null,
+        },
+        stops: [
+          {
+            id: "run-stop-near",
+            stopNumber: 1,
+            customerId: "cust-near",
+            customerAddress: { id: "addr-near", lat: 0.1, lng: 0 },
+            routeStop: {
+              customerAddress: { id: "addr-near", lat: 0.1, lng: 0 },
+              customer: {
+                id: "cust-near",
+                businessName: "Near",
+                deliveryWindowStart: null,
+                deliveryWindowEnd: null,
+              },
+            },
+          },
+          {
+            id: "run-stop-mid",
+            stopNumber: 2,
+            customerId: "cust-mid",
+            customerAddress: { id: "addr-mid", lat: 0.2, lng: 0 },
+            routeStop: {
+              customerAddress: { id: "addr-mid", lat: 0.2, lng: 0 },
+              customer: {
+                id: "cust-mid",
+                businessName: "Mid",
+                deliveryWindowStart: null,
+                deliveryWindowEnd: null,
+              },
+            },
+          },
+          {
+            id: "run-stop-far",
+            stopNumber: 3,
+            customerId: "cust-far",
+            customerAddress: { id: "addr-far", lat: 0.3, lng: 0 },
+            routeStop: {
+              customerAddress: { id: "addr-far", lat: 0.3, lng: 0 },
+              customer: {
+                id: "cust-far",
+                businessName: "Far",
+                deliveryWindowStart: "08:00",
+                deliveryWindowEnd: "09:00",
+              },
+            },
+          },
+        ],
+      };
+    }
+
+    function arrange(status: RouteRunStatus) {
+      prisma.forTenant().routeRun.findUnique.mockResolvedValue(windowedRun(status));
+      prisma.forTenant().route.findUnique.mockResolvedValue({
+        id: "route-1",
+        depotLat: 0,
+        depotLng: 0,
+        depotAddress: "Depot",
+        tenantId: "tenant-1",
+      });
+      prisma.$transaction = jest.fn().mockResolvedValue([]);
+      configGet.mockImplementation((key: string) =>
+        key === "googleMaps.apiKey" ? "test-key" : undefined,
+      );
+      systemConfigGet.mockImplementation((key: string) =>
+        Promise.resolve(key === "route.defaultStartTime" ? "08:00" : null),
+      );
+      (global as any).fetch = jest.fn().mockRejectedValue(new Error("network down"));
+      return jest.spyOn(service, "calculateETAs");
+    }
+
+    it("REG-B177: an underway run judges its windows against the clock the caller passes, not its scheduled departure", async () => {
+      const etaSpy = arrange(RouteRunStatus.IN_PROGRESS);
+
+      const result: any = await service.optimizeRoute("run-1", { lat: 0, lng: 0 }, "12:30");
+
+      expect(etaSpy).toHaveBeenCalled();
+      for (const call of etaSpy.mock.calls) expect(call[2]).toBe("12:30");
+      expect(result.startTime).toBe("12:30");
+      expect(result.windowsChecked).toBe(true);
+    });
+
+    it("REG-B177: an underway run with no caller clock is never reordered on its stale scheduled departure", async () => {
+      const etaSpy = arrange(RouteRunStatus.IN_PROGRESS);
+
+      const result: any = await service.optimizeRoute("run-1", { lat: 0, lng: 0 });
+
+      expect(etaSpy).not.toHaveBeenCalled();
+      expect(result.stopOrder).toEqual([
+        { stopId: "run-stop-near", stopNumber: 1 },
+        { stopId: "run-stop-mid", stopNumber: 2 },
+        { stopId: "run-stop-far", stopNumber: 3 },
+      ]);
+      // Nothing was checked, and the result says so — an empty violations list
+      // here must not read as "checked and clean".
+      expect(result.windowViolations).toEqual([]);
+      expect(result.windowsChecked).toBe(false);
+    });
+
+    it("REG-B147: a run that has not departed keeps its scheduled clock and is still window-repaired", async () => {
+      const etaSpy = arrange(RouteRunStatus.SCHEDULED);
+
+      const result: any = await service.optimizeRoute("run-1", { lat: 0, lng: 0 });
+
+      expect(etaSpy).toHaveBeenCalled();
+      for (const call of etaSpy.mock.calls) expect(call[2]).toBe("08:00");
+      expect(result.startTime).toBe("08:00");
+      expect(result.stopOrder[0].stopId).toBe("run-stop-far");
+      expect(result.windowViolations).toEqual([]);
+      expect(result.windowsChecked).toBe(true);
+    });
+
+    /** The ORS half of the same rule: the deterministic pass is skipped when
+     *  there is no honest clock, so the ORS solver must not be handed one
+     *  either — otherwise it reorders on exactly the stale departure the skip
+     *  branch refuses to use. */
+    function arrangeOrs(status: RouteRunStatus) {
+      prisma.forTenant().routeRun.findUnique.mockResolvedValue(windowedRun(status));
+      prisma.forTenant().route.findUnique.mockResolvedValue({
+        id: "route-1",
+        depotLat: 0,
+        depotLng: 0,
+        depotAddress: "Depot",
+        tenantId: "tenant-1",
+      });
+      prisma.$transaction = jest.fn().mockResolvedValue([]);
+      configGet.mockImplementation((key: string) =>
+        key === "googleMaps.apiKey" ? undefined : key === "ors.apiKey" ? "ors-key" : undefined,
+      );
+      systemConfigGet.mockImplementation((key: string) =>
+        Promise.resolve(key === "route.defaultStartTime" ? "08:00" : null),
+      );
+      (global as any).fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          routes: [
+            {
+              steps: [
+                { type: "job", job: 1 },
+                { type: "job", job: 2 },
+                { type: "job", job: 3 },
+              ],
+            },
+          ],
+        }),
+      });
+    }
+
+    function orsRequestBody() {
+      const [, init] = (global.fetch as jest.Mock).mock.calls[0];
+      return JSON.parse(init.body as string);
+    }
+
+    it("REG-B177: an underway run with no caller clock sends ORS no vehicle time_window", async () => {
+      arrangeOrs(RouteRunStatus.IN_PROGRESS);
+
+      const result: any = await service.optimizeRoute("run-1", { lat: 0, lng: 0 });
+
+      expect(orsRequestBody().vehicles[0]).not.toHaveProperty("time_window");
+      expect(result.windowsChecked).toBe(false);
+    });
+
+    it("REG-B177: an underway run WITH a caller clock sends ORS that clock as its time_window", async () => {
+      arrangeOrs(RouteRunStatus.IN_PROGRESS);
+
+      const result: any = await service.optimizeRoute("run-1", { lat: 0, lng: 0 }, "12:30");
+
+      // 12:30 = 45000s from midnight; WORKDAY_SEC (12h workday) = 43200s.
+      expect(orsRequestBody().vehicles[0].time_window).toEqual([45000, 88200]);
+      expect(result.windowsChecked).toBe(true);
     });
   });
 
