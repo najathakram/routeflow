@@ -142,9 +142,11 @@ function BuyerPaymentsPageInner() {
   const { data: remittance } = useBuyerRemittance();
   const { toast } = useToast();
 
-  const activeCredits = (statement?.transactions ?? []).filter(
-    (t) => t.type === "CREDIT_NOTE" && t.runningBalance > 0.001,
-  );
+  // M3: the "active" sub-label must never be a count derived from the capped
+  // `transactions` ledger (undercounts once a customer has more active
+  // credits than fit the page) — it reflects the uncapped `availableCredit`
+  // total the tile itself already shows.
+  const hasActiveCredit = (statement?.availableCredit ?? 0) > 0;
 
   // P5-15: monthly statement PDF download.
   const { data: statementMonths } = useBuyerStatementMonths();
@@ -251,7 +253,7 @@ function BuyerPaymentsPageInner() {
           icon={Wallet}
           label="Store Credit"
           value={fmt(statement?.availableCredit ?? 0)}
-          sub={activeCredits.length > 0 ? `${activeCredits.length} active` : "None available"}
+          sub={hasActiveCredit ? "Available" : "None available"}
           color="bg-buyer-50 text-buyer-600"
         />
         <StatCard

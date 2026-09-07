@@ -328,8 +328,16 @@ export class OrdersService implements OnApplicationBootstrap {
       where.customerId = customer.id;
     } else if (customerId) {
       where.customerId = customerId;
-    } else if (search) {
-      where.customer = { businessName: { contains: search, mode: "insensitive" } };
+    }
+
+    // B144: `search` composes with the role/customerId scope above instead of
+    // being swallowed by an `else if` — matches order NUMBER as well as the
+    // customer's businessName.
+    if (search) {
+      where.OR = [
+        { orderNumber: { contains: search, mode: "insensitive" } },
+        { customer: { businessName: { contains: search, mode: "insensitive" } } },
+      ];
     }
 
     // PR-B: "which orders had this item?" — an AND-ed relation filter, so it
@@ -367,7 +375,7 @@ export class OrdersService implements OnApplicationBootstrap {
         },
         skip,
         take: limit,
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       }),
       this.prisma.forTenant().order.count({ where }),
     ]);

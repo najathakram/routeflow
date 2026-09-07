@@ -35,7 +35,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
-import { CheckStatus, InvoiceStatus, NotificationEvent } from "@prisma/client";
+import { CheckStatus, InvoiceStatus, NotificationEvent, UserRole } from "@prisma/client";
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 
 const mockCompressDocument = compressDocument as jest.Mock;
@@ -3208,12 +3208,17 @@ describe("InvoicesService", () => {
       prisma.invoice.count.mockResolvedValue(0);
     });
 
+    // T1-pin (L-047): dueDate is a UTC-midnight stamp — its end-of-day bound is a
+    // LITERAL UTC instant, never a host-local `setHours` mutation (that self-referential
+    // oracle agreed with the buggy code on every host whose local TZ is UTC, CI included,
+    // and silently disagreed everywhere else).
     it("passes dueFrom/dueTo through as a dueDate range, widening dueTo to end-of-day", async () => {
       await service.findAll({ dueFrom: "2026-08-26", dueTo: "2026-08-26" } as any);
 
-      const expectedEnd = new Date("2026-08-26");
-      expectedEnd.setHours(23, 59, 59, 999);
-      expect(whereArg().dueDate).toEqual({ gte: new Date("2026-08-26"), lte: expectedEnd });
+      expect(whereArg().dueDate).toEqual({
+        gte: new Date("2026-08-26"),
+        lte: new Date("2026-08-26T23:59:59.999Z"),
+      });
     });
 
     it("accepts dueFrom alone (open-ended window)", async () => {
@@ -3235,6 +3240,292 @@ describe("InvoicesService", () => {
       expect(dueDate.gte).toEqual(new Date("2026-08-01"));
       expect(dueDate.lt).toBeInstanceOf(Date); // isOverdue's "past due" bound survives
     });
+  });
+
+  // ─── T1 (REG-B89) — day-window bounds, per column convention (L-047) ────────
+  // `paidAt` is a REAL instant: its calendar-day bounds must be evaluated in the
+  // TENANT's own timezone, never the host clock's. `issueDate` is a UTC-midnight
+  // calendar-date stamp: its bounds are the LITERAL UTC instants of the
+  // date-only strings, never a host-local `setHours` mutation (which silently
+  // disagrees with both conventions off a UTC host — the zone is DATA here, not
+  // read from the environment; see the pinned rewrite above for the sibling
+  // dueDate leg).
+  describe("REG-B89 — paidAt (tenant-local) vs issueDate (UTC-literal) day-window bounds", () => {
+    beforeEach(() => {
+      // Zone as DATA (L-047): the tenant is explicitly America/New_York regardless
+      // of whatever timezone this test happens to run under.
+      jest.spyOn(service as any, "resolveTenantInvoiceDefaults").mockResolvedValue({
+        notes: null,
+        terms: null,
+        timezone: "America/New_York",
+      });
+    });
+
+    it("listAllPayments: paidAt bounds are America/New_York calendar-day boundaries, not host-local midnight", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      prisma.invoicePayment.count.mockResolvedValue(0);
+
+      await service.listAllPayments({ dateFrom: "2026-08-26", dateTo: "2026-08-26" });
+
+      const where = prisma.invoicePayment.findMany.mock.calls[0][0].where;
+      // NY is UTC-4 in August (EDT): local midnight Aug 26 = 04:00 UTC; local
+      // day-end Aug 26 23:59:59.999 = 03:59:59.999 UTC the NEXT calendar day.
+      expect(where.paidAt).toEqual({
+        gte: new Date("2026-08-26T04:00:00.000Z"),
+        lte: new Date("2026-08-27T03:59:59.999Z"),
+      });
+    });
+
+    it("findAll: issueDate bounds are the literal UTC instants of the calendar-date strings", async () => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.invoice.count.mockResolvedValue(0);
+
+      await service.findAll({ dateFrom: "2026-08-26", dateTo: "2026-08-26" } as any);
+
+      const where = prisma.invoice.findMany.mock.calls[0][0].where;
+      expect(where.issueDate).toEqual({
+        gte: new Date("2026-08-26T00:00:00.000Z"),
+        lte: new Date("2026-08-26T23:59:59.999Z"),
+      });
+    });
+
+    // The CSV export is the SECOND paidAt site B89 changed; without this the
+    // whole tenant-local window could be re-broken there alone and the suite
+    // would stay green on a UTC host (CI included).
+    it("exportPayments: paidAt bounds are America/New_York calendar-day boundaries", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+
+      await service.exportPayments({ dateFrom: "2026-08-26", dateTo: "2026-08-26" });
+
+      const where = prisma.invoicePayment.findMany.mock.calls[0][0].where;
+      expect(where.paidAt).toEqual({
+        gte: new Date("2026-08-26T04:00:00.000Z"),
+        lte: new Date("2026-08-27T03:59:59.999Z"),
+      });
+    });
+
+    // The day-end/day-start instants are composed by CONCATENATING a time
+    // suffix onto the raw query param, so the param must be normalised to its
+    // calendar day FIRST: `dueTo` is `@IsDateString()` (a full ISO datetime
+    // passes validation) and the payments routes carry no DTO at all, so a raw
+    // concatenation would hand Prisma an Invalid Date bound.
+    it("findAll: a full ISO datetime dueTo still yields that calendar day's UTC day-end bound", async () => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.invoice.count.mockResolvedValue(0);
+
+      await service.findAll({ dueTo: "2026-08-26T00:00:00.000Z" } as any);
+
+      const where = prisma.invoice.findMany.mock.calls[0][0].where;
+      expect(where.dueDate.lte).toEqual(new Date("2026-08-26T23:59:59.999Z"));
+    });
+
+    it("listAllPayments: a full ISO datetime dateFrom still yields that calendar day's tenant-local start", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      prisma.invoicePayment.count.mockResolvedValue(0);
+
+      await service.listAllPayments({ dateFrom: "2026-08-26T12:00:00.000Z" });
+
+      const where = prisma.invoicePayment.findMany.mock.calls[0][0].where;
+      expect(where.paidAt.gte).toEqual(new Date("2026-08-26T04:00:00.000Z"));
+    });
+
+    it("findAll: an unparsable dateTo is rejected before any query runs", async () => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.invoice.count.mockResolvedValue(0);
+
+      await expect(service.findAll({ dateTo: "not-a-date" } as any)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+    });
+
+    // The payments routes carry NO DTO (bare `@Query("dateTo")`), so the
+    // service is the only gate: an unparsable value must 400 rather than reach
+    // Prisma as an `Invalid Date` bound — the same guard the `dateFrom` leg
+    // already had, on BOTH payments sites.
+    it("listAllPayments: an unparsable dateTo is rejected before any query runs", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      prisma.invoicePayment.count.mockResolvedValue(0);
+
+      await expect(service.listAllPayments({ dateTo: "not-a-date" })).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.invoicePayment.findMany).not.toHaveBeenCalled();
+    });
+
+    it("exportPayments: an unparsable dateTo is rejected before any query runs", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+
+      await expect(service.exportPayments({ dateTo: "not-a-date" })).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.invoicePayment.findMany).not.toHaveBeenCalled();
+    });
+
+    it("listAllPayments: a full ISO datetime dateTo yields the same bound as its date-only form", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      prisma.invoicePayment.count.mockResolvedValue(0);
+
+      await service.listAllPayments({ dateTo: "2026-08-26T12:00:00.000Z" });
+      await service.listAllPayments({ dateTo: "2026-08-26" });
+
+      const isoWhere = prisma.invoicePayment.findMany.mock.calls[0][0].where;
+      const dayWhere = prisma.invoicePayment.findMany.mock.calls[1][0].where;
+      expect(isoWhere.paidAt.lte).toEqual(new Date("2026-08-27T03:59:59.999Z"));
+      expect(isoWhere.paidAt.lte).toEqual(dayWhere.paidAt.lte);
+    });
+
+    // The `gte` legs are UTC-midnight calendar stamps too: a full ISO
+    // `dateFrom` used raw narrows the window past that day's own stamp and
+    // drops every invoice issued on it.
+    it("findAll: a full ISO datetime dateFrom/dueFrom still yields that calendar day's UTC day-start", async () => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.invoice.count.mockResolvedValue(0);
+
+      await service.findAll({
+        dateFrom: "2026-08-26T12:00:00.000Z",
+        dueFrom: "2026-08-26T12:00:00.000Z",
+      } as any);
+
+      const where = prisma.invoice.findMany.mock.calls[0][0].where;
+      expect(where.issueDate.gte).toEqual(new Date("2026-08-26T00:00:00.000Z"));
+      expect(where.dueDate.gte).toEqual(new Date("2026-08-26T00:00:00.000Z"));
+    });
+  });
+
+  // ─── T1-pin — duplicate() must stamp issueDate as a UTC-midnight calendar
+  // stamp of "today", the same invariant every other issueDate write in this
+  // file holds (L-047). Today `duplicate()`'s create() call omits issueDate
+  // entirely, leaving it to whatever the schema default resolves to.
+  describe("T1-pin — duplicate() stamps issueDate as UTC-midnight of today", () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it("sets issueDate to the UTC-midnight stamp of the mocked clock's calendar day", async () => {
+      jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
+      jest.setSystemTime(new Date("2026-08-26T15:42:07.000Z"));
+
+      const baseInv = {
+        id: "inv-dup-1",
+        orderId: null,
+        customerId: "cust-1",
+        invoiceNumber: "INV-2026-0099",
+        status: InvoiceStatus.SENT,
+        subtotal: 50,
+        taxAmount: 5,
+        discount: 0,
+        shippingFee: 0,
+        total: 55,
+        notes: null,
+        terms: null,
+        items: [],
+      };
+      prisma.invoice.findUnique.mockResolvedValue(baseInv);
+      prisma.invoice.findFirst.mockResolvedValue(null); // for nextInvoiceNumber
+      prisma.invoice.create.mockResolvedValue({ ...baseInv, id: "inv-dup-2" });
+
+      await service.duplicate("inv-dup-1");
+
+      const data = prisma.invoice.create.mock.calls[0][0].data;
+      expect(data.issueDate).toEqual(new Date("2026-08-26T00:00:00.000Z"));
+    });
+  });
+
+  // ─── T2 (REG-B169) — orderBy carries an `id` tiebreaker. `issueDate`/`paidAt`
+  // ties are STRUCTURAL (bulk imports, UTC-midnight stamps sharing a value), so
+  // a single-key orderBy leaves page order unstable across identical requests —
+  // a row can silently repeat or vanish across pages.
+  describe("REG-B169 — orderBy carries an id tiebreaker", () => {
+    it("findAll: default sort orders by issueDate desc, id desc", async () => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.invoice.count.mockResolvedValue(0);
+
+      await service.findAll({} as any);
+
+      expect(prisma.invoice.findMany.mock.calls[0][0].orderBy).toEqual([
+        { issueDate: "desc" },
+        { id: "desc" },
+      ]);
+    });
+
+    it("findAll: sortBy=total&sortOrder=asc orders by total asc, id asc", async () => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.invoice.count.mockResolvedValue(0);
+
+      await service.findAll({ sortBy: "total", sortOrder: "asc" } as any);
+
+      expect(prisma.invoice.findMany.mock.calls[0][0].orderBy).toEqual([
+        { total: "asc" },
+        { id: "asc" },
+      ]);
+    });
+
+    it("listAllPayments: default sort orders by paidAt desc, id desc", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      prisma.invoicePayment.count.mockResolvedValue(0);
+
+      await service.listAllPayments({});
+
+      expect(prisma.invoicePayment.findMany.mock.calls[0][0].orderBy).toEqual([
+        { paidAt: "desc" },
+        { id: "desc" },
+      ]);
+    });
+
+    // m9 — the sort allowlists are plain object literals, so a bare index
+    // lookup resolves INHERITED keys: `sortBy=constructor` returns Object's
+    // constructor and `sortBy=__proto__` returns Object.prototype, either of
+    // which reaches Prisma as a malformed orderBy (a 500 any unauthenticated-
+    // ish caller with a query string can trigger). Both must fall back to the
+    // same order the default does.
+    it.each(["constructor", "__proto__", "toString", "valueOf"])(
+      "findAll: sortBy=%s is not an allowlisted field — falls back to the default order",
+      async (sortBy) => {
+        prisma.invoice.findMany.mockResolvedValue([]);
+        prisma.invoice.count.mockResolvedValue(0);
+
+        await service.findAll({ sortBy } as any);
+
+        expect(prisma.invoice.findMany.mock.calls[0][0].orderBy).toEqual([
+          { issueDate: "desc" },
+          { id: "desc" },
+        ]);
+      },
+    );
+
+    it.each(["constructor", "__proto__", "toString", "valueOf"])(
+      "listAllPayments: sortBy=%s is not an allowlisted field — falls back to the default order",
+      async (sortBy) => {
+        prisma.invoicePayment.findMany.mockResolvedValue([]);
+        prisma.invoicePayment.count.mockResolvedValue(0);
+
+        await service.listAllPayments({ sortBy });
+
+        expect(prisma.invoicePayment.findMany.mock.calls[0][0].orderBy).toEqual([
+          { paidAt: "desc" },
+          { id: "desc" },
+        ]);
+      },
+    );
+
+    // H3 — exportPayments carries the same sort allowlist as listAllPayments
+    // (its own `Object.hasOwn` guard), so it needs the same prototype-key pin:
+    // a bare index lookup there would hand Prisma `Object.prototype` as an
+    // orderBy and 500 the CSV export.
+    it.each(["constructor", "__proto__", "toString", "valueOf"])(
+      "exportPayments: sortBy=%s is not an allowlisted field — falls back to the default order",
+      async (sortBy) => {
+        prisma.invoicePayment.findMany.mockResolvedValue([]);
+
+        await expect(service.exportPayments({ sortBy })).resolves.toBeDefined();
+
+        expect(prisma.invoicePayment.findMany.mock.calls[0][0].orderBy).toEqual([
+          { paidAt: "desc" },
+          { id: "desc" },
+        ]);
+      },
+    );
   });
 
   describe("P5-12 — VOID payments excluded from balance math", () => {
@@ -5556,19 +5847,23 @@ describe("InvoicesService", () => {
       expect(second.split(",").slice(0, 3)).toEqual(["PAY-0002", "2026-07-02", ""]);
     });
 
+    // Harness fix (REG-B169, T2): both orderBy expectations rewritten from a
+    // single-key object to the array-with-id-tiebreaker form — listAllPayments'
+    // orderBy is now `[{ <sortField>: <dir> }, { id: <dir> }]` for a custom
+    // sortBy, same convention as the default-sort T2 pin above.
     it("settledAt is an accepted sort field on both the list and the export", async () => {
       prisma.invoicePayment.findMany.mockResolvedValue([]);
       prisma.invoicePayment.count.mockResolvedValue(0);
 
       await service.listAllPayments({ sortBy: "settledAt", sortDir: "asc" });
       expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ orderBy: { settledAt: "asc" } }),
+        expect.objectContaining({ orderBy: [{ settledAt: "asc" }, { id: "asc" }] }),
       );
 
       prisma.invoicePayment.findMany.mockClear();
       await service.exportPayments({ sortBy: "settledAt", sortDir: "desc" });
       expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ orderBy: { settledAt: "desc" } }),
+        expect.objectContaining({ orderBy: [{ settledAt: "desc" }, { id: "desc" }] }),
       );
     });
   });
@@ -7027,6 +7322,356 @@ describe("InvoicesService", () => {
         expect(data.referenceNumber).toBeNull();
         expect(data.subject).toBeNull();
       });
+    });
+  });
+
+  // ─── T6 (REG-B12) — getKpiSummary(): the invoices page's six KPI tiles must
+  // be computed by the DATABASE over the whole OPEN set, never the client's
+  // `useInvoices({ limit: 999 })` fetch-all-then-reduce (which silently drops
+  // whichever rows page 1000+ would have held — exactly the oldest, most
+  // delinquent invoices). NOTE: this method does not exist yet — every one of
+  // these calls throws a TypeError today (structural red).
+  describe("REG-B12 — getKpiSummary()", () => {
+    // The bar renders on `/invoices`, which BUYERS are allowed to open, so the
+    // summary is role-aware: an OPERATOR sees the tenant's receivables, a
+    // CUSTOMER only their own. Every case names the caller.
+    const OPERATOR = { sub: "user-op", role: UserRole.OPERATOR };
+    const BUYER = { sub: "user-buyer", role: UserRole.CUSTOMER };
+
+    // Precedent: "REG-B78 (T14): OrdersService owns the helper at all — its
+    // absence is an assertion, not a TypeError" (orders.update-items-guards.spec.ts).
+    // Without this the behavioral `it` below dies on `service.getKpiSummary is
+    // not a function` and none of its six figures is ever exercised at red time.
+    it("InvoicesService owns getKpiSummary at all — its absence is an assertion, not a TypeError", () => {
+      expect(typeof (service as unknown as Record<string, unknown>).getKpiSummary).toBe("function");
+    });
+
+    it("buckets the OPEN set by dueDate against the viewer's `today`, and threads through the count/avgDays reads", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        // overdue: dueDate < today
+        {
+          id: "inv-overdue",
+          total: 100,
+          dueDate: new Date("2026-08-25T00:00:00.000Z"),
+          payments: [],
+        },
+        // due today: dueDate === today
+        { id: "inv-today", total: 50, dueDate: new Date("2026-08-26T00:00:00.000Z"), payments: [] },
+        // due in 30: today < dueDate <= today+30d
+        { id: "inv-30", total: 25, dueDate: new Date("2026-09-10T00:00:00.000Z"), payments: [] },
+        // later: counts toward totalOutstanding only, no bucket
+        { id: "inv-later", total: 10, dueDate: new Date("2026-10-30T00:00:00.000Z"), payments: [] },
+        // CONFIRMED basis (F03): only the PAID row reduces the balance — the
+        // DRAFT (unconfirmed) and VOID rows never do. 100 − 20 = 80 → overdue.
+        {
+          id: "inv-partial",
+          total: 100,
+          dueDate: new Date("2026-08-24T00:00:00.000Z"),
+          payments: [
+            { amount: 40, status: "DRAFT" },
+            { amount: 30, status: "VOID" },
+            { amount: 20, status: "PAID" },
+          ],
+        },
+        // null dueDate: counts toward totalOutstanding, lands in NO bucket
+        { id: "inv-no-due", total: 7, dueDate: null, payments: [] },
+        // m5: status OVERDUE with a FUTURE dueDate → OVERDUE, never dueIn30.
+        // The client memo's basis is a DISJUNCT (`status === "OVERDUE" || due <
+        // today`), so an invoice the server already flipped to OVERDUE stays
+        // overdue whatever its dueDate says.
+        {
+          id: "inv-status-overdue",
+          total: 11,
+          status: InvoiceStatus.OVERDUE,
+          dueDate: new Date("2026-09-05T00:00:00.000Z"),
+          payments: [],
+        },
+        // boundary: today+30 is INSIDE dueIn30 (inclusive)
+        { id: "inv-day30", total: 13, dueDate: new Date("2026-09-25T00:00:00.000Z"), payments: [] },
+        // boundary: today+31 is OUTSIDE every bucket
+        { id: "inv-day31", total: 17, dueDate: new Date("2026-09-26T00:00:00.000Z"), payments: [] },
+      ]);
+      prisma.invoicePayment.count.mockResolvedValue(3);
+      prisma.$queryRaw.mockResolvedValue([{ avgDays: 12.5 }]);
+
+      const svc = service as unknown as {
+        getKpiSummary?: (
+          today: string,
+          user: { sub: string; role: UserRole },
+        ) => Promise<Record<string, number>>;
+      };
+      // Assert-then-call: the missing method reads as an assertion failure here
+      // too, never a TypeError that skips every oracle below.
+      expect(typeof svc.getKpiSummary).toBe("function");
+      const result = await svc.getKpiSummary!("2026-08-26", OPERATOR);
+
+      expect(result).toEqual({
+        totalOutstanding: 313, // 100 + 50 + 25 + 10 + 80 + 7 + 11 + 13 + 17
+        // 100 + 80 (the PARTIAL row's CONFIRMED-only balance) + 11 (m5: the
+        // status-OVERDUE row, whose dueDate is in the future)
+        overdue: 191,
+        dueToday: 50,
+        dueIn30: 38, // 25 + 13 (day 30) — the status-OVERDUE row is NOT here
+        avgDays: 12.5,
+        awaitingConfirmationCount: 3,
+      });
+
+      // No `take` — the OPEN set is read whole, not capped like a rendering page.
+      const call = prisma.invoice.findMany.mock.calls[0][0];
+      expect(call.take).toBeUndefined();
+      // Restricted to the OPEN set: PAID/VOID/WRITTEN_OFF/DRAFT excluded (the
+      // page.tsx memo's own exclusion list this replaces — B12 design §2).
+      expect(new Set(call.where.status.notIn)).toEqual(
+        new Set([
+          InvoiceStatus.PAID,
+          InvoiceStatus.VOID,
+          InvoiceStatus.WRITTEN_OFF,
+          InvoiceStatus.DRAFT,
+        ]),
+      );
+
+      // The tenant id reaches the raw avgDays query as a bound parameter, not
+      // string-interpolated into the query text.
+      expect(prisma.$queryRaw.mock.calls[0]).toContain("test-tenant");
+
+      // …and the POPULATION it averages is pinned: the pass-through oracle
+      // above cannot tell a correctly-scoped average from one taken over the
+      // wrong rows.
+      const sql = (prisma.$queryRaw.mock.calls[0][0] as string[]).join("?");
+      expect(sql).toContain("status = 'PAID'");
+      expect(sql).toContain('"paidAt" IS NOT NULL');
+      expect(sql).toContain('"sentAt" IS NOT NULL');
+      expect(sql).toContain('"paidAt" >= "sentAt"');
+    });
+
+    // m5 — the `overdue` bucket's basis is the client memo's DISJUNCT, not a
+    // date-only rule: an invoice the server has already flipped to OVERDUE
+    // counts as overdue whatever its dueDate says. A date-only implementation
+    // buckets the future-dated row into dueIn30 and drops the null-dated one
+    // out of every bucket — both under-report the tile the operator collects
+    // against.
+    it("counts a status-OVERDUE invoice as overdue regardless of its dueDate (m5)", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        // dueDate 10 days in the FUTURE — a date-only rule buckets this in dueIn30.
+        {
+          id: "inv-future-overdue",
+          total: 40,
+          status: InvoiceStatus.OVERDUE,
+          dueDate: new Date("2026-09-05T00:00:00.000Z"),
+          payments: [],
+        },
+        // no dueDate at all — a date-only rule drops this out of every bucket.
+        {
+          id: "inv-nodue-overdue",
+          total: 60,
+          status: InvoiceStatus.OVERDUE,
+          dueDate: null,
+          payments: [],
+        },
+      ]);
+      prisma.invoicePayment.count.mockResolvedValue(0);
+      prisma.$queryRaw.mockResolvedValue([{ avgDays: 0 }]);
+
+      const svc = service as unknown as {
+        getKpiSummary?: (
+          today: string,
+          user: { sub: string; role: UserRole },
+        ) => Promise<Record<string, number>>;
+      };
+      expect(typeof svc.getKpiSummary).toBe("function");
+      const result = await svc.getKpiSummary!("2026-08-26", OPERATOR);
+
+      expect({
+        overdue: result.overdue,
+        dueIn30: result.dueIn30,
+        dueToday: result.dueToday,
+        totalOutstanding: result.totalOutstanding,
+      }).toEqual({ overdue: 100, dueIn30: 0, dueToday: 0, totalOutstanding: 100 });
+    });
+
+    // m7 — the awaiting-confirmation tile sits in the SAME bar as the money
+    // figures, so its DRAFT-payment count is scoped to the same OPEN set they
+    // sum. Counting draft payments on PAID/VOID/WRITTEN_OFF/DRAFT invoices
+    // hands the operator a queue with nothing to act on beside it.
+    it("scopes awaitingConfirmationCount to the OPEN invoice set (m7)", async () => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.invoicePayment.count.mockResolvedValue(2);
+      prisma.$queryRaw.mockResolvedValue([{ avgDays: 0 }]);
+
+      const svc = service as unknown as {
+        getKpiSummary?: (
+          today: string,
+          user: { sub: string; role: UserRole },
+        ) => Promise<Record<string, number>>;
+      };
+      expect(typeof svc.getKpiSummary).toBe("function");
+      await svc.getKpiSummary!("2026-08-26", OPERATOR);
+
+      const countWhere = prisma.invoicePayment.count.mock.calls[0][0].where;
+      expect(countWhere.status).toBe("DRAFT");
+      expect(new Set(countWhere.invoice.status.notIn)).toEqual(
+        new Set([
+          InvoiceStatus.PAID,
+          InvoiceStatus.VOID,
+          InvoiceStatus.WRITTEN_OFF,
+          InvoiceStatus.DRAFT,
+        ]),
+      );
+    });
+
+    // avgDays feeds the tile's `avgDays > 0 ? … : "N/A"` render, so it must be
+    // a NUMBER even when nothing qualifies: Postgres AVG() over an empty
+    // population returns NULL, and a narrowed query can return no row at all.
+    // `?? null` would render "N/A" only by the accident of `null > 0`.
+    it("reports avgDays 0 when the aging query averages NULL", async () => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.invoicePayment.count.mockResolvedValue(0);
+      prisma.$queryRaw.mockResolvedValue([{ avgDays: null }]);
+
+      const svc = service as unknown as {
+        getKpiSummary?: (
+          today: string,
+          user: { sub: string; role: UserRole },
+        ) => Promise<Record<string, number>>;
+      };
+      expect(typeof svc.getKpiSummary).toBe("function");
+      expect((await svc.getKpiSummary!("2026-08-26", OPERATOR)).avgDays).toBe(0);
+    });
+
+    it("reports avgDays 0 when the aging query returns no row at all", async () => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.invoicePayment.count.mockResolvedValue(0);
+      prisma.$queryRaw.mockResolvedValue([]);
+
+      const svc = service as unknown as {
+        getKpiSummary?: (
+          today: string,
+          user: { sub: string; role: UserRole },
+        ) => Promise<Record<string, number>>;
+      };
+      expect(typeof svc.getKpiSummary).toBe("function");
+      expect((await svc.getKpiSummary!("2026-08-26", OPERATOR)).avgDays).toBe(0);
+    });
+
+    // The DTO's `@Matches(/^\d{4}-\d{2}-\d{2}$/)` pins the SHAPE only. A value
+    // that matches it but is not a real calendar day must be rejected BEFORE
+    // any query runs: `2026-13-01` would otherwise 500 on `.toISOString()`
+    // after three reads, and `2026-02-30` would silently roll to Mar 2 and
+    // bucket the tiles against a day the caller never asked for.
+    it.each(["2026-13-01", "2026-02-30"])(
+      "rejects a shape-valid but non-existent calendar day (%s) before any query runs",
+      async (today) => {
+        const svc = service as unknown as {
+          getKpiSummary?: (
+            today: string,
+            user: { sub: string; role: UserRole },
+          ) => Promise<Record<string, number>>;
+        };
+        expect(typeof svc.getKpiSummary).toBe("function");
+        await expect(svc.getKpiSummary!(today, OPERATOR)).rejects.toThrow(BadRequestException);
+        expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+      },
+    );
+
+    // With no tenant context `forTenant()` reads UNSCOPED while the raw query's
+    // `"tenantId" = NULL` matches nothing — one response mixing all-tenant
+    // totals with a zeroed average. All three reads must agree instead.
+    it("returns a zeroed summary — and reads nothing — when there is no tenant context", async () => {
+      prisma.getTenantId.mockReturnValue(null);
+
+      const svc = service as unknown as {
+        getKpiSummary?: (
+          today: string,
+          user: { sub: string; role: UserRole },
+        ) => Promise<Record<string, number>>;
+      };
+      expect(typeof svc.getKpiSummary).toBe("function");
+      expect(await svc.getKpiSummary!("2026-08-26", OPERATOR)).toEqual({
+        totalOutstanding: 0,
+        overdue: 0,
+        dueToday: 0,
+        dueIn30: 0,
+        avgDays: 0,
+        awaitingConfirmationCount: 0,
+      });
+      expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    // The invoices page is CUSTOMER-allowed and the bar renders on it, so a
+    // buyer must get their OWN figures — never the tenant's whole receivables.
+    // All THREE reads carry the scope: the totals, the awaiting-confirmation
+    // count, and the raw avgDays average.
+    it("scopes all three reads to the caller's own customer when the viewer is a CUSTOMER", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-9" });
+      prisma.invoice.findMany.mockResolvedValue([
+        { id: "inv-mine", total: 100, dueDate: new Date("2026-08-25T00:00:00.000Z"), payments: [] },
+      ]);
+      prisma.invoicePayment.count.mockResolvedValue(1);
+      prisma.$queryRaw.mockResolvedValue([{ avgDays: 4 }]);
+
+      const svc = service as unknown as {
+        getKpiSummary?: (
+          today: string,
+          user: { sub: string; role: UserRole },
+        ) => Promise<Record<string, number>>;
+      };
+      expect(typeof svc.getKpiSummary).toBe("function");
+      const result = await svc.getKpiSummary!("2026-08-26", BUYER);
+
+      expect(result.overdue).toBe(100);
+      // Resolved by the caller's USER id, exactly the way findAll resolves it.
+      expect(prisma.customer.findFirst.mock.calls[0][0]).toEqual({
+        where: { userId: "user-buyer" },
+      });
+      expect(prisma.invoice.findMany.mock.calls[0][0].where.customerId).toBe("cust-9");
+      // m7: the count carries BOTH scopes — the buyer's own customer id and
+      // the same OPEN status set the money tiles sum.
+      const buyerCountInvoiceWhere = prisma.invoicePayment.count.mock.calls[0][0].where.invoice;
+      expect(buyerCountInvoiceWhere.customerId).toBe("cust-9");
+      expect(new Set(buyerCountInvoiceWhere.status.notIn)).toEqual(
+        new Set([
+          InvoiceStatus.PAID,
+          InvoiceStatus.VOID,
+          InvoiceStatus.WRITTEN_OFF,
+          InvoiceStatus.DRAFT,
+        ]),
+      );
+      // …and the customer id reaches the raw avgDays query as a BOUND value
+      // too — nested one level down inside the conditional `Prisma.sql`
+      // fragment, so the oracle flattens before it looks.
+      const flatValues = (v: any): any[] =>
+        v && typeof v === "object" && Array.isArray(v.strings) && Array.isArray(v.values)
+          ? v.values.flatMap((x: any) => flatValues(x))
+          : Array.isArray(v)
+            ? v.flatMap((x: any) => flatValues(x))
+            : [v];
+      expect(prisma.$queryRaw.mock.calls[0].slice(1).flatMap(flatValues)).toContain("cust-9");
+    });
+
+    // A CUSTOMER token with no customer profile is the same empty answer
+    // `findAll` gives it (an empty page), never the tenant-wide totals an
+    // unscoped read would return.
+    it("returns a zeroed summary — and reads nothing — for a CUSTOMER with no customer profile", async () => {
+      prisma.customer.findFirst.mockResolvedValue(null);
+
+      const svc = service as unknown as {
+        getKpiSummary?: (
+          today: string,
+          user: { sub: string; role: UserRole },
+        ) => Promise<Record<string, number>>;
+      };
+      expect(typeof svc.getKpiSummary).toBe("function");
+      expect(await svc.getKpiSummary!("2026-08-26", BUYER)).toEqual({
+        totalOutstanding: 0,
+        overdue: 0,
+        dueToday: 0,
+        dueIn30: 0,
+        avgDays: 0,
+        awaitingConfirmationCount: 0,
+      });
+      expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
   });
 });

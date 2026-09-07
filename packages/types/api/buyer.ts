@@ -101,6 +101,16 @@ export interface BuyerStatement {
   availableCredit: number;
   advanceBalance: number;
   pendingOrdersAmount: number;
+  /** Lifetime billed total (every non-DRAFT, non-VOID invoice), summed by the
+   *  DATABASE over the whole history — never a reduce over the capped
+   *  `transactions` ledger, which stops at one page. */
+  lifetimeInvoiced: number;
+  /** Lifetime money received: Σ amount over CONFIRMED (PAID) invoice payments,
+   *  summed by the DATABASE over the whole history. DRAFT (unconfirmed) and
+   *  VOID (bounced) rows never count. */
+  lifetimeReceived: number;
+  /** True when the transactions ledger below is a capped partial view of the full history. */
+  transactionsTruncated: boolean;
   transactions: BuyerStatementTransaction[];
 }
 

@@ -27,3 +27,29 @@ export const PAYABLE: InvoiceStatus[] = [
   InvoiceStatus.PARTIAL,
   InvoiceStatus.OVERDUE,
 ];
+/**
+ * "Open" invoices for an aggregate/summary read (KPI tiles, dashboards):
+ * excludes settled/dead/forgiven (PAID/VOID/WRITTEN_OFF, same as
+ * CREDIT_NOT_APPLICABLE) AND DRAFT — a not-yet-issued invoice has nothing due
+ * and must never inflate a receivables/aging figure the way it must still
+ * block a credit application (CREDIT_NOT_APPLICABLE keeps DRAFT applicable).
+ * B12 (`getKpiSummary`): reproduces the page.tsx memo's own exclusion list.
+ */
+export const KPI_SUMMARY_EXCLUDED: InvoiceStatus[] = [
+  InvoiceStatus.PAID,
+  InvoiceStatus.VOID,
+  InvoiceStatus.WRITTEN_OFF,
+  InvoiceStatus.DRAFT,
+];
+/**
+ * LIFETIME billed history (the customer statement's "Invoiced Amount" tile,
+ * M1): every invoice the customer was actually billed, over the WHOLE history.
+ * Deliberately WIDER than KPI_SUMMARY_EXCLUDED — PAID / OVERDUE / WRITTEN_OFF
+ * are real past billings and belong in a lifetime figure even though they are
+ * not open receivables — and narrower than "everything": DRAFT was never
+ * issued and VOID was cancelled, so neither was ever billed.
+ */
+export const LIFETIME_INVOICED_EXCLUDED: InvoiceStatus[] = [
+  InvoiceStatus.DRAFT,
+  InvoiceStatus.VOID,
+];

@@ -7,7 +7,7 @@ import { ArrowLeft, Ban, Printer } from "lucide-react";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useInvoice,
-  useInvoicePayments,
+  usePaymentDetail,
   useVoidPayment,
   useGetPaymentImageUrl,
 } from "@/lib/api/invoices";
@@ -24,17 +24,12 @@ export default function PaymentDetailPage() {
   const router = useRouter();
   const { toast } = useToast();
 
-  // Fetch the payment by searching all payments by id — use list with no filters,
-  // since we don't have a single-payment endpoint yet.
-  // We'll fetch a large page and find the matching one.
-  const { data, isLoading } = useInvoicePayments({ limit: 200 });
+  const { data: payment, isLoading } = usePaymentDetail(id);
   const voidPayment = useVoidPayment();
 
   React.useEffect(() => {
     setTitle("Payment Receipt");
   }, [setTitle]);
-
-  const payment = data?.data.find((p) => p.id === id);
 
   // Enrich the "Applied Invoice" card with the invoice's own total / balance /
   // status. Guarded below for loading/undefined so the card degrades gracefully.

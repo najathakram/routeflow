@@ -1169,6 +1169,740 @@ describe("CustomersService", () => {
     });
   });
 
+  // ─── T2 (REG-B169) — orderBy carries an id tiebreaker (createdAt ties are
+  // structural — a bulk import can share one createdAt across many rows).
+  describe("REG-B169 — orderBy carries an id tiebreaker", () => {
+    it("findAll: default sort orders by createdAt desc, id desc", async () => {
+      prisma.customer.findMany.mockResolvedValue([]);
+      prisma.customer.count.mockResolvedValue(0);
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+
+      await service.findAll({ page: 1, limit: 20 });
+
+      expect(prisma.customer.findMany.mock.calls[0][0].orderBy).toEqual([
+        { createdAt: "desc" },
+        { id: "desc" },
+      ]);
+    });
+
+    // m9 — the sort allowlist is a plain object literal, so a bare index
+    // lookup resolves INHERITED keys: `sortBy=constructor` returns Object's
+    // constructor and `sortBy=__proto__` returns Object.prototype, either of
+    // which reaches Prisma as a malformed orderBy (→ 500). Both must fall back
+    // to the same order the default does.
+    it.each(["constructor", "__proto__", "toString", "valueOf"])(
+      "findAll: sortBy=%s is not an allowlisted field — falls back to the default order",
+      async (sortBy) => {
+        prisma.customer.findMany.mockResolvedValue([]);
+        prisma.customer.count.mockResolvedValue(0);
+        prisma.invoice.findMany.mockResolvedValue([]);
+        prisma.advancePayment.findMany.mockResolvedValue([]);
+
+        await service.findAll({ page: 1, limit: 20, sortBy } as any);
+
+        expect(prisma.customer.findMany.mock.calls[0][0].orderBy).toEqual([
+          { createdAt: "desc" },
+          { id: "desc" },
+        ]);
+      },
+    );
+  });
+
+  /** A findMany mock that HONOURS `take`/`skip` AND the `where` status/balance
+   * filters against a fixed row set. A mock that ignores `take` would make the
+   * REG-B110 tests vacuous; one that ignores `where` could not tell the OPEN-set
+   * reads (status-filtered, uncapped) apart from the LEDGER reads (all statuses,
+   * capped), which is exactly what those tests exist to distinguish. */
+  const honouringTake = (rows: any[]) =>
+    jest.fn((args: any = {}) => {
+      const where = args?.where ?? {};
+      let matched = rows;
+      if (where.status?.notIn) {
+        matched = matched.filter((r: any) => !where.status.notIn.includes(r.status));
+      }
+      if (where.status?.not !== undefined) {
+        matched = matched.filter((r: any) => r.status !== where.status.not);
+      }
+      if (where.balance?.gt !== undefined) {
+        matched = matched.filter((r: any) => Number(r.balance) > where.balance.gt);
+      }
+      const skip = args?.skip ?? 0;
+      const take = args?.take ?? matched.length;
+      return Promise.resolve(matched.slice(skip, skip + take));
+    });
+
+  // ─── T4 (REG-B110) — getStatementForOperator's four money figures come from
+  // UNCAPPED reads over the whole/open set; the take:100/50/50 caps stay for
+  // the transactions LEDGER display only, and a capped ledger surfaces
+  // transactionsTruncated so the UI can label it a partial view.
+  describe("REG-B110 — getStatementForOperator reads the WHOLE set for money, not the capped page", () => {
+    it("150 open invoices / 60 credit notes / 60 advances: money figures cover the WHOLE set, and the ledger reports truncated", async () => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+
+      const invoices = Array.from({ length: 150 }, (_, i) => ({
+        id: `inv-${i}`,
+        invoiceNumber: `INV-${i}`,
+        total: 10,
+        status: "SENT",
+        dueDate: null,
+        createdAt: new Date(),
+        payments: [],
+      }));
+      const creditNotes = Array.from({ length: 60 }, (_, i) => ({
+        id: `cn-${i}`,
+        creditNoteNumber: `CN-${i}`,
+        amount: 5,
+        amountUsed: 0,
+        status: "ISSUED",
+        createdAt: new Date(),
+        expiresAt: null,
+      }));
+      const advancePayments = Array.from({ length: 60 }, (_, i) => ({
+        id: `ap-${i}`,
+        amount: 2,
+        balance: 2,
+        method: "CASH",
+        reference: null,
+        receivedAt: new Date(),
+      }));
+
+      prisma.invoice.findMany.mockImplementation(honouringTake(invoices));
+      prisma.creditNote.findMany.mockImplementation(honouringTake(creditNotes));
+      prisma.advancePayment.findMany.mockImplementation(honouringTake(advancePayments));
+      prisma.order.findMany.mockResolvedValue([]);
+
+      const result = await service.getStatementForOperator("cust-1");
+
+      // ONE matcher over all four figures, so a red tree exercises every oracle
+      // instead of stopping at the first failed `expect` (outstandingAmount).
+      //   outstandingAmount: 150 × $10, no payments — the whole set, not just
+      //     the first 100 (take:100).            TODAY 1000
+      //   availableCredit:   60 × $5 remaining — not just the first 50 (take:50).
+      //                                          TODAY 250
+      //   advanceBalance:    60 × $2 remaining — not just the first 50 (take:50).
+      //                                          TODAY 100
+      //   transactionsTruncated: every read above is capped below its own count,
+      //     so the ledger the UI renders is a partial view.  TODAY undefined
+      expect({
+        outstandingAmount: result.outstandingAmount,
+        availableCredit: result.availableCredit,
+        advanceBalance: result.advanceBalance,
+        transactionsTruncated: (result as any).transactionsTruncated,
+      }).toEqual({
+        outstandingAmount: 1500,
+        availableCredit: 300,
+        advanceBalance: 120,
+        transactionsTruncated: true,
+      });
+    });
+
+    // M1 — the statement header's "Invoiced Amount" / "Amount Received" tiles
+    // are LIFETIME figures and sit beside the (uncapped) Outstanding/Overdue
+    // ones, so they must come from a DB aggregate over the whole history, not
+    // a reduce over the take-capped `transactions` ledger. The oracle is the
+    // aggregate's own `_sum`: values that NO reduce over the 150-row fixture
+    // could produce, so a capped (or uncapped) client-side reduce fails here.
+    it("lifetimeInvoiced/lifetimeReceived come from the DB aggregates, not a reduce over the capped ledger (M1)", async () => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+
+      // 150 invoices, each with a CONFIRMED $4 payment: a reduce over the
+      // ledger's first 100 rows gives 1000/400 and an uncapped reduce over the
+      // OPEN set gives 1500/600 — neither is what the aggregates report,
+      // because the lifetime figures also include the PAID/WRITTEN_OFF history
+      // the OPEN-set read deliberately drops.
+      const invoices = Array.from({ length: 150 }, (_, i) => ({
+        id: `inv-${i}`,
+        invoiceNumber: `INV-${i}`,
+        total: 10,
+        status: "SENT",
+        dueDate: null,
+        createdAt: new Date(),
+        payments: [{ amount: 4, status: "PAID" }],
+      }));
+      prisma.invoice.findMany.mockImplementation(honouringTake(invoices));
+      prisma.creditNote.findMany.mockResolvedValue([]);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+      prisma.order.findMany.mockResolvedValue([]);
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 1750 } });
+      prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 643.219 } });
+
+      const result: any = await service.getStatementForOperator("cust-1");
+
+      expect({
+        lifetimeInvoiced: result.lifetimeInvoiced,
+        lifetimeReceived: result.lifetimeReceived,
+      }).toEqual({
+        lifetimeInvoiced: 1750,
+        // roundMoney on every monetary result — cents, never a raw float.
+        lifetimeReceived: 643.22,
+      });
+
+      // Billed history, not the OPEN set: DRAFT (never issued) and VOID
+      // (cancelled) are the only exclusions — PAID/OVERDUE/WRITTEN_OFF are
+      // real past billings and belong in a lifetime total.
+      const invoiceAggArgs = prisma.invoice.aggregate.mock.calls[0][0];
+      expect(invoiceAggArgs._sum).toEqual({ total: true });
+      expect(invoiceAggArgs.where.customerId).toBe("cust-1");
+      expect(new Set(invoiceAggArgs.where.status.notIn)).toEqual(new Set(["DRAFT", "VOID"]));
+      expect(invoiceAggArgs.take).toBeUndefined();
+
+      // Received money is the CONFIRMED (PAID) basis — a DRAFT (unconfirmed)
+      // or VOID (bounced) payment is not money received — scoped to this
+      // customer's invoices.
+      const paymentAggArgs = prisma.invoicePayment.aggregate.mock.calls[0][0];
+      expect(paymentAggArgs._sum).toEqual({ amount: true });
+      expect(paymentAggArgs.where.status).toBe("PAID");
+      expect(paymentAggArgs.where.invoice).toEqual({ customerId: "cust-1" });
+      expect(paymentAggArgs.take).toBeUndefined();
+    });
+
+    it("a small history (5 open invoices / 2 credit notes / 1 advance, all under the caps) reports transactionsTruncated false", async () => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+
+      const invoices = Array.from({ length: 5 }, (_, i) => ({
+        id: `inv-${i}`,
+        invoiceNumber: `INV-${i}`,
+        total: 10,
+        status: "SENT",
+        dueDate: null,
+        createdAt: new Date(),
+        payments: [],
+      }));
+      const creditNotes = Array.from({ length: 2 }, (_, i) => ({
+        id: `cn-${i}`,
+        creditNoteNumber: `CN-${i}`,
+        amount: 5,
+        amountUsed: 0,
+        status: "ISSUED",
+        createdAt: new Date(),
+        expiresAt: null,
+      }));
+      const advancePayments = [
+        {
+          id: "ap-0",
+          amount: 2,
+          balance: 2,
+          method: "CASH",
+          reference: null,
+          receivedAt: new Date(),
+        },
+      ];
+
+      prisma.invoice.findMany.mockImplementation(honouringTake(invoices));
+      prisma.creditNote.findMany.mockImplementation(honouringTake(creditNotes));
+      prisma.advancePayment.findMany.mockImplementation(honouringTake(advancePayments));
+      prisma.order.findMany.mockResolvedValue([]);
+
+      const result = await service.getStatementForOperator("cust-1");
+
+      // The negative side of the flag: nothing is capped away here, so the
+      // ledger IS the whole history and transactionsTruncated must be false —
+      // a hardcoded `true` fails this case — while the money figures still
+      // sum the open set.
+      expect({
+        outstandingAmount: result.outstandingAmount,
+        availableCredit: result.availableCredit,
+        advanceBalance: result.advanceBalance,
+        transactionsTruncated: (result as any).transactionsTruncated,
+      }).toEqual({
+        outstandingAmount: 50,
+        availableCredit: 10,
+        advanceBalance: 2,
+        transactionsTruncated: false,
+      });
+    });
+
+    it("a $100 invoice with DRAFT $40 + VOID $30 + PAID $20 payments: outstandingAmount is $80, the CONFIRMED (PAID) basis", async () => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "inv-mixed",
+          invoiceNumber: "INV-MIXED",
+          total: 100,
+          status: "SENT",
+          dueDate: null,
+          createdAt: new Date(),
+          payments: [
+            { amount: 40, status: "DRAFT" },
+            { amount: 30, status: "VOID" },
+            { amount: 20, status: "PAID" },
+          ],
+        },
+      ]);
+      prisma.creditNote.findMany.mockResolvedValue([]);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+      prisma.order.findMany.mockResolvedValue([]);
+
+      const result = await service.getStatementForOperator("cust-1");
+
+      // CONFIRMED (PAID) basis: only the $20 PAID row counts as paid, so
+      // outstanding = 100 − 20 = 80 — NOT 100 − (40 + 20) = 40, which is what
+      // today's `status !== "VOID"` basis gives by wrongly counting the
+      // unconfirmed DRAFT $40 as paid.
+      expect(result.outstandingAmount).toBe(80);
+    });
+
+    // The case that DISTINGUISHES the two possible bases for the flag: the OPEN
+    // set (20) sits far below the ledger cap while the ledger's own population
+    // (320 rows, all statuses) sits far above it. A flag derived from the
+    // open-set size answers `false` here — on a ledger showing 100 of 320.
+    it("20 open + 300 settled invoices: the ledger reports truncated even though the open set fits the cap", async () => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+
+      const openRows = Array.from({ length: 20 }, (_, i) => ({
+        id: `inv-open-${i}`,
+        invoiceNumber: `INV-OPEN-${i}`,
+        total: 10,
+        status: "SENT",
+        dueDate: null,
+        createdAt: new Date(),
+        payments: [],
+      }));
+      const settledRows = Array.from({ length: 300 }, (_, i) => ({
+        id: `inv-paid-${i}`,
+        invoiceNumber: `INV-PAID-${i}`,
+        total: 999,
+        status: "PAID",
+        dueDate: null,
+        createdAt: new Date(),
+        payments: [{ amount: 999, status: "PAID" }],
+      }));
+
+      prisma.invoice.findMany.mockImplementation(honouringTake([...openRows, ...settledRows]));
+      prisma.creditNote.findMany.mockImplementation(
+        honouringTake([
+          {
+            id: "cn-1",
+            creditNoteNumber: "CN-1",
+            amount: 5,
+            amountUsed: 0,
+            status: "ISSUED",
+            createdAt: new Date(),
+            expiresAt: null,
+          },
+        ]),
+      );
+      prisma.advancePayment.findMany.mockImplementation(
+        honouringTake([
+          {
+            id: "ap-1",
+            amount: 2,
+            balance: 2,
+            method: "CASH",
+            reference: null,
+            receivedAt: new Date(),
+          },
+        ]),
+      );
+      prisma.order.findMany.mockResolvedValue([]);
+
+      const result = await service.getStatementForOperator("cust-1");
+
+      expect({
+        outstandingAmount: result.outstandingAmount,
+        transactionsTruncated: (result as any).transactionsTruncated,
+        invoiceLedgerRows: result.transactions.filter((t: any) => t.type === "INVOICE").length,
+      }).toEqual({
+        outstandingAmount: 200,
+        transactionsTruncated: true,
+        // exactly the cap — the CAP + 1 probe row is never rendered
+        invoiceLedgerRows: 100,
+      });
+    });
+
+    // A DRAFT invoice is not yet issued, so it is not receivable — the same
+    // exclusion the invoices KPI summary makes (KPI_SUMMARY_EXCLUDED) and the
+    // one the Invoices-tab Outstanding card used to make client-side before it
+    // was repointed at this figure.
+    it("a DRAFT invoice never inflates outstanding/overdue", async () => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      const past = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+      prisma.invoice.findMany.mockImplementation(
+        honouringTake([
+          {
+            id: "inv-sent",
+            invoiceNumber: "INV-SENT",
+            total: 500,
+            status: "SENT",
+            dueDate: past,
+            createdAt: past,
+            payments: [],
+          },
+          {
+            id: "inv-draft",
+            invoiceNumber: "INV-DRAFT",
+            total: 5000,
+            status: "DRAFT",
+            dueDate: past,
+            createdAt: past,
+            payments: [],
+          },
+        ]),
+      );
+      prisma.creditNote.findMany.mockImplementation(honouringTake([]));
+      prisma.advancePayment.findMany.mockImplementation(honouringTake([]));
+      prisma.order.findMany.mockResolvedValue([]);
+
+      const result = await service.getStatementForOperator("cust-1");
+
+      expect({
+        outstandingAmount: result.outstandingAmount,
+        overdueAmount: result.overdueAmount,
+      }).toEqual({ outstandingAmount: 500, overdueAmount: 500 });
+    });
+  });
+
+  // ─── T4 (REG-B110) — the buyer-facing twin. build-plan P3 requires the same
+  // uncapped OPEN-set money reads "in `getStatementForOperator` (and
+  // `getMyStatement`)": here the take:50 caps are for the transactions LEDGER
+  // display only, and reverting just this half must go red.
+  describe("REG-B110 — getMyStatement reads the WHOLE set for money, not the capped page", () => {
+    const invoiceRows = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `inv-${i}`,
+        invoiceNumber: `INV-${i}`,
+        total: 10,
+        status: "SENT",
+        dueDate: null,
+        createdAt: new Date(),
+        payments: [],
+      }));
+    const creditNoteRows = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `cn-${i}`,
+        creditNoteNumber: `CN-${i}`,
+        amount: 5,
+        amountUsed: 0,
+        status: "ISSUED",
+        createdAt: new Date(),
+        expiresAt: null,
+      }));
+
+    it("150 open invoices / 60 credit notes: money figures cover the WHOLE set, and the ledger reports truncated", async () => {
+      prisma.customer.findFirst.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.invoice.findMany.mockImplementation(honouringTake(invoiceRows(150)));
+      prisma.creditNote.findMany.mockImplementation(honouringTake(creditNoteRows(60)));
+
+      const result = await service.getMyStatement(customerPayload);
+
+      // ONE matcher over the figures so a red tree exercises every oracle.
+      //   outstandingAmount: 150 × $10, no payments — the whole set, not just
+      //     the first 50 (take:50).                TODAY 500
+      //   availableCredit:   60 × $5 remaining — not just the first 50.
+      //                                            TODAY 250
+      //   transactionsTruncated: both reads are capped below their own count.
+      expect({
+        outstandingAmount: result.outstandingAmount,
+        availableCredit: result.availableCredit,
+        transactionsTruncated: (result as any).transactionsTruncated,
+      }).toEqual({
+        outstandingAmount: 1500,
+        availableCredit: 300,
+        transactionsTruncated: true,
+      });
+    });
+
+    it("the transactions LEDGER stays capped at 50 invoice rows while the money reads are uncapped", async () => {
+      prisma.customer.findFirst.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.invoice.findMany.mockImplementation(honouringTake(invoiceRows(150)));
+      prisma.creditNote.findMany.mockImplementation(honouringTake(creditNoteRows(60)));
+
+      const result = await service.getMyStatement(customerPayload);
+
+      // The fix lifts the cap off the MONEY reads only — the ledger the UI
+      // renders keeps its take:50 display cap.
+      expect(result.transactions.filter((t: any) => t.type === "INVOICE")).toHaveLength(50);
+      expect(result.transactions.filter((t: any) => t.type === "CREDIT_NOTE")).toHaveLength(50);
+    });
+
+    it("a $100 invoice with DRAFT $40 + VOID $30 + PAID $20 payments: outstandingAmount is $80, the CONFIRMED (PAID) basis", async () => {
+      prisma.customer.findFirst.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "inv-mixed",
+          invoiceNumber: "INV-MIXED",
+          total: 100,
+          status: "SENT",
+          dueDate: null,
+          createdAt: new Date(),
+          payments: [
+            { amount: 40, status: "DRAFT" },
+            { amount: 30, status: "VOID" },
+            { amount: 20, status: "PAID" },
+          ],
+        },
+      ]);
+      prisma.creditNote.findMany.mockResolvedValue([]);
+
+      const result = await service.getMyStatement(customerPayload);
+
+      // CONFIRMED (PAID) basis: only the $20 PAID row counts as paid, so
+      // outstanding = 100 − 20 = 80 — NOT 100 − (40 + 20) = 40, which is what
+      // a `status !== "VOID"` basis gives by wrongly counting the unconfirmed
+      // DRAFT $40 as paid.
+      expect(result.outstandingAmount).toBe(80);
+    });
+
+    it("a $100 invoice whose ONLY payment is a DRAFT $40: outstandingAmount stays $100", async () => {
+      prisma.customer.findFirst.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "inv-draft-only",
+          invoiceNumber: "INV-DRAFT-ONLY",
+          total: 100,
+          status: "SENT",
+          dueDate: null,
+          createdAt: new Date(),
+          payments: [{ amount: 40, status: "DRAFT" }],
+        },
+      ]);
+      prisma.creditNote.findMany.mockResolvedValue([]);
+
+      const result = await service.getMyStatement(customerPayload);
+
+      // An unconfirmed DRAFT payment is excluded outright, not merely netted
+      // against a confirmed one: with no PAID row at all the whole $100 is
+      // still outstanding.
+      expect(result.outstandingAmount).toBe(100);
+    });
+
+    // M1 — the buyer-facing twin: same DB-aggregate basis for the two lifetime
+    // figures, so reverting just this half goes red too.
+    it("lifetimeInvoiced/lifetimeReceived come from the DB aggregates, not a reduce over the capped ledger (M1)", async () => {
+      prisma.customer.findFirst.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.invoice.findMany.mockImplementation(honouringTake(invoiceRows(150)));
+      prisma.creditNote.findMany.mockResolvedValue([]);
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 1725 } });
+      prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 88.005 } });
+
+      const result: any = await service.getMyStatement(customerPayload);
+
+      // 150 × $10 = 1500 (uncapped reduce) and 50 × $10 = 500 (the ledger's
+      // capped reduce) are both WRONG — the aggregate's own sum is the oracle.
+      expect({
+        lifetimeInvoiced: result.lifetimeInvoiced,
+        lifetimeReceived: result.lifetimeReceived,
+      }).toEqual({ lifetimeInvoiced: 1725, lifetimeReceived: 88.01 });
+
+      const invoiceAggArgs = prisma.invoice.aggregate.mock.calls[0][0];
+      expect(invoiceAggArgs._sum).toEqual({ total: true });
+      expect(invoiceAggArgs.where.customerId).toBe(MOCK_CUSTOMER.id);
+      expect(new Set(invoiceAggArgs.where.status.notIn)).toEqual(new Set(["DRAFT", "VOID"]));
+      expect(invoiceAggArgs.take).toBeUndefined();
+
+      const paymentAggArgs = prisma.invoicePayment.aggregate.mock.calls[0][0];
+      expect(paymentAggArgs._sum).toEqual({ amount: true });
+      expect(paymentAggArgs.where.status).toBe("PAID");
+      // Scoped to the CALLER's own customer row, resolved from the JWT.
+      expect(paymentAggArgs.where.invoice).toEqual({ customerId: MOCK_CUSTOMER.id });
+      expect(paymentAggArgs.take).toBeUndefined();
+    });
+
+    it("a lifetime with no billed history at all reports $0.00, never NaN (M1)", async () => {
+      prisma.customer.findFirst.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.creditNote.findMany.mockResolvedValue([]);
+      // Postgres SUM() over an empty set is NULL — Prisma surfaces it as null.
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: null } });
+      prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: null } });
+
+      const result: any = await service.getMyStatement(customerPayload);
+
+      expect({
+        lifetimeInvoiced: result.lifetimeInvoiced,
+        lifetimeReceived: result.lifetimeReceived,
+      }).toEqual({ lifetimeInvoiced: 0, lifetimeReceived: 0 });
+    });
+
+    it("a small history (5 open invoices / 2 credit notes, under the caps) reports transactionsTruncated false", async () => {
+      prisma.customer.findFirst.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.invoice.findMany.mockImplementation(honouringTake(invoiceRows(5)));
+      prisma.creditNote.findMany.mockImplementation(honouringTake(creditNoteRows(2)));
+
+      const result = await service.getMyStatement(customerPayload);
+
+      expect({
+        outstandingAmount: result.outstandingAmount,
+        availableCredit: result.availableCredit,
+        transactionsTruncated: (result as any).transactionsTruncated,
+      }).toEqual({
+        outstandingAmount: 50,
+        availableCredit: 10,
+        transactionsTruncated: false,
+      });
+    });
+
+    // The distinguishing case, buyer side: 20 open invoices (below the cap) but
+    // 320 rows of history (well above it).
+    it("20 open + 300 settled invoices: the ledger reports truncated even though the open set fits the cap", async () => {
+      prisma.customer.findFirst.mockResolvedValue(MOCK_CUSTOMER);
+
+      const settledRows = Array.from({ length: 300 }, (_, i) => ({
+        id: `inv-paid-${i}`,
+        invoiceNumber: `INV-PAID-${i}`,
+        total: 999,
+        status: "PAID",
+        dueDate: null,
+        createdAt: new Date(),
+        payments: [{ amount: 999, status: "PAID" }],
+      }));
+
+      prisma.invoice.findMany.mockImplementation(
+        honouringTake([...invoiceRows(20), ...settledRows]),
+      );
+      prisma.creditNote.findMany.mockImplementation(honouringTake(creditNoteRows(1)));
+
+      const result = await service.getMyStatement(customerPayload);
+
+      expect({
+        outstandingAmount: result.outstandingAmount,
+        transactionsTruncated: (result as any).transactionsTruncated,
+        invoiceLedgerRows: result.transactions.filter((t: any) => t.type === "INVOICE").length,
+      }).toEqual({
+        outstandingAmount: 200,
+        transactionsTruncated: true,
+        // exactly the cap — the CAP + 1 probe row is never rendered
+        invoiceLedgerRows: 50,
+      });
+    });
+
+    it("a DRAFT invoice never inflates outstanding/overdue", async () => {
+      prisma.customer.findFirst.mockResolvedValue(MOCK_CUSTOMER);
+      const past = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+      prisma.invoice.findMany.mockImplementation(
+        honouringTake([
+          {
+            id: "inv-sent",
+            invoiceNumber: "INV-SENT",
+            total: 500,
+            status: "SENT",
+            dueDate: past,
+            createdAt: past,
+            payments: [],
+          },
+          {
+            id: "inv-draft",
+            invoiceNumber: "INV-DRAFT",
+            total: 5000,
+            status: "DRAFT",
+            dueDate: past,
+            createdAt: past,
+            payments: [],
+          },
+        ]),
+      );
+      prisma.creditNote.findMany.mockImplementation(honouringTake([]));
+
+      const result = await service.getMyStatement(customerPayload);
+
+      expect({
+        outstandingAmount: result.outstandingAmount,
+        overdueAmount: result.overdueAmount,
+      }).toEqual({ outstandingAmount: 500, overdueAmount: 500 });
+    });
+  });
+
+  // ─── H2 — every money figure a statement returns is rounded to cents. The
+  // figures are float reduces over invoice/advance/order rows, so an unrounded
+  // sum leaks binary-float dust (the classic 0.1 + 0.2 = 0.30000000000000004)
+  // straight into the operator's and the buyer's screens. One pin per method,
+  // with a fixture whose raw reduce is provably dusty.
+  describe("H2 — statement money figures are rounded to cents", () => {
+    const dustyInvoices = (dueDate: Date | null) => [
+      {
+        id: "inv-dust-1",
+        invoiceNumber: "INV-DUST-1",
+        total: 0.1,
+        status: "SENT",
+        dueDate,
+        createdAt: new Date(),
+        payments: [],
+      },
+      {
+        id: "inv-dust-2",
+        invoiceNumber: "INV-DUST-2",
+        total: 0.2,
+        status: "SENT",
+        dueDate,
+        createdAt: new Date(),
+        payments: [],
+      },
+    ];
+
+    it("getStatementForOperator: outstanding/overdue/advanceBalance/pendingOrdersAmount are cents, not 0.30000000000000004", async () => {
+      // Guard the fixture itself: the raw reduce these four figures perform IS
+      // dusty, so an unrounded implementation cannot pass by accident.
+      expect(0.1 + 0.2).not.toBe(0.3);
+
+      const past = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.invoice.findMany.mockImplementation(honouringTake(dustyInvoices(past)));
+      prisma.creditNote.findMany.mockImplementation(honouringTake([]));
+      prisma.advancePayment.findMany.mockImplementation(
+        honouringTake([
+          {
+            id: "ap-dust-1",
+            amount: 0.1,
+            balance: 0.1,
+            method: "CASH",
+            reference: null,
+            receivedAt: new Date(),
+          },
+          {
+            id: "ap-dust-2",
+            amount: 0.2,
+            balance: 0.2,
+            method: "CASH",
+            reference: null,
+            receivedAt: new Date(),
+          },
+        ]),
+      );
+      prisma.order.findMany.mockResolvedValue([
+        { id: "ord-dust-1", total: 0.1, orderNumber: "ORD-1", status: "PENDING", createdAt: past },
+        {
+          id: "ord-dust-2",
+          total: 0.2,
+          orderNumber: "ORD-2",
+          status: "CONFIRMED",
+          createdAt: past,
+        },
+      ]);
+
+      const result = await service.getStatementForOperator("cust-1");
+
+      // ONE matcher over all four figures so a red tree exercises every oracle.
+      expect({
+        outstandingAmount: result.outstandingAmount,
+        overdueAmount: result.overdueAmount,
+        advanceBalance: result.advanceBalance,
+        pendingOrdersAmount: result.pendingOrdersAmount,
+      }).toEqual({
+        outstandingAmount: 0.3,
+        overdueAmount: 0.3,
+        advanceBalance: 0.3,
+        pendingOrdersAmount: 0.3,
+      });
+    });
+
+    it("getMyStatement: outstanding/overdue are cents, not 0.30000000000000004", async () => {
+      expect(0.1 + 0.2).not.toBe(0.3);
+
+      const past = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+      prisma.customer.findFirst.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.invoice.findMany.mockImplementation(honouringTake(dustyInvoices(past)));
+      prisma.creditNote.findMany.mockImplementation(honouringTake([]));
+
+      const result = await service.getMyStatement(customerPayload);
+
+      expect({
+        outstandingAmount: result.outstandingAmount,
+        overdueAmount: result.overdueAmount,
+      }).toEqual({ outstandingAmount: 0.3, overdueAmount: 0.3 });
+    });
+  });
+
   // ─── upsertCustomerPrice — MSRP-era partial-update + role-gated implicit delete ───
 
   describe("upsertCustomerPrice", () => {

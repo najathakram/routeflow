@@ -1,0 +1,455 @@
+{
+  "e1": {
+    "executor": "E1 (api + types)",
+    "status": "done",
+    "filesTouched": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api/src/invoices/invoice-status-sets.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api/src/customers/customers.service.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api/src/customers/customers.service.spec.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api/src/invoices/invoices.service.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api/src/invoices/invoices.service.spec.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/packages/types/api/buyer.ts"
+    ],
+    "typeFieldsAdded": [
+      "BuyerStatement.lifetimeInvoiced: number (packages/types/api/buyer.ts) — lifetime billed total, DB aggregate _sum.total over invoices excluding DRAFT+VOID, roundMoney'd",
+      "BuyerStatement.lifetimeReceived: number (packages/types/api/buyer.ts) — lifetime money received, DB aggregate _sum.amount over CONFIRMED (status PAID) invoice payments on this customer's invoices, roundMoney'd"
+    ],
+    "diffSummary": "M1 (api half). invoice-status-sets.ts: new named set LIFETIME_INVOICED_EXCLUDED = [DRAFT, VOID] (no existing set matched; §2's \"add a named set, never a hand-rolled list\"). customers.service.ts — getStatementForOperator AND getMyStatement each gained two entries in their existing Promise.all: `invoice.aggregate({ _sum: { total: true }, where: { customerId, status: { notIn: LIFETIME_INVOICED_EXCLUDED } } })` and `invoicePayment.aggregate({ _sum: { amount: true }, where: { ...CONFIRMED_PAYMENT, invoice: { customerId } } })` (CONFIRMED_PAYMENT = the repo's `{ status: \"PAID\" }` where-form of the sumConfirmed basis, never a hand-rolled list). Results: `lifetimeInvoiced = roundMoney(Number(agg?._sum?.total ?? 0))`, `lifetimeReceived = roundMoney(Number(agg?._sum?.amount ?? 0))` (?? 0 because SUM() over an empty set is NULL), both added to each return object. No rows materialised, no take, ledger caps untouched. packages/types/api/buyer.ts: BuyerStatement gains the two fields (required, documented) — note /buyer/statement is served by customersService.getStatementForOperator (buyer.controller.ts:253), so both new fields ship on that endpoint too.\nm5. invoices.service.ts getKpiSummary: the OPEN-set select now carries `status: true`, and the bucket chain is the client memo's disjunct — `if (inv.status === InvoiceStatus.OVERDUE) overdue += balance; else if (dueDateIso == null) continue; else if (dueDateIso < today) overdue…` — so a status-OVERDUE row with a future or null dueDate lands in overdue, not dueIn30/no bucket.\nm7. The awaitingConfirmationCount count is scoped to the same open set: `where: { status: \"DRAFT\", invoice: { status: { notIn: KPI_SUMMARY_EXCLUDED }, ...(customerId ? { customerId } : {}) } }` (the buyer's customerId now composes inside `invoice` instead of replacing it).\nm9. `Object.hasOwn(validSortFields, sortBy)` guards replace the bare index lookups at invoices.service.ts findAll (:2887) and listAllPayments (:4491) — and at exportPayments (:5629), a 4th byte-identical allowlist this PR had also rewritten (see notes). customers.service.ts's allowlist already carried the guard from the engine's own work; verified, unchanged.\nSpecs. invoices.service.spec.ts: the existing REG-B12 bucketing test's `inv-status-overdue` fixture comment + expectations were rewritten for m5 (overdue 180→191, dueIn30 49→38; totalOutstanding unchanged at 313) — that test previously pinned the date-only rule as \"the server definition of record\", which the m5 ruling overrides; new `it` \"counts a status-OVERDUE invoice as overdue regardless of its dueDate (m5)\" (future dueDate + null dueDate → overdue 100, dueIn30 0); new `it` \"scopes awaitingConfirmationCount to the OPEN invoice set (m7)\" pinning the count's where; the CUSTOMER-scope test's count assertion now pins customerId AND the open status set; two `it.each([\"constructor\",\"__proto__\",\"toString\",\"valueOf\"])` blocks in REG-B169 for findAll and listAllPayments (m9). customers.service.spec.ts: M1 pins in both REG-B110 describes — a findMany-honouring 150-invoice fixture (each with a CONFIRMED $4 payment) whose capped reduce (1000/400) and uncapped reduce (1500/600) are both ≠ the aggregate mocks' _sum (1750 / 643.219→643.22 operator, 1725 / 88.005→88.01 buyer), plus assertions on both aggregates' `_sum`, `where` (customerId, notIn {DRAFT,VOID}, status PAID) and absence of `take`; a NULL-sum → $0.00 (never NaN) case; and an `it.each` m9 prototype-key pin on findAll's default order. Nothing committed; no other worktree touched.",
+    "gateOutputs": "Prettier (all six touched files): `npx prettier --check …` → \"All matched files use Prettier code style!\"\nGate 1 — `cd apps/api && npx tsc -p tsconfig.build.json --noEmit` → TSC_EXIT=0 (no output).\nGate 2 — `cd apps/api && npx jest src/invoices src/customers --runInBand` → Test Suites: 13 passed, 13 total; Tests: 454 passed, 454 total; Time 36.1 s; JEST_EXIT=0. (The `[Nest] ERROR … catalog unseeded` line in the log is an existing customers spec's deliberate-throw path, not a failure.)\nFix-revert probes (each reverted in place, run, then restored byte-for-byte from a scratchpad backup; final gate above was re-run AFTER the restores):\n• m5+m7 reverted to the date-only chain and the unscoped DRAFT count → `npx jest src/invoices/invoices.service.spec.ts -t \"REG-B12\"` = 4 failed / 7 passed: \"counts a status-OVERDUE invoice as overdue regardless of its dueDate (m5)\", \"scopes awaitingConfirmationCount to the OPEN invoice set (m7)\", \"buckets the OPEN set by dueDate…\", \"scopes all three reads to the caller's own customer…\".\n• M1 reverted to a reduce over the capped ledger → `npx jest src/customers/customers.service.spec.ts -t \"M1\"` = 2 failed / 1 passed: both \"lifetimeInvoiced/lifetimeReceived come from the DB aggregates…\" tests (operator + getMyStatement). The 1 passing is the NULL-sum/NaN guard, which is a shape oracle, not a basis oracle.\n• m9 reverted to bare index lookups at all three sites → `npx jest src/invoices/invoices.service.spec.ts src/customers/customers.service.spec.ts -t \"not an allowlisted field\"` = 12 failed / 0 passed (4 keys × findAll-invoices, listAllPayments, findAll-customers).",
+    "notes": "1. SCOPE FLAG for the lead — m9 fourth site. The ruling names three rewritten allowlists; `customers.service.ts`'s was already guarded (engine work, verified, untouched by me), so only two remained there. This PR had also rewritten a fourth, byte-identical allowlist — `invoices.service.exportPayments` (:5629, the CSV twin of listAllPayments, same query params, same prototype-key 500) — and fix-round-3's review bar reads \"`Object.hasOwn` at every allowlist\", so I guarded it too. Four lines; revert it if the lead wants the literal three.\n2. Existing-pin reversal. `invoices.service.spec.ts` REG-B12 previously asserted, in a comment, that date-only bucketing was \"the server definition of record, replacing the client memo's status-or-date rule\". m5 overrules that; I rewrote the fixture comment and the two figures rather than adding a contradictory test. Worth one line in the PR body.\n3. Type placement. The only statement response type in packages/types is `BuyerStatement` (found via `transactionsTruncated`, as the design said). It is genuinely the operator statement's shape: `/buyer/statement` calls `customersService.getStatementForOperator`. `apps/api/src/buyer/statement.service.ts` (the monthly PDF, \"must NOT change\") is unrelated and untouched. The client types for `/customers/:id/statement` (`CustomerStatement`, web + mobile lib) and `/customers/me/statement` (mobile `AccountSummary`) are LOCAL, not shared — E2 must add `lifetimeInvoiced` / `lifetimeReceived` there to read the tiles.\n4. getMyStatement's response is narrower than BuyerStatement (no advanceBalance/pendingOrdersAmount) — pre-existing; both new fields are present on both methods.\n5. Impeccable hook false positive: it flagged `packages/types/api/buyer.ts:36` \"broken-image\". That line is a pre-existing doc comment on `ShelfEstimate.imageUrl` mentioning `<img>` inside a pure `.ts` interface file — no markup, not my edit, ~60 lines from it. Left as is; no ignore rule added (that would need the owner).\n6. Nothing was committed, stashed, checked out or reset; `git status` file set is identical to the start (36 entries). Probe backups live in the session scratchpad, not the worktree."
+  },
+  "e2": {
+    "executor": "E2",
+    "status": "done",
+    "filesTouched": [
+      "apps/web/app/(dashboard)/customers/[id]/page.tsx",
+      "apps/web/app/(dashboard)/orders/page.tsx",
+      "apps/web/app/buyer/portal/[seller]/payments/page.tsx",
+      "apps/web/app/buyer/portal/[seller]/finances/page.tsx",
+      "apps/mobile/app/(customer)/payments.tsx",
+      "apps/web/lib/api/customers.ts",
+      "apps/web/e2e/37-list-caps.spec.ts"
+    ],
+    "diffSummary": "M1: customers/[id]/page.tsx Statement tab's \"Invoiced Amount\"/\"Amount Received\" tiles now read statement.lifetimeInvoiced/lifetimeReceived (DB-aggregated, E1's new fields) instead of reducing the capped `transactions` ledger. apps/mobile/app/(operator)/customers/[id]/statement.tsx checked and left untouched — its 4 tiles are Outstanding/Overdue/Credit/Advances, not the lifetime-invoiced/received pair, so M1 does not apply there per the ruling's own escape clause.\\n\\nM2: apps/web/e2e/37-list-caps.spec.ts REG-B110 test now issues the fixture invoice via POST /invoices/:id/send (the same endpoint apps/web/lib/api/invoices.ts's useSendInvoice hook calls, confirmed in invoices.controller.ts/invoices.service.ts `send()` which flips DRAFT→SENT) before reading the statement, plus a vacuity guard `expect(outstandingAmount).toBeGreaterThan(0)` and an exact-value assertion `toBe(250)`.\\n\\nM3: added/reused truncation notes wherever an uncapped total sits beside a capped-ledger-derived count/list. web buyer portal payments/page.tsx and finances/page.tsx: replaced `${activeCredits.length} active` (derived from the capped `transactions` ledger) with a boolean `hasActiveCredit` derived from the uncapped `availableCredit` total, and rendered the existing `LedgerTruncationNote` component (reused, not modified) when `transactionsTruncated`. mobile (customer)/payments.tsx: same `hasActiveCredit` fix plus an inline truncation note (new `truncationNote` style) mirroring the web component's wording, since RN has no shared component to import. customers/[id]/page.tsx Statement tab already had `LedgerTruncationNote` partially wired (from a prior wave) — confirmed correct, no change needed there beyond the M1 tile fix.\\n\\nm4: orders/page.tsx CSV export now sends `productId: productIdFilter || undefined` alongside the other filters, matching the on-screen query.\\n\\nm8: customers/[id]/page.tsx Invoices-tab summary bar — 'Overdue' tile changed from a page-scoped invoice-status count (`overdueCount`, derived from the 50-row `invoicesData`) to a money figure reading `statement.overdueAmount` (server aggregate), matching 'Outstanding'. 'Total Invoices' already read `meta.total` (pre-existing, confirmed correct, no change needed).\\n\\nScope note: `apps/web/lib/api/customers.ts`'s local `CustomerStatement` interface (a hand-rolled mirror of packages/types' `BuyerStatement`, not named in the executor file list) was missing `lifetimeInvoiced`/`lifetimeReceived` and blocked compilation of the M1 change in customers/[id]/page.tsx (which imports `useCustomerStatement` from that file, not from @routeflow/types). Added the two fields there as a minimal, targeted, non-structural fix — did not refactor the type to import from packages/types (that's the underlying L-072-flavored anti-pattern, out of scope for this round).",
+    "gateOutputs": "web tsc (npx tsc --noEmit -p tsconfig.json from apps/web): 0 errors.\\nweb lint (npm run lint -w apps/web from worktree root): exit 0, 0 Error: lines (only pre-existing Warning: lines, none in files I touched).\\nmobile tsc (npx tsc --noEmit from apps/mobile): 0 errors.\\nmobile jest (npx jest --maxWorkers=2 from apps/mobile): 111 suites / 1418 tests passed, 0 failed.\\nweb jest, scoped (npx jest ledger-truncation-note --maxWorkers=2 from apps/web, sanity check on the reused shared component): 1 suite / 3 tests passed.\\nprettier --write on all touched files: all reported unchanged except apps/mobile/app/(customer)/payments.tsx (reformatted, re-verified against tsc/jest after).",
+    "typeFieldsAdded": [
+      "CustomerStatement.lifetimeInvoiced: number (apps/web/lib/api/customers.ts) — mirrors packages/types BuyerStatement.lifetimeInvoiced, needed because customers/[id]/page.tsx's useCustomerStatement is typed off this local interface, not @routeflow/types",
+      "CustomerStatement.lifetimeReceived: number (apps/web/lib/api/customers.ts) — mirrors packages/types BuyerStatement.lifetimeReceived, same reason"
+    ],
+    "notes": "No designMismatch encountered — every M1/M2/M3/m4/m8 finding location matched the ruling's cited lines exactly, apart from the one scope note above (a plumbing type gap outside the named file list, fixed minimally so the named-file change would compile). Did not touch apps/api/* or apps/mobile/lib/api/customers.ts (E1's territory) or ledger-truncation-note.tsx/its test (pre-existing shared infra, reused as-is). Never ran Playwright, per instructions — the e2e spec change is unexecuted, gate-checked only by prettier + read-through."
+  },
+  "sweep": {
+    "hits": [
+      {
+        "pattern": "limit: 999",
+        "file": "apps/web/app/(dashboard)/estimates/page.tsx",
+        "line": 702,
+        "excerpt": "const { data: allData } = useEstimates({ limit: 999 });\n  const all = allData?.data ?? [];",
+        "inTouchedFiles": false
+      },
+      {
+        "pattern": "limit: 999",
+        "file": "apps/web/app/(dashboard)/vendor-bills/page.tsx",
+        "line": 1058,
+        "excerpt": "const { data: allData } = useVendorBills({ limit: 999 });\n  const all = allData?.data ?? [];",
+        "inTouchedFiles": false
+      },
+      {
+        "pattern": "limit: 999",
+        "file": "apps/web/app/(dashboard)/vendor-bills/page.tsx",
+        "line": 2326,
+        "excerpt": "const { data: billsData } = useVendorBills({ limit: 999 });\n  const billsCount = billsData?.meta?.total ?? billsData?.data?.length;",
+        "inTouchedFiles": false
+      },
+      {
+        "pattern": "limit: 999",
+        "file": "apps/web/app/(dashboard)/credit-notes/page.tsx",
+        "line": 556,
+        "excerpt": "const { data: allData } = useCreditNotes({ limit: 999 });\n  const all = allData?.data ?? [];",
+        "inTouchedFiles": false
+      },
+      {
+        "pattern": "setHours(23, 59",
+        "file": "apps/api/src/import/import.service.ts",
+        "line": 1180,
+        "excerpt": "dayEnd.setHours(23, 59, 59, 999);\nconst duplicate = await this.prisma.forTenant().expense.findFirst({",
+        "inTouchedFiles": false
+      },
+      {
+        "pattern": "take: (50|100|200|500),",
+        "file": "apps/api/src/analytics/analytics.service.ts",
+        "line": 674,
+        "excerpt": "orderBy: { createdAt: \"asc\" },\ntake: 100,",
+        "inTouchedFiles": false
+      },
+      {
+        "pattern": "take: (50|100|200|500),",
+        "file": "apps/api/src/analytics/analytics.service.ts",
+        "line": 683,
+        "excerpt": "orderBy: { createdAt: \"asc\" },\ntake: 100,",
+        "inTouchedFiles": false
+      },
+      {
+        "pattern": "take: (50|100|200|500),",
+        "file": "apps/api/src/billing/subscription.service.ts",
+        "line": 91,
+        "excerpt": "orderBy: { createdAt: \"desc\" },\ntake: 500,",
+        "inTouchedFiles": false
+      },
+      {
+        "pattern": "take: (50|100|200|500),",
+        "file": "apps/api/src/billing/subscription.service.ts",
+        "line": 96,
+        "excerpt": "orderBy: { issuedAt: \"desc\" },\ntake: 500,",
+        "inTouchedFiles": false
+      },
+      {
+        "pattern": "take: (50|100|200|500),",
+        "file": "apps/api/src/import/import.service.ts",
+        "line": 1344,
+        "excerpt": "select: { id: true, businessName: true, tenantId: true },\ntake: 100,",
+        "inTouchedFiles": false
+      },
+      {
+        "pattern": "take: (50|100|200|500),",
+        "file": "apps/api/src/import/duplicate-match.service.ts",
+        "line": 144,
+        "excerpt": "select: { id: true, invoiceNumber: true },\ntake: 200,",
+        "inTouchedFiles": false
+      },
+      {
+        "pattern": "take: (50|100|200|500),",
+        "file": "apps/api/src/import/duplicate-match.service.ts",
+        "line": 354,
+        "excerpt": "select: VENDOR_BILL_DUP_SELECT,\ntake: 200,",
+        "inTouchedFiles": false
+      },
+      {
+        "pattern": "take: (50|100|200|500),",
+        "file": "apps/api/src/import/migration.service.ts",
+        "line": 133,
+        "excerpt": "select: { id, entityType, externalId, matchedEntityId },\ntake: 100,",
+        "inTouchedFiles": false
+      },
+      {
+        "pattern": "take: (50|100|200|500),",
+        "file": "apps/api/src/import/migration.service.ts",
+        "line": 144,
+        "excerpt": "orderBy: { createdAt: \"desc\" },\ntake: 50,",
+        "inTouchedFiles": false
+      },
+      {
+        "pattern": "take: (50|100|200|500),",
+        "file": "apps/api/src/import/product-alias.service.ts",
+        "line": 182,
+        "excerpt": "orderBy: { rawText: \"asc\" },\ntake: 500,",
+        "inTouchedFiles": false
+      },
+      {
+        "pattern": "take: (50|100|200|500),",
+        "file": "apps/api/src/drafts/drafts.service.ts",
+        "line": 22,
+        "excerpt": "orderBy: { updatedAt: \"desc\" },\ntake: 50,",
+        "inTouchedFiles": false
+      },
+      {
+        "pattern": "take: (50|100|200|500),",
+        "file": "apps/api/src/customers/customers.service.ts",
+        "line": 817,
+        "excerpt": "orderBy: { createdAt: \"desc\" },\ntake: 50,",
+        "inTouchedFiles": true
+      },
+      {
+        "pattern": "take: (50|100|200|500),",
+        "file": "apps/api/src/payment-requests/payment-requests.service.ts",
+        "line": 500,
+        "excerpt": "orderBy: { createdAt: \"desc\" },\ntake: 100,",
+        "inTouchedFiles": false
+      }
+    ]
+  },
+  "sweepJudge": {
+    "verdicts": [
+      {
+        "file": "apps/web/app/(dashboard)/estimates/page.tsx",
+        "line": 702,
+        "verdict": "defect",
+        "why": "The `limit: 999` fetch is reduced at :705-714 into the KPI chips (`total: all.length`, draft/sent/accepted/declined counters), so every chip is a count over a capped page rather than the whole set — the exact B12 class.",
+        "inTouchedFiles": false
+      },
+      {
+        "file": "apps/web/app/(dashboard)/vendor-bills/page.tsx",
+        "line": 1058,
+        "verdict": "defect",
+        "why": "The 999-row fetch feeds the KPI money memo at :1061-1085 (`outstanding`, `dueThisWeekAmount`, `spend30d` summed and `unpaidCount`/`dueThisWeekCount` counted over `all`), so a tenant past 999 bills shows understated totals.",
+        "inTouchedFiles": false
+      },
+      {
+        "file": "apps/web/app/(dashboard)/vendor-bills/page.tsx",
+        "line": 2326,
+        "verdict": "display-budget",
+        "why": "The tab badge reads `billsData?.meta?.total` (the server's uncapped count) and only falls back to `data.length`, so the displayed number is not derived from the cap — the 999 rows are wasted payload, not wrong arithmetic.",
+        "inTouchedFiles": false
+      },
+      {
+        "file": "apps/web/app/(dashboard)/credit-notes/page.tsx",
+        "line": 556,
+        "verdict": "defect",
+        "why": "`all` drives both the KPI counters (:559-567) and the money tiles at :571-590 — `openCredit` (a roundMoney reduce over `isOpenCredit` rows) and `issued30Value` — so the credit totals are sums over a 999-row cap.",
+        "inTouchedFiles": false
+      },
+      {
+        "file": "apps/api/src/import/import.service.ts",
+        "line": 1180,
+        "verdict": "defect",
+        "why": "`dayStart/dayEnd` use host-local `setHours` to bound a `date` column that is written as a UTC calendar stamp, and the window feeds the expense duplicate MATCH at :1182-1192, so a server off UTC silently mis-scopes the dedupe day and re-imports or wrongly skips rows.",
+        "inTouchedFiles": false
+      },
+      {
+        "file": "apps/api/src/analytics/analytics.service.ts",
+        "line": 674,
+        "verdict": "display-budget",
+        "why": "`getPriceHistory` maps the 100 rows straight to `{date, unitPrice}` chart points with no total, average or lookup computed over them — a rendering budget (the `asc` order does mean the chart shows the oldest 100, worth a UI note but not arithmetic).",
+        "inTouchedFiles": false
+      },
+      {
+        "file": "apps/api/src/analytics/analytics.service.ts",
+        "line": 683,
+        "verdict": "display-budget",
+        "why": "`getCostHistory` likewise returns the 100 movements as plain chart rows (`unitCost`, `avgCostAfter` are per-row columns read from the DB, not re-derived), so nothing is summed or averaged across the capped set.",
+        "inTouchedFiles": false
+      },
+      {
+        "file": "apps/api/src/billing/subscription.service.ts",
+        "line": 91,
+        "verdict": "display-budget",
+        "why": "`getExport` returns the 500 `billingEvent` rows verbatim inside the export payload; no count, sum or match is computed over them here (the truncation is an unlabelled payload budget, not an arithmetic boundary).",
+        "inTouchedFiles": false
+      },
+      {
+        "file": "apps/api/src/billing/subscription.service.ts",
+        "line": 96,
+        "verdict": "display-budget",
+        "why": "Same shape for `rfInvoice`: the 500 rows are passed through into `{ ...invoices }` with no aggregation in this service, so the cap bounds what is rendered/exported rather than any figure.",
+        "inTouchedFiles": false
+      },
+      {
+        "file": "apps/api/src/import/import.service.ts",
+        "line": 1344,
+        "verdict": "defect",
+        "why": "`diagnoseOrphanedContacts` returns `orphanCount: orphans.length` computed from the `take: 100` read, so the count the caller uses to decide whether to adopt caps at 100 while `adoptOrphanedContacts` then repairs every matching row uncapped.",
+        "inTouchedFiles": false
+      },
+      {
+        "file": "apps/api/src/import/duplicate-match.service.ts",
+        "line": 144,
+        "verdict": "defect",
+        "why": "The 200 candidates are then MATCHED in app code (`candidates.find(c => normalizeNumber(c.invoiceNumber) === target)`, :152-153), so a real duplicate outside the first 200 rows in the date/total window is missed and the invoice is imported twice.",
+        "inTouchedFiles": false
+      },
+      {
+        "file": "apps/api/src/import/duplicate-match.service.ts",
+        "line": 354,
+        "verdict": "defect",
+        "why": "`fuzzyVendorBillCandidates`' 200 rows are consumed by `rows.find(r => r.supplierId === supplierId)` / `totalAgrees` at :329-331 — again a match over a capped candidate set, so a repeat vendor bill can slip past the duplicate guard.",
+        "inTouchedFiles": false
+      },
+      {
+        "file": "apps/api/src/import/migration.service.ts",
+        "line": 133,
+        "verdict": "display-budget",
+        "why": "`getJob`'s per-status numbers come from the uncapped `groupBy` at :125-129; the `take: 100` bounds only the `duplicates` array the UI lists, and nothing counts or sums it.",
+        "inTouchedFiles": false
+      },
+      {
+        "file": "apps/api/src/import/migration.service.ts",
+        "line": 144,
+        "verdict": "display-budget",
+        "why": "`listJobs` is the \"recent migration runs\" history list — the 50 rows are returned as-is with no total, count or match derived from them.",
+        "inTouchedFiles": false
+      },
+      {
+        "file": "apps/api/src/import/product-alias.service.ts",
+        "line": 182,
+        "verdict": "display-budget",
+        "why": "`list` applies the `search` filter server-side in the `where` (`rawText: { contains }`) BEFORE the cap, so the cap truncates what is rendered but never breaks the search; no count or sum is taken over the rows.",
+        "inTouchedFiles": false
+      },
+      {
+        "file": "apps/api/src/drafts/drafts.service.ts",
+        "line": 22,
+        "verdict": "display-budget",
+        "why": "Per-user `saleDraft` rows for the drafts dock, newest first (the comment says \"cap 50 — matches the dock\"); no arithmetic, lookup or match is performed over the returned set.",
+        "inTouchedFiles": false
+      },
+      {
+        "file": "apps/api/src/customers/customers.service.ts",
+        "line": 817,
+        "verdict": "defect",
+        "why": "The endpoint returns an honest `meta.total` from a separate `count`, but its consumer `customers/[id]/page.tsx` renders `allOrders.length` (the 50 capped rows) as the \"Orders\" StatCard value at :2386 and the tab label at :2346, so the customer's order count silently pins at 50 — a count fed by a cap, in two files this PR already touches (reviewer hazard).",
+        "inTouchedFiles": true
+      },
+      {
+        "file": "apps/api/src/payment-requests/payment-requests.service.ts",
+        "line": 500,
+        "verdict": "display-budget",
+        "why": "`listForTenant` maps the 100 rows into the operator queue rows and returns them; the web page only checks `requests.length === 0` for the empty state and derives no count, total or match from the set.",
+        "inTouchedFiles": false
+      }
+    ]
+  },
+  "regate": {
+    "allPass": true,
+    "results": [
+      {
+        "command": "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+        "pass": true,
+        "summary": "API TypeScript compilation successful",
+        "failures": []
+      },
+      {
+        "command": "cd apps/api && npx jest src/invoices src/orders src/customers src/supplier-statements --maxWorkers=2",
+        "pass": true,
+        "summary": "31 test suites, 926 tests passed",
+        "failures": []
+      },
+      {
+        "command": "cd apps/web && npx tsc --noEmit -p tsconfig.json",
+        "pass": true,
+        "summary": "Web TypeScript compilation successful",
+        "failures": []
+      },
+      {
+        "command": "cd apps/web && npx jest --maxWorkers=2",
+        "pass": true,
+        "summary": "34 test suites, 179 tests passed",
+        "failures": []
+      },
+      {
+        "command": "cd apps/mobile && npx jest --maxWorkers=2",
+        "pass": true,
+        "summary": "111 test suites, 1418 tests passed",
+        "failures": []
+      },
+      {
+        "command": "npm run lint -w apps/web",
+        "pass": true,
+        "summary": "0 errors (warnings only)",
+        "failures": []
+      }
+    ]
+  },
+  "review": {
+    "recommendation": "one-more-round",
+    "verdicts": [
+      {
+        "item": "M1 — lifetime Invoiced/Received tiles come from DB aggregates, not the capped ledger",
+        "verdict": "fixed",
+        "evidence": "customers.service.ts:1038-1051 (getStatementForOperator) and :341-347 (getMyStatement) each add `invoice.aggregate({_sum:{total:true}, where:{customerId, status:{notIn: LIFETIME_INVOICED_EXCLUDED}}})` + `invoicePayment.aggregate({_sum:{amount:true}, where:{...CONFIRMED_PAYMENT, invoice:{customerId}}})` inside the existing Promise.all — no `take`, no rows materialised. Refutation of 'the where's are hand-rolled': LIFETIME_INVOICED_EXCLUDED is a NAMED set in invoice-status-sets.ts:44-52 ([DRAFT, VOID]) and CONFIRMED_PAYMENT is the repo's own `{status:\"PAID\"}` const from payment-predicates.ts:24 — no literal status array at either call site. Results: `roundMoney(Number(agg?._sum?.X ?? 0))` at :1102-1104 / :400-402, so an empty-set NULL sum yields 0.00, never NaN. Type: packages/types/api/buyer.ts BuyerStatement gains both fields (+transactionsTruncated); apps/web/lib/api/customers.ts:228-234 mirrors them for the local CustomerStatement the page's hook is typed off. Web tiles read them (customers/[id]/page.tsx:3829/3840, both former transaction-reduces deleted). /buyer/statement is served by getStatementForOperator (buyer.controller.ts:248-255, verified), so buyer surfaces inherit. Spec pins verified by running them: customers.service.spec.ts:1306 and :1672 use a 150-invoice honouringTake fixture whose capped reduce (1000/400) and uncapped reduce (1500/600) both differ from the aggregate mocks (1750 / 643.219→643.22), and assert `_sum`, `where.customerId`, `where.status.notIn`={DRAFT,VOID}, `where.status`=PAID, `where.invoice`, and `take === undefined` on both aggregates; :1702 pins the NULL→$0.00 case. I re-ran `npx jest src/invoices src/customers --maxWorkers=2` in apps/api: 13 suites / 454 tests passed, 21.8 s."
+      },
+      {
+        "item": "M2 — e2e REG-B110 fixture actually reaches an ISSUED status via a real API route",
+        "verdict": "fixed",
+        "evidence": "e2e/37-list-caps.spec.ts:324-327 POSTs `${api}/api/v1/invoices/${invoice.id}/send` with the operator bearer + tenant header and asserts `sendRes.ok()`. Refutation checks: (a) the route exists — invoices.controller.ts:195 `@Post(\":id/send\") send(...)`; (b) it is the same endpoint the web Send button uses — apps/web/lib/api/invoices.ts:394 `useSendInvoice` posts `/invoices/${id}/send`; (c) it really issues — invoices.service.ts:3580 `nextStatus = inv.status === DRAFT ? SENT : inv.status`, written at :3581-3584, and SENT is outside KPI_SUMMARY_EXCLUDED so the invoice enters the statement's open set; (d) it is NOT the email path (`:id/send-email`, :201) so the emailless throwaway customer cannot 400 on 'No email address on file'. Vacuity guard present at :344 (`toBeGreaterThan(0)`) plus the exact pin `toBe(250)` at :345, and both UI tiles are asserted against `fmtMoney(statement.outstandingAmount)` (:353-364). Not executed — Playwright is forbidden for this round; the `toBe(250)` pin holds by code reading (create() defaults `taxRate: item.taxRate ?? 0` at invoices.service.ts:434 and derives taxAmount from those rates at :477, so no tenant default inflates the total)."
+      },
+      {
+        "item": "M3 — partial ledger views are labelled, and no count/total is derived from ledger rows",
+        "verdict": "fixed",
+        "evidence": "Counts killed at all three surfaces: buyer/portal/[seller]/payments/page.tsx:146-147, finances/page.tsx:110-111 and mobile (customer)/payments.tsx:70 all replace `${credits.length} active` with `hasActiveCredit = (statement?.availableCredit ?? 0) > 0` — the uncapped total, not a row count. Notes render ONLY on truncation: ledger-truncation-note.tsx:12 `if (truncated !== true) return null` (so absent/false/undefined all render nothing), and mobile uses `statement?.transactionsTruncated ? <Text …> : null` at payments.tsx:133-138. The flag itself is real: customers.service.ts:1057-1063 reads `take: CAP + 1` and sets truncated from `raw.length > CAP` before slicing, for invoices/credit notes/advances. Operator statement tab gets the note at customers/[id]/page.tsx:3863. Two residual gaps are filed as hazards below (an orphaned note on the buyer payments page, and finances' unlabelled `.slice(0, 6)`), neither of which is a wrong number."
+      },
+      {
+        "item": "m4 — orders CSV export sends productId",
+        "verdict": "fixed",
+        "evidence": "orders/page.tsx:396 adds `productId: productIdFilter || undefined` to the export request params, alongside the same `search`/`urgent`/date/fulfillPath keys the on-screen query at :340-350 sends; the export's former client-side re-filter was deleted (:397-404 of the diff)."
+      },
+      {
+        "item": "m5 — a status-OVERDUE invoice counts as overdue regardless of dueDate",
+        "verdict": "fixed",
+        "evidence": "invoices.service.ts:3059 selects `status: true` and the bucket chain at :3079-3089 is `if (inv.status === InvoiceStatus.OVERDUE) overdue += balance; else if (dueDateIso == null) continue; else if (dueDateIso < today) overdue…`. Refutation against the deleted client memo (git show HEAD:apps/web/app/(dashboard)/invoices/page.tsx:291-297): the memo's rule was `inv.status === \"OVERDUE\" || (due && due < today && openForCollection)` — a disjunct whose first arm carries no dueDate condition, exactly what the server now does; dueToday/dueIn30 keep the memo's `else if` shape. Spec pin invoices.service.spec.ts:7435 (future dueDate + null dueDate, both OVERDUE → overdue 100, dueIn30 0, dueToday 0) passes in the run above; E1's revert probe turned it red."
+      },
+      {
+        "item": "m7 — awaitingConfirmationCount scoped to the open invoice set",
+        "verdict": "fixed",
+        "evidence": "invoices.service.ts:3020-3029: `invoicePayment.count({ where: { status: \"DRAFT\", invoice: { status: { notIn: KPI_SUMMARY_EXCLUDED }, ...(customerId ? { customerId } : {}) } } })` — the buyer's customerId now composes INSIDE `invoice` instead of replacing the status clause. KPI_SUMMARY_EXCLUDED is the named set (invoice-status-sets.ts:35-40 = PAID/VOID/WRITTEN_OFF/DRAFT), the same one the tiles' findMany uses at :3055, so the count and the money figures share one basis. Spec pin invoices.service.spec.ts:7478 asserts `countWhere.status === \"DRAFT\"` and set-equality of `countWhere.invoice.status.notIn`; passes."
+      },
+      {
+        "item": "m8 — the Invoices-tab summary bar's money figures and counts",
+        "verdict": "fixed",
+        "evidence": "customers/[id]/page.tsx:3543-3544 replaces the page-scoped `overdueCount` with `overdueTotal = statement?.overdueAmount ?? 0`, rendered as money at :3563 (`fmt(overdueTotal)`) with the danger class keyed off the amount; Outstanding likewise reads `statement?.outstandingAmount`. The count chip is honest: 'Total Invoices' at :3570 reads `invoicesData?.meta?.total ?? allInvoices.length` (server total, page length only as a no-meta fallback). The stale `overdueCount`/`outstanding` reduces over `invoicesData` are gone from the block."
+      },
+      {
+        "item": "m9 — Object.hasOwn at every sort allowlist",
+        "verdict": "fixed",
+        "evidence": "I enumerated every allowlist in the touched api files (`grep -n 'validSortFields' invoices.service.ts customers.service.ts orders.service.ts supplier-statements/*.ts`): four exist, all four guarded — invoices.service.ts:2888 (findAll), :4492 (listAllPayments), :5630 (exportPayments, the 4th byte-identical twin E1 flagged in its scope note), customers.service.ts:173-175 (findAll). orders.service.ts has no allowlist (its orderBy is the literal `[{createdAt:'desc'},{id:'desc'}]` at :378), so nothing is missed there. Spec pins: invoices.service.spec.ts:3482 and :3497 `it.each([\"constructor\",\"__proto__\",\"toString\",\"valueOf\"])` for findAll and listAllPayments, plus the customers findAll equivalent; all pass, and E1's revert probe made 12 of them red. Gap (hazard below): exportPayments' guard has no spec pin."
+      }
+    ],
+    "newHazards": [
+      {
+        "severity": "major",
+        "file": "apps/web/app/(dashboard)/customers/[id]/page.tsx",
+        "line": 2386,
+        "summary": "Sweep-confirmed defect INSIDE a touched file, and a direct contradiction of m8's own rule two tabs away: the Profile-tab 'Orders' StatCard renders `allOrders.length` (and the tab label at :2346 renders the same value) from `useCustomerOrders`, which hits GET /customers/:id/orders — customers.service.ts:813-821 reads `take: 50` but returns an honest uncapped `meta.total` right beside it. A customer with more than 50 orders shows 'Orders (50)' forever. m8 ruled 'count chips read meta.total of the filtered query, never the loaded rows' and that fix was applied to Total Invoices at :3570; this sibling count in the same file was left on the capped rows. One-line fix: `ordersResult?.meta?.total ?? allOrders.length` at both sites (the tab label and the StatCard)."
+      },
+      {
+        "severity": "minor",
+        "file": "apps/api/src/customers/customers.service.ts",
+        "line": 1072,
+        "summary": "Money-discipline miss on the very figures this batch re-based: `outstanding` (:1072, :369), `overdue` (:1077, :374), `advanceBalance` (:1096) and `pendingOrdersAmount` (:1098) are raw float reduces returned unrounded as outstandingAmount/overdueAmount/advanceBalance/pendingOrdersAmount, while `availableCredit` (:1085), `lifetimeInvoiced` and `lifetimeReceived` (:1102-1104) in the same return object all go through roundMoney. The reduces now run over the WHOLE open set instead of a 50/100-row page, so float accumulation is materially more likely (150 rows of 2-dp Decimals can land on 1499.9999999999998). Fix: wrap the four reduces in roundMoney, same as the sibling fields."
+      },
+      {
+        "severity": "minor",
+        "file": "apps/api/src/invoices/invoices.service.ts",
+        "line": 5630,
+        "summary": "The fourth m9 allowlist guard (exportPayments, the CSV twin of listAllPayments) ships with no regression pin — the it.each prototype-key blocks at invoices.service.spec.ts:3482/:3497 cover findAll and listAllPayments only. A future edit can silently revert this site with a green suite. Fix: one more it.each over `service.exportPayments({ sortBy })` asserting the `[{paidAt:'desc'},{id:'desc'}]` fallback."
+      },
+      {
+        "severity": "minor",
+        "file": "apps/web/app/buyer/portal/[seller]/payments/page.tsx",
+        "line": 267,
+        "summary": "Orphaned truncation note: `<LedgerTruncationNote truncated={statement?.transactionsTruncated} />` sits under the wallet StatCards, but this page renders no ledger rows at all any more (grep for `transactions` in the file returns only this line and a comment — the `activeCredits` list was replaced by the boolean). The visible list below it is the separately paginated `useBuyerPayments` history, so on a truncated statement the buyer reads 'older entries are not listed in this ledger' next to a list that is in fact complete/paginated. Either drop the note here or move it above an actual ledger."
+      },
+      {
+        "severity": "minor",
+        "file": "apps/web/app/buyer/portal/[seller]/finances/page.tsx",
+        "line": 109,
+        "summary": "A second, unlabelled display cap survives M3: `activeCredits` is `.slice(0, 6)` of the ledger's CREDIT_NOTE rows, and the note beneath it (:230) is keyed only to the API's `transactionsTruncated`. A buyer with 9 active credits inside an untruncated ledger sees 6 rows and no label. The count-from-rows defect is genuinely gone (the tile now reads availableCredit), so this is a labelling gap, not a wrong number."
+      },
+      {
+        "severity": "info",
+        "file": "apps/api/src/customers/customers.service.ts",
+        "line": 1044,
+        "summary": "Basis note, not a regression: `lifetimeReceived` is a DIRECT invoicePayment.aggregate, so prisma.service.ts:262-266 injects `tenantId` into its where, while every other payment figure in these methods reads payments through the invoice relation (untenanted) — and InvoicePayment.tenantId is nullable (finance.prisma:319). A legacy NULL-tenant payment row would therefore be missing from lifetimeReceived while still reducing `outstanding`. This matches the established repo pattern (bookkeeping.service.ts:1081/1134/1247/1293 aggregate invoicePayment the same way) and the master-side backfill tool covers the data, so it is a note for the PR body, not a change request."
+      }
+    ],
+    "reasoning": "All eight rulings (M1 M2 M3 m4 m5 m7 m8 m9) are implemented as designed — I refuted each executor claim against the code rather than the reports. The aggregate `where`s use named sets (LIFETIME_INVOICED_EXCLUDED, KPI_SUMMARY_EXCLUDED) and the repo's CONFIRMED_PAYMENT const, never hand-rolled status lists; the e2e fixture is genuinely issued through the real `POST /invoices/:id/send` route the web Send button calls (controller :195, DRAFT→SENT at service :3580), not a DB write; the truncation notes are gated on `truncated !== true` returning null and on a flag derived from `take: CAP + 1` reads; `Object.hasOwn` guards all four allowlists that exist in the touched files (three of them pinned); every new money result goes through roundMoney with `?? 0` against a NULL aggregate sum. m5 was checked against the deleted client memo's actual text in HEAD, not the executor's paraphrase. I re-ran the api suite myself (13 suites / 454 tests, 21.8 s), lint (`npx eslint` on the five api files: 0 errors, warnings only) and `prettier --check` on all thirteen touched files (clean); mobile's new type usage is an `import type` from @routeflow/types that mobile already consumes, so no build hazard. What blocks a clean land is one wrong number the sweep already judged a defect inside a touched file: the customer page's 'Orders' StatCard and tab badge still count the capped 50 rows although the endpoint returns meta.total — the exact rule m8 applied to 'Total Invoices' 1,200 lines below, so shipping the PR with it is internally inconsistent. Alongside it are three cheap, in-scope tidies: roundMoney on the four still-raw statement money figures (whose reduces this batch widened from a page to the whole open set), a spec pin for the unpinned fourth m9 guard, and the orphaned truncation note on the buyer payments page. That is roughly five one-line edits plus one it.each — small enough that one more round is cheaper than filing them, and each sits squarely inside this round's own rule."
+  },
+  "finalGate": {
+    "allPass": true,
+    "results": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api && npx jest --maxWorkers=2",
+        "pass": true,
+        "summary": "Test Suites: 261 passed, 261 total | Tests: 4326 passed, 4326 total | Snapshots: 0 total | Time: 181.522 s",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/web && npx jest --maxWorkers=2",
+        "pass": true,
+        "summary": "Test Suites: 34 passed, 34 total | Tests: 179 passed, 179 total | Snapshots: 0 total | Time: 25.934 s",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/mobile && npx jest --maxWorkers=2",
+        "pass": true,
+        "summary": "Test Suites: 111 passed, 111 total | Tests: 1418 passed, 1418 total | Snapshots: 0 total | Time: 23.937 s",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry && node scripts/validate-lessons.mjs",
+        "pass": true,
+        "summary": "Lessons register is self-consistent: 39/40 entries, 39.5/40.0 KB, archived 45, nextId 89 (max L-088)",
+        "failures": []
+      }
+    ]
+  }
+}

@@ -15,8 +15,12 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { roundMoney } from "@routeflow/pricing";
-import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
-import { CREDIT_NOT_APPLICABLE } from "../invoices/invoice-status-sets";
+import { CONFIRMED_PAYMENT, sumConfirmed } from "../invoices/payment-predicates";
+import {
+  CREDIT_NOT_APPLICABLE,
+  KPI_SUMMARY_EXCLUDED,
+  LIFETIME_INVOICED_EXCLUDED,
+} from "../invoices/invoice-status-sets";
 import { geocodeAddress, GeocodableAddress, GeocodeCoords } from "../common/geocode.util";
 import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
@@ -170,7 +174,13 @@ export class CustomersService {
         ? validSortFields[query.sortBy]
         : undefined;
     const dir = query.sortDir === "asc" ? "asc" : "desc";
-    const orderBy: any = orderField ? { [orderField]: dir } : { createdAt: "desc" };
+    // REG-B169: an id tiebreaker — createdAt (or any other sortable column)
+    // can tie across many rows (a bulk import routinely shares one
+    // createdAt), so a single-key orderBy leaves those rows in
+    // undefined/unstable order across pages.
+    const orderBy: any = orderField
+      ? [{ [orderField]: dir }, { id: dir }]
+      : [{ createdAt: "desc" }, { id: "desc" }];
 
     const [data, total] = await Promise.all([
       this.prisma.forTenant().customer.findMany({
@@ -267,65 +277,114 @@ export class CustomersService {
       .customer.findFirst({ where: { userId: user.sub } });
     if (!customer) throw new NotFoundException("Customer profile not found");
 
-    const [invoices, creditNotes] = await Promise.all([
+    const INVOICE_SELECT = {
+      id: true,
+      invoiceNumber: true,
+      total: true,
+      status: true,
+      dueDate: true,
+      createdAt: true,
+      payments: { select: { amount: true, status: true } },
+    } as const;
+    const CREDIT_NOTE_SELECT = {
+      id: true,
+      creditNoteNumber: true,
+      amount: true,
+      status: true,
+      createdAt: true,
+      amountUsed: true,
+      expiresAt: true,
+    } as const;
+    // REG-B110: the LEDGER caps below are for the transactions DISPLAY only —
+    // the money figures (outstanding/overdue/availableCredit) are computed
+    // from the separate, uncapped OPEN-set reads further down, never from a
+    // take-capped page.
+    const LEDGER_INVOICE_CAP = 50;
+    const LEDGER_CREDIT_NOTE_CAP = 50;
+
+    const [
+      openInvoices,
+      ledgerInvoicesRaw,
+      openCreditNotes,
+      ledgerCreditNotesRaw,
+      lifetimeInvoicedAgg,
+      lifetimeReceivedAgg,
+    ] = await Promise.all([
+      this.prisma.forTenant().invoice.findMany({
+        // DRAFT is excluded with the settled/dead/forgiven statuses: a
+        // not-yet-issued invoice is not receivable, so it must not inflate
+        // outstanding/overdue. Same set as the invoices KPI summary (and the
+        // Invoices-tab card's former client-side filter).
+        where: { customerId: customer.id, status: { notIn: KPI_SUMMARY_EXCLUDED } },
+        select: INVOICE_SELECT,
+      }),
       this.prisma.forTenant().invoice.findMany({
         where: { customerId: customer.id },
         orderBy: { createdAt: "desc" },
-        take: 50,
-        select: {
-          id: true,
-          invoiceNumber: true,
-          total: true,
-          status: true,
-          dueDate: true,
-          createdAt: true,
-          payments: { select: { amount: true, status: true } },
-        },
+        take: LEDGER_INVOICE_CAP + 1,
+        select: INVOICE_SELECT,
+      }),
+      this.prisma.forTenant().creditNote.findMany({
+        where: { customerId: customer.id, status: { not: "VOID" } },
+        select: CREDIT_NOTE_SELECT,
       }),
       this.prisma.forTenant().creditNote.findMany({
         where: { customerId: customer.id },
         orderBy: { createdAt: "desc" },
-        take: 50,
-        select: {
-          id: true,
-          creditNoteNumber: true,
-          amount: true,
-          status: true,
-          createdAt: true,
-          amountUsed: true,
-          expiresAt: true,
-        },
+        take: LEDGER_CREDIT_NOTE_CAP + 1,
+        select: CREDIT_NOTE_SELECT,
+      }),
+      // M1 — lifetime "Invoiced Amount" / "Amount Received", summed by the
+      // DATABASE over the buyer's whole history (never a reduce over the
+      // take-capped ledger below, which under-reports past one page).
+      this.prisma.forTenant().invoice.aggregate({
+        _sum: { total: true },
+        // DRAFT was never issued and VOID was cancelled — neither was billed.
+        where: { customerId: customer.id, status: { notIn: LIFETIME_INVOICED_EXCLUDED } },
+      }),
+      this.prisma.forTenant().invoicePayment.aggregate({
+        _sum: { amount: true },
+        // CONFIRMED (PAID) basis — the same one `sumConfirmed` applies row-wise.
+        where: { ...CONFIRMED_PAYMENT, invoice: { customerId: customer.id } },
       }),
     ]);
 
-    const invoicesWithPaid = invoices.map((i) => ({
-      ...i,
-      // VOID payments (e.g. a bounced check reversed in P5-12) must not count as paid.
-      amountPaid: i.payments
-        .filter((p) => p.status !== "VOID")
-        .reduce((sum, p) => sum + Number(p.amount), 0),
-    }));
+    // Each ledger read asks for one row MORE than its cap; a read that comes
+    // back over the cap is the proof that rows were left behind. The extra row
+    // is sliced off before the ledger is built.
+    const invoicesTruncated = ledgerInvoicesRaw.length > LEDGER_INVOICE_CAP;
+    const creditNotesTruncated = ledgerCreditNotesRaw.length > LEDGER_CREDIT_NOTE_CAP;
+    const ledgerInvoices = ledgerInvoicesRaw.slice(0, LEDGER_INVOICE_CAP);
+    const ledgerCreditNotes = ledgerCreditNotesRaw.slice(0, LEDGER_CREDIT_NOTE_CAP);
 
-    const outstanding = invoicesWithPaid
-      .filter((i) => i.status !== "PAID" && i.status !== "VOID")
-      .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0);
+    // CONFIRMED (PAID) basis — a DRAFT (unconfirmed) payment must never count
+    // as paid (F03/sumConfirmed); VOID (e.g. a bounced check, P5-12) already
+    // doesn't.
+    const withPaid = <T extends { payments: { amount: unknown; status: string }[] }>(rows: T[]) =>
+      rows.map((i) => ({ ...i, amountPaid: sumConfirmed(i.payments) }));
 
-    const overdue = invoicesWithPaid
-      .filter(
-        (i) =>
-          i.status !== "PAID" &&
-          i.status !== "VOID" &&
-          i.dueDate &&
-          new Date(i.dueDate) < new Date(),
-      )
-      .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0);
+    const openInvoicesWithPaid = withPaid(openInvoices);
+    const ledgerInvoicesWithPaid = withPaid(ledgerInvoices);
+
+    // H2: every money figure this statement returns is rounded to cents —
+    // a float reduce over many invoices leaks binary-float dust
+    // (0.1 + 0.2 = 0.30000000000000004) straight into the UI.
+    const outstanding = roundMoney(
+      openInvoicesWithPaid.reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0),
+    );
+
+    const overdue = roundMoney(
+      openInvoicesWithPaid
+        .filter((i) => i.dueDate && new Date(i.dueDate) < new Date())
+        .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0),
+    );
 
     // P5-13: wallet = Σ remaining over OPEN, non-expired credits. amount − amountUsed
     // (not face amount) prevents the double-count — a partial credit already sits on
     // the invoice as a CREDIT_NOTE payment, so only its unused remainder appears here.
     const now = new Date();
     const availableCredit = roundMoney(
-      creditNotes
+      openCreditNotes
         .filter(
           (c) =>
             c.status !== "VOID" &&
@@ -335,8 +394,21 @@ export class CustomersService {
         .reduce((sum, c) => sum + roundMoney(Number(c.amount) - Number(c.amountUsed)), 0),
     );
 
+    // True whenever the transactions ledger below is a partial view of the
+    // customer's full history (the ledger reads ALL statuses, capped) —
+    // derived from the ledger read itself, never from the open-set size.
+    // Read by the customer statement ledgers on web and mobile, which render a
+    // partial-view line above the ledger when it is true and nothing when it is
+    // false (LedgerTruncationNote on web, the mobile statement screen's line).
+    const transactionsTruncated = invoicesTruncated || creditNotesTruncated;
+
+    // Aggregate over an empty set returns a NULL sum — `?? 0` so a brand-new
+    // buyer reads $0.00, never NaN.
+    const lifetimeInvoiced = roundMoney(Number(lifetimeInvoicedAgg?._sum?.total ?? 0));
+    const lifetimeReceived = roundMoney(Number(lifetimeReceivedAgg?._sum?.amount ?? 0));
+
     const transactions = [
-      ...invoicesWithPaid.map((i) => ({
+      ...ledgerInvoicesWithPaid.map((i) => ({
         type: "INVOICE" as const,
         id: i.id,
         description: `Invoice #${i.invoiceNumber}`,
@@ -345,7 +417,7 @@ export class CustomersService {
         runningBalance: -(Number(i.total) - i.amountPaid),
         status: i.status,
       })),
-      ...creditNotes.map((c) => {
+      ...ledgerCreditNotes.map((c) => {
         const expired = !!c.expiresAt && new Date(c.expiresAt) <= now;
         const remaining =
           c.status === "VOID" || expired ? 0 : roundMoney(Number(c.amount) - Number(c.amountUsed));
@@ -366,6 +438,9 @@ export class CustomersService {
       outstandingAmount: outstanding,
       overdueAmount: overdue,
       availableCredit,
+      lifetimeInvoiced,
+      lifetimeReceived,
+      transactionsTruncated,
       transactions,
     };
   }
@@ -870,47 +945,85 @@ export class CustomersService {
   async getStatementForOperator(customerId: string) {
     await this.findCustomerOrThrow(customerId);
 
-    const [invoices, creditNotes, advancePayments, pendingOrders] = await Promise.all([
+    const INVOICE_SELECT = {
+      id: true,
+      invoiceNumber: true,
+      total: true,
+      status: true,
+      dueDate: true,
+      createdAt: true,
+      payments: { select: { amount: true, status: true } },
+    } as const;
+    const CREDIT_NOTE_SELECT = {
+      id: true,
+      creditNoteNumber: true,
+      amount: true,
+      status: true,
+      createdAt: true,
+      amountUsed: true,
+      expiresAt: true,
+    } as const;
+    const ADVANCE_PAYMENT_SELECT = {
+      id: true,
+      amount: true,
+      balance: true,
+      method: true,
+      reference: true,
+      receivedAt: true,
+    } as const;
+    // REG-B110: the LEDGER caps below are for the transactions DISPLAY only —
+    // the money figures (outstanding/overdue/availableCredit/advanceBalance)
+    // are computed from the separate, uncapped OPEN-set reads further down,
+    // never from a take-capped page (a customer with >100 open invoices was
+    // silently under-reported).
+    const LEDGER_INVOICE_CAP = 100;
+    const LEDGER_CREDIT_NOTE_CAP = 50;
+    const LEDGER_ADVANCE_CAP = 50;
+
+    const [
+      openInvoices,
+      ledgerInvoicesRaw,
+      openCreditNotes,
+      ledgerCreditNotesRaw,
+      openAdvancePayments,
+      ledgerAdvancePaymentsRaw,
+      pendingOrders,
+      lifetimeInvoicedAgg,
+      lifetimeReceivedAgg,
+    ] = await Promise.all([
+      this.prisma.forTenant().invoice.findMany({
+        // DRAFT is excluded with the settled/dead/forgiven statuses: a
+        // not-yet-issued invoice is not receivable, so it must not inflate
+        // outstanding/overdue. Same set as the invoices KPI summary (and the
+        // Invoices-tab card's former client-side filter).
+        where: { customerId, status: { notIn: KPI_SUMMARY_EXCLUDED } },
+        select: INVOICE_SELECT,
+      }),
       this.prisma.forTenant().invoice.findMany({
         where: { customerId },
         orderBy: { createdAt: "desc" },
-        take: 100,
-        select: {
-          id: true,
-          invoiceNumber: true,
-          total: true,
-          status: true,
-          dueDate: true,
-          createdAt: true,
-          payments: { select: { amount: true, status: true } },
-        },
+        take: LEDGER_INVOICE_CAP + 1,
+        select: INVOICE_SELECT,
+      }),
+      this.prisma.forTenant().creditNote.findMany({
+        where: { customerId, status: { not: "VOID" } },
+        select: CREDIT_NOTE_SELECT,
       }),
       this.prisma.forTenant().creditNote.findMany({
         where: { customerId },
         orderBy: { createdAt: "desc" },
-        take: 50,
-        select: {
-          id: true,
-          creditNoteNumber: true,
-          amount: true,
-          status: true,
-          createdAt: true,
-          amountUsed: true,
-          expiresAt: true,
-        },
+        take: LEDGER_CREDIT_NOTE_CAP + 1,
+        select: CREDIT_NOTE_SELECT,
+      }),
+      this.prisma.forTenant().advancePayment.findMany({
+        where: { customerId, balance: { gt: 0 } },
+        select: ADVANCE_PAYMENT_SELECT,
       }),
       this.prisma.forTenant().advancePayment.findMany({
         where: { customerId },
         orderBy: { receivedAt: "desc" },
-        take: 50,
-        select: {
-          id: true,
-          amount: true,
-          balance: true,
-          method: true,
-          reference: true,
-          receivedAt: true,
-        },
+        take: LEDGER_ADVANCE_CAP + 1,
+        select: ADVANCE_PAYMENT_SELECT,
       }),
       // Pending / confirmed / out-for-delivery orders not yet invoiced
       this.prisma.forTenant().order.findMany({
@@ -920,35 +1033,65 @@ export class CustomersService {
         },
         select: { id: true, total: true, orderNumber: true, status: true, createdAt: true },
       }),
+      // M1 — the statement header's "Invoiced Amount" / "Amount Received"
+      // tiles are LIFETIME figures over the customer's WHOLE history, so the
+      // DATABASE sums them: a reduce over the take-capped `transactions`
+      // ledger below under-reports every customer with more history than one
+      // capped page holds, right beside the uncapped Outstanding/Overdue.
+      // Aggregates — no rows materialised, no cap to out-grow.
+      this.prisma.forTenant().invoice.aggregate({
+        _sum: { total: true },
+        // DRAFT was never issued and VOID was cancelled — neither was billed.
+        // PAID/OVERDUE/WRITTEN_OFF are real past billings and DO belong here.
+        where: { customerId, status: { notIn: LIFETIME_INVOICED_EXCLUDED } },
+      }),
+      this.prisma.forTenant().invoicePayment.aggregate({
+        _sum: { amount: true },
+        // CONFIRMED (PAID) basis — the same one `sumConfirmed` applies row-wise
+        // above: a DRAFT (unconfirmed) or VOID (bounced check) payment is not
+        // money received.
+        where: { ...CONFIRMED_PAYMENT, invoice: { customerId } },
+      }),
     ]);
 
-    const invoicesWithPaid = invoices.map((i) => ({
-      ...i,
-      // VOID payments (e.g. a bounced check reversed in P5-12) must not count as paid.
-      amountPaid: i.payments
-        .filter((p) => p.status !== "VOID")
-        .reduce((sum, p) => sum + Number(p.amount), 0),
-    }));
+    // Each ledger read asks for one row MORE than its cap; a read that comes
+    // back over the cap is the proof that rows were left behind. The extra row
+    // is sliced off before the ledger is built.
+    const invoicesTruncated = ledgerInvoicesRaw.length > LEDGER_INVOICE_CAP;
+    const creditNotesTruncated = ledgerCreditNotesRaw.length > LEDGER_CREDIT_NOTE_CAP;
+    const advancesTruncated = ledgerAdvancePaymentsRaw.length > LEDGER_ADVANCE_CAP;
+    const ledgerInvoices = ledgerInvoicesRaw.slice(0, LEDGER_INVOICE_CAP);
+    const ledgerCreditNotes = ledgerCreditNotesRaw.slice(0, LEDGER_CREDIT_NOTE_CAP);
+    const ledgerAdvancePayments = ledgerAdvancePaymentsRaw.slice(0, LEDGER_ADVANCE_CAP);
 
-    const outstanding = invoicesWithPaid
-      .filter((i) => !["PAID", "VOID", "WRITTEN_OFF"].includes(i.status))
-      .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0);
+    // CONFIRMED (PAID) basis — a DRAFT (unconfirmed) payment must never count
+    // as paid (F03/sumConfirmed); VOID (e.g. a bounced check, P5-12) already
+    // doesn't.
+    const withPaid = <T extends { payments: { amount: unknown; status: string }[] }>(rows: T[]) =>
+      rows.map((i) => ({ ...i, amountPaid: sumConfirmed(i.payments) }));
 
-    const overdue = invoicesWithPaid
-      .filter(
-        (i) =>
-          !["PAID", "VOID", "WRITTEN_OFF"].includes(i.status) &&
-          i.dueDate &&
-          new Date(i.dueDate) < new Date(),
-      )
-      .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0);
+    const openInvoicesWithPaid = withPaid(openInvoices);
+    const ledgerInvoicesWithPaid = withPaid(ledgerInvoices);
+
+    // H2: every money figure this statement returns is rounded to cents —
+    // a float reduce over many invoices leaks binary-float dust
+    // (0.1 + 0.2 = 0.30000000000000004) straight into the UI.
+    const outstanding = roundMoney(
+      openInvoicesWithPaid.reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0),
+    );
+
+    const overdue = roundMoney(
+      openInvoicesWithPaid
+        .filter((i) => i.dueDate && new Date(i.dueDate) < new Date())
+        .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0),
+    );
 
     // P5-13: wallet = Σ remaining over OPEN, non-expired credits. amount − amountUsed
     // (not face amount) prevents the double-count — a partial credit already sits on
     // the invoice as a CREDIT_NOTE payment, so only its unused remainder appears here.
     const now = new Date();
     const availableCredit = roundMoney(
-      creditNotes
+      openCreditNotes
         .filter(
           (c) =>
             c.status !== "VOID" &&
@@ -958,12 +1101,29 @@ export class CustomersService {
         .reduce((sum, c) => sum + roundMoney(Number(c.amount) - Number(c.amountUsed)), 0),
     );
 
-    const advanceBalance = advancePayments.reduce((sum, a) => sum + Number(a.balance), 0);
+    const advanceBalance = roundMoney(
+      openAdvancePayments.reduce((sum, a) => sum + Number(a.balance), 0),
+    );
 
-    const pendingOrdersAmount = pendingOrders.reduce((sum, o) => sum + Number(o.total), 0);
+    const pendingOrdersAmount = roundMoney(
+      pendingOrders.reduce((sum, o) => sum + Number(o.total), 0),
+    );
+
+    // Aggregate over an empty set returns a NULL sum — `?? 0` so an untouched
+    // customer reads $0.00, never NaN.
+    const lifetimeInvoiced = roundMoney(Number(lifetimeInvoicedAgg?._sum?.total ?? 0));
+    const lifetimeReceived = roundMoney(Number(lifetimeReceivedAgg?._sum?.amount ?? 0));
+
+    // True whenever the transactions ledger below is a partial view of the
+    // customer's full history (the ledger reads ALL statuses, capped) —
+    // derived from the ledger read itself, never from the open-set size.
+    // Read by the customer statement ledgers on web and mobile, which render a
+    // partial-view line above the ledger when it is true and nothing when it is
+    // false (LedgerTruncationNote on web, the mobile statement screen's line).
+    const transactionsTruncated = invoicesTruncated || creditNotesTruncated || advancesTruncated;
 
     const transactions = [
-      ...invoicesWithPaid.map((i) => ({
+      ...ledgerInvoicesWithPaid.map((i) => ({
         type: "INVOICE" as const,
         id: i.id,
         description: `Invoice #${i.invoiceNumber}`,
@@ -972,7 +1132,7 @@ export class CustomersService {
         runningBalance: -(Number(i.total) - i.amountPaid),
         status: i.status,
       })),
-      ...creditNotes.map((c) => {
+      ...ledgerCreditNotes.map((c) => {
         const expired = !!c.expiresAt && new Date(c.expiresAt) <= now;
         const remaining =
           c.status === "VOID" || expired ? 0 : roundMoney(Number(c.amount) - Number(c.amountUsed));
@@ -987,7 +1147,7 @@ export class CustomersService {
           expiresAt: c.expiresAt ? c.expiresAt.toISOString() : null,
         };
       }),
-      ...advancePayments.map((a) => ({
+      ...ledgerAdvancePayments.map((a) => ({
         type: "ADVANCE_PAYMENT" as const,
         id: a.id,
         description: `Advance Payment${a.reference ? ` (${a.reference})` : ""}`,
@@ -1004,6 +1164,9 @@ export class CustomersService {
       availableCredit,
       advanceBalance,
       pendingOrdersAmount,
+      lifetimeInvoiced,
+      lifetimeReceived,
+      transactionsTruncated,
       transactions,
     };
   }
