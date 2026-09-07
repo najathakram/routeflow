@@ -1,10 +1,10 @@
 {
-  "nextId": 85,
-  "activeCount": 38,
+  "nextId": 86,
+  "activeCount": 39,
   "archivedCount": 42,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-07T01:30:00.000Z",
+  "updatedAt": "2026-09-07T02:35:00.000Z",
   "schemaVersion": 1,
-  "note": "docs/643-f18-bookkeeping: added L-084 (process — a fix that first arms/consumes/clears a persisted state field must grep every writer and reader of that field into the build radius before the plan is cut, F18/#643) and archived L-056 (tooling) + L-064 (deploy), the oldest active entries with zero live citations outside frozen .claude/pipeline/ run records whose Guard names a landed automated check, for headroom. Note: the task brief for this follow-up named the new entry L-083, but master already carried an unrelated L-083 (campaign-check freshness) landed earlier the same day, and nextId was already 84 before this session started — filed as the actually-free L-084 instead."
+  "note": "docs/645-f08-bookkeeping: added L-085 (process — an engine run stalled on a hung tool call holding a workflow barrier that no stop/resume could clear, plus a line-number probe that raced a sibling editor and deleted the wrong line; recovery was a lead-designed light loop from the tree as it stood, F08/#645). No entry archived: register is 39/40 entries at 39.7/40.0 KB (validate-lessons), UNDER the 40960-byte cap, so the byte cap did not force an archive this round -- headroom for a future append is effectively zero (~0 more entries fit at the current average size) but that binds the NEXT append, not this one."
 }
