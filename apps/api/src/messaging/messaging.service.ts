@@ -3,6 +3,7 @@ import { MessageChannel, MeterKey, NotificationEvent, UserRole, UserStatus } fro
 import { PrismaService } from "../prisma/prisma.service";
 import { MeterService } from "../billing/meter.service";
 import { MESSAGE_PROVIDER, type MessageProvider } from "./providers/message-provider.interface";
+import { seedDefaultsFor } from "./messaging-config.service";
 import {
   isInvoicePolicyViolation,
   isMetered,
@@ -17,7 +18,8 @@ export type SkipReason =
   | "OPTED_OUT"
   | "NO_CONTACT"
   | "NO_CUSTOMER"
-  | "SEND_FAILED";
+  | "SEND_FAILED"
+  | "NO_TRANSPORT";
 
 export interface SendOutcome {
   channel: MessageChannel;
@@ -132,6 +134,15 @@ export class MessagingService {
         })
       : false;
 
+    // 4b. Transport capability (F23/B145, cause-ruling.md §2) — INTERNAL is
+    //     always in-app (recorded, read by messages.service.ts) and is exempt;
+    //     every other channel must have a bound provider that actually
+    //     transports it, or a "sent" outcome would be fabricated. This is the
+    //     ONE capability seam consulted by both send and config.
+    if (channel !== MessageChannel.INTERNAL && !this.provider.transports(channel)) {
+      return { channel, outcome: "skipped", reason: "NO_TRANSPORT", wouldBeQuiet };
+    }
+
     // 5. Dispatch (provider channels only; INTERNAL/PORTAL record-only). A
     //    failed dispatch is NOT recorded and NOT metered — never bill for a
     //    message that didn't go out (matters once real adapters land in P6-3/4).
@@ -186,7 +197,22 @@ export class MessagingService {
     args: { customerId: string; senderId: string; vars?: Record<string, string | number> },
   ): Promise<SendOutcome[]> {
     const db = this.prisma.forTenant();
-    const rules = await db.notificationRule.findMany({ where: { eventKey, enabled: true } });
+    let rules = await db.notificationRule.findMany({ where: { eventKey, enabled: true } });
+    if (rules.length === 0) {
+      // F23/B182 (cause-ruling.md §2): a tenant that has never opened the notifications
+      // settings tab (⇐ the only path that reached the old private seeder) has an EMPTY
+      // notificationRule table, so notify() saw zero enabled rules forever even though
+      // e.g. INVOICE_SENT:EMAIL is documented as on by default. Seed the shared defaults
+      // here too (idempotent; createMany skipDuplicates) and re-read before giving up.
+      const [allRules, allTemplates] = await Promise.all([
+        db.notificationRule.findMany({}),
+        db.messageTemplate.findMany({}),
+      ]);
+      const seeded = await seedDefaultsFor(db, allRules, allTemplates);
+      if (seeded) {
+        rules = await db.notificationRule.findMany({ where: { eventKey, enabled: true } });
+      }
+    }
     const outcomes: SendOutcome[] = [];
     for (const rule of rules) {
       const template = await db.messageTemplate.findFirst({
