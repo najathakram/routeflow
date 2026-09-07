@@ -635,6 +635,55 @@ suite) rather than judgment/none/runbook.
 - **Guard:** `REG-B129 (T5 path: cancel → un-cancel → re-dispatch)`, `REG-B211 (T12 path:
 complete-with-skipped → reopen refused)`; mutation probes in the F11 PR body.
 
+## Archived 2026-09-06 — headroom for L-084 (F18 bookkeeping follow-up, #643)
+
+Landing L-084 (process — a fix that first arms/consumes/clears a persisted state field must grep
+every writer and reader of that field into the build radius before the plan is cut) at 40 of 40
+active entries (40,591 B) required archiving first — adding the new entry without archiving would
+have pushed the file past the 40,960-byte cap. Both entries below have zero live citations
+anywhere in the tree outside `.claude/pipeline/` frozen run records (checked via `git grep`,
+excluding `.claude/lessons/*.md` and `.claude/pipeline/**`) and are guarded by a landed, automated
+mechanical check rather than a procedure, a runbook pointer, or "Guard: none — judgment": **L-056**
+(`scripts/ci-audit-critical.mjs` + its contract spec) and **L-064** (`apps/web/csp.mjs` +
+`apps/web/lib/csp.test.ts`'s prod-identity pin). Both are dated 2026-09-04; L-056 was minted first
+(lower id). Note the task brief for this follow-up named the new entry L-083, but master already
+carried an unrelated L-083 (`campaign-check freshness`, landed earlier the same day) and
+`_meta.json.nextId` was already `84` before this session started — the new entry is filed as the
+actually-free L-084 instead.
+
+### L-056 · 2026-09-04 · tooling · #609
+
+- **Symptom:** the `Fail on critical production advisories` CI step (`npm audit --omit=dev
+--audit-level=critical`) blew its 20-minute `timeout-minutes` twice in one day, 8 minutes
+  apart; the non-blocking high-severity step hit the same failure masked by `|| true`.
+- **Root cause:** npm's registry started returning 500 on the quick-audit endpoint ("This
+  endpoint is being retired. Use the bulk advisory endpoint instead."), and npm's own client
+  retries internally for ~12 minutes before giving up — the gate had no way to tell an upstream
+  outage apart from a real finding.
+- **Lesson:** a CI gate that depends on a third-party service must distinguish a finding from an
+  outage: fail on findings, warn-and-skip on unavailability with a bounded retry — otherwise an
+  upstream deprecation blocks every merge.
+- **Guard:** `scripts/ci-audit-critical.mjs` (bounded 3-attempt retry, registry/transport-error
+  detection, `::warning::…SKIPPED` + exit 0 on outage, fail-closed otherwise); contract spec
+  `apps/api/src/common/ci-audit-script.spec.ts`.
+
+### L-064 · 2026-09-04 · deploy · imp-04
+
+- **Symptom:** the local E2E lane's browser login against the Docker-built web image was
+  CSP-blocked with no HTTP response at all (`POST http://localhost:3000/api/v1/auth/login`
+  from `http://localhost:3001`, `status -1`); the login page's no-response fallback rendered
+  it as "Invalid username or password" even though API, CORS, seed, and throttle were all fine.
+- **Root cause:** `next.config.mjs`'s CSP gated the `connect-src` localhost relaxation on
+  `isDev = NODE_ENV !== "production"`, which is always `false` in a **built** image — `next
+build` forces production — so that branch was dead in every Docker image, not just prod.
+- **Lesson:** **never gate a build-time artifact (a CSP header, a routes manifest) on
+  `NODE_ENV` — every built image reports `production` regardless of its actual deployment
+  target. Derive the decision from the build input it must actually match instead** (here,
+  whether the baked `NEXT_PUBLIC_API_URL` itself is `http:`), and pin the production output
+  byte-identical in a spec so the fix can't silently change what ships.
+- **Guard:** `apps/web/csp.mjs` (`apiConnectSources`) + `apps/web/lib/csp.test.ts` (prod-identity
+  case pins the exact production `Content-Security-Policy` string).
+
 ## Archived 2026-09-06 — headroom for L-083 (campaign-check freshness)
 
 Landing L-083 (tooling — campaign-check must refuse a stale run artifact by name, with the regen

@@ -1,10 +1,10 @@
 {
-  "nextId": 84,
-  "activeCount": 39,
-  "archivedCount": 40,
+  "nextId": 85,
+  "activeCount": 38,
+  "archivedCount": 42,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-06T19:14:12.020Z",
+  "updatedAt": "2026-09-07T01:30:00.000Z",
   "schemaVersion": 1,
-  "note": "fix/campaign-check-report-freshness: added L-083 (tooling — campaign-check must refuse a stale run artifact by name, with the regen command, before scanning a single token) and archived L-065 (tooling) + L-046 (domain), the oldest active entries whose Guard names a landed automated artifact, for headroom (L-072 skipped — cited inline by CLAUDE.md); b28e8d65 (restore --first-parent after a concurrent probe mutation was captured by df7494dd) carries no new register entry — the rule that a tree-mutating probe runs alone already exists in the model-routing skill and the incident is recorded in the dev-pipeline RUN-LOG."
+  "note": "docs/643-f18-bookkeeping: added L-084 (process — a fix that first arms/consumes/clears a persisted state field must grep every writer and reader of that field into the build radius before the plan is cut, F18/#643) and archived L-056 (tooling) + L-064 (deploy), the oldest active entries with zero live citations outside frozen .claude/pipeline/ run records whose Guard names a landed automated check, for headroom. Note: the task brief for this follow-up named the new entry L-083, but master already carried an unrelated L-083 (campaign-check freshness) landed earlier the same day, and nextId was already 84 before this session started — filed as the actually-free L-084 instead."
 }
