@@ -352,10 +352,14 @@ nonce}` so a re-scan re-flashes),
   pure logic: the four `scanFabHidden` rules incl. the REG-B62 pricing-ready gate),
   `barcode-fab-props.test.ts` (type-level, `tsc --noEmit`: `BarcodeFab`'s handler union rejects
   neither-handler and both-handlers, accepts either alone — L-095), `scan-camera-web-sequencing.test.ts`
-  (B245 pin, no REG token, outside this run's red gate: 5 source-text assertions on
+  (B245 pin, outside this run's red gate: 5 source-text assertions on
   `ScanCamera.web.tsx`'s own adapter wiring — `handleFrame` in `.then()`, `inFlightRef` release in
   `.finally()`, the `scanSettled` drain, `playScanCue`, `track.stop()` on unmount — discharges B245
-  as a coverage pin, not a behavioral fix, L-025).
+  as a coverage pin, not a behavioral fix, L-025). **Retitled `REG-B245: …` in #671 (2026-09-08,
+  commit `76c80b00`, docs/F16b-invoice-counter's sibling test-hygiene fix)** — the registry's
+  `proof: REG-B245` field predated a matching literal token in the test titles themselves (the
+  discharge on #668 was correct in substance, just not campaign-check-checkable byte-for-byte
+  until this retitle); no assertion changed. L-097.
 - mocks: `@routeflow/ui.js`, `@routeflow/types.js`, `expo-secure-store.js`.
 
 ### Batch 2026-07-23 (PRs #306, #307, #309, #310)
