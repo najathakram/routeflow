@@ -1,26 +1,42 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { PriceType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { computeLineSubtotal, getTierPrice, roundMoney } from "@routeflow/pricing";
 import { loadMsrpMap } from "../common/msrp";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { NumberingService } from "../import/numbering.service";
 
 @Injectable()
 export class EstimatesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly entitlements: EntitlementsService,
+    private readonly numbering: NumberingService,
   ) {}
 
+  /**
+   * The next `EST-<year>-####` number, from the SAME per-tenant-year primitive the
+   * invoice series uses (fix-round-2.md D2). The inline scan this replaces was the
+   * condemned B100 generator verbatim: `orderBy { estimateNumber: "desc" }` on TEXT
+   * (so `EST-2026-10000` sorted below `EST-2026-9999` and the series stuck at the
+   * 4-digit wall) over a `startsWith` filter that only the `forTenant()` extension
+   * scoped. Format is preserved byte-for-byte — prefix "EST-", the year segment, and
+   * `padStart(4)` widening rather than truncating past 9999 — because
+   * `DEFAULTS.ESTIMATE` is `{ prefix: "EST-", padding: 4 }` and `format()` emits
+   * `${prefix}${year}-${padded}` whenever `year > 0`. Reserved in reserveNext's own
+   * short transaction: a rollback after this call leaves a gap in the series.
+   */
   private async nextEstNumber() {
     const year = new Date().getFullYear();
-    const prefix = `EST-${year}-`;
-    const last = await this.prisma.forTenant().estimate.findFirst({
-      where: { estimateNumber: { startsWith: prefix } },
-      orderBy: { estimateNumber: "desc" },
+    return this.numbering.reserveNext("ESTIMATE", {
+      year,
+      tenantId: this.prisma.getTenantId() ?? undefined,
     });
-    const seq = last ? parseInt(last.estimateNumber.split("-")[2], 10) + 1 : 1;
-    return `${prefix}${String(seq).padStart(4, "0")}`;
   }
 
   async create(dto: any) {
@@ -216,6 +232,28 @@ export class EstimatesService {
   }
 
   async convertToInvoice(id: string) {
+    // D9 (fix-round-2b.md): validate BEFORE reserving. Every reservation commits on
+    // its own (see below), so a convert rejected AFTER one burns a number for good —
+    // and "estimate missing" / "not ACCEPTED" is the ordinary rejection here, not a
+    // rare one (any repeat click on an already-converted estimate hits it). This read
+    // is advisory only: the authoritative check stays the atomic claim inside the
+    // transaction, so a race LOSER still burns a number (accepted, rare) while the
+    // common rejection now costs nothing.
+    const existing = await this.prisma
+      .forTenant()
+      .estimate.findUnique({ where: { id }, select: { id: true, status: true } });
+    if (!existing) throw new NotFoundException("Estimate not found");
+    if (existing.status !== "ACCEPTED") {
+      throw new BadRequestException("Only ACCEPTED estimates can be converted");
+    }
+
+    // B100/F16b: reserved BEFORE the transaction below opens (fix-round-2.md D1).
+    // reserveNext commits its own short transaction, so this one never holds the
+    // NumberingSequence row lock, and it is not called from inside the transaction
+    // either — that would need a second pooled connection while this one is held and
+    // starves the pool under concurrent mints (REG-B100-C).
+    const year = new Date().getFullYear();
+    const invoiceNumber = await this.numbering.reserveNext("INVOICE", { year });
     return this.prisma.tenantTransaction(async (tx) => {
       // Claim before creating anything: two concurrent converts both passed the
       // old read-then-check and both minted an invoice. Claiming inside the tx
@@ -242,44 +280,44 @@ export class EstimatesService {
             ] as string[])
           : new Map<string, number | null>();
 
-      const year = new Date().getFullYear();
-      const prefix = `INV-${year}-`;
-      const last = await tx.invoice.findFirst({
-        where: { invoiceNumber: { startsWith: prefix } },
-        orderBy: { invoiceNumber: "desc" },
-      });
-      const seq = last ? parseInt(last.invoiceNumber.split("-")[2], 10) + 1 : 1;
-      const invoiceNumber = `${prefix}${String(seq).padStart(4, "0")}`;
-
-      const inv = await tx.invoice.create({
-        data: {
-          invoiceNumber,
-          customerId: est.customerId,
-          status: "DRAFT",
-          subtotal: est.subtotal,
-          taxAmount: est.taxAmount,
-          discount: est.discount,
-          shippingFee: 0,
-          total: est.total,
-          notes: est.notes,
-          terms: est.terms,
-          items: {
-            create: est.items.map((i) => ({
-              description: i.description,
-              productId: i.productId,
-              qty: i.qty,
-              unitPrice: i.unitPrice,
-              discount: 0,
-              taxRate: 0,
-              subtotal: i.subtotal,
-              msrp: i.productId ? (msrpMap.get(i.productId) ?? null) : null,
-              tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
-            })),
+      try {
+        const inv = await tx.invoice.create({
+          data: {
+            invoiceNumber,
+            customerId: est.customerId,
+            status: "DRAFT",
+            subtotal: est.subtotal,
+            taxAmount: est.taxAmount,
+            discount: est.discount,
+            shippingFee: 0,
+            total: est.total,
+            notes: est.notes,
+            terms: est.terms,
+            items: {
+              create: est.items.map((i) => ({
+                description: i.description,
+                productId: i.productId,
+                qty: i.qty,
+                unitPrice: i.unitPrice,
+                discount: 0,
+                taxRate: 0,
+                subtotal: i.subtotal,
+                msrp: i.productId ? (msrpMap.get(i.productId) ?? null) : null,
+                tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
+              })),
+            },
           },
-        },
-        include: { customer: { select: { id: true, businessName: true } }, items: true },
-      });
-      return inv;
+          include: { customer: { select: { id: true, businessName: true } }, items: true },
+        });
+        return inv;
+      } catch (err: any) {
+        // B100/F16b (REG-B100-F): had no P2002 catch — a concurrent convert's
+        // unique-constraint hit propagated as a raw 500 (same message as the
+        // sibling catches in invoices.service.ts).
+        if (err?.code === "P2002")
+          throw new ConflictException("Invoice number conflict — please retry.");
+        throw err;
+      }
     });
   }
 }

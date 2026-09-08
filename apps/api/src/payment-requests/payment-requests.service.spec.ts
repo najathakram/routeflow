@@ -199,7 +199,7 @@ describe("PaymentRequestsService", () => {
       expect(prisma.invoice.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ customerId: "cust-1" }),
-          orderBy: [{ issueDate: "asc" }, { invoiceNumber: "asc" }],
+          orderBy: [{ issueDate: "asc" }, { createdAt: "asc" }, { invoiceNumber: "asc" }],
         }),
       );
 
@@ -301,6 +301,25 @@ describe("PaymentRequestsService", () => {
       ]);
       expect(result.allocations).toEqual([{ invoiceId: "inv-draft", amount: 500 }]);
       expect(result.excess).toBe(0);
+    });
+  });
+
+  // ─── B100/F16b pin P6 ───────────────────────────────────────────────────────
+  // GREEN invariant pin (outside the red gate — see bug-test-plan.md "Pins"): routing
+  // invoice numbering through NumberingService must not disturb how open invoices are
+  // ordered for oldest-first allocation. Asserted on the argument openInvoices passes
+  // (payment-requests.service.ts:106), never on the source text of the file (L-087).
+  describe("B100/F16b pin P6 — openInvoices allocation order is unaffected", () => {
+    it("still reads open invoices ordered [issueDate asc, createdAt asc, invoiceNumber asc]", async () => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+
+      await service.buildOldestFirstAllocation("cust-1", 100);
+
+      expect(prisma.invoice.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: [{ issueDate: "asc" }, { createdAt: "asc" }, { invoiceNumber: "asc" }],
+        }),
+      );
     });
   });
 

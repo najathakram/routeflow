@@ -23,6 +23,7 @@ import { InvoicesService, addCalendarDays } from "./invoices.service";
 import { startOfCalendarDay } from "../common/calendar-date";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { NumberingService } from "../import/numbering.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { EmailService } from "../email/email.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -94,8 +95,21 @@ describe("InvoicesService", () => {
     removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
   };
 
+  // B100/F16b harness note: the five invoice-number mint sites route through
+  // NumberingService once P1/P2 land — InvoicesService does not inject it yet, so
+  // this provider is unused by today's code and only backs the new REG-B100/pin
+  // tests below (see cause-ruling.md §2 D2). Default resolves to the same
+  // "INV-2026-0001" the pre-B100 findFirst-null mocks produced, so it is a safe
+  // module-wide default for the many unrelated tests that never assert on the
+  // minted invoiceNumber.
+  const mockNumbering = {
+    reserveNext: jest.fn().mockResolvedValue("INV-2026-0001"),
+  };
+
   beforeEach(async () => {
     prisma = createMockPrisma();
+    mockNumbering.reserveNext.mockClear();
+    mockNumbering.reserveNext.mockResolvedValue("INV-2026-0001");
     mockEntitlements.hasFlag.mockReset();
     mockEntitlements.hasFlag.mockResolvedValue(false);
     mockCommissionEngine.syncInvoiceCommissionSafe.mockClear();
@@ -151,6 +165,7 @@ describe("InvoicesService", () => {
         // pre-MSRP tests keep their exact write shapes (msrp stays null).
         { provide: EntitlementsService, useValue: mockEntitlements },
         { provide: CommissionEngineService, useValue: mockCommissionEngine },
+        { provide: NumberingService, useValue: mockNumbering },
       ],
     }).compile();
 
@@ -240,12 +255,227 @@ describe("InvoicesService", () => {
         items: [],
       };
       prisma.invoice.findUnique.mockResolvedValue(baseInv);
-      prisma.invoice.findFirst.mockResolvedValue(null); // for nextInvoiceNumber
       prisma.invoice.create.mockResolvedValue({ ...baseInv, id: "inv-3" });
 
       const result = await service.duplicate("inv-2");
       expect(prisma.invoice.create).toHaveBeenCalled();
       expect(result.id).toBe("inv-3");
+    });
+
+    // REG-B100-E (cause-ruling.md §3, cause-refutation.md §7.4): duplicate() has no
+    // P2002 catch today — a concurrent duplicate's unique-constraint hit propagates
+    // as a raw 500. TODAY this rejects with the plain `{ code: "P2002" }` object,
+    // not a ConflictException, so the assertion below fails on the type.
+    it("REG-B100-E: maps a concurrent duplicate's P2002 into ConflictException (409), not a raw 500", async () => {
+      const baseInv = {
+        id: "inv-race",
+        orderId: null,
+        customerId: "cust-1",
+        invoiceNumber: "INV-2026-0004",
+        status: InvoiceStatus.SENT,
+        subtotal: 50,
+        taxAmount: 5,
+        discount: 0,
+        shippingFee: 0,
+        total: 55,
+        notes: null,
+        terms: null,
+        items: [],
+      };
+      prisma.invoice.findUnique.mockResolvedValue(baseInv);
+      prisma.invoice.create.mockRejectedValue({
+        code: "P2002",
+        message: "Unique constraint failed on the fields: (`invoiceNumber`)",
+      });
+
+      await expect(service.duplicate("inv-race")).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  // ─── B100/F16b pins (cause-ruling.md §2/§3) ────────────────────────────────
+
+  describe("REG-B100 pin P5 — generateInvoiceNumber delegates to NumberingService", () => {
+    it("calls numbering.reserveNext('INVOICE', { year }) instead of scanning prisma.invoice.findFirst", async () => {
+      mockNumbering.reserveNext.mockResolvedValueOnce("INV-2026-0038");
+
+      // generateInvoiceNumber is private — every one of the five mint sites (P5,
+      // cause-refutation.md §7.6) reduces through this one primitive or (for
+      // estimates convertToInvoice) the equivalent direct call, so pinning it here
+      // covers create(), createSplitInvoices(), createPartialFromOrder() and
+      // duplicate() at once.
+      const result = await (service as any).generateInvoiceNumber();
+
+      // TODAY generateInvoiceNumber never touches NumberingService at all — it
+      // scans prisma.invoice.findFirst — so this fails on "was not called".
+      expect(mockNumbering.reserveNext).toHaveBeenCalledWith(
+        "INVOICE",
+        expect.objectContaining({ year: new Date().getFullYear() }),
+      );
+      expect(result).toBe("INV-2026-0038");
+      expect(prisma.invoice.findFirst).not.toHaveBeenCalled();
+    });
+  });
+
+  // D7 pin (fix-round-2b.md): WHERE the number is reserved follows the caller.
+  //  - Delivery path — routes stop completion → recordDeliveryPaymentInTx →
+  //    createInvoiceFromOrder(orderId, tx): the reservation must run ON that tx.
+  //    Opening one here (the standalone shape, or a nested $transaction) needs a
+  //    second pooled connection while the routes tx holds OrderItem locks and
+  //    starves the pool under concurrent stop completions (REG-B100-C, 7/10).
+  //  - Office path — no caller tx: the reservation must be standalone (NO `tx` in
+  //    the opts) and commit BEFORE the invoice transaction opens, so that
+  //    transaction never holds the NumberingSequence row lock (fix-round-2.md D1).
+  // Asserted on the opts NumberingService actually receives and on the transaction
+  // mocks, never on source text (L-087).
+  describe("B100/F16b pin D7 — the reservation boundary follows the caller's transaction", () => {
+    const orderFixture = (id: string) => ({
+      id,
+      customerId: "cust-1",
+      orderNumber: `ORD-${id}`,
+      subtotal: 20,
+      tax: 0,
+      lineItems: [
+        {
+          id: "li-1",
+          productId: "p-1",
+          qty: 2,
+          invoicedQty: 0,
+          unitPrice: 10,
+          priceType: "STANDARD",
+          trackedCategoryId: null,
+          categoryTaxAmount: 0,
+          product: { name: "Widget", unitsPerBox: 0, trackedCategoryId: null },
+        },
+      ],
+    });
+
+    beforeEach(() => {
+      jest
+        .spyOn(service as any, "resolveDefaultTerms")
+        .mockResolvedValue({ terms: "Net 30", dueDays: 30 });
+      jest
+        .spyOn(service as any, "resolveTenantInvoiceDefaults")
+        .mockResolvedValue({ notes: null, terms: null, timezone: null });
+      prisma.trackedCategory.findMany.mockResolvedValue([]);
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.create.mockImplementation((args: any) =>
+        Promise.resolve({ ...args.data, items: [], payments: [], customer: {} }),
+      );
+    });
+
+    it("delivery path: createInvoiceFromOrder(orderId, tx) reserves ON that tx and opens no transaction", async () => {
+      // A stable, identity-distinct tx client (the #506 spec shape): a pass-through
+      // to `this.prisma` would make the `{ tx: txClient }` assertion vacuous, since
+      // reserving on the base client would look identical to reserving on the tx.
+      const txClient = {
+        order: { findUnique: jest.fn().mockResolvedValue(orderFixture("ord-d7-tx")) },
+        invoice: {
+          findMany: jest.fn().mockResolvedValue([]),
+          create: jest.fn(async (args: any) => ({
+            ...args.data,
+            id: "inv-d7",
+            items: [],
+            payments: [],
+            customer: {},
+          })),
+        },
+        customer: { findFirst: jest.fn().mockResolvedValue({ isTaxExempt: false }) },
+        trackedCategory: { findMany: jest.fn().mockResolvedValue([]) },
+        orderItem: { update: jest.fn().mockResolvedValue({}) },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+        $queryRaw: jest.fn().mockResolvedValue([]),
+      };
+
+      await service.createInvoiceFromOrder("ord-d7-tx", txClient);
+
+      expect(mockNumbering.reserveNext).toHaveBeenCalledTimes(1);
+      expect(mockNumbering.reserveNext).toHaveBeenCalledWith(
+        "INVOICE",
+        expect.objectContaining({ tx: txClient, year: new Date().getFullYear() }),
+      );
+      // No transaction of ours — the caller's is the only one on this path.
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      // …and the insert really did run on that tx, so the counter lock it now holds
+      // is released by the caller's commit, not left dangling on another client.
+      expect(txClient.invoice.create).toHaveBeenCalledTimes(1);
+      expect(prisma.invoice.create).not.toHaveBeenCalled();
+    });
+
+    it("office path: createInvoiceFromOrder(orderId) reserves standalone (no tx) before its transaction opens", async () => {
+      prisma.order.findUnique.mockResolvedValue(orderFixture("ord-d7-office"));
+
+      await service.createInvoiceFromOrder("ord-d7-office");
+
+      expect(mockNumbering.reserveNext).toHaveBeenCalledTimes(1);
+      // No `tx` key at all — reserveNext must open its OWN short transaction here.
+      expect(mockNumbering.reserveNext.mock.calls[0][1]).not.toHaveProperty("tx");
+      expect(prisma.tenantTransaction).toHaveBeenCalled();
+      // Reserved (and committed) strictly BEFORE the invoice transaction opens.
+      expect(mockNumbering.reserveNext.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.tenantTransaction.mock.invocationCallOrder[0],
+      );
+    });
+  });
+
+  // GREEN invariant pin (outside the red gate — see bug-test-plan.md "Pins"): the
+  // sibling derivation must survive routing the base number through NumberingService.
+  // Asserted on the numbers actually written (`invoice.create` args), never on the
+  // source text of invoices.service.ts — a text match would be satisfied by a comment
+  // or by dead code (L-087).
+  describe("B100/F16b pin P4 — createSplitInvoices' -R{i} suffix is untouched", () => {
+    it("derives sibling numbers from the ONE reserved base: [base, base-R1]", async () => {
+      jest
+        .spyOn(service as any, "resolveDefaultTerms")
+        .mockResolvedValue({ terms: "Net 30", dueDays: 30 });
+      jest
+        .spyOn(service as any, "resolveTenantInvoiceDefaults")
+        .mockResolvedValue({ notes: null, terms: null, timezone: null });
+      // NOT stubbed: generateInvoiceNumber runs for real so the base number is the one
+      // NumberingService reserved, and the siblings are derived from it.
+      mockNumbering.reserveNext.mockResolvedValueOnce("INV-2026-0038");
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.create.mockImplementation((args: any) =>
+        Promise.resolve({ ...args.data, items: [], payments: [], customer: {} }),
+      );
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        {
+          id: "cat-tob",
+          name: "Tobacco",
+          invoiceTreatment: "SEPARATE_INVOICE",
+          taxType: "NONE",
+          rate: 0,
+        },
+      ]);
+      const line = (id: string, catId: string | null, name: string) => ({
+        id,
+        productId: `p-${id}`,
+        qty: 1,
+        invoicedQty: 0,
+        unitPrice: 10,
+        priceType: "STANDARD",
+        trackedCategoryId: catId,
+        categoryTaxAmount: 0,
+        product: { name, unitsPerBox: 0, trackedCategoryId: catId },
+      });
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-p4",
+        customerId: "cust-1",
+        orderNumber: "ORD-P4",
+        subtotal: 20,
+        tax: 0,
+        lineItems: [line("std", null, "Widget"), line("tob", "cat-tob", "Cigarillos")],
+      });
+
+      await service.createInvoiceFromOrder("ord-p4");
+
+      // Exactly ONE number reserved for the whole group; index 0 keeps the base,
+      // every sibling appends `-R{i}` (invoices.service.ts:1243).
+      expect(mockNumbering.reserveNext).toHaveBeenCalledTimes(1);
+      expect(prisma.invoice.create.mock.calls.map((c: any) => c[0].data.invoiceNumber)).toEqual([
+        "INV-2026-0038",
+        "INV-2026-0038-R1",
+      ]);
     });
   });
 
@@ -536,7 +766,6 @@ describe("InvoicesService", () => {
           trackedSubcategoryId: "sub-1",
         },
       ]);
-      prisma.invoice.findFirst.mockResolvedValue(null); // nextInvoiceNumber
       prisma.invoice.create.mockResolvedValue({
         id: "inv-new",
         items: [
@@ -695,7 +924,6 @@ describe("InvoicesService", () => {
           priceIncludesTax: false,
         },
       ]);
-      prisma.invoice.findFirst.mockResolvedValue(null); // nextInvoiceNumber
       prisma.invoice.create.mockImplementation((args: any) =>
         Promise.resolve({ id: "inv-x", ...args.data, items: [], customer: {}, payments: [] }),
       );
@@ -739,7 +967,6 @@ describe("InvoicesService", () => {
       };
       prisma.customer.findUnique.mockResolvedValue(taxExemptCustomer);
       prisma.product.findMany.mockResolvedValue([]);
-      prisma.invoice.findFirst.mockResolvedValue(null); // for invoice number generation
       // tenantConfig is not in mock — mock resolveTenantInvoiceDefaults directly
       jest.spyOn(service as any, "resolveTenantInvoiceDefaults").mockResolvedValue({
         notes: null,
@@ -3422,7 +3649,6 @@ describe("InvoicesService", () => {
         items: [],
       };
       prisma.invoice.findUnique.mockResolvedValue(baseInv);
-      prisma.invoice.findFirst.mockResolvedValue(null); // for nextInvoiceNumber
       prisma.invoice.create.mockResolvedValue({ ...baseInv, id: "inv-dup-2" });
 
       await service.duplicate("inv-dup-1");
@@ -6436,7 +6662,6 @@ describe("InvoicesService", () => {
     describe("create() — paymentTermsLabel + deposit fields", () => {
       it("persists paymentTermsLabel, depositPercent, and depositDueDate verbatim", async () => {
         prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", isTaxExempt: false });
-        prisma.invoice.findFirst.mockResolvedValue(null); // nextInvoiceNumber
         prisma.invoice.create.mockImplementation((args: any) =>
           Promise.resolve({ ...args.data, id: "inv-new", items: [], payments: [], customer: {} }),
         );
@@ -7099,6 +7324,28 @@ describe("InvoicesService", () => {
           const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
           expect("depositPercent" in data).toBe(false);
           expect(result[0].status).toBe(InvoiceStatus.DRAFT);
+        });
+
+        // REG-B100 pin (harness note 4, cause-ruling.md §2 D2): this fire-and-forget
+        // path has no AsyncLocalStorage request context, so it must pass its
+        // explicit tenantId straight through to NumberingService rather than
+        // relying on prisma.getTenantId(). TODAY generateInvoiceNumber never calls
+        // numbering.reserveNext at all, so this fails on "was not called".
+        it("REG-B100 pin: passes the explicit tenantId to numbering with no request context", async () => {
+          // This describe's beforeEach stubs generateInvoiceNumber wholesale (the
+          // deposit-issuance tests don't care what it mints); restore the real one
+          // so the mint actually reaches NumberingService and the tenantId claim
+          // is exercised end-to-end.
+          ((service as any).generateInvoiceNumber as jest.SpyInstance).mockRestore();
+          prisma.order.findFirst.mockResolvedValue(orderWith());
+          armTenantConfig({});
+
+          await service.createInvoiceFromOrderWithTenant("ord-issue", "qa-fire-and-forget-tenant");
+
+          expect(mockNumbering.reserveNext).toHaveBeenCalledWith(
+            "INVOICE",
+            expect.objectContaining({ tenantId: "qa-fire-and-forget-tenant" }),
+          );
         });
       });
     });

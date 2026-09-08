@@ -40,6 +40,14 @@ on:
       - "apps/api/package.json"
       - "apps/api/src/**/*.db.spec.ts"
       - "apps/api/src/common/testing/**"
+      # B100/F16b (2026-09-08): invoice/estimate number reservation now runs in
+      # its own short transaction (NumberingService.reserveNext) and is proven
+      # only by the DB-lane pin (invoice-numbering.db.spec.ts) — a PR touching
+      # these three files must run this lane, not just the one that touches
+      # the spec file itself.
+      - "apps/api/src/import/numbering.service.ts"
+      - "apps/api/src/invoices/invoices.service.ts"
+      - "apps/api/src/estimates/estimates.service.ts"
       - "apps/api/.squawk.toml"
       - "scripts/lint-migrations.mjs"
       - ".github/workflows/db-migrations.yml"

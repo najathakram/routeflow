@@ -64,7 +64,7 @@ export class CommissionStatementsService {
     return statement;
   }
 
-  /** Copies generateInvoiceNumber's max+1 scan pattern (invoices.service.ts). */
+  /** Same max+1 scan class as B100 (fixed for invoices in #F16b); statement numbering is tracked as its own registry row. */
   private async nextStatementNumber(db: any): Promise<string> {
     const year = new Date().getFullYear();
     const prefix = `CST-${year}-`;

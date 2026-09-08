@@ -1,0 +1,67 @@
+{
+  "runId": "wf_16afcfe2-549",
+  "mode": "bugfix",
+  "scale": "major",
+  "startedAt": "2026-09-08T11:37:30Z",
+  "estimatedCostUsd": 26.4,
+  "agents": 58,
+  "totalTokens": 7745994,
+  "durationMs": 13830840,
+  "clean": false,
+  "note": "Aggregate result truncated in the task output (>200 KB); reconstructed from journal.jsonl (58 per-agent results).",
+  "verify": {
+    "judged": 18,
+    "votesCast": 21,
+    "firstVoteRefutedRate": 0.056,
+    "disputed": 1,
+    "disputesUpheld": 0
+  },
+  "redGate": {
+    "ran": true,
+    "audits": 2,
+    "behaviorallyRed": false,
+    "remediated": true,
+    "note": "Two audits found structural pins (P3/P4/P6 green-today, source-text P4/P6) and unrun numbering specs; remediation rewrote P3/P4/P6 behaviourally and corrected T1a2/T1d/T1e oracles so each REG is red in isolation (measured values recorded in bug-test-plan.md)."
+  },
+  "fixPlanning": { "rounds": 1, "round1": { "fix": 20, "dispute": 0, "defer": 1 } },
+  "mutationProbe": {
+    "ran": true,
+    "targets": 3,
+    "caught": 3,
+    "allCaught": true,
+    "restoredVerified": true
+  },
+  "siblingSweep": {
+    "ran": true,
+    "hits": 21,
+    "note": "hits judged inside the review/verify slate; est/cn/bill/statement/PO siblings remain rows to file"
+  },
+  "harnessCheck": { "ran": true, "issues": 0 },
+  "finalGate": {
+    "pass": true,
+    "commands": [
+      "cd apps/api && npx jest --silent",
+      "DB lane (node scripts/local-env.mjs --db --db-specs)",
+      "node scripts/validate-lessons.mjs"
+    ]
+  },
+  "finalPass": {
+    "ran": true,
+    "findings": 11,
+    "real": [
+      "lock held to COMMIT → lock-order inversion with driver stop completion (major)",
+      "full-body serialization under the 5 s tx budget (major)",
+      "nextEstNumber same defect class (major)",
+      "payment-requests TEXT tiebreak past 9999 (minor)",
+      "db-migrations.yml path gating (minor)",
+      "nextCnNumber cross-tenant on raw client (minor, file)",
+      "-R{i} siblings unchecked (minor, file)",
+      "scanMaxForYear regex scan (minor, file)",
+      "commission-statements comment (minor)"
+    ]
+  },
+  "remainingFindings": ["see fix-round-2.md — light loop round 2 in progress"],
+  "lightLoop": true,
+  "uiVerify": { "ran": false, "reason": "api-only change" },
+  "phaseReport": []
+}
