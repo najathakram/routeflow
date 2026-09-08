@@ -976,9 +976,13 @@
   padding: 10px;
 }
 .rf-marketing .signin-menu [role="menuitem"] {
+  display: flex;
+  align-items: center;
+  width: 100%;
   padding: 12px;
   font-size: 0.875rem;
   gap: 10px;
+  white-space: nowrap;
   cursor: pointer;
 }
 .rf-marketing .signin-menu p {
@@ -5497,7 +5501,7 @@
 }
 .rf-marketing .signin-menu [role="menuitem"] {
   border-radius: 14px;
-  color: #6b81a0;
+  color: #202124;
 }
 .rf-marketing .mobile-panel {
   border-radius: 30px 0 0 30px;
@@ -8425,9 +8429,16 @@
   color: #202124;
 }
 .rf-marketing .signin-menu [role="menuitem"]:hover,
-.rf-marketing .signin-menu [role="menuitem"]:focus {
+.rf-marketing .signin-menu [role="menuitem"]:focus-visible {
   background: #eeeef1;
   color: #202124;
+}
+.rf-marketing .signin-menu [role="menuitem"]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.rf-marketing .signin-menu [role="menuitem"] > * {
+  outline: none;
 }
 .rf-marketing .button,
 .rf-marketing .header-actions .button,

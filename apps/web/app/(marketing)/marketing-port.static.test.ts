@@ -387,3 +387,103 @@ describe("marketing.css ships one tokenised focus ring — R-MKT T7", () => {
     expect(css).not.toMatch(/outline[^;{}]*#91809f/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Sign-in menu items — owner screenshot 2026-09-08: the item was an inline
+// `<a>` whose icon/label/arrow sat in different line boxes, so :focus-visible
+// painted one outline rectangle per wrapped fragment instead of one ring
+// around the row. Fix: the item is a `display: flex` row (`white-space:
+// nowrap` keeps it to one line at the panel's own min-width) so the anchor
+// generates a single box, plus a dedicated :focus-visible ring on the anchor
+// and an explicit `outline: none` on its children so a ring can never
+// re-fragment across the icon/label/arrow.
+// ---------------------------------------------------------------------------
+
+type CssRule = { selector: string; body: string };
+
+// Line-based rule walker, same technique as customPropertyScopeViolations
+// above: the stylesheet is prettier-formatted with one selector/declaration
+// per line, so tracking brace depth finds each TOP-LEVEL rule's own body
+// without tripping over nested @media blocks or the same selector text
+// repeated elsewhere in this ~10k-line, multi-file-ported stylesheet (this
+// file legitimately declares `.signin-menu [role="menuitem"]` more than
+// once — a structural layer and a separate visual layer — so a plain
+// `.indexOf`/`.match` would silently grab the wrong one).
+function parseTopLevelRules(css: string): CssRule[] {
+  const rules: CssRule[] = [];
+  let depth = 0;
+  let pendingSelector: string | null = null;
+  let bodyLines: string[] = [];
+  for (const raw of css.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.endsWith("{")) {
+      if (depth === 0) {
+        pendingSelector = line.slice(0, -1).trim();
+        bodyLines = [];
+      }
+      depth++;
+      continue;
+    }
+    if (/^}+$/.test(line)) {
+      for (let i = 0; i < line.length; i++) {
+        depth--;
+        if (depth === 0 && pendingSelector !== null) {
+          rules.push({ selector: pendingSelector, body: bodyLines.join("\n") });
+          pendingSelector = null;
+        }
+      }
+      continue;
+    }
+    if (depth === 1 && pendingSelector !== null) {
+      bodyLines.push(line);
+    }
+  }
+  return rules;
+}
+
+const SIGNIN_ITEM_SELECTOR = '.rf-marketing .signin-menu [role="menuitem"]';
+const SIGNIN_ITEM_FOCUS_VISIBLE_SELECTOR = `${SIGNIN_ITEM_SELECTOR}:focus-visible`;
+const SIGNIN_ITEM_BARE_SELECTORS = new Set([
+  SIGNIN_ITEM_SELECTOR,
+  `${SIGNIN_ITEM_SELECTOR}:hover`,
+  `${SIGNIN_ITEM_SELECTOR}:focus`,
+  SIGNIN_ITEM_FOCUS_VISIBLE_SELECTOR,
+]);
+
+describe("sign-in menu items are one flex row with a single focus ring — R-MKT signin-menu", () => {
+  it("the menu item's structural rule sets display: flex and white-space: nowrap (R-MKT signin-menu)", () => {
+    const rules = parseTopLevelRules(fs.readFileSync(MARKETING_CSS_PATH, "utf8"));
+    const structural = rules.find(
+      (r) => r.selector === SIGNIN_ITEM_SELECTOR && r.body.includes("display: flex"),
+    );
+    expect(structural).toBeDefined();
+    expect(structural!.body).toContain("white-space: nowrap");
+  });
+
+  it("the menu item carries its own :focus-visible ring with an outline-offset (R-MKT signin-menu)", () => {
+    const rules = parseTopLevelRules(fs.readFileSync(MARKETING_CSS_PATH, "utf8"));
+    const ownRing = rules.find(
+      (r) => r.selector === SIGNIN_ITEM_FOCUS_VISIBLE_SELECTOR && r.body.includes("outline:"),
+    );
+    expect(ownRing).toBeDefined();
+    expect(ownRing!.body).toContain("outline-offset");
+  });
+
+  it("no rule paints a visible outline on the item's inner icon/label/arrow (R-MKT signin-menu)", () => {
+    const rules = parseTopLevelRules(fs.readFileSync(MARKETING_CSS_PATH, "utf8"));
+    const innerRules = rules.filter(
+      (r) =>
+        r.selector.includes(".signin-menu") &&
+        r.selector.includes('[role="menuitem"]') &&
+        !SIGNIN_ITEM_BARE_SELECTORS.has(r.selector),
+    );
+    // The item's children must be explicitly neutralised (`> * { outline:
+    // none }`) — that rule not existing yet is exactly the pre-fix state.
+    expect(innerRules.length).toBeGreaterThan(0);
+    for (const rule of innerRules) {
+      expect(rule.body).not.toMatch(/outline\s*:\s*(?!none\b)\S/);
+    }
+    expect(innerRules.some((r) => /outline\s*:\s*none\b/.test(r.body))).toBe(true);
+  });
+});
