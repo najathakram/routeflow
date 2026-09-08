@@ -11,6 +11,19 @@
 
 ## process
 
+### L-094 · 2026-09-08 · process · #663
+
+- **Symptom:** the auth-redesign dev-pipeline engine stopped mid fix-loop at 62 agents with no
+  `result.json`, on checkpoint `102c79ce` — the next session reconstructed state via a light loop;
+  two driver agents in the same run had also stalled on background waits.
+- **Root cause:** the engine writes `result.json` only at the very end, so a stopped or killed run
+  leaves nothing machine-readable behind.
+- **Lesson:** **A long engine run checkpoints `result.json` (phase, remaining findings, gate
+  state) after every phase, not only at the end, and agent prompts forbid background waits — so
+  an interruption resumes from a record, not a reconstruction.**
+- **Guard:** none yet — process; dev-pipeline engine change candidate recorded in
+  `~/.claude/skills/dev-pipeline/references/RUN-LOG.md` under `2026-09-07-auth-redesign`.
+
 ### L-078 · 2026-09-05 · process · close-out re-check
 
 - **Symptom:** `LESSONS.md` keeps merging CLEANLY into duplicate ids — L-054 four times, then
@@ -509,19 +522,6 @@
   arithmetic boundary; every paginated order carries an id tiebreaker.**
 - **Guard:** REG-B12/B80/B110/B117/B144/B169 pins (revert-probed) and the `limit: 999` /
   `take: N,` sibling sweep filed as rows.
-
-### L-088 · 2026-09-07 · domain · #652
-
-- **Symptom:** delivery windows were mapped into the request and then dropped before a cost-only
-  solver on one branch, while another branch handed a clock-less solver a "hard" window with no
-  start time — three bugs, one class.
-- **Root cause:** a constraint verified inside individual solver branches instead of once at the
-  seam every branch shares.
-- **Lesson:** **enforce a cross-branch constraint at the shared seam AFTER any solver returns
-  (re-time against the real clock, repair, then persist), give every solver the same clock the
-  verifier uses, and pin it with a fixture where cost order and window order disagree.**
-- **Guard:** `REG-B147` / `REG-B161` / `REG-B177` in `route-optimization.service.spec.ts`
-  (mutation-probed: seven pins red with the window pass disabled).
 
 ### L-071 · 2026-09-04 · domain · OCR gate
 
