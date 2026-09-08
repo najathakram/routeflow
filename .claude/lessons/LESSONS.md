@@ -312,6 +312,21 @@
 
 ## testing
 
+### L-093 · 2026-09-08 · testing · #665
+
+- **Symptom:** after #657 deployed, `/distributors` answered 307 with no `Location` header in
+  production (and in the compose image), while `next dev` redirected fine — the deployment E2E
+  (spec 36 T1) was the only thing that caught it.
+- **Root cause:** the alias was a prerendered `redirect()` page; served from the ISR cache on the
+  standalone server, it lost its `Location` header.
+- **Lesson:** **URL aliases and legacy redirects belong in `next.config.mjs` `redirects()`
+  (evaluated before middleware, carries `Location` for every UA), never in a prerendered page
+  calling `redirect()` — the dev server masks this whole class, so the deployment E2E or a
+  production image is the only oracle.**
+- **Guard:** `apps/web/app/(marketing)/distributors-redirect.static.test.ts` pins the config
+  entry and the page's absence; a repo-wide sweep for the same shape filed 9 unbatched rows
+  (B251–B259) rather than extending this one test to cover them.
+
 ### L-092 · 2026-09-08 · testing · #657
 
 - **Symptom:** the marketing engine's UI-verify rounds 3–6 judged screenshots of master's build
@@ -354,19 +369,6 @@
   replaced.**
 - **Guard:** the m7 spec (`invoices.service.spec.ts`) now quotes the memo's basis verbatim in its
   title and comment; deployment E2E spec 22 REG-B11 is the standing regression signal.
-
-### L-087 · 2026-09-07 · testing · #650
-
-- **Symptom:** a passing "leaves INTERNAL untouched" assertion in a new NO_TRANSPORT test proved
-  nothing — every INTERNAL event is already NO_TRIGGER, so the `channel !== INTERNAL` exemption
-  was unreachable and it passed on precedence alone (reviewer's mutation probe).
-- **Root cause:** written from the design's intent (INTERNAL is exempt), not the tree's current
-  state (every INTERNAL event is already NO_TRIGGER, so the exemption line never runs).
-- **Lesson:** **pin the CURRENT state behaviourally — every INTERNAL cell under a no-transport
-  provider reports NO_TRIGGER — so the first wired INTERNAL event turns it red; a reviewer's probe
-  must judge every "untouched" claim before it counts as coverage.**
-- **Guard:** the rewritten pin in `messaging-config.service.spec.ts`'s "NO_TRANSPORT — provider
-  declares no transports" describe block; F23's round-2 review finding (`result.json`).
 
 ### L-076 · 2026-09-05 · testing · F13
 
