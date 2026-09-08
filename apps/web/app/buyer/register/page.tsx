@@ -7,8 +7,8 @@ import { z } from "zod";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Eye, EyeOff } from "lucide-react";
 import { Input, Button } from "@routeflow/ui/web";
-import { BrandMark } from "@/components/brand";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
+import { AuthShell } from "@/components/auth";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -146,163 +146,149 @@ function BuyerRegisterInner() {
     : "/buyer/login";
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-buyer-50 to-white p-4">
-      <div className="w-full max-w-sm">
-        {/* Logo / Brand */}
-        <div className="mb-8 flex flex-col items-center gap-3">
-          <BrandMark size={48} />
-          <h1 className="text-2xl font-bold text-navy">Create Account</h1>
-          <p className="text-sm text-navy/70">Join RouteFlow Buyer Portal</p>
-        </div>
+    <AuthShell
+      audience="retailer"
+      kicker="Retailer account"
+      title="Your next chapter starts here."
+      lead="Create your retailer account."
+      footer={
+        <p className="text-xs text-navy/70">
+          Selling on RouteFlow?{" "}
+          <a href="/login" className="text-[#0B6E6B] hover:underline">
+            Sign in to the seller dashboard
+          </a>
+        </p>
+      }
+    >
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
+        {apiError && (
+          <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">{apiError}</p>
+        )}
 
-        {/* Card */}
-        <div className="rounded-xl bg-white p-6 shadow-card">
-          <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
-            {apiError && (
-              <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">{apiError}</p>
-            )}
+        <Input
+          label="Full Name"
+          type="text"
+          placeholder="Enter your full name"
+          autoComplete="name"
+          register={register("name")}
+          error={errors.name?.message}
+        />
 
-            <Input
-              label="Full Name"
-              type="text"
-              placeholder="Enter your full name"
-              autoComplete="name"
-              register={register("name")}
-              error={errors.name?.message}
+        <Input
+          label="Email"
+          type="email"
+          placeholder="Enter your email"
+          autoComplete="email"
+          register={register("email")}
+          error={errors.email?.message}
+        />
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="buyer-password" className="text-sm font-medium text-navy">
+            Password
+          </label>
+          <div className="relative">
+            <input
+              id="buyer-password"
+              type={showPassword ? "text" : "password"}
+              placeholder="8+ chars, upper & lower case, number or symbol"
+              autoComplete="new-password"
+              className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:outline-none focus:ring-2 focus:ring-buyer-500 focus:border-transparent"
+              {...register("password")}
             />
-
-            <Input
-              label="Email"
-              type="email"
-              placeholder="Enter your email"
-              autoComplete="email"
-              register={register("email")}
-              error={errors.email?.message}
-            />
-
-            <div className="flex flex-col gap-1">
-              <label htmlFor="buyer-password" className="text-sm font-medium text-navy">
-                Password
-              </label>
-              <div className="relative">
-                <input
-                  id="buyer-password"
-                  type={showPassword ? "text" : "password"}
-                  placeholder="8+ chars, upper & lower case, number or symbol"
-                  autoComplete="new-password"
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:outline-none focus:ring-2 focus:ring-buyer-500 focus:border-transparent"
-                  {...register("password")}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/70 hover:text-navy transition-colors"
-                  tabIndex={-1}
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-              {errors.password && <p className="text-xs text-danger">{errors.password.message}</p>}
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label htmlFor="buyer-confirm-password" className="text-sm font-medium text-navy">
-                Confirm Password
-              </label>
-              <div className="relative">
-                <input
-                  id="buyer-confirm-password"
-                  type={showConfirmPassword ? "text" : "password"}
-                  placeholder="Re-enter your password"
-                  autoComplete="new-password"
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:outline-none focus:ring-2 focus:ring-buyer-500 focus:border-transparent"
-                  {...register("confirmPassword")}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowConfirmPassword((v) => !v)}
-                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/70 hover:text-navy transition-colors"
-                  tabIndex={-1}
-                  aria-label={showConfirmPassword ? "Hide password" : "Show password"}
-                >
-                  {showConfirmPassword ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
-                </button>
-              </div>
-              {errors.confirmPassword && (
-                <p className="text-xs text-danger">{errors.confirmPassword.message}</p>
-              )}
-            </div>
-
             <button
-              type="submit"
-              disabled={isLoading}
-              className="mt-2 flex h-10 w-full items-center justify-center rounded-lg bg-buyer-600 text-sm font-semibold text-white transition-colors hover:bg-buyer-700 focus:outline-none focus:ring-2 focus:ring-buyer-500 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed"
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/70 hover:text-navy transition-colors"
+              tabIndex={-1}
+              aria-label={showPassword ? "Hide password" : "Show password"}
             >
-              {isLoading ? (
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-              ) : (
-                "Create Account"
-              )}
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
-          </form>
-
-          {/* Divider */}
-          <div className="my-4 flex items-center gap-3">
-            <div className="h-px flex-1 bg-surface-border" />
-            <span className="text-xs text-navy/70">or</span>
-            <div className="h-px flex-1 bg-surface-border" />
           </div>
+          {errors.password && <p className="text-xs text-danger">{errors.password.message}</p>}
+        </div>
 
-          {/* Google sign-up button */}
-          {googleError && (
-            <p className="mb-3 rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
-              {googleError}
-            </p>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="buyer-confirm-password" className="text-sm font-medium text-navy">
+            Confirm Password
+          </label>
+          <div className="relative">
+            <input
+              id="buyer-confirm-password"
+              type={showConfirmPassword ? "text" : "password"}
+              placeholder="Re-enter your password"
+              autoComplete="new-password"
+              className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:outline-none focus:ring-2 focus:ring-buyer-500 focus:border-transparent"
+              {...register("confirmPassword")}
+            />
+            <button
+              type="button"
+              onClick={() => setShowConfirmPassword((v) => !v)}
+              className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/70 hover:text-navy transition-colors"
+              tabIndex={-1}
+              aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+            >
+              {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+          {errors.confirmPassword && (
+            <p className="text-xs text-danger">{errors.confirmPassword.message}</p>
           )}
-          <button
-            type="button"
-            onClick={handleGoogleSignUp}
-            disabled={googleLoading}
-            className="flex w-full items-center justify-center gap-3 rounded border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-buyer-500 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {googleLoading ? (
-              <>
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-navy/30 border-t-navy/70" />
-                <span>Redirecting to Google...</span>
-              </>
-            ) : (
-              <>
-                <GoogleIcon className="h-4 w-4" />
-                <span>Continue with Google</span>
-              </>
-            )}
-          </button>
-
-          <div className="mt-4 text-center">
-            <p className="text-sm text-navy/70">
-              Already have an account?{" "}
-              <a href={loginHref} className="text-buyer-600 hover:underline font-medium">
-                Sign in
-              </a>
-            </p>
-          </div>
         </div>
 
-        <div className="mt-6 text-center">
-          <p className="text-xs text-navy/70">
-            Selling on RouteFlow?{" "}
-            <a href="/login" className="text-buyer-600 hover:underline">
-              Sign in to the seller dashboard
-            </a>
-          </p>
-        </div>
+        <button
+          type="submit"
+          disabled={isLoading}
+          className="rf-btn mt-2 flex h-10 w-full items-center justify-center disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          {isLoading ? (
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+          ) : (
+            "Create Account"
+          )}
+        </button>
+      </form>
+
+      {/* Divider */}
+      <div className="my-4 flex items-center gap-3">
+        <div className="h-px flex-1 bg-surface-border" />
+        <span className="text-xs text-navy/70">or</span>
+        <div className="h-px flex-1 bg-surface-border" />
       </div>
-    </div>
+
+      {/* Google sign-up button */}
+      {googleError && (
+        <p className="mb-3 rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">{googleError}</p>
+      )}
+      <button
+        type="button"
+        onClick={handleGoogleSignUp}
+        disabled={googleLoading}
+        className="rf-btn secondary flex w-full items-center justify-center gap-3"
+      >
+        {googleLoading ? (
+          <>
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-navy/30 border-t-navy/70" />
+            <span>Redirecting to Google...</span>
+          </>
+        ) : (
+          <>
+            <GoogleIcon className="h-4 w-4" />
+            <span>Continue with Google</span>
+          </>
+        )}
+      </button>
+
+      <div className="mt-4 text-center">
+        <p className="text-sm text-navy/70">
+          Already have an account?{" "}
+          <a href={loginHref} className="text-[#0B6E6B] hover:underline font-medium">
+            Sign in
+          </a>
+        </p>
+      </div>
+    </AuthShell>
   );
 }
 

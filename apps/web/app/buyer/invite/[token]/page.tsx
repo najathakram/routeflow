@@ -4,7 +4,7 @@ import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Building2, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
-import { BrandMark } from "@/components/brand";
+import { AuthShell } from "@/components/auth";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { getInviteDetails, acceptInvite, getBuyerAccessToken } from "@/lib/buyer-auth";
 
@@ -136,158 +136,155 @@ export default function BuyerInvitePage() {
     }
   };
 
+  // The shell owns the page heading: it announces the state the card is showing,
+  // exactly as the old page's own per-state heading did (MED-1); the branch order mirrors the
+  // `content` chain below so the heading can never describe a different state.
+  const title =
+    isLoadingInvite || authLoading
+      ? "You're invited."
+      : loadError
+        ? "Invalid Invite"
+        : accepted
+          ? "Invite Accepted!"
+          : "You're invited.";
+
+  let content: React.ReactNode;
   if (isLoadingInvite || authLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-surface-raised">
+    content = (
+      <div className="flex justify-center py-8">
         <Loader2 className="h-8 w-8 animate-spin text-buyer-500" />
       </div>
     );
-  }
-
-  if (loadError) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-surface-raised p-4">
-        <div className="w-full max-w-sm rounded-xl bg-white p-8 shadow-card text-center">
-          <AlertCircle className="mx-auto mb-4 h-12 w-12 text-danger" />
-          <h1 className="text-xl font-bold text-navy mb-2">Invalid Invite</h1>
-          <p className="text-sm text-navy/70 mb-6">{loadError}</p>
-          <a href="/buyer/portal" className="text-buyer-600 hover:underline text-sm">
-            Go to Buyer Portal
-          </a>
-        </div>
+  } else if (loadError) {
+    content = (
+      <div className="text-center">
+        <AlertCircle className="mx-auto mb-4 h-12 w-12 text-danger" />
+        <p className="text-sm text-navy/70 mb-6">{loadError}</p>
+        <a href="/buyer/portal" className="text-[#0B6E6B] hover:underline text-sm">
+          Go to Buyer Portal
+        </a>
       </div>
     );
-  }
-
-  if (accepted) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-surface-raised p-4">
-        <div className="w-full max-w-sm rounded-xl bg-white p-8 shadow-card text-center">
-          <CheckCircle className="mx-auto mb-4 h-12 w-12 text-success" />
-          <h1 className="text-xl font-bold text-navy mb-2">Invite Accepted!</h1>
-          <p className="text-sm text-navy/70">
-            You are now connected to <strong>{invite?.name}</strong>. Redirecting to your portal...
-          </p>
-        </div>
+  } else if (accepted) {
+    content = (
+      <div className="rf-auth-success text-center">
+        <CheckCircle className="mx-auto mb-4 h-12 w-12 text-success" />
+        <p className="text-sm text-navy/70">
+          You are now connected to <strong>{invite?.name}</strong>. Redirecting to your portal...
+        </p>
       </div>
+    );
+  } else {
+    content = (
+      <>
+        <div className="mb-6 flex flex-col items-center gap-3 text-center">
+          {invite?.logoKey ? (
+            /* Guarded /uploads needs auth an <img> can't send — use the
+               public streaming endpoint (same fix as the portal SellerCard). */
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={`${apiUrl}/public/tenants/${encodeURIComponent(invite.slug)}/logo`}
+              alt={invite.name}
+              className="h-16 w-16 rounded-xl object-contain border border-surface-border"
+            />
+          ) : (
+            <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-surface-raised border border-surface-border">
+              <Building2 className="h-8 w-8 text-navy/70" />
+            </div>
+          )}
+          <div>
+            <p className="text-xs text-navy/70 uppercase tracking-wide mb-1">
+              You have been invited by
+            </p>
+            <h2 className="text-xl font-bold text-navy">{invite?.name}</h2>
+          </div>
+        </div>
+
+        {acceptError && (
+          <p className="mb-4 rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
+            {acceptError}
+          </p>
+        )}
+
+        {isAuthenticated && buyer ? (
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-navy/70 text-center">
+              Signed in as <strong>{buyer.email}</strong>
+            </p>
+            <Button onClick={handleAccept} loading={isAccepting} className="rf-btn w-full">
+              Accept Invite &amp; Connect
+            </Button>
+            <button
+              type="button"
+              onClick={() => router.push("/buyer/portal")}
+              className="text-sm text-navy/70 hover:text-navy text-center"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-navy/70 text-center mb-2">
+              Sign in or create an account to accept this invite.
+            </p>
+
+            {/* Google Sign-In — embeds invite_token in OAuth state for seamless linking */}
+            {invite?.slug && (
+              <>
+                {googleError && (
+                  <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
+                    {googleError}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={handleGoogleSignIn}
+                  disabled={googleLoading}
+                  className="rf-btn secondary flex w-full items-center justify-center gap-3"
+                >
+                  {googleLoading ? (
+                    <>
+                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-navy/30 border-t-navy/70" />
+                      <span>Redirecting to Google…</span>
+                    </>
+                  ) : (
+                    <>
+                      <GoogleIcon className="h-4 w-4" />
+                      <span>Continue with Google to accept</span>
+                    </>
+                  )}
+                </button>
+
+                {/* Divider */}
+                <div className="flex items-center gap-3">
+                  <div className="h-px flex-1 bg-surface-border" />
+                  <span className="text-xs text-navy/70">or</span>
+                  <div className="h-px flex-1 bg-surface-border" />
+                </div>
+              </>
+            )}
+
+            <a
+              href={`/buyer/login?redirect=/buyer/invite/${token}`}
+              className="rf-btn flex w-full items-center justify-center gap-2"
+            >
+              Sign in to accept
+            </a>
+            <a
+              href={`/buyer/register?redirect=/buyer/invite/${token}`}
+              className="rf-btn secondary flex w-full items-center justify-center gap-2"
+            >
+              Create account to accept
+            </a>
+          </div>
+        )}
+      </>
     );
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-raised p-4">
-      <div className="w-full max-w-sm">
-        {/* Header */}
-        <div className="mb-8 flex flex-col items-center gap-3">
-          <BrandMark size={48} />
-          <h1 className="text-2xl font-bold text-navy">RouteFlow</h1>
-          <p className="text-sm text-navy/70">Buyer Portal Invite</p>
-        </div>
-
-        {/* Invite Card */}
-        <div className="rounded-xl bg-white p-6 shadow-card">
-          <div className="mb-6 flex flex-col items-center gap-3 text-center">
-            {invite?.logoKey ? (
-              /* Guarded /uploads needs auth an <img> can't send — use the
-                 public streaming endpoint (same fix as the portal SellerCard). */
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={`${apiUrl}/public/tenants/${encodeURIComponent(invite.slug)}/logo`}
-                alt={invite.name}
-                className="h-16 w-16 rounded-xl object-contain border border-surface-border"
-              />
-            ) : (
-              <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-surface-raised border border-surface-border">
-                <Building2 className="h-8 w-8 text-navy/70" />
-              </div>
-            )}
-            <div>
-              <p className="text-xs text-navy/70 uppercase tracking-wide mb-1">
-                You have been invited by
-              </p>
-              <h2 className="text-xl font-bold text-navy">{invite?.name}</h2>
-            </div>
-          </div>
-
-          {acceptError && (
-            <p className="mb-4 rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
-              {acceptError}
-            </p>
-          )}
-
-          {isAuthenticated && buyer ? (
-            <div className="flex flex-col gap-3">
-              <p className="text-sm text-navy/70 text-center">
-                Signed in as <strong>{buyer.email}</strong>
-              </p>
-              <Button onClick={handleAccept} loading={isAccepting} className="w-full">
-                Accept Invite &amp; Connect
-              </Button>
-              <button
-                type="button"
-                onClick={() => router.push("/buyer/portal")}
-                className="text-sm text-navy/70 hover:text-navy text-center"
-              >
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-3">
-              <p className="text-sm text-navy/70 text-center mb-2">
-                Sign in or create an account to accept this invite.
-              </p>
-
-              {/* Google Sign-In — embeds invite_token in OAuth state for seamless linking */}
-              {invite?.slug && (
-                <>
-                  {googleError && (
-                    <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
-                      {googleError}
-                    </p>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleGoogleSignIn}
-                    disabled={googleLoading}
-                    className="flex w-full items-center justify-center gap-3 rounded border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-buyer-500 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {googleLoading ? (
-                      <>
-                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-navy/30 border-t-navy/70" />
-                        <span>Redirecting to Google…</span>
-                      </>
-                    ) : (
-                      <>
-                        <GoogleIcon className="h-4 w-4" />
-                        <span>Continue with Google to accept</span>
-                      </>
-                    )}
-                  </button>
-
-                  {/* Divider */}
-                  <div className="flex items-center gap-3">
-                    <div className="h-px flex-1 bg-surface-border" />
-                    <span className="text-xs text-navy/70">or</span>
-                    <div className="h-px flex-1 bg-surface-border" />
-                  </div>
-                </>
-              )}
-
-              <a
-                href={`/buyer/login?redirect=/buyer/invite/${token}`}
-                className="flex w-full items-center justify-center gap-2 rounded-lg bg-buyer-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-buyer-700 transition-colors"
-              >
-                Sign in to accept
-              </a>
-              <a
-                href={`/buyer/register?redirect=/buyer/invite/${token}`}
-                className="flex w-full items-center justify-center gap-2 rounded border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy hover:bg-surface-raised transition-colors"
-              >
-                Create account to accept
-              </a>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+    <AuthShell audience="retailer" kicker="Retailer account" title={title}>
+      {content}
+    </AuthShell>
   );
 }

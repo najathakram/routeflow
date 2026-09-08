@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, KeyRound } from "lucide-react";
 import { PasswordInput, Button } from "@routeflow/ui/web";
-import { BrandMark } from "@/components/brand";
+import { AuthShell } from "@/components/auth";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import {
   buyerChangePassword,
@@ -125,98 +125,86 @@ export default function BuyerChangePasswordPage() {
     (apiError?.toLowerCase().includes("current password") ||
       apiError?.toLowerCase().includes("incorrect"));
 
+  const title = hasPassword ? "Update your password." : "Set a password.";
+  const lead = !hasPassword
+    ? "You sign in with Google. Add a password to also sign in with your email."
+    : buyer?.email
+      ? `Updating password for ${buyer.email}`
+      : "Update your buyer portal password";
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-raised p-4">
-      <div className="w-full max-w-sm">
-        {/* Logo / Brand */}
-        <div className="mb-8 flex flex-col items-center gap-3">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <BrandMark size={48} />
-          <h1 className="text-2xl font-bold text-navy">
-            {hasPassword ? "Change Password" : "Set a Password"}
-          </h1>
-          <p className="text-center text-sm text-navy/70">
-            {!hasPassword
-              ? "You sign in with Google. Add a password to also sign in with your email."
-              : buyer?.email
-                ? `Updating password for ${buyer.email}`
-                : "Update your buyer portal password"}
-          </p>
+    <AuthShell
+      audience="retailer"
+      kicker="Retailer account"
+      title={title}
+      lead={lead}
+      footer={
+        <button
+          type="button"
+          onClick={() => router.back()}
+          className="inline-flex items-center gap-1.5 text-xs text-navy/70 hover:text-navy transition-colors"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Go back
+        </button>
+      }
+    >
+      {success ? (
+        <div className="rf-auth-success flex flex-col items-center gap-4 py-4 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-success/10">
+            <KeyRound className="h-6 w-6 text-success" />
+          </div>
+          <div>
+            <p className="font-semibold text-navy">
+              {hasPassword ? "Password changed successfully!" : "Password set successfully!"}
+            </p>
+            <p className="mt-1 text-sm text-navy/70">Redirecting you to the portal…</p>
+          </div>
         </div>
-
-        {/* Card */}
-        <div className="rounded-xl bg-white p-6 shadow-card">
-          {/* Success state */}
-          {success ? (
-            <div className="flex flex-col items-center gap-4 py-4 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-success/10">
-                <KeyRound className="h-6 w-6 text-success" />
-              </div>
-              <div>
-                <p className="font-semibold text-navy">
-                  {hasPassword ? "Password changed successfully!" : "Password set successfully!"}
+      ) : (
+        <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
+          {apiError && (
+            <div className="rounded-lg bg-danger-bg px-3 py-2">
+              <p className="text-sm text-danger">{apiError}</p>
+              {isGoogleOnlyHint && (
+                <p className="mt-1 text-xs text-danger/80">
+                  If you signed up with Google and never set a password, use{" "}
+                  <Link href="/buyer/forgot-password" className="underline">
+                    forgot password
+                  </Link>{" "}
+                  to create one.
                 </p>
-                <p className="mt-1 text-sm text-navy/70">Redirecting you to the portal…</p>
-              </div>
+              )}
             </div>
-          ) : (
-            <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
-              {apiError && (
-                <div className="rounded-lg bg-danger-bg px-3 py-2">
-                  <p className="text-sm text-danger">{apiError}</p>
-                  {isGoogleOnlyHint && (
-                    <p className="mt-1 text-xs text-danger/80">
-                      If you signed up with Google and never set a password, use{" "}
-                      <Link href="/buyer/forgot-password" className="underline">
-                        forgot password
-                      </Link>{" "}
-                      to create one.
-                    </p>
-                  )}
-                </div>
-              )}
-              {hasPassword && (
-                <PasswordInput
-                  label="Current password"
-                  autoComplete="current-password"
-                  register={register("currentPassword")}
-                  error={errors.currentPassword?.message}
-                />
-              )}
-              <PasswordInput
-                label="New password"
-                autoComplete="new-password"
-                register={register("newPassword")}
-                error={errors.newPassword?.message}
-              />
-              <p className="text-xs text-navy/70">
-                At least 8 characters, with upper and lower case and a number or symbol.
-              </p>
-              <PasswordInput
-                label="Confirm new password"
-                autoComplete="new-password"
-                register={register("confirmPassword")}
-                error={errors.confirmPassword?.message}
-              />
-              <Button type="submit" loading={isSubmitting} className="mt-2 w-full">
-                Set new password
-              </Button>
-            </form>
           )}
-        </div>
-
-        {/* Back link */}
-        <div className="mt-6 text-center">
-          <button
-            type="button"
-            onClick={() => router.back()}
-            className="inline-flex items-center gap-1.5 text-xs text-navy/70 hover:text-navy transition-colors"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            Go back
-          </button>
-        </div>
-      </div>
-    </div>
+          {hasPassword && (
+            <PasswordInput
+              label="Current password"
+              autoComplete="current-password"
+              register={register("currentPassword")}
+              error={errors.currentPassword?.message}
+            />
+          )}
+          <PasswordInput
+            label="New password"
+            autoComplete="new-password"
+            register={register("newPassword")}
+            error={errors.newPassword?.message}
+          />
+          <p className="text-xs text-navy/70">
+            At least 8 characters, with upper and lower case and a number or symbol.
+          </p>
+          <PasswordInput
+            label="Confirm new password"
+            autoComplete="new-password"
+            register={register("confirmPassword")}
+            error={errors.confirmPassword?.message}
+          />
+          <Button type="submit" loading={isSubmitting} className="rf-btn mt-2 w-full">
+            Set new password
+          </Button>
+        </form>
+      )}
+    </AuthShell>
   );
 }

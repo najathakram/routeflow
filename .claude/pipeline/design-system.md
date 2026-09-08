@@ -21,8 +21,8 @@ tailwind config in `packages/ui`.
   - density knob: `--row-h 44px`, `--text-body 13.5px` (operator).
 - **Surface classes** override accent + density: `.surface-buyer` (emerald `#059669`, `--row-h 52px`,
   `--text-body 14px`), `.surface-admin` (indigo `#4f46e5`, slate chrome). Applied at
-  `apps/web/app/(dashboard)/layout.tsx:1260` (`surface-operator`),
-  `apps/web/app/buyer/portal/layout.tsx:240`, `apps/web/app/(platform-admin)/layout.tsx:146`.
+  `apps/web/app/(dashboard)/layout.tsx:1288` (`surface-operator`),
+  `apps/web/app/buyer/portal/layout.tsx:248`, `apps/web/app/(platform-admin)/layout.tsx:145`.
 - **Tailwind color scales** (`packages/config/tailwind.config.ts`): `brand.50–900` (500 `#14A39F`),
   `buyer.50–900`, `canvas{DEFAULT,mid,light}` (marketing dark navy), `ink.{900,700,500,400}`,
   `navy{DEFAULT,light}`, `accent{DEFAULT,strong,deep,soft}`, `paper`, `sunken`, `line{,strong}`,
