@@ -795,8 +795,13 @@ AgentFormModal` in a nested modal (`isAgentModalOpen` state); on create it selec
 
 - **Routes** (`lib/marketing-routes.ts#MARKETING_PAGE_PATHS`, single source — see middleware note
   below): `page.tsx` (home), `product/`, `wholesalers/`, `retailers/`, `pricing/`, `company/`,
-  `contact/`, `privacy/`, `terms/`. `/distributors` 307/308-redirects to `/wholesalers` — not a
-  page of its own.
+  `contact/`, `privacy/`, `terms/`. `/distributors` (the original design's URL for the wholesaler
+  page) is a `next.config.mjs` **`redirects()`** entry to `/wholesalers` (307) — **PR #665
+  follow-through**: it used to be `distributors/page.tsx`, a prerendered `redirect()` page, which
+  lost its `Location` header served from the ISR cache on the standalone server (307, no
+  `Location`, production-only — `next dev` masked it; the deployment E2E's spec 36 T1 caught it).
+  A `next.config` redirect is evaluated before middleware and always carries `Location`; the page
+  is gone. Pinned by `distributors-redirect.static.test.ts` (below) — [[L-093]].
 - **`layout.tsx`** wraps every route in a `.rf-marketing`-classed shell (the scope every rule in
   `marketing.css` — ~10,092 lines, ported near-verbatim from the redesign — hangs off) plus
   `SiteHeader` + `EditorialMotion` + a footer; `app/globals.css` and
@@ -927,6 +932,12 @@ now contributes alongside api/mobile).
   `lib/marketing-routes.test.ts`, `app/(marketing)/lib/operation-model.test.ts`. Component:
   `components/brand/BrandMark.test.tsx`, `app/(marketing)/components/{site-header,marketing,faq,
 demo-form}.test.tsx`.
+- **`app/(marketing)/distributors-redirect.static.test.ts` (PR #665, `/distributors` follow-through,
+  [[L-093]])** — pins the `next.config.mjs` `redirects()` entry (loaded via a real
+  `node --input-type=module` subprocess import of the config, since Jest/`next/jest`'s transform
+  collides with the config's own `__dirname` binding — same technique `lib/csp.test.ts` uses) and
+  the absence of `app/(marketing)/distributors/page.tsx`, so the alias can never regress back to a
+  prerendered `redirect()` page.
 
 ## E2E tests (`apps/web/e2e/`)
 

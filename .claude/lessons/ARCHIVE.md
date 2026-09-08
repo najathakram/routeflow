@@ -833,3 +833,41 @@ grep` every writer and reader of that field before the build plan is cut and put
   revert by checksum against a backup only.**
 - **Guard:** bug-pipeline RESUME cards carry the stall recipe; the engine's probe stage forbids
   line-number mutations (knob candidate recorded in RUN-LOG 2026-09-07).
+
+## Archived 2026-09-08 — headroom for L-093 (docs/665-distributors-bookkeeping, #665 follow-up)
+
+Oldest active entry whose guard names a landed automated artifact rather than a bare procedure,
+and which nothing outside `.claude/pipeline/**`, `.claude/lessons/**`, or `code-map/CHANGELOG.md`
+still cites (grep-confirmed against the whole repo, same rule as the L-090 headroom note above).
+Re-ran the full elimination fresh rather than trusting the L-090-era list, since citations
+accumulate between sessions: L-004/L-010/L-025/L-026/L-027/L-034/L-035/L-038/L-041/L-050/L-051
+carry no landed automated-artifact guard (`none — judgment` or a bare manual procedure — L-034's
+own "force execution, assert mtime" ritual is still cited as live, general guidance in
+`tools/bugflow/docs/MIGRATION.md`/`DEVELOPMENT.md` and inline in `scripts/campaign-check.mjs`/
+`scripts/jest-campaign-reporter.cjs`, so it is not even a "superseded by L-083" case despite the
+overlapping root cause). L-047/L-055/L-057/L-060/L-061/L-062/L-063/L-066/L-067/L-068/L-069/L-071/
+L-072/L-073/L-074/L-076/L-077/L-078/L-081/L-082/L-083/L-090/L-091 are each still named — by id —
+in `code-map/api.md`, `code-map/web.md`, `code-map/INDEX.md`, `CLAUDE.md`, `HANDOFF.md`,
+`docs/adr/0003-bugflow-github-native-bug-tracking.md`, `tools/bugflow/docs/*`, a live
+`.claude/campaign/bugs/*.md` record, or app source (`apps/api/src/prisma/*`,
+`apps/api/src/invoices/*`, `apps/api/src/billing/*`, `apps/web/lib/api/*`,
+`apps/web/app/**/page.tsx`, `apps/web/e2e/*.spec.ts`, `.github/workflows/db-migrations.yml`,
+`scripts/campaign/bugs.mjs`, `scripts/campaign-check.mjs`, `scripts/jest-campaign-reporter.cjs`)
+— none of which are allowed citation sites for this rule. **L-087** (2026-09-07) is the oldest
+survivor: every citation of its id anywhere in the repo resolves to `code-map/CHANGELOG.md`
+(allowed) or `.claude/lessons/**` itself. L-088/L-089 (both 2026-09-07) are the next-oldest
+equally-clean survivors, left active as the closer headroom margin for a future single-entry
+archive.
+
+### L-087 · 2026-09-07 · testing · #650
+
+- **Symptom:** a passing "leaves INTERNAL untouched" assertion in a new NO_TRANSPORT test proved
+  nothing — every INTERNAL event is already NO_TRIGGER, so the `channel !== INTERNAL` exemption
+  was unreachable and it passed on precedence alone (reviewer's mutation probe).
+- **Root cause:** written from the design's intent (INTERNAL is exempt), not the tree's current
+  state (every INTERNAL event is already NO_TRIGGER, so the exemption line never runs).
+- **Lesson:** **pin the CURRENT state behaviourally — every INTERNAL cell under a no-transport
+  provider reports NO_TRIGGER — so the first wired INTERNAL event turns it red; a reviewer's probe
+  must judge every "untouched" claim before it counts as coverage.**
+- **Guard:** the rewritten pin in `messaging-config.service.spec.ts`'s "NO_TRANSPORT — provider
+  declares no transports" describe block; F23's round-2 review finding (`result.json`).

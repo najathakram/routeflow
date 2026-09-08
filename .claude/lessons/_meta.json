@@ -1,10 +1,10 @@
 {
-  "nextId": 93,
+  "nextId": 94,
   "activeCount": 40,
-  "archivedCount": 48,
+  "archivedCount": 49,
   "maxEntries": 40,
   "maxBytes": 40960,
   "updatedAt": "2026-09-08T00:00:00.000Z",
   "schemaVersion": 1,
-  "note": "docs/657-marketing-bookkeeping: added L-092 (testing -- the marketing engine's UI-verify rounds 3-6 judged screenshots of master's build for two days because a stale Docker container from a retired worktree still held :3001, so the UI gate never proved which build answered on the URL under test; every UI-verify pass now starts with a build-identity probe on the exact URL, recorded in the evidence; PR #657, guard is process -- add to the dev-pipeline driver prompt outside this repo). Register at 40/40 entries (cap, not exceeded) and within the 40,960-byte cap -- no archive needed this round."
+  "note": "docs/665-distributors-bookkeeping: added L-093 (testing -- /distributors' next.config redirect fix for #665: a prerendered redirect() page lost its Location header from the ISR cache on the standalone server; next.config.mjs redirects() is the only correct home for a URL alias, and the deployment E2E is the only oracle that catches this class since next dev masks it). Register was 40/40 (at cap): archived L-087 (testing, #650 -- the oldest active entry with a landed automated-artifact guard uncited outside .claude/pipeline/.claude/lessons/code-map/CHANGELOG.md, grep-confirmed fresh against the whole repo) to ARCHIVE.md for headroom, back to 40/40 with L-093 added. validate-lessons.mjs green."
 }
