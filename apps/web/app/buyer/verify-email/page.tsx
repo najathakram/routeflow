@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { CheckCircle2, MailCheck } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
+import { AuthShell } from "@/components/auth";
 import { buyerVerifyEmail } from "@/lib/buyer-auth";
 
 // ─── Inner (useSearchParams requires a Suspense boundary) ─────────────────────
@@ -44,62 +45,49 @@ function BuyerVerifyEmailInner() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-raised p-4">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 flex flex-col items-center gap-3">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-buyer.svg" alt="RouteFlow" className="h-12 w-12 object-contain" />
-          <h1 className="text-2xl font-bold text-navy">Verify your email</h1>
+    <AuthShell audience="retailer" kicker="Retailer account" title="Confirm your email.">
+      {!token ? (
+        <div className="flex flex-col gap-3 text-center">
+          <p className="text-sm text-navy">
+            This verification link is invalid or incomplete. Sign in to your portal to request a new
+            one.
+          </p>
+          <Link href="/buyer/login" className="text-sm font-medium text-[#0B6E6B] hover:underline">
+            Go to sign in
+          </Link>
         </div>
-
-        <div className="rounded-xl bg-white p-6 shadow-card">
-          {!token ? (
-            <div className="flex flex-col gap-3 text-center">
-              <p className="text-sm text-navy">
-                This verification link is invalid or incomplete. Sign in to your portal to request a
-                new one.
-              </p>
-              <Link
-                href="/buyer/login"
-                className="text-sm font-medium text-buyer-600 hover:underline"
-              >
-                Go to sign in
-              </Link>
-            </div>
-          ) : done ? (
-            <div className="flex flex-col items-center gap-3 py-2 text-center">
-              <CheckCircle2 className="h-8 w-8 text-buyer-600" />
-              <p className="text-sm font-medium text-navy">Email verified</p>
-              <p className="text-sm text-navy/70">
-                Sellers who have this email on file can now connect you instantly.
-              </p>
-              <Link
-                href="/buyer/portal"
-                className="mt-1 text-sm font-medium text-buyer-600 hover:underline"
-              >
-                Go to your portal
-              </Link>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center gap-4 py-2 text-center">
-              {apiError && (
-                <p className="w-full rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
-                  {apiError}
-                </p>
-              )}
-              <MailCheck className="h-8 w-8 text-buyer-600" />
-              <p className="text-sm text-navy/70">
-                Confirm this is your email address. If you didn&apos;t create a RouteFlow buyer
-                account, close this page — don&apos;t verify.
-              </p>
-              <Button onClick={onVerify} loading={submitting} className="w-full">
-                Verify my email
-              </Button>
-            </div>
+      ) : done ? (
+        <div className="rf-auth-success flex flex-col items-center gap-3 py-2 text-center">
+          <CheckCircle2 className="h-8 w-8 text-buyer-600" />
+          <p className="text-sm font-medium text-navy">Email verified</p>
+          <p className="text-sm text-navy/70">
+            Sellers who have this email on file can now connect you instantly.
+          </p>
+          <Link
+            href="/buyer/portal"
+            className="mt-1 text-sm font-medium text-[#0B6E6B] hover:underline"
+          >
+            Go to your portal
+          </Link>
+        </div>
+      ) : (
+        <div className="flex flex-col items-center gap-4 py-2 text-center">
+          {apiError && (
+            <p className="w-full rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
+              {apiError}
+            </p>
           )}
+          <MailCheck className="h-8 w-8 text-buyer-600" />
+          <p className="text-sm text-navy/70">
+            Confirm this is your email address. If you didn&apos;t create a RouteFlow buyer account,
+            close this page — don&apos;t verify.
+          </p>
+          <Button onClick={onVerify} loading={submitting} className="rf-btn w-full">
+            Verify my email
+          </Button>
         </div>
-      </div>
-    </div>
+      )}
+    </AuthShell>
   );
 }
 

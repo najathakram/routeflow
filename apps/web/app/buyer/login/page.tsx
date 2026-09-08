@@ -9,6 +9,7 @@ import { Input, Button, PasswordInput } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { GoogleIcon, startGoogleSignIn } from "@/lib/google-oauth";
 import { usePortalPresence } from "@/lib/hooks/usePortalPresence";
+import { AuthShell } from "@/components/auth";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -91,194 +92,117 @@ function BuyerLoginInner() {
     : "/buyer/register";
 
   return (
-    <div className="flex min-h-screen">
-      {/* Left panel — emerald gradient with branding */}
-      <div className="hidden lg:flex lg:w-1/2 items-center justify-center bg-gradient-to-br from-buyer-900 via-buyer-800 to-buyer-700 relative overflow-hidden">
-        {/* Decorative circles */}
-        <div className="absolute -top-24 -left-24 h-96 w-96 rounded-full bg-buyer-600/20" />
-        <div className="absolute -bottom-16 -right-16 h-72 w-72 rounded-full bg-buyer-500/10" />
-        <div className="absolute top-1/3 right-1/4 h-48 w-48 rounded-full bg-buyer-400/10" />
-
-        <div className="relative z-10 max-w-md px-12 text-center">
-          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 backdrop-blur-sm p-2">
-            <img src="/logo-buyer.svg" alt="RouteFlow" className="h-full w-full object-contain" />
-          </div>
-          <h2
-            style={{
-              fontFamily: "var(--font-instrument-serif), serif",
-              fontSize: 44,
-              lineHeight: 1.08,
-              letterSpacing: "-0.025em",
-              color: "#fff",
-              margin: 0,
-              marginBottom: 16,
-            }}
+    <AuthShell
+      audience="retailer"
+      kicker="Retailer account"
+      title="Welcome back."
+      lead="Sign in to order from your suppliers."
+      footer={
+        <p className="text-xs text-navy/70">
+          Selling on RouteFlow?{" "}
+          <a href="/login" className="text-[#0B6E6B] hover:underline">
+            Sign in to the seller dashboard
+          </a>
+        </p>
+      }
+    >
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
+        {presence.op && (
+          <p
+            role="status"
+            className="rounded-lg border border-surface-border bg-surface-raised px-3 py-2 text-sm text-navy"
           >
-            Order smarter with <em style={{ fontStyle: "italic", color: "#6ee7b7" }}>RouteFlow</em>.
-          </h2>
-          <p className="text-buyer-200 text-base leading-relaxed">
-            Browse catalogs, track deliveries, and manage invoices. Your one-stop B2B ordering
-            platform.
+            You&apos;re signed in to a seller dashboard.{" "}
+            <a href="/dashboard" className="text-[#0B6E6B] hover:underline font-medium">
+              Go to seller dashboard
+            </a>
           </p>
-          <div className="mt-8 flex justify-center gap-6 text-buyer-300 text-sm">
-            <div className="flex items-center gap-2">
-              <div className="h-2 w-2 rounded-full bg-buyer-400" />
-              Easy ordering
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="h-2 w-2 rounded-full bg-buyer-400" />
-              Real-time tracking
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="h-2 w-2 rounded-full bg-buyer-400" />
-              Invoice management
-            </div>
-          </div>
+        )}
+
+        {apiError && (
+          <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">{apiError}</p>
+        )}
+        <Input
+          label="Email"
+          type="email"
+          placeholder="Enter your email"
+          autoComplete="email"
+          register={register("email")}
+          error={errors.email?.message}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              document.getElementById("buyer-password")?.focus();
+            }
+          }}
+        />
+        <PasswordInput
+          id="buyer-password"
+          label="Password"
+          placeholder="Enter your password"
+          autoComplete="current-password"
+          className="rounded-lg"
+          register={register("password")}
+          error={errors.password?.message}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              handleSubmit(onSubmit)();
+            }
+          }}
+        />
+        <div className="-mt-2 text-right">
+          <a
+            href="/buyer/forgot-password"
+            className="text-xs font-medium text-[#0B6E6B] hover:underline"
+          >
+            Forgot password?
+          </a>
         </div>
+        <Button type="submit" loading={isLoading} className="rf-btn mt-2 w-full">
+          Sign in
+        </Button>
+      </form>
+
+      {/* Divider */}
+      <div className="my-4 flex items-center gap-3">
+        <div className="h-px flex-1 bg-surface-border" />
+        <span className="text-xs text-navy/70">or</span>
+        <div className="h-px flex-1 bg-surface-border" />
       </div>
 
-      {/* Right panel — form */}
-      <div className="flex flex-1 items-center justify-center bg-surface-raised p-4 lg:p-8">
-        <div className="w-full max-w-sm">
-          {/* Mobile logo (hidden on large screens where left panel shows) */}
-          <div className="mb-8 flex flex-col items-center gap-3 lg:hidden">
-            <img src="/logo-buyer.svg" alt="RouteFlow" className="h-12 w-12 object-contain" />
-            <h1 className="text-2xl font-bold text-navy">RouteFlow</h1>
-          </div>
+      {/* Google sign-in button */}
+      {googleError && (
+        <p className="mb-3 rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">{googleError}</p>
+      )}
+      <button
+        type="button"
+        onClick={handleGoogleSignIn}
+        disabled={googleLoading}
+        className="rf-btn secondary flex w-full items-center justify-center gap-3"
+      >
+        {googleLoading ? (
+          <>
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-navy/30 border-t-navy/70" />
+            <span>Redirecting to Google...</span>
+          </>
+        ) : (
+          <>
+            <GoogleIcon className="h-4 w-4" />
+            <span>Continue with Google</span>
+          </>
+        )}
+      </button>
 
-          {/* Desktop heading */}
-          <div className="mb-6 hidden lg:block">
-            <h1
-              style={{
-                fontFamily: "var(--font-instrument-serif), serif",
-                fontSize: 34,
-                letterSpacing: "-0.02em",
-                color: "#0E1F36",
-                margin: 0,
-                lineHeight: 1.1,
-              }}
-            >
-              Welcome back
-            </h1>
-            <p className="text-sm text-navy/70 mt-1">Sign in to your buyer account</p>
-          </div>
-
-          {/* Card */}
-          <div className="rounded-xl bg-white p-6 shadow-card">
-            <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
-              {presence.op && (
-                <p
-                  role="status"
-                  className="rounded-lg border border-surface-border bg-surface-raised px-3 py-2 text-sm text-navy"
-                >
-                  You&apos;re signed in to a seller dashboard.{" "}
-                  <a href="/dashboard" className="text-buyer-600 hover:underline font-medium">
-                    Go to seller dashboard
-                  </a>
-                </p>
-              )}
-
-              {apiError && (
-                <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">{apiError}</p>
-              )}
-              <Input
-                label="Email"
-                type="email"
-                placeholder="Enter your email"
-                autoComplete="email"
-                register={register("email")}
-                error={errors.email?.message}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    document.getElementById("buyer-password")?.focus();
-                  }
-                }}
-              />
-              <PasswordInput
-                id="buyer-password"
-                label="Password"
-                placeholder="Enter your password"
-                autoComplete="current-password"
-                className="rounded-lg"
-                register={register("password")}
-                error={errors.password?.message}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    handleSubmit(onSubmit)();
-                  }
-                }}
-              />
-              <div className="-mt-2 text-right">
-                <a
-                  href="/buyer/forgot-password"
-                  className="text-xs font-medium text-buyer-600 hover:underline"
-                >
-                  Forgot password?
-                </a>
-              </div>
-              <Button type="submit" loading={isLoading} className="mt-2 w-full">
-                Sign in
-              </Button>
-            </form>
-
-            {/* Divider */}
-            <div className="my-4 flex items-center gap-3">
-              <div className="h-px flex-1 bg-surface-border" />
-              <span className="text-xs text-navy/70">or</span>
-              <div className="h-px flex-1 bg-surface-border" />
-            </div>
-
-            {/* Google sign-in button */}
-            {googleError && (
-              <p className="mb-3 rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
-                {googleError}
-              </p>
-            )}
-            <button
-              type="button"
-              onClick={handleGoogleSignIn}
-              disabled={googleLoading}
-              className="flex w-full items-center justify-center gap-3 rounded-lg border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {googleLoading ? (
-                <>
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-navy/30 border-t-navy/70" />
-                  <span>Redirecting to Google...</span>
-                </>
-              ) : (
-                <>
-                  <GoogleIcon className="h-4 w-4" />
-                  <span>Continue with Google</span>
-                </>
-              )}
-            </button>
-
-            <div className="mt-4 text-center">
-              <p className="text-sm text-navy/70">
-                Don&apos;t have an account?{" "}
-                <a
-                  href={registerHref}
-                  className="text-buyer-600 hover:text-buyer-700 hover:underline font-medium"
-                >
-                  Create account
-                </a>
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-6 text-center">
-            <p className="text-xs text-navy/70">
-              Selling on RouteFlow?{" "}
-              <a href="/login" className="text-buyer-600 hover:underline">
-                Sign in to the seller dashboard
-              </a>
-            </p>
-          </div>
-        </div>
+      <div className="mt-4 text-center">
+        <p className="text-sm text-navy/70">
+          Don&apos;t have an account?{" "}
+          <a href={registerHref} className="text-[#0B6E6B] hover:underline font-medium">
+            Create account
+          </a>
+        </p>
       </div>
-    </div>
+    </AuthShell>
   );
 }
 

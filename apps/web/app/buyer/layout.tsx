@@ -20,8 +20,8 @@ export const metadata: Metadata = {
     statusBarStyle: "black-translucent",
   },
   icons: {
-    icon: [{ url: "/logo-buyer.svg", type: "image/svg+xml" }],
-    apple: "/logo-buyer.svg",
+    icon: [{ url: "/brand/routeflow-mark-64.png", type: "image/png", sizes: "64x64" }],
+    apple: "/brand/routeflow-mark-180.png",
   },
   openGraph: {
     title: "RouteFlow Buyer Portal",
