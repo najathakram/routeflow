@@ -967,3 +967,27 @@ margin. Register lands at 40/40 entries with L-096/L-097 added.
   before editing it, and report the correction rather than quietly conforming or quietly diverging.**
 - **Guard:** none — judgment. A spec item naming a specific file + field is a cue to open that file
   first.
+
+## Archived 2026-09-08 — headroom for L-098 (docs/673-signin-menu-bookkeeping, #673 follow-up)
+
+L-051 (2026-09-02, process, #603 close-out) — the entry the L-096/L-097 headroom note (#671
+follow-up) reserved as "the next headroom margin." Re-confirmed fresh: a repo-wide grep for the
+literal id `L-051` hits only `.claude/lessons/**`, `.claude/pipeline/**`, and
+`code-map/CHANGELOG.md`/`code-map/_meta.json`'s own history note — all allowed citation sites —
+with no hit in `code-map/*.md` area files, `CLAUDE.md`, `docs/`, `apps/`, `scripts/`, `packages/`,
+`tools/`, `HANDOFF.md`, or `README.md`. Its guard was already `none — judgment` (a worktree-naming
+convention, not an automated artifact), so archiving loses no in-repo enforcement. Back to 40/40
+with L-098 added.
+
+### L-051 · 2026-09-02 · process · #603 close-out
+
+- **Symptom:** `git stash pop` in the main checkout applied 19 files of ANOTHER worktree's
+  uncommitted batch work onto a docs-only close-out branch — and dropped that stash entry.
+- **Root cause:** stashes are refs on the shared repository, not per worktree: an entry pushed in
+  `.claude/worktrees/rf-F13` became `stash@{0}` for every checkout, and a bare `pop` takes the
+  newest entry wherever it was made. The intended entry had silently become `stash@{1}`.
+- **Lesson:** **With several worktrees, never `git stash pop` bare — `git stash list`, then pop
+  by index or message, and prefix every stash message with its worktree name.** A dropped stash is
+  recoverable from the commit id `pop` prints (`git stash store <sha>`), so keep that line.
+- **Guard:** stash messages here carry the worktree name (`rf-F13: …`); no hook — HANDOFF and the
+  fleet-state memory carry the rule.

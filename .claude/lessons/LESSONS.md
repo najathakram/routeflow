@@ -92,19 +92,6 @@
 - **Guard:** none — judgment. A gate demanding a repo file while you work in a worktree is the cue
   to check which tree that path actually lands in.
 
-### L-051 · 2026-09-02 · process · #603 close-out
-
-- **Symptom:** `git stash pop` in the main checkout applied 19 files of ANOTHER worktree's
-  uncommitted batch work onto a docs-only close-out branch — and dropped that stash entry.
-- **Root cause:** stashes are refs on the shared repository, not per worktree: an entry pushed in
-  `.claude/worktrees/rf-F13` became `stash@{0}` for every checkout, and a bare `pop` takes the
-  newest entry wherever it was made. The intended entry had silently become `stash@{1}`.
-- **Lesson:** **With several worktrees, never `git stash pop` bare — `git stash list`, then pop
-  by index or message, and prefix every stash message with its worktree name.** A dropped stash is
-  recoverable from the commit id `pop` prints (`git stash store <sha>`), so keep that line.
-- **Guard:** stash messages here carry the worktree name (`rf-F13: …`); no hook — HANDOFF and the
-  fleet-state memory carry the rule.
-
 ### L-069 · 2026-09-04 · process · #597
 
 - **Symptom:** claiming a batch made the dispatcher offer the batch touching the same files to a
@@ -494,6 +481,18 @@
   `docs/runbooks/deploy-visibility-flip.md` and the `rebuild` skill.
 
 ## domain
+
+### L-098 · 2026-09-08 · domain · #673
+
+- **Symptom:** a keyboard user saw a fragmented purple focus ring and a wrapped arrow on the
+  Sign-in menu items.
+- **Root cause:** an interactive element containing several inline children (icon, label, glyph)
+  was left `display: inline`, so `:focus-visible` painted once per line box and the trailing
+  glyph wrapped.
+- **Lesson:** **Any focusable element that holds more than one child is a flex/grid/block
+  container with `white-space: nowrap` where the row must not break; the focus ring lives on the
+  element, never on its children; pin the rule with a CSS-rule test, never a source-text grep.**
+- **Guard:** the `signin-menu` assertions in `marketing-port.static.test.ts`.
 
 ### L-096 · 2026-09-08 · domain · #671
 
