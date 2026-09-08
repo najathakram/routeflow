@@ -1,10 +1,10 @@
 {
-  "nextId": 92,
-  "activeCount": 39,
+  "nextId": 93,
+  "activeCount": 40,
   "archivedCount": 48,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-07T19:30:00.000Z",
+  "updatedAt": "2026-09-08T00:00:00.000Z",
   "schemaVersion": 1,
-  "note": "docs/f16-spec37-followup: added L-091 (testing -- two deployed-E2E regression tests stayed red for two deploys on harness defects, not product regressions: getByText on a value the page renders twice, and a fixture that provisioned 25 pending orders for one customer through an API whose staff-create path demands an explicit merge choice; assert identifiers by ROLE and provision fixtures THROUGH the product's own guards; PR #661, spec 37 REG-B80/B144, deployment E2E run 34154308035 on master 92cb0fb6)."
+  "note": "docs/657-marketing-bookkeeping: added L-092 (testing -- the marketing engine's UI-verify rounds 3-6 judged screenshots of master's build for two days because a stale Docker container from a retired worktree still held :3001, so the UI gate never proved which build answered on the URL under test; every UI-verify pass now starts with a build-identity probe on the exact URL, recorded in the evidence; PR #657, guard is process -- add to the dev-pipeline driver prompt outside this repo). Register at 40/40 entries (cap, not exceeded) and within the 40,960-byte cap -- no archive needed this round."
 }

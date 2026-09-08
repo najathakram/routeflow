@@ -791,9 +791,59 @@ AgentFormModal` in a nested modal (`isAgentModalOpen` state); on create it selec
 - **Shop grid density control (2026-08-20):** `shop/page.tsx` exports `type ShopDensity = "sm"|"md"|"lg"`; state initializes to default `"md"` (one notch denser than the old hardcoded grid — that IS the "cards are too big" fix) and a mount-time `useEffect` reads localStorage key `rf:buyer:shop:density` (view mode likewise persisted at `rf:buyer:shop:view`, `"grid"|"list"`) — hydration-safe, no SSR mismatch. `GRID_CLASS_BY_DENSITY` is a static full-string map (`lg`=today's `grid grid-cols-2 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4`, `md`=`…gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5`, `sm`=`…gap-2 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7`) — Tailwind can't see interpolated classes, so it's always a keyed lookup, never templated. A 3-button segmented control (`data-testid="density-toggle"` + `density-sm`/`density-md`/`density-lg`) sits next to the Grid/List toggle, grid-view only. Grid container carries `data-testid="product-grid"`; each `ProductTile` gets a `size?: ShopDensity` prop (`"lg"`/`"md"` = today's visuals, only `"sm"` trims body/type-scale) and the card root/nav link carry `data-testid="product-tile"`/`product-tile-link` respectively — clicking the image or name navigates to the product detail route below (dots/favorite/Add/stepper stay outside the Link or `preventDefault`+`stopPropagation`). Plan: `.claude/pipeline/plans/2026-08-20-buyer-shop-density-and-detail.md`.
 - **Buyer product detail page (2026-08-20, WP2):** NEW route `portal/[seller]/shop/[productId]/page.tsx` (`data-testid="product-detail-page"`) — first UI consumer of `useBuyerProduct(productId)` (`lib/api/buyer.ts:196`, `GET /buyer/products/:id` → `BuyerProductDetail`; previously zero consumers). Gallery (main image + thumbnail strip, focal via `objectPositionForUrl`) | info column: name (`product-detail-name`), stock line, price (`product-detail-price`) via the SAME `deriveTilePrice` the tile/cart use (cent parity — never `qty × unitPrice`), full `description`, favorite toggle. Action slot mirrors the tile: QtyStepper if already carted, Notify-me if OOS (`alertSubscribed` from the payload), else Add (`product-detail-add`, boxed = 1 box = `unitsPerBox` qty exactly like the tile). Variant rows price through `deriveTilePrice` too (never the raw `buyerPrice`) — `BuyerProductDetail.variants[]` gained `category`+`unitsPerBox` for it. 404/403 → "Product not available" card (never leaks existence — the endpoint already gates). **The plan's "no API changes" assumption did NOT hold** — `getProductDetail` had to start returning the listing's `unitsPerBox`/`thumbnailUrl`/stock/merch fields (see api.md "Detail↔listing payload parity") or the boxed Add and the OOS branch were both silently wrong.
 
-### `(marketing)/` — public site
+### `(marketing)/` — public site (marketing-port, PR #657, 2026-09-07)
 
-- `page.tsx` (home), `product/`, `company/`, `retailers/`, `wholesalers/`, `distributors/`, `pricing/`.
+- **Routes** (`lib/marketing-routes.ts#MARKETING_PAGE_PATHS`, single source — see middleware note
+  below): `page.tsx` (home), `product/`, `wholesalers/`, `retailers/`, `pricing/`, `company/`,
+  `contact/`, `privacy/`, `terms/`. `/distributors` 307/308-redirects to `/wholesalers` — not a
+  page of its own.
+- **`layout.tsx`** wraps every route in a `.rf-marketing`-classed shell (the scope every rule in
+  `marketing.css` — ~10,092 lines, ported near-verbatim from the redesign — hangs off) plus
+  `SiteHeader` + `EditorialMotion` + a footer; `app/globals.css` and
+  `packages/config/tailwind.config.ts` stay byte-identical to the pre-port baseline (MKT-PIN, see
+  `marketing-port.static.test.ts` below) — marketing ships its own token/utility layer instead
+  (registry B247, consolidation deferred).
+- **`components/site-header.tsx`** — `SiteHeader()`; nav from `../lib/site.ts#routes`/`NAV_SLUGS`
+  (never hand-mirror labels/hrefs — [[L-072]]). Desktop "Sign in" is a Radix `DropdownMenu`
+  (Distributor → `/login`, Retailer → `/buyer/login`); mobile is a Radix `Dialog` sheet (adds
+  Contact + both sign-ins + Book a demo). Both portals re-stamp the `.rf-marketing` scope class via
+  a `display:contents` carrier div — Radix portals mount into `document.body`, OUTSIDE the
+  layout's scoped wrapper, and every marketing rule/token is a `.rf-marketing` descendant selector.
+- **`components/editorial-motion.tsx`** — `EditorialMotion()`, renders `null`. Scroll-reveal via one
+  shared `IntersectionObserver` over a fixed selector list (section headings, cards, CTA blocks,
+  …): adds `.editorial-reveal`, adds `.reveal-pending` only to nodes starting below the fold, then
+  removes `.reveal-pending` on intersect. No-ops under `prefers-reduced-motion: reduce` (content
+  stays visible with no JS either way).
+- **`contact/page.tsx`** — `DemoForm` (`components/demo-form.tsx`) builds a
+  `mailto:hello@routeflow.info` draft client-side; no POST, nothing stored server-side (deliberate
+  v1 scope cut per the pipeline spec's R8 — registry B250 tracks adding a real lead-capture
+  endpoint).
+- **`lib/site.ts`** — the `routes` table (slug/label/href) `NAV_SLUGS` and `site-header.tsx` read
+  from; kept set-equal to `lib/marketing-routes.ts#MARKETING_PAGE_PATHS` by the parity test in
+  `middleware.marketing.test.ts`.
+- **`components/auth-links.ts`** — the four auth CTAs the chrome links (`/login`, `/signup`,
+  `/buyer/login`, `/buyer/register`).
+
+#### Middleware marketing carve-out (`middleware.ts`, `lib/marketing-routes.ts`)
+
+- **`MARKETING_PAGE_PATHS` / `MARKETING_AUTH_PATHS` / `MARKETING_ASSET_PREFIXES` /
+  `MARKETING_ASSET_FILES`** (`lib/marketing-routes.ts`, dependency-free — runs on the edge
+  runtime) are the SINGLE source for "is this URL a public marketing page/asset" ([[L-072]] — the
+  `/privacy`+`/terms` miss shipped from a hand-typed second copy). `middleware.ts` unions the page
+  paths with `/robots.txt`/`/sitemap.xml` into `MARKETING_PATHS`. **Exact-path match only, no
+  prefix matching** — a typo'd or retired marketing path is NOT exempt (registry B249).
+- **Mobile-web proxy carve-out**: a phone UA hitting a non-exempt path is rewritten
+  (`NextResponse.rewrite`) to the `@routeflow/mobile` Railway build so the address bar stays on
+  `www.routeflow.info`. Exempt (never proxied): `/api/`, `/_next/`, marketing assets, marketing
+  auth paths, and every marketing page EXCEPT `/` when the visitor is signed in
+  (`rf-op-auth`/`rf-buyer-auth`) or already marked `rf-mobile-app` — those go to the mobile build
+  too, since the marketing home isn't useful to a returning app user.
+- **`MOBILE_APP_COOKIE` (`rf-mobile-app`)** — httpOnly marker set on every proxied DOCUMENT request
+  (never on subresource/API proxying, so the SPA's own asset fetches don't re-stamp it), 30-day
+  ROLLING max-age (re-stamped on each proxied load). Marks "this browser has been served the
+  mobile-web build" so a returning visit to `/` skips the marketing home even with no presence
+  cookie (the Expo session lives in AsyncStorage, invisible to this middleware). `?desktop=1` /
+  the `prefer-desktop` cookie always win over both signals, at any age.
 
 ### Top-level
 
@@ -867,6 +917,16 @@ now contributes alongside api/mobile).
   `app/(dashboard)/routes/_components/late-stops.test.ts` (F12, PR #652 — `lateStopsFromAnalysis`;
   `CreateRouteModal.tsx`+`.test.tsx` DELETED same PR, B31 dead code),
   `components/MoneyInput.test.tsx`.
+- **Marketing-port specs (11, PR #657)** — static guards: `components/no-next-image.test.ts`
+  (walks `app/`+`components/` for any `next/image` import — see `components/brand/` above),
+  `app/(marketing)/marketing-port.static.test.ts` (MKT-PIN: dead asset/dependency scans,
+  `globals.css`/`tailwind.config.ts` byte-identical to the branch baseline, one tokenised
+  `--ring` focus rule — the two-colours-hardcoded finding from review is fixed and pinned here),
+  `app/(marketing)/middleware.marketing.test.ts` (`lib/site.ts#routes` ↔
+  `lib/marketing-routes.ts#MARKETING_PAGE_PATHS` parity), `app/(marketing)/seo.test.ts`,
+  `lib/marketing-routes.test.ts`, `app/(marketing)/lib/operation-model.test.ts`. Component:
+  `components/brand/BrandMark.test.tsx`, `app/(marketing)/components/{site-header,marketing,faq,
+demo-form}.test.tsx`.
 
 ## E2E tests (`apps/web/e2e/`)
 
@@ -1117,6 +1177,19 @@ total}`) — types live in `lib/api/vendor-bills.ts` as `PriorScanSummary`/`Scan
   e2e COUNT-01 caught it). Amend sessions still hydrate — those ARE seeded server-side).
 - **order-entry / catalog batch (2026-07-11):** `MoneyInput.tsx` (`MoneyInput`/`DecimalInput` — raw draft string, parse live, `toFixed` on blur only; replaced every reformat-while-typing / numeric-bound money input incl. the `PriceEditRow` echo `useEffect` + product-tier `EditableNumber`), `CategoryCombobox.tsx` (pick-or-type-new, fork of `UnitCombobox`; `GET /products/categories`), `formatQtySplit` in `lib/pricing.ts` ("2 boxes + 3 pcs" on order/invoice detail + PDF). `ScanInvoiceModal.tsx` + `vendor-bills/[id]` gained the unmatched-line banner + per-line link/create (reuse `InlineCreateProductModal` w/ `initialPrice`/`initialCost`) and STOP auto-`acknowledgeUnlinked`. `QuickRestockModal` (inventory) = `SearchableProductPicker`(+`inputRef` wedge) + `BarcodeScannerButton`. `vendor-bills/[id]` `EditLineItems` line-item product select uses `SearchableProductPicker async` (server-side search, no 500-row `useProducts` fetch) instead of a native `<select>`; `onChange(id, product)` sets `productId`/`description`/`unitCost` from `product.averageCost`, clearing sets `productId: ""` (custom item). Per-line item **note** input on `CreateOrderModal`/`orders/[id]`; per-line **cost eye** toggle (operator-only) on `CreateOrderModal`.
 - **`ScanInvoiceModal.tsx` batch scan (one bill per PDF):** state = `invoices: InvoiceGroup[]` + `activeIndex`; flat names (`supplierId`, `reviewItems`, `pagePreviews`, expense fields…) are DERIVED from `invoices[activeIndex]` with plain-closure wrapper setters (NEVER memoize — stale `activeIndex` would cross-write invoices). `groupFiles`: each PDF = own invoice, all images = one invoice (pages). One `scanInvoice(files, signal)` call per group (concurrency 3, per-invoice `AbortController` + `runIdRef` stale-guard, per-invoice Retry). `InvoiceNavigator` (◀ Invoice X of N ▶ + status dots + within-batch dup-invoice# warn) switches preview AND form. `handleCreateAll`: `isSubmittingAll` gate, ONE up-front aggregated unlinked-lines confirm (single-invoice copy must keep "aren't linked to a product" — OP-17b asserts it), per-invoice create→receive→expense with `createdBillId`/`expenseCreated` idempotency (no double-post on retry); supplier invoice # editable → bill `notes` + expense `referenceNumber`; `roundMoney` on all totals; modal stays open if failed/scanning invoices remain. Object URLs revoked on re-upload/unmount (`invoicesRef`). e2e: OP-17b (single, unchanged) + OP-17c/d/e (batch/retry/idempotency, all write-routes mocked). Partial-failure branch now resets `createFromRow` alongside `activeIndex` (was desynced — a still-open "Create product from this line" flyout could attribute the new product to the wrong invoice after `setActiveIndex` jumped); `InvoiceNavigator` + the per-row create-product button are `disabled` while `isPending` so an operator can't switch invoices or open that flyout mid-batch-create. `invoiceTotalOf` sums RAW line amounts and rounds ONCE at the end (was rounding each line then summing) — must match the server create() totalOwed computation exactly, since this value also feeds the paired both-mode Expense.amount; per-line rounding could drift a cent from the server total on a fractional qty or >2-decimal unit cost.
+- **`components/brand/` (new, marketing-port #657)** — the one shared brand mark, replacing every
+  per-site logo treatment (marketing nav/footer SVG, login's inline SVG, the 404 "RF" monogram,
+  platform-admin's Shield icon, every legacy per-brand `<img>`). `BrandMark({size=34, className,
+tone="dark"|"light"})` — plain `<img src="/brand/routeflow-mark-192.png">`, deliberately NOT
+  `next/image` (guarded by `components/no-next-image.test.ts` below — `apps/web` builds
+  `output:"standalone"` with no `images` config); `tone="light"` applies `brightness-0 invert` for
+  dark surfaces. `BrandSignature({size, periodColor, standalone, tone})` = mark + "routeflow."
+  wordmark; `standalone` opts into the marketing header's own type metrics on surfaces outside
+  `.rf-marketing` (login, 404, platform-admin) so the signature is self-contained there. `Brand` =
+  `BrandSignature` wrapped in a `Link href="/"`. **`TenantLogo.tsx` falls back to `BrandMark`**
+  (via a `role="img" aria-label` wrapper, since `BrandMark` itself is `alt=""`/`aria-hidden`) when
+  no `branding.logoUrl` is uploaded; its own `tone` prop (default `"dark"`) affects only the
+  fallback mark, never a tenant's uploaded logo.
 
 ## API hooks (`lib/api/`)
 
@@ -1312,3 +1385,15 @@ today]`, under the shared `["invoices"]`-prefix invalidation every payment mutat
   2026-09-07 19:06Z, api SKIPPED — no api change) — REG-B12/REG-B80/REG-B144/REG-B110 all PASSED
   (list-caps project, attempt 1); run totals 143 passed / 0 failed / 26 skipped. B80/B144 (T2)
   discharged on this run; B110 (T2) was already discharged in the #659 follow-up (#660).
+- **`e2e/36-marketing-site.spec.ts`** (new, marketing-port #657) + **`playwright.config.ts`**
+  project `marketing` (`testMatch: /36-marketing-site\.spec\.ts/`, NO `dependencies` — signed-out
+  throughout, Desktop Chrome by default; T2's mobile assertions opt into `devices["iPhone 13"]`
+  via `test.use()` inside that describe block) — NOT part of the local red gate (post-deploy proof
+  only, same convention as 08-create-order-escape's "without this entry the spec never runs").
+  T1 per-route chrome/copy across the 9 public pages + the `/distributors` redirect + a bogus-path
+  404 + `/privacy` noindex + the contact form + the company page's photo credit; T2 the mobile
+  sheet (9 links) and desktop sign-in menu, the contact mailto draft, the wholesalers tab, home
+  FAQ single-open; T3 crawls every internal link on the 9 pages for < 400; T12 a mobile UA still
+  gets the marketing site on `/pricing` (R11 — see the middleware carve-out under `(marketing)/`
+  above; B249 is the gap this project's Desktop-Chrome-only run does NOT cover); T13
+  below-the-fold `.reveal-pending` clears on scroll and stays opaque under reduced-motion.
