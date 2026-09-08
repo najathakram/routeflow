@@ -1,10 +1,10 @@
 {
-  "nextId": 96,
+  "nextId": 98,
   "activeCount": 40,
-  "archivedCount": 51,
+  "archivedCount": 53,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-08T09:00:00.000Z",
+  "updatedAt": "2026-09-08T13:00:00.000Z",
   "schemaVersion": 1,
-  "note": "docs/668-b246-bookkeeping: added L-095 (domain -- the B246 fix's first round wired the order-edit scan FAB's tap to the wrong prop; the second round found that making both handlers optional on the shared BarcodeFab let <BarcodeFab /> compile into a dead control across five mounts; model mutually exclusive handlers on a shared interactive component as a discriminated union, exactly one of onScanned/onPress, so a no-op mount is a type error, and pin the shape with a props test). Register was 40/40 (at cap): archived L-089 (domain, #656 -- the entry the L-093/L-094 headroom notes reserved as the next closer headroom margin; re-confirmed uncited outside .claude/pipeline/, .claude/lessons/, or code-map/CHANGELOG.md/_meta.json via a fresh grep of code-map/*.md, CLAUDE.md, docs/, apps/, scripts/, packages/, tools/, HANDOFF.md, README.md) to ARCHIVE.md for headroom, back to 40/40 with L-095 added. validate-lessons.mjs green."
+  "note": "docs/671-f16b-bookkeeping: added L-096 (domain -- F16's design of record specified a new InvoiceCounter table; S2 found the per-tenant/per-year NumberingSequence + NumberingService already shipped, named for B100 by a code comment; grep the schema for the dimension you need before designing a new store) and L-097 (process -- B245 was discharged with proof REG-B245 while its pin tests were titled plain 'B245: ...'; a discharge token must match its test titles byte-for-byte, verified with campaign-check.mjs, not only bugs.mjs sync --check). Register was 40/40 (at cap) needing room for TWO: the L-093/L-094/L-095 headroom notes' reserved 'guarded and clean' candidates (L-087/L-088/L-089) are now all archived, and a fresh re-scan found every remaining guarded entry (spec/hook/CI-gate backed) still cited outside .claude/pipeline/, .claude/lessons/, or code-map/CHANGELOG.md/_meta.json (code-map/*.md area files, HANDOFF.md, tools/bugflow/docs/*, app source, or a campaign bug record). Fell back to the register's 'oldest, no recurrence' branch instead: archived L-004 (process, 2026-08-24 -- the single oldest entry in the whole register) and L-026 (process, 2026-09-01), both grep-confirmed cited nowhere outside the same allowed set and both already absorbed into standing practice (L-004 into every worktree's task-brief constraints, L-026 into the bug-pipeline's S2 refutation step). L-051 (2026-09-02, also clean) stays active as the next headroom margin. Back to 40/40 with L-096/L-097 added. validate-lessons.mjs green."
 }

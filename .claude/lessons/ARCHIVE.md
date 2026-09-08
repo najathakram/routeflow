@@ -917,3 +917,53 @@ with L-095 added.
   arithmetic boundary; every paginated order carries an id tiebreaker.**
 - **Guard:** REG-B12/B80/B110/B117/B144/B169 pins (revert-probed) and the `limit: 999` /
   `take: N,` sibling sweep filed as rows.
+
+## Archived 2026-09-08 — headroom for L-096/L-097 (docs/671-f16b-bookkeeping, #671 follow-up)
+
+The L-093/L-094/L-095 headroom notes' "guarded AND clean" reservation ran out — L-087, L-088 and
+L-089 were the only three survivors it ever found, and all three are now archived. This round
+needed room for TWO new entries, so before drafting either the elimination was re-run fresh
+against the current register (id-by-id `grep` for the literal token, oldest first): every entry
+whose guard names a landed automated artifact (a spec, hook, or CI gate) is still cited by id
+somewhere outside `.claude/pipeline/**`, `.claude/lessons/**`, or `code-map/CHANGELOG.md`/
+`_meta.json`'s own rolling note — confirmed for L-047/L-055/L-057/L-060/L-061/L-062/L-063/L-066/
+L-069/L-070/L-071/L-073/L-076/L-078/L-081 (live in `code-map/*.md` area files, `HANDOFF.md`,
+`tools/bugflow/docs/*`, a `.claude/campaign/bugs/*.md` record, or app source), so none of those
+were eligible under the "guarded" branch of the compaction rule. Falling back to its "oldest, no
+recurrence" branch instead: among entries with only a `none — judgment`/convention guard (never
+eligible under "guarded" either way, since archiving one loses the only thing enforcing it),
+**L-004** (2026-08-24, the single oldest entry in the whole register) and **L-026** (2026-09-01)
+were the two oldest whose id is cited nowhere outside the same allowed set (grep-confirmed) — both
+lower-cost to lose than a "guarded" entry because nothing in-repo enforces them today regardless
+of whether the register keeps them, and both have since been absorbed into standing practice
+(L-004's bounded-single-attempt rule now reads as a session constraint in every worktree's own
+task brief; L-026's "read the file before trusting a spec's claim" is now the bug-pipeline's S2
+refutation step by design). L-051 (2026-09-02, also clean) stays active as the next headroom
+margin. Register lands at 40/40 entries with L-096/L-097 added.
+
+### L-004 · 2026-08-24 · process
+
+- **Symptom:** autonomous sessions stalled retrying merges and visibility flips.
+- **Root cause:** the auto-mode permission classifier blocks `gh pr merge`, visibility flips,
+  and prod-DB commands while the owner is away. It also reacts to the **session's recent shape**,
+  not just the command: after a run of branch deletions it refused a read-only `git branch -r`,
+  so the safe/unsafe boundary is not stable within a session.
+- **Lesson:** **One clean attempt at a blocked command, then reorganize the work: open
+  hook-verified PRs plus a written owner runbook — never retry or route around a block.** When a
+  read-only command is refused, reach the same fact through another tool (`gh api …`), which the
+  denial explicitly permits — that is redirection, not circumvention.
+- **Guard:** none — judgment.
+
+### L-026 · 2026-09-01 · process
+
+- **Symptom:** an approved fix spec instructed editing a root manifest field "because it pins three
+  of the five modules". It pinned none of them; following the instruction would have ADDED three
+  pins the scope never asked for.
+- **Root cause:** the spec was written from an audit summary rather than from the manifests. Two
+  further claims in the same five-line item were also wrong — one module was pinned _ahead_ of the
+  framework's bundled version (the fix was a downgrade, not a catch-up), and a command it presented
+  as a one-liner only accepts an interactive prompt.
+- **Lesson:** **A spec's factual claims about a file are a hypothesis, not evidence — read the file
+  before editing it, and report the correction rather than quietly conforming or quietly diverging.**
+- **Guard:** none — judgment. A spec item naming a specific file + field is a cue to open that file
+  first.

@@ -11,6 +11,18 @@
 
 ## process
 
+### L-097 · 2026-09-08 · process · #671
+
+- **Symptom:** B245 was discharged with proof `REG-B245` while its pin tests were titled plain
+  `B245: …` — the token lived in the registry but not in the test file.
+- **Root cause:** `prove`'s `--proof` regex checks the claim text only; nothing cross-checks a
+  discharge token against the titles of the file it claims to pin.
+- **Lesson:** **A discharge proof token must match its test titles byte-for-byte — run
+  `node scripts/campaign-check.mjs`, not just `bugs.mjs sync --check`, before merging a docs
+  follow-up by rule.**
+- **Guard:** campaign-check's exact-prefix rule (already enforced) + this step in the follow-up
+  checklist.
+
 ### L-094 · 2026-09-08 · process · #663
 
 - **Symptom:** the auth-redesign dev-pipeline engine stopped mid fix-loop at 62 agents with no
@@ -66,20 +78,6 @@
 - **Guard:** none — judgment. The mismatch also showed up as a blocker (the shared test mock had
   no `auditLog` model), so "the harness fights you" is a hint you are off the intended path.
 
-### L-026 · 2026-09-01 · process
-
-- **Symptom:** an approved fix spec instructed editing a root manifest field "because it pins three
-  of the five modules". It pinned none of them; following the instruction would have ADDED three
-  pins the scope never asked for.
-- **Root cause:** the spec was written from an audit summary rather than from the manifests. Two
-  further claims in the same five-line item were also wrong — one module was pinned _ahead_ of the
-  framework's bundled version (the fix was a downgrade, not a catch-up), and a command it presented
-  as a one-liner only accepts an interactive prompt.
-- **Lesson:** **A spec's factual claims about a file are a hypothesis, not evidence — read the file
-  before editing it, and report the correction rather than quietly conforming or quietly diverging.**
-- **Guard:** none — judgment. A spec item naming a specific file + field is a cue to open that file
-  first.
-
 ### L-027 · 2026-09-01 · process
 
 - **Symptom:** with several sessions running in git worktrees, a repo-file gate was about to be
@@ -93,19 +91,6 @@
   integration branch; it is the only sane resting state for a tree that hooks resolve against.**
 - **Guard:** none — judgment. A gate demanding a repo file while you work in a worktree is the cue
   to check which tree that path actually lands in.
-
-### L-004 · 2026-08-24 · process
-
-- **Symptom:** autonomous sessions stalled retrying merges and visibility flips.
-- **Root cause:** the auto-mode permission classifier blocks `gh pr merge`, visibility flips,
-  and prod-DB commands while the owner is away. It also reacts to the **session's recent shape**,
-  not just the command: after a run of branch deletions it refused a read-only `git branch -r`,
-  so the safe/unsafe boundary is not stable within a session.
-- **Lesson:** **One clean attempt at a blocked command, then reorganize the work: open
-  hook-verified PRs plus a written owner runbook — never retry or route around a block.** When a
-  read-only command is refused, reach the same fact through another tool (`gh api …`), which the
-  denial explicitly permits — that is redirection, not circumvention.
-- **Guard:** none — judgment.
 
 ### L-051 · 2026-09-02 · process · #603 close-out
 
@@ -509,6 +494,18 @@
   `docs/runbooks/deploy-visibility-flip.md` and the `rebuild` skill.
 
 ## domain
+
+### L-096 · 2026-09-08 · domain · #671
+
+- **Symptom:** F16's design of record specified a new `InvoiceCounter` table; S2 found the
+  per-tenant, per-year `NumberingSequence` + `NumberingService` already shipped (a code comment
+  naming B100), so building the table would have created a second numbering store.
+- **Root cause:** the design was written from the bug report, not from the schema.
+- **Lesson:** **Before designing any new store/counter/registry, grep the schema folder and the
+  modules for the dimension you need — an existing primitive with a gap (here, an unused `year`
+  column) beats a new table every time.**
+- **Guard:** the bug-pipeline S2 refutation step now asks "does the primitive already exist?"
+  explicitly.
 
 ### L-095 · 2026-09-08 · domain · #668
 
