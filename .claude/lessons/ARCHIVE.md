@@ -762,3 +762,74 @@ id, so **L-046** (domain), the following qualifying entry, is archived instead.
   watchdog spec's "rejects promptly" bound 15 s; `upload-routes.security.spec.ts` 60 s.
   Regression signal: any "Exceeded timeout of 5000 ms" in an api spec again means the config was
   dropped.
+
+## Archived 2026-09-07 — headroom for L-089 (docs/656-f16-bookkeeping, #656 follow-up)
+
+### L-080 · 2026-09-06 · process · registry-guards
+
+- **Symptom:** three PRs (#612/#617/#618) landed bug-ledger rows while the per-bug records still
+  said `queued`; every other worktree's Stop-hook Gate 4 then rewrote nine records on its next turn,
+  and a triage id filed without `--batch` (B213) could not be moved into a batch under its own id.
+- **Root cause:** the record front matter is a mirror DERIVED from the ledger by `sync`, yet nothing
+  refused a push whose ledger edit skipped `sync`; and `move` only knew how to re-home an existing
+  shard row, so an id with no row had to be re-filed under a new number.
+- **Lesson:** **a committed derived file needs a read-only `--check` of its own derivation that the
+  pre-push gate runs on the real tree; a state machine that mints ids must be able to give any
+  catalogued id its FIRST row, not only move an existing one.**
+- **Guard:** `sync --check` (T13/T13b) and `move --tier` (T14) in `scripts/campaign/bugs.mjs`
+  `self-test`, which `npm run verify` runs before every push.
+
+## Archived 2026-09-07 — headroom for L-090 (docs/f16-hotfix-followup, #659 follow-up)
+
+Two-entry block, chosen oldest-first among active entries whose guard names a landed automated
+artifact rather than a bare procedure, and which nothing outside `.claude/pipeline/**`,
+`.claude/lessons/**`, or `code-map/CHANGELOG.md` still cites (grep-confirmed against the whole
+repo, not just the code map). Every candidate dated 2026-08-24 through 2026-09-06 ahead of these
+two was excluded: L-004/L-010/L-025/L-026/L-027/L-035/L-038/L-041/L-050/L-051/L-060 carry no
+landed automated-artifact guard (`none — judgment` or a bare manual procedure); L-047, L-055,
+L-062, L-066, L-068, L-069, L-070, L-074, L-076, L-078, L-081 are each still named in
+`code-map/api.md`, `code-map/web.md`, `code-map/INDEX.md`, `HANDOFF.md`,
+`docs/adr/0003-bugflow-github-native-bug-tracking.md`, `tools/bugflow/docs/*`, or a live bug
+record under `.claude/campaign/bugs/` — none of which are allowed citation sites for this rule;
+L-063 is cited directly from `scripts/campaign-check.mjs`, `scripts/jest-campaign-reporter.cjs`
+and `apps/api/src/common/campaign-check-freshness.spec.ts`; L-082 and L-083 are cited from
+`code-map/INDEX.md` (L-083 additionally from `code-map/api.md` and
+`.claude/skills/bug-registry/SKILL.md`). **L-084** and **L-085** (both 2026-09-06 — the register
+otherwise stalls on that one day) are the two oldest survivors: every citation of either id
+anywhere in the repo resolves to `code-map/CHANGELOG.md` (allowed) or another
+`.claude/pipeline/**` run record (allowed). Register: 39/40 entries, 39.3/40.0 KB after this pass.
+
+### L-084 · 2026-09-06 · process · F18
+
+- **Symptom:** F18's engine ended with every gate green and 3/3 probes caught, yet its final pass
+  found 12 live defects in files outside the build radius — platform-admin plan writers, Stripe
+  subscription webhooks, the period-end cron, alias and custom-plan paths — after the engine's
+  round cap had already stopped it.
+- **Root cause:** the fix was the FIRST product caller to arm a dormant persisted state (the
+  downgrade markers), which turned every other writer's and consumer's latent weakness into a
+  live defect; the radius was seeded from the build plan's file list, so those files were never
+  in scope until the final pass, and the pass's ordered reads could not feed a fix round.
+- **Lesson:** **when a fix arms, first-consumes, or first-clears a persisted state field, `git
+grep` every writer and reader of that field before the build plan is cut and put them in the
+  radius; treat the final pass's "reads worth their cost" as a fix round's input, never as the
+  run's end.**
+- **Guard:** bug-pipeline S5 checklist line ("state fields this fix arms → grep writers/readers →
+  radius"); knob candidate recorded in RUN-LOG 2026-09-06 (ledger evidence required before the
+  engine changes).
+
+### L-085 · 2026-09-06 · process · F08
+
+- **Symptom:** F08's engine stalled 90 minutes inside its fix wave — one executor's `Edit` tool
+  call never returned, the parallel barrier waited on it, `TaskStop` marked the run killed but its
+  loop never released, and `resumeFromRunId` was refused three times; separately, an executor's
+  line-number probe (`sed -i 'Nd'`) on `returns.service.ts` raced another executor editing the
+  same file and deleted a different line.
+- **Root cause:** a hung in-process tool call holds a workflow barrier that no stop or resume can
+  clear; and a line-number probe assumes a file nobody else is editing.
+- **Lesson:** **when an engine run stalls (journal silent, no processes in its worktree, an
+  agent's last entry is a tool call with no result), do not wait or resume it — stop it and
+  continue by a NEW lead-designed light loop from the tree as it stands (integrity check first,
+  then the owed work); and an executor/probe must never mutate a shared file by line number —
+  revert by checksum against a backup only.**
+- **Guard:** bug-pipeline RESUME cards carry the stall recipe; the engine's probe stage forbids
+  line-number mutations (knob candidate recorded in RUN-LOG 2026-09-07).

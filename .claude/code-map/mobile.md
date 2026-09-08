@@ -1152,6 +1152,10 @@ lastAt}` state).
   `Invalid call ... process.env.EXPO_ROUTER_APP_ROOT` — the same babel-preset-expo/expo-router
   resolution class the Dockerfile already pins with `ENV NODE_PATH` (commits fdf60a49/7cab3863). A
   warm Metro cache masks it; `--clear` exposes it. Not a defect in this change.
+- **Registry: B202 closed via #562 (2026-09-07 bookkeeping).** This section already documented the
+  fix in full; the bug-registry row itself carried no ledger entry until this bookkeeping pass —
+  `move`/`prove`/`discharge` added F30.jsonl's missing B202 row (tier T1, proof REG-B202 +
+  REG-B202/CUE1-14) and moved it `done` against PR #562. See `.claude/campaign/bugs/B202.md`.
 
 ### 2026-08-31 — Native-only launch blockers found by running the first APK (B203/B204)
 
@@ -1282,3 +1286,21 @@ The owner-approved publish-readiness fix PR (HANDOFF.md banner 2026-09-01).
   accepted API/mobile asymmetry, not a gap.
 - **`__tests__/recurring-invoices-helpers.test.ts`** — adds `describe("REG-B106 lastRunOutcome")`
   with T22a (no run / status null → null), T22b (FAILED → red + detail), T22c (SUCCESS → green).
+
+### 2026-09-07 — F16 list caps / silent truncation (B110, #656)
+
+- **`lib/api/customers.ts`** — `CustomerStatement` (buyer statement) and `AccountSummary`
+  (operator statement) both gain `transactionsTruncated: boolean` — true when the server's
+  `transactions` ledger read hit its own `take` cap (mirrors web/`packages/types` `buyer.ts`).
+- **`app/(customer)/payments.tsx`** — the "Store credit" `Tile`'s sub-label and the "Active
+  credits" card's visibility now key on `hasActiveCredit = (statement?.availableCredit ?? 0) > 0`
+  (the server's uncapped total), never `credits.length` (a reduce over the capped `transactions`
+  array) — `credits.length > 0 ? "N active" : "None available"` became `hasActiveCredit ?
+"Available" : "None available"`, dropping the count. New `truncationNote` style renders "Showing
+  the most recent transactions only — older entries are not listed in this ledger." above the
+  credit rows when `statement?.transactionsTruncated` is true.
+- **`app/(operator)/customers/[id]/statement.tsx`** — same truncation note (new `truncNote` style)
+  rendered above the transactions list when `data.transactionsTruncated === true`; silent
+  (no label) otherwise.
+- Web equivalents: `apps/web/app/(dashboard)/customers/[id]/ledger-truncation-note.tsx`
+  (`LedgerTruncationNote`) and the buyer `finances/page.tsx` note — see `web.md`.

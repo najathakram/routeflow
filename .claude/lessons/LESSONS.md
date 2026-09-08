@@ -11,55 +11,6 @@
 
 ## process
 
-### L-085 · 2026-09-06 · process · F08
-
-- **Symptom:** F08's engine stalled 90 minutes inside its fix wave — one executor's `Edit` tool
-  call never returned, the parallel barrier waited on it, `TaskStop` marked the run killed but its
-  loop never released, and `resumeFromRunId` was refused three times; separately, an executor's
-  line-number probe (`sed -i 'Nd'`) on `returns.service.ts` raced another executor editing the
-  same file and deleted a different line.
-- **Root cause:** a hung in-process tool call holds a workflow barrier that no stop or resume can
-  clear; and a line-number probe assumes a file nobody else is editing.
-- **Lesson:** **when an engine run stalls (journal silent, no processes in its worktree, an
-  agent's last entry is a tool call with no result), do not wait or resume it — stop it and
-  continue by a NEW lead-designed light loop from the tree as it stands (integrity check first,
-  then the owed work); and an executor/probe must never mutate a shared file by line number —
-  revert by checksum against a backup only.**
-- **Guard:** bug-pipeline RESUME cards carry the stall recipe; the engine's probe stage forbids
-  line-number mutations (knob candidate recorded in RUN-LOG 2026-09-07).
-
-### L-084 · 2026-09-06 · process · F18
-
-- **Symptom:** F18's engine ended with every gate green and 3/3 probes caught, yet its final pass
-  found 12 live defects in files outside the build radius — platform-admin plan writers, Stripe
-  subscription webhooks, the period-end cron, alias and custom-plan paths — after the engine's
-  round cap had already stopped it.
-- **Root cause:** the fix was the FIRST product caller to arm a dormant persisted state (the
-  downgrade markers), which turned every other writer's and consumer's latent weakness into a
-  live defect; the radius was seeded from the build plan's file list, so those files were never
-  in scope until the final pass, and the pass's ordered reads could not feed a fix round.
-- **Lesson:** **when a fix arms, first-consumes, or first-clears a persisted state field, `git
-grep` every writer and reader of that field before the build plan is cut and put them in the
-  radius; treat the final pass's "reads worth their cost" as a fix round's input, never as the
-  run's end.**
-- **Guard:** bug-pipeline S5 checklist line ("state fields this fix arms → grep writers/readers →
-  radius"); knob candidate recorded in RUN-LOG 2026-09-06 (ledger evidence required before the
-  engine changes).
-
-### L-080 · 2026-09-06 · process · registry-guards
-
-- **Symptom:** three PRs (#612/#617/#618) landed bug-ledger rows while the per-bug records still
-  said `queued`; every other worktree's Stop-hook Gate 4 then rewrote nine records on its next turn,
-  and a triage id filed without `--batch` (B213) could not be moved into a batch under its own id.
-- **Root cause:** the record front matter is a mirror DERIVED from the ledger by `sync`, yet nothing
-  refused a push whose ledger edit skipped `sync`; and `move` only knew how to re-home an existing
-  shard row, so an id with no row had to be re-filed under a new number.
-- **Lesson:** **a committed derived file needs a read-only `--check` of its own derivation that the
-  pre-push gate runs on the real tree; a state machine that mints ids must be able to give any
-  catalogued id its FIRST row, not only move an existing one.**
-- **Guard:** `sync --check` (T13/T13b) and `move --tier` (T14) in `scripts/campaign/bugs.mjs`
-  `self-test`, which `npm run verify` runs before every push.
-
 ### L-078 · 2026-09-05 · process · close-out re-check
 
 - **Symptom:** `LESSONS.md` keeps merging CLEANLY into duplicate ids — L-054 four times, then
@@ -361,6 +312,37 @@ grep` every writer and reader of that field before the build plan is cut and put
 
 ## testing
 
+### L-091 · 2026-09-07 · testing · #661
+
+- **Symptom:** two deployed-E2E regression tests for real fixes stayed red for two deploys on
+  harness defects — a `getByText` on a value the page renders twice (strict-mode violation) and
+  a fixture that provisioned 25 pending orders for one customer through an API whose staff-create
+  path demands an explicit merge choice (409).
+- **Root cause:** the harness modelled the product from its own assumptions instead of through
+  the product's real contracts — an identifier's role on the page, and the API's guard for
+  repeated entities.
+- **Lesson:** **assert identifiers by ROLE (`getByRole("heading", …)`) never `getByText` when a
+  value can render more than once, and provision E2E fixtures THROUGH the product's own guards
+  (send the explicit choice the API demands — `mergeChoice: "separate"` — rather than multiplying
+  entities to dodge the guard, which pollutes the tenant).**
+- **Guard:** spec 37 REG-B80/B144 as landed; the register's T2 discharge needs the run id.
+
+### L-090 · 2026-09-07 · testing · #659
+
+- **Symptom:** a server-side KPI replacing a client memo passed every unit test and failed the
+  deployment E2E — the "Awaiting confirmation" tile read 0 (deployment E2E spec 22 REG-B11 red on
+  master `e02851af`).
+- **Root cause:** the port narrowed the memo's basis (DRAFT payments across every loaded invoice →
+  DRAFT payments on the OPEN set only) while pinning the NEW, narrowed basis in its own spec — so
+  the pin agreed with the port, not with the memo the port was supposed to reproduce.
+- **Lesson:** **when a client-side derivation moves to the server, transcribe the client's basis
+  VERBATIM into the server pin FIRST — quote the memo's filter/exclusions (or lack of them) in the
+  spec's own title/comment — then port to make that pin pass. A pin written from the port's own
+  code, after the port, proves the port is internally consistent, never that it reproduces what it
+  replaced.**
+- **Guard:** the m7 spec (`invoices.service.spec.ts`) now quotes the memo's basis verbatim in its
+  title and comment; deployment E2E spec 22 REG-B11 is the standing regression signal.
+
 ### L-087 · 2026-09-07 · testing · #650
 
 - **Symptom:** a passing "leaves INTERNAL untouched" assertion in a new NO_TRANSPORT test proved
@@ -500,6 +482,19 @@ grep` every writer and reader of that field before the build plan is cut and put
   `docs/runbooks/deploy-visibility-flip.md` and the `rebuild` skill.
 
 ## domain
+
+### L-089 · 2026-09-07 · domain · #656
+
+- **Symptom:** six different caps (999, 200, 100, 50, 500, page size 20) each silently bounded a
+  total, a lookup, a match or a search — tiles understated, a receipt "not found", a statement
+  that omitted old debt, a bill that could never be matched, a search that could not reach page 2.
+- **Root cause:** a `take`/`limit` chosen as a rendering budget was reused as an arithmetic
+  boundary.
+- **Lesson:** **a total, a lookup, a match or a search is computed by the database over the whole
+  (open) set, or the view is labelled partial; a cap is a rendering budget and never an
+  arithmetic boundary; every paginated order carries an id tiebreaker.**
+- **Guard:** REG-B12/B80/B110/B117/B144/B169 pins (revert-probed) and the `limit: 999` /
+  `take: N,` sibling sweep filed as rows.
 
 ### L-088 · 2026-09-07 · domain · #652
 

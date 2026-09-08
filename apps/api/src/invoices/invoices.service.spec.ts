@@ -7489,11 +7489,20 @@ describe("InvoicesService", () => {
       }).toEqual({ overdue: 100, dueIn30: 0, dueToday: 0, totalOutstanding: 100 });
     });
 
-    // m7 — the awaiting-confirmation tile sits in the SAME bar as the money
-    // figures, so its DRAFT-payment count is scoped to the same OPEN set they
-    // sum. Counting draft payments on PAID/VOID/WRITTEN_OFF/DRAFT invoices
-    // hands the operator a queue with nothing to act on beside it.
-    it("scopes awaitingConfirmationCount to the OPEN invoice set (m7)", async () => {
+    // m7 (F16 hotfix) — the awaiting-confirmation tile does NOT share the money
+    // tiles' OPEN basis. It reproduces the client memo it replaced, whose count
+    // ran above and outside every status branch:
+    //
+    //   for (const p of inv.payments ?? []) {
+    //     if (p.status === "DRAFT") awaitingConfirmationCount++;
+    //   }
+    //
+    // over `useInvoices({ limit: 999 })` — i.e. every invoice of every status.
+    // Scoping it to KPI_SUMMARY_EXCLUDED zeroed the tile for the commonest
+    // case: a DRAFT payment on a still-DRAFT invoice, which `recordPayment`
+    // deliberately leaves DRAFT. So for staff the count carries NO
+    // invoice-status filter at all.
+    it("counts DRAFT payments across EVERY invoice status for staff (m7 — the memo's basis)", async () => {
       prisma.invoice.findMany.mockResolvedValue([]);
       prisma.invoicePayment.count.mockResolvedValue(2);
       prisma.$queryRaw.mockResolvedValue([{ avgDays: 0 }]);
@@ -7505,18 +7514,16 @@ describe("InvoicesService", () => {
         ) => Promise<Record<string, number>>;
       };
       expect(typeof svc.getKpiSummary).toBe("function");
-      await svc.getKpiSummary!("2026-08-26", OPERATOR);
+      const result = await svc.getKpiSummary!("2026-08-26", OPERATOR);
+      expect(result.awaitingConfirmationCount).toBe(2);
 
       const countWhere = prisma.invoicePayment.count.mock.calls[0][0].where;
       expect(countWhere.status).toBe("DRAFT");
-      expect(new Set(countWhere.invoice.status.notIn)).toEqual(
-        new Set([
-          InvoiceStatus.PAID,
-          InvoiceStatus.VOID,
-          InvoiceStatus.WRITTEN_OFF,
-          InvoiceStatus.DRAFT,
-        ]),
-      );
+      // The regression this pins: ANY invoice-status narrowing here drops the
+      // draft payments the E2E's own fixture creates (a DRAFT invoice), which
+      // is what made the tile read 0. The money tiles' OPEN set must not leak
+      // into this count.
+      expect(countWhere.invoice).toBeUndefined();
     });
 
     // avgDays feeds the tile's `avgDays > 0 ? … : "N/A"` render, so it must be
@@ -7625,18 +7632,14 @@ describe("InvoicesService", () => {
         where: { userId: "user-buyer" },
       });
       expect(prisma.invoice.findMany.mock.calls[0][0].where.customerId).toBe("cust-9");
-      // m7: the count carries BOTH scopes — the buyer's own customer id and
-      // the same OPEN status set the money tiles sum.
+      // m7 (F16 hotfix): the count carries the buyer's OWN scope — exactly
+      // `findAll`'s buyer rule (their customer id, minus the DRAFT invoices a
+      // buyer is never shown), NOT the money tiles' OPEN set. A buyer must
+      // never be handed another customer's unconfirmed payments, but a draft
+      // payment on their own PAID or OVERDUE invoice is still theirs to see.
       const buyerCountInvoiceWhere = prisma.invoicePayment.count.mock.calls[0][0].where.invoice;
       expect(buyerCountInvoiceWhere.customerId).toBe("cust-9");
-      expect(new Set(buyerCountInvoiceWhere.status.notIn)).toEqual(
-        new Set([
-          InvoiceStatus.PAID,
-          InvoiceStatus.VOID,
-          InvoiceStatus.WRITTEN_OFF,
-          InvoiceStatus.DRAFT,
-        ]),
-      );
+      expect(buyerCountInvoiceWhere.status).toEqual({ not: InvoiceStatus.DRAFT });
       // …and the customer id reaches the raw avgDays query as a BOUND value
       // too — nested one level down inside the conditional `Prisma.sql`
       // fragment, so the oracle flattens before it looks.

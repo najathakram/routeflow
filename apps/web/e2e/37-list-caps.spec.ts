@@ -41,9 +41,9 @@
  * Role: OPERATOR (reads its token out of the pre-authenticated session, same
  * as 21-destructive-guards / 22-payment-truth). Tenant: the approved
  * e2e-routeflow regression seed (assertTestTenant, helpers/constants.ts).
- * Every fixture created here (`E2E B144 …` customer + 25 orders, one
- * throwaway invoice + payment) is fully self-provisioned and left behind —
- * the same residue tolerance 21/22/24's own throwaway fixtures already take.
+ * Every fixture created here (one `E2E B144 …` customer carrying 25 separate
+ * orders, one throwaway invoice + payment) is fully self-provisioned and left
+ * behind — the same residue tolerance 21/22/24's own throwaway fixtures take.
  */
 
 import { test, expect, type Page } from "@playwright/test";
@@ -61,6 +61,39 @@ function fmtMoney(n: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(n);
+}
+
+type Headers = { authorization: string; "x-tenant-slug": string };
+
+/**
+ * Bearer + tenant headers for a direct API call, or null when unauthenticated —
+ * the same shape 29-returns-lifecycle.spec.ts uses.
+ *
+ * `operatorAccessToken` reads the token out of the PAGE's localStorage, which
+ * is per-ORIGIN: a fresh `page` sits on `about:blank`, whose storage is a
+ * different (opaque) origin from the app's, so the operator storageState's
+ * token is simply not there yet. Every caller must therefore navigate into the
+ * app FIRST — `openApp()` below — exactly as 22-payment-truth and
+ * 29-returns-lifecycle do before their own token reads. Reading before the
+ * first navigation is what failed REG-B80/B144/B110 with "carried no access
+ * token" while REG-B12 (which never reads a token) passed beside them.
+ */
+async function apiHeaders(page: Page): Promise<Headers | null> {
+  const token = await operatorAccessToken(page);
+  if (!token) return null;
+  return { authorization: `Bearer ${token}`, "x-tenant-slug": TENANT_SLUG };
+}
+
+/**
+ * Land on an app origin with the session applied, so `apiHeaders` can read the
+ * token. `/invoices` + its "New Invoice" toolbar button is the hydration signal
+ * REG-B12 above and 22-payment-truth both already rely on.
+ */
+async function openApp(page: Page): Promise<void> {
+  await page.goto("/invoices");
+  await expect(page.getByRole("button", { name: "New Invoice" })).toBeVisible({
+    timeout: 15_000,
+  });
 }
 
 /**
@@ -132,17 +165,20 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     page,
     request,
   }) => {
-    const token = await operatorAccessToken(page);
-    expect(token, "operator storageState carried no access token").toBeTruthy();
-    const headers = { authorization: `Bearer ${token}`, "x-tenant-slug": TENANT_SLUG };
-    const api = apiBase(BASE);
+    await openApp(page);
+    const headers = await apiHeaders(page);
+    expect(
+      headers,
+      "no operator access token in localStorage — operator storageState is stale or the setup project did not run",
+    ).toBeTruthy();
+    const api = apiBase(page.url());
 
     // Self-provisioned fixture: a throwaway customer + invoice + payment, so
     // this test never depends on whether the tenant's newest payment happens
     // to already sit within the first 200 rows useInvoicePayments would page.
     const suffix = Date.now();
     const customerRes = await request.post(`${api}/api/v1/customers`, {
-      headers,
+      headers: headers!,
       data: {
         username: `e2e_b80_${suffix}`,
         businessName: `E2E B80 Payment Detail ${suffix}`,
@@ -154,7 +190,7 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     expect(customer?.id, "POST /customers response carried no customer.id").toBeTruthy();
 
     const invoiceRes = await request.post(`${api}/api/v1/invoices`, {
-      headers,
+      headers: headers!,
       data: {
         customerId: customer.id,
         items: [{ description: "E2E B80 line", qty: 1, unitPrice: 4200 }],
@@ -164,7 +200,7 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     const invoice: { id: string } = await invoiceRes.json();
 
     const paymentRes = await request.post(`${api}/api/v1/invoices/${invoice.id}/payments`, {
-      headers,
+      headers: headers!,
       data: { amount: 4200, method: "CASH", status: "PAID" },
     });
     expect(paymentRes.ok(), `POST /invoices/:id/payments returned ${paymentRes.status()}`).toBe(
@@ -179,7 +215,7 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     const detailRes = await request.get(
       `${api}/api/v1/invoices/payments/${recorded.createdPaymentId}`,
       {
-        headers,
+        headers: headers!,
       },
     );
     expect(detailRes.ok(), `GET /invoices/payments/:id returned ${detailRes.status()}`).toBe(true);
@@ -201,7 +237,17 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     // "Payment not found." is what the buggy page renders once the id falls
     // outside the 200-row page it fetched — this must not appear once the
     // page is fetching by id instead.
-    await expect(page.getByText(paymentDetail.paymentNumber)).toBeVisible({ timeout: 15_000 });
+    //
+    // The receipt renders the number TWICE — the page heading
+    // (`<h2 className="font-mono text-2xl font-bold text-navy">{payment.paymentNumber ?? "Payment"}</h2>`,
+    // finance/payments/[id]/page.tsx:107) and the receipt document's
+    // "<number> · <date>" subline (same file, :147) — so a bare getByText is a
+    // strict-mode violation, not a product failure (L-086: heading locators are
+    // pinned by role, never by loose text). The heading's whole accessible name
+    // is the payment number, so an exact role match resolves to that one node.
+    await expect(
+      page.getByRole("heading", { name: paymentDetail.paymentNumber, exact: true }),
+    ).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("Payment not found.")).toHaveCount(0);
 
     expect(
@@ -218,15 +264,35 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     page,
     request,
   }) => {
-    const token = await operatorAccessToken(page);
-    expect(token, "operator storageState carried no access token").toBeTruthy();
-    const headers = { authorization: `Bearer ${token}`, "x-tenant-slug": TENANT_SLUG };
-    const api = apiBase(BASE);
+    // 26 provisioning round-trips against the deployed API (1 customer, 25
+    // orders) do not fit the 60 s per-test default in playwright.config.ts once
+    // Railway is cold — the assertions below keep their own 15 s budgets.
+    test.setTimeout(120_000);
+
+    await openApp(page);
+    const headers = await apiHeaders(page);
+    expect(
+      headers,
+      "no operator access token in localStorage — operator storageState is stale or the setup project did not run",
+    ).toBeTruthy();
+    const api = apiBase(page.url());
 
     const suffix = String(Date.now());
+    // `search` is matched by the API against the order NUMBER or the customer's
+    // businessName (`orders.service.ts:336-341`, the B144 where-clause), and
+    // order numbers are server-minted, so the suffix has to live in the business
+    // name. ONE customer owns all 25 orders, so every matching row on either
+    // page carries exactly this name — the page-2 assertion below matches
+    // whichever of the 25 the second page happens to hold.
     const businessName = `E2E B144 ${suffix}`;
+
+    // ONE customer, 25 orders — one more than the default page size (20) — so a
+    // match on page 2 is only reachable if the search actually narrowed the
+    // SERVER query rather than only ever filtering whatever the first page
+    // happened to already hold. One customer rather than 25 keeps this spec's
+    // residue on the shared e2e-routeflow tenant to a single customer per run.
     const customerRes = await request.post(`${api}/api/v1/customers`, {
-      headers,
+      headers: headers!,
       data: {
         username: `e2e_b144_${suffix}`,
         businessName,
@@ -237,16 +303,27 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     const customer: { id: string } = (await customerRes.json()).customer;
     expect(customer?.id, "POST /customers response carried no customer.id").toBeTruthy();
 
-    // 25 orders — one more than the default page size (20) — so a match on
-    // page 2 is only reachable if the search actually narrowed the SERVER
-    // query rather than only ever filtering whatever the first page happened
-    // to already hold.
+    // From the 2nd order on this customer already holds an open PENDING order,
+    // and a staff create that carries no merge decision is refused with 409
+    // `MERGE_CHOICE_REQUIRED` (`orders.controller.ts:110-127`, via
+    // `findActiveOrder`). `mergeChoice: "separate"` is the operator's explicit
+    // choice — a declared `@IsEnum(["merge", "separate"])` field on
+    // CreateOrderDto (`create-order.dto.ts:103`), so the global
+    // `forbidNonWhitelisted` ValidationPipe (`main.ts:145-149`) passes it
+    // through — and it satisfies the guard legitimately: the controller falls
+    // through to `ordersService.create(…, { skipAutoMerge: choice ===
+    // "separate" })` (`orders.controller.ts:278-282`), which INSERTs a new
+    // order flagged `skipAutoMerge` (`orders.service.ts:2268`) instead of
+    // folding these items into the existing one. The post-create
+    // `mergeAllPendingForCustomer` consolidation is staff-exempt
+    // (`orders.controller.ts:285`, `if (!isStaff …)`), so the 25 stay distinct.
     for (let i = 0; i < 25; i++) {
       const orderRes = await request.post(`${api}/api/v1/orders`, {
-        headers,
+        headers: headers!,
         data: {
           customerId: customer.id,
           status: "PENDING",
+          mergeChoice: "separate",
           items: [{ name: `E2E B144 item ${i}`, qty: 1, unitPrice: 10 }],
         },
       });
@@ -286,15 +363,18 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     page,
     request,
   }) => {
-    const token = await operatorAccessToken(page);
-    expect(token, "operator storageState carried no access token").toBeTruthy();
-    const headers = { authorization: `Bearer ${token}`, "x-tenant-slug": TENANT_SLUG };
-    const api = apiBase(BASE);
+    await openApp(page);
+    const headers = await apiHeaders(page);
+    expect(
+      headers,
+      "no operator access token in localStorage — operator storageState is stale or the setup project did not run",
+    ).toBeTruthy();
+    const api = apiBase(page.url());
 
     const suffix = Date.now();
     const businessName = `E2E B110 Statement Parity ${suffix}`;
     const customerRes = await request.post(`${api}/api/v1/customers`, {
-      headers,
+      headers: headers!,
       data: {
         username: `e2e_b110_${suffix}`,
         businessName,
@@ -306,7 +386,7 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     expect(customer?.id, "POST /customers response carried no customer.id").toBeTruthy();
 
     const invoiceRes = await request.post(`${api}/api/v1/invoices`, {
-      headers,
+      headers: headers!,
       data: {
         customerId: customer.id,
         items: [{ description: "E2E B110 line", qty: 1, unitPrice: 250 }],
@@ -322,14 +402,14 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     // actually contributes to outstandingAmount and the test isn't a $0.00
     // == $0.00 tautology.
     const sendRes = await request.post(`${api}/api/v1/invoices/${invoice.id}/send`, {
-      headers,
+      headers: headers!,
     });
     expect(sendRes.ok(), `POST /invoices/:id/send returned ${sendRes.status()}`).toBe(true);
 
     // API oracle: the statement endpoint the customer detail page's
     // useCustomerStatement query itself reads.
     const statementRes = await request.get(`${api}/api/v1/customers/${customer.id}/statement`, {
-      headers,
+      headers: headers!,
     });
     expect(
       statementRes.ok(),
