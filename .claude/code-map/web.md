@@ -827,10 +827,16 @@ AgentFormModal` in a nested modal (`isAgentModalOpen` state); on create it selec
   (registry B247, consolidation deferred).
 - **`components/site-header.tsx`** — `SiteHeader()`; nav from `../lib/site.ts#routes`/`NAV_SLUGS`
   (never hand-mirror labels/hrefs — [[L-072]]). Desktop "Sign in" is a Radix `DropdownMenu`
-  (Distributor → `/login`, Retailer → `/buyer/login`); mobile is a Radix `Dialog` sheet (adds
-  Contact + both sign-ins + Book a demo). Both portals re-stamp the `.rf-marketing` scope class via
-  a `display:contents` carrier div — Radix portals mount into `document.body`, OUTSIDE the
-  layout's scoped wrapper, and every marketing rule/token is a `.rf-marketing` descendant selector.
+  (Distributor → `/login`, Retailer → `/buyer/login`) — each `DropdownMenu.Item asChild` anchor
+  (`role="menuitem"`, icon + label + `ArrowUpRight` glyph) is styled by
+  `.rf-marketing .signin-menu [role="menuitem"]` in `marketing.css`: `display: flex; align-items:
+center; width: 100%; white-space: nowrap`, its own `:focus-visible` ring (`outline` +
+  `outline-offset`) on the anchor, `> * { outline: none }` on its children — was `inline`,
+  fragmenting the ring per line box and wrapping the arrow, PR #673 [[L-098]]; mobile is a Radix
+  `Dialog` sheet (adds Contact + both sign-ins + Book a demo). Both portals re-stamp the
+  `.rf-marketing` scope class via a `display:contents` carrier div — Radix portals mount into
+  `document.body`, OUTSIDE the layout's scoped wrapper, and every marketing rule/token is a
+  `.rf-marketing` descendant selector.
 - **`components/editorial-motion.tsx`** — `EditorialMotion()`, renders `null`. Scroll-reveal via one
   shared `IntersectionObserver` over a fixed selector list (section headings, cards, CTA blocks,
   …): adds `.editorial-reveal`, adds `.reveal-pending` only to nodes starting below the fold, then
@@ -959,7 +965,10 @@ now contributes alongside api/mobile).
   (walks `app/`+`components/` for any `next/image` import — see `components/brand/` above),
   `app/(marketing)/marketing-port.static.test.ts` (MKT-PIN: dead asset/dependency scans,
   `globals.css`/`tailwind.config.ts` byte-identical to the branch baseline, one tokenised
-  `--ring` focus rule — the two-colours-hardcoded finding from review is fixed and pinned here),
+  `--ring` focus rule — the two-colours-hardcoded finding from review is fixed and pinned here;
+  plus a `.signin-menu [role="menuitem"]` CSS-rule-parser pin, R-MKT signin-menu, PR #673
+  [[L-098]]: structural `display: flex` + `white-space: nowrap`, the anchor's own `:focus-visible`
+  ring, no inner-child outline),
   `app/(marketing)/middleware.marketing.test.ts` (`lib/site.ts#routes` ↔
   `lib/marketing-routes.ts#MARKETING_PAGE_PATHS` parity), `app/(marketing)/seo.test.ts`,
   `lib/marketing-routes.test.ts`, `app/(marketing)/lib/operation-model.test.ts`. Component:
