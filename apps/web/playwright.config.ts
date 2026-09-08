@@ -611,5 +611,14 @@ export default defineConfig({
       dependencies: [],
       use: { ...devices["Desktop Chrome"] },
     },
+    // Auth interface redesign (spec 46) — same convention as "marketing":
+    // NOT part of the local red gate (test-plan.md "Harness notes") — this
+    // project resolving/running is the post-deploy proof.
+    {
+      name: "auth-redesign",
+      testMatch: /46-auth-redesign\.spec\.ts/,
+      dependencies: [],
+      use: { ...devices["Desktop Chrome"] },
+    },
   ],
 });

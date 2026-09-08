@@ -13,6 +13,12 @@ import { buyerRequestPasswordReset } from "@/lib/buyer-auth";
 describe("BuyerForgotPasswordPage", () => {
   beforeEach(() => jest.clearAllMocks());
 
+  it("tells a Google-signup buyer this flow also adds a password", () => {
+    renderWithProviders(<BuyerForgotPasswordPage />);
+
+    expect(screen.getByText(/signed up with Google/i)).toBeInTheDocument();
+  });
+
   it("shows the zod validation message and never calls the API on an invalid submit", async () => {
     const user = userEvent.setup();
     renderWithProviders(<BuyerForgotPasswordPage />);

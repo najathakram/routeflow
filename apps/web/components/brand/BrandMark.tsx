@@ -116,12 +116,26 @@ interface BrandProps {
   className?: string;
   /** Forwarded to `BrandSignature` — `"light"` for dark surfaces (ruling B2). */
   tone?: BrandTone;
+  /**
+   * Forwarded to `BrandSignature`. Off by default so marketing call sites keep
+   * inheriting the `.rf-marketing` metrics; pass it on surfaces that do not
+   * load that cascade (the auth shell).
+   */
+  standalone?: boolean;
+  /** Forwarded to `BrandSignature` — accent for the trailing period. */
+  periodColor?: string;
 }
 
-export function Brand({ size, className, tone = "dark" }: BrandProps = {}) {
+export function Brand({
+  size,
+  className,
+  tone = "dark",
+  standalone,
+  periodColor,
+}: BrandProps = {}) {
   return (
     <Link href="/" aria-label="RouteFlow home" className={className}>
-      <BrandSignature size={size} tone={tone} />
+      <BrandSignature size={size} tone={tone} standalone={standalone} periodColor={periodColor} />
     </Link>
   );
 }

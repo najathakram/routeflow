@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useRouter } from "next/navigation";
 import { PasswordInput, Button } from "@routeflow/ui/web";
+import { AuthShell } from "@/components/auth";
 import { useAuth } from "@/lib/auth-context";
 import { changePassword } from "@/lib/auth";
 
@@ -61,49 +62,38 @@ export default function ChangePasswordPage() {
   if (isLoading || !isAuthenticated) return null;
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-raised p-4">
-      <div className="w-full max-w-sm">
-        {/* Logo */}
-        <div className="mb-8 flex flex-col items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500 text-lg font-bold text-white">
-            RF
-          </div>
-          <h1 className="text-2xl font-bold text-navy">Change Password</h1>
-          <p className="text-center text-sm text-navy/70">
-            You must set a new password before continuing.
-          </p>
-        </div>
-
-        {/* Card */}
-        <div className="rounded-xl bg-white p-6 shadow-card">
-          <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
-            {apiError && (
-              <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">{apiError}</p>
-            )}
-            <PasswordInput
-              label="Current password"
-              autoComplete="current-password"
-              register={register("currentPassword")}
-              error={errors.currentPassword?.message}
-            />
-            <PasswordInput
-              label="New password"
-              autoComplete="new-password"
-              register={register("newPassword")}
-              error={errors.newPassword?.message}
-            />
-            <PasswordInput
-              label="Confirm new password"
-              autoComplete="new-password"
-              register={register("confirmPassword")}
-              error={errors.confirmPassword?.message}
-            />
-            <Button type="submit" loading={isSubmitting} className="mt-2 w-full">
-              Set new password
-            </Button>
-          </form>
-        </div>
-      </div>
-    </div>
+    <AuthShell
+      audience="distributor"
+      kicker="Distributor workspace"
+      title="Choose a new password"
+      lead="You must set a new password before continuing."
+    >
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
+        {apiError && (
+          <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">{apiError}</p>
+        )}
+        <PasswordInput
+          label="Current password"
+          autoComplete="current-password"
+          register={register("currentPassword")}
+          error={errors.currentPassword?.message}
+        />
+        <PasswordInput
+          label="New password"
+          autoComplete="new-password"
+          register={register("newPassword")}
+          error={errors.newPassword?.message}
+        />
+        <PasswordInput
+          label="Confirm new password"
+          autoComplete="new-password"
+          register={register("confirmPassword")}
+          error={errors.confirmPassword?.message}
+        />
+        <Button type="submit" loading={isSubmitting} className="rf-btn mt-2 w-full">
+          Set new password
+        </Button>
+      </form>
+    </AuthShell>
   );
 }
