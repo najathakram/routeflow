@@ -594,5 +594,22 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+
+    // ── Marketing site port (spec 36) ──────────────────────────────────────────
+    // Signed-out throughout — no storageState, no "setup" dependency. Proves T1
+    // (per-route chrome/copy), T2 (mobile sheet/sign-in/contact-form/tabs/FAQ),
+    // T3 (internal link crawl), T12 (mobile UA still reaches the marketing site).
+    // Desktop Chrome by default; T2's mobile assertions opt into
+    // devices["iPhone 13"] inside the spec via test.use() on that describe block.
+    // NOT part of the local red gate (test-plan.md "Harness notes") — this
+    // project resolving/running is the post-deploy proof, same convention as
+    // 08-create-order-escape's precedent for "without this entry the spec never
+    // runs".
+    {
+      name: "marketing",
+      testMatch: /36-marketing-site\.spec\.ts/,
+      dependencies: [],
+      use: { ...devices["Desktop Chrome"] },
+    },
   ],
 });

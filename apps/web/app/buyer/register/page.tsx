@@ -7,6 +7,7 @@ import { z } from "zod";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Eye, EyeOff } from "lucide-react";
 import { Input, Button } from "@routeflow/ui/web";
+import { BrandMark } from "@/components/brand";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
@@ -149,7 +150,7 @@ function BuyerRegisterInner() {
       <div className="w-full max-w-sm">
         {/* Logo / Brand */}
         <div className="mb-8 flex flex-col items-center gap-3">
-          <img src="/logo-buyer.svg" alt="RouteFlow" className="h-12 w-12 object-contain" />
+          <BrandMark size={48} />
           <h1 className="text-2xl font-bold text-navy">Create Account</h1>
           <p className="text-sm text-navy/70">Join RouteFlow Buyer Portal</p>
         </div>

@@ -7,6 +7,7 @@ import { z } from "zod";
 import Link from "next/link";
 import { ArrowLeft, MailCheck } from "lucide-react";
 import { Input, Button } from "@routeflow/ui/web";
+import { BrandMark } from "@/components/brand";
 import { buyerRequestPasswordReset } from "@/lib/buyer-auth";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
@@ -47,7 +48,7 @@ export default function BuyerForgotPasswordPage() {
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center gap-3">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-buyer.svg" alt="RouteFlow" className="h-12 w-12 object-contain" />
+          <BrandMark size={48} />
           <h1 className="text-2xl font-bold text-navy">Reset your password</h1>
           <p className="text-center text-sm text-navy/70">
             Enter your buyer account email and we&apos;ll send you a reset link. This also works if

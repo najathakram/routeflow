@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { CheckCircle2, MailCheck } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
+import { BrandMark } from "@/components/brand";
 import { buyerVerifyEmail } from "@/lib/buyer-auth";
 
 // ─── Inner (useSearchParams requires a Suspense boundary) ─────────────────────
@@ -48,7 +49,7 @@ function BuyerVerifyEmailInner() {
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center gap-3">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-buyer.svg" alt="RouteFlow" className="h-12 w-12 object-contain" />
+          <BrandMark size={48} />
           <h1 className="text-2xl font-bold text-navy">Verify your email</h1>
         </div>
 

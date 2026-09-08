@@ -4,7 +4,6 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  Shield,
   LayoutDashboard,
   Building2,
   LogOut,
@@ -16,6 +15,7 @@ import {
   UserCircle,
   Bot,
 } from "lucide-react";
+import { BrandMark } from "@/components/brand";
 
 // Re-export for backwards compat (existing pages import from layout)
 export { superAdminClient } from "@/lib/admin-api";
@@ -86,9 +86,8 @@ function Sidebar() {
     <aside className="flex w-60 shrink-0 flex-col bg-slate-900 border-r border-slate-700/50">
       {/* Logo */}
       <div className="flex h-16 items-center gap-3 border-b border-slate-700/50 px-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600">
-          <Shield className="h-4 w-4 text-white" />
-        </div>
+        {/* Dark surface: the aside's `bg-slate-900` (B2). */}
+        <BrandMark size={32} className="rounded-lg" tone="light" />
         <div>
           <div className="text-sm font-bold text-white">RouteFlow</div>
           <div className="text-[10px] font-medium uppercase tracking-wider text-indigo-400">
