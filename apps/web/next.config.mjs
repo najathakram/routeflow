@@ -51,6 +51,18 @@ const nextConfig = {
         destination: "/routes/:id/dispatch",
         permanent: true,
       },
+      // /distributors is the URL the original marketing design used for the
+      // wholesaler-side page; /wholesalers is the canonical URL. This used to
+      // be a prerendered `redirect()` page (app/(marketing)/distributors/
+      // page.tsx), but a prerendered redirect() page served from the ISR
+      // cache lost its Location header on the standalone server (307, no
+      // Location; spec 36 T1 red on 2026-09-08). A next.config redirect is
+      // evaluated before middleware, so it always carries the Location header.
+      {
+        source: "/distributors",
+        destination: "/wholesalers",
+        permanent: false,
+      },
     ];
   },
 
