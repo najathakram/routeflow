@@ -312,6 +312,18 @@
 
 ## testing
 
+### L-092 · 2026-09-08 · testing · #657
+
+- **Symptom:** the marketing engine's UI-verify rounds 3–6 judged screenshots of master's build
+  for two days — a stale Docker container (`routeflow_web`, built from a retired worktree) still
+  held `:3001`, so every request the UI gate made hit master, never the branch under review.
+- **Root cause:** the UI gate never proved WHICH build actually answered on the URL under test.
+- **Lesson:** **every UI-verify pass starts with a build-identity probe on the exact URL (a
+  branch-only marker string, or the commit sha the page exposes) and records the answer in the
+  evidence — a judge never scores a screenshot without that line.**
+- **Guard:** process — add to the dev-pipeline driver prompt (skill file outside the repo) as
+  protocol step 0; no in-repo guard yet.
+
 ### L-091 · 2026-09-07 · testing · #661
 
 - **Symptom:** two deployed-E2E regression tests for real fixes stayed red for two deploys on
