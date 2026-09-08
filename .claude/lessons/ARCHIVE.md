@@ -893,3 +893,27 @@ the closer headroom margin for the next single-entry archive.
   verifier uses, and pin it with a fixture where cost order and window order disagree.**
 - **Guard:** `REG-B147` / `REG-B161` / `REG-B177` in `route-optimization.service.spec.ts`
   (mutation-probed: seven pins red with the window pass disabled).
+
+## Archived 2026-09-08 — headroom for L-095 (docs/668-b246-bookkeeping, #668 follow-up)
+
+L-089 (2026-09-07, domain, #656) — the entry the L-093/L-094 headroom notes reserved as "the
+closer headroom margin for the next single-entry archive." Re-confirmed fresh (citations
+accumulate between sessions): a repo-wide grep for the literal id `L-089` hits only
+`.claude/lessons/**`, `.claude/pipeline/**` (a mention inside
+`2026-09-07-auth-redesign/discovery.md`), and `code-map/CHANGELOG.md`/`code-map/_meta.json`'s own
+history note — all allowed citation sites — with no hit in `code-map/*.md` area files, `CLAUDE.md`,
+`docs/`, `apps/`, `scripts/`, `packages/`, `tools/`, `HANDOFF.md`, or `README.md`. Back to 40/40
+with L-095 added.
+
+### L-089 · 2026-09-07 · domain · #656
+
+- **Symptom:** six different caps (999, 200, 100, 50, 500, page size 20) each silently bounded a
+  total, a lookup, a match or a search — tiles understated, a receipt "not found", a statement
+  that omitted old debt, a bill that could never be matched, a search that could not reach page 2.
+- **Root cause:** a `take`/`limit` chosen as a rendering budget was reused as an arithmetic
+  boundary.
+- **Lesson:** **a total, a lookup, a match or a search is computed by the database over the whole
+  (open) set, or the view is labelled partial; a cap is a rendering budget and never an
+  arithmetic boundary; every paginated order carries an id tiebreaker.**
+- **Guard:** REG-B12/B80/B110/B117/B144/B169 pins (revert-probed) and the `limit: 999` /
+  `take: N,` sibling sweep filed as rows.

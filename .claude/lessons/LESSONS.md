@@ -510,18 +510,19 @@
 
 ## domain
 
-### L-089 · 2026-09-07 · domain · #656
+### L-095 · 2026-09-08 · domain · #668
 
-- **Symptom:** six different caps (999, 200, 100, 50, 500, page size 20) each silently bounded a
-  total, a lookup, a match or a search — tiles understated, a receipt "not found", a statement
-  that omitted old debt, a bill that could never be matched, a search that could not reach page 2.
-- **Root cause:** a `take`/`limit` chosen as a rendering budget was reused as an arithmetic
-  boundary.
-- **Lesson:** **a total, a lookup, a match or a search is computed by the database over the whole
-  (open) set, or the view is labelled partial; a cap is a rendering budget and never an
-  arithmetic boundary; every paginated order carries an id tiebreaker.**
-- **Guard:** REG-B12/B80/B110/B117/B144/B169 pins (revert-probed) and the `limit: 999` /
-  `take: N,` sibling sweep filed as rows.
+- **Symptom:** the fix's first round wired the scan FAB's tap to the wrong prop (inert, compiled
+  cleanly); round two found both handlers optional on shared `BarcodeFab` let `<BarcodeFab />`
+  compile into a dead control across five existing mounts too.
+- **Root cause:** mutually exclusive handlers (`onScanned` opens its own camera; `onPress`
+  intercepts the tap for a caller with its own scan surface) were modelled as independent optional
+  props, so neither being supplied still typechecked.
+- **Lesson:** **Model mutually exclusive handlers on a shared component as a discriminated union
+  (exactly one of `onScanned` / `onPress`), so a no-op mount is a TYPE error — pin it with a props
+  test.**
+- **Guard:** `barcode-fab-props.test.ts` (`tsc --noEmit`: rejects neither/both) + `BarcodeFab.tsx`'s
+  discriminated-union `Props`.
 
 ### L-071 · 2026-09-04 · domain · OCR gate
 
