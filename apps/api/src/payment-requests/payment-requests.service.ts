@@ -55,9 +55,10 @@ function isUniqueConstraintViolation(err: unknown): boolean {
  *
  * ALLOCATION POLICY (owner decision 2026-08-21): every buyer payment is against
  * the ACCOUNT and settles the OLDEST invoices first (issueDate asc, then
- * invoiceNumber asc), partially covering the last invoice it reaches. The
- * request may record which invoice screen it started from, but allocation never
- * honors it — the UI says so.
+ * createdAt asc, then invoiceNumber asc — numbers are minted in creation order;
+ * the text tiebreak only decides split siblings), partially covering the last
+ * invoice it reaches. The request may record which invoice screen it started
+ * from, but allocation never honors it — the UI says so.
  *
  * MONEY DISCIPLINE: a request row is NOT money. InvoicePayment rows are written
  * exclusively through InvoicesService.recordStandalonePayment — on operator
@@ -103,7 +104,7 @@ export class PaymentRequestsService {
       // real payment into on-account credit — while every other read (findAll/
       // findOne/PDF/email) correctly still shows the money owed.
       include: { payments: { where: CONFIRMED_PAYMENT } },
-      orderBy: [{ issueDate: "asc" }, { invoiceNumber: "asc" }],
+      orderBy: [{ issueDate: "asc" }, { createdAt: "asc" }, { invoiceNumber: "asc" }],
     });
     return rows
       .map((inv) => {

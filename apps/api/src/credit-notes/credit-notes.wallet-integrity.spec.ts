@@ -83,6 +83,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import { NumberingService } from "../import/numbering.service";
 import { EmailService } from "../email/email.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -412,6 +413,10 @@ describe("InvoicesService — voidInvoiceInTx caps/voids credit notes it sourced
         { provide: StorageService, useValue: {} },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         { provide: CommissionEngineService, useValue: commissionEngine },
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("INV-2026-0001") },
+        },
       ],
     }).compile();
 

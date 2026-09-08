@@ -13,6 +13,7 @@ import { CreditNotesModule } from "../credit-notes/credit-notes.module";
 import { MessagingModule } from "../messaging/messaging.module";
 import { EntitlementsModule } from "../billing/entitlements.module";
 import { CommissionsModule } from "../sales-agents/commissions.module";
+import { NumberingModule } from "../import/numbering.module";
 
 @Module({
   imports: [
@@ -27,6 +28,9 @@ import { CommissionsModule } from "../sales-agents/commissions.module";
     MessagingModule,
     EntitlementsModule,
     CommissionsModule,
+    // B100/F16b: reserveNext("INVOICE", …) mints invoice numbers through the
+    // shared NumberingService.
+    NumberingModule,
   ],
   controllers: [InvoicesController],
   providers: [InvoicesService, InvoicePdfService],

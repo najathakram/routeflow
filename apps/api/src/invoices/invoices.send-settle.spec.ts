@@ -55,6 +55,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { StorageService } from "../storage/storage.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 const ORDER_ID = "ord-f07-settle-1";
@@ -155,6 +156,10 @@ describe("InvoicesService — send()/sendEmail() settle-before-sweep (TP-INV)", 
         {
           provide: CommissionEngineService,
           useValue: { syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined) },
+        },
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("INV-2026-0001") },
         },
       ],
     }).compile();

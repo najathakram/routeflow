@@ -2,7 +2,7 @@ import { Module } from "@nestjs/common";
 import { ImportController } from "./import.controller";
 import { ImportService } from "./import.service";
 import { NumberingController } from "./numbering.controller";
-import { NumberingService } from "./numbering.service";
+import { NumberingModule } from "./numbering.module";
 import { AliasController } from "./alias.controller";
 import { ResolutionController } from "./resolution.controller";
 import { MigrationController } from "./migration.controller";
@@ -36,6 +36,9 @@ import { BillingModule } from "../billing/billing.module";
     CustomersModule,
     EntitlementsModule,
     BillingModule,
+    // B100/F16b: NumberingService now lives in its own module (numbering.module.ts)
+    // so InvoicesModule/EstimatesModule can consume it without importing ImportModule.
+    NumberingModule,
   ],
   controllers: [
     ImportController,
@@ -47,7 +50,6 @@ import { BillingModule } from "../billing/billing.module";
   ],
   providers: [
     ImportService,
-    NumberingService,
     ExternalRefService,
     ProductAliasService,
     VariantResolutionService,
@@ -55,10 +57,10 @@ import { BillingModule } from "../billing/billing.module";
     BatchImportService,
     SourceConnectorRegistry,
   ],
-  // NumberingService is exported so the deferred invoices/orders wiring (which
-  // must call reserveNext at mint time) can consume it without duplicating it.
+  // NumberingModule is re-exported so any existing consumer of ImportModule's
+  // NumberingService export keeps working without duplicating the provider.
   // The idempotency substrate is exported for the migration (Phase 4) and batch
   // (Phase 5) flows built on top of it.
-  exports: [NumberingService, ExternalRefService, ProductAliasService, DuplicateMatchModule],
+  exports: [NumberingModule, ExternalRefService, ProductAliasService, DuplicateMatchModule],
 })
 export class ImportModule {}
