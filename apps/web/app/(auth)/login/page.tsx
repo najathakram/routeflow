@@ -6,7 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { Input, Button, PasswordInput } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { useTenant } from "@/components/tenant-provider";
@@ -15,6 +15,7 @@ import { GoogleIcon, startGoogleSignIn } from "@/lib/google-oauth";
 import { tenantSlugFromHostname } from "@/lib/tenant-host";
 import { safeOperatorRedirect } from "@/lib/portal-routing";
 import { usePortalPresence } from "@/lib/hooks/usePortalPresence";
+import { AuthShell } from "@/components/auth";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -175,323 +176,143 @@ export default function LoginPage() {
     : null;
 
   return (
-    <div
-      className="flex min-h-screen"
-      style={{ background: "#FAF6EE" /* cream — matches marketing site */ }}
-    >
-      {/* Left panel — deep-teal gradient with brand & value-prop. Hidden < lg. */}
-      <div
-        className="relative hidden lg:flex lg:w-1/2 items-center justify-center overflow-hidden"
-        style={{ background: "linear-gradient(155deg, #0E1F36 0%, #073F3D 60%, #0B6E6B 100%)" }}
-      >
-        {/* Decorative glow */}
-        <div
-          aria-hidden="true"
-          style={{
-            position: "absolute",
-            top: -160,
-            right: -120,
-            width: 460,
-            height: 460,
-            borderRadius: "50%",
-            background: "radial-gradient(circle, rgba(125,220,216,0.45), rgba(20,163,159,0) 65%)",
-            filter: "blur(20px)",
-          }}
-        />
-        <div
-          aria-hidden="true"
-          style={{
-            position: "absolute",
-            inset: 0,
-            opacity: 0.18,
-            backgroundImage:
-              "linear-gradient(to right, rgba(125,220,216,0.5) 1px, transparent 1px), linear-gradient(to bottom, rgba(125,220,216,0.5) 1px, transparent 1px)",
-            backgroundSize: "32px 32px",
-            maskImage: "radial-gradient(ellipse at top right, black, transparent 65%)",
-            WebkitMaskImage: "radial-gradient(ellipse at top right, black, transparent 65%)",
-          }}
-        />
-
-        <div className="relative z-10 max-w-md px-12">
-          <Link
-            href="/"
-            className="mb-12 inline-flex items-center gap-2 text-sm transition-colors"
-            style={{ color: "rgba(250,246,238,0.75)" }}
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> Back to home
-          </Link>
-
-          {/* RouteFlow LogoLoop — dark-background variant. The shared
-              /logo.svg asset is the light-bg version (ink + teal on transparent),
-              which would render with poor contrast against this panel's
-              #0E1F36 gradient. Cream arc + teal accent + cream-filled origin +
-              teal-ringed ink destination match the design's `dark` tone. */}
-          <svg
-            width={48}
-            height={48}
-            viewBox="0 0 64 64"
-            fill="none"
-            aria-label="RouteFlow"
-            role="img"
-            className="mb-8"
-          >
-            <path
-              d="M 14 14 C 40 10, 56 24, 50 50"
-              stroke="#FAF6EE"
-              strokeWidth="3.2"
-              strokeLinecap="round"
-              fill="none"
-            />
-            <path
-              d="M 14 14 C 8 40, 24 54, 50 50"
-              stroke="#14a39f"
-              strokeWidth="3.2"
-              strokeLinecap="round"
-              fill="none"
-            />
-            <circle cx="14" cy="14" r="5.5" fill="#FAF6EE" />
-            <circle cx="50" cy="50" r="5.5" fill="#0E1F36" stroke="#14a39f" strokeWidth="3" />
-          </svg>
-
-          <h2
-            style={{
-              fontFamily: "var(--font-instrument-serif), serif",
-              fontSize: 56,
-              lineHeight: 1.05,
-              letterSpacing: "-0.025em",
-              color: "#FAF6EE",
-              margin: 0,
-            }}
-          >
-            Welcome back to <em style={{ fontStyle: "italic", color: "#7DDCD8" }}>RouteFlow</em>.
-          </h2>
-          <p className="mt-6 text-base leading-relaxed" style={{ color: "rgba(250,246,238,0.7)" }}>
-            Sign in to your wholesale operations dashboard. Manage orders, routes, drivers, invoices
-            and customers — all on one rail.
+    <AuthShell
+      audience="distributor"
+      kicker="Distributor workspace"
+      title="Welcome back."
+      lead="Sign in to your distributor workspace."
+      logoUrl={logoUrl}
+      logoAlt={businessName}
+      footer={
+        <>
+          <p className="text-xs text-navy/70">
+            Buying from a seller?{" "}
+            <a href="/buyer/login" className="text-[#0B6E6B] hover:underline font-medium">
+              Sign in to the buyer portal
+            </a>
           </p>
-
-          <ul className="mt-10 space-y-4">
-            {[
-              "Live driver tracking & route optimisation",
-              "Auto-invoicing the moment a delivery is signed off",
-              "Real-time P&L by route, van and customer",
-            ].map((item) => (
-              <li
-                key={item}
-                className="flex items-start gap-3 text-sm"
-                style={{ color: "rgba(250,246,238,0.85)" }}
-              >
-                <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" style={{ color: "#7DDCD8" }} />
-                {item}
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-
-      {/* Right panel — form */}
-      <div className="flex flex-1 items-center justify-center p-4 lg:p-8">
-        <div className="w-full max-w-sm">
-          {/* Mobile-only top bar (left panel is hidden on small screens) */}
-          <div className="mb-6 lg:hidden">
-            <Link
-              href="/"
-              className="mb-6 inline-flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" /> Back to home
-            </Link>
-            <div className="flex items-center gap-3">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={logoUrl ?? "/logo.svg"}
-                alt={businessName}
-                className="h-10 w-10 object-contain"
-              />
-              <h1
-                style={{
-                  fontFamily: "var(--font-instrument-serif), serif",
-                  fontSize: 28,
-                  letterSpacing: "-0.02em",
-                  color: "#0E1F36",
-                  margin: 0,
-                }}
-              >
-                {businessName}
-              </h1>
-            </div>
-          </div>
-
-          {/* Desktop heading inside the form column */}
-          <div className="hidden lg:block mb-7">
-            {logoUrl && (
-              <div className="mb-4 flex items-center gap-3">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={logoUrl}
-                  alt={businessName}
-                  className="h-9 w-9 rounded-lg object-contain"
-                />
-                <span className="text-base font-semibold text-navy">{businessName}</span>
-              </div>
-            )}
-            <h1
-              style={{
-                fontFamily: "var(--font-instrument-serif), serif",
-                fontSize: 36,
-                letterSpacing: "-0.02em",
-                color: "#0E1F36",
-                margin: 0,
-                lineHeight: 1.1,
-              }}
-            >
-              Sign in
-            </h1>
-            <p className="mt-2 text-sm text-navy/70">Wholesaler portal — manage your operations.</p>
-          </div>
-
-          {/* Form card */}
-          <div
-            className="rounded-2xl p-6 shadow-card"
-            style={{
-              background: "#FFFFFF",
-              border: "1px solid rgba(14,31,54,0.08)",
-              boxShadow: "0 20px 40px -20px rgba(14,31,54,0.18)",
-            }}
+          <p className="text-xs text-navy/70">
+            New to RouteFlow?{" "}
+            <a href="/signup" className="text-[#0B6E6B] hover:underline font-medium">
+              Start your 14-day free trial
+            </a>
+          </p>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
+        {presence.buyer && (
+          <p
+            role="status"
+            className="rounded-lg border border-surface-border bg-surface-raised px-3 py-2 text-sm text-navy"
           >
-            <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
-              {presence.buyer && (
-                <p
-                  role="status"
-                  className="rounded-lg border border-surface-border bg-surface-raised px-3 py-2 text-sm text-navy"
-                >
-                  You&apos;re signed in to the buyer portal.{" "}
-                  <a href="/buyer/portal" className="text-[#0B6E6B] hover:underline font-medium">
-                    Go to buyer portal
-                  </a>
-                </p>
-              )}
+            You&apos;re signed in to the buyer portal.{" "}
+            <a href="/buyer/portal" className="text-[#0B6E6B] hover:underline font-medium">
+              Go to buyer portal
+            </a>
+          </p>
+        )}
 
-              {throttleSeconds && throttleSeconds > 0 ? (
-                <p className="rounded-lg bg-warning-bg px-3 py-2 text-sm text-warning">
-                  Too many login attempts. Try again in {throttleSeconds}{" "}
-                  {throttleSeconds === 1 ? "second" : "seconds"}.
-                </p>
-              ) : apiError ? (
-                <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">{apiError}</p>
-              ) : null}
+        {throttleSeconds && throttleSeconds > 0 ? (
+          <p className="rounded-lg bg-warning-bg px-3 py-2 text-sm text-warning">
+            Too many login attempts. Try again in {throttleSeconds}{" "}
+            {throttleSeconds === 1 ? "second" : "seconds"}.
+          </p>
+        ) : apiError ? (
+          <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">{apiError}</p>
+        ) : null}
 
-              {showWorkspaceField && (
-                <Input
-                  label="Workspace"
-                  placeholder="e.g. acme-logistics"
-                  autoComplete="organization"
-                  autoCapitalize="none"
-                  spellCheck={false}
-                  register={register("workspace")}
-                  error={errors.workspace?.message}
-                />
-              )}
-              <Input
-                label="Username or email"
-                placeholder="you@company.com"
-                autoComplete="username"
-                register={register("username")}
-                error={errors.username?.message}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    document.getElementById("password")?.focus();
-                  }
-                }}
-              />
-              <PasswordInput
-                id="password"
-                label="Password"
-                placeholder="Enter your password"
-                autoComplete="current-password"
-                className="rounded-lg"
-                register={register("password")}
-                error={errors.password?.message}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    handleSubmit(onSubmit)();
-                  }
-                }}
-              />
+        {showWorkspaceField && (
+          <Input
+            label="Workspace"
+            placeholder="e.g. acme-logistics"
+            autoComplete="organization"
+            autoCapitalize="none"
+            spellCheck={false}
+            register={register("workspace")}
+            error={errors.workspace?.message}
+          />
+        )}
+        <Input
+          label="Username or email"
+          placeholder="you@company.com"
+          autoComplete="username"
+          register={register("username")}
+          error={errors.username?.message}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              document.getElementById("password")?.focus();
+            }
+          }}
+        />
+        <PasswordInput
+          id="password"
+          label="Password"
+          placeholder="Enter your password"
+          autoComplete="current-password"
+          className="rounded-lg"
+          register={register("password")}
+          error={errors.password?.message}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              handleSubmit(onSubmit)();
+            }
+          }}
+        />
 
-              <div className="-mt-2 text-right">
-                <Link
-                  href="/forgot-password"
-                  className="text-xs font-medium text-[#0B6E6B] hover:underline"
-                >
-                  Forgot password?
-                </Link>
-              </div>
-
-              <Button
-                type="submit"
-                loading={isLoading}
-                disabled={!!(throttleSeconds && throttleSeconds > 0)}
-                className="mt-2 w-full"
-              >
-                Sign in <ArrowRight className="h-4 w-4 ml-1" />
-              </Button>
-            </form>
-
-            {/* Divider */}
-            <div className="my-5 flex items-center gap-3">
-              <div className="h-px flex-1 bg-surface-border" />
-              <span className="text-xs text-navy/70 uppercase tracking-wider">or</span>
-              <div className="h-px flex-1 bg-surface-border" />
-            </div>
-
-            {googleError && (
-              <p className="mb-3 rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
-                {googleError}
-              </p>
-            )}
-            <button
-              type="button"
-              onClick={handleGoogleSignIn}
-              disabled={googleLoading || isLoading}
-              className="flex w-full items-center justify-center gap-3 rounded-lg border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {googleLoading ? (
-                <>
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-navy/30 border-t-navy/70" />
-                  <span>Redirecting to Google…</span>
-                </>
-              ) : (
-                <>
-                  <GoogleIcon className="h-4 w-4" />
-                  <span>Continue with Google</span>
-                </>
-              )}
-            </button>
-
-            <p className="mt-5 text-center text-xs text-navy/70">
-              First sign-in? You&apos;ll be prompted to change your password.
-            </p>
-          </div>
-
-          {/* Footer links */}
-          <div className="mt-6 space-y-2 text-center">
-            <p className="text-xs text-navy/70">
-              Buying from a seller?{" "}
-              <a href="/buyer/login" className="text-[#0B6E6B] hover:underline font-medium">
-                Sign in to the buyer portal
-              </a>
-            </p>
-            <p className="text-xs text-navy/70">
-              New to RouteFlow?{" "}
-              <a href="/signup" className="text-[#0B6E6B] hover:underline font-medium">
-                Start your 14-day free trial
-              </a>
-            </p>
-          </div>
+        <div className="-mt-2 text-right">
+          <Link
+            href="/forgot-password"
+            className="text-xs font-medium text-[#0B6E6B] hover:underline"
+          >
+            Forgot password?
+          </Link>
         </div>
+
+        <Button
+          type="submit"
+          loading={isLoading}
+          disabled={!!(throttleSeconds && throttleSeconds > 0)}
+          className="rf-btn mt-2 w-full"
+        >
+          Sign in <ArrowRight className="h-4 w-4 ml-1" />
+        </Button>
+      </form>
+
+      {/* Divider */}
+      <div className="my-5 flex items-center gap-3">
+        <div className="h-px flex-1 bg-surface-border" />
+        <span className="text-xs text-navy/70 uppercase tracking-wider">or</span>
+        <div className="h-px flex-1 bg-surface-border" />
       </div>
-    </div>
+
+      {googleError && (
+        <p className="mb-3 rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">{googleError}</p>
+      )}
+      <button
+        type="button"
+        onClick={handleGoogleSignIn}
+        disabled={googleLoading || isLoading}
+        className="rf-btn secondary flex w-full items-center justify-center gap-3"
+      >
+        {googleLoading ? (
+          <>
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-navy/30 border-t-navy/70" />
+            <span>Redirecting to Google…</span>
+          </>
+        ) : (
+          <>
+            <GoogleIcon className="h-4 w-4" />
+            <span>Continue with Google</span>
+          </>
+        )}
+      </button>
+
+      <p className="mt-5 text-center text-xs text-navy/70">
+        First sign-in? You&apos;ll be prompted to change your password.
+      </p>
+    </AuthShell>
   );
 }

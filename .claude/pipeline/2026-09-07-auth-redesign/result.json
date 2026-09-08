@@ -1,0 +1,15 @@
+{
+  "runId": "wf_ca7094ab-7e5",
+  "mode": "feature",
+  "clean": false,
+  "lightLoop": true,
+  "engineStoppedAt": "62 agents, mid fix-loop",
+  "verdict": "SHIP",
+  "rounds": ["r1 review+judge", "r2 E1/E2/E3", "r2b", "opus re-check"],
+  "remainingFindings": ["F11", "LOW-2", "LOW-3"],
+  "redGate": "not re-run after the engine stop",
+  "uiVerify": "light-r1 + light-r2 evidence, Opus judged",
+  "phaseReport": [],
+  "scale": "major",
+  "confirmedByPhase": {}
+}

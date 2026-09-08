@@ -11,6 +11,19 @@
 
 ## process
 
+### L-094 · 2026-09-08 · process · #663
+
+- **Symptom:** the auth-redesign dev-pipeline engine stopped mid fix-loop at 62 agents with no
+  `result.json`, on checkpoint `102c79ce` — the next session reconstructed state via a light loop;
+  two driver agents in the same run had also stalled on background waits.
+- **Root cause:** the engine writes `result.json` only at the very end, so a stopped or killed run
+  leaves nothing machine-readable behind.
+- **Lesson:** **A long engine run checkpoints `result.json` (phase, remaining findings, gate
+  state) after every phase, not only at the end, and agent prompts forbid background waits — so
+  an interruption resumes from a record, not a reconstruction.**
+- **Guard:** none yet — process; dev-pipeline engine change candidate recorded in
+  `~/.claude/skills/dev-pipeline/references/RUN-LOG.md` under `2026-09-07-auth-redesign`.
+
 ### L-078 · 2026-09-05 · process · close-out re-check
 
 - **Symptom:** `LESSONS.md` keeps merging CLEANLY into duplicate ids — L-054 four times, then
@@ -312,6 +325,33 @@
 
 ## testing
 
+### L-093 · 2026-09-08 · testing · #665
+
+- **Symptom:** after #657 deployed, `/distributors` answered 307 with no `Location` header in
+  production (and in the compose image), while `next dev` redirected fine — the deployment E2E
+  (spec 36 T1) was the only thing that caught it.
+- **Root cause:** the alias was a prerendered `redirect()` page; served from the ISR cache on the
+  standalone server, it lost its `Location` header.
+- **Lesson:** **URL aliases and legacy redirects belong in `next.config.mjs` `redirects()`
+  (evaluated before middleware, carries `Location` for every UA), never in a prerendered page
+  calling `redirect()` — the dev server masks this whole class, so the deployment E2E or a
+  production image is the only oracle.**
+- **Guard:** `apps/web/app/(marketing)/distributors-redirect.static.test.ts` pins the config
+  entry and the page's absence; a repo-wide sweep for the same shape filed 9 unbatched rows
+  (B251–B259) rather than extending this one test to cover them.
+
+### L-092 · 2026-09-08 · testing · #657
+
+- **Symptom:** the marketing engine's UI-verify rounds 3–6 judged screenshots of master's build
+  for two days — a stale Docker container (`routeflow_web`, built from a retired worktree) still
+  held `:3001`, so every request the UI gate made hit master, never the branch under review.
+- **Root cause:** the UI gate never proved WHICH build actually answered on the URL under test.
+- **Lesson:** **every UI-verify pass starts with a build-identity probe on the exact URL (a
+  branch-only marker string, or the commit sha the page exposes) and records the answer in the
+  evidence — a judge never scores a screenshot without that line.**
+- **Guard:** process — add to the dev-pipeline driver prompt (skill file outside the repo) as
+  protocol step 0; no in-repo guard yet.
+
 ### L-091 · 2026-09-07 · testing · #661
 
 - **Symptom:** two deployed-E2E regression tests for real fixes stayed red for two deploys on
@@ -342,19 +382,6 @@
   replaced.**
 - **Guard:** the m7 spec (`invoices.service.spec.ts`) now quotes the memo's basis verbatim in its
   title and comment; deployment E2E spec 22 REG-B11 is the standing regression signal.
-
-### L-087 · 2026-09-07 · testing · #650
-
-- **Symptom:** a passing "leaves INTERNAL untouched" assertion in a new NO_TRANSPORT test proved
-  nothing — every INTERNAL event is already NO_TRIGGER, so the `channel !== INTERNAL` exemption
-  was unreachable and it passed on precedence alone (reviewer's mutation probe).
-- **Root cause:** written from the design's intent (INTERNAL is exempt), not the tree's current
-  state (every INTERNAL event is already NO_TRIGGER, so the exemption line never runs).
-- **Lesson:** **pin the CURRENT state behaviourally — every INTERNAL cell under a no-transport
-  provider reports NO_TRIGGER — so the first wired INTERNAL event turns it red; a reviewer's probe
-  must judge every "untouched" claim before it counts as coverage.**
-- **Guard:** the rewritten pin in `messaging-config.service.spec.ts`'s "NO_TRANSPORT — provider
-  declares no transports" describe block; F23's round-2 review finding (`result.json`).
 
 ### L-076 · 2026-09-05 · testing · F13
 
@@ -483,31 +510,19 @@
 
 ## domain
 
-### L-089 · 2026-09-07 · domain · #656
+### L-095 · 2026-09-08 · domain · #668
 
-- **Symptom:** six different caps (999, 200, 100, 50, 500, page size 20) each silently bounded a
-  total, a lookup, a match or a search — tiles understated, a receipt "not found", a statement
-  that omitted old debt, a bill that could never be matched, a search that could not reach page 2.
-- **Root cause:** a `take`/`limit` chosen as a rendering budget was reused as an arithmetic
-  boundary.
-- **Lesson:** **a total, a lookup, a match or a search is computed by the database over the whole
-  (open) set, or the view is labelled partial; a cap is a rendering budget and never an
-  arithmetic boundary; every paginated order carries an id tiebreaker.**
-- **Guard:** REG-B12/B80/B110/B117/B144/B169 pins (revert-probed) and the `limit: 999` /
-  `take: N,` sibling sweep filed as rows.
-
-### L-088 · 2026-09-07 · domain · #652
-
-- **Symptom:** delivery windows were mapped into the request and then dropped before a cost-only
-  solver on one branch, while another branch handed a clock-less solver a "hard" window with no
-  start time — three bugs, one class.
-- **Root cause:** a constraint verified inside individual solver branches instead of once at the
-  seam every branch shares.
-- **Lesson:** **enforce a cross-branch constraint at the shared seam AFTER any solver returns
-  (re-time against the real clock, repair, then persist), give every solver the same clock the
-  verifier uses, and pin it with a fixture where cost order and window order disagree.**
-- **Guard:** `REG-B147` / `REG-B161` / `REG-B177` in `route-optimization.service.spec.ts`
-  (mutation-probed: seven pins red with the window pass disabled).
+- **Symptom:** the fix's first round wired the scan FAB's tap to the wrong prop (inert, compiled
+  cleanly); round two found both handlers optional on shared `BarcodeFab` let `<BarcodeFab />`
+  compile into a dead control across five existing mounts too.
+- **Root cause:** mutually exclusive handlers (`onScanned` opens its own camera; `onPress`
+  intercepts the tap for a caller with its own scan surface) were modelled as independent optional
+  props, so neither being supplied still typechecked.
+- **Lesson:** **Model mutually exclusive handlers on a shared component as a discriminated union
+  (exactly one of `onScanned` / `onPress`), so a no-op mount is a TYPE error — pin it with a props
+  test.**
+- **Guard:** `barcode-fab-props.test.ts` (`tsc --noEmit`: rejects neither/both) + `BarcodeFab.tsx`'s
+  discriminated-union `Props`.
 
 ### L-071 · 2026-09-04 · domain · OCR gate
 

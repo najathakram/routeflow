@@ -1,0 +1,39 @@
+{
+  "runId": "wf_4fb3a80b-8b4",
+  "mode": "bugfix",
+  "scale": "minor",
+  "startedAt": "2026-09-08T06:17:03Z",
+  "estimatedCostUsd": 11.93,
+  "agents": 32,
+  "totalTokens": 3450163,
+  "durationMs": 16031041,
+  "clean": true,
+  "note": "Aggregate result object was truncated in the task output (>64 KB); this file is reconstructed from journal.jsonl (32 per-agent results).",
+  "redGate": {
+    "ran": true,
+    "behaviorallyRed": false,
+    "structurallyRed": false,
+    "note": "Audited twice: T1a (BarcodeFab mount count 0 vs 1 on the unmodified screen) is a genuine behavioural red; T1b-d fail derivatively (empty fabBlock) and T2 fails on a missing module, so the aggregate stayed non-behavioral. Source-text specs on a renderer-less mobile suite are weak oracles."
+  },
+  "fixPlanning": {
+    "rounds": 2,
+    "round1": { "fix": 8, "dispute": 0, "defer": 0 },
+    "round2": { "fix": 3, "dispute": 0, "defer": 0 }
+  },
+  "review": { "lastRoundFindings": 0 },
+  "finalGate": {
+    "pass": true,
+    "commands": [
+      "cd apps/mobile && npx jest --silent (115 suites / 1435 tests)",
+      "npm run lint -w apps/mobile (0 errors)",
+      "node scripts/validate-lessons.mjs"
+    ]
+  },
+  "remainingFindings": [],
+  "designDeviation": "The engine's Fable fix planner extended components/BarcodeFab.tsx (optional onPress intercept; onScanned optional; hardened in round 2) — outside the S3 file list, accepted by the final review.",
+  "uiVerify": {
+    "ran": false,
+    "reason": "no mobile renderer on the host; owner exercises the FAB on a device after the next EAS build"
+  },
+  "phaseReport": []
+}

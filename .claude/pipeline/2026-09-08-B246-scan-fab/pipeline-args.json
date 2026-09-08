@@ -1,0 +1,73 @@
+{
+  "mode": "bugfix",
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-08-B246-scan-fab/build-plan.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-08-B246-scan-fab/bug-test-plan.md",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-08T06:17:03Z",
+  "scale": "minor",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25",
+  "context": "B246 Option C (+ B245 pin). Design of record = cause-ruling.md section 2 (read with the plan). Mobile Jest is pure-logic node tests; no renderer, no Expo, no Playwright, no UI verify. Option-B bookkeeping: no map/lessons/ledger edits. Do not touch the scan ladder, ScanTray, ScanOrderSheet, NewOrderScreen, BarcodeScanner or ScanCamera.",
+  "formatCommand": "git ls-files -mo --exclude-standard | grep -E '[.](ts|tsx|json)$' | grep -v '^[.]claude/' | xargs -r npx prettier --write",
+  "radiusFiles": [
+    "apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx",
+    "apps/mobile/lib/scan-fab-visibility.ts",
+    "apps/mobile/components/BarcodeFab.tsx",
+    "apps/mobile/lib/scan-ladder.ts"
+  ],
+  "siblingPatterns": [
+    {
+      "regex": "const \\[scanOpen, setScanOpen\\] = useState",
+      "note": "a scanner owned by a modal picker/sheet with no parent-level scan affordance = FILE, do not fix"
+    }
+  ],
+  "testPackages": [
+    {
+      "id": "TP-MOBILE",
+      "title": "mobile source-text + pure-logic specs",
+      "files": [
+        "apps/mobile/__tests__/edit-items-scan-fab.test.ts",
+        "apps/mobile/__tests__/scan-fab-visibility.test.ts",
+        "apps/mobile/__tests__/scan-camera-web-sequencing.test.ts"
+      ],
+      "brief": "bug-test-plan T1 (REG-B246 a-d) T2 (REG-B246) T3 (B245 pin, no REG token); harness notes; implement nothing",
+      "effort": "medium"
+    }
+  ],
+  "redGate": {
+    "commands": ["cd apps/mobile && npx jest --runInBand -t \"REG-B246\""],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "P1",
+      "title": "scan FAB opens the picker in scan mode",
+      "files": [
+        "apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx",
+        "apps/mobile/lib/scan-fab-visibility.ts"
+      ],
+      "brief": "build-plan P1",
+      "effort": "high"
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "cd apps/mobile && npx tsc --noEmit -p tsconfig.json",
+      "cd apps/mobile && npx jest __tests__/edit-items-scan-fab.test.ts __tests__/scan-fab-visibility.test.ts __tests__/scan-camera-web-sequencing.test.ts __tests__/scan-ladder.test.ts --runInBand"
+    ],
+    "final": [
+      "cd apps/mobile && npx jest --silent",
+      "npm run lint -w apps/mobile",
+      "node scripts/validate-lessons.mjs"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx",
+        "behavior": "line-list FAB mounted, gated, opens the picker in scan mode",
+        "test": "REG-B246",
+        "revertFix": true
+      }
+    ]
+  }
+}

@@ -71,6 +71,7 @@ import { apiClient } from "@/lib/api-client";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { useInvoiceSettings, useUpdateInvoiceSettings } from "@/lib/api/invoices";
 import { useTenant } from "@/components/tenant-provider";
+import { BRAND_MARK_SRC } from "@/components/brand";
 import { useMarginConfig, useUpdateMarginConfig } from "@/lib/api/margin";
 import {
   useRemittanceConfig,
@@ -303,7 +304,7 @@ function BusinessProfileTab() {
                 className="h-full w-full object-contain p-2"
               />
             ) : (
-              <img src="/logo.svg" alt="RouteFlow" className="h-10 w-10 object-contain" />
+              <img src={BRAND_MARK_SRC} alt="RouteFlow" className="h-10 w-10 object-contain" />
             )}
           </div>
           <div className="space-y-2">

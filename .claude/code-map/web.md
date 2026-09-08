@@ -491,8 +491,18 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 
 ### `(auth)/` — operator login & OAuth
 
+**Sign-in redesign (2026-09-08, PR #663, spec 46):** `login/`, `signup/`, `signup/check-email/`,
+`forgot-password/`, `reset-password/` now render through the shared `AuthShell`
+(`components/auth/` — see "Components & shared" below); request/redirect/branch logic is
+byte-identical to before, only the chrome changed. `admin-login/page.tsx` and
+`platform/auth/callback/page.tsx` are untouched (outside AuthShell's scope).
+
 - `login/page.tsx` — workspace picker, email/password, legacy token migration.
-- `signup/page.tsx`, `signup/check-email/page.tsx` — signup + confirmation.
+- `signup/page.tsx`, `signup/check-email/page.tsx` — signup + confirmation (check-email's fenced
+  heading stays `Check your inbox`, no trailing period).
+- `forgot-password/page.tsx`, `reset-password/page.tsx` — reset flow (reset-password's
+  invalid-token state keeps its old heading text as a state-derived `AuthShell` title; valid
+  state is the fenced `Choose a new password`).
 - `admin-login/page.tsx` — super-admin login (uses `superAdminClient`).
 - `platform/auth/callback/page.tsx` — Google OAuth callback.
 
@@ -785,19 +795,84 @@ AgentFormModal` in a nested modal (`isAgentModalOpen` state); on create it selec
 
 ### `buyer/` — buyer portal (multi-seller B2B)
 
-- **Auth:** `login/page.tsx`, `register/page.tsx`, `change-password/page.tsx`, `invite/[token]/page.tsx` (**2026-08-26:** `handleAccept` awaits `refreshSellers()` after a successful accept — register→accept→portal is all soft navigation under ONE BuyerAuthProvider whose sellers list was seeded `[]` at registration, so without the refetch a freshly-linked buyer landed on "No sellers connected yet" until a hard reload; e2e BSD-01 caught it), `verify-merge/page.tsx`.
+- **Auth:** `login/page.tsx`, `register/page.tsx`, `change-password/page.tsx`, `invite/[token]/page.tsx` (**2026-08-26:** `handleAccept` awaits `refreshSellers()` after a successful accept — register→accept→portal is all soft navigation under ONE BuyerAuthProvider whose sellers list was seeded `[]` at registration, so without the refetch a freshly-linked buyer landed on "No sellers connected yet" until a hard reload; e2e BSD-01 caught it), `verify-merge/page.tsx`, `forgot-password/page.tsx`,
+  `reset-password/page.tsx`, `verify-email/page.tsx`. **Sign-in redesign (2026-09-08, PR #663):**
+  all 8 buyer auth pages now render through the shared `AuthShell` (`components/auth/`, see
+  "Components & shared"), on the SAME link utility the operator `/login` "Forgot password?" link
+  uses (`#0b6e6b`, 6.07:1 — the old buyer pages used a separate emerald palette at 3.77:1);
+  `invite/[token]/page.tsx` and `verify-merge/page.tsx` gained state-derived `AuthShell` titles
+  (invalid/accepted/idle, and verifying/verified/failed respectively) — logic byte-identical,
+  chrome only.
 - **Portal (`portal/[seller]/`):** `page.tsx` (landing), `shop/page.tsx` (browse/cart), `cart/page.tsx` (checkout → order), `dashboard/page.tsx`, `orders/page.tsx` + `[id]/page.tsx` (+ **P5-10** "Request a change" modal on dispatched orders (run `IN_PROGRESS`; no prices shown by design) → `POST /buyer/orders/:id/change-requests`; CR status chips PENDING/APPROVED/DECLINED from `order.changeRequests`; buyer `canEdit` now honors `editWindow`), `invoices/page.tsx` + `[id]/page.tsx` (PDF; **check lifecycle (P5-12)**: badge rendering now imports the shared **`lib/check-badge.ts`** `checkBadgeFor` helper [extracted verbatim in P5-14 — was local to this file; CHECK-only, manually-voided-not-bounced ⇒ no badge, Bounced ⇒ danger + struck amount + optional NSF line; also consumed by `payments/page.tsx`], displayed paid total filters `status!=="VOID"` so a bounce re-opens the balance, payment date now reads `p.paidAt ?? p.createdAt` [fixes a prior always-"N/A" bug from a never-returned `recordedAt` field]; `lib/api/buyer.ts` `BuyerInvoiceDetail.payments[]` += `status?/checkStatus?/nsfFeeAmount?/paidAt?/createdAt?`, dropped `recordedAt`; `useBuyerNotifications.ts` now also invalidates `["buyer","invoice"]` on `invoice.updated` so the badge/balance goes live, not just a notification), `templates/page.tsx`, `favorites/page.tsx`, `finances/page.tsx` (**P5-13 wallet**: `lib/api/buyer.ts` += `BuyerStatement`/`BuyerStatementTransaction` types + `useBuyerStatement()` (`GET /buyer/statement`); fifth `StatCard` "Store Credit" (`icon=Wallet`, `value=statement?.availableCredit`) + a lean "Active Credits" card listing `transactions.filter(type==="CREDIT_NOTE" && runningBalance>0)` w/ remaining + expiry, capped at 6 — the page's own load/error state is NOT gated on this hook), **`payments/page.tsx`** (P5-14 — Payments & credits: `useBuyerPayments({page,limit:20})` paginated payment table [Date/Invoice #/Method/Status via shared `checkBadgeFor`/Amount, VOID struck] + a "Store Credit" `StatCard` reading the SAME `useBuyerStatement().availableCredit` P5-13 hook [never recomputed — same cache entry as `finances/page.tsx`] + a how-to-pay card off `useBuyerRemittance()` [hides empty fields, friendly empty state when no field is set]; nav "Payments" (CreditCard icon) inserted between Invoices and Finances in `portal/layout.tsx`; `useBuyerNotifications.ts` `onInvoiceUpdated` also invalidates `["buyer","payments"]`+`["buyer","statement"]`; **Monthly statement (P5-15)**: a "Monthly statement" `Card` between the wallet grid and the payments table — `useBuyerStatementMonths()` feeds a native month `<select>` (options via a module-scope `monthLabel(bucket)`, default = `months[0]`) + a Download button; handler mirrors the invoice-detail `handleDownloadPdf` exactly — `fetchStatementPdfUrl(month)` → `fetchPdfBlob(url, buyerApiClient)` → programmatic `<a download="statement-${month}.pdf">` (blob URL revoked after 60s, error toast on failure, `finally` clears a `statementDownloading` spinner state); empty-months state "Statements become available after your first invoice."), `licenses/page.tsx` (W6b — self-serve license submit/renew), `account/page.tsx`; `portal/settings/page.tsx`.
 - **Your Shelf + running-low strip/chips (P5-06/07):** `portal/[seller]/shelf/page.tsx` — Running low / Due soon / Snoozed / Everything else sections off `useBuyerShelf()` (`GET /buyer/shelf` — THE single payload the shelf, the shop strip and the dashboard chips all read, so low lists + suggested qtys can't drift). Rows: presigned thumbnail (`imageUrl`), cadence line, days-left bar (`estDaysLeft/cadenceDays` clamped 0..1), suggested qty (no prices — estimates carry none by design), **Add** (server create/merge via `useBuyerCreateOrder` at `suggestedQty`), **Snooze/Unsnooze** (`useSnoozeReplenishment`/`useUnsnoozeReplenishment`; one cycle server-side). Header: **Add all low to cart** (`useAddAllLow` → `POST /buyer/shelf/add-all-low`) + open-order card (number/items/total → order detail; route-day/cutoff calendar deferred — needs a delivery-schedule model). Shop strip `shop/_components/RunningLowStrip.tsx` (low && !snoozed, quick-add to the LOCAL shop cart at suggestedQty, `QtyStepper` when already carted, hidden when empty; rendered above the shop grid). Dashboard chips "N running low"/"N due soon" → `./shelf`. Nav "Your Shelf" (Boxes) after Shop in `portal/layout.tsx`. `lib/api/buyer.ts` += `ShelfEstimate`/`ShelfResponse`/`ShelfActiveOrder`, `useBuyerShelf`, `useSnoozeReplenishment`, `useUnsnoozeReplenishment`, `useAddAllLow`.
 - **Shop grid density control (2026-08-20):** `shop/page.tsx` exports `type ShopDensity = "sm"|"md"|"lg"`; state initializes to default `"md"` (one notch denser than the old hardcoded grid — that IS the "cards are too big" fix) and a mount-time `useEffect` reads localStorage key `rf:buyer:shop:density` (view mode likewise persisted at `rf:buyer:shop:view`, `"grid"|"list"`) — hydration-safe, no SSR mismatch. `GRID_CLASS_BY_DENSITY` is a static full-string map (`lg`=today's `grid grid-cols-2 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4`, `md`=`…gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5`, `sm`=`…gap-2 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7`) — Tailwind can't see interpolated classes, so it's always a keyed lookup, never templated. A 3-button segmented control (`data-testid="density-toggle"` + `density-sm`/`density-md`/`density-lg`) sits next to the Grid/List toggle, grid-view only. Grid container carries `data-testid="product-grid"`; each `ProductTile` gets a `size?: ShopDensity` prop (`"lg"`/`"md"` = today's visuals, only `"sm"` trims body/type-scale) and the card root/nav link carry `data-testid="product-tile"`/`product-tile-link` respectively — clicking the image or name navigates to the product detail route below (dots/favorite/Add/stepper stay outside the Link or `preventDefault`+`stopPropagation`). Plan: `.claude/pipeline/plans/2026-08-20-buyer-shop-density-and-detail.md`.
 - **Buyer product detail page (2026-08-20, WP2):** NEW route `portal/[seller]/shop/[productId]/page.tsx` (`data-testid="product-detail-page"`) — first UI consumer of `useBuyerProduct(productId)` (`lib/api/buyer.ts:196`, `GET /buyer/products/:id` → `BuyerProductDetail`; previously zero consumers). Gallery (main image + thumbnail strip, focal via `objectPositionForUrl`) | info column: name (`product-detail-name`), stock line, price (`product-detail-price`) via the SAME `deriveTilePrice` the tile/cart use (cent parity — never `qty × unitPrice`), full `description`, favorite toggle. Action slot mirrors the tile: QtyStepper if already carted, Notify-me if OOS (`alertSubscribed` from the payload), else Add (`product-detail-add`, boxed = 1 box = `unitsPerBox` qty exactly like the tile). Variant rows price through `deriveTilePrice` too (never the raw `buyerPrice`) — `BuyerProductDetail.variants[]` gained `category`+`unitsPerBox` for it. 404/403 → "Product not available" card (never leaks existence — the endpoint already gates). **The plan's "no API changes" assumption did NOT hold** — `getProductDetail` had to start returning the listing's `unitsPerBox`/`thumbnailUrl`/stock/merch fields (see api.md "Detail↔listing payload parity") or the boxed Add and the OOS branch were both silently wrong.
 
-### `(marketing)/` — public site
+### `(marketing)/` — public site (marketing-port, PR #657, 2026-09-07)
 
-- `page.tsx` (home), `product/`, `company/`, `retailers/`, `wholesalers/`, `distributors/`, `pricing/`.
+- **Routes** (`lib/marketing-routes.ts#MARKETING_PAGE_PATHS`, single source — see middleware note
+  below): `page.tsx` (home), `product/`, `wholesalers/`, `retailers/`, `pricing/`, `company/`,
+  `contact/`, `privacy/`, `terms/`. `/distributors` (the original design's URL for the wholesaler
+  page) is a `next.config.mjs` **`redirects()`** entry to `/wholesalers` (307) — **PR #665
+  follow-through**: it used to be `distributors/page.tsx`, a prerendered `redirect()` page, which
+  lost its `Location` header served from the ISR cache on the standalone server (307, no
+  `Location`, production-only — `next dev` masked it; the deployment E2E's spec 36 T1 caught it).
+  A `next.config` redirect is evaluated before middleware and always carries `Location`; the page
+  is gone. Pinned by `distributors-redirect.static.test.ts` (below) — [[L-093]].
+- **`layout.tsx`** wraps every route in a `.rf-marketing`-classed shell (the scope every rule in
+  `marketing.css` — ~10,092 lines, ported near-verbatim from the redesign — hangs off) plus
+  `SiteHeader` + `EditorialMotion` + a footer; `app/globals.css` and
+  `packages/config/tailwind.config.ts` stay byte-identical to the pre-port baseline (MKT-PIN, see
+  `marketing-port.static.test.ts` below) — marketing ships its own token/utility layer instead
+  (registry B247, consolidation deferred).
+- **`components/site-header.tsx`** — `SiteHeader()`; nav from `../lib/site.ts#routes`/`NAV_SLUGS`
+  (never hand-mirror labels/hrefs — [[L-072]]). Desktop "Sign in" is a Radix `DropdownMenu`
+  (Distributor → `/login`, Retailer → `/buyer/login`); mobile is a Radix `Dialog` sheet (adds
+  Contact + both sign-ins + Book a demo). Both portals re-stamp the `.rf-marketing` scope class via
+  a `display:contents` carrier div — Radix portals mount into `document.body`, OUTSIDE the
+  layout's scoped wrapper, and every marketing rule/token is a `.rf-marketing` descendant selector.
+- **`components/editorial-motion.tsx`** — `EditorialMotion()`, renders `null`. Scroll-reveal via one
+  shared `IntersectionObserver` over a fixed selector list (section headings, cards, CTA blocks,
+  …): adds `.editorial-reveal`, adds `.reveal-pending` only to nodes starting below the fold, then
+  removes `.reveal-pending` on intersect. No-ops under `prefers-reduced-motion: reduce` (content
+  stays visible with no JS either way).
+- **`contact/page.tsx`** — `DemoForm` (`components/demo-form.tsx`) builds a
+  `mailto:hello@routeflow.info` draft client-side; no POST, nothing stored server-side (deliberate
+  v1 scope cut per the pipeline spec's R8 — registry B250 tracks adding a real lead-capture
+  endpoint).
+- **`lib/site.ts`** — the `routes` table (slug/label/href) `NAV_SLUGS` and `site-header.tsx` read
+  from; kept set-equal to `lib/marketing-routes.ts#MARKETING_PAGE_PATHS` by the parity test in
+  `middleware.marketing.test.ts`.
+- **`components/auth-links.ts`** — the four auth CTAs the chrome links (`/login`, `/signup`,
+  `/buyer/login`, `/buyer/register`).
+
+#### Middleware marketing carve-out (`middleware.ts`, `lib/marketing-routes.ts`)
+
+- **`MARKETING_PAGE_PATHS` / `MARKETING_AUTH_PATHS` / `MARKETING_ASSET_PREFIXES` /
+  `MARKETING_ASSET_FILES`** (`lib/marketing-routes.ts`, dependency-free — runs on the edge
+  runtime) are the SINGLE source for "is this URL a public marketing page/asset" ([[L-072]] — the
+  `/privacy`+`/terms` miss shipped from a hand-typed second copy). `middleware.ts` unions the page
+  paths with `/robots.txt`/`/sitemap.xml` into `MARKETING_PATHS`. **Exact-path match only, no
+  prefix matching** — a typo'd or retired marketing path is NOT exempt (registry B249).
+- **Mobile-web proxy carve-out**: a phone UA hitting a non-exempt path is rewritten
+  (`NextResponse.rewrite`) to the `@routeflow/mobile` Railway build so the address bar stays on
+  `www.routeflow.info`. Exempt (never proxied): `/api/`, `/_next/`, marketing assets, marketing
+  auth paths, and every marketing page EXCEPT `/` when the visitor is signed in
+  (`rf-op-auth`/`rf-buyer-auth`) or already marked `rf-mobile-app` — those go to the mobile build
+  too, since the marketing home isn't useful to a returning app user.
+- **`MOBILE_APP_COOKIE` (`rf-mobile-app`)** — httpOnly marker set on every proxied DOCUMENT request
+  (never on subresource/API proxying, so the SPA's own asset fetches don't re-stamp it), 30-day
+  ROLLING max-age (re-stamped on each proxied load). Marks "this browser has been served the
+  mobile-web build" so a returning visit to `/` skips the marketing home even with no presence
+  cookie (the Expo session lives in AsyncStorage, invisible to this middleware). `?desktop=1` /
+  the `prefer-desktop` cookie always win over both signals, at any age.
 
 ### Top-level
 
-- `change-password/page.tsx`, `contact/page.tsx`.
+- `change-password/page.tsx`, `contact/page.tsx`, `verify-email/page.tsx`. **Sign-in redesign
+  (2026-09-08, PR #663):** both `change-password/page.tsx` and `verify-email/page.tsx` render
+  through the shared `AuthShell`; `verify-email/page.tsx` gained a state-derived title
+  (`Verifying your email…` / `Email verified!` / `Verification failed`) — logic byte-identical.
 - **`app/api/health/route.ts`** (2026-08-29) — the web app's ONLY route handler. Deploy-readiness
   probe returning `{status, sha, branch, timestamp}`, where `sha` = `RAILWAY_GIT_COMMIT_SHA`.
   ⚠️ **`export const dynamic = "force-dynamic"` + `revalidate = 0` are load-bearing** — a statically
@@ -867,6 +942,35 @@ now contributes alongside api/mobile).
   `app/(dashboard)/routes/_components/late-stops.test.ts` (F12, PR #652 — `lateStopsFromAnalysis`;
   `CreateRouteModal.tsx`+`.test.tsx` DELETED same PR, B31 dead code),
   `components/MoneyInput.test.tsx`.
+- **Auth-redesign specs (PR #663, spec 46)** — `components/auth/AuthShell.test.tsx`
+  (`describe("AuthShell — T1")`, the shell component itself); `app/(auth)/auth-redesign.static.test.ts`
+  (454 lines, 12 `describe`s: all 15 pages render `AuthShell` — T2a; `.rf-auth` CSS scoping —
+  T2c/D10(b); RF monogram removed from forgot/reset/change-password — T2d; `auth-copy.ts` exports
+  `AUTH_STORY` — T2f; `audience` prop matches route family — T2g; buttons use `.rf-btn` — T2h; ONE
+  `h1` — T2j; success blocks carry `.rf-auth-success` — T2i; D1 pages compute their title rather
+  than a literal — D10(a); no low-contrast emerald link utility on a buyer page — D10(c); fenced
+  headings carry no trailing period — D10(d)); `app/(auth)/auth-redesign.guards.test.ts` (127
+  lines, 2 `describe`s: no design-preview leftovers — T2b; no `next/image` import — T2e).
+  **`app/(auth)/login/page.test.tsx` now module-mocks `@/lib/tenant-host` and
+  `@/components/tenant-provider` for the whole file** — its assertions no longer exercise
+  `tenantSlugFromHostname` directly (still covered by `lib/tenant-host.test.ts`); fidelity-loss
+  note, registry B260.
+- **Marketing-port specs (11, PR #657)** — static guards: `components/no-next-image.test.ts`
+  (walks `app/`+`components/` for any `next/image` import — see `components/brand/` above),
+  `app/(marketing)/marketing-port.static.test.ts` (MKT-PIN: dead asset/dependency scans,
+  `globals.css`/`tailwind.config.ts` byte-identical to the branch baseline, one tokenised
+  `--ring` focus rule — the two-colours-hardcoded finding from review is fixed and pinned here),
+  `app/(marketing)/middleware.marketing.test.ts` (`lib/site.ts#routes` ↔
+  `lib/marketing-routes.ts#MARKETING_PAGE_PATHS` parity), `app/(marketing)/seo.test.ts`,
+  `lib/marketing-routes.test.ts`, `app/(marketing)/lib/operation-model.test.ts`. Component:
+  `components/brand/BrandMark.test.tsx`, `app/(marketing)/components/{site-header,marketing,faq,
+demo-form}.test.tsx`.
+- **`app/(marketing)/distributors-redirect.static.test.ts` (PR #665, `/distributors` follow-through,
+  [[L-093]])** — pins the `next.config.mjs` `redirects()` entry (loaded via a real
+  `node --input-type=module` subprocess import of the config, since Jest/`next/jest`'s transform
+  collides with the config's own `__dirname` binding — same technique `lib/csp.test.ts` uses) and
+  the absence of `app/(marketing)/distributors/page.tsx`, so the alias can never regress back to a
+  prerendered `redirect()` page.
 
 ## E2E tests (`apps/web/e2e/`)
 
@@ -927,6 +1031,15 @@ file location — `resolveFromEnv` resolves relative to `process.cwd()`, not the
 directory, so a `../../`-relative value would be cwd-dependent) so a local run never touches
 campaign evidence; `scripts/campaign-check.mjs` carries a pointer comment to this file for the
 same reason.
+
+- **`e2e/46-auth-redesign.spec.ts`, project `auth-redesign`** (PR #663, spec 46; `testMatch:
+/46-auth-redesign\.spec\.ts/`, no `dependencies`, Desktop Chrome only — **not part of the local
+  red gate** per `test-plan.md`'s Harness notes; this project resolving/running IS the post-deploy
+  proof). 4 `test.describe`s: T5 (desktop 1280×800 chrome/copy/labels), T5d (mobile 375×812
+  chrome), T5e (accessibility), T5f (tenant logo on a tenant subdomain host). Specs 47
+  (`47-auth-redesign-evidence.spec.ts`) and 48 (`48-auth-redesign-a11y.spec.ts`) were planned in
+  the build-plan then DROPPED in the round-2 ruling (D3) — 47 duplicated the driver's own evidence
+  capture, 48 duplicated this spec's own T5e — so 47/48 return to the free spec-number pool.
 
 ### Local E2E lane (`apps/web/e2e/LOCAL-LANE.md`, wave D)
 
@@ -995,6 +1108,39 @@ Run: `cd apps/web && npx playwright test` (all projects) or `--project=critical-
 
 ## Components & shared
 
+- **`components/auth/` (2026-09-08, PR #663, spec 46) — shared `AuthShell` for all 15 reskinned
+  auth pages** (operator `(auth)/login`, `(auth)/signup`, `(auth)/signup/check-email`,
+  `(auth)/forgot-password`, `(auth)/reset-password`; buyer `buyer/login`, `buyer/register`,
+  `buyer/change-password`, `buyer/invite/[token]`, `buyer/reset-password`, `buyer/forgot-password`,
+  `buyer/verify-email`, `buyer/verify-merge`; top-level `change-password`, `verify-email`) — logic
+  on every page is byte-identical to before, only the chrome changed.
+  `AuthShell.tsx` (98 lines) — `AuthShellProps { audience: "distributor"|"retailer", kicker: string,
+title: string, lead?: ReactNode, backHref?: string, backLabel?: string, logoUrl?: string|null,
+logoAlt?: string, footer?: ReactNode, children: ReactNode }` (`title` is the single `h1`; this is
+  NOT the mobile scanner shell — no `initialScanOpen` here). Renders one
+  `<main id="main-content" className="rf-auth">` with a `.rf-auth-story` panel (`Brand tone="light"
+standalone`, an `h2` kicker/heading/paragraph from `AUTH_STORY[audience]`, an aria-hidden
+  order-status/AI-chip visual, a tagline) and a `.rf-auth-form` section (back link, `.rf-auth-card`
+  with an optional tenant `logoUrl`, the `h1 title`, optional `lead`, `children`, then a footer slot
+  that ALWAYS renders even with no `footer` prop so "Need help?" stays right-aligned). **The story
+  panel's `h2` precedes the card's `h1` in DOM order** — design intent (left-to-right
+  story-then-form), hidden entirely at ≤ 850px — registry B261.
+  `auth-copy.ts` — `AuthAudience`, `AUTH_STORY`, `AUTH_ORBIT`, `AUTH_AI_CHIP`, `AUTH_TAGLINE`
+  (verbatim fenced strings transcribed from an external redesign source, cited in the file header).
+  `auth-shell.css` (336 lines) — every top-level selector is prefixed `.rf-auth` (D4; a dead
+  `.rf-auth-forgot` rule was removed) so `.rf-auth .rf-btn` (0,2,0) beats Tailwind's
+  `bg-accent-strong` (0,1,0) by specificity, never bundle order; `app/globals.css` and the Tailwind
+  config are untouched. `index.ts` re-exports `AuthShell`, `AuthShellProps`, and all of
+  `auth-copy.ts`. State-derived `h1` titles (no state string rendered twice) on
+  `buyer/invite/[token]`, `verify-email` (top-level + buyer), `buyer/verify-merge`, and both
+  `reset-password` pages. Buyer auth pages moved off a separate emerald link palette onto the SAME
+  utility the operator `/login` "Forgot password?" link uses (`#0b6e6b`, 6.07:1). **Deferred**
+  (not fixed, registry rows): B260 (`(auth)/login/page.test.tsx` module-mocks `tenant-host`/
+  `tenant-provider` for the whole file instead of exercising `tenantSlugFromHostname` directly —
+  unit coverage stands in via `lib/tenant-host.test.ts`), B261 (h2-before-h1 above), B262
+  (operator/buyer copy asymmetries: OR/or divider, one-sided back-arrow, `/reset-password` missing
+  its footer link — fenced strings, needs a copy ruling). Guards: see "Unit tests" and "E2E tests"
+  below.
 - **Duplicate-invoice UX in `ScanInvoiceModal.tsx` (2026-08-07):** `InvoiceGroup` gained
   `duplicate` / `duplicateCheckPending` / `allowDuplicate`. A check fires from `applyScan` for every
   invoice in a batch and again (500ms debounce, keyed by invoice id, cleared on discard + unmount)
@@ -1117,6 +1263,19 @@ total}`) — types live in `lib/api/vendor-bills.ts` as `PriorScanSummary`/`Scan
   e2e COUNT-01 caught it). Amend sessions still hydrate — those ARE seeded server-side).
 - **order-entry / catalog batch (2026-07-11):** `MoneyInput.tsx` (`MoneyInput`/`DecimalInput` — raw draft string, parse live, `toFixed` on blur only; replaced every reformat-while-typing / numeric-bound money input incl. the `PriceEditRow` echo `useEffect` + product-tier `EditableNumber`), `CategoryCombobox.tsx` (pick-or-type-new, fork of `UnitCombobox`; `GET /products/categories`), `formatQtySplit` in `lib/pricing.ts` ("2 boxes + 3 pcs" on order/invoice detail + PDF). `ScanInvoiceModal.tsx` + `vendor-bills/[id]` gained the unmatched-line banner + per-line link/create (reuse `InlineCreateProductModal` w/ `initialPrice`/`initialCost`) and STOP auto-`acknowledgeUnlinked`. `QuickRestockModal` (inventory) = `SearchableProductPicker`(+`inputRef` wedge) + `BarcodeScannerButton`. `vendor-bills/[id]` `EditLineItems` line-item product select uses `SearchableProductPicker async` (server-side search, no 500-row `useProducts` fetch) instead of a native `<select>`; `onChange(id, product)` sets `productId`/`description`/`unitCost` from `product.averageCost`, clearing sets `productId: ""` (custom item). Per-line item **note** input on `CreateOrderModal`/`orders/[id]`; per-line **cost eye** toggle (operator-only) on `CreateOrderModal`.
 - **`ScanInvoiceModal.tsx` batch scan (one bill per PDF):** state = `invoices: InvoiceGroup[]` + `activeIndex`; flat names (`supplierId`, `reviewItems`, `pagePreviews`, expense fields…) are DERIVED from `invoices[activeIndex]` with plain-closure wrapper setters (NEVER memoize — stale `activeIndex` would cross-write invoices). `groupFiles`: each PDF = own invoice, all images = one invoice (pages). One `scanInvoice(files, signal)` call per group (concurrency 3, per-invoice `AbortController` + `runIdRef` stale-guard, per-invoice Retry). `InvoiceNavigator` (◀ Invoice X of N ▶ + status dots + within-batch dup-invoice# warn) switches preview AND form. `handleCreateAll`: `isSubmittingAll` gate, ONE up-front aggregated unlinked-lines confirm (single-invoice copy must keep "aren't linked to a product" — OP-17b asserts it), per-invoice create→receive→expense with `createdBillId`/`expenseCreated` idempotency (no double-post on retry); supplier invoice # editable → bill `notes` + expense `referenceNumber`; `roundMoney` on all totals; modal stays open if failed/scanning invoices remain. Object URLs revoked on re-upload/unmount (`invoicesRef`). e2e: OP-17b (single, unchanged) + OP-17c/d/e (batch/retry/idempotency, all write-routes mocked). Partial-failure branch now resets `createFromRow` alongside `activeIndex` (was desynced — a still-open "Create product from this line" flyout could attribute the new product to the wrong invoice after `setActiveIndex` jumped); `InvoiceNavigator` + the per-row create-product button are `disabled` while `isPending` so an operator can't switch invoices or open that flyout mid-batch-create. `invoiceTotalOf` sums RAW line amounts and rounds ONCE at the end (was rounding each line then summing) — must match the server create() totalOwed computation exactly, since this value also feeds the paired both-mode Expense.amount; per-line rounding could drift a cent from the server total on a fractional qty or >2-decimal unit cost.
+- **`components/brand/` (new, marketing-port #657)** — the one shared brand mark, replacing every
+  per-site logo treatment (marketing nav/footer SVG, login's inline SVG, the 404 "RF" monogram,
+  platform-admin's Shield icon, every legacy per-brand `<img>`). `BrandMark({size=34, className,
+tone="dark"|"light"})` — plain `<img src="/brand/routeflow-mark-192.png">`, deliberately NOT
+  `next/image` (guarded by `components/no-next-image.test.ts` below — `apps/web` builds
+  `output:"standalone"` with no `images` config); `tone="light"` applies `brightness-0 invert` for
+  dark surfaces. `BrandSignature({size, periodColor, standalone, tone})` = mark + "routeflow."
+  wordmark; `standalone` opts into the marketing header's own type metrics on surfaces outside
+  `.rf-marketing` (login, 404, platform-admin) so the signature is self-contained there. `Brand` =
+  `BrandSignature` wrapped in a `Link href="/"`. **`TenantLogo.tsx` falls back to `BrandMark`**
+  (via a `role="img" aria-label` wrapper, since `BrandMark` itself is `alt=""`/`aria-hidden`) when
+  no `branding.logoUrl` is uploaded; its own `tone` prop (default `"dark"`) affects only the
+  fallback mark, never a tenant's uploaded logo.
 
 ## API hooks (`lib/api/`)
 
@@ -1312,3 +1471,15 @@ today]`, under the shared `["invoices"]`-prefix invalidation every payment mutat
   2026-09-07 19:06Z, api SKIPPED — no api change) — REG-B12/REG-B80/REG-B144/REG-B110 all PASSED
   (list-caps project, attempt 1); run totals 143 passed / 0 failed / 26 skipped. B80/B144 (T2)
   discharged on this run; B110 (T2) was already discharged in the #659 follow-up (#660).
+- **`e2e/36-marketing-site.spec.ts`** (new, marketing-port #657) + **`playwright.config.ts`**
+  project `marketing` (`testMatch: /36-marketing-site\.spec\.ts/`, NO `dependencies` — signed-out
+  throughout, Desktop Chrome by default; T2's mobile assertions opt into `devices["iPhone 13"]`
+  via `test.use()` inside that describe block) — NOT part of the local red gate (post-deploy proof
+  only, same convention as 08-create-order-escape's "without this entry the spec never runs").
+  T1 per-route chrome/copy across the 9 public pages + the `/distributors` redirect + a bogus-path
+  404 + `/privacy` noindex + the contact form + the company page's photo credit; T2 the mobile
+  sheet (9 links) and desktop sign-in menu, the contact mailto draft, the wholesalers tab, home
+  FAQ single-open; T3 crawls every internal link on the 9 pages for < 400; T12 a mobile UA still
+  gets the marketing site on `/pricing` (R11 — see the middleware carve-out under `(marketing)/`
+  above; B249 is the gap this project's Desktop-Chrome-only run does NOT cover); T13
+  below-the-fold `.reveal-pending` clears on scroll and stays opaque under reduced-motion.

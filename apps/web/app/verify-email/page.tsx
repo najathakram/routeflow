@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useSearchParams } from "next/navigation";
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import { AuthShell } from "@/components/auth";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { OP_KEYS } from "@/lib/auth-keys";
 import { setOpPresenceCookie } from "@/lib/presence-cookies";
@@ -91,66 +92,64 @@ function VerifyEmailInner() {
     };
   }, [token, apiUrl]);
 
+  // The shell owns the page heading: it announces the state the card is showing,
+  // exactly as the old page's own per-state heading did (MED-1).
+  const title =
+    state === "success"
+      ? "Email verified!"
+      : state === "error"
+        ? "Verification failed"
+        : "Verifying your email…";
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-raised p-4">
-      <div className="w-full max-w-sm">
-        <div className="rounded-xl bg-white p-8 shadow-card text-center">
-          {/* Verifying */}
-          {state === "verifying" && (
-            <>
-              <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-brand-50">
-                <Loader2 className="h-8 w-8 animate-spin text-brand-600" />
-              </div>
-              <h1 className="text-xl font-bold text-navy">Verifying your email…</h1>
-              <p className="mt-2 text-sm text-navy/70">
-                Just a moment while we activate your account.
-              </p>
-            </>
-          )}
+    <AuthShell audience="distributor" kicker="Distributor workspace" title={title}>
+      <div className="text-center">
+        {/* Verifying */}
+        {state === "verifying" && (
+          <>
+            <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-brand-50">
+              <Loader2 className="h-8 w-8 animate-spin text-brand-600" />
+            </div>
+            <p className="mt-2 text-sm text-navy/70">
+              Just a moment while we activate your account.
+            </p>
+          </>
+        )}
 
-          {/* Success */}
-          {state === "success" && (
-            <>
-              <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-success/10">
-                <CheckCircle2 className="h-8 w-8 text-success" />
-              </div>
-              <h1 className="text-xl font-bold text-navy">Email verified!</h1>
-              <p className="mt-2 text-sm text-navy/70">
-                Your account is active. Taking you to your dashboard…
-              </p>
-              <div className="mt-4 flex justify-center">
-                <Loader2 className="h-4 w-4 animate-spin text-navy/30" />
-              </div>
-            </>
-          )}
+        {/* Success */}
+        {state === "success" && (
+          <div className="rf-auth-success">
+            <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-success/10">
+              <CheckCircle2 className="h-8 w-8 text-success" />
+            </div>
+            <p className="mt-2 text-sm text-navy/70">
+              Your account is active. Taking you to your dashboard…
+            </p>
+            <div className="mt-4 flex justify-center">
+              <Loader2 className="h-4 w-4 animate-spin text-navy/30" />
+            </div>
+          </div>
+        )}
 
-          {/* Error */}
-          {state === "error" && (
-            <>
-              <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-danger/10">
-                <XCircle className="h-8 w-8 text-danger" />
-              </div>
-              <h1 className="text-xl font-bold text-navy">Verification failed</h1>
-              <p className="mt-2 text-sm text-navy/70">{errorMsg}</p>
-              <div className="mt-6 space-y-3">
-                <a
-                  href="/signup"
-                  className="block w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white text-center transition-colors hover:bg-brand-700"
-                >
-                  Sign up again
-                </a>
-                <a
-                  href="/login"
-                  className="block w-full rounded-lg border border-surface-border px-4 py-2.5 text-sm font-medium text-navy text-center transition-colors hover:bg-surface-raised"
-                >
-                  Back to Sign In
-                </a>
-              </div>
-            </>
-          )}
-        </div>
+        {/* Error */}
+        {state === "error" && (
+          <>
+            <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-danger/10">
+              <XCircle className="h-8 w-8 text-danger" />
+            </div>
+            <p className="mt-2 text-sm text-navy/70">{errorMsg}</p>
+            <div className="mt-6 space-y-3">
+              <a href="/signup" className="rf-btn flex w-full items-center justify-center">
+                Sign up again
+              </a>
+              <a href="/login" className="rf-btn secondary flex w-full items-center justify-center">
+                Back to Sign In
+              </a>
+            </div>
+          </>
+        )}
       </div>
-    </div>
+    </AuthShell>
   );
 }
 

@@ -33,6 +33,7 @@ import type { ExpiringAuthorization } from "@/lib/api/authorizations";
 import type { BuyerSeller } from "@/lib/buyer-auth";
 import { PortalSwitchLink } from "@/components/PortalSwitchLink";
 import { setLastPortalCookie } from "@/lib/presence-cookies";
+import { BrandMark } from "@/components/brand";
 
 function buyerExpiryLabel(a: ExpiringAuthorization): string {
   if (a.expired) return "Expired";
@@ -250,11 +251,8 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
         {/* Header */}
         <div className="border-b border-white/10 px-4 py-4">
           <div className="flex items-center gap-2">
-            <img
-              src="/logo-buyer.svg"
-              alt="RouteFlow"
-              className="h-8 w-8 rounded-lg object-contain"
-            />
+            {/* Dark surface: `bg-gradient-to-b from-buyer-900 to-buyer-800` (B2). */}
+            <BrandMark size={32} className="rounded-lg object-contain" tone="light" />
             <div className="flex-1">
               <p className="text-sm font-bold text-white">RouteFlow</p>
               <p className="text-xs text-buyer-300">Buyer Portal</p>

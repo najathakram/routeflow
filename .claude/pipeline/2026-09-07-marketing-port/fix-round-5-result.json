@@ -1,0 +1,191 @@
+{
+  "w5": {
+    "executor": "W5 (Opus, high)",
+    "status": "done",
+    "filesTouched": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/app/globals.css",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/components/brand/BrandMark.tsx",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/tsconfig.json",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/r3/ (deleted)",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/app/(marketing)/marketing.css",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/components/TenantLogo.tsx"
+    ],
+    "diffSummary": "R1 (globals.css reverted byte-for-byte + selector-hook comment). Restored with `git -C <worktree> show 5ddec78e:apps/web/app/globals.css > apps/web/app/globals.css` (a file write, no checkout). Removed the 10 added lines (the `.brand-mark--light { filter: brightness(0) invert(1); }` block and its comment). sha256 = 09d7d3dc6fbeb42734933ef366a0586668d147f8e85bb17b8b37a94994e18dbe, exactly the T7 pin's expected value; `git diff 5ddec78e -- apps/web/app/globals.css` is empty. In `BrandMark.tsx` the light effect stays the Tailwind pair `brightness-0 invert` (unchanged on the element); added a 4-line comment above it recording that `brand-mark--light` carries NO styles of its own and exists purely as a selector hook for marketing.css's `.rf-marketing .brand-mark:not(.brand-mark--light)` multiply scoping, with globals.css byte-identical to base (MKT-PIN T7). No API/behaviour change.\n\nR2 (tsc unblocked, durably). `apps/web/tsconfig.json` exclude: `[\"node_modules\"]` -> `[\"node_modules\", \"test-output\"]`. Deleted the round-3 scratch dir `apps/web/test-output/r3/` (two files: `playwright.r3.config.ts`, `r3.spec.ts`) with `rm <two named files>` + `rmdir r3` — no recursive delete. The r4 evidence dir is untouched (it also holds .ts files, now likewise out of the TS program via the exclude). `apps/web/test-output/` is already gitignored (.gitignore:46).\n\nR3 (contrast recomputed against the real painted ground). Confirmed the ground: `.rf-marketing .connection-diagram { background: #eeedf2; }` at marketing.css:8636-8639 is unqualified/top-level and is the LAST `.connection-diagram` background rule (it overrides the `#edf3fb8c` at :5088 and the `#f4f7fc` at :1323), so #eeedf2 is opaque on every marketing page including /product. Changed `.rf-marketing .connection-nodes > div` #5c6b82 -> #3f4a5c and `.rf-marketing .connection-diagram > p` #6b7687 -> #4a5568 (both at :5107/:5115, the last color declaration for each selector), and rewrote both comments to state the ground and both ratios.\n\nWCAG maths (relative luminance per WCAG 2.x: c/255, linearised c<=0.03928 ? c/12.92 : ((c+0.055)/1.055)^2.4; L = 0.2126R+0.7152G+0.0722B; contrast = (Lhi+0.05)/(Llo+0.05)). L(#eeedf2) = 0.8516, L(#ffffff) = 1.0000.\n  #5c6b82 (round-4 nodes)  L=0.1440 | vs #eeedf2 4.65:1 PASS | vs white 5.41:1 PASS\n  #6b7687 (round-4 p)      L=0.1783 | vs #eeedf2 3.95:1 FAIL | vs white 4.60:1 PASS\n  #3f4a5c (new nodes)      L=0.0673 | vs #eeedf2 7.69:1 PASS | vs white 8.95:1 PASS\n  #4a5568 (new p)          L=0.0895 | vs #eeedf2 6.46:1 PASS | vs white 7.53:1 PASS\nBoth new values are the design's own named candidates and both clear 4.5:1 on #eeedf2 AND on white. Hue held: #5c6b82 216.3deg -> #3f4a5c 217.2deg; #6b7687 216.4deg -> #4a5568 218.0deg (HSL hue, same blue-gray family).\n\nR4 (accessible name restored). `TenantLogo`'s no-logo fallback is now wrapped: `<span role=\"img\" aria-label={imgAlt}><BrandMark tone={tone} className={...} /></span>`, with a 3-line comment saying BrandMark is alt=\"\"/aria-hidden by design so the wrapper must carry the name or the `alt` prop is silently dropped. `BrandMark`'s API is unchanged; the tenant-logo `<img alt={imgAlt}>` path is untouched.",
+    "gateOutputs": "All commands run from C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog (apps/web for the app gates). Real output:\n\n1) sha256 of globals.css after the restore (R1, and re-confirmed after every later edit):\n`sha256sum apps/web/app/globals.css`\n  09d7d3dc6fbeb42734933ef366a0586668d147f8e85bb17b8b37a94994e18dbe *apps/web/app/globals.css\n  expected (pin, marketing-port.static.test.ts:309): 09d7d3dc6fbeb42734933ef366a0586668d147f8e85bb17b8b37a94994e18dbe -> MATCH\n`git diff 5ddec78e -- apps/web/app/globals.css` -> empty (no output)\n\n2) `cd apps/web && npx tsc --noEmit -p tsconfig.json`\n  (no output)  TSC_EXIT=0\n\n3) `cd apps/web && npx jest --silent`\n  Test Suites: 42 passed, 42 total\n  Tests:       338 passed, 338 total\n  Snapshots:   0 total\n  Time:        24.464 s\n  JEST_EXIT=0\n  (final run, after the last comment edit; an identical 338/338 run was made before it)\n\n4) T7 pin run explicitly: `cd apps/web && npx jest \"marketing-port.static\" -t \"MKT-PIN T7\"`\n  PASS app/(marketing)/marketing-port.static.test.ts\n    v app/globals.css is byte-identical to the branch baseline (MKT-PIN T7) (5 ms)\n    v packages/config/tailwind.config.ts is byte-identical to the branch baseline (MKT-PIN T7) (2 ms)\n    v marketing.css declares no :root and scopes every custom property under .rf-marketing (MKT-PIN T7) (8 ms)\n  Tests: 53 skipped, 3 passed, 56 total   PIN_EXIT=0\n\n5) prettier --write on touched files: `cd apps/web && npx prettier --write \"app/(marketing)/marketing.css\" components/brand/BrandMark.tsx components/TenantLogo.tsx tsconfig.json`\n  app/(marketing)/marketing.css 1124ms (unchanged)\n  components/brand/BrandMark.tsx 116ms (unchanged)\n  components/TenantLogo.tsx 26ms (unchanged)\n  tsconfig.json 28ms (unchanged)\n  (globals.css deliberately NOT passed to --write, so the pinned bytes cannot be reformatted)\n\n6) prettier --check on all five touched files incl. globals.css:\n  Checking formatting...\n  All matched files use Prettier code style!\n  PRETTIER_EXIT=0\n  (re-run on marketing.css after the final comment edit: PRETTIER_EXIT=0)\n\n7) Bonus, not my assigned gate but run to avoid handing the Regate a red lint: `cd apps/web && npx next lint`\n  LINT_EXIT=0 — warnings only, all pre-existing (no-img-element x7, one role-has-required-aria-props in AddressAutocomplete, one exhaustive-deps in ScanInvoiceModal). The new `<span role=\"img\" aria-label>` produced no finding. 0 errors.\n\n8) WCAG verification script (node, run in the worktree):\n  L(#eeedf2) = 0.8516  L(#ffffff) = 1.0000\n  #5c6b82 L=0.1440 | vs #eeedf2 = 4.65:1 PASS | vs #ffffff = 5.41:1 PASS\n  #6b7687 L=0.1783 | vs #eeedf2 = 3.95:1 FAIL | vs #ffffff = 4.60:1 PASS\n  #3f4a5c L=0.0673 | vs #eeedf2 = 7.69:1 PASS | vs #ffffff = 8.95:1 PASS\n  #4a5568 L=0.0895 | vs #eeedf2 = 6.46:1 PASS | vs #ffffff = 7.53:1 PASS\n\n9) R2 deletion evidence: `ls apps/web/test-output/` -> `artifacts  r4` (r3 gone; r4 evidence dir intact).",
+    "notes": "Nothing was committed, stashed, checked out, reset or cleaned; no other worktree, the root checkout, or Docker was touched. Only read-only git (`git show`, `git diff`, `git status`) was used, all with an explicit worktree path.\n\nThree things the reviewer should weigh, none of which changed the ruling:\n\n(a) R3 slot assignment was mine within the ruling's discretion. The design named two example values (\"#4a5568 ~5.0:1, #3f4a5c higher\") without binding either to a selector. I gave the DARKER one (#3f4a5c) to `.connection-nodes > div` and the lighter (#4a5568) to `.connection-diagram > p`, because round-4's pair had the node labels darker than the caption (L 0.1440 vs 0.1783) and the caption is the subordinate 0.75rem footnote; the reverse (literal listing order) would have inverted that hierarchy. Both values are the design's own candidates and both clear 4.5:1 on #eeedf2 and on white.\n\n(b) The design's estimate \"#4a5568 ~5.0:1\" is low — measured 6.46:1 on #eeedf2 (7.53:1 on white). Not a mismatch; the binding constraint (>= 4.5:1 on #eeedf2) is met with margin.\n\n(c) Only ONE of the two round-4 colours genuinely failed on the real ground: #6b7687 at 3.95:1. #5c6b82 was already 4.65:1 on #eeedf2 (a thin pass). The ruling directed recomputing and picking values with >= 4.5:1 there, and the executor list names marketing.css as \"two colours\", so I changed both; the node-label change is a margin improvement (4.65 -> 7.69), not a defect repair.\n\nFor the UI gate: the ground to sample is #eeedf2, from the unqualified `.rf-marketing .connection-diagram` rule at marketing.css:8636 — it is the LAST such background declaration, so it beats the `#edf3fb8c` at :5088 and the base `#f4f7fc` at :1323 on every marketing page, /product included. Expect painted ink #3f4a5c on the four node labels and #4a5568 on the caption paragraph.\n\nAlso worth a close-out note: `apps/web/test-output/r4/` still holds .ts files (playwright.r4.config.ts, r4.spec.ts). They no longer enter the TS program thanks to the R2 exclude, and the dir is gitignored, but the r5 UI gate should write its evidence under the same `test-output/` root so the exclude keeps covering it."
+  },
+  "regate": {
+    "allPass": true,
+    "results": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web && npx tsc --noEmit -p tsconfig.json",
+        "pass": true,
+        "summary": "TypeScript compilation check passed (exit 0)",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web && npx jest --silent",
+        "pass": true,
+        "summary": "Jest: 338 tests passed (incl. marketing-port.static.test.ts T7 pin green)",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog && npm run lint -w apps/web",
+        "pass": true,
+        "summary": "ESLint: 0 errors (pre-existing 42 warnings reported)",
+        "failures": []
+      },
+      {
+        "command": "sha256sum C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/app/globals.css",
+        "pass": true,
+        "summary": "globals.css SHA256: 09d7d3dc6fbeb42734933ef366a0586668d147f8e85bb17b8b37a94994e18dbe (matches pin exactly)",
+        "failures": []
+      },
+      {
+        "command": "test ! -d C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/r3",
+        "pass": true,
+        "summary": "Round-3 scratch directory test-output/r3 has been deleted",
+        "failures": []
+      }
+    ]
+  },
+  "drive": {
+    "branchBuildProven": true,
+    "serverPid": "35892 (actual Next.js/node listener on :3007; the npx wrapper shell PID was 255024)",
+    "serverStopped": true,
+    "flows": [
+      {
+        "flow": "branch build proof: GET /product",
+        "viewport": "n/a (curl)",
+        "status": "PASS",
+        "facts": [
+          "HTTP status = 200",
+          "body contains a <header element (grep count = 1)",
+          "body contains all five nav labels: Platform, Distributors, Retailers, Pricing, Company"
+        ]
+      },
+      {
+        "flow": "/product .connection-nodes > div and .connection-diagram > p contrast",
+        "viewport": "1440x900",
+        "status": "PASS",
+        "facts": [
+          ".connection-nodes > div count = 1, boundingBox = {x:776, y:412.48, width:135.5, height:75.47}",
+          ".connection-nodes > div computed color = rgb(63,74,92) (#3f4a5c); nearest painted ancestor bg = rgb(238,237,242) (#eeedf2) on DIV.connection-diagram",
+          "pixel sample (crop png, darkest ink vs modal/most-common ground pixel): ink=rgb(63,74,92) ground=rgb(238,237,242), 222 unique colors in crop, contrast ratio = 7.688:1",
+          ".connection-diagram > p count = 1, boundingBox = {x:776, y:515.95, width:563, height:19.19}",
+          ".connection-diagram > p computed color = rgb(74,85,104) (#4a5568); nearest painted ancestor bg = rgb(238,237,242) (#eeedf2) on DIV.connection-diagram",
+          "pixel sample: ink=rgb(74,85,104) ground=rgb(238,237,242), 184 unique colors in crop, contrast ratio = 6.462:1",
+          "both ratios exceed the 4.5:1 WCAG AA threshold and match the design doc's predicted 7.69:1 and 6.46:1 against #eeedf2",
+          "screenshots saved: r5-product-1440x900.png (full page), r5-crop-node-1440x900.png, r5-crop-p-1440x900.png"
+        ]
+      },
+      {
+        "flow": "/product .connection-nodes > div and .connection-diagram > p contrast",
+        "viewport": "375x812",
+        "status": "PASS",
+        "facts": [
+          ".connection-nodes > div count = 1, boundingBox = {x:29, y:371.05, width:74, height:70.19}",
+          ".connection-nodes > div computed color = rgb(63,74,92) (#3f4a5c); nearest painted ancestor bg = rgb(238,237,242) (#eeedf2) on DIV.connection-diagram",
+          "pixel sample: ink(darkest observed pixel)=rgb(71,81,99) ground=rgb(238,237,242), 222 unique colors in crop, contrast ratio = 6.869:1 (darkest sampled pixel differs slightly from the pure computed color, likely anti-aliasing/subpixel rendering at this smaller crop, but well above threshold either way)",
+          ".connection-diagram > p count = 1, boundingBox = {x:29, y:469.23, width:317, height:19.19}",
+          ".connection-diagram > p computed color = rgb(74,85,104) (#4a5568); nearest painted ancestor bg = rgb(238,237,242) (#eeedf2) on DIV.connection-diagram",
+          "pixel sample: ink=rgb(74,85,104) ground=rgb(238,237,242), 184 unique colors in crop, contrast ratio = 6.462:1",
+          "screenshots saved: r5-product-375x812.png (full page), r5-crop-node-375x812.png, r5-crop-p-375x812.png"
+        ]
+      }
+    ],
+    "notes": "Setup: npx next dev -p 3007 from apps/web (log at apps/web/test-output/r5/dev-server.log); the log shows a benign lockfile-patch warning (Next tried and failed to patch node_modules lockfile for missing swc deps) followed by \"Ready in 6.1s\" — server started fine despite the warning. Branch build was proven via curl GET /product (200, <header present, all 5 nav labels present) before any Playwright run.\n\nConfig/spec: apps/web/test-output/r5/playwright.r5.config.ts (baseURL http://localhost:3007, no storageState) and apps/web/test-output/r5/r5.spec.ts. One flow parameterized over both viewports (1440x900, 375x812) via a for-loop producing two Playwright tests. Run command: `npx playwright test -c test-output/r5/playwright.r5.config.ts` from apps/web. Full output logged to apps/web/test-output/r5/run-output.log. Both tests passed (2 passed, 8.5s total).\n\nMethodology per element: (1) Playwright boundingBox() after scrollIntoViewIfNeeded(); (2) page.evaluate walking getComputedStyle up the ancestor chain to find the nearest ancestor with a non-transparent background-color, returning both the element's computed `color` and that ancestor's `background-color` + tag/class; (3) a tight screenshot clip (box padded by 4px) saved as a PNG crop; (4) pngjs PNG.sync.read on that crop, scanning every pixel to find the darkest pixel (by relative luminance, taken as the text-ink sample) and the single most frequent pixel color (taken as the surrounding-ground sample), then computing the WCAG contrast ratio between them via the standard relative-luminance formula (same formula used in round 4's spec).\n\nBoth elements paint on DIV.connection-diagram whose computed background-color is rgb(238,237,242) = #eeedf2, exactly matching the design doc's R3 assumption. The computed `color` values (#3f4a5c for connection-nodes>div, #4a5568 for connection-diagram>p) match exactly what the design doc specifies was applied in marketing.css (confirmed independently by grep of apps/web/app/(marketing)/marketing.css lines ~5107-5120, which carry inline comments documenting the same R3 math). Pixel-sampled contrast ratios (7.688:1 and 6.869:1 for the node label at 1440/375; 6.462:1 for the caption at both viewports) all clear 4.5:1 by a wide margin and closely match the doc's predicted 7.69:1 / 6.46:1 against #eeedf2.\n\nServer teardown: the npx wrapper's shell PID (255024, from `nohup ... &`) was not the actual listener — netstat showed the real Next.js/node process listening on :3007 was PID 35892. Killed via `taskkill //F //PID 35892`; netstat re-check confirmed port 3007 is free.\n\nNo design-doc mismatch encountered in the UI-driver scope — the R3 color fix was already present in marketing.css at the time of this run and behaved exactly as specified. This report covers only the UI DRIVER facts (branch-build proof + the one contrast flow at two viewports); it does not cover R1/R2/R4 (globals.css revert, tsconfig exclude, TenantLogo aria wrapper) which are outside this task's scope."
+  },
+  "judge": {
+    "verdicts": [
+      {
+        "flow": "branch build proof: /product serves the ported marketing page (header + five nav labels)",
+        "verdict": "pass",
+        "evidence": "The driver's curl proof was NOT captured to any log (test-output/r5/ holds only dev-server.log, playwright.r5.config.ts, r5.spec.ts, run-output.log), so I re-proved it from the pixels instead. Cropped rows 0-200 of apps/web/test-output/artifacts/r5-product-1440x900.png (full page 1440x7284) and read the image: the marketing <header> pill renders the routeflow wordmark plus all five nav labels — Platform (active pill), Distributors, Retailers, Pricing, Company — with 'Sign in' and 'Book a demo'. Mobile crop of r5-product-375x812.png (375x11466) rows 0-200 shows the same header with nav collapsed to the hamburger, expected at 375px. Corroborated by test-output/r5/dev-server.log: 'Local: http://localhost:3007', 'Ready in 6.1s', 'Compiled /product in 13.6s (2169 modules)', 'GET /product 200'. Server was on :3007 only — never :3000/:3001/Docker (playwright.r5.config.ts baseURL http://localhost:3007). Teardown confirmed by me: `netstat -ano | grep 3007` returns no listener."
+      },
+      {
+        "flow": "/product .connection-nodes > div and .connection-diagram > p contrast vs painted ground",
+        "viewport": "1440x900",
+        "verdict": "pass",
+        "evidence": "I re-measured from the PNGs myself with my own pngjs script (scratchpad/judge-r5.js), not from the driver's numbers. First I ran a per-row luminance profile of r5-crop-node-1440x900.png (143x83) to separate the icon band (y=18-35, min #676d7a = the SVG glyph, a different element) from the label text band (y=63-73, min #3f4a5c) — the driver's whole-crop 'darkest pixel' happened to be the text, but only by luck; measuring the isolated text band is the sound method. Text band y62-75: mode/ground = #eeedf2 rgb(238,237,242) with 1626/1859 px; darkest ink = #3f4a5c rgb(63,74,92) -> CR 7.688:1. Caption crop r5-crop-p-1440x900.png: ground #eeedf2 (14025/15417 px), darkest ink = #4a5568 rgb(74,85,104) -> CR 6.462:1. I then repeated the measurement IN SITU from the full-page r5-product-1440x900.png, independent of the driver's clip: band x800-890 y4362-4392 ('Office' label) -> ground #eeedf2, ink #3f4a5c, CR 7.688:1; band x920-1190 y4412-4442 (caption) -> ground #eeedf2, ink #4a5568, CR 6.462:1. Identical to the crop values. Ground is confirmed #eeedf2 by overwhelming plurality, matching the design's R3 assumption (relative luminance 0.8516 measured). Source agrees: apps/web/app/(marketing)/marketing.css:5107 `color: #3f4a5c` and :5115 `color: #4a5568`, and `awk 'NR>5115'` finds no later rule overriding either selector's color. Both ≥ 4.5:1."
+      },
+      {
+        "flow": "/product .connection-nodes > div and .connection-diagram > p contrast vs painted ground",
+        "viewport": "375x812",
+        "verdict": "pass",
+        "evidence": "Row profile of r5-crop-node-375x812.png (82x78) isolates the label text band at y=59-67 (icon band y=16-33). Text band y58-69: ground = #eeedf2 (mode); darkest ink = #475163 rgb(71,81,99) -> CR 6.869:1. In-situ from full-page r5-product-375x812.png, band x40-100 y7352-7382: ground #eeedf2, darkest #475163, CR 6.869:1 — identical. Caption r5-crop-p-375x812.png and in-situ band x60-320 y7398-7428: ground #eeedf2, darkest ink = #4a5568 -> CR 6.462:1. NOTE I verified rather than glossed: at 375px the label drops to font-size 0.75rem (marketing.css:3290) and ZERO pixels reach the exact specified #3f4a5c (my inkcore.js count: exact=0, within +/-2 = 0) — greyscale anti-aliasing never fully covers a pixel at 12px. The darkest observed #475163 still measures 6.869:1, and the specified pair #3f4a5c on #eeedf2 is 7.688:1, so the element clears 4.5:1 on either reading. I also checked an apparent anomaly — the caption crops at both viewports report identical ink-pixel counts (1392 non-ground px, 123 px at ≥4.5:1) despite different crop widths (571 vs 325). That is consistent, not fabricated: the same string at the same 12px size rasterises identically and is centred, so only the surrounding ground area differs (15417 vs 8775 total px). Both ≥ 4.5:1."
+      }
+    ],
+    "blockers": [],
+    "reasoning": "branchBuildProven = CONFIRMED, but on my own evidence rather than the driver's. The driver asserted a curl GET /product returning 200 with a <header and five nav labels; no such output was written to test-output/r5/ (only dev-server.log, the config, the spec, and run-output.log are there), so that claim was unverified as reported. I substituted a stronger proof: I cropped the header region out of both full-page r5 PNGs and read them — the desktop shot shows the ported marketing header with Platform/Distributors/Retailers/Pricing/Company, the mobile shot shows the same header with the expected hamburger collapse. That is pixel evidence from the artefact itself, so the gate is satisfied.\n\nOn contrast I did not accept the driver's numbers. I wrote my own pngjs analysis (scratchpad/judge-r5.js, inkcore.js, crop.js, findbg.js), and I improved on the driver's method in one material way: the driver took the darkest pixel of the WHOLE crop as the text ink, but the node crop also contains the SVG icon (a separate element, colour #676d7a). Per-row luminance profiling shows the icon occupies y=18-35 and the label text y=63-73 at desktop; the driver's answer was right only because the label ink is darker than the icon stroke. Measuring the isolated text band gives the same figures on a sound basis. I then re-measured both elements a second time IN SITU from the full-page screenshots at the coordinates I located myself (via an #eeedf2-density row scan), which is independent of the driver's Playwright clip — the values reproduce exactly.\n\nResults: ground is #eeedf2 at both viewports (design R3's assumption, confirmed empirically by mode with an overwhelming plurality of pixels). Node label #3f4a5c = 7.688:1; caption #4a5568 = 6.462:1; at 375px the label's darkest rasterised pixel is #475163 = 6.869:1 because 12px anti-aliasing never reaches full coverage — still far above bar on either the pixel or the specified-pair reading. All four measurements clear 4.5:1 with margin. Source corroborates (marketing.css:5107 and :5115 carry exactly these colours with the R3 rationale comment, and no later rule overrides either selector's colour).\n\nTwo things I checked because they looked suspicious and both cleared: the identical caption ink-pixel counts across viewports (explained by identical 12px rasterisation of the same centred string), and whether the r5 scratch .ts files would re-break tsc (they will not — R2 landed: tsconfig exclude is [\"node_modules\", \"test-output\"] and test-output/r3 is gone). Housekeeping verified: server was :3007 only, and port 3007 now has no listener. I made no writes to the worktree — all my scratch files live in the session scratchpad and require pngjs by absolute path.\n\nNo blockers. The UI gate passes at both viewports. One process note for the lead, not a blocker: the driver reported a curl step it did not log, so future rounds should require the branch-build proof be captured to a file like every other command."
+  },
+  "review": {
+    "recommendation": "land",
+    "verdicts": [
+      {
+        "item": "R1 (high) — revert apps/web/app/globals.css to base 5ddec78e byte-for-byte; brand-mark--light stays a bare selector hook, documented in BrandMark.tsx",
+        "verdict": "fixed",
+        "evidence": "REFUTED FIRST, then confirmed. (a) `git -C <worktree> diff 5ddec78e -- apps/web/app/globals.css` piped to `wc -c` returns 0 — a genuinely empty diff, not an empty-looking one. (b) `sha256sum apps/web/app/globals.css` = 09d7d3dc6fbeb42734933ef366a0586668d147f8e85bb17b8b37a94994e18dbe; I read the pin constant myself at apps/web/app/(marketing)/marketing-port.static.test.ts (GLOBALS_CSS_SHA256) — identical string. (c) I re-ran the pin, not just trusted it: `npx jest \"marketing-port.static\"` -> 'app/globals.css is byte-identical to the branch baseline (MKT-PIN T7)' PASS, suite 56/56, exit 0. (d) `grep -n brand-mark app/globals.css` exits 1 (zero occurrences) — the H4 block is gone, not merely reformatted. (e) HEAD is still 5ddec78e and `git log --oneline -3` shows no new commit, so the revert was a file write, not a checkout. (f) I did NOT accept the BrandMark.tsx comment at face value — I verified its factual claim: `.rf-marketing .brand-mark:not(.brand-mark--light) { mix-blend-mode: multiply; }` really exists at marketing.css:9711, it is the ONLY rule in the repo that references the class, and I inspected all 11 `.rf-marketing .brand-mark` rules (159, 819, 3107, 4397, 5784, 8382, 9703, 9707, 9711, 9726, 9826) — not one declares `filter`, so Tailwind's `brightness-0 invert` on the light mark is unopposed both inside and outside `.rf-marketing`. The comment sits at BrandMark.tsx:45-48 (four lines rather than the ruling's 'one-line', which is a wording nicety, not a deviation)."
+      },
+      {
+        "item": "R2 (high) — add \"test-output\" to apps/web/tsconfig.json exclude and delete the round-3 scratch dir",
+        "verdict": "fixed",
+        "evidence": "Diff shows exactly `\"exclude\": [\"node_modules\"]` -> `[\"node_modules\", \"test-output\"]`, nothing else. `ls -d apps/web/test-output/r3` -> 'No such file or directory'; `ls apps/web/test-output/` -> artifacts, r4, r5 (the r4 evidence dir survived as the ruling required). I re-ran the gate myself: `cd apps/web && npx tsc --noEmit -p tsconfig.json` -> no output, TSC_EXIT=0. I explicitly refuted the 'exclude hides a real spec dir' hazard rather than assuming: `npx tsc -p tsconfig.json --showConfig` resolves exclude to ['node_modules','test-output'] over a 478-file program, and inspecting that file list shows marketing-port.static IS still in the program, 39 e2e specs are in, 42 *.test.ts/tsx are in, and the files whose path contains 'test-output' number ZERO. A repo-wide `find . -type d -name test-output -not -path '*/node_modules/*'` returns exactly one directory (apps/web/test-output), it is gitignored at .gitignore:46, and its only .ts files are the r4/r5 Playwright scratch (playwright.r4.config.ts, r4.spec.ts, playwright.r5.config.ts, r5.spec.ts). Nothing real is hidden."
+      },
+      {
+        "item": "R3 (medium) — recompute the two connection-diagram colours against the real painted ground #eeedf2 and pick same-hue values >= 4.5:1 there",
+        "verdict": "fixed",
+        "evidence": "I did not take the ground on trust. I ran a brace-depth parser over marketing.css (comment-aware) against every `.connection-*` line: marketing.css:8642 `.rf-marketing .connection-diagram { background: #eeedf2 }` sits at depth 1 with an EMPTY enclosing stack — it is genuinely top-level, not inside any @media. It is the last of three same-specificity (0,2,0) background declarations (1323 #f4f7fc, 5088 #edf3fb8c, 8642 #eeedf2), so it wins on source order and is opaque on every marketing page including /product. I also checked the only two media rules that touch the diagram: 2939 (@media max-width:760, depth 2) sets max-width only, and 3287/3290 (@media max-width:480) set padding and font-size only — neither touches colour or background, so the ground never changes responsively. I then recomputed WCAG independently in my own script rather than reading W5's table: L(#eeedf2)=0.8516; #3f4a5c L=0.0673 -> 7.69:1 on #eeedf2 and 8.95:1 on white; #4a5568 L=0.0895 -> 6.46:1 and 7.53:1. Both clear 4.5:1 on the real ground. My numbers reproduce W5's to two decimals, including the confirmation that only ONE round-4 value truly failed (#6b7687 = 3.95:1; #5c6b82 was a thin 4.65:1 pass). Hue held: 216.3->217.2deg and 216.4->218.0deg. Placement verified: `awk` over lines after 5115 finds no later `.connection-nodes > div` or `.connection-diagram > p` rule, so 5107/5115 are the last colour declarations for those selectors. Both source comments accurately state the ground and both ratios."
+      },
+      {
+        "item": "R4 (low) — wrap TenantLogo's no-logo fallback in <span role=\"img\" aria-label={imgAlt}> without changing the BrandMark API",
+        "verdict": "fixed",
+        "evidence": "The diff shows the wrapper added strictly inside the else arm of `branding?.logoUrl ? <img src alt={imgAlt}…/> : <span role=\"img\" aria-label={imgAlt}><BrandMark …/></span>`. I specifically hunted the 'aria wrapper duplicates the name when a tenant logo exists' hazard and REFUTED it: the ternary is exclusive, so a tenant with a logoUrl renders only the <img alt> path and never reaches the wrapper. BrandMark.tsx has no signature change (BrandMarkProps still size/className/tone). I checked all three call sites (app/(dashboard)/layout.tsx:1309 and :1359, app/(dashboard)/invoices/[id]/page.tsx:2318) — all pass className=\"h-8 w-8\" into a flex parent, and all three set showName, which does announce the name twice (role=img label plus the visible <span>{displayName}</span>); I verified against the base file that this double-announce is byte-identical to the pre-change `<img alt={imgAlt}>` + showName behaviour, so it is pre-existing and not an R4 regression. Gates: `npx tsc --noEmit` exit 0, `npx jest --silent` 42 suites / 338 tests passed exit 0, `npx prettier --check` on all five touched files (globals.css included) 'All matched files use Prettier code style!' exit 0."
+      }
+    ],
+    "newHazards": [
+      {
+        "severity": "medium",
+        "file": "apps/web/app/(marketing)/marketing.css",
+        "line": 1359,
+        "summary": "R3 repaired two labels but left a third element in the SAME diagram below AA. `.rf-marketing .connection-center span` is `color: #697b94` at 0.8rem (0.75rem under @media max-width:480 at :3296, which changes font-size only — I confirmed by awk that no later rule overrides the colour). Its card ground is `.connection-center` background #ffffffdb (:8646) composited over the #eeedf2 diagram = #fdfcfd, giving 4.22:1 (4.32:1 even on pure white) — below the 4.5:1 AA floor for normal text. This value is new-in-branch: the port replaced the previous 407-line marketing.css wholesale, so nothing upstream is being preserved here. It is outside R3's stated two-selector scope, which is why I am not blocking on it, but it is the identical defect class one element away and the lead should fold a same-hue darkening into the close-out rather than discover it in an owner visual review."
+      },
+      {
+        "severity": "low",
+        "file": "apps/web/components/TenantLogo.tsx",
+        "line": 57,
+        "summary": "The R4 wrapper silently moved `shrink-0` off the flex item. Before, the `<img>` was the direct child of the flex parent and carried `${className} shrink-0`; now the wrapping `<span role=\"img\">` is the flex item (default flex-shrink:1) while `shrink-0` rides on the inner <img>, where it is inert because the span is not a flex container. All three call sites are flex rows/columns (dashboard layout.tsx:1309 collapsed sidebar, :1359 mobile aside w-64 max-w-[82%], invoices page 2318). In practice the sibling name span uses `truncate` (overflow:hidden makes its min-width resolve to 0) so it absorbs the shrink first, and the fixed h-8 w-8 img would overflow rather than scale — so I could not construct an actual squashed render. But the explicit guard the base had is gone. One-word fix: move `shrink-0` onto the span."
+      },
+      {
+        "severity": "low",
+        "file": "apps/web/components/TenantLogo.tsx",
+        "line": 1,
+        "summary": "No test file for TenantLogo exists anywhere in the repo (`find . -name 'TenantLogo*test*'` outside node_modules returns nothing; components/ holds only TenantLogo.tsx). That is precisely why the round-4 accessible-name regression shipped undetected, and the R4 fix now ships with no regression guard of its own — BrandMark.test.tsx covers BrandMark's classes but never renders TenantLogo, so the exclusive ternary, the role=\"img\"/aria-label wrapper, and the tenant-logo <img alt> path are all untested. A short RTL spec asserting getByRole('img', { name }) in both branches would close the loop; worth a close-out row rather than another round."
+      }
+    ],
+    "reasoning": "Refute-first, and every claim in the W5 report was re-derived rather than accepted. R1 R2 R3 R4 are all FIXED; nothing regressed.\n\nThe two claims most worth attacking both survived. First, R1's byte-identity: an empty-looking `git diff` is weak evidence, so I measured the diff at 0 bytes, matched the sha256 against the pin constant I read myself out of marketing-port.static.test.ts, re-ran the T7 test (56/56 green), and confirmed `grep brand-mark app/globals.css` exits 1. I then went one step past the ruling and checked whether the surviving `brand-mark--light` hook is actually load-bearing or now-dead decoration: `.rf-marketing .brand-mark:not(.brand-mark--light)` really exists at marketing.css:9711, it is the only reference to the class, and none of the eleven `.rf-marketing .brand-mark` rules declares `filter` — so Tailwind's `brightness-0 invert` is unopposed and the BrandMark comment is factually true, not aspirational.\n\nSecond, R3's ground. The whole ruling rests on #eeedf2 being what is really painted, so I wrote a comment-aware brace-depth parser over the 9,829-line stylesheet instead of eyeballing indentation. marketing.css:8642 is depth 1 with an empty enclosing stack — genuinely top-level — and it is the last of three same-specificity background declarations, so it beats #edf3fb8c (:5088) and #f4f7fc (:1323) by source order everywhere. I also confirmed the two responsive rules (:2939, :3287/:3290) touch only max-width, padding and font-size, so the ground never shifts by viewport. My own WCAG implementation then reproduced W5's table exactly: 7.69:1 and 6.46:1 on #eeedf2, hue drift under 2 degrees. This independently corroborates the UI judge, who measured the same two values off the pixels by a different route.\n\nI disproved two of the three hazards the brief asked me to hunt. The tsconfig exclude hides nothing real — `--showConfig` gives a 478-file program still containing the marketing static test, 39 e2e specs and 42 component tests, with zero test-output files in it, and the repo contains exactly one gitignored directory by that name holding only r4/r5 Playwright scratch. The aria wrapper cannot duplicate a name when a tenant logo exists, because the ternary is exclusive and the wrapper lives only in the no-logo arm; the double-announce that does occur under `showName` is byte-identical to the pre-change behaviour, so it is not an R4 regression. The colour change likewise does not leak: only the two ruled selectors moved, and every neighbouring `.connection-*` element carries an explicit colour (svg #676d7a at :8654, strong #665976 at :8651, span #697b94 at :1359), so nothing picks the new value up through currentColor.\n\nThe third hazard hunt did turn something up, from the opposite direction: not leakage but an element left behind. `.connection-center span` sits at 4.22:1 on its composited card ground, inside the very diagram R3 just repaired twice. It is new-in-branch and it is the same defect class, but it is outside the ruling's two-selector scope and the lead's round-5 brief is explicit about scope, so I am recording it for the close-out rather than spending a round on a one-line colour change. The two TenantLogo notes are similarly cheap and non-blocking — a misplaced `shrink-0` I could not make misrender, and the absence of any TenantLogo spec, which is the process reason the round-4 a11y defect escaped in the first place.\n\nGates re-run by me, not quoted: tsc exit 0, jest 42 suites / 338 tests exit 0, the T7 pin suite 56/56 exit 0, prettier --check clean across all five touched files including globals.css. The worktree discipline held — HEAD is still 5ddec78e, no new commits, no stash change, and I made no writes. Land, with the three hazards carried into the close-out."
+  },
+  "finalGate": {
+    "allPass": true,
+    "results": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web && npx jest --silent",
+        "pass": true,
+        "summary": "Web tests: 338 passed, 338 total | Test Suites: 42 passed, 42 total | Time: 22.323s | Snapshots: 0",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api && npx jest src/common/ci-freshness-guard-script.spec.ts --runInBand",
+        "pass": true,
+        "summary": "API freshness guard: 12 passed, 12 total | Test Suites: 1 passed, 1 total | Time: 4.823s | Snapshots: 0",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog && node scripts/validate-lessons.mjs",
+        "pass": true,
+        "summary": "Lessons register self-consistent: 39/40 entries at 39.7/40.0 KB | archived 42 | nextId 86 (max L-085) | Warning: size constraint disagreement (owner decision needed on entry vs byte cap)",
+        "failures": []
+      }
+    ]
+  }
+}

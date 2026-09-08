@@ -1,10 +1,10 @@
 {
-  "nextId": 92,
-  "activeCount": 39,
-  "archivedCount": 48,
+  "nextId": 96,
+  "activeCount": 40,
+  "archivedCount": 51,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-07T19:30:00.000Z",
+  "updatedAt": "2026-09-08T09:00:00.000Z",
   "schemaVersion": 1,
-  "note": "docs/f16-spec37-followup: added L-091 (testing -- two deployed-E2E regression tests stayed red for two deploys on harness defects, not product regressions: getByText on a value the page renders twice, and a fixture that provisioned 25 pending orders for one customer through an API whose staff-create path demands an explicit merge choice; assert identifiers by ROLE and provision fixtures THROUGH the product's own guards; PR #661, spec 37 REG-B80/B144, deployment E2E run 34154308035 on master 92cb0fb6)."
+  "note": "docs/668-b246-bookkeeping: added L-095 (domain -- the B246 fix's first round wired the order-edit scan FAB's tap to the wrong prop; the second round found that making both handlers optional on the shared BarcodeFab let <BarcodeFab /> compile into a dead control across five mounts; model mutually exclusive handlers on a shared interactive component as a discriminated union, exactly one of onScanned/onPress, so a no-op mount is a type error, and pin the shape with a props test). Register was 40/40 (at cap): archived L-089 (domain, #656 -- the entry the L-093/L-094 headroom notes reserved as the next closer headroom margin; re-confirmed uncited outside .claude/pipeline/, .claude/lessons/, or code-map/CHANGELOG.md/_meta.json via a fresh grep of code-map/*.md, CLAUDE.md, docs/, apps/, scripts/, packages/, tools/, HANDOFF.md, README.md) to ARCHIVE.md for headroom, back to 40/40 with L-095 added. validate-lessons.mjs green."
 }

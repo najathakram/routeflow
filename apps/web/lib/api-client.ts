@@ -11,6 +11,7 @@ import { setOpPresenceCookie, clearOpPresenceCookie } from "./presence-cookies";
 import { hasReauthHandler, requestReauth } from "./session-expiry";
 import { parsePlanGate, type PlanGateBody } from "./plan-gate";
 import { getImpersonation, clearImpersonation } from "./impersonation";
+import { MARKETING_PAGE_PATHS } from "./marketing-routes";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
 
@@ -52,17 +53,7 @@ function getTenantSlugFromCookie(): string | null {
  *  background API call 401s. Stale localStorage tokens are common (sessions
  *  expire; tokens linger), and a stray 401 should clear those tokens silently
  *  rather than punting the visitor off the marketing site they came to see. */
-const MARKETING_ROUTES = new Set([
-  "/",
-  "/retailers",
-  "/wholesalers",
-  "/distributors",
-  "/buyer",
-  "/product",
-  "/pricing",
-  "/company",
-  "/contact",
-]);
+const MARKETING_ROUTES = new Set<string>([...MARKETING_PAGE_PATHS, "/buyer"]);
 
 function isOnMarketingRoute(): boolean {
   if (typeof window === "undefined") return false;

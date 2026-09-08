@@ -298,6 +298,10 @@ home: `local-assets/` (gitignored). Generated docs/screenshots go there, never
 into `docs/`. The repo goes public briefly for CI, and clones should stay lean.
 `.claude/settings.local.json` is per-machine and gitignored; never commit it.
 
+`apps/web/public/brand/`, `apps/web/public/marketing/`, and `apps/web/fonts/` are a second
+exception — required build assets of the marketing-port site (brand PNGs, hero WebP photography,
+two self-hosted Geist webfonts), not generated output. Total ≤ 476 KB, verified 2026-09-07.
+
 ## Token Budget
 
 - grep before reading whole files; read exports/signatures before bodies.
