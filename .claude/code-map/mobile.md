@@ -295,7 +295,11 @@ nonce}` so a re-scan re-flashes),
   - ⚠️ **Setting `unitsPerBox` RE-PRICES the line** — it switches from `qty × unitPrice` to BOX-price proration, so the affordance surfaces the resulting line total rather than silently changing money on screen.
 
 - **PR-B (2026-08-20):** `lib/api/product-sales.ts` (`useProductSales`) + `lib/product-sales-logic.ts` (pure `productSalesSummaryLine` — collapses a single-price range and drops the price clause when there is none — and `productSaleRowTarget`, which routes a row to the ORDER when `orderId` is set and the INVOICE otherwise, covering invoices cut without an order). `(operator)/products/[id].tsx` gained a **Sales card** (card rows, not a table — this is a phone): summary strip + the **8 most recent** lines only (`SALES_ROWS_INLINE`; the API returns up to 200 and the summary still covers ALL of them), then "View all N sales" → the product-filtered orders list. Money renders exactly as the server sent it; only boxes/pieces go through `formatQtySplit`. The orders index now carries TWO independent dismissible chips (customer AND product) — both pairs of pure rules live in `lib/customer-order-filter.ts`, each dismissal clearing only its own state + route param.
-- `(tabs)/orders/` → index (status filter; **#225:** DRAFT filter chip; **A3 2026-08-19: reads the `customerId` route param the customer screen pushes — it used to be DROPPED, so "View orders" showed every order — forwards it to `useAdminOrders` and renders a dismissible "Customer: X" chip whose label comes from `useAdminCustomer` (correct even at zero orders); dismissing clears the state AND `router.setParams`. Pure rules in `lib/customer-order-filter.ts` + specs**), `[id].tsx` (assign driver, split-invoice; **"Edit items" entry shown for DRAFT/PENDING/CONFIRMED** — mirrors API guard; **#225:** `useReopenOrder` CANCELLED→PENDING action, `SendInvoiceSheet` re-send on DELIVERED orders via `useCreateInvoiceFromOrder`), `[id]/edit-items.tsx` (integer-qty stepper; `PriceOverrideModal` new-price **+ "Amount off / unit"** lens, **price edit on DRAFT/PENDING/CONFIRMED** (gated by `canEditPrice`; was DRAFT-only) — read-only on terminal statuses; fresh adds pre-fill remembered price via `useCustomerPriceHistory`; **#225:** save now builds a minimal `buildOrderItemDiff` sent with `replaceAll:false`, was a full id-less resend that wiped invoiced/override history on untouched lines), `[id]/split-invoice.tsx`.
+- `(tabs)/orders/` → index (status filter; **#225:** DRAFT filter chip; **A3 2026-08-19: reads the `customerId` route param the customer screen pushes — it used to be DROPPED, so "View orders" showed every order — forwards it to `useAdminOrders` and renders a dismissible "Customer: X" chip whose label comes from `useAdminCustomer` (correct even at zero orders); dismissing clears the state AND `router.setParams`. Pure rules in `lib/customer-order-filter.ts` + specs**), `[id].tsx` (assign driver, split-invoice; **"Edit items" entry shown for DRAFT/PENDING/CONFIRMED** — mirrors API guard; **#225:** `useReopenOrder` CANCELLED→PENDING action, `SendInvoiceSheet` re-send on DELIVERED orders via `useCreateInvoiceFromOrder`), `[id]/edit-items.tsx` (integer-qty stepper; `PriceOverrideModal` new-price **+ "Amount off / unit"** lens, **price edit on DRAFT/PENDING/CONFIRMED** (gated by `canEditPrice`; was DRAFT-only) — read-only on terminal statuses; fresh adds pre-fill remembered price via `useCustomerPriceHistory`; **#225:** save now builds a minimal `buildOrderItemDiff` sent with `replaceAll:false`, was a full id-less resend that wiped invoiced/override history on untouched lines); **#668 (B246 option C):** the line-list
+  branch now mounts `BarcodeFab` (`hidden={scanFabHidden(...)}` via new `lib/scan-fab-visibility.ts`,
+  gated on pricing-ready/picker-open/price-modal-open/other-blocking-modal-open; `onPress` opens the
+  local `ProductPicker` pre-armed to scan via a new `initialScanOpen` prop — 1 tap after Apply, was
+  2, no second scanner/pricing path), `[id]/split-invoice.tsx`.
 - **Share retap made synchronous (2026-08-27, Samsung Internet dead-end):** `lib/share-pdf.ts`
   `canShareFilesHere()` now probes FILE support via a sync `canShare({files:[probe]})` (Samsung
   Internet exposes share()/canShare() but rejects files — it was taking the file-share path and
@@ -341,6 +345,17 @@ nonce}` so a re-scan re-flashes),
 - **P10-REG-C:** `invoice-split.test.ts` (`groupLinesForInvoiceSplit` — 12 cases: Standard-fold for uncategorised/SEPARATE_SECTION/LINE_TAX lines, SEPARATE_INVOICE grouping + name-sort, single-group→no-split, cent-parity for boxed lines); `invoice-siblings.test.ts` (`siblingInvoicesOf` — 5 cases: no group, undefined current, self-exclusion, group/id mismatch filtering, order+field passthrough).
 - **D1 (2026-08-19):** `substitute-line.test.ts` (`buildSubstituteLine` — 9 cases: re-denomination against the SUBSTITUTE's box size, loose remainder, box-UNAWARE selling-unit expansion, loose→case split, no split on a loose substitute, tier price on the wire, no `unitPrice` at list, typed override + reason, this-session row stays a new line); `order-item-diff.test.ts` extended with the B1/B2/B3 payload cases.
 - **F30 (2026-08-31):** `scan-camera-buffer.test.ts` (pending buffer: depth-2 cap, dedupe by normalized code, drain order), `sale-line-fold.test.ts` (boxed increment/decrement/piece folds a typed plain qty — REG-B194), `barcode-resolve-archived.test.ts` (the `archived` outcome + sellable-only ambiguity list), `wedge-submit.test.ts` (synchronous field clear on a scan code but NOT on a typed name, mid-resolve burst buffered not concatenated), `offline-queue-failed.test.ts` (4xx / retry-exhausted → persisted `failedActions`, never a bare dequeue), `api-client-timeout.test.ts` (online timeout is NOT enqueued), `toast-ios.test.ts` (iOS `showToast` → registered host, Alert fallback); `scan-loop.test.ts` + `order-draft-gate.test.ts` extended.
+- **#668 (2026-09-08, B246 option C):** `edit-items-scan-fab.test.ts` (REG-B246, source-text:
+  exactly one `<BarcodeFab` mount in the line-list branch, its `hidden={scanFabHidden(...)}` cites
+  all four visibility flags, `ProductPicker` declares `initialScanOpen` and seeds `scanOpen` from
+  it, the FAB's `onPress` sets picker-open + scan-intent), `scan-fab-visibility.test.ts` (REG-B246,
+  pure logic: the four `scanFabHidden` rules incl. the REG-B62 pricing-ready gate),
+  `barcode-fab-props.test.ts` (type-level, `tsc --noEmit`: `BarcodeFab`'s handler union rejects
+  neither-handler and both-handlers, accepts either alone — L-095), `scan-camera-web-sequencing.test.ts`
+  (B245 pin, no REG token, outside this run's red gate: 5 source-text assertions on
+  `ScanCamera.web.tsx`'s own adapter wiring — `handleFrame` in `.then()`, `inFlightRef` release in
+  `.finally()`, the `scanSettled` drain, `playScanCue`, `track.stop()` on unmount — discharges B245
+  as a coverage pin, not a behavioral fix, L-025).
 - mocks: `@routeflow/ui.js`, `@routeflow/types.js`, `expo-secure-store.js`.
 
 ### Batch 2026-07-23 (PRs #306, #307, #309, #310)
@@ -1304,3 +1319,46 @@ The owner-approved publish-readiness fix PR (HANDOFF.md banner 2026-09-01).
   (no label) otherwise.
 - Web equivalents: `apps/web/app/(dashboard)/customers/[id]/ledger-truncation-note.tsx`
   (`LedgerTruncationNote`) and the buyer `finances/page.tsx` note — see `web.md`.
+
+### 2026-09-08 — B246 option C: scan FAB on the order-edit line list (#668)
+
+- **`app/(operator)/(tabs)/orders/[id]/edit-items.tsx`** — the line-list branch (alongside the
+  `ProductPicker` scan surface, an exclusive alternative branch) now mounts `BarcodeFab`: `hidden=
+{scanFabHidden({ pricingReady, pickerOpen: showPicker, priceModalOpen: !!priceEditItem,
+blockingModalOpen: unlistedModalOpen || createCreditOpen || !!licenseBlock || !!creditBlock })}`,
+  `onPress` sets new state `pickerScanIntent` true and calls `setShowPicker(true)` — never opens
+  its own overlay. The local `ProductPicker` function gains `initialScanOpen?: boolean`, seeding
+  `scanOpen = useState(initialScanOpen ?? false)`; its mount passes
+  `initialScanOpen={pickerScanIntent}`; `pickerScanIntent` resets to `false` on both picker-close
+  paths so the plain "Add product" entry still opens cold. Net: Apply → FAB → camera, 1 tap after a
+  price edit (was 2 after Apply, and the registry's original "6 taps" claim was refuted by
+  measurement — the real pre-fix path was Apply → Add product → barcode icon = 3 taps). No new
+  pricing path: `onPickAndStay`/`onPick` still route through the existing `addPickedToDraft`.
+- **`lib/scan-fab-visibility.ts`** (new) — `scanFabHidden(input: { pricingReady, pickerOpen,
+priceModalOpen, blockingModalOpen }): boolean`, `!(pricingReady && !pickerOpen &&
+!priceModalOpen && !blockingModalOpen)`. `blockingModalOpen` (unlisted-item, credit-note, licence
+  guard, credit-limit guard) is a 4th flag added during the fix's round-2 hardening, beyond
+  cause-ruling.md's original 3-flag plan — trust the code over the plan doc. `pricingReady` is the
+  REG-B62 guard: nothing scan-shaped may act before the customer's contract loads.
+- **`components/BarcodeFab.tsx`** — `Props` is now a discriminated union on top of `Base =
+{hidden?, continuous?}`: exactly one of `onScanned: (code: string) => ScanOutcome |
+Promise<ScanOutcome>` (opens this component's own camera overlay) or `onPress: () => void`
+  (intercepts the tap, opens nothing here — the caller routes into its own scan surface); the
+  other is typed `?: never` in each branch. Was: both handlers independently optional, so
+  `<BarcodeFab />` with neither compiled into a permanently inert 56px button (the exact B246
+  defect, moved into the shared component's type — L-095). `handlePress` checks `onPress` first,
+  falls back to opening its own scanner only when absent.
+- Tests: see the Tests section's `#668` bullet above (`edit-items-scan-fab.test.ts`,
+  `scan-fab-visibility.test.ts`, `barcode-fab-props.test.ts`, `scan-camera-web-sequencing.test.ts`).
+  Final gate: 115 suites / 1435 tests (`npx jest --silent`, apps/mobile), lint 0 errors. No mobile
+  renderer on the pipeline host, so no UI-verify ran — the owner exercises the FAB on a device
+  after the next EAS build.
+- **Registry:** B246 moved into `F30` (tier T1, the mobile-scan wave — same file family as B202),
+  proven + discharged on #668 (master `7fc01298`). B245 moved into `F30` alongside it, discharged
+  as a pin (no code change — see L-025). Sibling sweep (`useState.*scanOpen` across
+  `app/**`/`components/**`) filed **B264–B266** (unbatched, low): `purchase-orders/record.tsx`,
+  `(tabs)/invoices/[id]/edit.tsx`, `customers/[id]/standing-orders/new.tsx` — each imports
+  `ProductPickerSheet` with no parent-level scan affordance of its own. **B263** (unbatched, high)
+  files the deferred Option-B twin — price control inside the scan flow over a PAUSED camera
+  (`ScanOrderSheet` on the edit screen); `ScanCamera`'s `active` pause prop stays unreachable today
+  because `BarcodeScanner` (its only caller) never passes one.
