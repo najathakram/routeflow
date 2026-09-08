@@ -57,6 +57,7 @@ import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 import { startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
+import { NumberingService } from "../import/numbering.service";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -126,6 +127,7 @@ export class InvoicesService {
     private readonly storage: StorageService,
     private readonly entitlements: EntitlementsService,
     private readonly commissionEngine: CommissionEngineService,
+    private readonly numbering: NumberingService,
   ) {}
 
   /**
@@ -492,11 +494,19 @@ export class InvoicesService {
     }
 
     const tenantDefaults = await this.resolveTenantInvoiceDefaults();
-    const invoiceNumber = await this.nextInvoiceNumber();
     // A regulated line makes this a filable sale — create the invoice AND its W5 ledger
     // rows atomically (a ledger write that fails must not leave a committed invoice with
     // no SALE row). Non-regulated invoices skip the ledger call entirely (no-op anyway).
     const hasRegulated = itemsData.some((it) => it.trackedCategoryId != null);
+    // B100/F16b: reserved BEFORE the transaction below opens (fix-round-2.md D1).
+    // reserveNext runs its own short transaction and commits it, so this one never
+    // holds the NumberingSequence row lock — the lock that inverted lock order against
+    // the driver stop-completion tx and serialized every concurrent mint behind a whole
+    // invoice body. It must not be called from INSIDE the transaction either: that
+    // needs a second pooled connection while this one is held, which starves the pool
+    // under concurrent mints (proved by REG-B100-C, 7/10 rejected). The trade is
+    // explicit and accepted: a failure below leaves a gap in the series.
+    const invoiceNumber = await this.nextInvoiceNumber();
     let invoice: any;
     try {
       invoice = await this.prisma.tenantTransaction(async (tx: any) => {
@@ -1219,7 +1229,6 @@ export class InvoicesService {
     });
 
     const multi = groupData.length > 1;
-    const baseNumber = await this.generateInvoiceNumber(db);
     const invoiceGroupId = multi ? randomUUID() : null;
 
     // Create every sibling invoice + its ledger rows + the invoicedQty bumps
@@ -1227,7 +1236,30 @@ export class InvoicesService {
     // leave invoice 1 committed while invoicedQty stays un-bumped — a retry would
     // then double-invoice. When a caller already passed a tx (txClient) we run
     // inline (already inside their transaction); otherwise we open one.
+    // B100/F16b: ONE base number for the whole group. WHERE it is reserved depends on
+    // whether a caller already handed us their transaction (fix-round-2b.md D7):
+    //  - office paths (`db === this.prisma`, incl. the fire-and-forget one): reserved
+    //    HERE, before `tenantTransaction` opens below, in reserveNext's own short
+    //    transaction — so this file's transaction never holds the NumberingSequence
+    //    row lock and never needs a second pooled connection while holding one
+    //    (fix-round-2.md D1). A failure below leaves a gap in the series.
+    //  - delivery path (`db` IS the caller's tx — routes stop completion →
+    //    recordDeliveryPaymentInTx → createInvoiceFromOrder(orderId, tx)): reserved
+    //    INSIDE runCreation, on that same client. Hoisting a standalone reservation
+    //    there would open a second transaction while the routes tx holds OrderItem
+    //    locks (pool starvation, REG-B100-C); reserving on `db` instead opens nothing
+    //    and merely holds the counter row until the routes tx commits — no cycle,
+    //    because the office paths above hold no other lock while holding the counter.
+    // tenantId is passed explicitly: the fire-and-forget path
+    // (createInvoiceFromOrderWithTenant) has no request-context tenant.
+    const callerTx = db === this.prisma ? null : db;
+    const hoistedBaseNumber = callerTx
+      ? null
+      : await this.generateInvoiceNumber(tenantId ?? undefined);
     const runCreation = async (tx: any): Promise<any[]> => {
+      // Right before the first insert — never above the caller's transaction.
+      const baseNumber =
+        hoistedBaseNumber ?? (await this.generateInvoiceNumber(tenantId ?? undefined, tx));
       const out: any[] = [];
       for (let i = 0; i < groupData.length; i++) {
         const gd = groupData[i];
@@ -2698,14 +2730,20 @@ export class InvoicesService {
           ? { depositPercent: effectiveDepositPercent, depositDueDate: issueDate }
           : {};
     const tenantId = this.prisma.getTenantId();
-    const invoiceNumber = await this.generateInvoiceNumber();
 
     // F03/R7/T-B85: the create + invoicedQty bump + credit-note settle run inside
     // ONE tenantTransaction — mirrors createSplitInvoices's runCreation(tx) shape.
     // Previously this ran with no transaction at all AND never settled the
     // order's explicit-amount OrderCreditNote selections, so a leftover selection
     // was neither auto-applied (send()'s explicitIds exclusion assumes settle
-    // already ran) nor settled here — stranding it.
+    // already ran) nor settled here — stranding it. B100/F16b: the number is reserved
+    // BEFORE this transaction opens, in reserveNext's own short transaction
+    // (fix-round-2.md D1) — a failure below leaves a gap in the series. This method
+    // never receives a caller tx; if it ever does, it must reserve INSIDE it with
+    // `generateInvoiceNumber(tenantId, tx)`, the createSplitInvoices rule
+    // (fix-round-2b.md D7) — a hoisted reservation under a caller's tx is the
+    // pool-starving nested open.
+    const invoiceNumber = await this.generateInvoiceNumber(tenantId ?? undefined);
     const runCreation = async (tx: any) => {
       let created: any;
       try {
@@ -2767,19 +2805,33 @@ export class InvoicesService {
   }
 
   /**
-   * Generate next invoice number. Accepts optional tx client for
-   * transactional safety inside $transaction blocks.
+   * Generate the next invoice number via `NumberingService.reserveNext` — replaces
+   * the former unscoped `prisma.invoice.findFirst` scan (B100/F16b, cause-ruling.md
+   * §2 D2: that scan was both cross-tenant, :2778 `where` carried no `tenantId`, and
+   * lexicographically wrong past 9999, :2779 `orderBy` sorted TEXT).
+   *
+   * `tx` is threaded in ONLY by a caller that is already inside a transaction (the
+   * delivery path — routes stop completion → `recordDeliveryPaymentInTx` →
+   * `createInvoiceFromOrder(orderId, tx)`): `reserveNext` then reserves on THAT
+   * client, opening nothing, because a nested `$transaction` would need a second
+   * pooled connection while this one is held and starves the pool under concurrent
+   * mints (REG-B100-C). Such a caller holds the counter row lock until its own
+   * commit — safe, since the office paths below reserve standalone and never hold
+   * another row lock while holding the counter, so no lock-order cycle exists
+   * (fix-round-2b.md D7).
+   *
+   * Omitted (every office path), `reserveNext` reserves in its OWN short transaction
+   * and commits it before returning, so the caller's later transaction never holds
+   * the `NumberingSequence` row lock (fix-round-2.md D1). The trade is explicit: a
+   * rollback after this call leaves a gap in the series.
+   *
+   * `tenantId` is passed explicitly only on the fire-and-forget path that has no
+   * request-context tenant (`createInvoiceFromOrderWithTenant`) — every other caller
+   * relies on `NumberingService` resolving it from the request context as before.
    */
-  private async generateInvoiceNumber(db?: any): Promise<string> {
-    const client = db ?? this.prisma;
+  private async generateInvoiceNumber(tenantId?: string, tx?: any): Promise<string> {
     const year = new Date().getFullYear();
-    const prefix = `INV-${year}-`;
-    const last = await client.invoice.findFirst({
-      where: { invoiceNumber: { startsWith: prefix } },
-      orderBy: { invoiceNumber: "desc" },
-    });
-    const seq = last ? parseInt(last.invoiceNumber.split("-")[2], 10) + 1 : 1;
-    return `${prefix}${String(seq).padStart(4, "0")}`;
+    return this.numbering.reserveNext("INVOICE", { year, tenantId, ...(tx ? { tx } : {}) });
   }
 
   async findAll(query: ListInvoicesDto, user?: JwtPayload) {
@@ -4401,34 +4453,52 @@ export class InvoicesService {
     // (`now()`) resolves to, a real instant rather than a calendar stamp.
     const tenantDefaults = await this.resolveTenantInvoiceDefaults();
 
-    return this.prisma.forTenant().invoice.create({
-      data: {
-        invoiceNumber: await this.nextInvoiceNumber(),
-        customerId: inv.customerId,
-        status: InvoiceStatus.DRAFT,
-        issueDate: startOfCalendarDay(new Date(), tenantDefaults.timezone),
-        subtotal,
-        taxAmount: taxTotal,
-        discount: invDiscount,
-        shippingFee: shipping,
-        total,
-        notes: inv.notes,
-        terms: inv.terms,
-        // Copy the "Net 30"-style label verbatim — it still describes this line-item
-        // set. Deposit fields do NOT travel: a duplicate is a fresh invoice with its
-        // own (unstarted) payment story, not a continuation of the source's deposit
-        // schedule (out of scope: no InvoiceInstallment / deposit-aware statuses).
-        paymentTermsLabel: (inv as any).paymentTermsLabel ?? null,
-        referenceNumber: (inv as any).referenceNumber ?? null,
-        subject: (inv as any).subject ?? null,
-        items: { create: itemsData },
-      },
-      include: {
-        customer: { select: { id: true, businessName: true } },
-        items: true,
-        payments: true,
-      },
-    });
+    try {
+      // B100/F16b: the number is reserved in reserveNext's OWN short transaction,
+      // committed BEFORE the one below opens, so this transaction never holds the counter
+      // row lock and never needs a second pooled connection (fix-round-2.md D1); a
+      // failing insert therefore leaves a gap. `tx` auto-injects tenantId like forTenant().
+      // duplicate() never receives a caller tx; if it ever does, reserve INSIDE it with
+      // `generateInvoiceNumber(tenantId, tx)` per fix-round-2b.md D7.
+      const invoiceNumber = await this.nextInvoiceNumber();
+      return await this.prisma.tenantTransaction(async (tx: any) =>
+        tx.invoice.create({
+          data: {
+            invoiceNumber,
+            customerId: inv.customerId,
+            status: InvoiceStatus.DRAFT,
+            issueDate: startOfCalendarDay(new Date(), tenantDefaults.timezone),
+            subtotal,
+            taxAmount: taxTotal,
+            discount: invDiscount,
+            shippingFee: shipping,
+            total,
+            notes: inv.notes,
+            terms: inv.terms,
+            // Copy the "Net 30"-style label verbatim — it still describes this line-item
+            // set. Deposit fields do NOT travel: a duplicate is a fresh invoice with its
+            // own (unstarted) payment story, not a continuation of the source's deposit
+            // schedule (out of scope: no InvoiceInstallment / deposit-aware statuses).
+            paymentTermsLabel: (inv as any).paymentTermsLabel ?? null,
+            referenceNumber: (inv as any).referenceNumber ?? null,
+            subject: (inv as any).subject ?? null,
+            items: { create: itemsData },
+          },
+          include: {
+            customer: { select: { id: true, businessName: true } },
+            items: true,
+            payments: true,
+          },
+        }),
+      );
+    } catch (err: any) {
+      // B100/F16b (REG-B100-E): duplicate() had no P2002 catch — a concurrent
+      // duplicate's unique-constraint hit propagated as a raw 500 instead of the
+      // 409 every other mint site already returns (same message as :557-559).
+      if (err?.code === "P2002")
+        throw new ConflictException("Invoice number conflict — please retry.");
+      throw err;
+    }
   }
 
   // ─── List all payments (across all invoices) ─────────────────────────────

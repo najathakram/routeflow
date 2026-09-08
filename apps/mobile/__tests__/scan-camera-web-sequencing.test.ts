@@ -30,14 +30,14 @@ import { join } from "path";
 const source = readFileSync(join(__dirname, "..", "components", "ScanCamera.web.tsx"), "utf8");
 
 describe("ScanCamera.web.tsx frame/resolve/teardown sequencing (B245 pin)", () => {
-  it("B245: decode resolves handleFrame from inside a .then( block, not synchronously", () => {
+  it("REG-B245: decode resolves handleFrame from inside a .then( block, not synchronously", () => {
     const thenMatches =
       source.match(/\.then\s*\(\s*\(\s*code\s*\)\s*=>\s*\{[\s\S]{0,120}?\}/g) ?? [];
     const thenWithHandleFrame = thenMatches.filter((block) => /handleFrame\s*\(/.test(block));
     expect(thenWithHandleFrame.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("B245: the in-flight guard is released inside a .finally( block, so it clears even on a rejected decode", () => {
+  it("REG-B245: the in-flight guard is released inside a .finally( block, so it clears even on a rejected decode", () => {
     const finallyMatches =
       source.match(/\.finally\s*\(\s*\(\s*\)\s*=>\s*\{[\s\S]{0,200}?\}\s*\)/g) ?? [];
     const finallyWithRelease = finallyMatches.filter((block) =>
@@ -49,18 +49,18 @@ describe("ScanCamera.web.tsx frame/resolve/teardown sequencing (B245 pin)", () =
   // Title says "at least once" deliberately: this is a bare occurrence count
   // over the file, so it pins that the drain call site exists — it asserts
   // nothing about ordering relative to the resolved-outcome return.
-  it("B245: scanSettled is called at least once to drain the engine", () => {
+  it("REG-B245: scanSettled is called at least once to drain the engine", () => {
     const scanSettledCalls = source.match(/scanSettled\s*\(/g) ?? [];
     expect(scanSettledCalls.length).toBeGreaterThanOrEqual(1);
   });
 
   // Same shape: an occurrence count, not per-outcome coverage.
-  it("B245: playScanCue is called at least once for the accept/reject cue", () => {
+  it("REG-B245: playScanCue is called at least once for the accept/reject cue", () => {
     const playScanCueCalls = source.match(/playScanCue\s*\(/g) ?? [];
     expect(playScanCueCalls.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("B245: the camera track is stopped when the scanner unmounts", () => {
+  it("REG-B245: the camera track is stopped when the scanner unmounts", () => {
     // `stop()` (the function that iterates `streamRef.current.getTracks()`
     // and calls `track.stop()` on each) is invoked from the effect's
     // cleanup — `return () => { cancelled = true; stop(); };` — so both the

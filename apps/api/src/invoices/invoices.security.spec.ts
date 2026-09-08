@@ -36,6 +36,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import { NumberingService } from "../import/numbering.service";
 
 const FOREIGN_INVOICE = { id: "inv-foreign", status: "SENT", shippedAt: null };
 
@@ -60,6 +61,10 @@ describe("InvoicesService — cross-tenant id 404s on scoped reads", () => {
         { provide: StorageService, useValue: {} },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         { provide: CommissionEngineService, useValue: {} },
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("INV-2026-0001") },
+        },
       ],
     }).compile();
     service = module.get<InvoicesService>(InvoicesService);
