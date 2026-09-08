@@ -52,6 +52,8 @@ import { sanitizeIntInput } from "../../../../../lib/qty";
 import { QTY_INPUT_WIDTH } from "../../../../../lib/row-layout";
 import { resolveProductByCode } from "../../../../../lib/barcode-resolve";
 import { BarcodeScanner } from "../../../../../components/BarcodeScanner";
+import { BarcodeFab } from "../../../../../components/BarcodeFab";
+import { scanFabHidden } from "../../../../../lib/scan-fab-visibility";
 import { ProductPickerSheet } from "../../../../../components/ProductPickerSheet";
 import { InlineCreateProductSheet } from "../../../../../components/InlineCreateProductSheet";
 import { InlineToast, useInlineToast } from "../../../../../components/InlineToast";
@@ -239,6 +241,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const [pendingDeletes, setPendingDeletes] = useState<string[]>([]);
   const [unlistedModalOpen, setUnlistedModalOpen] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
+  // B246: armed by the line-list scan FAB so ProductPicker mounts with its
+  // own camera already open (initialScanOpen) — reset whenever the picker
+  // closes so the plain "Add product" path keeps opening cold.
+  const [pickerScanIntent, setPickerScanIntent] = useState(false);
   const [substituteFor, setSubstituteFor] = useState<string | null>(null);
   const [priceEditItem, setPriceEditItem] = useState<DraftItem | null>(null);
   const [licenseBlock, setLicenseBlock] = useState<BlockedCategory[] | null>(null);
@@ -800,6 +806,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
         <ProductPicker
           title={substituteFor ? "Substitute with…" : "Add product"}
           canCreateProducts={!isDriver}
+          initialScanOpen={pickerScanIntent}
           // Add-and-stay (scans + wedge input): the picker stays open so N
           // items scan with zero taps — closes web's long-standing edit-screen
           // divergence. Not offered in substitute mode (one pick by contract).
@@ -829,10 +836,12 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               addPickedToDraft(p, kind);
             }
             setShowPicker(false);
+            setPickerScanIntent(false);
           }}
           onClose={() => {
             setShowPicker(false);
             setSubstituteFor(null);
+            setPickerScanIntent(false);
           }}
         />
       ) : (
@@ -995,6 +1004,28 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               </Text>
             </Pressable>
           </View>
+
+          {/* B246: permanent scan affordance on the line list — mirrors web's
+              always-present scan row (orders/[id]/page.tsx). REG-B62: stays
+              hidden until pricing is ready, and while the picker or the
+              price-edit modal already has the operator's attention, and while
+              any other modal (unlisted item, credit note, licence /
+              credit-limit guards) is up — same rule as the driver adjust
+              screen. Opens the SAME picker as "Add product", pre-armed to
+              scan — no second scanner, no new pricing path. */}
+          <BarcodeFab
+            hidden={scanFabHidden({
+              pricingReady,
+              pickerOpen: showPicker,
+              priceModalOpen: !!priceEditItem,
+              blockingModalOpen:
+                unlistedModalOpen || createCreditOpen || !!licenseBlock || !!creditBlock,
+            })}
+            onPress={() => {
+              setPickerScanIntent(true);
+              setShowPicker(true);
+            }}
+          />
         </>
       )}
     </SafeAreaView>
@@ -1740,6 +1771,7 @@ function ProductPicker({
   onPickAndStay,
   onClose,
   canCreateProducts = false,
+  initialScanOpen,
 }: {
   title?: string;
   /** Single pick — the caller closes the picker (tap rows, substitutions). */
@@ -1754,8 +1786,10 @@ function ProductPicker({
   onClose: () => void;
   /** Staff may create a product from a miss; drivers get a plain "not found". */
   canCreateProducts?: boolean;
+  /** B246: mount already scanning — the line-list scan FAB's entry point. */
+  initialScanOpen?: boolean;
 }) {
-  const [scanOpen, setScanOpen] = useState(false);
+  const [scanOpen, setScanOpen] = useState(initialScanOpen ?? false);
   // This picker is a scan BURST surface (wedge auto-add + miss sinks below all
   // go through `showToast`), so it owns an `<InlineToast>`: mounting it
   // registers this screen as the iOS toast host (lib/toast-host.ts), which is
