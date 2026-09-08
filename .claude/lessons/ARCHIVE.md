@@ -871,3 +871,25 @@ archive.
   must judge every "untouched" claim before it counts as coverage.**
 - **Guard:** the rewritten pin in `messaging-config.service.spec.ts`'s "NO_TRANSPORT — provider
   declares no transports" describe block; F23's round-2 review finding (`result.json`).
+
+## Archived 2026-09-08 — headroom for L-094 (docs/663-auth-redesign-bookkeeping, #663 follow-up)
+
+L-088 (2026-09-07, domain, #652) — one of the two next-oldest equally-clean survivors the L-093
+headroom note reserved for "a future single-entry archive"; re-confirmed here (id cited nowhere
+outside `.claude/pipeline/**`, `.claude/lessons/**`, or `code-map/CHANGELOG.md` — grep-checked
+against `code-map/*.md`, `CLAUDE.md`, `docs/**`, `apps/**`, `scripts/**`, `packages/**`,
+`tools/**`, `HANDOFF.md`, `README.md`). L-089 (also 2026-09-07, equally clean) stays active as
+the closer headroom margin for the next single-entry archive.
+
+### L-088 · 2026-09-07 · domain · #652
+
+- **Symptom:** delivery windows were mapped into the request and then dropped before a cost-only
+  solver on one branch, while another branch handed a clock-less solver a "hard" window with no
+  start time — three bugs, one class.
+- **Root cause:** a constraint verified inside individual solver branches instead of once at the
+  seam every branch shares.
+- **Lesson:** **enforce a cross-branch constraint at the shared seam AFTER any solver returns
+  (re-time against the real clock, repair, then persist), give every solver the same clock the
+  verifier uses, and pin it with a fixture where cost order and window order disagree.**
+- **Guard:** `REG-B147` / `REG-B161` / `REG-B177` in `route-optimization.service.spec.ts`
+  (mutation-probed: seven pins red with the window pass disabled).

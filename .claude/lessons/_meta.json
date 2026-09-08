@@ -1,10 +1,10 @@
 {
-  "nextId": 94,
+  "nextId": 95,
   "activeCount": 40,
-  "archivedCount": 49,
+  "archivedCount": 50,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-08T00:00:00.000Z",
+  "updatedAt": "2026-09-08T04:00:00.000Z",
   "schemaVersion": 1,
-  "note": "docs/665-distributors-bookkeeping: added L-093 (testing -- /distributors' next.config redirect fix for #665: a prerendered redirect() page lost its Location header from the ISR cache on the standalone server; next.config.mjs redirects() is the only correct home for a URL alias, and the deployment E2E is the only oracle that catches this class since next dev masks it). Register was 40/40 (at cap): archived L-087 (testing, #650 -- the oldest active entry with a landed automated-artifact guard uncited outside .claude/pipeline/.claude/lessons/code-map/CHANGELOG.md, grep-confirmed fresh against the whole repo) to ARCHIVE.md for headroom, back to 40/40 with L-093 added. validate-lessons.mjs green."
+  "note": "docs/663-auth-redesign-bookkeeping: added L-094 (process -- the auth-redesign dev-pipeline engine stopped mid fix-loop at 62 agents with no result.json, on checkpoint 102c79ce, so the next session had no machine-readable state and reconstructed it via a light loop; a long engine run must checkpoint result.json after every phase, not only at the end, and agent prompts must forbid background waits, so an interruption resumes from a record instead of a reconstruction). Register was 40/40 (at cap): archived L-088 (domain, #652 -- one of the two next-oldest equally-clean survivors the L-093 headroom note explicitly reserved for 'a future single-entry archive'; re-confirmed uncited outside .claude/pipeline/, .claude/lessons/, or code-map/CHANGELOG.md via a fresh grep of code-map/*.md, CLAUDE.md, docs/, apps/, scripts/, packages/, tools/, HANDOFF.md, README.md) to ARCHIVE.md for headroom, back to 40/40 with L-094 added. L-089 stays active as the next closer headroom margin. validate-lessons.mjs green."
 }
