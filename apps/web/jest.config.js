@@ -14,6 +14,13 @@ const createJestConfig = nextJest({ dir: "./" });
 const customJestConfig = {
   setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"],
   testEnvironment: "jsdom",
+  // Campaign gate artifact — see scripts/jest-campaign-reporter.cjs. Writes
+  // .campaign/runs/web.json so scripts/campaign-check.mjs can discharge REG-B###
+  // T1 claims proven by apps/web jest specs, alongside api/mobile/pricing.
+  reporters: [
+    "default",
+    ["<rootDir>/../../scripts/jest-campaign-reporter.cjs", { artifact: "web" }],
+  ],
   // RTL suites mount the real Auth/BuyerAuth/i18n providers and pay a cold SWC compile on
   // the first test of each file; under CI/pre-push load on slow hosts that exceeds Jest's
   // 5 s default and fails as a timeout rather than an assertion. 30 s is a ceiling, not a wait.
