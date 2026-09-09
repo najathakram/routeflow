@@ -230,6 +230,12 @@ function main() {
   // three mirrors were folded into @routeflow/pricing — so it is a third jest
   // proof source alongside api and mobile.
   const pricingJsonPath = path.join(runsDir, "pricing.json");
+  // apps/web's jest unit-test proof source (REG-B### specs under app/components/lib/hooks,
+  // e.g. lib/api/*.test.tsx) — wired via jest-campaign-reporter.cjs's { artifact: "web" } in
+  // apps/web/jest.config.js, alongside api/mobile/pricing. Deliberately named "web.json", not
+  // "web-e2e.json" — that name is reserved for the Playwright report below and must never
+  // collide with this jest one.
+  const webJsonPath = path.join(runsDir, "web.json");
   // Provisional name — F00 has not yet added a JSON reporter to
   // apps/web/playwright.config.ts (verified: reporter: [["list"], ["html", ...]]
   // only, no JSON entry, as of this writing). Once it does, this is where its
@@ -239,10 +245,11 @@ function main() {
   // file is NEVER read here or anywhere else; only web-e2e.json above is campaign evidence.
   const webE2eJsonPath = path.join(runsDir, "web-e2e.json");
 
-  let apiJson, mobileJson, pricingJson, webE2eJson;
+  let apiJson, mobileJson, pricingJson, webJson, webE2eJson;
   let apiJsonLoaded = false,
     mobileJsonLoaded = false,
     pricingJsonLoaded = false,
+    webJsonLoaded = false,
     webE2eJsonLoaded = false;
 
   function getApiJson() {
@@ -265,6 +272,13 @@ function main() {
       pricingJsonLoaded = true;
     }
     return pricingJson;
+  }
+  function getWebJson() {
+    if (!webJsonLoaded) {
+      webJson = loadJsonIfExists(webJsonPath);
+      webJsonLoaded = true;
+    }
+    return webJson;
   }
   function getWebE2eJson() {
     if (!webE2eJsonLoaded) {
@@ -393,6 +407,12 @@ function main() {
       dir: "packages/pricing",
       jsonPath: pricingJsonPath,
       testPathspecs: [":(glob)packages/pricing/**/*.spec.ts"],
+    },
+    {
+      ws: "web",
+      dir: "apps/web",
+      jsonPath: webJsonPath,
+      testPathspecs: [":(glob)apps/web/**/*.test.ts", ":(glob)apps/web/**/*.test.tsx"],
     },
   ];
 
@@ -716,25 +736,35 @@ function main() {
     const api = getApiJson();
     const mobile = getMobileJson();
     const pricing = getPricingJson();
-    if (api === null && mobile === null && pricing === null) {
+    const web = getWebJson();
+    if (api === null && mobile === null && pricing === null && web === null) {
       const regenerateLines = T1_WORKSPACES.map(
         (w) => `  regenerate: cd ${w.dir} && npx jest --maxWorkers=2`,
       ).join("\n");
       fail(
         `at least one T1 obligation is claimed, but none of ${apiJsonPath}, ` +
-          `${mobileJsonPath} or ${pricingJsonPath} exists — run the JSON-reporter jest ` +
-          `passes first (cd apps/api && npx jest --json --outputFile=${apiJsonPath}, ` +
+          `${mobileJsonPath}, ${pricingJsonPath} or ${webJsonPath} exists — run the ` +
+          `JSON-reporter jest passes first (cd apps/api && npx jest --json --outputFile=${apiJsonPath}, ` +
           `cd apps/mobile && npx jest --json --outputFile=${mobileJsonPath}, ` +
-          `cd packages/pricing && npx jest --json --outputFile=${pricingJsonPath})\n` +
+          `cd packages/pricing && npx jest --json --outputFile=${pricingJsonPath}, ` +
+          `cd apps/web && npx jest --json --outputFile=${webJsonPath})\n` +
           regenerateLines,
       );
-    } else if (api === "PARSE_ERROR" || mobile === "PARSE_ERROR" || pricing === "PARSE_ERROR") {
-      fail(`a jest JSON report exists but failed to parse (api, mobile or pricing) — re-run it`);
+    } else if (
+      api === "PARSE_ERROR" ||
+      mobile === "PARSE_ERROR" ||
+      pricing === "PARSE_ERROR" ||
+      web === "PARSE_ERROR"
+    ) {
+      fail(
+        `a jest JSON report exists but failed to parse (api, mobile, pricing or web) — re-run it`,
+      );
     } else {
       jestIndex = mergeIndexes(
         indexAssertions(jestAssertions(api), "api"),
         indexAssertions(jestAssertions(mobile), "mobile"),
         indexAssertions(jestAssertions(pricing), "pricing"),
+        indexAssertions(jestAssertions(web), "web"),
       );
     }
   }
