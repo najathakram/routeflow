@@ -12,7 +12,7 @@ import {
 import * as SplashScreen from "expo-splash-screen";
 import * as Notifications from "expo-notifications";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { UserRole } from "@routeflow/types";
 import { ios } from "@routeflow/ui/tokens";
 import { useAuthStore } from "../lib/auth-store";
@@ -21,6 +21,7 @@ import { useBuyerSessionStore } from "../lib/buyer-session-store";
 import { useDeveloperMode } from "../lib/api/addons";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { initSentry } from "../lib/sentry";
+import { queryClient } from "../lib/query-client";
 
 initSentry();
 
@@ -34,8 +35,6 @@ Notifications.setNotificationHandler({
 });
 
 SplashScreen.preventAutoHideAsync();
-
-const queryClient = new QueryClient();
 
 function RootLayoutNav() {
   const { user, isLoading, activeRole, setActiveRole, initialize } = useAuthStore();

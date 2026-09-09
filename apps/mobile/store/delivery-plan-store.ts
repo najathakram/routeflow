@@ -5,6 +5,9 @@ interface DeliveryPlanState {
   plansByStop: Record<string, Record<string, number>>;
   setQty: (stopId: string, orderItemId: string, qty: number) => void;
   clearStop: (stopId: string) => void;
+  // D1/D3 (cause-ruling.md §3): sign-out (lib/session-teardown.ts) resets this
+  // user-scoped store so the next user on this device never sees prior data.
+  reset: () => void;
 }
 
 /**
@@ -27,4 +30,5 @@ export const useDeliveryPlanStore = create<DeliveryPlanState>((set) => ({
       delete next[stopId];
       return { plansByStop: next };
     }),
+  reset: () => set({ plansByStop: {} }),
 }));

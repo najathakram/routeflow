@@ -10,6 +10,8 @@ import {
 } from "./auth";
 import { OP_KEYS, DRIVER_KEYS, CURRENT_ROLE_KEY } from "./auth-keys";
 import { registerStaffSessionExpiredHandler } from "./api-client";
+import { teardownUserSession } from "./session-teardown";
+import { rehydrateUserScopedStores } from "./session-hydrate";
 
 export type ActiveRole = "driver" | "operator" | null;
 
@@ -38,7 +40,7 @@ function defaultRoleForUser(user: AuthUser | null): ActiveRole {
   return null;
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
+export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   isAuthenticated: false,
   isLoading: true,
@@ -51,6 +53,11 @@ export const useAuthStore = create<AuthState>((set) => ({
       isAuthenticated: true,
       activeRole: defaultRoleForUser(response.user),
     });
+    // D3 (cause-ruling.md §3 / REG-B136): the user-scoped persisted stores
+    // skip automatic hydration — their AsyncStorage key is resolved from the
+    // signed-in user id, which only exists once the tokens are stored. Pull
+    // this user's POD/settlement scratchpad in now.
+    await rehydrateUserScopedStores();
     return response.user;
   },
 
@@ -61,10 +68,23 @@ export const useAuthStore = create<AuthState>((set) => ({
       isAuthenticated: true,
       activeRole: defaultRoleForUser(response.user),
     });
+    // D3 (cause-ruling.md §3 / REG-B136): same as login() — the native Google
+    // flow returns here without an app reload, so this is the only hydration
+    // point for the user-scoped POD/settlement stores on this sign-in path.
+    await rehydrateUserScopedStores();
     return response.user;
   },
 
   logout: async () => {
+    // D1 (cause-ruling.md §3): tear down GPS/query-cache/user-scoped-store
+    // state BEFORE apiLogout() — tokens are still valid at this point, so
+    // the teardown itself can't be interrupted by a now-401'd request.
+    try {
+      await teardownUserSession({ reason: "logout", userId: get().user?.id ?? null });
+    } catch {
+      // Teardown must never block sign-out: a failure here still falls through
+      // to apiLogout() and the state clear below.
+    }
     await apiLogout();
     set({ user: null, isAuthenticated: false, activeRole: null });
   },
@@ -88,6 +108,11 @@ export const useAuthStore = create<AuthState>((set) => ({
         activeRole: defaultRoleForUser(user),
       });
 
+      // D3 (cause-ruling.md §3 / REG-B136): relaunch path. Same reason as
+      // login() — hydrate the user-scoped stores only once the stored user is
+      // known, so a POD capture written under this user's key comes back.
+      if (user) await rehydrateUserScopedStores();
+
       // BUG-XR1-3: cross-tab logout. When another tab clears the
       // operator/driver access token (or the role marker) via logout,
       // mirror the sign-out into this tab's in-memory state so the
@@ -100,9 +125,17 @@ export const useAuthStore = create<AuthState>((set) => ({
       // this handler — clearing the in-memory user makes the root layout
       // redirect to the login screen instead of stranding the user on a
       // screen whose every request 401s (mirrors the buyer-side handler).
-      registerStaffSessionExpiredHandler(() =>
-        useAuthStore.setState({ user: null, isAuthenticated: false, activeRole: null }),
-      );
+      registerStaffSessionExpiredHandler(() => {
+        // D1: the session-expired path is the other caller of the shared
+        // teardown (cause-ruling.md §3). Fire-and-forget with its own catch —
+        // this callback's signature is synchronous and a teardown failure
+        // must never block the redirect to /login below.
+        teardownUserSession({
+          reason: "session-expired",
+          userId: get().user?.id ?? null,
+        }).catch(() => {});
+        useAuthStore.setState({ user: null, isAuthenticated: false, activeRole: null });
+      });
     } catch {
       set({ user: null, isAuthenticated: false, activeRole: null });
     } finally {
@@ -126,8 +159,16 @@ function installCrossTabLogoutListener() {
     // Only react when the change is a clear (newValue === null) of a key we care about.
     if (!e.key || e.newValue !== null) return;
     if (!STAFF_TOKEN_KEYS.has(e.key)) return;
-    // The other tab signed out. Drop our in-memory user without calling
-    // apiLogout() — the server already received the original logout.
+    // The other tab signed out. Run the SAME shared teardown D1 defined
+    // (cause-ruling.md §3) — GPS/query-cache/user-scoped stores in THIS tab
+    // are otherwise left exactly as B150/B140 originally found them, because
+    // this listener used to only clear the in-memory user — then drop it
+    // without calling apiLogout() — the server already received the original
+    // logout from the tab that signed out.
+    teardownUserSession({
+      reason: "cross-tab",
+      userId: useAuthStore.getState().user?.id ?? null,
+    }).catch(() => {});
     useAuthStore.setState({
       user: null,
       isAuthenticated: false,

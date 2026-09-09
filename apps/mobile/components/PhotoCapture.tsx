@@ -12,6 +12,10 @@ import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { colors, borderRadius } from "@routeflow/ui/tokens";
+// Keep POD attaches well under the API's 2MB JSON body limit while staying
+// legible for dispute review (boxes at a door, not product photography). Shared
+// with payment.tsx's rescue transcode so both producers use one budget.
+import { DATA_URL_JPEG_QUALITY, DATA_URL_MAX_WIDTH } from "../lib/pod-image";
 
 interface Props {
   photos: string[]; // array of local URIs (or data URLs in "data-url" mode)
@@ -27,11 +31,6 @@ interface Props {
    */
   output?: "uri" | "data-url";
 }
-
-// Keep POD attaches well under the API's 2MB JSON body limit while staying
-// legible for dispute review (boxes at a door, not product photography).
-const DATA_URL_MAX_WIDTH = 1280;
-const DATA_URL_JPEG_QUALITY = 0.6;
 
 export function PhotoCapture({
   photos,

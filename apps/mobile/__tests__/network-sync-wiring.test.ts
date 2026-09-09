@@ -34,6 +34,7 @@ jest.mock("@react-native-community/netinfo", () => ({
 const dequeue = jest.fn();
 const incrementRetry = jest.fn();
 const addFailedAction = jest.fn();
+const restampAction = jest.fn();
 const queuedAction = {
   id: "a1",
   endpoint: "/orders",
@@ -51,6 +52,7 @@ jest.mock("../store/offlineQueue", () => {
     dequeue,
     incrementRetry,
     addFailedAction,
+    restampAction,
     failedActions: [],
     clearFailedAction: jest.fn(),
     clearFailedActions: jest.fn(),
@@ -63,6 +65,17 @@ jest.mock("../store/offlineQueue", () => {
     selectFailedActionCount: (s: any) => s.failedActions.length,
   };
 });
+
+// REG-B137: the hook now resolves the queue's owning identity before draining.
+// lib/queue-identity.ts itself stays REAL — only the two stores it reads are
+// stubbed, so this spec does not drag react-native / expo in through
+// lib/auth-store.ts.
+jest.mock("../lib/auth-store", () => ({
+  useAuthStore: { getState: () => ({ user: { id: "u-1" } }) },
+}));
+jest.mock("../lib/tenant-store", () => ({
+  useTenantStore: { getState: () => ({ slug: "t-1" }) },
+}));
 
 const request = jest.fn();
 jest.mock("../lib/api-client", () => ({
