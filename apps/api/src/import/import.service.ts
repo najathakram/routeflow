@@ -2,11 +2,13 @@ import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
+import { NumberingService } from "./numbering.service";
+import { ExternalRefService } from "./external-ref.service";
 import { roundMoney } from "@routeflow/pricing";
 import { sumConfirmed } from "../invoices/payment-predicates";
 import { parseImportMoney, parseImportNumber } from "./parse-import-number";
 import { parse } from "csv-parse/sync";
-import { InvoiceStatus, UserRole } from "@prisma/client";
+import { ImportEntityType, InvoiceStatus, UserRole } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 
@@ -17,6 +19,16 @@ import * as crypto from "crypto";
  * single upload can't exhaust memory / stall the worker.
  */
 const MAX_IMPORT_ROWS = 20_000;
+
+/**
+ * B268/D4: the external-ref source recorded for invoice CSV rows that carry NO
+ * source "Invoice Number". Such a row's only durable identity is the CSV's
+ * "Invoice ID" group key, so it is recorded against this source when the invoice
+ * is created and looked up before any mint — otherwise every re-upload of the
+ * same file reserves a fresh number and duplicates the invoice (and its
+ * synthetic payment).
+ */
+const IMPORT_INVOICE_REF_SOURCE = "import";
 
 /** Category name substrings (lower-cased) that map to the INVENTORY_PURCHASE system code */
 const INVENTORY_PURCHASE_KEYWORDS = [
@@ -36,6 +48,8 @@ export class ImportService {
     private readonly prisma: PrismaService,
     private readonly vendorBillsService: VendorBillsService,
     private readonly customersService: CustomersService,
+    private readonly numbering: NumberingService,
+    private readonly externalRefs: ExternalRefService,
   ) {}
 
   private parseCsv(buffer: Buffer): any[] {
@@ -530,17 +544,49 @@ export class ImportService {
 
     // Group by Invoice ID
     const groups: Record<string, any[]> = {};
+    let rowIndex = 0;
     for (const row of rows) {
-      const id = row["Invoice ID"] || row["Invoice Number"];
-      if (!id) continue;
+      rowIndex++;
+      // F5 (REG-B268-E, cause-ruling.md §2 D2 follow-up): normalize with
+      // `.trim()` AT GROUPING TIME, not just later at `importRef` (:663). A
+      // whitespace-only "Invoice ID"/"Invoice Number" cell (a space, a tab, a
+      // stray quoted blank) was truthy before the trim, so it grouped and
+      // reached the fallback branch with an empty `importRef` — the exact
+      // shape that skips the idempotency lookup entirely and mints a fresh
+      // number on every re-upload of the same row (B268/D4). Reject it HERE
+      // instead, as a reported error row, so it is never silently dropped
+      // (the old `if (!id) continue`) nor silently duplicated.
+      // Opus re-check fix: trim EACH source BEFORE the `||` fallback — trimming
+      // only the joined result let a whitespace-only "Invoice ID" (truthy pre-trim)
+      // win the `||` and shadow a perfectly valid "Invoice Number", turning a
+      // healthy row into a spurious "missing invoice id" error. Only a row where
+      // BOTH sources are blank after their own trim is actually missing.
+      const id =
+        (row["Invoice ID"] ?? "").toString().trim() ||
+        (row["Invoice Number"] ?? "").toString().trim();
+      if (!id) {
+        skipped++;
+        errors.push(`Row ${rowIndex}: missing invoice id`);
+        continue;
+      }
       if (!groups[id]) groups[id] = [];
       groups[id].push(row);
     }
 
     const year = new Date().getFullYear();
-    let seq = 1;
 
-    for (const [, invoiceRows] of Object.entries(groups)) {
+    // B268/D4: every group carrying a source "Invoice Number" is processed BEFORE
+    // any group without one (a stable partition — `filter` keeps file order inside
+    // each half), so a fallback mint can never take a number that a later
+    // source-numbered row in the SAME file will claim verbatim.
+    const groupEntries = Object.entries(groups);
+    const hasSourceNumber = (rows: any[]) => Boolean((rows[0]["Invoice Number"] || "").trim());
+    const orderedGroups = [
+      ...groupEntries.filter(([, rows]) => hasSourceNumber(rows)),
+      ...groupEntries.filter(([, rows]) => !hasSourceNumber(rows)),
+    ];
+
+    for (const [, invoiceRows] of orderedGroups) {
       const first = invoiceRows[0];
       const customerName = (first["Customer Name"] || first["Company Name"] || "").trim();
       if (!customerName) {
@@ -628,8 +674,15 @@ export class ImportService {
       const discount =
         parseImportMoney(first["Entity Discount Amount"] || first["Discount Amount"] || "0") || 0;
       const shippingFee = parseImportMoney(first["Shipping Charge"] || "0") || 0;
-      const invoiceNumber =
-        first["Invoice Number"] || `INV-${year}-${String(seq++).padStart(4, "0")}`;
+      // B268/D4: a row carrying a source number keeps it verbatim (the upsert-by-number
+      // branch below repairs status drift on re-import). A row with NO source number is a
+      // live mint, not a preserved import — reserved further down, inside the try, via
+      // NumberingService so it never collides with a real tenant invoice.
+      const numberFromSource = (first["Invoice Number"] || "").trim();
+      // The CSV's own group key. For a source-numberless row this is the ONLY
+      // durable identity the created invoice has (nothing else from the row is
+      // persisted), so re-import idempotency keys on it (B268/D4).
+      const importRef = (first["Invoice ID"] || "").trim();
       const notes = first["Notes"] || null;
       const terms = first["Terms & Conditions"] || null;
 
@@ -735,30 +788,154 @@ export class ImportService {
         });
       }
 
+      let invoiceNumber = numberFromSource;
+      // A fallback row has no number until `reserveNext` returns, so a failure
+      // before that would otherwise be reported with an empty identifier.
+      const rowLabel = numberFromSource
+        ? numberFromSource
+        : importRef
+          ? `import-ref ${importRef}`
+          : `${customerName} (no invoice number)`;
+      // Opus re-check fix (REG-B268-F): hoisted above the try/else so the
+      // external-ref record() call below (outside the `else` block's scope)
+      // can see whether THIS row's prior lookup was a mismatch and choose the
+      // composite key instead of repointing the plain one.
+      let priorMismatch = false;
       try {
-        // If the invoice already exists, only sync the Zoho-authoritative status
-        // and dueDate. Totals/items/customer assignment are preserved so any
-        // local edits aren't clobbered, but re-importing the same CSV will
-        // repair any status drift (e.g. a Draft that got auto-flipped to
-        // Overdue by an earlier buggy recalc).
-        const existing = await this.prisma
-          .forTenant()
-          .invoice.findFirst({ where: { invoiceNumber } });
-        if (existing) {
-          const needsUpdate =
-            existing.status !== status ||
-            (existing.dueDate?.getTime() ?? 0) !== (dueDate?.getTime() ?? 0) ||
-            (existing.paidAt?.getTime() ?? 0) !== (paidAt?.getTime() ?? 0);
-          if (needsUpdate) {
-            await this.prisma.forTenant().invoice.update({
-              where: { id: existing.id },
-              data: { status, dueDate, paidAt },
-            });
-            updated++;
-          } else {
-            skipped++;
+        if (numberFromSource) {
+          // If the invoice already exists, only sync the Zoho-authoritative status
+          // and dueDate. Totals/items/customer assignment are preserved so any
+          // local edits aren't clobbered, but re-importing the same CSV will
+          // repair any status drift (e.g. a Draft that got auto-flipped to
+          // Overdue by an earlier buggy recalc). This upsert-by-number branch is
+          // ONLY for rows carrying their ORIGINAL source number — never for a
+          // synthesized fallback number (B268/D4).
+          const existing = await this.prisma
+            .forTenant()
+            .invoice.findFirst({ where: { invoiceNumber } });
+          if (existing) {
+            const needsUpdate =
+              existing.status !== status ||
+              (existing.dueDate?.getTime() ?? 0) !== (dueDate?.getTime() ?? 0) ||
+              (existing.paidAt?.getTime() ?? 0) !== (paidAt?.getTime() ?? 0);
+            if (needsUpdate) {
+              await this.prisma.forTenant().invoice.update({
+                where: { id: existing.id },
+                data: { status, dueDate, paidAt },
+              });
+              updated++;
+            } else {
+              skipped++;
+            }
+            continue;
           }
-          continue;
+        } else {
+          // No source number: this row is a live mint, not a preserved import.
+          // Re-import idempotency therefore keys on the CSV's own "Invoice ID"
+          // rather than on a number (B268/D4) — the invoice this row would mint may
+          // already have been created by an earlier run of the SAME file, and
+          // reserving a fresh number unconditionally is what duplicates it (and its
+          // synthetic payment). The ref is recorded on create below, so a hit here
+          // is always THIS row's own prior invoice, never a number-keyed match
+          // against an unrelated live one.
+          //
+          // Opus re-check fix (REG-B268-F): a customer/total MISMATCH (below)
+          // records its new invoice under a composite key
+          // `${importRef}|${customerId}|${total}` instead of the plain
+          // `importRef` key, so it never repoints the plain key away from the
+          // ORIGINAL invoice. Look up the composite key for THIS row's own
+          // customer/total FIRST — that's the exact key a prior mismatched
+          // re-import of this same file would have recorded under — and fall
+          // back to the plain key only when no composite hit exists (the
+          // normal, never-mismatched path).
+          const compositeRef = importRef ? `${importRef}|${customer.id}|${total.toFixed(2)}` : null;
+          const compositePriorId = compositeRef
+            ? await this.externalRefs.findLocalId(
+                ImportEntityType.INVOICE,
+                IMPORT_INVOICE_REF_SOURCE,
+                compositeRef,
+              )
+            : null;
+          const priorId =
+            compositePriorId ||
+            (importRef
+              ? await this.externalRefs.findLocalId(
+                  ImportEntityType.INVOICE,
+                  IMPORT_INVOICE_REF_SOURCE,
+                  importRef,
+                )
+              : null);
+          const prior = priorId
+            ? await this.prisma.forTenant().invoice.findFirst({ where: { id: priorId } })
+            : null;
+          // F3 (REG-B268-D): the ("import", CSV "Invoice ID") key has no
+          // file/job scope, so an unrelated document from a DIFFERENT file
+          // whose "Invoice ID" cell happens to collide with a prior import
+          // must never silently overwrite that prior invoice. Compare the
+          // prior's customer AND total against THIS row before treating it as
+          // a re-import; either differing means a NEW invoice, not an update.
+          priorMismatch =
+            !!prior &&
+            (prior.customerId !== customer.id || Math.abs(Number(prior.total) - total) > 0.01);
+          if (priorMismatch) {
+            errors.push(
+              `${rowLabel}: Invoice ID "${importRef}" is already used by a different invoice ` +
+                `(customer or total mismatch) — imported as a new invoice instead of updating it`,
+            );
+          } else if (prior) {
+            // Same status/dueDate/paidAt sync as the source-numbered branch above.
+            const needsUpdate =
+              prior.status !== status ||
+              (prior.dueDate?.getTime() ?? 0) !== (dueDate?.getTime() ?? 0) ||
+              (prior.paidAt?.getTime() ?? 0) !== (paidAt?.getTime() ?? 0);
+            if (needsUpdate) {
+              await this.prisma.forTenant().invoice.update({
+                where: { id: prior.id },
+                data: { status, dueDate, paidAt },
+              });
+              // F2 (REG-B268-C): a re-import that flips the prior invoice to
+              // PAID/PARTIAL must get the SAME synthetic-payment treatment a
+              // brand-new PAID/PARTIAL invoice gets on create (:897-915) —
+              // otherwise the invoice is PAID with zero InvoicePayment rows,
+              // which reconciliation/balance-due math reads as unpaid. Guarded
+              // on "no payment already exists" so a SECOND re-import of an
+              // already-synthesized-payment row doesn't duplicate it.
+              if (status === InvoiceStatus.PAID || status === InvoiceStatus.PARTIAL) {
+                const existingPayment = await this.prisma
+                  .forTenant()
+                  .invoicePayment.findFirst({ where: { invoiceId: prior.id } });
+                if (!existingPayment) {
+                  const paidAmount = !isNaN(balanceDue)
+                    ? total - balanceDue
+                    : status === InvoiceStatus.PAID
+                      ? total
+                      : 0;
+                  if (paidAmount > 0.01) {
+                    await this.prisma.forTenant().invoicePayment.create({
+                      data: {
+                        invoiceId: prior.id,
+                        amount: paidAmount,
+                        method: "OTHER",
+                        reference: "zoho-import",
+                        notes: "Imported from Zoho",
+                        createdAt: paidAt || issueDate,
+                      },
+                    });
+                  }
+                }
+              }
+              updated++;
+            } else {
+              skipped++;
+            }
+            continue;
+          }
+          // Reserve a fresh number through NumberingService (standalone — no
+          // transaction is open here) instead of a local `seq` counter, so it can
+          // never collide with (and silently overwrite) a real tenant invoice. A
+          // collision here is a genuine error, not an update — it falls through
+          // to the catch below and is reported as a row error.
+          invoiceNumber = await this.numbering.reserveNext("INVOICE", { year });
         }
 
         const newInvoice = await this.prisma.forTenant().invoice.create({
@@ -779,6 +956,29 @@ export class ImportService {
             items: { create: itemsData },
           },
         });
+
+        // Durable identity for a source-numberless row (B268/D4) — recorded before
+        // any further write, so a re-upload of the same file finds THIS invoice
+        // instead of minting a second one.
+        //
+        // Opus re-check fix (REG-B268-F): a customer/total MISMATCH must NOT
+        // repoint the plain `importRef` key — that key belongs to the ORIGINAL
+        // invoice forever. Record this new, different invoice under the
+        // customer+total-scoped composite key instead, so re-importing the
+        // mismatched file again finds THIS invoice (via the composite lookup
+        // above) while re-importing the original file again still finds the
+        // original via the plain key — alternating files are both idempotent.
+        if (!numberFromSource && importRef) {
+          const refToRecord = priorMismatch
+            ? `${importRef}|${customer.id}|${total.toFixed(2)}`
+            : importRef;
+          await this.externalRefs.record(
+            ImportEntityType.INVOICE,
+            newInvoice.id,
+            IMPORT_INVOICE_REF_SOURCE,
+            refToRecord,
+          );
+        }
 
         // For PAID/PARTIAL invoices, create a synthetic payment record so
         // balance-due calculations are correct without a separate payments import
@@ -804,7 +1004,7 @@ export class ImportService {
 
         imported++;
       } catch (e: any) {
-        this.pushRowError(errors, invoiceNumber, e);
+        this.pushRowError(errors, invoiceNumber || rowLabel, e);
         skipped++;
       }
     }

@@ -4712,6 +4712,9 @@ export class InvoicesService {
         "Use the dedicated 'Apply Credit Note' or 'Apply Advance Payment' actions for these methods so the source balance is properly debited.",
       );
     }
+    // Refuse a null tenant BEFORE the transaction opens — same policy as sites
+    // 2/3 (D3): a PAY number is never minted from the shared "singleton" row.
+    const { tenantId, tenantShort } = this.requirePaymentTenant();
     return this.prisma.tenantTransaction(async (tx) => {
       // Lock the invoice row so concurrent payment requests serialize here
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
@@ -4743,12 +4746,12 @@ export class InvoicesService {
       // Auto-generate payment number — use tenantId as the counter row key so
       // each tenant has its own independent sequence. Include a short tenant hash
       // in the payment number to avoid global @unique collisions across tenants.
-      const counterKey = this.prisma.getTenantId() ?? "singleton";
-      const tenantShort = counterKey.slice(0, 6).toUpperCase();
       const counter = await tx.paymentCounter.upsert({
-        where: { id: counterKey },
+        where: { id: tenantId },
         update: { next: { increment: 1 } },
-        create: { id: counterKey, next: 2 },
+        // `tenantId` explicitly: the tx proxy injects it for a wrapped tx, but a
+        // caller-supplied raw client would leave the counter row tenant-less.
+        create: { id: tenantId, next: 2, tenantId },
       });
       const paymentNumber = `PAY-${tenantShort}-${String(counter.next - 1).padStart(4, "0")}`;
 
@@ -5037,16 +5040,72 @@ export class InvoicesService {
     };
   }
 
+  /**
+   * The one tenant policy every PAY site shares (D3): a payment number is only
+   * ever minted from a counter row keyed on a NON-NULL tenantId — never from the
+   * shared `"singleton"` row, which two tenants in that state would both mint
+   * `PAY-SINGLE-0001` from and collide on the GLOBAL `InvoicePayment.paymentNumber`
+   * unique. Reservation LIFETIME still differs by site: sites 1/2 mint on the
+   * caller's transaction (hoisting would take a second pooled connection inside an
+   * open tx — F16b — and would burn a number on every validation failure), site 3
+   * reserves standalone before its tx.
+   */
+  private requirePaymentTenant(): { tenantId: string; tenantShort: string } {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException("A tenant context is required to record a payment.");
+    }
+    return { tenantId, tenantShort: tenantId.slice(0, 6).toUpperCase() };
+  }
+
   /** Tenant-scoped `PAY-XXXX-####` sequence — mirrors recordPayment's counter. */
   private async nextPaymentNumberInTx(tx: any): Promise<string> {
-    const counterKey = this.prisma.getTenantId() ?? "singleton";
-    const tenantShort = counterKey.slice(0, 6).toUpperCase();
+    const { tenantId, tenantShort } = this.requirePaymentTenant();
     const counter = await tx.paymentCounter.upsert({
-      where: { id: counterKey },
+      where: { id: tenantId },
       update: { next: { increment: 1 } },
-      create: { id: counterKey, next: 2 },
+      // See recordPayment: explicit so a raw (unwrapped) tx client cannot land a
+      // tenant-less counter row.
+      create: { id: tenantId, next: 2, tenantId },
     });
     return `PAY-${tenantShort}-${String(counter.next - 1).padStart(4, "0")}`;
+  }
+
+  /**
+   * Tenant-scoped `PAY-<tenantShort>-####` sequence for the standalone
+   * (bulk-allocation) payment site — B269. Reserves `count` consecutive
+   * numbers with a SHORT STANDALONE upsert on `this.prisma` (never `tx`),
+   * committed BEFORE the caller opens its own payment transaction: a
+   * rolled-back booking (e.g. a Stripe webhook redelivery whose allocation
+   * fails validation) burns the reserved block instead of re-minting the same
+   * number on retry — the permanent settlement stall
+   * `cause-refutation.md` §2.3 describes. Never falls back to a "singleton"
+   * counter: a null tenant is refused outright, matching sites 1/2's existing
+   * `tenantShort` segment (never a bare `PAY-####`).
+   */
+  private async nextPaymentNumber(count = 1): Promise<{ tenantShort: string; start: number }> {
+    const { tenantId, tenantShort } = this.requirePaymentTenant();
+    const counter = await this.prisma.paymentCounter.upsert({
+      where: { id: tenantId },
+      // F6 (REG-B269-E, cause-ruling.md §2 D2 follow-up / findings #4 on run
+      // 54): `tenantId` explicit on the UPDATE arm too, not just `create` —
+      // every tenant that already recorded a payment before this helper
+      // existed keeps a counter row at `id: tenantId` with `tenantId: NULL`,
+      // and an update-only upsert never touches that column, so the comment
+      // below's claim ("avoids the legacy shape backfill-legacy-tenant-ids.mjs
+      // exists to repair") was false for the whole installed base — it only
+      // held for a tenant minting its FIRST payment under this helper. This
+      // repairs the row on first use going forward, same value either arm
+      // takes since `id` already pins it to this tenant.
+      update: { next: { increment: count }, tenantId },
+      // `tenantId` explicitly: this upsert runs on the UNSCOPED client (it is
+      // standalone, outside any tenant tx), so nothing injects the column the way
+      // the tx proxy does for `upsert.create`. Without it the counter row lands
+      // with tenantId NULL — the very legacy shape backfill-legacy-tenant-ids.mjs
+      // exists to repair.
+      create: { id: tenantId, tenantId, next: count + 1 },
+    });
+    return { tenantShort, start: counter.next - count };
   }
 
   async updatePayment(invoiceId: string, paymentId: string, dto: UpdatePaymentDto) {
@@ -5337,19 +5396,18 @@ export class InvoicesService {
     const settledAt = dto.settledAt ? new Date(dto.settledAt) : null;
     const status = dto.status ?? "PAID";
 
-    return this.prisma.tenantTransaction(async (tx) => {
-      // Generate a block of sequential payment numbers (tenant-scoped counter)
-      const counterKey = this.prisma.getTenantId() ?? "singleton";
-      const counter = await tx.paymentCounter.upsert({
-        where: { id: counterKey },
-        update: { next: { increment: dto.allocations.length } },
-        create: { id: counterKey, next: dto.allocations.length + 1 },
-      });
+    // Standalone reservation, committed BEFORE the payment tx opens (B269): a
+    // rolled-back booking burns the reserved block instead of re-minting the
+    // same number on retry, and a null tenant is refused instead of falling
+    // back to the shared "singleton" counter (which is how two tenants' first
+    // settlements used to collide on the GLOBAL paymentNumber unique).
+    const { tenantShort, start } = await this.nextPaymentNumber(dto.allocations.length);
 
+    return this.prisma.tenantTransaction(async (tx) => {
       const payments: any[] = [];
       for (let i = 0; i < dto.allocations.length; i++) {
         const alloc = dto.allocations[i];
-        const paymentNumber = `PAY-${String(counter.next - dto.allocations.length + i).padStart(4, "0")}`;
+        const paymentNumber = `PAY-${tenantShort}-${String(start + i).padStart(4, "0")}`;
 
         // Validate invoice belongs to customer and is not voided. F03/R1:
         // CONFIRMED (PAID) rows only feed the balance check below.
