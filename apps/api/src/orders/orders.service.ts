@@ -1675,7 +1675,11 @@ export class OrdersService implements OnApplicationBootstrap {
     }
   }
 
-  async create(dto: CreateOrderDto, user: JwtPayload, options: { skipAutoMerge?: boolean } = {}) {
+  async create(
+    dto: CreateOrderDto,
+    user: JwtPayload,
+    options: { skipAutoMerge?: boolean; allowArchived?: boolean } = {},
+  ) {
     // F30/R8: Idempotency-Key replay. `idempotencyKey` isn't on CreateOrderDto
     // (the controller threads it in from the `Idempotency-Key` header, never
     // client body input) — a client-generated uuid per cart session so a
@@ -1833,6 +1837,25 @@ export class OrdersService implements OnApplicationBootstrap {
         : [];
 
     const productMap = new Map(products.map((p) => [p.id, p]));
+
+    // B142 (cause-ruling.md §2/§3, D3): staff AND buyer order create share this
+    // one branch (cause-refutation.md §2 row 1) — reject a NEW order carrying an
+    // archived product line at this interactive edge.
+    // Fable train-2 fix round, item 4: EXEMPT via `options.allowArchived` —
+    // the ONLY caller that passes it is the driver change-request draft path
+    // (ChangeRequestsService.approve → :350ish `this.ordersService.create(...,
+    // { allowArchived: true })`), which drafts a NEXT_DELIVERY order for a
+    // product the customer already has on an existing (possibly since
+    // archived) line; every other caller — staff create, buyer createOrder —
+    // still rejects a new archived line (REG-B142-E/F).
+    if (!options.allowArchived) {
+      const archivedCreate = products.find((p: any) => p.isActive === false);
+      if (archivedCreate) {
+        throw new BadRequestException(
+          `Product ${archivedCreate.sku ?? archivedCreate.name} is archived`,
+        );
+      }
+    }
 
     // RF-4: load the regulated section (TrackedCategory) tax config for every
     // catalog product that carries one, so each regulated line's category tax is
@@ -3757,6 +3780,16 @@ export class OrdersService implements OnApplicationBootstrap {
             if (unresolvedAddIds.length > 0) {
               throw new BadRequestException(
                 `Product${unresolvedAddIds.length > 1 ? "s" : ""} not found: ${unresolvedAddIds.join(", ")}`,
+              );
+            }
+            // B142 (cause-ruling.md §2/§3, D3): reject a NEW line for an archived
+            // product at this interactive edge only — a qty/price edit or removal
+            // of a line that already exists never reaches `addProductIds` (it has
+            // an `item.id`), so archived lines already on the order keep working.
+            const archivedAdd = addProducts.find((p: any) => p.isActive === false);
+            if (archivedAdd) {
+              throw new BadRequestException(
+                `Product ${archivedAdd.sku ?? archivedAdd.name} is archived`,
               );
             }
 

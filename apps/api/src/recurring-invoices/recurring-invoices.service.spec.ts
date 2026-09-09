@@ -221,6 +221,80 @@ describe("RecurringInvoicesService (cycle claim, B9)", () => {
   });
 });
 
+// B142 (train 2, cause-ruling.md §2/§3, D3 batch path): recurring generation must
+// NEVER reject on an archived SKU — a reject inside invoicesService.create() makes
+// the cron throw, and REG-B106's failure handler gives the cycle back, so the
+// template would re-fail every night and the customer would never be billed
+// (cause-refutation.md §2 "Recurring generation is the sharpest risk"). Instead it
+// bills as scheduled and records a note on the invoice so the gap is visible.
+describe("RecurringInvoicesService (archived SKU in generation, B142)", () => {
+  let service: RecurringInvoicesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let invoices: { create: jest.Mock; send: jest.Mock; sendEmail: jest.Mock };
+
+  const template = () => ({
+    id: "ri-1",
+    customerId: "c1",
+    discount: 0,
+    shippingFee: 0,
+    notes: null,
+    terms: null,
+    autoSend: false,
+    frequency: "MONTHLY",
+    dayOfWeek: null,
+    dayOfMonth: 1,
+    nextRunAt: new Date("2026-07-01"),
+    items: [
+      {
+        description: "Archived Widget",
+        productId: "prod-archived",
+        qty: 1,
+        unitPrice: 10,
+        discount: 0,
+        taxRate: 0,
+      },
+    ],
+  });
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    invoices = {
+      create: jest.fn().mockResolvedValue({ id: "inv-1" }),
+      send: jest.fn().mockResolvedValue({ id: "inv-1" }),
+      sendEmail: jest.fn().mockResolvedValue({ success: true }),
+    };
+    const mod = await Test.createTestingModule({
+      providers: [
+        RecurringInvoicesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: TenantContextService, useValue: {} },
+        { provide: InvoicesService, useValue: invoices },
+      ],
+    }).compile();
+    service = mod.get(RecurringInvoicesService);
+    prisma.invoice.update.mockResolvedValue({ id: "inv-1" });
+    prisma.recurringInvoice.update.mockResolvedValue({ id: "ri-1" });
+    prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 1 });
+    prisma.product.findMany.mockResolvedValue([
+      { id: "prod-archived", isActive: false, sku: "ARCH-1", name: "Archived Widget" },
+    ]);
+  });
+
+  it("REG-B142-C generation with an archived SKU still bills and records a note", async () => {
+    const result = await (service as any).generateInvoiceFromTemplate(template());
+
+    // Never a reject — the invoice is still created (no thrown BadRequestException).
+    expect(invoices.create).toHaveBeenCalledTimes(1);
+    expect(result).toBeDefined();
+    expect(result).not.toBeNull();
+
+    const createArg = invoices.create.mock.calls[0][0];
+    expect(createArg.notes ?? "").toMatch(/archived/i);
+    // The cycle must still be claimed/advanced — a note is not a failure outcome.
+    expect(prisma.recurringInvoice.updateMany).toHaveBeenCalled();
+  });
+});
+
 // T4 (pin, R1) — same-month boundary guard: an operator-set first run earlier in the
 // month than dayOfMonth still lands on that month's occurrence, not next month.
 // T2 (pin, R2) — the dom-31 clamp. NOT a B46 proof: a month-end `from` is rolled into

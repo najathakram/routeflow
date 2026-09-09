@@ -25,6 +25,11 @@ import {
   useUpdateBusinessSettings,
   type AppUser,
 } from "../../../lib/api/admin";
+import {
+  getPushEnabled,
+  setPushEnabled as persistPushEnabled,
+} from "../../../lib/notification-prefs";
+import { registerPushToken, deregisterPushToken } from "../../../lib/auth";
 import { showToast } from "../../../lib/toast";
 import { alertInfo } from "../../../lib/confirm";
 
@@ -38,7 +43,13 @@ function GeneralTab() {
   const [taxRate, setTaxRate] = useState("");
   const [city, setCity] = useState("");
   const [zip, setZip] = useState("");
-  const [pushEnabled, setPushEnabled] = useState(false);
+  // B04: defaults ON — matches the server's opt-out semantics
+  // (notification-prefs.ts / NotificationsService treat a missing/unread
+  // preference as enabled) — and is immediately overwritten by the
+  // preference fetch below once it resolves. `pushPrefLoading` disables the
+  // switch until then so a tap can't race the fetch.
+  const [pushEnabled, setPushEnabled] = useState(true);
+  const [pushPrefLoading, setPushPrefLoading] = useState(true);
 
   useEffect(() => {
     if (data) {
@@ -48,6 +59,25 @@ function GeneralTab() {
       setZip(data.zip ?? "");
     }
   }, [data]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getPushEnabled()
+      .then((enabled) => {
+        if (!cancelled) setPushEnabled(enabled);
+      })
+      .catch(() => {
+        // REG-B04-A: fails OPEN — keep the ON default rather than blocking
+        // the tab or flipping the switch to a false "disabled" read.
+        if (!cancelled) setPushEnabled(true);
+      })
+      .finally(() => {
+        if (!cancelled) setPushPrefLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   if (isLoading) {
     return (
@@ -114,12 +144,25 @@ function GeneralTab() {
             </View>
             <Switch
               value={pushEnabled}
+              disabled={pushPrefLoading}
               onValueChange={(v) => {
                 setPushEnabled(v);
+                // REG-B04-A: write the preference first, then (de)register
+                // this device immediately rather than waiting for the next
+                // login — toggle-on registers the token now, toggle-off
+                // deletes it via the same deregister path `logout()` uses.
+                persistPushEnabled(v)
+                  .then(() => (v ? registerPushToken() : deregisterPushToken()))
+                  .catch(() => {
+                    // Best-effort — the server is still the authoritative gate
+                    // (registration/send both re-check the preference), so a
+                    // dropped write here degrades to "try again next toggle",
+                    // never to "silently stays on".
+                  });
                 alertInfo(
                   v ? "Push enabled" : "Push disabled",
                   v
-                    ? "We'll register this device with the push service on your next launch."
+                    ? "We'll register this device with the push service."
                     : "Notifications won't be delivered to this device.",
                 );
               }}

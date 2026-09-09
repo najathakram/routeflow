@@ -463,6 +463,7 @@ export default function EditInvoiceScreen() {
       <ProductPickerSheet
         visible={pickerOpen}
         title="Add item"
+        activeOnly
         onClose={() => setPickerOpen(false)}
         onSelect={addCatalogLine}
       />

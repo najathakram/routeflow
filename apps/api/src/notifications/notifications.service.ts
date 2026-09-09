@@ -57,7 +57,21 @@ export class NotificationsService implements OnModuleInit {
     return this.firebaseInitialized || true; // Expo push always available
   }
 
+  /**
+   * B04: per-user opt-out. Missing row (never toggled) defaults to ENABLED —
+   * only an explicit "false" suppresses delivery/registration.
+   */
+  private async isPushEnabled(userId: string): Promise<boolean> {
+    const pref = await this.prisma.forTenant().userPreference.findUnique({
+      where: { userId_key: { userId, key: "pushEnabled" } },
+    });
+    return pref?.value !== "false";
+  }
+
   async registerToken(userId: string, token: string, platform: "IOS" | "ANDROID"): Promise<void> {
+    // B04 / REG-B04-D: server-side no-op so a stale client can't re-enable
+    // delivery just by calling register-token again after toggling off.
+    if (!(await this.isPushEnabled(userId))) return;
     await this.prisma.forTenant().deviceToken.upsert({
       where: { token },
       create: { userId, token, platform },
@@ -77,6 +91,11 @@ export class NotificationsService implements OnModuleInit {
    * native FCM tokens are routed to Firebase when configured.
    */
   async sendToUser(userId: string, payload: PushPayload): Promise<number> {
+    // B04 / REG-B04-C: an explicit pushEnabled=false skips delivery entirely —
+    // checked BEFORE the token lookup so a disabled user's tokens are never
+    // even read for this send.
+    if (!(await this.isPushEnabled(userId))) return 0;
+
     const tokens = await this.prisma.forTenant().deviceToken.findMany({
       where: { userId },
       select: { token: true, id: true },
@@ -99,13 +118,26 @@ export class NotificationsService implements OnModuleInit {
 
   async sendToAll(payload: PushPayload): Promise<{ sent: number; deviceCount: number }> {
     const allTokens = await this.prisma.forTenant().deviceToken.findMany({
-      select: { token: true, id: true },
+      select: { token: true, id: true, userId: true },
     });
 
-    const deviceCount = allTokens.length;
+    // B04: exclude devices belonging to a user who has explicitly opted out —
+    // same rule as sendToUser, applied as a pre-filter here since this fans
+    // out over every device at once.
+    const disabledUserIds = new Set(
+      (
+        await this.prisma.forTenant().userPreference.findMany({
+          where: { key: "pushEnabled", value: "false" },
+          select: { userId: true },
+        })
+      ).map((p: { userId: string }) => p.userId),
+    );
+    const tokens = allTokens.filter((t: { userId: string }) => !disabledUserIds.has(t.userId));
+
+    const deviceCount = tokens.length;
     if (deviceCount === 0) return { sent: 0, deviceCount: 0 };
 
-    const { expoTokens, fcmTokens } = this.partitionTokens(allTokens);
+    const { expoTokens, fcmTokens } = this.partitionTokens(tokens);
 
     let sent = 0;
     if (expoTokens.length > 0) {

@@ -354,7 +354,10 @@ export class ChangeRequestsService {
         notes: `From change request on order #${order.orderNumber ?? order.id} (not on truck)`,
       } as any,
       pseudo,
-      { skipAutoMerge: false },
+      // B142/REG-B142-G: this draft moves an existing (possibly since
+      // archived) line to the customer's next delivery — the archived-line
+      // guard is for NEW interactive lines, not this internal draft path.
+      { skipAutoMerge: false, allowArchived: true },
     );
 
     try {
