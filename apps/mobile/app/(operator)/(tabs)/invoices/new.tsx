@@ -1580,6 +1580,7 @@ function InvoiceComposer({
       <ProductPickerSheet
         visible={pickCode != null}
         title="Which one?"
+        activeOnly
         initialSearch={pickCode ?? undefined}
         onClose={() => setPickCode(null)}
         onSelect={(p: { id: string }) => {

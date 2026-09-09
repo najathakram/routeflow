@@ -5,6 +5,7 @@ import { apiClient } from "../lib/api-client";
 import { showToast } from "../lib/toast";
 import { alertInfo } from "../lib/confirm";
 import { drainQueue, buildReplayRequestConfig, describeFailedDrain } from "../lib/queue-drain";
+import { resolveQueueIdentity, settleQueueOwnership } from "../lib/queue-identity";
 
 // RF-170: matches /route-runs/{runId}/stops/{stopId}/complete
 const STOP_COMPLETE_RE = /\/route-runs\/([^/]+)\/stops\/[^/]+\/complete/;
@@ -18,6 +19,7 @@ export function useNetworkSync() {
     dequeue,
     incrementRetry,
     addFailedAction,
+    restampAction,
     failedActions,
     clearFailedAction,
     clearFailedActions,
@@ -30,8 +32,26 @@ export function useNetworkSync() {
 
   const runDrain = async (currentQueue: QueuedAction[]) => {
     if (syncing.current || currentQueue.length === 0) return;
+
+    // REG-B137: nothing is replayed under a session that does not own it.
+    // With nobody signed in there is no token to replay under at all, so the
+    // queue simply waits.
+    const identity = resolveQueueIdentity();
+    if (!identity) return;
+
     syncing.current = true;
     setSyncing(true);
+
+    // Partition by owner BEFORE anything is attempted — an entry queued by a
+    // different user is moved to failedActions and dropped from the queue
+    // rather than executed under this session (B137). Done ahead of the
+    // RF-170 run check below so not even that lookup fires for someone
+    // else's work.
+    const owned = settleQueueOwnership(currentQueue, identity, {
+      addFailedAction,
+      removeAction: dequeue,
+      restampAction,
+    });
 
     // RF-170: before submitting a stop-completion, verify the run is still
     // active. If it was cancelled while the driver was offline, the action
@@ -39,7 +59,7 @@ export function useNetworkSync() {
     // is a deliberate short-circuit, not the silent-loss path REG-B143/B111
     // fixed below, and it never reaches the shared classification.
     const remaining: QueuedAction[] = [];
-    for (const action of currentQueue) {
+    for (const action of owned) {
       const stopMatch = STOP_COMPLETE_RE.exec(action.endpoint);
       if (stopMatch) {
         const runId = stopMatch[1];

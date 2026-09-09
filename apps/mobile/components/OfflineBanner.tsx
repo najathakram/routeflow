@@ -4,6 +4,8 @@ import { ios } from "@routeflow/ui/tokens";
 import { useNetworkSync } from "../hooks/useNetworkSync";
 import { chooseAction } from "../lib/confirm";
 import { describeQueuedAction } from "../lib/queue-drain";
+import { selectFailedActionsForUser } from "../lib/queue-identity";
+import { useAuthStore } from "../lib/auth-store";
 
 /**
  * Connectivity + failed-action banner, shared by the operator and driver
@@ -22,21 +24,22 @@ import { describeQueuedAction } from "../lib/queue-drain";
  * retry-exhausted write may or may not have landed. The dialog says so.
  */
 export function OfflineBanner() {
-  const {
-    isOnline,
-    queueLength,
-    failedCount,
-    failedActions,
-    clearFailedAction,
-    clearFailedActions,
-  } = useNetworkSync();
+  const { isOnline, queueLength, failedActions, clearFailedAction } = useNetworkSync();
+  // REG-B137: only the signed-in user's failures are theirs to see or dismiss.
+  // Another driver's entry on a shared device stays listed for that driver.
+  const userId = useAuthStore((state) => state.user?.id);
+  const ownFailures = userId ? selectFailedActionsForUser(failedActions, userId) : [];
+  const failedCount = ownFailures.length;
+  const dismissOwnFailures = () => {
+    for (const failure of ownFailures) clearFailedAction(failure.action.id);
+  };
 
   if (isOnline && failedCount === 0) return null;
 
   const reviewFailures = () => {
-    const [oldest, ...rest] = failedActions;
+    const [oldest, ...rest] = ownFailures;
     if (!oldest) return;
-    const shown = failedActions
+    const shown = ownFailures
       .slice(0, 3)
       .map((f) => `${describeQueuedAction(f.action)}\n${f.reason}`)
       .join("\n\n");
@@ -48,11 +51,11 @@ export function OfflineBanner() {
         ? [
             { label: "Cancel", style: "cancel" },
             { label: "Dismiss oldest", onPress: () => clearFailedAction(oldest.action.id) },
-            { label: "Dismiss all", style: "destructive", onPress: clearFailedActions },
+            { label: "Dismiss all", style: "destructive", onPress: dismissOwnFailures },
           ]
         : [
             { label: "Cancel", style: "cancel" },
-            { label: "Dismiss", style: "destructive", onPress: clearFailedActions },
+            { label: "Dismiss", style: "destructive", onPress: dismissOwnFailures },
           ],
     );
   };

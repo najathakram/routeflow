@@ -1,0 +1,19 @@
+{
+  "runId": "wf_3078d9dc-724",
+  "mode": "bugfix",
+  "scale": "minor",
+  "startedAt": "2026-09-09T05:21:00Z",
+  "estimatedCostUsd": 19.65,
+  "agents": 46,
+  "totalTokens": 6013430,
+  "durationMs": 19103192,
+  "clean": false,
+  "note": "Aggregate truncated; reconstructed from journal.jsonl (46 results). Final gate GREEN: mobile 123 suites / 1534 tests, lint 0 errors, lessons OK. 2 minors left (rehydrate helper untested; cross-tab web logout skips teardown) → fixed at landing with pins REG-B136-F / REG-B140-C.",
+  "redGate": { "ran": true, "audits": 1 },
+  "fixPlanning": { "rounds": 19, "fixesTotal": 31 },
+  "review": { "lastRoundFindings": 2 },
+  "finalGate": { "pass": true },
+  "mutationProbe": { "ran": false, "note": "minor scale; no probe records" },
+  "uiVerify": { "ran": false, "reason": "no mobile renderer" },
+  "phaseReport": []
+}

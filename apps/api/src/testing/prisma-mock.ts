@@ -92,6 +92,7 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     expenseCategory: modelProxy(),
     mileageRate: modelProxy(),
     deviceToken: modelProxy(),
+    userPreference: modelProxy(),
     syncLog: modelProxy(),
     refreshToken: modelProxy(),
     systemConfig: modelProxy(),

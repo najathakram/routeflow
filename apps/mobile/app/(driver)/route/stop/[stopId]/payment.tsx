@@ -22,6 +22,16 @@ import {
   type RouteRunOrder,
 } from "../../../../../lib/api/routes";
 import { podPhotoArtifactId } from "../../../../../lib/pod-artifacts";
+import {
+  artifactIdsFromPodPhotoUrls,
+  pendingPodArtifacts,
+  type PendingArtifactCandidate,
+} from "../../../../../lib/pod-reconcile";
+import {
+  DATA_URL_JPEG_QUALITY,
+  DATA_URL_MAX_WIDTH,
+  MAX_POD_DATA_URL_LENGTH,
+} from "../../../../../lib/pod-image";
 import { useOrder } from "../../../../../lib/api/orders";
 import { useDriverPayments } from "../../../../../lib/api/addons";
 import { useUploadPaymentImage } from "../../../../../lib/api/payments";
@@ -41,6 +51,7 @@ import {
 import { showToast } from "../../../../../lib/toast";
 import { regulatedPodGateError } from "../../../../../lib/pod-gating";
 import { openRouteInMaps } from "../../../../../components/openInMaps";
+import { useOfflineQueue } from "../../../../../store/offlineQueue";
 import * as Location from "expo-location";
 
 // Driver-vocabulary labels for the at-door SegmentedControl. Segments are
@@ -171,6 +182,35 @@ export default function PaymentScreen() {
     }
   };
 
+  // REG-B111 leg A: PhotoCapture's transcode-failure fallback
+  // (components/PhotoCapture.tsx:66-68) hands back a local `file://` URI
+  // instead of a `data:` URL when the resize/base64 transcode fails. That
+  // capture must still reach the attach loop below — never be silently
+  // filtered out — so convert it here on a best-effort basis instead.
+  // Resizes on the SAME budget PhotoCapture uses (lib/pod-image.ts): a
+  // full-resolution camera JPEG transcoded without a resize routinely exceeds
+  // the server's 1.9MB dataUrl cap and its 2MB JSON body limit, so an
+  // unresized rescue would fail the attach every time. A result that is still
+  // over the cap counts as a conversion failure (the caller keeps the capture)
+  // rather than a request the server is guaranteed to reject.
+  const podPhotoToDataUrl = async (uri: string): Promise<string | null> => {
+    if (uri.startsWith("data:")) {
+      return uri.length > MAX_POD_DATA_URL_LENGTH ? null : uri;
+    }
+    try {
+      const jpeg = await manipulateAsync(uri, [{ resize: { width: DATA_URL_MAX_WIDTH } }], {
+        compress: DATA_URL_JPEG_QUALITY,
+        format: SaveFormat.JPEG,
+        base64: true,
+      });
+      if (!jpeg.base64) return null;
+      const dataUrl = `data:image/jpeg;base64,${jpeg.base64}`;
+      return dataUrl.length > MAX_POD_DATA_URL_LENGTH ? null : dataUrl;
+    } catch {
+      return null;
+    }
+  };
+
   const closeStop = async () => {
     if (!stopId || !runId || !stop || submitting) return;
 
@@ -261,18 +301,99 @@ export default function PaymentScreen() {
     // the completion payload no longer carries photo strings at all (sending
     // them would overwrite keys attached by queued replays). Failures never
     // block the driver: a lost photo is no worse than the pre-upload behavior.
-    const podPhotos = (pod?.photoUrls ?? []).filter((p) => p.startsWith("data:"));
-    for (const dataUrl of podPhotos) {
+    const podPhotos = pod?.photoUrls ?? [];
+    // Captures that did NOT reach the server. `clearPod` below wipes the whole
+    // POD entry once the stop completes, so anything still in here is written
+    // back afterwards — a photo the server never received is never deleted
+    // from the device (REG-B111).
+    const unsentUris: string[] = [];
+    // Convert every capture ONCE, then write a converted `file://` fallback
+    // back into podStore. `podPhotoArtifactId` hashes the data URL, so
+    // re-encoding the same file on the next attempt (a failed completion
+    // leaves the POD in place) could otherwise mint a SECOND id for the same
+    // photo and append a duplicate. Persisting the converted data URL makes
+    // the id stable across retries (D3, REG-B136).
+    const stableUrls = [...podPhotos];
+    const candidates: PendingArtifactCandidate[] = [];
+    for (const [index, rawUrl] of podPhotos.entries()) {
+      const dataUrl = await podPhotoToDataUrl(rawUrl);
+      if (!dataUrl) {
+        // Conversion failed (exotic/corrupt file, or still over the server's
+        // size cap). Treated exactly like a failed attach: the capture is kept
+        // on the device and the failure is recorded in the offline queue's
+        // failedActions, so it survives the navigation away from this screen.
+        const reason =
+          "A delivery photo couldn't be prepared for upload. It's saved on this device and listed under failed actions.";
+        unsentUris.push(rawUrl);
+        setAmountError(reason);
+        showToast(reason);
+        useOfflineQueue.getState().addFailedAction({
+          action: {
+            id: `pod-photo-${stopId}-unconvertible-${index}`,
+            endpoint: `/route-runs/${runId}/stops/${stopId}/pod-artifact`,
+            method: "POST",
+            // The source URI only — never the base64 payload: failedActions is
+            // persisted to AsyncStorage as one JSON blob, so an image body
+            // there would bloat the offline queue by megabytes per failure.
+            body: { kind: "photo", sourceUri: rawUrl },
+            timestamp: Date.now(),
+            retries: 0,
+          },
+          reason,
+          failedAt: Date.now(),
+        });
+        continue;
+      }
+      stableUrls[index] = dataUrl;
+      candidates.push({ artifactId: podPhotoArtifactId(dataUrl), dataUrl });
+    }
+    if (stableUrls.some((url, i) => url !== podPhotos[i])) {
+      usePodStore.getState().setPhotos(stopId, stableUrls);
+    }
+
+    // Attach only what the server does not already hold for this stop: its
+    // `podPhotoUrls` are `…/photo-<artifactId>.<ext>` storage keys, so
+    // reconciling against them is what stops an app-kill relaunch (podStore
+    // now hydrates) or a retry after a failed completion from appending the
+    // same photo twice — the server's own guard only dedupes an identical
+    // artifactId (D3, REG-B136).
+    const pending =
+      pendingPodArtifacts(candidates, {
+        podArtifactIds: artifactIdsFromPodPhotoUrls(stop.podPhotoUrls),
+      }) ?? [];
+    for (const { artifactId, dataUrl } of pending) {
       try {
         await attachPodMut.mutateAsync({
           runId,
           stopId,
           kind: "photo",
           dataUrl,
-          artifactId: podPhotoArtifactId(dataUrl),
+          artifactId,
         });
-      } catch {
-        // offline-queued or failed — the stop completion must proceed either way
+      } catch (e: any) {
+        // The stop completion must proceed either way — but the failure is
+        // never silent: it's surfaced inline + as a toast, recorded in the
+        // offline queue's failedActions, and the capture is kept on the
+        // device (REG-B111 leg B) instead of vanishing from an empty catch.
+        const reason =
+          e?.response?.data?.message ?? e?.message ?? "Delivery photo failed to upload.";
+        unsentUris.push(dataUrl);
+        setAmountError(reason);
+        showToast(reason);
+        useOfflineQueue.getState().addFailedAction({
+          action: {
+            id: `pod-photo-${stopId}-${artifactId}`,
+            endpoint: `/route-runs/${runId}/stops/${stopId}/pod-artifact`,
+            method: "POST",
+            // artifactId only — the base64 image never enters failedActions
+            // (persisted to AsyncStorage; see the note above).
+            body: { kind: "photo", artifactId },
+            timestamp: Date.now(),
+            retries: 0,
+          },
+          reason,
+          failedAt: Date.now(),
+        });
       }
     }
 
@@ -311,6 +432,9 @@ export default function PaymentScreen() {
     setClosing(false);
 
     clearPod(stopId);
+    // Any capture the server never received survives the clear: the driver
+    // still has the photo, and the failedActions entries above say why.
+    if (unsentUris.length) usePodStore.getState().setPhotos(stopId, unsentUris);
     if (stopId) clearPlan(stopId);
     if (collected > 0 && runId) {
       useRunSettlementStore.getState().recordCollection(runId, {

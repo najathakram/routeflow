@@ -3,6 +3,7 @@ import { Platform } from "react-native";
 import * as Notifications from "expo-notifications";
 import * as WebBrowser from "expo-web-browser";
 import { apiClient } from "./api-client";
+import { getPushEnabled } from "./notification-prefs";
 import { OP_KEYS, DRIVER_KEYS, BUYER_KEYS, CURRENT_ROLE_KEY, type CurrentRole } from "./auth-keys";
 import { setLastUsername } from "./last-username";
 import { generateOAuthState, isValidReturnedState, OAUTH_STATE_KEY } from "./oauth-state";
@@ -117,10 +118,19 @@ export async function getStoredUser(): Promise<AuthUser | null> {
 
 // ─── Auth functions ───────────────────────────────────────────────────────────
 
-async function registerPushToken(): Promise<void> {
+export async function registerPushToken(): Promise<void> {
   // Expo push token only works on physical device (not simulator)
   if (Platform.OS === "web") return;
   try {
+    // B04: a user who toggled push off shouldn't have this login silently
+    // re-enable delivery — the server also no-ops registerToken for a
+    // disabled user (defense in depth), but skipping the OS permission
+    // prompt + network round-trip here is the visible half of the fix.
+    // REG-B04-B: the preference fetch fails OPEN — an enabled user (the
+    // common case) must still register even if this read errors, so a
+    // rejection is treated as "enabled", never as a silent skip.
+    if (!(await getPushEnabled().catch(() => true))) return;
+
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
     if (existingStatus !== "granted") {
@@ -142,7 +152,7 @@ async function registerPushToken(): Promise<void> {
   }
 }
 
-async function deregisterPushToken(): Promise<void> {
+export async function deregisterPushToken(): Promise<void> {
   if (Platform.OS === "web") return;
   try {
     const token = await storage.get("pushToken");

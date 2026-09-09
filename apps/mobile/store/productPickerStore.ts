@@ -15,6 +15,9 @@ interface ProductPickerState {
   selections: Record<string, PickedProduct>;
   setSelection: (key: string, product: PickedProduct) => void;
   clearSelection: (key: string) => void;
+  // D1/D3 (cause-ruling.md §3): sign-out (lib/session-teardown.ts) resets this
+  // user-scoped store so the next user on this device never sees prior data.
+  reset: () => void;
 }
 
 export const useProductPickerStore = create<ProductPickerState>((set) => ({
@@ -26,4 +29,5 @@ export const useProductPickerStore = create<ProductPickerState>((set) => ({
       delete next[key];
       return { selections: next };
     }),
+  reset: () => set({ selections: {} }),
 }));
