@@ -7924,6 +7924,229 @@ describe("InvoicesService", () => {
       expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
   });
+
+  // ─── T4 unit pin — REG-B269 (cause-ruling.md §2 D3, bug-test-plan.md T4) ───
+  //
+  // Site 3 (recordStandalonePayment, reached from payment-requests.service.ts:853
+  // for a Stripe settlement) mints `PAY-####` from the `"singleton"` counter key
+  // with no tenant segment — sites 1/2 already embed `tenantShort` for exactly
+  // this reason (invoices.service.ts:4743-4745). D3's `nextPaymentNumber(tenantId)`
+  // helper must: require a non-empty tenant (never fall back to "singleton"),
+  // format `PAY-<tenantShort>-####` the same way sites 1/2 already do, and
+  // reserve the counter on a client that is NOT the payment transaction's own
+  // (a short standalone reservation committed before the payment tx opens —
+  // the same shape NumberingService's own fast path uses via `forTenant()`,
+  // never nested inside a caller's `$transaction`). TODAY none of this holds:
+  // recordStandalonePayment reserves the counter INSIDE its own single
+  // `tenantTransaction` call and never checks for a null tenant.
+  describe("REG-B269 pin: recordStandalonePayment's PaymentCounter mint (site 3)", () => {
+    const seedValidInvoice = (id: string) => {
+      prisma.invoice.findFirst.mockResolvedValue({
+        id,
+        customerId: "cust-1",
+        status: InvoiceStatus.SENT,
+        total: 100,
+        dueDate: null,
+        payments: [],
+      });
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+    };
+
+    it("REG-B269-pin-1: refuses a null-tenant booking instead of minting from the singleton counter", async () => {
+      prisma.getTenantId.mockReturnValue(null);
+      seedValidInvoice("inv-b269-1");
+      prisma.paymentCounter.upsert.mockResolvedValue({ id: "singleton", next: 2 });
+
+      // TODAY this RESOLVES (site 3 falls back to `?? "singleton"` and mints
+      // successfully), so asserting a rejection fails on that concrete
+      // behavior — a resolved promise where BadRequestException is expected —
+      // not on an unresolved import or a stub.
+      await expect(
+        service.recordStandalonePayment({
+          customerId: "cust-1",
+          totalAmount: 40,
+          method: "CHECK",
+          allocations: [{ invoiceId: "inv-b269-1", amount: 40 }],
+        } as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("REG-B269-pin-2: formats PAY-<tenantShort>-#### exactly like sites 1/2, not the bare PAY-#### site 3 mints today", async () => {
+      prisma.getTenantId.mockReturnValue("qa269ab");
+      seedValidInvoice("inv-b269-2");
+      prisma.paymentCounter.upsert.mockResolvedValue({ id: "qa269ab", next: 2 });
+
+      await service.recordStandalonePayment({
+        customerId: "cust-1",
+        totalAmount: 40,
+        method: "CHECK",
+        allocations: [{ invoiceId: "inv-b269-2", amount: 40 }],
+      } as any);
+
+      // sites 1/2's algorithm: tenantShort = tenantId.slice(0,6).toUpperCase().
+      // TODAY site 3 writes the bare "PAY-0001" (no tenant segment) instead.
+      expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ paymentNumber: "PAY-QA269A-0001" }),
+        }),
+      );
+    });
+
+    it("REG-B269-pin-3: reserves the counter on a client OUTSIDE the payment transaction, never on the tx that writes the InvoicePayment rows", async () => {
+      prisma.getTenantId.mockReturnValue("qa269c");
+      seedValidInvoice("inv-b269-3");
+      prisma.paymentCounter.upsert.mockResolvedValue({ id: "qa269c", next: 2 });
+
+      // A tx-scoped paymentCounter DISTINCT from the standalone prisma.paymentCounter
+      // mock — the only way to make "which client reserved it" observable, since
+      // the shared prisma-mock fixture normally hands the tx callback the SAME
+      // model-proxy reference as the top level. D3: the mint must commit standalone
+      // BEFORE the payment tx opens, so a compliant fix never reaches this one.
+      const txPaymentCounterUpsert = jest.fn().mockResolvedValue({ id: "qa269c", next: 99 });
+      prisma.tenantTransaction.mockImplementation((fn: any) =>
+        fn({
+          ...prisma,
+          paymentCounter: { upsert: txPaymentCounterUpsert },
+          $executeRaw: jest.fn().mockResolvedValue(0),
+          $queryRaw: jest.fn().mockResolvedValue([]),
+        }),
+      );
+
+      await service.recordStandalonePayment({
+        customerId: "cust-1",
+        totalAmount: 40,
+        method: "CHECK",
+        allocations: [{ invoiceId: "inv-b269-3", amount: 40 }],
+      } as any);
+
+      // TODAY: recordStandalonePayment reserves on `tx.paymentCounter.upsert`
+      // (the ONE tenantTransaction call wrapping the whole method), so the
+      // standalone client is never touched and the tx-scoped one is — the
+      // reverse of what this pins.
+      expect(prisma.paymentCounter.upsert).toHaveBeenCalled();
+      expect(txPaymentCounterUpsert).not.toHaveBeenCalled();
+    });
+
+    // F6 (REG-B269-E, cause-ruling.md §2 D2 follow-up / findings #4 on run 54):
+    // the explicit `tenantId` lived only on the `create` arm, so a tenant that
+    // already recorded a payment before this helper existed kept its counter
+    // row at `tenantId: NULL` forever — the `update` arm never touched that
+    // column. Pins that BOTH arms of the upsert now carry `tenantId`.
+    it("REG-B269-E counter update arm sets tenantId", async () => {
+      prisma.getTenantId.mockReturnValue("qa269e2");
+      seedValidInvoice("inv-b269-e");
+      prisma.paymentCounter.upsert.mockResolvedValue({ id: "qa269e2", next: 2 });
+
+      await service.recordStandalonePayment({
+        customerId: "cust-1",
+        totalAmount: 40,
+        method: "CHECK",
+        allocations: [{ invoiceId: "inv-b269-e", amount: 40 }],
+      } as any);
+
+      expect(prisma.paymentCounter.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "qa269e2" },
+          update: expect.objectContaining({ tenantId: "qa269e2" }),
+          create: expect.objectContaining({ tenantId: "qa269e2" }),
+        }),
+      );
+    });
+  });
+
+  // ─── T4 unit pin — REG-B269 sites 1/2 (cause-ruling.md §2 D3) ───────────────
+  //
+  // D3's tenant requirement is a policy shared by ALL THREE PAY sites, not just
+  // the standalone one: `?? "singleton"` at site 1 (recordPayment) and site 2
+  // (nextPaymentNumberInTx) would mint `PAY-SINGLE-####` off ONE globally shared
+  // PaymentCounter row, so two tenants' first null-tenant payments produce the
+  // same string and the second dies on the GLOBAL InvoicePayment.paymentNumber
+  // unique — the same B269 failure class site 3 now refuses. What is NOT shared
+  // is reservation LIFETIME: sites 1/2 still mint on the caller's transaction
+  // (a standalone hoist would take a second pooled connection inside an open tx
+  // — F16b — and would burn a number on every validation failure), site 3 alone
+  // reserves standalone before its tx (pin-3 above).
+  describe("REG-B269 pin: the tenant requirement covers PAY sites 1 and 2 too", () => {
+    const seedInvoiceAndUpdate = (id: string) => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id,
+        status: InvoiceStatus.SENT,
+        total: 100,
+        dueDate: null,
+        payments: [],
+      });
+      prisma.invoice.update.mockResolvedValue({
+        id,
+        invoiceNumber: "INV-0001",
+        customerId: "cust-1",
+        total: 100,
+        payments: [],
+      });
+    };
+
+    it("REG-B269-pin-4: recordPayment (site 1) refuses a null tenant instead of minting from the singleton counter", async () => {
+      prisma.getTenantId.mockReturnValue(null);
+      seedInvoiceAndUpdate("inv-b269-4");
+      prisma.paymentCounter.upsert.mockResolvedValue({ id: "singleton", next: 2 });
+
+      // TODAY this RESOLVES, writing paymentNumber "PAY-SINGLE-0001" off the
+      // shared counter row — a resolved promise where BadRequestException is
+      // expected, not an unresolved import or a stub.
+      await expect(
+        service.recordPayment("inv-b269-4", { amount: 100, method: "CASH" } as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      // Refused BEFORE the counter is touched: no number is burnt on the refusal.
+      expect(prisma.paymentCounter.upsert).not.toHaveBeenCalled();
+    });
+
+    it("REG-B269-pin-5: nextPaymentNumberInTx (site 2, the driver delivery path) refuses a null tenant and otherwise mints on the CALLER's tx", async () => {
+      const txUpsert = jest.fn().mockResolvedValue({ id: "qa269d", next: 2 });
+      const tx = { paymentCounter: { upsert: txUpsert } };
+      const mint = (service as any).nextPaymentNumberInTx.bind(service) as (
+        tx: unknown,
+      ) => Promise<string>;
+
+      prisma.getTenantId.mockReturnValue(null);
+      // TODAY: resolves "PAY-SINGLE-0001" off the shared counter.
+      await expect(mint(tx)).rejects.toBeInstanceOf(BadRequestException);
+      expect(txUpsert).not.toHaveBeenCalled();
+
+      prisma.getTenantId.mockReturnValue("qa269d");
+      await expect(mint(tx)).resolves.toBe("PAY-QA269D-0001");
+      // Reservation lifetime is unchanged: still the caller's tx, never a
+      // standalone client (site 2 runs inside the delivery transaction).
+      expect(txUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "qa269d" },
+          create: expect.objectContaining({ id: "qa269d", tenantId: "qa269d" }),
+        }),
+      );
+      expect(prisma.paymentCounter.upsert).not.toHaveBeenCalled();
+    });
+
+    it("REG-B269-pin-6: recordPayment's counter row is keyed on the tenantId and carries tenantId on create", async () => {
+      prisma.getTenantId.mockReturnValue("qa269e");
+      seedInvoiceAndUpdate("inv-b269-6");
+      prisma.paymentCounter.upsert.mockResolvedValue({ id: "qa269e", next: 2 });
+
+      await service.recordPayment("inv-b269-6", { amount: 100, method: "CASH" } as any);
+
+      // Without the explicit `tenantId` the row lands tenant-less whenever the
+      // callback gets a raw (unwrapped) client — the legacy shape
+      // backfill-legacy-tenant-ids.mjs exists to repair.
+      expect(prisma.paymentCounter.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "qa269e" },
+          create: expect.objectContaining({ id: "qa269e", tenantId: "qa269e" }),
+        }),
+      );
+      expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ paymentNumber: "PAY-QA269E-0001" }),
+        }),
+      );
+    });
+  });
 });
 
 /**

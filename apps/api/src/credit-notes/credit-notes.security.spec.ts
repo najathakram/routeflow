@@ -14,6 +14,7 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { NumberingService } from "../import/numbering.service";
 
 const MOCK_CN = {
   id: "cn-1",
@@ -51,6 +52,12 @@ describe("CreditNotesService — F10-003 findOneForUser role gate", () => {
             syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
             removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
           },
+        },
+        // Harness: CreditNotesService injects NumberingService (B267/B269);
+        // these suites never exercise a mint, so the mock only satisfies DI.
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("CN-2026-0001") },
         },
       ],
     }).compile();

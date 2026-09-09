@@ -45,6 +45,7 @@
  * exist yet on this tree).
  */
 import { Test } from "@nestjs/testing";
+import { ConflictException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import { ImportService } from "./import.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -52,13 +53,22 @@ import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { NumberingService } from "./numbering.service";
+import { ExternalRefService } from "./external-ref.service";
 
 describe("ImportService — import robustness (F17)", () => {
   let service: ImportService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let numbering: { reserveNext: jest.Mock };
+  let externalRefs: { findLocalId: jest.Mock; record: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    numbering = { reserveNext: jest.fn().mockResolvedValue("INV-2026-0001") };
+    externalRefs = {
+      findLocalId: jest.fn().mockResolvedValue(null),
+      record: jest.fn().mockResolvedValue(undefined),
+    };
     const mod = await Test.createTestingModule({
       providers: [
         ImportService,
@@ -71,6 +81,14 @@ describe("ImportService — import robustness (F17)", () => {
             maybeStartCustomerGrace: jest.fn().mockResolvedValue(undefined),
           },
         },
+        // Harness: ImportService injects NumberingService (B267/B269); most
+        // suites here never exercise a mint, so the default mock just satisfies DI
+        // — REG-B268-E below drives it into failure on purpose.
+        { provide: NumberingService, useValue: numbering },
+        // Harness: ImportService injects ExternalRefService (B268/D4 re-import
+        // idempotency for source-numberless rows). `findLocalId` → null is
+        // "never imported before", the state every suite here assumes.
+        { provide: ExternalRefService, useValue: externalRefs },
       ],
     }).compile();
     service = mod.get(ImportService);
@@ -783,6 +801,106 @@ describe("ImportService — import robustness (F17)", () => {
       // Both payments are on the books: 500 (history) + 500 (the new one).
       expect(paymentStore).toHaveLength(2);
       expect(paymentStore.reduce((s, p) => s + Number(p.amount), 0)).toBe(1000);
+    });
+  });
+
+  describe("REG-B268 — a fallback row whose number reservation fails is a labelled error row", () => {
+    it("REG-B268-E: importInvoices reports a source-numberless row whose reserveNext throws as ONE error row identified by its 'Invoice ID', and writes no invoice", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", businessName: "Acme Corp" });
+      // The number-space is exhausted / contended: reserveNext gives up rather than
+      // returning a number. Before B268/D4 the row still carried a synthesized
+      // number, so the error line at least named the row; the fix must keep an
+      // identifier without one.
+      numbering.reserveNext.mockRejectedValue(new ConflictException("could not reserve"));
+
+      // No "Invoice Number" column at all — the fallback branch, keyed on "Invoice ID".
+      const csv = "Invoice ID,Customer Name,Total,Invoice Status\nA1,Acme Corp,100,Open\n";
+
+      const result = await service.importInvoices(Buffer.from(csv), "user-1");
+
+      expect(result.imported).toBe(0);
+      expect(result.updated).toBe(0);
+      expect(result.skipped).toBe(1);
+      expect(prisma.invoice.create).not.toHaveBeenCalled();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+      expect(result.errors).toHaveLength(1);
+      // The row is identifiable: the label carries the CSV's own id and the line
+      // never degenerates to a bare ": import failed".
+      expect(result.errors[0]).toContain("A1");
+      expect(result.errors[0].startsWith(":")).toBe(false);
+    });
+  });
+
+  // F5 (REG-B268-E, cause-ruling.md §2 D2 follow-up / findings #3 on run 54): a
+  // whitespace-only "Invoice ID" cell (a space, a tab, a stray quoted blank) was
+  // truthy at grouping, so it grouped and reached the fallback branch with an
+  // empty (post-.trim()) `importRef` — which skips the idempotency lookup
+  // entirely (`importRef ? findLocalId : null`), so every re-upload of the SAME
+  // row minted a FRESH number and duplicated the invoice — the exact B268/D4
+  // class the whole file exists to close. Grouping now `.trim()`s the id and
+  // rejects an empty result as a reported error row, before any customer/number
+  // work runs, so the row is never silently dropped AND never silently minted
+  // twice.
+  describe("REG-B268-E — whitespace-only Invoice ID is rejected, never minted twice", () => {
+    it("a space-only 'Invoice ID' cell is reported as a missing-id error row and mints nothing, on either import", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", businessName: "Acme Corp" });
+
+      // A single space in the "Invoice ID" column — truthy before `.trim()`.
+      const csv = 'Invoice ID,Customer Name,Total,Invoice Status\n" ",Acme Corp,100,Open\n';
+
+      const first = await service.importInvoices(Buffer.from(csv), "user-1");
+      expect(first.imported).toBe(0);
+      expect(first.skipped).toBe(1);
+      expect(prisma.invoice.create).not.toHaveBeenCalled();
+      expect(numbering.reserveNext).not.toHaveBeenCalled();
+      expect(first.errors.some((e) => /missing invoice id/i.test(e))).toBe(true);
+
+      // Re-uploading the SAME file must not mint a second (or first) number —
+      // it is rejected identically every time, never duplicated.
+      const second = await service.importInvoices(Buffer.from(csv), "user-1");
+      expect(second.imported).toBe(0);
+      expect(second.skipped).toBe(1);
+      expect(prisma.invoice.create).not.toHaveBeenCalled();
+      expect(numbering.reserveNext).not.toHaveBeenCalled();
+    });
+
+    // Opus re-check fix: the grouping key must trim EACH source separately
+    // before the `||` fallback — trimming only the already-joined string let a
+    // whitespace-only "Invoice ID" (truthy pre-trim) win over a perfectly
+    // valid "Invoice Number" and misreport a healthy row as "missing invoice
+    // id". Only a row where BOTH sources are blank after their OWN trim is
+    // actually missing.
+    it("a whitespace-only 'Invoice ID' alongside a valid 'Invoice Number' still imports normally", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", businessName: "Acme Corp" });
+      prisma.invoice.findFirst.mockResolvedValue(null);
+      prisma.invoice.create.mockResolvedValue({ id: "inv-1" });
+
+      const csv =
+        'Invoice Number,Invoice ID,Customer Name,Total,Invoice Status\nINV-9001," ",Acme Corp,100,Open\n';
+
+      const result = await service.importInvoices(Buffer.from(csv), "user-1");
+
+      expect(result.imported).toBe(1);
+      expect(result.errors).toHaveLength(0);
+      expect(prisma.invoice.create).toHaveBeenCalledTimes(1);
+      const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+      expect(data.invoiceNumber).toBe("INV-9001");
+      // Source-numbered branch — never touches the fallback mint/idempotency path.
+      expect(numbering.reserveNext).not.toHaveBeenCalled();
+    });
+
+    it("both 'Invoice ID' and 'Invoice Number' whitespace-only is reported as a missing-id error row", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", businessName: "Acme Corp" });
+
+      const csv =
+        'Invoice Number,Invoice ID,Customer Name,Total,Invoice Status\n" "," ",Acme Corp,100,Open\n';
+
+      const result = await service.importInvoices(Buffer.from(csv), "user-1");
+
+      expect(result.imported).toBe(0);
+      expect(result.skipped).toBe(1);
+      expect(prisma.invoice.create).not.toHaveBeenCalled();
+      expect(result.errors.some((e) => /missing invoice id/i.test(e))).toBe(true);
     });
   });
 

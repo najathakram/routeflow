@@ -123,6 +123,12 @@ describe("CreditNotesService — wallet-exclusion on the credit apply paths (F09
             removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
           },
         },
+        // Harness: CreditNotesService injects NumberingService (B267/B269);
+        // these suites never exercise a mint, so the mock only satisfies DI.
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("CN-2026-0001") },
+        },
       ],
     }).compile();
     service = mod.get(CreditNotesService);
@@ -304,10 +310,20 @@ describe("CreditNotesService — create() refuses VOID/WRITTEN_OFF source invoic
             removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
           },
         },
+        // Harness: CreditNotesService injects NumberingService (B267/B269);
+        // these suites never exercise a mint, so the mock only satisfies DI.
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("CN-2026-0001") },
+        },
       ],
     }).compile();
     service = mod.get(CreditNotesService);
     prisma.creditNote.findFirst.mockResolvedValue(null); // nextCnNumber → CN-…-0001
+    // REG-B267-E: create() now reads the customer through the tenant-scoped
+    // `forTenant().customer.findFirst` BEFORE reserving a number, so every
+    // create-path test needs an in-tenant customer to get past that gate.
+    prisma.customer.findFirst.mockResolvedValue({ id: "c1", businessName: "Acme Retail" });
     prisma.creditNote.create.mockImplementation((args: any) =>
       Promise.resolve({ id: "cn-should-not-exist", ...args.data, customer: {} }),
     );
@@ -569,6 +585,12 @@ describe("CreditNotesService — findAll invoice-number include (F09, R9)", () =
             syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
             removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
           },
+        },
+        // Harness: CreditNotesService injects NumberingService (B267/B269);
+        // these suites never exercise a mint, so the mock only satisfies DI.
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("CN-2026-0001") },
         },
       ],
     }).compile();
