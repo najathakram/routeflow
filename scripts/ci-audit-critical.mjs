@@ -39,11 +39,21 @@
 // ackedBy, ackedOn, followUp } entries. A critical advisory is suppressed only when an entry's
 // `id` + `package` match it AND today (UTC) is <= `expires`; suppression prints
 // `::warning::ALLOWLISTED …`. A missing allowlist file is fine (no allowlist configured); a
-// present-but-malformed one (bad JSON, missing field, bad date) fails closed — `::error::` +
-// exit 1 — without ever running npm audit. An entry past its `expires` always fails the gate
+// present-but-malformed one (bad JSON, missing field, bad date, or an `ackedOn` after today —
+// an ack can't be timestamped in the future) fails closed — `::error::` + exit 1 — without ever
+// running npm audit. An entry past its `expires` always fails the blocking gate
 // (`::error::ALLOWLIST EXPIRED …`), even if the advisory it names no longer appears in the
-// current audit output, so a stale entry can't rot silently. --report-only never fails on any
-// of this — it only gains the extra ALLOWLISTED/EXPIRED lines for visibility.
+// current audit output, so a stale entry can't rot silently. --report-only never fails on any of
+// this — an expired entry there prints `::warning::ALLOWLIST EXPIRED …` instead (still visible,
+// never blocking), and both the ALLOWLISTED and EXPIRED lines are derived by walking
+// `vulnerabilities` directly rather than npm's `metadata.vulnerabilities` rollup, same as the
+// blocking lane.
+//
+// A package also floors back to its own npm-reported severity when a `via` entry is a bare
+// string naming a package with NO top-level entry in `vulnerabilities` at all — npm's pointer
+// invariant (a string via always points to another top-level package) is violated, so that
+// pointer's severity is unknowable and the gate fails closed on it rather than trusting whatever
+// (possibly lower) rows remain.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -179,8 +189,11 @@ function isValidUtcDate(s) {
 // Loads and validates the allowlist. A missing file is NOT an error (no allowlist configured
 // yet) — { ok: true, entries: [] }. A present-but-malformed file fails closed — { ok: false }
 // — having already printed ::error:: for the caller to surface; the caller must not fall back
-// to "no allowlist" in that case.
-function loadAllowlist() {
+// to "no allowlist" in that case. `today` (UTC YYYY-MM-DD) is passed in rather than recomputed
+// here so main() and this function agree on one instant — Round-4 pin 2: an entry whose
+// `ackedOn` is after `today` (a plain string compare, valid for zero-padded ISO dates) fails
+// closed too, before npm is ever spawned — an ack timestamped in the future is unverifiable.
+function loadAllowlist(today) {
   const allowlistPath = process.env.CI_AUDIT_ALLOWLIST || defaultAllowlistPath();
   if (!fs.existsSync(allowlistPath)) {
     return { ok: true, entries: [] };
@@ -214,6 +227,12 @@ function loadAllowlist() {
     if (!isValidUtcDate(entry.ackedOn)) {
       console.log(
         `::error::CI audit allowlist ${allowlistPath} entry ${entry.id} has an invalid "ackedOn" (want a real UTC calendar date, YYYY-MM-DD): ${entry.ackedOn}`,
+      );
+      return { ok: false, entries: [] };
+    }
+    if (entry.ackedOn > today) {
+      console.log(
+        `::error::CI audit allowlist ${allowlistPath} entry ${entry.id} has "ackedOn" ${entry.ackedOn} in the future (today is ${today})`,
       );
       return { ok: false, entries: [] };
     }
@@ -395,6 +414,51 @@ function applyStringViaFloor(remaining, stringViaPackages, json) {
   }
 }
 
+// Names (restricted to `severities`) of packages whose `via` list contains at least one bare
+// string that does NOT correspond to a top-level entry in `vulnerabilities`. In real npm audit
+// output a string via is a POINTER to another package's own top-level entry — that's an
+// invariant of the format. Round-4 pin 1: when a package's pointer names something with no
+// top-level entry at all, the invariant is violated and we cannot read that pointer's severity,
+// so we can't trust the package's other (possibly lower) remaining rows to speak for it. This is
+// deliberately broader than packagesWithStringVia's MINOR-7 case — it floors the package even
+// when it still has other non-suppressed rows, because none of those rows can vouch for a
+// pointer target we can't see.
+function packagesWithGhostStringVia(json, severities) {
+  const vulns = json.vulnerabilities || {};
+  const names = new Set();
+  for (const [name, info] of Object.entries(vulns)) {
+    if (!severities.includes(info.severity)) continue;
+    const viaList = Array.isArray(info.via) ? info.via : [info.via];
+    if (viaList.some((v) => typeof v === "string" && !(v in vulns))) names.add(name);
+  }
+  return names;
+}
+
+// Mutates `remaining` in place. For each package in `ghostPackages` (see
+// packagesWithGhostStringVia), ensures at least one remaining row's advisorySeverity reaches the
+// package's own npm-reported severity — appending an unsuppressible floor row (ghsaId null)
+// unless a remaining row already reaches that severity. Runs after applyStringViaFloor so a
+// package the MINOR-7 floor already restored to its reported severity is never floored twice.
+function applyGhostViaFloor(remaining, ghostPackages, json) {
+  for (const name of ghostPackages) {
+    const info = json.vulnerabilities[name];
+    if (!info) continue;
+    const alreadyFloored = remaining.some(
+      (r) => r.name === name && severityRank(r.advisorySeverity) >= severityRank(info.severity),
+    );
+    if (alreadyFloored) continue;
+    remaining.push({
+      name,
+      severity: info.severity,
+      advisorySeverity: info.severity,
+      title:
+        "(see npm audit for detail — dangling string via, pointer target missing from vulnerabilities)",
+      range: info.range || "(range unknown)",
+      ghsaId: null,
+    });
+  }
+}
+
 function printRows(rows, { noticePrefix = false } = {}) {
   rows.forEach((r, i) => {
     const label = r.severity.toUpperCase();
@@ -403,10 +467,6 @@ function printRows(rows, { noticePrefix = false } = {}) {
       `${prefix}${label}: ${r.name} (severity=${r.severity}) — ${r.title} — range ${r.range}`,
     );
   });
-}
-
-function printAdvisories(json, { severities = ["critical"], noticePrefix = false } = {}) {
-  printRows(buildRows(json, severities), { noticePrefix });
 }
 
 // npm's own severity ordering.
@@ -485,15 +545,18 @@ function runAuditLoop({ level, reportOnly, backoffs, allowlist, today }) {
       const high = counts.high || 0;
       if (reportOnly) {
         console.log(`advisories: critical=${critical} high=${high} (report-only, level=${level})`);
-        if (high + critical > 0) {
-          printAdvisories(json, { severities: ["critical", "high"], noticePrefix: true });
+        // Round-4 pin 3: whether to print advisories/suppressions is decided by walking
+        // `json.vulnerabilities` itself (buildRows), never by npm's `metadata.vulnerabilities`
+        // rollup (`critical`/`high` above are logged for visibility only) — the same
+        // never-trust-the-rollup rule the blocking lane already follows, so a stale/inconsistent
+        // rollup can never hide a real advisory from this report either.
+        const advisoryRows = buildRows(json, ["critical", "high"]);
+        if (advisoryRows.length > 0) {
+          printRows(advisoryRows, { noticePrefix: true });
         }
-        if (critical > 0) {
-          const { suppressed } = partitionByAllowlist(
-            buildRows(json, ["critical"]),
-            allowlist,
-            today,
-          );
+        const criticalRows = buildRows(json, ["critical"]);
+        if (criticalRows.length > 0) {
+          const { suppressed } = partitionByAllowlist(criticalRows, allowlist, today);
           printSuppressed(suppressed);
         }
         return 0;
@@ -509,6 +572,7 @@ function runAuditLoop({ level, reportOnly, backoffs, allowlist, today }) {
         today,
       );
       applyStringViaFloor(remaining, packagesWithStringVia(json, ["critical"]), json);
+      applyGhostViaFloor(remaining, packagesWithGhostStringVia(json, ["critical"]), json);
       console.log(`npm metadata: critical=${critical}`);
       printSuppressed(suppressed);
 
@@ -583,18 +647,21 @@ function runAuditLoop({ level, reportOnly, backoffs, allowlist, today }) {
 function main() {
   const { level, reportOnly } = parseArgs(process.argv.slice(2));
   const backoffs = backoffSchedule();
+  const today = todayUtcDate();
 
-  const allowlistLoad = loadAllowlist();
+  const allowlistLoad = loadAllowlist(today);
   if (!allowlistLoad.ok) {
     // Already printed ::error::. Fail closed on the blocking gate; --report-only never fails,
     // consistent with every other branch below.
     return reportOnly ? 0 : 1;
   }
   const allowlist = allowlistLoad.entries;
-  const today = todayUtcDate();
   const expired = allowlist.filter((e) => e.expires < today);
   for (const e of expired) {
-    console.log(`::error::ALLOWLIST EXPIRED ${e.id} — ${e.followUp}`);
+    // Round-4 pin 3: --report-only never fails, so an expired entry there is only a warning —
+    // ::error:: is reserved for the blocking gate, which still fails via the rot guard below.
+    const prefix = reportOnly ? "::warning::" : "::error::";
+    console.log(`${prefix}ALLOWLIST EXPIRED ${e.id} — ${e.followUp}`);
   }
 
   const exitCode = runAuditLoop({ level, reportOnly, backoffs, allowlist, today });

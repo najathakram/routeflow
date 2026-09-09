@@ -202,6 +202,33 @@ beforeAll(() => {
       "  });",
       "}",
       "",
+      "function ghostViaJson() {",
+      "  // Round-4 pin 1: pkg-p's via list carries a dangling string pointer ('ghost-pkg') with",
+      "  // NO top-level vulnerabilities entry, alongside a detailed 'high' via — npm's pointer",
+      "  // invariant (a string via always names another top-level package) is violated, so pkg-p",
+      "  // must floor back to its own npm-reported (critical) severity even though its only",
+      "  // detailed via is 'high'.",
+      "  return JSON.stringify({",
+      "    vulnerabilities: {",
+      "      'pkg-p': {",
+      "        name: 'pkg-p',",
+      "        severity: 'critical',",
+      "        via: [",
+      "          'ghost-pkg',",
+      "          {",
+      "            title: 'DoS in pkg-p',",
+      "            severity: 'high',",
+      "            range: '<1.0.0',",
+      "            url: 'https://github.com/advisories/GHSA-ghst-pkgp-0001',",
+      "          },",
+      "        ],",
+      "        range: '<1.0.0',",
+      "      },",
+      "    },",
+      "    metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 1, critical: 1, total: 1 } },",
+      "  });",
+      "}",
+      "",
       "function highJson() {",
       "  return JSON.stringify({",
       "    vulnerabilities: {",
@@ -239,6 +266,10 @@ beforeAll(() => {
       "    break;",
       "  case 'mixed-string-critical-via':",
       "    process.stdout.write(mixedStringCriticalViaJson());",
+      "    process.exit(1);",
+      "    break;",
+      "  case 'ghost-via':",
+      "    process.stdout.write(ghostViaJson());",
       "    process.exit(1);",
       "    break;",
       "  case 'high':",
@@ -537,6 +568,24 @@ describe("ci-audit-critical.mjs contract — allowlist", () => {
     expect(res.status).toBe(0);
   });
 
+  // Round-4 pin 3: --report-only never fails on an expired entry, but the annotation level must
+  // downgrade to a warning (::error:: is reserved for the blocking gate) — and the ALLOWLISTED/
+  // EXPIRED lines must still print (they're derived by walking `vulnerabilities` directly, not
+  // gated on npm's metadata rollup). Fails if the expired-entry log keeps using ::error:: under
+  // --report-only.
+  it("report-only with an expired allowlist entry: exits 0, warns ALLOWLIST EXPIRED (not ::error::)", () => {
+    const counter = newCounter("report-only-expired");
+    const allowlist = writeAllowlist([allowlistEntry({ expires: isoDateOffset(-1) })]);
+    const res = run(
+      ["--level", "high", "--report-only"],
+      fakeEnv("critical", counter, { CI_AUDIT_ALLOWLIST: allowlist }),
+    );
+
+    expect(res.stdout).toContain("::warning::ALLOWLIST EXPIRED");
+    expect(res.stdout).not.toContain("::error::");
+    expect(res.status).toBe(0);
+  });
+
   // Round-3 (MAJOR): the blocking decision must be derived by walking `vulnerabilities` itself,
   // never from npm's `metadata.vulnerabilities.critical` rollup — a fixture where that rollup
   // says 0 but a package entry is still `severity: "critical"` must still fail the gate.
@@ -599,6 +648,20 @@ describe("ci-audit-critical.mjs contract — allowlist", () => {
     expect(res.stdout).toContain("::error::");
     expect(res.status).toBe(1);
   });
+
+  // Round-4 pin 1: a string via that names a package with NO top-level `vulnerabilities` entry
+  // violates npm's pointer invariant — that pointer's severity can't be read, so the package
+  // floors back to its own npm-reported (critical) severity even though its only detailed via is
+  // 'high'. Fails if the ghost-via floor is removed (or only fires when zero rows remain, like
+  // the MINOR-7 floor it's layered on top of).
+  it("(xiv) string via names a package with no top-level vulnerabilities entry: floors to critical, exits 1", () => {
+    const counter = newCounter("ghost-via");
+    const res = run([], fakeEnv("ghost-via", counter));
+
+    expect(res.stdout).toContain("CRITICAL: pkg-p");
+    expect(res.stdout).toContain("::error::");
+    expect(res.status).toBe(1);
+  });
 });
 
 // Round-3 (MINOR 4+5): `expires`/`ackedOn` must be real UTC calendar dates (not just
@@ -647,6 +710,22 @@ describe("ci-audit-critical.mjs contract — allowlist date validation", () => {
 
     expect(res.status).toBe(0);
     expect(invocationCount(counter)).toBe(1);
+  });
+
+  // Round-4 pin 2: an ack timestamped in the future is unverifiable — `ackedOn` must be <= today
+  // (a plain UTC YYYY-MM-DD string compare), checked before npm is ever spawned. This entry is
+  // otherwise well-formed (a valid 29-day window), so this fails if the ackedOn<=today check is
+  // removed and only the shape/window checks remain.
+  it("ackedOn in the future (tomorrow): exits 1, npm never runs", () => {
+    const counter = newCounter("allow-future-ackedon");
+    const allowlist = writeAllowlist([
+      allowlistEntry({ ackedOn: isoDateOffset(1), expires: isoDateOffset(30) }),
+    ]);
+    const res = run([], fakeEnv("clean", counter, { CI_AUDIT_ALLOWLIST: allowlist }));
+
+    expect(res.stdout).toContain("::error::");
+    expect(res.status).toBe(1);
+    expect(invocationCount(counter)).toBe(0);
   });
 });
 
