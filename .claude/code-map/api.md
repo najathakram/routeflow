@@ -525,6 +525,17 @@ private …` immediately followed by a `gh repo view --json visibility` read-bac
   fixed literal** — a hardcoded epoch chosen without regard to wall-clock time can drift into the
   calendar future and get clamped by F3's own guard; only the relative offsets between the 17
   cases matter.
+- **`src/common/campaign-check-web-report.spec.ts` (2026-09-08, #686)** — pins that
+  `scripts/campaign-check.mjs` treats `apps/web`'s Jest campaign report
+  (`.campaign/runs/web.json`, wired via `apps/web/jest.config.js`'s `reporters` block —
+  `["<rootDir>/../../scripts/jest-campaign-reporter.cjs", { artifact: "web" }]`) as a T1 proof
+  source on par with api/mobile/pricing. Root cause it guards: REG-B### specs living in
+  `apps/web` (e.g. a `lib/api/*.test.tsx` REG-B35 pin) were invisible to the gate — "no test
+  titled with REG-B## found in the jest report" on every PR (#683) — because the checker only
+  ever read api/mobile reports; `apps/web` never ran the campaign reporter at all. Harness
+  mirrors `campaign-check-freshness.spec.ts`'s `runScriptDirect`/`mkdtempSync` fixture pattern.
+  See [`INDEX`](INDEX.md)'s "Bug-register burn-down campaign" row and [`web`](web.md)'s Jest
+  section for the reporter wiring.
 - **`src/main.ts`** — ⚠️ NEVER `app.use(json())` here: it consumes the body before Nest captures `rawBody` and silently breaks EVERY Stripe webhook signature (#400 — the 2mb body limit goes through Nest's parser options). **Sentry (2026-08-26, DSN-optional):** `import "./instrument"` is the FIRST import (`src/instrument.ts` — `Sentry.init` with `enabled: !!process.env.SENTRY_DSN`, inert otherwise); global filters registered as `useGlobalFilters(new SentryExceptionFilter(httpAdapter), new ThrottlerExceptionFilter(), new MulterExceptionFilter())` — Nest reverses the array so the specific filters still win for their types; ⚠️ the catch-all Sentry filter MUST stay first or the narrow ones are never reached. `src/common/sentry-exception.filter.ts` captures ONLY ≥500s with `tenant`/user/path tags then defers to `super.catch`; `src/common/multer-exception.filter.ts` maps multer 2.3.0's newer codes (`LIMIT_FIELD_ARRAY_INDEX`, `INVALID_FIELD_NAME`, `STREAM_DESTROYED`) to 400 — @nestjs/platform-express's `transformException` switches on a frozen message list that predates them, so without it they arrive as raw `MulterError`s, score as 500, and capture one Sentry event per attacker probe. startup: `assertSecrets()` (JWT required in all envs; **`STORAGE_URL_SIGNING_SECRET` now FATAL in production too — F5-001 fail-closed**; `ENCRYPTION_KEY` still warn-only), **no boot-time DDL (PR-1, `imp-03a`, 2026-09-03)** — `runStartupMigration()` is deleted; schema drift is now caught read-only by `scripts/schema-drift.mjs`, not by a startup writer,
   helmet, trust proxy 2 (Railway CDN), CORS wildcard
   patterns, global `ValidationPipe` (whitelist/forbidNonWhitelisted/transform),
