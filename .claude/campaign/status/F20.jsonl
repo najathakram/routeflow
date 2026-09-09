@@ -1,8 +1,8 @@
-{"id":"B04","batch":"F20","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"2d0270fd"}
+{"id":"B04","batch":"F20","tier":"T1","state":"done","pr":682,"proof":"REG-B04-A/B push preference gates registration and send path","evidence":"fixed via #682 (7d8141e0): push preference gate + archived-product guard; B151 already proven via #555","roundSha":"2d0270fd","buildPlan":null}
 {"id":"B23","batch":"F20","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"2d0270fd"}
 {"id":"B94","batch":"F20","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"e5b0af8e"}
 {"id":"B95","batch":"F20","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"e5b0af8e"}
-{"id":"B142","batch":"F20","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
-{"id":"B151","batch":"F20","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
+{"id":"B142","batch":"F20","tier":"T1","state":"done","pr":682,"proof":"REG-B142-A/B/C/D archived-product guard at interactive edges only","evidence":"fixed via #682 (7d8141e0): push preference gate + archived-product guard; B151 already proven via #555","roundSha":"0b2c3a0a","buildPlan":null}
+{"id":"B151","batch":"F20","tier":"T1","state":"done","pr":555,"proof":"REG-B151","evidence":"fixed via #682 (7d8141e0): push preference gate + archived-product guard; B151 already proven via #555","roundSha":"0b2c3a0a","buildPlan":null}
 {"id":"B172","batch":"F20","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
 {"id":"B32","batch":"F20","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"c60fe214"}

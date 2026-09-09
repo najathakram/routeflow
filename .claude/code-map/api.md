@@ -2224,3 +2224,34 @@ candidates)` — earlier candidate wins, then barcode > sku > unitSku, ties on `
 - **Stale comment fixed** in `findAll`: it claimed `@Min(1)` blocks external `limit=0`; the DTO is
   `@Min(0)`. Bounding that for external callers is a separate hardening change (web pickers pass
   500/1000 and `BuyerCatalogService` uses 0 internally).
+
+### 2026-09-09 — Train 2 push-preference gate + archived-product guard (B04/B142, #682, `7d8141e0`)
+
+- **`notifications.service.ts`** — new private `isPushEnabled(userId): Promise<boolean>` reads
+  `UserPreference` (`userId_key: {userId, key: "pushEnabled"}`); missing row reads as ENABLED
+  (opt-out), only an explicit `"false"` disables. `registerToken(userId, token, platform)` no-ops
+  (skips the `deviceToken.upsert`) when disabled, so a stale client can't re-enable delivery just
+  by re-registering (B04/REG-B04-D). `sendToUser(userId, payload): Promise<number>` checks the
+  gate BEFORE the token lookup — a disabled user's tokens are never even read (REG-B04-C).
+  Mirrors mobile's `lib/notification-prefs.ts` (see [`mobile.md`](mobile.md)), which is the
+  client-side convenience only; this gate is the authoritative one.
+- **`orders.service.ts`** — `create(dto, options?: { skipAutoMerge?, allowArchived? })` (`:1678`)
+  rejects a NEW order carrying an archived product line (`isActive === false`) UNLESS
+  `options.allowArchived` is set; staff create and buyer `createOrder` both reject
+  (REG-B142-E/F), the one exemption is the driver change-request draft path
+  (`ChangeRequestsService.approve` → `create(..., { allowArchived: true })`, which drafts a
+  NEXT_DELIVERY order for a product the customer already has on an existing — possibly since
+  archived — line). `updateOrderItems(orderId, dto, user?)` (`:3069`) applies the same guard only
+  to `addProductIds` (a NEW line, no `item.id`) — a qty/price edit or removal of a line already on
+  the order never reaches `addProductIds`, so an already-archived line already on the order keeps
+  working. Both throw `BadRequestException` naming the SKU/name.
+- **`recurring-invoices.service.ts`** — deliberately the OPPOSITE policy: private
+  `buildArchivedItemsNote(productIds): Promise<string | null>` (`:206`) NEVER blocks generation —
+  a rejection inside `invoicesService.create()` here would silently stall a scheduled billing
+  cycle — it instead appends a one-line note (`"Note: <sku(s)> {is|are} archived; billed as
+scheduled."`) to the generated invoice when the template references an archived product. Same
+  batch-paths-bill-regardless carve-out applies to estimate→invoice convert and templates apply
+  (not individually mapped here) — only the interactive create/edit edges above reject.
+- Registry: F20 (B04, B142; B151 already proven via #555) proved on #682 and discharged to done
+  in this follow-up — see [`mobile.md`](mobile.md) for the client-side train-1/train-2 pieces and
+  F19's discharge (#681).

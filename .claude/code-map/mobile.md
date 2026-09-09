@@ -1425,3 +1425,66 @@ order.status !== "CANCELLED"`) is UNCHANGED on the list branch — no new gate, 
   prop, never swaps the surface out); L-038 archived for headroom (tooling, bot-authored lockfile
   regeneration — no dedicated automated guard, grep-confirmed clean of citations outside
   `.claude/lessons/**`/`.claude/pipeline/**`). Register back to 40/40.
+
+### 2026-09-09 — Train 1 session teardown/hydrate + POD reconcile (B111/B136/B137/B140/B150, #681, `8de65863`) / Train 2 push toggle + product-picker archived guard (B04/B142, #682, `7d8141e0`)
+
+- **`lib/session-teardown.ts`** (new) — `TeardownReason = "logout" | "session-expired" |
+"cross-tab"`; `TeardownOptions { reason?, userId?: string | null }`;
+  `teardownUserSession(options?): Promise<void>` is the ONE place every user-scoped side effect of
+  ending a session lands — called by `useAuthStore.logout()` BEFORE `apiLogout()` (tokens still
+  valid) and by the session-expired handler. Resolves the outgoing `userId` FIRST (falls back to
+  `getStoredUser()`), then: `stopLocationTracking()` unconditionally for both realms (B150),
+  `queryClient.cancelQueries()` + `.clear()` on the shared `lib/query-client.ts` instance (B140),
+  `reset()` on all 7 user-scoped stores (`podStore`, `runSettlementStore`, `mileageStore`,
+  `routeStore`, `delivery-plan-store`, `listUiStore`, `productPickerStore`, via a defensive
+  `resetIfPresent`), then `clearUserScopedStorage(POD_STORE_NAME | RUN_SETTLEMENT_STORE_NAME,
+userId)` to delete the two persisted blobs outright (a `persist` write from the `reset()` calls
+  above can otherwise land in the `anon` bucket one async hop later and resurrect the cleared
+  capture). Deliberately untouched: the tenant store (shared-tablet branded login survives
+  sign-out) and the offline queue (identity-stamped, never flushed on sign-out).
+- **`lib/session-hydrate.ts`** (new) — `rehydrateUserScopedStores(): Promise<void>` calls
+  `persist.rehydrate()` on `podStore`/`runSettlementStore` (both now `skipHydration: true`,
+  keyed by user id which isn't known at module-eval time); the ONE explicit hydration point,
+  called from `lib/auth-store.ts` right after `login()`/`initialize()` resolves the user.
+  Optional-chained and swallowed per store — a hydration failure never blocks sign-in.
+- **`lib/query-client.ts`** (new) — `export const queryClient = new QueryClient()`, the single
+  instance shared by `app/_layout.tsx`'s `QueryClientProvider` and `session-teardown.ts` (a client
+  the layout allocated for itself would leave sign-out unable to clear it).
+- **`lib/pod-reconcile.ts`** (new, pure) — `PendingArtifactCandidate { artifactId, dataUrl }`,
+  `ServerPodStop { podArtifactIds?: string[] }`; `pendingPodArtifacts(local, serverStop):
+PendingArtifactCandidate[]` filters out local artifacts the server already holds (matched by
+  id) so a relaunch re-attaches only what's missing, never a duplicate append (B111/B136).
+  `artifactIdsFromPodPhotoUrls(urls): string[]` recovers those ids from a stop's
+  `podPhotoUrls` via the `/photo-<artifactId>.` key marker
+  (`apps/api/src/routes/pod-artifacts.util.ts#podArtifactKey`).
+- **`lib/queue-identity.ts`** (new) — `QueueIdentity`, `stampQueuedAction(action, identity):
+StampedAction`, `resolveQueueIdentity(): QueueIdentity | null`, `filterQueueForCurrentUser(...)`,
+  `selectFailedActionsForUser(...)`, `settleQueueOwnership(...)`. `store/offlineQueue.ts` stamps
+  every new entry with `{userId, tenantId}` at enqueue time (legacy unstamped entries adopted once
+  at drain time via `restampAction`); drain skips an entry stamped for a different user, moving it
+  to `failedActions` with reason `different-user` (B137) instead of replaying it.
+- **`lib/user-scoped-storage.ts`** (new) — `userScopedStorageKey(baseName): Promise<string>`,
+  `userScopedStorageKeyFor(baseName, userId)`, `clearUserScopedStorage(baseName, userId):
+Promise<void>`, and the zustand `StateStorage` adapter `userScopedStorage` — keys
+  `podStore`/`runSettlementStore`'s persisted blobs by user id (`routeflow-pod-store:<userId>`).
+- **`store/podStore.ts`** / **`store/runSettlementStore.ts`** — both now `persist` via
+  `createJSONStorage` on `userScopedStorage`, `skipHydration: true`, export their bucket base name
+  (`POD_STORE_NAME` / `RUN_SETTLEMENT_STORE_NAME`) so teardown/hydrate can address the same
+  literal, and gain `reset()` in their state shape.
+- **`lib/notification-prefs.ts`** (new) — `getPushEnabled(): Promise<boolean>` (missing row reads
+  as enabled — opt-out) / `setPushEnabled(enabled): Promise<void>`, both via
+  `GET`/`PATCH /users/me/preferences` under the `pushEnabled` key (same generic per-user
+  preference store `locale` uses on web; the server-side `isPushEnabled` gate in
+  `notifications.service.ts` is authoritative — see [`api.md`](api.md) — so a stale client can't
+  re-enable delivery on its own). `app/(operator)/settings/index.tsx`'s push switch binds to it
+  instead of local-only state; `lib/auth.ts` login registration and toggle-off deregistration both
+  gate on it too (B04).
+- **`components/ProductPickerSheet.tsx`** — new `activeOnly?: boolean` prop (default `false`,
+  opt-in only); when set, the product query passes `isActive: true`. Stock-count/PO-receive/
+  variant-parent callers keep the unfiltered query; only the driver-facing order-item add path
+  opts in (web parity, B142) — the list itself stays unfiltered by `isActive` so a scan can still
+  surface `· Archived` inline for a line already on the order.
+- Registry: F19 (B111/B136/B137/B140/B150) and F20 (B04/B142, plus B151 already proven via #555)
+  proved on #681/#682 and discharged to done in this follow-up; siblings B01/B02/B143 (F19, B143
+  already done via #555) and B32/B23/B94/B95/B172 (F20) stay queued/untouched — out of scope
+  for this wave.
