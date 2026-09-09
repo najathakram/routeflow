@@ -24,6 +24,18 @@ import {
   type DrainDeps,
   type FailedActionRecord,
 } from "../lib/queue-drain";
+import { selectFailedActionsForUser } from "../lib/queue-identity";
+
+// lib/queue-identity.ts statically imports lib/auth-store and lib/tenant-store,
+// which in turn pull in react-native — stub both so importing the pure
+// selectFailedActionsForUser selector doesn't drag react-native into this
+// plain-node Jest run (mirrors offline-queue-identity.test.ts).
+jest.mock("../lib/auth-store", () => ({
+  useAuthStore: { getState: () => ({ user: null }) },
+}));
+jest.mock("../lib/tenant-store", () => ({
+  useTenantStore: { getState: () => ({ slug: null }) },
+}));
 
 function action(overrides: Partial<QueuedAction>): QueuedAction {
   return {
@@ -224,7 +236,34 @@ describe("OfflineBanner surfaces failedActions (R6 badge)", () => {
 
   it("offers a way to clear the persisted failures", () => {
     expect(bannerSrc).toMatch(/clearFailedAction\b/);
-    expect(bannerSrc).toMatch(/clearFailedActions\b/);
+    // REG-B137: the banner must dismiss only the signed-in user's own
+    // failures — never the store-wide clearFailedActions(), which would
+    // also wipe another user's evicted (different-user) records.
+    expect(bannerSrc).not.toMatch(/clearFailedActions\b/);
+    expect(bannerSrc).toMatch(
+      /for\s*\(\s*const\s+\w+\s+of\s+ownFailures\s*\)\s*clearFailedAction\(/,
+    );
+  });
+
+  it("REG-B137: dismissing own failures never touches another user's evicted record", () => {
+    const u1 = "u-1";
+    const u2 = "u-2";
+    const failedActions: FailedActionRecord[] = [
+      {
+        action: { ...action({ id: "a1" }), userId: u1 } as any,
+        reason: "different-user",
+        failedAt: 1,
+      },
+      {
+        action: { ...action({ id: "a2" }), userId: u2 } as any,
+        reason: "different-user",
+        failedAt: 2,
+      },
+    ];
+    const ownIds = new Set(selectFailedActionsForUser(failedActions, u1).map((f) => f.action.id));
+    const remaining = failedActions.filter((f) => !ownIds.has(f.action.id));
+    expect(remaining).toHaveLength(1);
+    expect((remaining[0].action as any).userId).toBe(u2);
   });
 
   it("both role layouts render the shared banner rather than a private copy", () => {

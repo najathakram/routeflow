@@ -5,6 +5,9 @@ interface ListUiState {
   snapshots: Record<string, ListUiSnapshot<any>>;
   saveListUi: (key: string, snapshot: ListUiSnapshot<any>) => void;
   clearListUi: (key: string) => void;
+  // D1/D3 (cause-ruling.md §3): sign-out (lib/session-teardown.ts) resets this
+  // user-scoped store so the next user on this device never sees prior data.
+  reset: () => void;
 }
 
 /**
@@ -23,6 +26,7 @@ export const useListUiStore = create<ListUiState>((set) => ({
       delete next[key];
       return { snapshots: next };
     }),
+  reset: () => set({ snapshots: {} }),
 }));
 
 /** List id for the operator products screen (`app/(operator)/products/index.tsx`). */
