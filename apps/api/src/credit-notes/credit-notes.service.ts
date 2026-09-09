@@ -1,7 +1,10 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
+  HttpException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -11,6 +14,7 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { roundMoney } from "@routeflow/pricing";
 import { InvoiceStatus, PaymentMethod } from "@prisma/client";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import { NumberingService } from "../import/numbering.service";
 import {
   CREDIT_NOT_APPLICABLE,
   CREDIT_SETTLE_EXCLUDED,
@@ -24,22 +28,217 @@ export class CreditNotesService {
     private readonly gateway: RouteFlowGateway,
     private readonly ledger: RegulatedLedgerService,
     private readonly commissionEngine: CommissionEngineService,
+    private readonly numbering: NumberingService,
   ) {}
+
+  private readonly logger = new Logger(CreditNotesService.name);
 
   /** Round a quantity to 3 decimals (matches the Decimal(12,3) columns). */
   private round3(n: number): number {
     return Math.round(n * 1000) / 1000;
   }
 
-  private async nextCnNumber(db: any) {
-    const year = new Date().getFullYear();
-    const prefix = `CN-${year}-`;
-    const last = await db.creditNote.findFirst({
-      where: { creditNoteNumber: { startsWith: prefix } },
-      orderBy: { creditNoteNumber: "desc" },
+  /**
+   * F1 (REG-B267-F/G): true for a Postgres SSI serialization failure
+   * (SQLSTATE 40001) or a deadlock (40P01), in EITHER shape Prisma 7's
+   * driver-adapter engine can surface it as:
+   *  - the fully-wrapped `PrismaClientKnownRequestError` with `code: "P2034"`
+   *    (the shape the doc comment above assumed), OR
+   *  - a raw `DriverAdapterError` (name: "DriverAdapterError") straight from
+   *    `@prisma/adapter-pg`, which maps SQLSTATE 40001/40P01 to
+   *    `cause.kind: "TransactionWriteConflict"` and sets `message` to that
+   *    same string — observed escaping UNWRAPPED under real concurrent load
+   *    (REG-B267-H, DB lane) even though a sibling racer in the exact same
+   *    run got the P2034-wrapped shape for the identical conflict.
+   * Anything else (P2002, a validation exception, …) is NOT this.
+   *
+   * Opus re-check fix (REG-B267-I): an `HttpException` — or any error already
+   * carrying an HTTP status — is a validated application-level rejection
+   * (e.g. `validateAndBuildCnItems`'s in-tx `BadRequestException` when the
+   * amount cap check re-runs SERIALIZABLE), never a transient serialization
+   * conflict. The old message-substring fallback matched "40001" appearing
+   * literally inside such a message (a cap-check error text can legitimately
+   * quote a code-looking number) and retried a 400 that should have
+   * propagated on the first attempt. Structured signals are checked first;
+   * the substring fallback runs ONLY when the error is not already an
+   * HttpException.
+   */
+  private isSerializationFailure(err: any): boolean {
+    if (err instanceof HttpException) return false;
+    if (err?.code === "P2034") return true;
+    if (err?.name === "DriverAdapterError" && err?.cause?.kind === "TransactionWriteConflict")
+      return true;
+    if (err?.meta?.code === "40001") return true;
+    const message = String(err?.message ?? "");
+    return (
+      message.includes("40001") ||
+      message.includes("could not serialize access") ||
+      message === "TransactionWriteConflict"
+    );
+  }
+
+  /**
+   * REG-B267 / cause-ruling.md §2 D2: everything a credit-note create can reject
+   * on — invoice existence, customer match, CREDIT_SOURCE_EXCLUDED status, the
+   * cumulative invoice-total cap, and (with line items) the per-line cap and the
+   * line-sum reconciliation — lives here so it can run TWICE: once on a
+   * standalone (non-tx) read in `create()` BEFORE the number is reserved (so a
+   * rejected request burns no number), and again on the `tx` client inside the
+   * SERIALIZABLE transaction (so a genuine concurrent race is still caught —
+   * cause-refutation.md §2.1 CORRECTION 1 — at the cost of burning a number for
+   * that race's loser, same trade the invoice mint already takes). Returns the
+   * CreditNoteItem rows to write; `[]` when there is no source invoice.
+   */
+  private async validateAndBuildCnItems(
+    db: any,
+    dto: {
+      customerId: string;
+      invoiceId?: string;
+      amount: number;
+      items?: Array<{ invoiceItemId: string; amount: number; qty?: number }>;
+    },
+  ): Promise<
+    Array<{
+      invoiceItemId: string;
+      trackedCategoryId: string | null;
+      amount: number;
+      qty: number;
+      categoryTax: number;
+    }>
+  > {
+    if (!dto.invoiceId) return [];
+
+    const lineItems = Array.isArray(dto.items) && dto.items.length > 0 ? dto.items : null;
+
+    const invoice = await db.invoice.findFirst({
+      where: { id: dto.invoiceId },
+      select: {
+        total: true,
+        customerId: true,
+        status: true,
+        items: {
+          select: {
+            id: true,
+            subtotal: true,
+            qty: true,
+            trackedCategoryId: true,
+            categoryTaxAmount: true,
+          },
+        },
+      },
     });
-    const seq = last ? parseInt(last.creditNoteNumber.split("-")[2], 10) + 1 : 1;
-    return `${prefix}${String(seq).padStart(4, "0")}`;
+    if (!invoice) throw new BadRequestException("Invoice not found");
+    if (invoice.customerId !== dto.customerId)
+      throw new BadRequestException("Invoice does not belong to this customer");
+    // F09/B66: a dead or forgiven invoice justifies no new credit. DRAFT is
+    // allowed on purpose (returns.processRefund and the UI picker rely on it).
+    if (CREDIT_SOURCE_EXCLUDED.includes(invoice.status)) {
+      throw new BadRequestException(
+        `Cannot issue a credit note against a ${invoice.status} invoice.`,
+      );
+    }
+
+    const existingCredits = await db.creditNote.aggregate({
+      where: { invoiceId: dto.invoiceId, status: { not: "VOID" } },
+      _sum: { amount: true },
+    });
+    const totalExisting = Number(existingCredits._sum.amount ?? 0);
+    const invoiceTotal = Number(invoice.total);
+    if (totalExisting + dto.amount > invoiceTotal + 0.001) {
+      throw new BadRequestException(
+        `Credit note amount (${dto.amount}) would exceed invoice total (${invoiceTotal}). Already credited: ${totalExisting}.`,
+      );
+    }
+
+    if (!lineItems) return [];
+
+    const lineById = new Map((invoice.items ?? []).map((it: any) => [it.id, it]));
+    // Merge duplicate line references so there is exactly ONE CreditNoteItem per
+    // invoice line and the per-line cap sees the COMBINED amount — otherwise two
+    // sub-cap items on the same line could together over-credit (and over-reverse)
+    // that line.
+    const mergedByLine = new Map<
+      string,
+      { invoiceItemId: string; amount: number; qty: number | null }
+    >();
+    for (const li of lineItems) {
+      const amt = Number(li.amount);
+      const prev = mergedByLine.get(li.invoiceItemId);
+      if (prev) {
+        prev.amount += amt;
+        if (li.qty != null) prev.qty = (prev.qty ?? 0) + Number(li.qty);
+      } else {
+        mergedByLine.set(li.invoiceItemId, {
+          invoiceItemId: li.invoiceItemId,
+          amount: amt,
+          qty: li.qty != null ? Number(li.qty) : null,
+        });
+      }
+    }
+    // Cumulative per-LINE cap: credits already booked against each of these
+    // invoice lines by OTHER non-void credit notes. Repeated credits of the same
+    // line across separate notes must not exceed that line's subtotal even when
+    // the invoice-total cap above still has headroom — on a multi-line invoice an
+    // under-credited line's slack would otherwise let another line be over-credited
+    // (over-refunding AR and over-reversing the regulated ledger for that line).
+    // NOTE: this cap keys on invoiceItemId, which a delivered-basis reconcile
+    // ROTATES (it recreates the invoice's items under fresh ids). CreditNoteItem
+    // snapshots only invoiceItemId (no orderItemId) and the pre-reconcile item is
+    // deleted, so a credit issued AFTER a reconcile can't see a prior credit booked
+    // under the old id — this per-line cap is BEST-EFFORT there. The authoritative
+    // guards still hold: the header invoice-total cap above (keyed on the stable
+    // CreditNote.invoiceId) bounds total AR, and the regulated ledger's own
+    // order-line-keyed cap (RegulatedLedgerService.reverseCreditNoteEntries) floors
+    // the filing at 0 — so a reconcile-rotated double-credit is a within-invoice
+    // line-attribution quirk, never a net over-refund or a negative filing.
+    const priorLineItems = await db.creditNoteItem.findMany({
+      where: {
+        invoiceItemId: { in: [...mergedByLine.keys()] },
+        creditNote: { invoiceId: dto.invoiceId, status: { not: "VOID" } },
+      },
+      select: { invoiceItemId: true, amount: true },
+    });
+    const creditedByLine = new Map<string, number>();
+    for (const it of priorLineItems) {
+      const k = it.invoiceItemId ?? "";
+      creditedByLine.set(k, (creditedByLine.get(k) ?? 0) + Number(it.amount));
+    }
+
+    let sum = 0;
+    const cnItemsData = [...mergedByLine.values()].map((li) => {
+      const line: any = lineById.get(li.invoiceItemId);
+      if (!line)
+        throw new BadRequestException(
+          `Credit line ${li.invoiceItemId} is not on invoice ${dto.invoiceId}`,
+        );
+      const amt = li.amount;
+      if (!(amt > 0)) throw new BadRequestException("Credit line amount must be greater than 0");
+      const lineSubtotal = Number(line.subtotal);
+      const priorForLine = creditedByLine.get(li.invoiceItemId) ?? 0;
+      if (priorForLine + amt > lineSubtotal + 0.001)
+        throw new BadRequestException(
+          priorForLine > 0
+            ? `Credit line amount (${amt}) plus prior credits (${roundMoney(priorForLine)}) would exceed invoice line subtotal (${lineSubtotal})`
+            : `Credit line amount (${amt}) exceeds invoice line subtotal (${lineSubtotal})`,
+        );
+      sum += amt;
+      const frac = lineSubtotal > 0 ? Math.min(1, amt / lineSubtotal) : 0;
+      return {
+        invoiceItemId: line.id,
+        // Snapshot the category as it was AT SALE (the invoice line), NEVER the
+        // live product — a product's category may have drifted, and only a line
+        // that actually sold regulated has a matching SALE row to reverse.
+        trackedCategoryId: line.trackedCategoryId ?? null,
+        amount: roundMoney(amt),
+        qty: li.qty != null ? this.round3(li.qty) : this.round3(Number(line.qty) * frac),
+        categoryTax: roundMoney(Number(line.categoryTaxAmount ?? 0) * frac),
+      };
+    });
+    if (Math.abs(sum - dto.amount) > 0.01)
+      throw new BadRequestException(
+        `Credit line amounts (${roundMoney(sum)}) must sum to the credit note amount (${dto.amount})`,
+      );
+    return cnItemsData;
   }
 
   private recomputeStatus(
@@ -94,180 +293,142 @@ export class CreditNotesService {
       throw new BadRequestException("Credit line items require a source invoice");
 
     const tenantId = this.prisma.getTenantId();
+    // REG-B267 / cause-ruling.md §2 D2: a null request tenant (the SUPER_ADMIN
+    // path) is refused HERE, before anything reads. `forTenant()` returns the
+    // UNSCOPED client when the ambient tenant is null (prisma.service.ts), so
+    // validating first would do cross-tenant reads and hand the caller another
+    // tenant's invoice figures in a 400 body before the reservation's own tenant
+    // check fired.
+    if (!tenantId) throw new BadRequestException("A tenant context is required.");
 
-    // Everything — number allocation, the cumulative-credit cap, the per-line
-    // breakdown and the ledger reversal — runs inside ONE serializable transaction so
-    // concurrent credit notes against the same invoice can't both pass a stale cap and
-    // over-credit / over-reverse the regulated ledger.
-    const cn = await this.prisma.tenantTransaction(
-      async (tx: any) => {
-        let cnItemsData: Array<{
-          invoiceItemId: string;
-          trackedCategoryId: string | null;
-          amount: number;
-          qty: number;
-          categoryTax: number;
-        }> = [];
+    // REG-B267-E: the customer summary the response carries is read HERE, ahead
+    // of the reservation, through the tenant-scoped `findFirst` — `findFirst` is
+    // in SCOPED_METHODS so `tenantId` is injected into `where`, whereas
+    // `findUnique`'s post-filter only fires when the projection selects
+    // `tenantId`. A customerId owned by another tenant is therefore a 404 that
+    // burns no number, instead of a credit note bound to a foreign customer.
+    const customer = await this.prisma.forTenant().customer.findFirst({
+      where: { id: dto.customerId },
+      select: { id: true, businessName: true },
+    });
+    if (!customer) throw new NotFoundException("Customer not found");
 
-        if (dto.invoiceId) {
-          const invoice = await tx.invoice.findFirst({
-            where: { id: dto.invoiceId },
-            select: {
-              total: true,
-              customerId: true,
-              status: true,
-              items: {
-                select: {
-                  id: true,
-                  subtotal: true,
-                  qty: true,
-                  trackedCategoryId: true,
-                  categoryTaxAmount: true,
-                },
+    // REG-B267 / cause-ruling.md §2 D2: validate BEFORE reserving a number — a
+    // standalone (non-tx) read of everything this create can be rejected for, so
+    // a rejected request burns none of the tenant's CREDIT_NOTE series. Runs on
+    // `forTenant()`, never `tx` — nothing is open yet.
+    await this.validateAndBuildCnItems(this.prisma.forTenant(), dto);
+
+    // Hoisted ABOVE the SERIALIZABLE tx below (never `{ tx }`): under
+    // SERIALIZABLE a blocked counter UPDATE ABORTS (P2034) rather than waiting,
+    // so reserving inside the tx would fail concurrent creates instead of
+    // queueing them (cause-refutation.md §2.1 CORRECTION 1). A validation
+    // failure above burns nothing; a genuine race caught by the re-validation
+    // below still burns a number, same trade the invoice mint already takes.
+    const year = new Date().getFullYear();
+    const creditNoteNumber = await this.numbering.reserveNext("CREDIT_NOTE", {
+      year,
+      tenantId,
+    });
+
+    let cn: any;
+    // F1 (REG-B267-F/G, cause-ruling.md §2 D2 follow-up): the SERIALIZABLE tx
+    // re-reads CreditNote (validateAndBuildCnItems's aggregate) then inserts
+    // into it, a textbook rw-antidependency — PostgreSQL SSI cancels one
+    // concurrent racer with 40001/P2034. `tenantTransaction` is a bare
+    // `$transaction` with no retry (prisma.service.ts:48-63), so that used to
+    // surface as a raw 500 AFTER the standalone reservation above had already
+    // committed `creditNoteNumber` — burning it either way. Bounded retry, same
+    // house shape as REG-B108 (orders.service.ts ~:2705-2726): up to 3
+    // attempts, 25/50/100ms backoff, the SAME reserved number reused on every
+    // attempt (never re-reserve — that would burn a second number per retry).
+    // Exhausting retries throws 409, never lets the raw P2034 escape as a 500.
+    const MAX_CN_TX_ATTEMPTS = 3;
+    const CN_TX_BACKOFF_MS = [25, 50, 100];
+    let serializationErr: any;
+    for (let attempt = 0; attempt < MAX_CN_TX_ATTEMPTS; attempt++) {
+      try {
+        // Everything — the cumulative-credit cap, the per-line breakdown and the
+        // ledger reversal — runs inside ONE serializable transaction so concurrent
+        // credit notes against the same invoice can't both pass a stale cap and
+        // over-credit / over-reverse the regulated ledger. Re-validates on a fresh
+        // `tx` read (the pre-check above ran on a separate, non-tx snapshot).
+        cn = await this.prisma.tenantTransaction(
+          async (tx: any) => {
+            const cnItemsData = await this.validateAndBuildCnItems(tx, dto);
+
+            // REG-B267-E: the customer summary the response carries comes from the
+            // tenant-scoped pre-read above rather than from `create({ include })`.
+            // Prisma's include makes the create RE-READ the CreditNote row it just
+            // wrote, and under SERIALIZABLE that read is an rw-dependency against
+            // every concurrent create's insert into the same table — PostgreSQL then
+            // cancels racers as SSI pivots ("could not serialize access ... during
+            // read"), so five parallel creates lost two even with the number already
+            // reserved outside this tx. Customer is never written on this path, so
+            // the value read before the tx is still the right one. Same shape out.
+            const row = await tx.creditNote.create({
+              data: {
+                creditNoteNumber,
+                customerId: dto.customerId,
+                invoiceId: dto.invoiceId,
+                amount: dto.amount,
+                reason: dto.reason,
+                status: "ISSUED",
+                expiresAt,
               },
-            },
-          });
-          if (!invoice) throw new BadRequestException("Invoice not found");
-          if (invoice.customerId !== dto.customerId)
-            throw new BadRequestException("Invoice does not belong to this customer");
-          // F09/B66: a dead or forgiven invoice justifies no new credit. DRAFT is
-          // allowed on purpose (returns.processRefund and the UI picker rely on it).
-          if (CREDIT_SOURCE_EXCLUDED.includes(invoice.status)) {
-            throw new BadRequestException(
-              `Cannot issue a credit note against a ${invoice.status} invoice.`,
-            );
-          }
-
-          const existingCredits = await tx.creditNote.aggregate({
-            where: { invoiceId: dto.invoiceId, status: { not: "VOID" } },
-            _sum: { amount: true },
-          });
-          const totalExisting = Number(existingCredits._sum.amount ?? 0);
-          const invoiceTotal = Number(invoice.total);
-          if (totalExisting + dto.amount > invoiceTotal + 0.001) {
-            throw new BadRequestException(
-              `Credit note amount (${dto.amount}) would exceed invoice total (${invoiceTotal}). Already credited: ${totalExisting}.`,
-            );
-          }
-
-          if (lineItems) {
-            const lineById = new Map((invoice.items ?? []).map((it: any) => [it.id, it]));
-            // Merge duplicate line references so there is exactly ONE CreditNoteItem per
-            // invoice line and the per-line cap sees the COMBINED amount — otherwise two
-            // sub-cap items on the same line could together over-credit (and over-reverse)
-            // that line.
-            const mergedByLine = new Map<
-              string,
-              { invoiceItemId: string; amount: number; qty: number | null }
-            >();
-            for (const li of lineItems) {
-              const amt = Number(li.amount);
-              const prev = mergedByLine.get(li.invoiceItemId);
-              if (prev) {
-                prev.amount += amt;
-                if (li.qty != null) prev.qty = (prev.qty ?? 0) + Number(li.qty);
-              } else {
-                mergedByLine.set(li.invoiceItemId, {
-                  invoiceItemId: li.invoiceItemId,
-                  amount: amt,
-                  qty: li.qty != null ? Number(li.qty) : null,
-                });
-              }
-            }
-            // Cumulative per-LINE cap: credits already booked against each of these
-            // invoice lines by OTHER non-void credit notes. Repeated credits of the same
-            // line across separate notes must not exceed that line's subtotal even when
-            // the invoice-total cap above still has headroom — on a multi-line invoice an
-            // under-credited line's slack would otherwise let another line be over-credited
-            // (over-refunding AR and over-reversing the regulated ledger for that line).
-            // NOTE: this cap keys on invoiceItemId, which a delivered-basis reconcile
-            // ROTATES (it recreates the invoice's items under fresh ids). CreditNoteItem
-            // snapshots only invoiceItemId (no orderItemId) and the pre-reconcile item is
-            // deleted, so a credit issued AFTER a reconcile can't see a prior credit booked
-            // under the old id — this per-line cap is BEST-EFFORT there. The authoritative
-            // guards still hold: the header invoice-total cap above (keyed on the stable
-            // CreditNote.invoiceId) bounds total AR, and the regulated ledger's own
-            // order-line-keyed cap (RegulatedLedgerService.reverseCreditNoteEntries) floors
-            // the filing at 0 — so a reconcile-rotated double-credit is a within-invoice
-            // line-attribution quirk, never a net over-refund or a negative filing.
-            const priorLineItems = await tx.creditNoteItem.findMany({
-              where: {
-                invoiceItemId: { in: [...mergedByLine.keys()] },
-                creditNote: { invoiceId: dto.invoiceId, status: { not: "VOID" } },
-              },
-              select: { invoiceItemId: true, amount: true },
             });
-            const creditedByLine = new Map<string, number>();
-            for (const it of priorLineItems) {
-              const k = it.invoiceItemId ?? "";
-              creditedByLine.set(k, (creditedByLine.get(k) ?? 0) + Number(it.amount));
+            const created = { ...row, customer };
+
+            // Only regulated lines drive a ledger reversal (CreditNoteItem is consumed
+            // solely by reverseCreditNoteEntries, which filters on trackedCategoryId).
+            const regulatedItems = cnItemsData.filter((i) => i.trackedCategoryId);
+            if (regulatedItems.length > 0 && tenantId) {
+              await tx.creditNoteItem.createMany({
+                data: regulatedItems.map((i) => ({ ...i, creditNoteId: created.id, tenantId })),
+              });
+              await this.ledger.reverseCreditNoteEntries({ creditNoteId: created.id, db: tx });
             }
-
-            let sum = 0;
-            cnItemsData = [...mergedByLine.values()].map((li) => {
-              const line: any = lineById.get(li.invoiceItemId);
-              if (!line)
-                throw new BadRequestException(
-                  `Credit line ${li.invoiceItemId} is not on invoice ${dto.invoiceId}`,
-                );
-              const amt = li.amount;
-              if (!(amt > 0))
-                throw new BadRequestException("Credit line amount must be greater than 0");
-              const lineSubtotal = Number(line.subtotal);
-              const priorForLine = creditedByLine.get(li.invoiceItemId) ?? 0;
-              if (priorForLine + amt > lineSubtotal + 0.001)
-                throw new BadRequestException(
-                  priorForLine > 0
-                    ? `Credit line amount (${amt}) plus prior credits (${roundMoney(priorForLine)}) would exceed invoice line subtotal (${lineSubtotal})`
-                    : `Credit line amount (${amt}) exceeds invoice line subtotal (${lineSubtotal})`,
-                );
-              sum += amt;
-              const frac = lineSubtotal > 0 ? Math.min(1, amt / lineSubtotal) : 0;
-              return {
-                invoiceItemId: line.id,
-                // Snapshot the category as it was AT SALE (the invoice line), NEVER the
-                // live product — a product's category may have drifted, and only a line
-                // that actually sold regulated has a matching SALE row to reverse.
-                trackedCategoryId: line.trackedCategoryId ?? null,
-                amount: roundMoney(amt),
-                qty: li.qty != null ? this.round3(li.qty) : this.round3(Number(line.qty) * frac),
-                categoryTax: roundMoney(Number(line.categoryTaxAmount ?? 0) * frac),
-              };
-            });
-            if (Math.abs(sum - dto.amount) > 0.01)
-              throw new BadRequestException(
-                `Credit line amounts (${roundMoney(sum)}) must sum to the credit note amount (${dto.amount})`,
-              );
-          }
-        }
-
-        const creditNoteNumber = await this.nextCnNumber(tx);
-        const created = await tx.creditNote.create({
-          data: {
-            creditNoteNumber,
-            customerId: dto.customerId,
-            invoiceId: dto.invoiceId,
-            amount: dto.amount,
-            reason: dto.reason,
-            status: "ISSUED",
-            expiresAt,
+            return created;
           },
-          include: { customer: { select: { id: true, businessName: true } } },
-        });
-
-        // Only regulated lines drive a ledger reversal (CreditNoteItem is consumed
-        // solely by reverseCreditNoteEntries, which filters on trackedCategoryId).
-        const regulatedItems = cnItemsData.filter((i) => i.trackedCategoryId);
-        if (regulatedItems.length > 0 && tenantId) {
-          await tx.creditNoteItem.createMany({
-            data: regulatedItems.map((i) => ({ ...i, creditNoteId: created.id, tenantId })),
-          });
-          await this.ledger.reverseCreditNoteEntries({ creditNoteId: created.id, db: tx });
+          { isolationLevel: "Serializable" },
+        );
+        serializationErr = undefined;
+        break;
+      } catch (err: any) {
+        if (err?.code === "P2002") {
+          // The try above spans five statements, so a P2002 here is only a NUMBER
+          // conflict when the violated constraint actually names creditNoteNumber.
+          // Anything else (a future unique on CreditNoteItem or the ledger) must
+          // propagate untouched rather than reach the operator as a retry advice
+          // that cannot help — and either way the real constraint gets logged.
+          const target = Array.isArray(err?.meta?.target)
+            ? err.meta.target.join(",")
+            : String(err?.meta?.target ?? "");
+          this.logger.warn(
+            `Credit note create failed [${creditNoteNumber}] customer=${dto.customerId} invoice=${dto.invoiceId ?? "-"} code=P2002 target=${target}`,
+          );
+          if (target === "" || target.includes("creditNoteNumber"))
+            throw new ConflictException("Credit note number conflict — please retry.");
+          throw err;
         }
-        return created;
-      },
-      { isolationLevel: "Serializable" },
-    );
+        if (this.isSerializationFailure(err)) {
+          serializationErr = err;
+          if (attempt < MAX_CN_TX_ATTEMPTS - 1) {
+            await new Promise((resolve) => setTimeout(resolve, CN_TX_BACKOFF_MS[attempt]));
+            continue;
+          }
+          break;
+        }
+        throw err;
+      }
+    }
+    if (serializationErr) {
+      this.logger.error(
+        `Credit note create exhausted ${MAX_CN_TX_ATTEMPTS} attempts on serialization conflict ` +
+          `[${creditNoteNumber}] customer=${dto.customerId} invoice=${dto.invoiceId ?? "-"}: ${serializationErr?.message ?? serializationErr}`,
+      );
+      throw new ConflictException("Concurrent credit note for this invoice, please retry");
+    }
 
     this.gateway.emitCreditNoteCreated(this.prisma.getTenantId(), {
       creditNoteId: cn.id,

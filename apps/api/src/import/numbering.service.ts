@@ -27,16 +27,19 @@ const DEFAULTS: Record<DocumentNumberType, { prefix: string; padding: number }> 
 
 /**
  * The doc types whose LIVE series is keyed per tenant-year (B100/F16b): the
- * `INV-<year>-####` invoices and the `EST-<year>-####` estimates. Both share
- * their number namespace with rows written out of band (imports for invoices;
- * pre-B100 estimates minted by the retired inline max+1 scan), so both get the
- * lazy seed and the collision guard rather than the bare fast path. Every other
- * doc type keeps the year-0 series untouched.
+ * `INV-<year>-####` invoices, the `EST-<year>-####` estimates, and (B267)
+ * the `CN-<year>-####` credit notes. INVOICE/ESTIMATE share their number
+ * namespace with rows written out of band (imports for invoices; pre-B100
+ * estimates minted by the retired inline max+1 scan); CREDIT_NOTE joins them
+ * not for an out-of-band writer but for the same lazy-seed + collision-guard
+ * machinery (cause-ruling.md §2 D1) — the tenant-scoped year series and the
+ * wall-past-9999 fix are the same primitive either way. Every other doc type
+ * keeps the year-0 series untouched.
  */
-type YearScopedDocType = Extract<DocumentNumberType, "INVOICE" | "ESTIMATE">;
+type YearScopedDocType = Extract<DocumentNumberType, "INVOICE" | "ESTIMATE" | "CREDIT_NOTE">;
 
 const isYearScoped = (docType: DocumentNumberType): docType is YearScopedDocType =>
-  docType === "INVOICE" || docType === "ESTIMATE";
+  docType === "INVOICE" || docType === "ESTIMATE" || docType === "CREDIT_NOTE";
 
 export interface NumberingSettingRow {
   docType: DocumentNumberType;
@@ -53,8 +56,9 @@ export interface NumberingSettingRow {
  * Owns per-tenant, per-document-type numbering continuity (spec §1). Set during
  * migration from the source's last number ("INV-08841" → next "INV-08842") and
  * editable afterwards. `reserveNext(docType, opts?)` is the collision-guarded
- * contract LIVE minting (invoices/estimates, B100/F16b) consumes for the
- * per-tenant-year `INV-<year>-####` / `EST-<year>-####` series — in its own short
+ * contract LIVE minting (invoices/estimates, B100/F16b; credit notes, B267)
+ * consumes for the per-tenant-year `INV-<year>-####` / `EST-<year>-####` /
+ * `CN-<year>-####` series — in its own short
  * transaction for a standalone caller, or on the caller's own client when it is
  * already inside one (`opts.tx`, the delivery path). Imported documents keep their
  * ORIGINAL numbers and must NOT call `reserveNext`.
@@ -210,11 +214,13 @@ export class NumberingService {
    * `$transaction` anywhere on a mint path.
    *
    * For a year-scoped series (`opts.year > 0` with `docType` satisfying
-   * `isYearScoped()` (typed `YearScopedDocType`) — the live INVOICE and
-   * ESTIMATE series) two extra
-   * guarantees hold, because `import.service.ts` / `import-zoho.js` write
-   * arbitrary external numbers into this same namespace
-   * (cause-refutation.md §7.9):
+   * `isYearScoped()` (typed `YearScopedDocType`) — the live INVOICE, ESTIMATE
+   * and (B267) CREDIT_NOTE series) two extra
+   * guarantees hold: INVOICE/ESTIMATE because `import.service.ts` /
+   * `import-zoho.js` write arbitrary external numbers into this same namespace
+   * (cause-refutation.md §7.9); CREDIT_NOTE for the same lazy-seed +
+   * collision-guard machinery even though nothing writes credit notes out of
+   * band today (cause-ruling.md §2 D1):
    *   - lazy seed: when no sequence row exists yet, the tenant's true numeric max
    *     is computed from its own `<PREFIX>-<year>-####`(`-R{i}`) documents
    *     (imported numbers with no year segment don't match and are ignored) and
@@ -376,9 +382,14 @@ export class NumberingService {
     tenantId: string,
     candidate: string,
   ): Promise<{ id: string } | null> {
-    return docType === "ESTIMATE"
-      ? db.estimate.findFirst({ where: { tenantId, estimateNumber: candidate } })
-      : db.invoice.findFirst({ where: { tenantId, invoiceNumber: candidate } });
+    switch (docType) {
+      case "ESTIMATE":
+        return db.estimate.findFirst({ where: { tenantId, estimateNumber: candidate } });
+      case "CREDIT_NOTE":
+        return db.creditNote.findFirst({ where: { tenantId, creditNoteNumber: candidate } });
+      default:
+        return db.invoice.findFirst({ where: { tenantId, invoiceNumber: candidate } });
+    }
   }
 
   /**
@@ -404,18 +415,29 @@ export class NumberingService {
     prefix: string,
   ): Promise<number> {
     const pattern = `^${prefix}${year}-(\\d{1,9})(?:-R\\d+)?$`;
-    const rows =
-      docType === "ESTIMATE"
-        ? await db.$queryRaw<Array<{ max: number | null }>>`
+    let rows: Array<{ max: number | null }>;
+    switch (docType) {
+      case "ESTIMATE":
+        rows = await db.$queryRaw<Array<{ max: number | null }>>`
             SELECT COALESCE(MAX((regexp_match("estimateNumber", ${pattern}))[1]::int), 0)::int AS max
             FROM "Estimate"
             WHERE "tenantId" = ${tenantId}
-          `
-        : await db.$queryRaw<Array<{ max: number | null }>>`
+          `;
+        break;
+      case "CREDIT_NOTE":
+        rows = await db.$queryRaw<Array<{ max: number | null }>>`
+            SELECT COALESCE(MAX((regexp_match("creditNoteNumber", ${pattern}))[1]::int), 0)::int AS max
+            FROM "CreditNote"
+            WHERE "tenantId" = ${tenantId}
+          `;
+        break;
+      default:
+        rows = await db.$queryRaw<Array<{ max: number | null }>>`
             SELECT COALESCE(MAX((regexp_match("invoiceNumber", ${pattern}))[1]::int), 0)::int AS max
             FROM "Invoice"
             WHERE "tenantId" = ${tenantId}
           `;
+    }
     return Number(rows?.[0]?.max ?? 0);
   }
 

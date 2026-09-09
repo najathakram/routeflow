@@ -17,6 +17,8 @@ import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { NumberingService } from "./numbering.service";
+import { ExternalRefService } from "./external-ref.service";
 
 describe("ImportService — security (F8-003 / F9-008)", () => {
   let service: ImportService;
@@ -34,6 +36,23 @@ describe("ImportService — security (F8-003 / F9-008)", () => {
           useValue: {
             assertCustomerCapNotExceeded: jest.fn().mockResolvedValue(undefined),
             maybeStartCustomerGrace: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        // Harness: ImportService injects NumberingService (B267/B269);
+        // these suites never exercise a mint, so the mock only satisfies DI.
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("INV-2026-0001") },
+        },
+        // Harness: ImportService injects ExternalRefService (B268/D4 re-import
+        // idempotency for source-numberless rows). Mocked at the module boundary;
+        // `findLocalId` → null means "never imported before", the state every
+        // suite here assumes.
+        {
+          provide: ExternalRefService,
+          useValue: {
+            findLocalId: jest.fn().mockResolvedValue(null),
+            record: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],

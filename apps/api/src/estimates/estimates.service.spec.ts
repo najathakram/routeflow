@@ -197,4 +197,48 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       expect(prisma.invoice.findFirst).not.toHaveBeenCalled();
     });
   });
+
+  // T4 unit pin — B277 (cause-ruling.md §2 D5, cause-refutation.md §2.7,
+  // bug-test-plan.md T4). estimates.service.ts:139 is the ONLY writer of
+  // estimateNumber in the repo and reserveNext is already collision-guarded, so
+  // this is a zero-risk consistency pin, not a live repro — same construction as
+  // the REG-B100-F pin above (convertToInvoice), applied to create() instead.
+  // TODAY create() has no try/catch around estimate.create at all, so the raw
+  // `{ code: "P2002" }` object propagates unchanged and this fails on the TYPE
+  // of the rejection, not an unresolved import or a stub.
+  describe("create()", () => {
+    // Named `REG-B277` (not a bare `B277 pin`) so the red gate's `-t "REG-B2"`
+    // name filter actually collects this repro — the sibling pin below is GREEN
+    // today and deliberately stays outside that filter.
+    it("REG-B277 pin: maps a P2002 on the estimate number into ConflictException (409), not a raw 500", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", pricingTier: 1 });
+      prisma.estimate.create.mockRejectedValue({
+        code: "P2002",
+        message: "Unique constraint failed on the fields: (`estimateNumber`)",
+      });
+
+      await expect(
+        service.create({
+          customerId: "cust-1",
+          items: [{ description: "Widget", unitPrice: 10, qty: 1 }],
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    // The same try also spans `items: { create: itemsData }`, so a P2002 raised
+    // by some OTHER unique must not be relabelled as a numbering conflict with a
+    // retry instruction that cannot help.
+    it("B277 pin: a P2002 on a NON-number constraint propagates as the original error", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", pricingTier: 1 });
+      const err = { code: "P2002", meta: { target: ["estimateId", "productId"] } };
+      prisma.estimate.create.mockRejectedValue(err);
+
+      await expect(
+        service.create({
+          customerId: "cust-1",
+          items: [{ description: "Widget", unitPrice: 10, qty: 1 }],
+        }),
+      ).rejects.toBe(err);
+    });
+  });
 });

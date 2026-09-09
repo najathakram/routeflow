@@ -1,9 +1,11 @@
 import { Test } from "@nestjs/testing";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { CreditNotesService } from "./credit-notes.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("CreditNotesService — W5c regulated reversal", () => {
@@ -31,10 +33,20 @@ describe("CreditNotesService — W5c regulated reversal", () => {
             removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
           },
         },
+        // Harness: CreditNotesService injects NumberingService (B267/B269);
+        // these suites never exercise a mint, so the mock only satisfies DI.
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("CN-2026-0001") },
+        },
       ],
     }).compile();
     service = mod.get(CreditNotesService);
     prisma.creditNote.findFirst.mockResolvedValue(null); // nextCnNumber → CN-…-0001
+    // REG-B267-E: create() now reads the customer through the tenant-scoped
+    // `forTenant().customer.findFirst` BEFORE reserving a number, so every
+    // create-path test needs an in-tenant customer to get past that gate.
+    prisma.customer.findFirst.mockResolvedValue({ id: "c1", businessName: "Acme Retail" });
     prisma.creditNote.create.mockImplementation((args: any) =>
       Promise.resolve({ id: "cn-1", ...args.data, customer: {} }),
     );
@@ -279,6 +291,12 @@ describe("CreditNotesService — P5-13 apply-math + auto-apply", () => {
             syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
             removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
           },
+        },
+        // Harness: CreditNotesService injects NumberingService (B267/B269);
+        // these suites never exercise a mint, so the mock only satisfies DI.
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("CN-2026-0001") },
         },
       ],
     }).compile();
@@ -621,6 +639,12 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
             syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
             removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
           },
+        },
+        // Harness: CreditNotesService injects NumberingService (B267/B269);
+        // these suites never exercise a mint, so the mock only satisfies DI.
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("CN-2026-0001") },
         },
       ],
     }).compile();
@@ -1345,5 +1369,239 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
         /not found/i,
       );
     });
+  });
+});
+
+// ─── T4 unit pin — REG-B267 (cause-ruling.md §2 D2, bug-test-plan.md T4) ───
+//
+// nextCnNumber's `orderBy { creditNoteNumber: "desc" }` TEXT scan (permanent
+// wall past 9999, cross-tenant on a null request tenant) is replaced by a
+// standalone `numbering.reserveNext("CREDIT_NOTE", { year, tenantId })` call,
+// hoisted ABOVE the SERIALIZABLE `tenantTransaction` — never `{ tx }`, since a
+// blocked counter UPDATE aborts under SERIALIZABLE instead of waiting
+// (cause-refutation.md §2.1 CORRECTION 1). TODAY create() has no NumberingService
+// dependency at all and still scans tx.creditNote.findFirst, so this fails on
+// the uncalled mock's own value (0 calls), not an unresolved import or a stub.
+describe("CreditNotesService — REG-B267 pin: numbering reservation", () => {
+  let service: CreditNotesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let mockNumbering: { reserveNext: jest.Mock };
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    mockNumbering = { reserveNext: jest.fn().mockResolvedValue("CN-2026-0001") };
+    const mod = await Test.createTestingModule({
+      providers: [
+        CreditNotesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: RouteFlowGateway, useValue: { emitCreditNoteCreated: jest.fn() } },
+        {
+          provide: RegulatedLedgerService,
+          useValue: {
+            reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+            unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: CommissionEngineService,
+          useValue: {
+            syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
+            syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
+            removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        // B267 harness note (cause-refutation.md §8): CreditNotesService gains a
+        // NumberingService constructor parameter once P1/P2 land — the service
+        // does not inject it yet, so this provider is unused by today's code and
+        // only backs the pin below.
+        { provide: NumberingService, useValue: mockNumbering },
+      ],
+    }).compile();
+    service = mod.get(CreditNotesService);
+    // REG-B267-E: create() now reads the customer through the tenant-scoped
+    // `forTenant().customer.findFirst` BEFORE reserving a number, so every
+    // create-path test needs an in-tenant customer to get past that gate.
+    prisma.customer.findFirst.mockResolvedValue({ id: "c1", businessName: "Acme Retail" });
+    prisma.creditNote.create.mockImplementation((args: any) =>
+      Promise.resolve({ id: "cn-pin-1", ...args.data, customer: {} }),
+    );
+  });
+
+  it('create() reserves the number via numbering.reserveNext("CREDIT_NOTE", { year, tenantId }) BEFORE opening the tenantTransaction', async () => {
+    await service.create({ customerId: "c1", amount: 25 });
+
+    expect(mockNumbering.reserveNext).toHaveBeenCalledWith(
+      "CREDIT_NOTE",
+      expect.objectContaining({ year: new Date().getFullYear(), tenantId: "test-tenant" }),
+    );
+
+    const reserveOrder = mockNumbering.reserveNext.mock.invocationCallOrder[0];
+    const txOrder = prisma.tenantTransaction.mock.invocationCallOrder[0];
+    expect(reserveOrder).toBeLessThan(txOrder);
+
+    // The VALUE oracle, not just the wiring: the string reserveNext handed back
+    // is the one written as creditNoteNumber. Without this, a fix that calls
+    // reserveNext and then still writes its own scanned number would satisfy the
+    // call assertions above for the wrong reason.
+    expect(prisma.creditNote.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ creditNoteNumber: "CN-2026-0001" }),
+      }),
+    );
+  });
+
+  // REG-B267 tenant gate: `forTenant()` returns the UNSCOPED client when the
+  // ambient tenant is null, so a null-tenant create must be refused BEFORE any
+  // read — otherwise the caller gets another tenant's invoice figures in the
+  // 400 body (cause-ruling.md §2 D2: "null → the service throws").
+  it("REG-B267 null tenant: create() refuses before reading anything and reserves no number", async () => {
+    prisma.getTenantId.mockReturnValue(null);
+
+    await expect(service.create({ customerId: "c1", amount: 25 })).rejects.toThrow(
+      new BadRequestException("A tenant context is required."),
+    );
+
+    expect(prisma.invoice.findUnique).not.toHaveBeenCalled();
+    expect(prisma.invoice.findFirst).not.toHaveBeenCalled();
+    expect(prisma.customer.findFirst).not.toHaveBeenCalled();
+    expect(mockNumbering.reserveNext).not.toHaveBeenCalled();
+  });
+
+  // REG-B267 customer gate: the response's customer summary is read on the
+  // tenant-scoped `findFirst` ahead of the reservation, so a customerId owned by
+  // another tenant 404s and burns no number instead of producing a credit note
+  // bound to a foreign customer (and leaking that tenant's businessName).
+  it("REG-B267 foreign customer: create() 404s and reserves no number when the customer is not in the tenant", async () => {
+    prisma.customer.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.create({ customerId: "c-other-tenant", amount: 25 }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    expect(mockNumbering.reserveNext).not.toHaveBeenCalled();
+    expect(prisma.creditNote.create).not.toHaveBeenCalled();
+  });
+
+  // REG-B267 P2002: the catch spans five statements, so only a violation whose
+  // constraint names creditNoteNumber is a number conflict. (a)/(b) are the two
+  // shapes Prisma emits for that constraint; (c) proves a different unique is
+  // NOT relabelled as a retryable numbering conflict.
+  it("REG-B267 P2002 (a): a creditNoteNumber field-array target maps to ConflictException", async () => {
+    prisma.creditNote.create.mockRejectedValue({
+      code: "P2002",
+      meta: { target: ["tenantId", "creditNoteNumber"] },
+    });
+
+    await expect(service.create({ customerId: "c1", amount: 25 })).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  it("REG-B267 P2002 (b): a constraint-name target maps to ConflictException", async () => {
+    prisma.creditNote.create.mockRejectedValue({
+      code: "P2002",
+      meta: { target: "CreditNote_tenantId_creditNoteNumber_key" },
+    });
+
+    await expect(service.create({ customerId: "c1", amount: 25 })).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  it("REG-B267 P2002 (c): a NON-numbering unique propagates as the original error", async () => {
+    const err = { code: "P2002", meta: { target: ["creditNoteId", "productId"] } };
+    prisma.creditNote.create.mockRejectedValue(err);
+
+    await expect(service.create({ customerId: "c1", amount: 25 })).rejects.toBe(err);
+  });
+
+  // F1 (cause-ruling.md §2 D2 follow-up, findings #0 real=true sev=minor on run
+  // 57): the SERIALIZABLE tx's aggregate-then-insert into CreditNote is a
+  // textbook rw-antidependency — PostgreSQL SSI cancels one concurrent racer
+  // with 40001, which Prisma raises as P2034. `tenantTransaction` is a bare
+  // `$transaction` with no retry, so this used to escape as a raw 500 with the
+  // standalone-reserved number already burned. These two pins prove the bounded
+  // retry: the SAME number survives a transient P2034 (F), and exhausting the
+  // budget maps to a 409 rather than letting the raw error out (G).
+  it("REG-B267-F retries P2034 with the same number", async () => {
+    const p2034 = {
+      code: "P2034",
+      message:
+        "Transaction failed due to a write conflict or a deadlock. Please retry your transaction.",
+    };
+    prisma.tenantTransaction.mockImplementationOnce(() => Promise.reject(p2034));
+
+    const result = await service.create({ customerId: "c1", amount: 25 });
+
+    expect(mockNumbering.reserveNext).toHaveBeenCalledTimes(1);
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(2);
+    expect(result.creditNoteNumber).toBe("CN-2026-0001");
+    expect(prisma.creditNote.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ creditNoteNumber: "CN-2026-0001" }),
+      }),
+    );
+  });
+
+  it("REG-B267-G exhausts to 409", async () => {
+    const p2034 = {
+      code: "P2034",
+      message:
+        "Transaction failed due to a write conflict or a deadlock. Please retry your transaction.",
+    };
+    prisma.tenantTransaction.mockImplementation(() => Promise.reject(p2034));
+
+    await expect(service.create({ customerId: "c1", amount: 25 })).rejects.toEqual(
+      new ConflictException("Concurrent credit note for this invoice, please retry"),
+    );
+
+    // One reservation, three exhausted transaction attempts (max) — never a
+    // second reserveNext call burning a second number for the same request.
+    expect(mockNumbering.reserveNext).toHaveBeenCalledTimes(1);
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(3);
+  });
+
+  // Found live by REG-B267-H (DB lane, credit-note-numbering.db.spec.ts) under
+  // real concurrent load: Prisma 7's driver-adapter engine (@prisma/adapter-pg)
+  // can surface the SAME SQLSTATE 40001/40P01 conflict as a raw
+  // `DriverAdapterError` (name: "DriverAdapterError", message/cause.kind:
+  // "TransactionWriteConflict") INSTEAD OF the fully-wrapped
+  // `PrismaClientKnownRequestError { code: "P2034" }` the two pins above cover
+  // — observed escaping unwrapped even while a sibling racer in the same run
+  // got the P2034 shape for the identical conflict. Without this shape in
+  // `isSerializationFailure`, that racer's error skipped the retry entirely
+  // and escaped as a raw 500.
+  it("REG-B267-F (driver-adapter shape) retries a raw DriverAdapterError TransactionWriteConflict with the same number", async () => {
+    const driverAdapterErr = Object.assign(new Error("TransactionWriteConflict"), {
+      name: "DriverAdapterError",
+      cause: { kind: "TransactionWriteConflict" },
+    });
+    prisma.tenantTransaction.mockImplementationOnce(() => Promise.reject(driverAdapterErr));
+
+    const result = await service.create({ customerId: "c1", amount: 25 });
+
+    expect(mockNumbering.reserveNext).toHaveBeenCalledTimes(1);
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(2);
+    expect(result.creditNoteNumber).toBe("CN-2026-0001");
+  });
+
+  // Opus re-check fix (REG-B267-I): `validateAndBuildCnItems`'s in-tx cap check
+  // can reject with a `BadRequestException` whose message legitimately quotes a
+  // code-looking number ("(40001)" here is part of the CENTS figure, not a
+  // SQLSTATE) — the old `isSerializationFailure` matched that substring and
+  // retried a validated 400 as if it were a transient conflict. An HttpException
+  // must never be classified as a serialization failure: one attempt, the 400
+  // propagates unchanged, and the bounded backoff never sleeps.
+  it("REG-B267-I in-tx 400 is not retried", async () => {
+    const rejection = new BadRequestException(
+      "Credit note amount (40001) would exceed invoice total",
+    );
+    prisma.tenantTransaction.mockImplementation(() => Promise.reject(rejection));
+
+    await expect(service.create({ customerId: "c1", amount: 25 })).rejects.toBe(rejection);
+
+    expect(mockNumbering.reserveNext).toHaveBeenCalledTimes(1);
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+    expect(prisma.creditNote.create).not.toHaveBeenCalled();
   });
 });

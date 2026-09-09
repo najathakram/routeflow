@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { PriceType } from "@prisma/client";
@@ -18,6 +19,8 @@ export class EstimatesService {
     private readonly entitlements: EntitlementsService,
     private readonly numbering: NumberingService,
   ) {}
+
+  private readonly logger = new Logger(EstimatesService.name);
 
   /**
    * The next `EST-<year>-####` number, from the SAME per-tenant-year primitive the
@@ -134,26 +137,46 @@ export class EstimatesService {
     const tax = dto.taxAmount ?? 0;
     const total = roundMoney(subtotal - discount + tax);
 
-    return this.prisma.forTenant().estimate.create({
-      data: {
-        estimateNumber: await this.nextEstNumber(),
-        customerId: dto.customerId,
-        status: "DRAFT",
-        subtotal,
-        taxAmount: tax,
-        discount,
-        total,
-        expiresAt: dto.expiresAt
-          ? new Date(dto.expiresAt)
-          : dto.expiryDate
-            ? new Date(dto.expiryDate)
-            : null,
-        notes: dto.notes,
-        terms: dto.terms,
-        items: { create: itemsData },
-      },
-      include: { customer: { select: { id: true, businessName: true } }, items: true },
-    });
+    try {
+      return await this.prisma.forTenant().estimate.create({
+        data: {
+          estimateNumber: await this.nextEstNumber(),
+          customerId: dto.customerId,
+          status: "DRAFT",
+          subtotal,
+          taxAmount: tax,
+          discount,
+          total,
+          expiresAt: dto.expiresAt
+            ? new Date(dto.expiresAt)
+            : dto.expiryDate
+              ? new Date(dto.expiryDate)
+              : null,
+          notes: dto.notes,
+          terms: dto.terms,
+          items: { create: itemsData },
+        },
+        include: { customer: { select: { id: true, businessName: true } }, items: true },
+      });
+    } catch (err: any) {
+      // B277 pin (cause-ruling.md §2 D5): reserveNext is already collision-guarded,
+      // so this is a zero-risk consistency catch — same shape as convertToInvoice's
+      // P2002 catch below, applied to the estimate number instead of the invoice one.
+      // The try also spans `items: { create: itemsData }`, so only a P2002 whose
+      // constraint actually names estimateNumber is a number conflict; anything
+      // else propagates untouched, and every P2002 leaves a log line.
+      if (err?.code === "P2002") {
+        const target = Array.isArray(err?.meta?.target)
+          ? err.meta.target.join(",")
+          : String(err?.meta?.target ?? "");
+        this.logger.warn(
+          `Estimate create failed customer=${dto.customerId} code=P2002 target=${target}`,
+        );
+        if (target === "" || target.includes("estimateNumber"))
+          throw new ConflictException("Estimate number conflict — please retry.");
+      }
+      throw err;
+    }
   }
 
   async findAll(

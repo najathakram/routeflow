@@ -1,0 +1,39 @@
+{
+  "runId": "wf_a77b2cb1-08b",
+  "mode": "bugfix",
+  "scale": "major",
+  "startedAt": "2026-09-08T23:30:00Z",
+  "estimatedCostUsd": 52.98,
+  "agents": 58,
+  "totalTokens": 8078364,
+  "durationMs": 16098611,
+  "clean": false,
+  "note": "Aggregate truncated (>64 KB); reconstructed from journal.jsonl (58 results). Light-loop round after the engine (Fable-designed F1/F2/F3/F5/F6) closed the final pass's 2 majors + 3 minors; Opus scoped re-check before landing.",
+  "baseline": {
+    "pass": true,
+    "commands": 5,
+    "note": "grounding found 2 mechanical path findings (payment-requests.service.ts cited without its directory)"
+  },
+  "redGate": {
+    "ran": true,
+    "audits": 2,
+    "note": "first audit: a GREEN pin carried the REG token (renamed PIN-B269-D) + 10 structural blockers remediated; second audit 11 blockers remediated; then RED as expected"
+  },
+  "fixPlanning": { "rounds": 7, "fixesTotal": 51, "probes": { "targets": 4, "caught": 4 } },
+  "review": {
+    "lenses": 6,
+    "finalPassFindings": 9,
+    "lastRoundOpen": 5,
+    "lightLoopFixed": 5,
+    "filedAsRow": 1
+  },
+  "finalGate": {
+    "pass": false,
+    "note": "full api jest red on 4 suites that were ENVIRONMENTAL at run time (packages/pricing dist missing, workspace symlinks, squawk-cli) — re-run green 29/29 after the environment healed; DB lane 49/49; lessons OK. Scoped gates after the light loop: tsc clean, 26 suites / 631 tests, DB lane 6 suites / 30 tests."
+  },
+  "remainingFindings": [
+    "cross-upload source-number theft of a fallback-minted INV number (minor) → registry row in the follow-up"
+  ],
+  "uiVerify": { "ran": false, "reason": "API-only change" },
+  "phaseReport": []
+}

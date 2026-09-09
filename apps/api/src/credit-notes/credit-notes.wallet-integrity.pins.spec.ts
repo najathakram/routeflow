@@ -63,6 +63,7 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { NumberingService } from "../import/numbering.service";
 
 // ─────────────────────────────────────────────────────────────────────────
 // CreditNotesService — settleOrderCreditsInTx positive controls (R1/R3,
@@ -94,6 +95,12 @@ describe("CreditNotesService — settleOrderCreditsInTx positive controls (F09 p
             syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
             removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
           },
+        },
+        // Harness: CreditNotesService injects NumberingService (B267/B269);
+        // these suites never exercise a mint, so the mock only satisfies DI.
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("CN-2026-0001") },
         },
       ],
     }).compile();
@@ -308,23 +315,35 @@ describe("CreditNotesService — create() unaffected for a live SENT source invo
             removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
           },
         },
+        // Harness: CreditNotesService injects NumberingService (B267/B269);
+        // these suites never exercise a mint, so the mock only satisfies DI.
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("CN-2026-0001") },
+        },
       ],
     }).compile();
     service = mod.get(CreditNotesService);
     prisma.creditNote.findFirst.mockResolvedValue(null); // nextCnNumber → CN-…-0001
+    // REG-B267-E: create() now reads the customer through the tenant-scoped
+    // `forTenant().customer.findFirst` BEFORE reserving a number, so every
+    // create-path test needs an in-tenant customer to get past that gate.
+    prisma.customer.findFirst.mockResolvedValue({ id: "c1", businessName: "Acme Retail" });
     prisma.creditNote.create.mockImplementation((args: any) =>
       Promise.resolve({ id: "cn-live-1", ...args.data, customer: {} }),
     );
   });
 
   it("T8 (R4, REG-B66): creates exactly as before against a live SENT invoice", async () => {
-    prisma.invoice.findFirst.mockResolvedValueOnce({
+    // B267: create() validates TWICE — once standalone before the number is
+    // reserved, once again on the tx client — so this stub must answer both reads.
+    prisma.invoice.findFirst.mockResolvedValue({
       total: 100,
       customerId: "c1",
       items: [],
       status: "SENT",
     });
-    prisma.creditNote.aggregate.mockResolvedValueOnce({ _sum: { amount: 0 } });
+    prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
 
     await service.create({ customerId: "c1", invoiceId: "inv-sent-live", amount: 30 });
 
@@ -388,23 +407,35 @@ describe("CreditNotesService — create() unaffected for a DRAFT source invoice 
             removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
           },
         },
+        // Harness: CreditNotesService injects NumberingService (B267/B269);
+        // these suites never exercise a mint, so the mock only satisfies DI.
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("CN-2026-0001") },
+        },
       ],
     }).compile();
     service = mod.get(CreditNotesService);
     prisma.creditNote.findFirst.mockResolvedValue(null); // nextCnNumber → CN-…-0001
+    // REG-B267-E: create() now reads the customer through the tenant-scoped
+    // `forTenant().customer.findFirst` BEFORE reserving a number, so every
+    // create-path test needs an in-tenant customer to get past that gate.
+    prisma.customer.findFirst.mockResolvedValue({ id: "c1", businessName: "Acme Retail" });
     prisma.creditNote.create.mockImplementation((args: any) =>
       Promise.resolve({ id: "cn-draft-1", ...args.data, customer: {} }),
     );
   });
 
   it("T7b (R4, REG-B66): create({ invoiceId }) against a DRAFT invoice still creates — DRAFT stays out of CREDIT_SOURCE_EXCLUDED", async () => {
-    prisma.invoice.findFirst.mockResolvedValueOnce({
+    // B267: create() validates TWICE — once standalone before the number is
+    // reserved, once again on the tx client — so this stub must answer both reads.
+    prisma.invoice.findFirst.mockResolvedValue({
       total: 100,
       customerId: "c1",
       items: [],
       status: "DRAFT",
     });
-    prisma.creditNote.aggregate.mockResolvedValueOnce({ _sum: { amount: 0 } });
+    prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
 
     await service.create({ customerId: "c1", invoiceId: "inv-draft-live", amount: 30 });
 
