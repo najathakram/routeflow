@@ -94,6 +94,32 @@ describe("CustomersService.deleteAllCustomers — PAID/SENT pre-flight (B127)", 
     service = module.get<CustomersService>(CustomersService);
   });
 
+  // REG-B127 — canonical regression pin for the fix landed in #506 (cc8c7d46):
+  // DELETE /customers/all hard-deleted every customer plus PAID/SENT invoices/payments
+  // that the sibling batchDelete() refuses to touch, and on a null-tenant (SUPER_ADMIN)
+  // token span every tenant. This test collapses both load-bearing halves into one
+  // oracle: (1) a PAID invoice blocks the wipe with the same pre-flight batchDelete runs,
+  // and (2) a null tenantId is refused outright rather than falling through to an
+  // unscoped delete. T7-T11 above are the detailed proof.
+  it("REG-B127 DELETE /customers/all is blocked by PAID invoices and refuses a null tenantId", async () => {
+    (prisma.invoice.groupBy as jest.Mock).mockImplementation(blockOnStatus("PAID", "cust-1", 2));
+
+    const caught: any = await service.deleteAllCustomers().catch((e) => e);
+    expect(caught).toBeInstanceOf(ConflictException);
+    expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+
+    (prisma.invoice.groupBy as jest.Mock).mockClear();
+    (prisma.tenantTransaction as jest.Mock).mockClear();
+    prisma.getTenantId.mockReturnValue(null);
+
+    prisma.customer.findMany.mockClear();
+
+    await expect(service.deleteAllCustomers()).rejects.toThrow(ForbiddenException);
+    expect(prisma.customer.findMany).not.toHaveBeenCalled();
+    expect(prisma.invoice.groupBy).not.toHaveBeenCalled();
+    expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+  });
+
   // ─── T7 (R5) — a PAID invoice blocks the bulk customer delete ─────────────
 
   it("T7: throws ConflictException naming the blocking customer + PAID count, and deletes nothing", async () => {

@@ -637,4 +637,45 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(meterService.readAll).not.toHaveBeenCalled();
     });
   });
+
+  // B125 — createTenantAdmin used to auto-create a Driver row for the new admin
+  // (canActAsDriver: true + an unconditional tx.driver.create), so deleting that
+  // driver profile hit User's restrict-FKs and silently rolled back the whole
+  // transaction ("deleted admin drivers kept coming back"). Fixed in #491
+  // (28cb0a25): canActAsDriver starts false and no Driver row is created — the
+  // capability stays an explicit opt-in via Settings -> Act as driver.
+  describe("createTenantAdmin — no auto-created driver profile (B125)", () => {
+    beforeEach(() => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        name: "Acme",
+      } as any);
+      prisma.user.findFirst.mockResolvedValue(null); // no existing admin, no username/email collision
+      prisma.user.create.mockResolvedValue({
+        id: "admin-new",
+        username: "newadmin",
+        email: "newadmin@example.com",
+        status: "ACTIVE",
+        createdAt: new Date(),
+      } as any);
+    });
+
+    it("REG-B125 creates the admin with canActAsDriver: false and never creates a Driver row", async () => {
+      await service.createTenantAdmin(
+        TENANT_ID,
+        { username: "newadmin", email: "newadmin@example.com", password: "S3cret!!" },
+        ADMIN_ID,
+      );
+
+      // RED against the pre-fix handler, which passed canActAsDriver: true and then
+      // unconditionally called tx.driver.create for the new admin.
+      expect(prisma.user.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ role: "TENANT_ADMIN", canActAsDriver: false }),
+        }),
+      );
+      expect((prisma as any).driver.create).not.toHaveBeenCalled();
+    });
+  });
 });

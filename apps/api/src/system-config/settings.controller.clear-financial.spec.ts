@@ -269,6 +269,32 @@ describe("SettingsController#clearFinancialData — DELETE /settings/financial-d
     }
   });
 
+  // REG-B126 — canonical regression pin for the fix landed in #506 (cc8c7d46):
+  // DELETE /settings/financial-data ran ten unscoped deleteMany({}) calls, reachable by
+  // any OPERATOR token, wiping every tenant's finances. This test collapses the two
+  // load-bearing halves of that fix into one oracle: (1) the RolesGuard no longer admits
+  // OPERATOR — only TENANT_ADMIN — and (2) every deleteMany the wipe issues carries a
+  // tenant-scoping filter, never an absent/empty where. T1-T6b above are the detailed
+  // proof; this is the one test a revert of either half must break.
+  it("REG-B126 DELETE /settings/financial-data is tenant-scoped and refuses a plain OPERATOR", async () => {
+    expect(guardAdmits(UserRole.OPERATOR)).toBe(false);
+    expect(guardAdmits(UserRole.TENANT_ADMIN)).toBe(true);
+
+    const prisma = createMockPrisma();
+    prisma.getTenantId.mockReturnValue("tenant-a");
+    const controller = await buildController(prisma);
+    const models = deleteManyMocks(prisma);
+
+    await callClearFinancialData(controller, { confirmTenantId: "tenant-a" });
+
+    for (const m of MODELS) {
+      expect(models[m].deleteMany).toHaveBeenCalled();
+      for (const call of models[m].deleteMany.mock.calls) {
+        expect(isScopedWhere(call[0])).toBe(true);
+      }
+    }
+  });
+
   // T1b (R1) — pins the transaction helper, naming the CAUSE that T1 catches by outcome.
   // tenantTransaction hands the callback `_wrapTxWithTenant`, which lists `deleteMany` in
   // SCOPED_METHODS and appends `tenantId` to every where — re-scoping the parent-relation
