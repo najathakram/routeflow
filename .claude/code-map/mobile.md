@@ -81,7 +81,7 @@ in `useOpenPurchaseOrders` always return zero rows for that leg; `lib/api/buyer.
 | Integer qty input | `lib/qty.ts` — `sanitizeIntInput`/`parseIntQty` (no decimals/leading zeros); used by order/invoice qty steppers |
 | Product display name | `lib/product-display.ts` — hand-synced mirror of `apps/web/lib/product-display.ts` (keep in sync): `displayProductName(product, allProducts?)` composes `"<Parent> - <Variant>"` + `PRODUCT_NAME_SEPARATOR`; used by NewOrderScreen + operator invoices/new |
 | Share a PDF (no download) | `lib/share-pdf.ts` — **`openPdfInTab(url)` (A1 2026-08-19): the plain "open it" action — `window.open(url,"_blank","noopener")` on web, `Linking.openURL` on native — the same fallback `sharePdf` already degrades to, exposed standalone so a caller can offer it as an always-on row instead of only reaching it through a failed share.** `sharePdf()`: web → `navigator.share({files})`, native → cache + `expo-sharing`. **Transient-activation contract (PR-6 WP3):** never `await` a fetch between the tap and `share()`; `ACTIVATION_BUDGET_MS=3000`, per-url `pdfFileCache` (a `createPendingCache` instance — the LRU/rejection-eviction contract now lives in pure `lib/pending-cache.ts`, tested by `__tests__/pending-cache.test.ts` — capped at `SHARE_FILE_CACHE_MAX=3` and freed by `releasePdfFile()` on every terminal outcome, so only a pending second tap holds bytes), `budgetMs` = what's left of the budget after the caller's own prep, and `ShareOutcome = "shared" \| "opened-tab" \| "ready-await-tap" \| "failed"`. On budget expiry a caller that passed `retapHandled: true` drives its own "PDF ready — tap to share" control (operator invoice/order screens, via `nextPdfSharePhase` in `lib/invoice-send-logic.ts`); every OTHER caller gets `offerRetapShare()`'s explicit "Share PDF" dialog — a fresh gesture re-entering with the SAME url, which is the only retry that works for the screens that mint a new signed url per tap (customer statement/payments, tobacco). No path is silent. **iOS NotAllowedError = retap, not failure (2026-08-25 customer fix):** `share()` rejecting with NotAllowedError means iOS Safari's transient activation didn't survive the PDF fetch — the File IS cached, so the catch routes it through `classifyShareError` (`lib/share-error.ts`, pure + tested by `__tests__/share-error.test.ts`) to the SAME retap recovery as a budget expiry (cache kept, `offerRetapShare`/`ready-await-tap`), never to the failure toast. This was the "share works on desktop, fails on phone" bug. **`shareCsv`'s web path has the same recovery (2026-08-25):** `shareCsvWeb` downloads via its own `csvFileCache` (separate `createPendingCache` instance so CSV bursts can't evict a PDF awaiting its retap) and routes share() rejections through `classifyShareError` — NotAllowedError keeps the cached File and shows `offerRetapCsvShare()`'s "Share CSV" dialog instead of falling through to a silently popup-blocked `window.open`; dismissed / canShare-false / fetch-failure / real-failure behavior unchanged (the last two still fall through to opening the plain url). `shareCsvText` (in-memory bytes → anchor download) untouched. `canShareFilesHere()` is the sync capability probe. |
-| Barcode scanner | `components/BarcodeScanner.tsx` (native, expo-camera) + `BarcodeScanner.web.tsx` (`@zxing/browser` + getUserMedia rear-cam, friendly errors) |
+| Barcode scanner | `components/BarcodeScanner.tsx` (native, expo-camera) + `BarcodeScanner.web.tsx` (`@zxing/browser` + getUserMedia rear-cam, friendly errors). **#675 (2026-09-08):** both now accept `active?: boolean` (default `true`), forwarded straight into `<ScanCamera active={active && !paused}>` so a caller can pause (not unmount) the live camera; both also render `feedback.action` as a pressable pill (`label`/`onPress` from `ScanFeedback.action`) — previously dead, so `onAmbiguous`/`onCreate` in `lib/scan-ladder.ts` could never fire from either scanner. See "B263 option B" below. |
 | Deep-link scheme | `app.json` — scheme `routeflow`, slug `routeflow-mobile` |
 
 ## App shell & lib
@@ -360,6 +360,18 @@ nonce}` so a re-scan re-flashes),
   `proof: REG-B245` field predated a matching literal token in the test titles themselves (the
   discharge on #668 was correct in substance, just not campaign-check-checkable byte-for-byte
   until this retitle); no assertion changed. L-097.
+- **#675 (2026-09-08, B263 option B):** `price-override.test.ts` (REG-B263-A, pure: `applyPriceOverride`
+  rounds via `roundMoney`, preserves boxes/pieces/freeUnits, recomputes `lineTotal`; `needsMarginAck`
+  true/false at the floor boundary; source pin that the list-branch `PriceOverrideModal` routes through
+  `applyPriceOverride` and no longer writes `unitPrice: newPrice` directly), `edit-items-scan-price.test.ts`
+  (REG-B263-B, source-text: exactly one `<PriceOverrideModal` mount inside the picker branch, its
+  `<BarcodeScanner` carries `active={!pickerPriceEditItem}`, `onSave` wired through
+  `applyPriceOverride`; REG-B263-H, round-3 light-loop: the picker strip's margin-floor label derives
+  from the same `computeMarginFraction`/`classifyMargin` calls `DraftItemCard` uses, regex-pinned
+  against the list row's own message literals; `PIN-B263-D4`, no-change regression: list-branch
+  `canEditPrice` gating untouched), `barcode-scanner-active.test.ts` (REG-B263-C, source-text,
+  comment-stripped: both `BarcodeScanner.tsx` and `.web.tsx` forward `active` into `<ScanCamera` and
+  render `feedback.action` bound to `action.onPress`).
 - mocks: `@routeflow/ui.js`, `@routeflow/types.js`, `expo-secure-store.js`.
 
 ### Batch 2026-07-23 (PRs #306, #307, #309, #310)
@@ -1366,3 +1378,50 @@ Promise<ScanOutcome>` (opens this component's own camera overlay) or `onPress: (
   files the deferred Option-B twin — price control inside the scan flow over a PAUSED camera
   (`ScanOrderSheet` on the edit screen); `ScanCamera`'s `active` pause prop stays unreachable today
   because `BarcodeScanner` (its only caller) never passes one.
+
+### 2026-09-08 — B263 option B: price edit inside the scan flow over a paused camera (#675, `f52005f3`)
+
+Companion to "B246 option C" above — that PR shipped the FAB (Apply → FAB → camera, 1 tap); this
+one removes the remaining friction by letting the price edit happen WITHOUT leaving the picker at
+all (scan → Edit price → Apply → scan next, 0 remounts). Was 5 taps + 2 camera lifecycles
+end-to-end before either fix.
+
+- **`lib/price-override.ts`** (new, pure) — `applyPriceOverride(item, { unitPrice, reason }):
+DraftItem` returns the item with `unitPrice: roundMoney(unitPrice)`, `overrideReason: reason`,
+  and `lineTotal` recomputed via `computeLineSubtotal` (boxes/pieces/`freeUnits` preserved,
+  `@routeflow/pricing`). Both the line-list branch's `PriceOverrideModal` and the new picker-branch
+  one call it — this also fixes a pre-existing money-math gap where the list-branch modal wrote
+  the typed price unrounded. `needsMarginAck(item, newPrice, floorPrice): boolean` is the same pure
+  decision helper now backing the margin-floor ack on both branches.
+- **`app/(operator)/(tabs)/orders/[id]/edit-items.tsx`** — `ProductPicker` gains `canEditPrice`,
+  `marginFloor`, and `onScanSessionStart` props and new state `pickerPriceEditItem`; on a
+  successful scan-add it shows a "last added: `<name>` · `<price>` · Edit price" strip, and tapping
+  Edit price opens the SAME `PriceOverrideModal` used by the line-list branch (`onSave` →
+  `applyPriceOverride` → the shared `updateDraftItem` setter) over the live camera, now paused via
+  `<BarcodeScanner active={!pickerPriceEditItem} …>` — no remount, no track teardown. The strip's
+  margin-floor label derives from `computeMarginFraction`/`classifyMargin` (the same calls
+  `DraftItemCard` uses via the new `marginFloor` prop, itself the list row's own
+  `floorForCategory(marginConfig, category)`) instead of a hardcoded literal, so the two surfaces
+  cannot disagree on wording (round-3 light-loop fix, caught after the engine's main pass). The
+  strip clears on camera close or a row tap. `canEditPrice` gating itself (`!isDriver &&
+order.status !== "CANCELLED"`) is UNCHANGED on the list branch — no new gate, no SPECIAL-tier
+  change.
+- **`components/BarcodeScanner.tsx` + `.web.tsx`** — see the "Barcode scanner" table row above
+  (`active` pause prop + `feedback.action` pill). The dead `onAmbiguous`/`onCreate` hand-off this
+  fixes was found independently while implementing D1 and folded into this same PR rather than
+  filed separately.
+- Tests: see the Tests section's `#675` bullet above (`price-override.test.ts`,
+  `edit-items-scan-price.test.ts`, `barcode-scanner-active.test.ts`). Red gate before the fix: 18
+  failed / 0 passed / 1 skipped (`PIN-B263-D4`) on `-t "REG-B263"`. No mobile renderer on the
+  pipeline host, so no UI-verify ran — the owner exercises it on a device after the next EAS build.
+- **Registry:** B263 moved into `F30` (tier T1, B246's batch), analysis sections filled from
+  cause-ruling.md, proven (PR #675) and discharged (master `f52005f3`) — done. B246's row
+  notes the option-B twin landed. Sibling money-math gap found in review — the margin-floor gate
+  (`needsMarginAck`, rounds to the nearest cent) and the list/picker label (`classifyMargin`, exact
+  fraction) can disagree by up to half a cent at the boundary — filed unbatched as **B280** (low,
+  sensitive/money hand-set: `classify()` only scans title+location and neither string trips the
+  money regex, corrected in the row frontmatter then `bugs.mjs index` resync'd `bugs.jsonl`).
+  Lessons: L-099 appended (domain — a sheet returning to a live surface mounts over it with a pause
+  prop, never swaps the surface out); L-038 archived for headroom (tooling, bot-authored lockfile
+  regeneration — no dedicated automated guard, grep-confirmed clean of citations outside
+  `.claude/lessons/**`/`.claude/pipeline/**`). Register back to 40/40.
