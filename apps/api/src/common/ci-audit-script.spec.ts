@@ -48,7 +48,12 @@ beforeAll(() => {
       "      'acme-lib': {",
       "        name: 'acme-lib',",
       "        severity: 'critical',",
-      "        via: [{ title: 'Remote Code Execution in acme-lib', severity: 'critical', range: '<2.0.1' }],",
+      "        via: [{",
+      "          title: 'Remote Code Execution in acme-lib',",
+      "          severity: 'critical',",
+      "          range: '<2.0.1',",
+      "          url: 'https://github.com/advisories/GHSA-test-fake-0001',",
+      "        }],",
       "        range: '<2.0.1',",
       "      },",
       "    },",
@@ -140,6 +145,36 @@ function newCounter(name: string): string {
   return file;
 }
 
+const GHSA_TEST_ID = "GHSA-test-fake-0001"; // matches criticalJson()'s via[0].url above
+
+function isoDateOffset(days: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function writeAllowlist(entries: unknown[]): string {
+  const file = path.join(
+    dir,
+    `allowlist-${entries.length}-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
+  );
+  fs.writeFileSync(file, JSON.stringify({ entries }));
+  return file;
+}
+
+function allowlistEntry(overrides: Record<string, string> = {}): Record<string, string> {
+  return {
+    id: GHSA_TEST_ID,
+    package: "acme-lib",
+    reason: "test fixture",
+    expires: isoDateOffset(30),
+    ackedBy: "owner",
+    ackedOn: isoDateOffset(-1),
+    followUp: "n/a",
+    ...overrides,
+  };
+}
+
 function invocationCount(counterFile: string): number {
   return fs
     .readFileSync(counterFile, "utf8")
@@ -213,5 +248,110 @@ describe("ci-audit-critical.mjs contract", () => {
     expect(res.stdout).toContain("high=2");
     expect(res.stdout).toContain("acme-high-lib");
     expect(res.status).toBe(0);
+  });
+});
+
+// security/audit-allowlist.json contract — an owner-ruled EXPIRING allowlist so a specific,
+// already-assessed CRITICAL (e.g. a next.js advisory unreachable in the deployed image) can be
+// suppressed without disabling the gate outright, while an expired entry still fails closed so
+// the list can never rot silently. CI_AUDIT_ALLOWLIST points every case here at a temp fixture
+// so none of this depends on (or mutates) the real security/audit-allowlist.json.
+describe("ci-audit-critical.mjs contract — allowlist", () => {
+  it("(i) critical with a matching, unexpired allowlist entry: exits 0, prints ALLOWLISTED", () => {
+    const counter = newCounter("allow-match");
+    const allowlist = writeAllowlist([allowlistEntry()]);
+    const res = run([], fakeEnv("critical", counter, { CI_AUDIT_ALLOWLIST: allowlist }));
+
+    expect(res.stdout).toContain(`ALLOWLISTED ${GHSA_TEST_ID}`);
+    expect(res.stdout).toContain("all critical advisories are allowlisted (expiring)");
+    expect(res.status).toBe(0);
+  });
+
+  it("(ii) matching entry but expires yesterday: exits 1, ALLOWLIST EXPIRED", () => {
+    const counter = newCounter("allow-expired");
+    const allowlist = writeAllowlist([allowlistEntry({ expires: isoDateOffset(-1) })]);
+    const res = run([], fakeEnv("critical", counter, { CI_AUDIT_ALLOWLIST: allowlist }));
+
+    expect(res.stdout).toContain("ALLOWLIST EXPIRED");
+    expect(res.status).toBe(1);
+  });
+
+  it("(iii) entry for a different package: does not suppress, exits 1", () => {
+    const counter = newCounter("allow-wrong-package");
+    const allowlist = writeAllowlist([allowlistEntry({ package: "not-acme-lib" })]);
+    const res = run([], fakeEnv("critical", counter, { CI_AUDIT_ALLOWLIST: allowlist }));
+
+    expect(res.stdout).not.toContain("ALLOWLISTED");
+    expect(res.stdout).toContain("::error::");
+    expect(res.status).toBe(1);
+  });
+
+  it("(iv) malformed allowlist file (missing followUp): exits 1 with ::error::, npm audit never runs", () => {
+    const counter = newCounter("allow-malformed");
+    const { followUp: _followUp, ...noFollowUp } = allowlistEntry();
+    const allowlist = writeAllowlist([noFollowUp]);
+    const res = run([], fakeEnv("clean", counter, { CI_AUDIT_ALLOWLIST: allowlist }));
+
+    expect(res.stdout).toContain("::error::");
+    expect(res.status).toBe(1);
+    expect(invocationCount(counter)).toBe(0);
+  });
+
+  it("(v) expired entry with no matching advisory in a clean audit: exits 1 (rot guard)", () => {
+    const counter = newCounter("allow-rot");
+    const allowlist = writeAllowlist([allowlistEntry({ expires: isoDateOffset(-1) })]);
+    const res = run([], fakeEnv("clean", counter, { CI_AUDIT_ALLOWLIST: allowlist }));
+
+    expect(res.stdout).toContain("ALLOWLIST EXPIRED");
+    expect(res.status).toBe(1);
+  });
+
+  it("(vi) no allowlist file at the override path: today's behaviour, a critical fails", () => {
+    const counter = newCounter("allow-missing");
+    const missingPath = path.join(dir, "does-not-exist.json");
+    const res = run([], fakeEnv("critical", counter, { CI_AUDIT_ALLOWLIST: missingPath }));
+
+    expect(res.stdout).not.toContain("ALLOWLISTED");
+    expect(res.stdout).toContain("::error::");
+    expect(res.status).toBe(1);
+  });
+
+  it("--report-only is unaffected by the allowlist except for printing its warnings", () => {
+    const counter = newCounter("allow-report-only");
+    const allowlist = writeAllowlist([allowlistEntry()]);
+    const res = run(
+      ["--level", "high", "--report-only"],
+      fakeEnv("critical", counter, { CI_AUDIT_ALLOWLIST: allowlist }),
+    );
+
+    expect(res.stdout).toContain("critical=1");
+    expect(res.stdout).toContain(`ALLOWLISTED ${GHSA_TEST_ID}`);
+    expect(res.status).toBe(0);
+  });
+});
+
+describe("security/audit-allowlist.json (policy guard)", () => {
+  const REAL_ALLOWLIST_PATH = path.resolve(__dirname, "../../../../security/audit-allowlist.json");
+
+  it("parses, carries exactly the two current next.js GHSA ids, and keeps expires within 60 days of ackedOn", () => {
+    const parsed = JSON.parse(fs.readFileSync(REAL_ALLOWLIST_PATH, "utf8"));
+    expect(Array.isArray(parsed.entries)).toBe(true);
+
+    const ids = parsed.entries.map((e: { id: string }) => e.id).sort();
+    expect(ids).toEqual(["GHSA-2xp9-vwfh-vxw4", "GHSA-p293-qw3h-jr36"]);
+
+    for (const entry of parsed.entries) {
+      expect(entry.expires).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(entry.ackedOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+      const expiresMs = Date.parse(`${entry.expires}T00:00:00Z`);
+      const ackedMs = Date.parse(`${entry.ackedOn}T00:00:00Z`);
+      expect(Number.isNaN(expiresMs)).toBe(false);
+      expect(Number.isNaN(ackedMs)).toBe(false);
+
+      const diffDays = (expiresMs - ackedMs) / 86_400_000;
+      expect(diffDays).toBeGreaterThanOrEqual(0);
+      expect(diffDays).toBeLessThanOrEqual(60);
+    }
   });
 });

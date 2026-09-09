@@ -30,10 +30,25 @@
 //                         specs can drive a fake with no network.
 //   CI_AUDIT_BACKOFF_MS   Comma-separated backoff delays in ms (default "15000,45000") so
 //                         specs don't sleep for real minutes.
+//   CI_AUDIT_ALLOWLIST    Path to an allowlist JSON file, replacing the default
+//                         security/audit-allowlist.json (resolved from this script's own
+//                         location, not process.cwd()) so specs can point at a temp fixture.
+//
+// EXPIRING ALLOWLIST
+// security/audit-allowlist.json (or CI_AUDIT_ALLOWLIST) lists { id, package, reason, expires,
+// ackedBy, ackedOn, followUp } entries. A critical advisory is suppressed only when an entry's
+// `id` + `package` match it AND today (UTC) is <= `expires`; suppression prints
+// `::warning::ALLOWLISTED …`. A missing allowlist file is fine (no allowlist configured); a
+// present-but-malformed one (bad JSON, missing field, bad date) fails closed — `::error::` +
+// exit 1 — without ever running npm audit. An entry past its `expires` always fails the gate
+// (`::error::ALLOWLIST EXPIRED …`), even if the advisory it names no longer appears in the
+// current audit output, so a stale entry can't rot silently. --report-only never fails on any
+// of this — it only gains the extra ALLOWLISTED/EXPIRED lines for visibility.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const MAX_BUFFER = 64 * 1024 * 1024; // 64 MiB
 // 3 attempts x 60s + the default 15s + 45s backoff = 4 min worst case per
@@ -122,6 +137,105 @@ function isOutage(text) {
   return OUTAGE_PATTERNS.some((re) => re.test(text));
 }
 
+// scripts/ci-audit-critical.mjs -> scripts/ -> repo root. Anchored to this file's own
+// location (not process.cwd()) so the default allowlist resolves the same way whether this
+// runs from CI's checkout root or a spec that spawns it from apps/api.
+function repoRoot() {
+  return path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+}
+
+function defaultAllowlistPath() {
+  return path.join(repoRoot(), "security", "audit-allowlist.json");
+}
+
+function todayUtcDate() {
+  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD, UTC
+}
+
+const ALLOWLIST_REQUIRED_FIELDS = ["id", "package", "reason", "expires", "ackedBy", "followUp"];
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Loads and validates the allowlist. A missing file is NOT an error (no allowlist configured
+// yet) — { ok: true, entries: [] }. A present-but-malformed file fails closed — { ok: false }
+// — having already printed ::error:: for the caller to surface; the caller must not fall back
+// to "no allowlist" in that case.
+function loadAllowlist() {
+  const allowlistPath = process.env.CI_AUDIT_ALLOWLIST || defaultAllowlistPath();
+  if (!fs.existsSync(allowlistPath)) {
+    return { ok: true, entries: [] };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(allowlistPath, "utf8"));
+  } catch (e) {
+    console.log(`::error::CI audit allowlist ${allowlistPath} is not valid JSON: ${e.message}`);
+    return { ok: false, entries: [] };
+  }
+  if (!parsed || !Array.isArray(parsed.entries)) {
+    console.log(`::error::CI audit allowlist ${allowlistPath} must have an "entries" array`);
+    return { ok: false, entries: [] };
+  }
+  for (const entry of parsed.entries) {
+    for (const field of ALLOWLIST_REQUIRED_FIELDS) {
+      if (!entry || typeof entry[field] !== "string" || entry[field].trim() === "") {
+        console.log(
+          `::error::CI audit allowlist ${allowlistPath} has an entry missing "${field}": ${JSON.stringify(entry)}`,
+        );
+        return { ok: false, entries: [] };
+      }
+    }
+    if (!ISO_DATE_RE.test(entry.expires)) {
+      console.log(
+        `::error::CI audit allowlist ${allowlistPath} entry ${entry.id} has an invalid "expires" (want YYYY-MM-DD): ${entry.expires}`,
+      );
+      return { ok: false, entries: [] };
+    }
+  }
+  return { ok: true, entries: parsed.entries };
+}
+
+// The GHSA id usually lives in a `via` detail's `url`
+// (https://github.com/advisories/GHSA-xxxx-xxxx-xxxx); fall back to `.source`/`.name` in case a
+// future npm audit shape moves it.
+function ghsaIdFromVia(v) {
+  const candidates = [v.url, v.source, v.name].filter((s) => typeof s === "string");
+  for (const candidate of candidates) {
+    const m = candidate.match(/GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}/i);
+    if (m) return m[0];
+  }
+  return null;
+}
+
+function matchingAllowlistEntry(row, allowlist) {
+  if (!row.ghsaId) return null;
+  return allowlist.find((e) => e.id === row.ghsaId && e.package === row.name) || null;
+}
+
+// Splits rows into still-blocking (`remaining`) vs suppressed-by-an-unexpired-entry
+// (`suppressed`). A row whose matching entry is itself expired stays in `remaining` — the
+// separate expiry rot-guard in main() fails the gate independently of this partition.
+function partitionByAllowlist(rows, allowlist, today) {
+  const remaining = [];
+  const suppressed = [];
+  for (const row of rows) {
+    const entry = matchingAllowlistEntry(row, allowlist);
+    if (entry && entry.expires >= today) {
+      suppressed.push({ row, entry });
+    } else {
+      remaining.push(row);
+    }
+  }
+  return { remaining, suppressed };
+}
+
+function printSuppressed(suppressed) {
+  for (const { entry } of suppressed) {
+    console.log(
+      `::warning::ALLOWLISTED ${entry.id} (${entry.package}) until ${entry.expires} — ${entry.reason}`,
+    );
+  }
+}
+
 // Synchronous sleep with no dependency — spawnSync already makes this script
 // blocking end-to-end, so a blocking backoff between attempts is consistent.
 function sleepSync(ms) {
@@ -149,7 +263,7 @@ function lastErrorLine(result) {
   return result.error ? result.error.message : "unknown error";
 }
 
-function printAdvisories(json, { severities = ["critical"], noticePrefix = false } = {}) {
+function buildRows(json, severities) {
   const vulns = json.vulnerabilities || {};
   const rows = [];
   for (const [name, info] of Object.entries(vulns)) {
@@ -162,6 +276,7 @@ function printAdvisories(json, { severities = ["critical"], noticePrefix = false
         severity: info.severity,
         title: "(see npm audit for detail)",
         range: info.range || "(range unknown)",
+        ghsaId: null,
       });
       continue;
     }
@@ -171,9 +286,14 @@ function printAdvisories(json, { severities = ["critical"], noticePrefix = false
         severity: info.severity,
         title: v.title || v.name || "(untitled advisory)",
         range: v.range || info.range || "(range unknown)",
+        ghsaId: ghsaIdFromVia(v),
       });
     }
   }
+  return rows;
+}
+
+function printRows(rows, { noticePrefix = false } = {}) {
   rows.forEach((r, i) => {
     const label = r.severity.toUpperCase();
     const prefix = noticePrefix && i === 0 ? "::notice::" : "";
@@ -181,6 +301,10 @@ function printAdvisories(json, { severities = ["critical"], noticePrefix = false
       `${prefix}${label}: ${r.name} (severity=${r.severity}) — ${r.title} — range ${r.range}`,
     );
   });
+}
+
+function printAdvisories(json, { severities = ["critical"], noticePrefix = false } = {}) {
+  printRows(buildRows(json, severities), { noticePrefix });
 }
 
 function runAttempt(level) {
@@ -194,10 +318,7 @@ function runAttempt(level) {
   });
 }
 
-function main() {
-  const { level, reportOnly } = parseArgs(process.argv.slice(2));
-  const backoffs = backoffSchedule();
-
+function runAuditLoop({ level, reportOnly, backoffs, allowlist, today }) {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const result = runAttempt(level);
     const json = tryParseJson(result.stdout);
@@ -214,12 +335,30 @@ function main() {
         if (high + critical > 0) {
           printAdvisories(json, { severities: ["critical", "high"], noticePrefix: true });
         }
+        if (critical > 0) {
+          const { suppressed } = partitionByAllowlist(
+            buildRows(json, ["critical"]),
+            allowlist,
+            today,
+          );
+          printSuppressed(suppressed);
+        }
         return 0;
       }
       if (critical > 0) {
-        printAdvisories(json, { severities: ["critical"] });
-        console.log(`::error::${critical} critical production advisory(ies) found`);
-        return 1;
+        const { remaining, suppressed } = partitionByAllowlist(
+          buildRows(json, ["critical"]),
+          allowlist,
+          today,
+        );
+        printSuppressed(suppressed);
+        if (remaining.length > 0) {
+          printRows(remaining);
+          console.log(`::error::${remaining.length} critical production advisory(ies) found`);
+          return 1;
+        }
+        console.log("all critical advisories are allowlisted (expiring)");
+        return 0;
       }
       console.log(`advisories: critical=0 (level=${level}) — no critical production advisories`);
       return 0;
@@ -260,6 +399,33 @@ function main() {
 
   // Unreachable — the loop always returns — but keep a safe fallback.
   return reportOnly ? 0 : 1;
+}
+
+function main() {
+  const { level, reportOnly } = parseArgs(process.argv.slice(2));
+  const backoffs = backoffSchedule();
+
+  const allowlistLoad = loadAllowlist();
+  if (!allowlistLoad.ok) {
+    // Already printed ::error::. Fail closed on the blocking gate; --report-only never fails,
+    // consistent with every other branch below.
+    return reportOnly ? 0 : 1;
+  }
+  const allowlist = allowlistLoad.entries;
+  const today = todayUtcDate();
+  const expired = allowlist.filter((e) => e.expires < today);
+  for (const e of expired) {
+    console.log(`::error::ALLOWLIST EXPIRED ${e.id} — ${e.followUp}`);
+  }
+
+  const exitCode = runAuditLoop({ level, reportOnly, backoffs, allowlist, today });
+
+  if (!reportOnly && expired.length > 0) {
+    // Rot guard: an expired entry fails the blocking gate regardless of what this run's audit
+    // found — otherwise a fixed/no-longer-reported advisory would let a stale entry hide forever.
+    return 1;
+  }
+  return exitCode;
 }
 
 process.exit(main());
