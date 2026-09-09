@@ -23,19 +23,6 @@
 - **Guard:** campaign-check's exact-prefix rule (already enforced) + this step in the follow-up
   checklist.
 
-### L-094 · 2026-09-08 · process · #663
-
-- **Symptom:** the auth-redesign dev-pipeline engine stopped mid fix-loop at 62 agents with no
-  `result.json`, on checkpoint `102c79ce` — the next session reconstructed state via a light loop;
-  two driver agents in the same run had also stalled on background waits.
-- **Root cause:** the engine writes `result.json` only at the very end, so a stopped or killed run
-  leaves nothing machine-readable behind.
-- **Lesson:** **A long engine run checkpoints `result.json` (phase, remaining findings, gate
-  state) after every phase, not only at the end, and agent prompts forbid background waits — so
-  an interruption resumes from a record, not a reconstruction.**
-- **Guard:** none yet — process; dev-pipeline engine change candidate recorded in
-  `~/.claude/skills/dev-pipeline/references/RUN-LOG.md` under `2026-09-07-auth-redesign`.
-
 ### L-078 · 2026-09-05 · process · close-out re-check
 
 - **Symptom:** `LESSONS.md` keeps merging CLEANLY into duplicate ids — L-054 four times, then
@@ -454,6 +441,20 @@
   `docs/runbooks/deploy-visibility-flip.md` and the `rebuild` skill.
 
 ## domain
+
+### L-101 · 2026-09-09 · domain
+
+- **Symptom:** sign-out cleared tokens only; the offline queue, TanStack query cache, POD
+  scratchpad, six other user-scoped stores, and the background GPS task all outlived the session
+  and replayed under the next signed-in user.
+- **Root cause:** no teardown contract — each store/task was added over time without registering
+  itself with sign-out, so `useAuthStore.logout()` only ever knew about tokens.
+- **Lesson:** **sign-out is a teardown CONTRACT: one `teardownUserSession()` runs BEFORE the
+  token-deleting logout call, and every user-scoped store, cache, queue and background task
+  registers a reset there; queued work is identity-stamped and replays only for its owner; a
+  "minor" engine run that needs more than 4 fix rounds hands the remainder to a light loop.**
+- **Guard:** `apps/mobile/__tests__/session-teardown.test.ts` (REG-B150/B140),
+  `offline-queue-identity.test.ts` (REG-B137).
 
 ### L-100 · 2026-09-08 · domain · #678
 

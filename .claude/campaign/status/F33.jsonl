@@ -1,6 +1,6 @@
-{"id":"B35","batch":"F33","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B123","batch":"F33","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B124","batch":"F33","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B125","batch":"F33","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B203","batch":"F33","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B35","batch":"F33","tier":"T1","state":"done","pr":683,"proof":"REG-B35","evidence":"pins via #683 (f9f36075); fixes shipped in #477/#491/#565","buildPlan":null}
+{"id":"B123","batch":"F33","tier":"T1","state":"done","pr":683,"proof":"REG-B123","evidence":"pins via #683 (f9f36075); fixes shipped in #477/#491/#565","buildPlan":null}
+{"id":"B124","batch":"F33","tier":"T1","state":"done","pr":683,"proof":"REG-B124","evidence":"pins via #683 (f9f36075); fixes shipped in #477/#491/#565","buildPlan":null}
+{"id":"B125","batch":"F33","tier":"T1","state":"done","pr":683,"proof":"REG-B125","evidence":"pins via #683 (f9f36075); fixes shipped in #477/#491/#565","buildPlan":null}
+{"id":"B203","batch":"F33","tier":"T1","state":"done","pr":683,"proof":"REG-B203","evidence":"pins via #683 (f9f36075); fixes shipped in #477/#491/#565","buildPlan":null}
 {"id":"B204","batch":"F33","tier":"T1","state":"done","pr":565,"proof":"REG-B204 apps/mobile/__tests__/secure-key.test.ts: toSecureStoreKey maps the real key set into SecureStore's accepted alphabet, collision-free and idempotent; buyer-session-store initialize clears isLoading even when storage throws","evidence":"reconciled 2026-09-09: fixed on master before the registry existed; B204 via #565 (master 4046e669) with a pre-existing REG-B204 pin in apps/mobile/__tests__/secure-key.test.ts; siblings B35/B123/B124/B125/B203 stay queued in this batch with proposed-pin notes since the sweep found no REG-tokened test for them","buildPlan":null}

@@ -1053,3 +1053,24 @@ never itself wired as a repo guard). Back to 40/40 with L-100 added.
   evidence — a judge never scores a screenshot without that line.**
 - **Guard:** process — add to the dev-pipeline driver prompt (skill file outside the repo) as
   protocol step 0; no in-repo guard yet.
+
+**Archived 2026-09-09** (bookkeeping prep, `docs/wave-2026-09-09-bookkeeping`): L-094
+(2026-09-08, process, `#663`, guard `none yet`) is the clean candidate — a repo-wide grep for the
+literal id `L-094` hits only `.claude/lessons/LESSONS.md`, with no hit anywhere else in the repo
+(every other active entry is cited from `code-map/*.md`, `HANDOFF.md`, or `tools/bugflow/docs/**`,
+outside the allowed citation sites). Archiving it loses no in-repo enforcement — its
+`result.json`-checkpointing change was recorded only as a RUN-LOG candidate outside this repo,
+never wired as a guard here. Back to 40/40 with L-101 added.
+
+### L-094 · 2026-09-08 · process · #663
+
+- **Symptom:** the auth-redesign dev-pipeline engine stopped mid fix-loop at 62 agents with no
+  `result.json`, on checkpoint `102c79ce` — the next session reconstructed state via a light loop;
+  two driver agents in the same run had also stalled on background waits.
+- **Root cause:** the engine writes `result.json` only at the very end, so a stopped or killed run
+  leaves nothing machine-readable behind.
+- **Lesson:** **A long engine run checkpoints `result.json` (phase, remaining findings, gate
+  state) after every phase, not only at the end, and agent prompts forbid background waits — so
+  an interruption resumes from a record, not a reconstruction.**
+- **Guard:** none yet — process; dev-pipeline engine change candidate recorded in
+  `~/.claude/skills/dev-pipeline/references/RUN-LOG.md` under `2026-09-07-auth-redesign`.
