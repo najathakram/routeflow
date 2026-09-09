@@ -51,6 +51,7 @@ import {
 import { sanitizeIntInput } from "../../../../../lib/qty";
 import { QTY_INPUT_WIDTH } from "../../../../../lib/row-layout";
 import { resolveProductByCode } from "../../../../../lib/barcode-resolve";
+import { applyPriceOverride, needsMarginAck } from "../../../../../lib/price-override";
 import { BarcodeScanner } from "../../../../../components/BarcodeScanner";
 import { BarcodeFab } from "../../../../../components/BarcodeFab";
 import { scanFabHidden } from "../../../../../lib/scan-fab-visibility";
@@ -245,6 +246,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // own camera already open (initialScanOpen) — reset whenever the picker
   // closes so the plain "Add product" path keeps opening cold.
   const [pickerScanIntent, setPickerScanIntent] = useState(false);
+  // B263 D3: the productId of the most recent picker scan-add, so the picker
+  // can offer "Edit price" over the paused camera without leaving the sheet.
+  // Reset whenever the picker closes.
+  const [lastScannedId, setLastScannedId] = useState<string | null>(null);
   const [substituteFor, setSubstituteFor] = useState<string | null>(null);
   const [priceEditItem, setPriceEditItem] = useState<DraftItem | null>(null);
   const [licenseBlock, setLicenseBlock] = useState<BlockedCategory[] | null>(null);
@@ -723,6 +728,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     );
   }
 
+  // B263 D3: the draft line behind the picker's "last added" strip, resolved
+  // once so its margin floor and ack state are derived from the same line the
+  // strip renders.
+  const lastAddedLine = lastScannedId ? (draft[lastScannedId] ?? null) : null;
+
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
@@ -733,13 +743,19 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       {priceEditItem ? (
         <PriceOverrideModal
           item={priceEditItem}
-          onSave={(newPrice, reason) => {
+          onSave={(price, reason) => {
+            // B263 D2: rounding + lineTotal recompute now live in the shared
+            // helper (money discipline) — never write the raw typed price.
+            const updated = applyPriceOverride(priceEditItem, {
+              unitPrice: price,
+              reason: reason || undefined,
+            });
             setDraft((d) => ({
               ...d,
               [priceEditItem.productId]: {
                 ...priceEditItem,
-                unitPrice: newPrice,
-                overrideReason: reason || undefined,
+                unitPrice: updated.unitPrice,
+                overrideReason: updated.overrideReason,
               },
             }));
             setPriceEditItem(null);
@@ -806,11 +822,53 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
         <ProductPicker
           title={substituteFor ? "Substitute with…" : "Add product"}
           canCreateProducts={!isDriver}
+          canEditPrice={!isDriver && order.status !== "CANCELLED"}
           initialScanOpen={pickerScanIntent}
           // Add-and-stay (scans + wedge input): the picker stays open so N
           // items scan with zero taps — closes web's long-standing edit-screen
           // divergence. Not offered in substitute mode (one pick by contract).
-          onPickAndStay={substituteFor ? undefined : (p, kind) => addPickedToDraft(p, kind)}
+          onPickAndStay={
+            substituteFor
+              ? undefined
+              : (p, kind) => {
+                  addPickedToDraft(p, kind);
+                  setLastScannedId(p.id);
+                }
+          }
+          lastAdded={lastAddedLine}
+          // Review round: the strip flags a below-floor price with the SAME
+          // floor and the SAME ack state the line list uses — one derivation
+          // (`marginFloorPrice`), one ack set (`floorAcked`), two surfaces.
+          lastAddedFloor={
+            lastAddedLine
+              ? marginFloorPrice(
+                  lastAddedLine,
+                  floorForCategory(marginConfig, lastAddedLine.category),
+                )
+              : null
+          }
+          lastAddedAcked={
+            lastAddedLine ? floorAcked.has(lastAddedLine.lineId ?? lastAddedLine.productId) : false
+          }
+          // Finding B263-H: the same floor-FRACTION call the list row's own
+          // `marginFloor` prop uses (`:983`) — lets the strip classify
+          // `lastAdded` with the row's exact derivation, not a hand-rolled one.
+          marginFloor={floorForCategory(marginConfig, lastAddedLine?.category)}
+          // The list row's Set-to-floor writer, verbatim (`setLinePrice`) —
+          // one price-write path for both surfaces.
+          onSetToFloor={(item, price) => setLinePrice(item.productId, price)}
+          onEditPrice={(item, price, reason) => {
+            setDraft((d) => {
+              const cur = d[item.productId];
+              if (!cur) return d;
+              return {
+                ...d,
+                [item.productId]: { ...cur, unitPrice: price, overrideReason: reason },
+              };
+            });
+          }}
+          onScanSessionStart={() => setLastScannedId(null)}
+          onScanSessionEnd={() => setLastScannedId(null)}
           onPick={(p, kind) => {
             if (substituteFor) {
               const tierPrice = tierPriceFor(p);
@@ -837,11 +895,16 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
             }
             setShowPicker(false);
             setPickerScanIntent(false);
+            // The strip belongs to the CURRENT camera session: a row tap (or a
+            // substitute pick) closes the picker, so the id a wedge/search
+            // auto-add left behind must not survive into the next session.
+            setLastScannedId(null);
           }}
           onClose={() => {
             setShowPicker(false);
             setSubstituteFor(null);
             setPickerScanIntent(false);
+            setLastScannedId(null);
           }}
         />
       ) : (
@@ -1032,6 +1095,22 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   );
 }
 
+/**
+ * B263 (review round) — the ONE margin-floor derivation both price-edit
+ * surfaces read: the list row's below-floor guard and the picker's
+ * last-added strip. Same helper, same arguments (`averageCost` per piece,
+ * the line's category floor, `unitsPerBox`), so a price the row flags is
+ * flagged identically on the scan surface. Null when the product has no
+ * known cost — no cost, no floor, no ack.
+ */
+function marginFloorPrice(item: DraftItem, marginFloor: number): number | null {
+  const pieceCost = item.averageCost != null ? toNumber(item.averageCost) : null;
+  if (pieceCost == null || !Number.isFinite(pieceCost)) return null;
+  const marginFrac = computeMarginFraction(item.unitPrice, pieceCost, item.unitsPerBox);
+  if (classifyMargin(marginFrac, marginFloor) == null) return null;
+  return priceForMarginFloor(pieceCost, marginFloor, item.unitsPerBox);
+}
+
 // ─── Per-row card ────────────────────────────────────────────────────────────
 
 /**
@@ -1124,10 +1203,10 @@ function DraftItemCard({
     ? computeMarginFraction(item.unitPrice, pieceCost, item.unitsPerBox)
     : null;
   const marginClass = classifyMargin(marginFrac, marginFloor);
-  const floorPrice =
-    hasCost && marginClass != null
-      ? priceForMarginFloor(pieceCost!, marginFloor, item.unitsPerBox)
-      : null;
+  // Same derivation the picker's last-added strip reads (one helper, two
+  // surfaces) — unchanged behaviour: `classifyMargin` is null exactly when
+  // the cost is unknown, which is exactly when `hasCost` is false.
+  const floorPrice = marginFloorPrice(item, marginFloor);
   const below = marginClass === "belowCost" || marginClass === "belowFloor";
   // Display-only per-unit hint on the case price — never fed back into math.
   const perUnitHint = isBoxed ? perUnitPrice(item.unitPrice, upb) : null;
@@ -1772,6 +1851,15 @@ function ProductPicker({
   onClose,
   canCreateProducts = false,
   initialScanOpen,
+  lastAdded,
+  lastAddedFloor,
+  lastAddedAcked = false,
+  marginFloor,
+  onEditPrice,
+  onSetToFloor,
+  canEditPrice = false,
+  onScanSessionStart,
+  onScanSessionEnd,
 }: {
   title?: string;
   /** Single pick — the caller closes the picker (tap rows, substitutions). */
@@ -1788,8 +1876,63 @@ function ProductPicker({
   canCreateProducts?: boolean;
   /** B246: mount already scanning — the line-list scan FAB's entry point. */
   initialScanOpen?: boolean;
+  /**
+   * B263 D3: the parent's draft line for the most recent scan-add, so the
+   * picker can show a "last added" strip with an inline price edit without
+   * leaving the scan surface. Null before any scan-add this picker session,
+   * and in substitute mode (no `onPickAndStay`).
+   */
+  lastAdded?: DraftItem | null;
+  /**
+   * `lastAdded`'s margin floor, derived by the parent with the SAME helper
+   * (`marginFloorPrice`) and arguments the line list's below-floor guard
+   * uses. Null when the product has no known cost — then there is no floor
+   * and the strip shows no below-floor affordance.
+   */
+  lastAddedFloor?: number | null;
+  /**
+   * Whether the operator already tapped "Sell anyway" on `lastAdded` in the
+   * line list. `floorAcked` keeps exactly ONE writer (that tap): the strip
+   * reads the ack, never stamps it.
+   */
+  lastAddedAcked?: boolean;
+  /**
+   * `lastAdded`'s category margin floor FRACTION (e.g. 0.15) — the same
+   * `floorForCategory(marginConfig, category)` call the list row's own
+   * `marginFloor` prop is built from (`:983`). Lets the strip classify
+   * `lastAdded` with the EXACT same two calls the row uses
+   * (`computeMarginFraction` -> `classifyMargin`), so "below cost" vs
+   * "below floor" can never read differently on the two surfaces for the
+   * same line (finding B263-H).
+   */
+  marginFloor: number;
+  /**
+   * Applies an already-computed price override (rounded, `overrideReason`
+   * set) to `lastAdded` in the parent's draft — the same `setDraft` write the
+   * list branch uses.
+   */
+  onEditPrice: (item: DraftItem, unitPrice: number, overrideReason: string | undefined) => void;
+  /**
+   * The list row's one-tap "Set to floor" writer, threaded verbatim, so the
+   * strip's fix writes the price through exactly the same path.
+   */
+  onSetToFloor: (item: DraftItem, unitPrice: number) => void;
+  /**
+   * The list branch's price gate, threaded verbatim: a price override from
+   * the picker is reachable exactly when the line list's price chip is
+   * (never for a DRIVER, never on a CANCELLED order). Defaults to false.
+   */
+  canEditPrice?: boolean;
+  /** A camera session is opening — the parent clears its "last scan-added" line. */
+  onScanSessionStart?: () => void;
+  /** A camera session ended — the parent clears its "last scan-added" line. */
+  onScanSessionEnd?: () => void;
 }) {
   const [scanOpen, setScanOpen] = useState(initialScanOpen ?? false);
+  // B263 D3: the just-scanned line open for a price edit, stacked over the
+  // scanner. The camera stays mounted but paused (`active={!pickerPriceEditItem}`)
+  // — the same "keep it mounted" contract `paused` already uses below.
+  const [pickerPriceEditItem, setPickerPriceEditItem] = useState<DraftItem | null>(null);
   // This picker is a scan BURST surface (wedge auto-add + miss sinks below all
   // go through `showToast`), so it owns an `<InlineToast>`: mounting it
   // registers this screen as the iOS toast host (lib/toast-host.ts), which is
@@ -1912,6 +2055,21 @@ function ProductPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, products, isSearching]);
 
+  // Finding B263-H: the strip's own margin classification, using the EXACT
+  // same primitives as the list row's `marginClass` (`DraftItemCard`,
+  // `computeMarginFraction` -> `classifyMargin` around `:1198-1201`), fed
+  // `lastAdded`'s already-rounded `unitPrice` and the parent's `marginFloor`
+  // (same `floorForCategory` call the row itself is built from). Never a
+  // price-only comparison — two independent derivations of "which state is
+  // this line in" is exactly how the strip's label drifted from the row's.
+  const lastAddedPieceCost =
+    lastAdded?.averageCost != null ? toNumber(lastAdded.averageCost) : null;
+  const marginFrac =
+    lastAdded && lastAddedPieceCost != null
+      ? computeMarginFraction(lastAdded.unitPrice, lastAddedPieceCost, lastAdded.unitsPerBox)
+      : null;
+  const marginClass = classifyMargin(marginFrac, marginFloor);
+
   return (
     <>
       <NavBar inlineTitle={title} leading={<NavBackButton label="Cancel" onPress={onClose} />} />
@@ -1922,7 +2080,10 @@ function ProductPicker({
         onSubmitEditing={onPickAndStay ? () => void handleSearchSubmit() : undefined}
         trailing={
           <Pressable
-            onPress={() => setScanOpen(true)}
+            onPress={() => {
+              onScanSessionStart?.();
+              setScanOpen(true);
+            }}
             hitSlop={10}
             accessibilityRole="button"
             accessibilityLabel="Scan a barcode"
@@ -1983,11 +2144,85 @@ function ProductPicker({
       {scanOpen ? (
         <BarcodeScanner
           onScanned={onScanned}
-          onClose={() => setScanOpen(false)}
+          onClose={() => {
+            setScanOpen(false);
+            onScanSessionEnd?.();
+          }}
           continuous={!!onPickAndStay}
           // Stop decoding while a hand-off sheet is up, but keep the camera
           // mounted so dismissing it resumes scanning instantly.
           paused={pickCode !== null || createCode !== null}
+          // B263 D1/D3: pause the decode loop (camera stays mounted) while
+          // the price-edit sheet below is stacked over it.
+          active={!pickerPriceEditItem}
+        />
+      ) : null}
+
+      {/* B263 D3: the last scan-added line, with an inline price edit that
+          never leaves the scan surface or tears the camera down. */}
+      {scanOpen && lastAdded ? (
+        <View style={styles.pickerLastAdded} pointerEvents="box-none">
+          <View style={styles.pickerLastAddedRow}>
+            <Text style={styles.pickerLastAddedText} numberOfLines={1}>
+              Added {lastAdded.name} · ${lastAdded.unitPrice.toFixed(2)}
+            </Text>
+            {canEditPrice ? (
+              <Pressable
+                onPress={() => setPickerPriceEditItem(lastAdded)}
+                style={styles.pickerLastAddedBtn}
+                hitSlop={8}
+                accessibilityRole="button"
+              >
+                <Text style={styles.pickerLastAddedBtnText}>Edit price</Text>
+              </Pressable>
+            ) : null}
+          </View>
+          {/* Review round: a below-floor price is flagged on THIS surface too
+              — same predicate (`needsMarginAck`), same floor, same guard as
+              the line row. No ack control here: acknowledging stays a
+              line-list tap, so `floorAcked` keeps exactly one writer.
+              Finding B263-H: the label ALSO reads `marginClass` (same
+              `classifyMargin` call the row uses) so "Below cost" vs "Below
+              floor" can't disagree with the row for the same line. */}
+          {canEditPrice &&
+          lastAddedFloor != null &&
+          !lastAddedAcked &&
+          needsMarginAck(lastAdded, lastAdded.unitPrice, lastAddedFloor) ? (
+            <View style={styles.pickerLastAddedRow}>
+              <Text style={styles.pickerLastAddedBelow}>
+                {marginClass === "belowCost"
+                  ? `Below cost (${Math.round(marginFrac! * 100)}%)`
+                  : `Below floor · ${Math.round(marginFrac! * 100)}% margin`}
+              </Text>
+              <Pressable
+                onPress={() => onSetToFloor(lastAdded, lastAddedFloor)}
+                style={styles.pickerLastAddedBtn}
+                hitSlop={8}
+                accessibilityRole="button"
+              >
+                <Text style={styles.pickerLastAddedBtnText}>
+                  Set to floor ${lastAddedFloor.toFixed(2)}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+
+      {canEditPrice && pickerPriceEditItem ? (
+        <PriceOverrideModal
+          item={pickerPriceEditItem}
+          onSave={(price, reason) => {
+            // Same money path as the list branch (B263 D2): round + recompute
+            // through the shared helper, never write the raw typed price.
+            const updated = applyPriceOverride(pickerPriceEditItem, {
+              unitPrice: price,
+              reason: reason || undefined,
+            });
+            onEditPrice(pickerPriceEditItem, updated.unitPrice, updated.overrideReason);
+            setPickerPriceEditItem(null);
+          }}
+          onCancel={() => setPickerPriceEditItem(null)}
         />
       ) : null}
 
@@ -2253,6 +2488,48 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+  },
+
+  // ── Picker "last added" strip (B263 D3) ─────────────────────────────────────
+  pickerLastAdded: {
+    position: "absolute",
+    left: 20,
+    right: 20,
+    bottom: 96,
+    gap: 8,
+    backgroundColor: "rgba(0,0,0,0.72)",
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  pickerLastAddedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  pickerLastAddedBelow: {
+    flex: 1,
+    color: ios.system.red,
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+  },
+  pickerLastAddedText: {
+    flex: 1,
+    color: "#fff",
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+  },
+  pickerLastAddedBtn: {
+    minHeight: 32,
+    justifyContent: "center",
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.22)",
+  },
+  pickerLastAddedBtnText: {
+    color: "#fff",
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
   },
 
   // ── Footer ────────────────────────────────────────────────────────────────
