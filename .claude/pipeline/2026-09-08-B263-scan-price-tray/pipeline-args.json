@@ -1,0 +1,101 @@
+{
+  "mode": "bugfix",
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-08-B263-scan-price-tray/build-plan.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-08-B263-scan-price-tray/bug-test-plan.md",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-08T21:00:00Z",
+  "scale": "minor",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25",
+  "context": "B263 (B246 option B). Design of record = cause-ruling.md section 2 (read with the plan); binding facts = cause-refutation.md. Mobile Jest is pure-logic node; no renderer, no Expo, no Playwright, no UI verify. Money: prices written through applyPriceOverride (roundMoney) with overrideReason; no new tier/SPECIAL gate (parity with web + server). Camera paused via BarcodeScanner active, never remounted. Option-B bookkeeping: no map/lessons/ledger edits. Do not touch ScanCamera, ScanOrderSheet, ScanTray, NewOrderScreen, scan-ladder.ts, addPickedToDraft, BarcodeFab.",
+  "formatCommand": "git ls-files -mo --exclude-standard | grep -E '[.](ts|tsx|json)$' | grep -v '^[.]claude/' | xargs -r npx prettier --write",
+  "radiusFiles": [
+    "apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx",
+    "apps/mobile/components/BarcodeScanner.tsx",
+    "apps/mobile/components/BarcodeScanner.web.tsx",
+    "apps/mobile/lib/price-override.ts",
+    "apps/mobile/components/ScanCamera.tsx",
+    "apps/mobile/components/ScanCamera.web.tsx",
+    "apps/mobile/lib/scan-ladder.ts"
+  ],
+  "siblingPatterns": [
+    {
+      "regex": "unitPrice:\\s*(parseFloat|Number)\\(",
+      "note": "a mobile price write that skips roundMoney; FILE, do not fix here"
+    },
+    {
+      "regex": "<ScanCamera[^>]*>",
+      "note": "scanner hosts: check each renders feedback.action; FILE misses"
+    }
+  ],
+  "testPackages": [
+    {
+      "id": "TP-MOBILE",
+      "title": "pure helper + source-text specs",
+      "files": [
+        "apps/mobile/__tests__/price-override.test.ts",
+        "apps/mobile/__tests__/edit-items-scan-price.test.ts",
+        "apps/mobile/__tests__/barcode-scanner-active.test.ts"
+      ],
+      "brief": "bug-test-plan T1 (REG-B263-A) T2 (REG-B263-B) T3 (REG-B263-C); harness notes; implement nothing",
+      "effort": "medium"
+    }
+  ],
+  "redGate": {
+    "commands": ["cd apps/mobile && npx jest --runInBand -t \"REG-B263\""],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "P1",
+      "title": "pure price-override helper (money)",
+      "files": ["apps/mobile/lib/price-override.ts"],
+      "brief": "build-plan P1",
+      "effort": "high"
+    },
+    {
+      "id": "P2",
+      "title": "BarcodeScanner active + action pill",
+      "files": [
+        "apps/mobile/components/BarcodeScanner.tsx",
+        "apps/mobile/components/BarcodeScanner.web.tsx"
+      ],
+      "brief": "build-plan P2",
+      "effort": "medium"
+    },
+    {
+      "id": "P3",
+      "title": "edit screen: price edit inside the picker over a paused camera",
+      "files": ["apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx"],
+      "brief": "build-plan P3",
+      "effort": "high",
+      "dependsOn": ["P1", "P2"]
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "cd apps/mobile && npx tsc --noEmit -p tsconfig.json",
+      "cd apps/mobile && npx jest __tests__/price-override.test.ts __tests__/edit-items-scan-price.test.ts __tests__/barcode-scanner-active.test.ts __tests__/scan-ladder.test.ts __tests__/edit-items-scan-fab.test.ts --runInBand"
+    ],
+    "final": [
+      "cd apps/mobile && npx jest --silent",
+      "npm run lint -w apps/mobile",
+      "node scripts/validate-lessons.mjs"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx",
+        "behavior": "picker branch mounts the price modal and pauses the scanner",
+        "test": "REG-B263-B",
+        "revertFix": true
+      },
+      {
+        "file": "apps/mobile/components/BarcodeScanner.tsx",
+        "behavior": "active forwarded, action pill rendered",
+        "test": "REG-B263-C",
+        "revertFix": true
+      }
+    ]
+  }
+}

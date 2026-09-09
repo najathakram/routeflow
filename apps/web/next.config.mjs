@@ -34,6 +34,12 @@ const nextConfig = {
   // unminified code and discovering internal logic/patterns.
   productionBrowserSourceMaps: false,
 
+  // no next/image in this app (see components/no-next-image.test.ts); disables the
+  // /_next/image optimizer — GHSA-2xp9-vwfh-vxw4
+  images: {
+    unoptimized: true,
+  },
+
   experimental: {
     // Prevent Next.js from bundling server-only packages into the client
     serverComponentsExternalPackages: [],

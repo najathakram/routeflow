@@ -12,7 +12,7 @@
     {
       "name": "web",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["next", "dev"],
+      "runtimeArgs": ["next", "dev", "-H", "127.0.0.1"],
       "cwd": "apps/web",
       "port": 3001,
       "autoPort": true
