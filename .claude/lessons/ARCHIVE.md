@@ -1024,3 +1024,32 @@ same shape as a `none — judgment` guard), so archiving loses no in-repo enforc
   alternatives are a huge diff or hand-editing a lockfile no client would produce.**
 - **Guard:** none — `validate-lock` passes either way, since the shapes are equivalent. Verify a
   lockfile rebase by version-change count (`0`), never by diff size.
+
+## Archived 2026-09-09 — headroom for L-100 (docs/numbering-group-a-bookkeeping, 678 follow-up)
+
+No "next headroom" candidate was pre-flagged in `_meta.json.note` or the last 3 commits touching
+it (#677/#674/#672 each name the candidate THEY used, not a future one), so this follow-up applied
+the fallback rule fresh, oldest-first, over the CURRENT active register (L-038 having already been
+archived by #677): L-010/L-025/L-027/L-034/L-035 stay active per #677's own citation proof, unchanged
+since. L-050 (2026-09-02, testing, `none yet`) is cited outside allowed paths — `code-map/web.md`,
+`code-map/api.md`, `apps/web/playwright.config.ts`, `docs/IMPROVEMENTS.md`,
+`apps/api/scripts/e2e-seed.js`, `apps/web/e2e/LOCAL-LANE.md`, `apps/web/e2e/32-active-sessions.spec.ts`,
+`apps/web/e2e/helpers/constants.ts` — stays active. L-092 (2026-09-08, testing, `#657`) is the
+next-oldest weak-guard entry (`process — add to the dev-pipeline driver prompt … no in-repo guard
+yet`, the same no-automated-check shape as a `none — judgment` guard): a repo-wide grep for the
+literal id `L-092` hits only `.claude/lessons/LESSONS.md` and `code-map/CHANGELOG.md` — both
+allowed citation sites — with no hit anywhere else. Archiving it loses no in-repo enforcement (the
+lesson's own process step, adding a build-identity probe to the dev-pipeline driver prompt, was
+never itself wired as a repo guard). Back to 40/40 with L-100 added.
+
+### L-092 · 2026-09-08 · testing · #657
+
+- **Symptom:** the marketing engine's UI-verify rounds 3–6 judged screenshots of master's build
+  for two days — a stale Docker container (`routeflow_web`, built from a retired worktree) still
+  held `:3001`, so every request the UI gate made hit master, never the branch under review.
+- **Root cause:** the UI gate never proved WHICH build actually answered on the URL under test.
+- **Lesson:** **every UI-verify pass starts with a build-identity probe on the exact URL (a
+  branch-only marker string, or the commit sha the page exposes) and records the answer in the
+  evidence — a judge never scores a screenshot without that line.**
+- **Guard:** process — add to the dev-pipeline driver prompt (skill file outside the repo) as
+  protocol step 0; no in-repo guard yet.
