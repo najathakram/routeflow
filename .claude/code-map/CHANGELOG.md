@@ -8,6 +8,16 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-09** — (branch `docs/686-campaign-web-report-bookkeeping`, Option-B follow-up for
+  #686/`ff581ce4` + #685/`0c1bc2d6` = master) — `scripts/campaign-check.mjs` now reads
+  `apps/web`'s Jest campaign report (`.campaign/runs/web.json`, wired via
+  `apps/web/jest.config.js`'s `reporters` block, `{ artifact: "web" }`), closing the gap where
+  REG-B### pins living in apps/web were invisible to the gate ("no test titled with REG-B##
+  found", #683). Guard: `apps/api/src/common/campaign-check-web-report.spec.ts`. `INDEX.md`'s
+  "Bug-register burn-down campaign" row, `api.md` (new spec bullet), and `web.md`'s Jest section
+  updated. #685 is a Dependabot minor-and-patch group bump (17 bumps) with no map impact.
+  Lessons: L-102 appended (tooling); L-092 archived for headroom (oldest untouched no-guard
+  entry, grep-confirmed no citations outside the register/pipeline/code-map bookkeeping files).
 - **2026-09-09** — (branch `docs/wave-2026-09-09-bookkeeping`, Option-B FINISHING for the merged
   wave: train 1 `fix/train1-driver-teardown` #681/`8de65863`, train 2
   `fix/train2-operator-gaps` #682/`7d8141e0`, `test/reconcile-pins` #683/`f9f36075` = master —

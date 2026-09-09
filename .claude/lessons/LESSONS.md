@@ -97,6 +97,19 @@
 
 ## tooling
 
+### L-102 · 2026-09-09 · tooling · #686
+
+- **Symptom:** three REG-B### pins landed in `apps/web` Jest tests and every PR's `npm run
+verify` went red: `scripts/campaign-check.mjs` reported "no test titled with REG-B## found" for
+  each one, even though the tests existed and passed.
+- **Root cause:** the checker only ever read the api/mobile/pricing campaign reports —
+  `apps/web` never ran `scripts/jest-campaign-reporter.cjs`, so no `.campaign/runs/web.json`
+  existed for it to read.
+- **Lesson:** **a proof-by-test-title gate must read a report from EVERY workspace that can host
+  a pin; adding a pin to a workspace the gate doesn't yet cover is a tooling change first
+  (reporter + checker) and a pin second.**
+- **Guard:** `apps/api/src/common/campaign-check-web-report.spec.ts`.
+
 ### L-083 · 2026-09-06 · tooling · campaign-check freshness
 
 - **Symptom:** four pushes in one day were refused twelve minutes into `npm run verify` with "no test titled
@@ -441,20 +454,6 @@
   `docs/runbooks/deploy-visibility-flip.md` and the `rebuild` skill.
 
 ## domain
-
-### L-101 · 2026-09-09 · domain
-
-- **Symptom:** sign-out cleared tokens only; the offline queue, TanStack query cache, POD
-  scratchpad, six other user-scoped stores, and the background GPS task all outlived the session
-  and replayed under the next signed-in user.
-- **Root cause:** no teardown contract — each store/task was added over time without registering
-  itself with sign-out, so `useAuthStore.logout()` only ever knew about tokens.
-- **Lesson:** **sign-out is a teardown CONTRACT: one `teardownUserSession()` runs BEFORE the
-  token-deleting logout call, and every user-scoped store, cache, queue and background task
-  registers a reset there; queued work is identity-stamped and replays only for its owner; a
-  "minor" engine run that needs more than 4 fix rounds hands the remainder to a light loop.**
-- **Guard:** `apps/mobile/__tests__/session-teardown.test.ts` (REG-B150/B140),
-  `offline-queue-identity.test.ts` (REG-B137).
 
 ### L-100 · 2026-09-08 · domain · #678
 

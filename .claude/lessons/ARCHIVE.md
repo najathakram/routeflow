@@ -1074,3 +1074,33 @@ never wired as a guard here. Back to 40/40 with L-101 added.
   an interruption resumes from a record, not a reconstruction.**
 - **Guard:** none yet — process; dev-pipeline engine change candidate recorded in
   `~/.claude/skills/dev-pipeline/references/RUN-LOG.md` under `2026-09-07-auth-redesign`.
+
+## Archived 2026-09-09 — headroom for L-102 (docs/686-campaign-web-report-bookkeeping, #686 follow-up)
+
+Checked every active entry oldest-first by the standing rule (repo-wide grep for the literal id,
+citation outside `.claude/lessons/**`, `.claude/pipeline/**`, `code-map/CHANGELOG.md`,
+`code-map/_meta.json` disqualifies). L-010/L-025/L-027/L-034/L-035/L-041/L-050/L-055/L-057/L-060/
+L-061/L-062/L-063/L-066/L-067/L-068/L-069/L-070/L-071/L-072/L-073/L-074/L-076/L-077/L-078/L-081/
+L-082/L-083/L-086/L-090/L-091/L-093/L-095/L-096/L-097/L-098/L-099/L-100 are all cited outside the
+allowed sites (mostly `code-map/{api,web,mobile,INDEX}.md`, several from `HANDOFF.md` or
+`tools/bugflow/docs/**`). L-101 (2026-09-09, domain, no PR) is the only clean entry: a repo-wide
+grep for the literal id `L-101` hits only `.claude/lessons/LESSONS.md`, `.claude/lessons/_meta.json`,
+and `code-map/CHANGELOG.md` — all allowed citation sites — with no hit anywhere else. It carries a
+real automated guard (`apps/mobile/__tests__/session-teardown.test.ts`,
+`offline-queue-identity.test.ts`), so archiving it trades away nothing enforcement-wise; the tests
+themselves stay in place regardless of whether the register still narrates them. Back to 40/40
+with L-102 added.
+
+### L-101 · 2026-09-09 · domain
+
+- **Symptom:** sign-out cleared tokens only; the offline queue, TanStack query cache, POD
+  scratchpad, six other user-scoped stores, and the background GPS task all outlived the session
+  and replayed under the next signed-in user.
+- **Root cause:** no teardown contract — each store/task was added over time without registering
+  itself with sign-out, so `useAuthStore.logout()` only ever knew about tokens.
+- **Lesson:** **sign-out is a teardown CONTRACT: one `teardownUserSession()` runs BEFORE the
+  token-deleting logout call, and every user-scoped store, cache, queue and background task
+  registers a reset there; queued work is identity-stamped and replays only for its owner; a
+  "minor" engine run that needs more than 4 fix rounds hands the remainder to a light loop.**
+- **Guard:** `apps/mobile/__tests__/session-teardown.test.ts` (REG-B150/B140),
+  `offline-queue-identity.test.ts` (REG-B137).

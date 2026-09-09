@@ -900,7 +900,13 @@ center; width: 100%; white-space: nowrap`, its own `:focus-visible` ring (`outli
 now contributes alongside api/mobile).
 
 - **`jest.config.js`** — built on `next/jest` (`createJestConfig`), `testEnvironment: "jsdom"`,
-  `setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"]`. Opts out of `next/jest`'s optional-dependency
+  `setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"]`. **Campaign gate artifact (2026-09-08, #686):**
+  `reporters` wires `["<rootDir>/../../scripts/jest-campaign-reporter.cjs", { artifact: "web" }]`,
+  writing `.campaign/runs/web.json` so `scripts/campaign-check.mjs` can discharge REG-B### pins
+  living in `apps/web` (e.g. `lib/api/*.test.tsx`) — before this, apps/web never ran the
+  reporter and the gate reported "no test titled with REG-B## found" for every web-hosted pin
+  (#683). Guard: `apps/api/src/common/campaign-check-web-report.spec.ts` (see [`api`](api.md)).
+  Opts out of `next/jest`'s optional-dependency
   lockfile auto-patch via `NEXT_IGNORE_INCORRECT_LOCKFILE=1` (network call to the npm registry is
   unavailable in this environment and would abort config load; the lockfile itself is pD1's, not
   touched here). ⚠️ **`testMatch` is deliberately `["**/*.test.{ts,tsx}"]`, NOT the
