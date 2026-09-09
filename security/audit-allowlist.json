@@ -13,7 +13,7 @@
     {
       "id": "GHSA-2xp9-vwfh-vxw4",
       "package": "next",
-      "reason": "libheif/AVIF RCE in the image optimizer; production web image has no `images` config, no `sharp`, and `images.unoptimized: true`; /_next/image rejects remote URLs (400)",
+      "reason": "libheif/AVIF RCE in the image optimizer; the production web image has no images config, no sharp in the runner, and images.unoptimized: true, so /_next/image never optimizes",
       "expires": "2026-09-30",
       "ackedBy": "owner",
       "ackedOn": "2026-09-09",

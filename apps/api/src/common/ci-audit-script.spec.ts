@@ -96,6 +96,112 @@ beforeAll(() => {
       "  });",
       "}",
       "",
+      "function criticalZeroMetadataJson() {",
+      "  // Round-3 pin: metadata.vulnerabilities.critical is 0 (a stale/inconsistent rollup) but",
+      "  // the vulnerabilities object still carries a critical-severity package — the blocking",
+      "  // decision must be derived from the vulnerabilities object, never from this count.",
+      "  return JSON.stringify({",
+      "    vulnerabilities: {",
+      "      'acme-zero-meta-lib': {",
+      "        name: 'acme-zero-meta-lib',",
+      "        severity: 'critical',",
+      "        via: [",
+      "          {",
+      "            title: 'RCE in acme-zero-meta-lib',",
+      "            severity: 'critical',",
+      "            range: '<1.0.0',",
+      "            url: 'https://github.com/advisories/GHSA-zero-meta-0001',",
+      "          },",
+      "        ],",
+      "        range: '<1.0.0',",
+      "      },",
+      "    },",
+      "    metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 } },",
+      "  });",
+      "}",
+      "",
+      "function criticalMixedSeverityJson() {",
+      "  // Round-3 pin: one package, three vias at three severities — N in the ::error:: line must",
+      "  // count only the row(s) whose OWN severity is critical (one), not every remaining row.",
+      "  return JSON.stringify({",
+      "    vulnerabilities: {",
+      "      'acme-mixed-sev-lib': {",
+      "        name: 'acme-mixed-sev-lib',",
+      "        severity: 'critical',",
+      "        via: [",
+      "          {",
+      "            title: 'RCE in acme-mixed-sev-lib',",
+      "            severity: 'critical',",
+      "            range: '<1.0.0',",
+      "            url: 'https://github.com/advisories/GHSA-mixd-seva-0001',",
+      "          },",
+      "          {",
+      "            title: 'DoS in acme-mixed-sev-lib',",
+      "            severity: 'high',",
+      "            range: '<1.0.0',",
+      "            url: 'https://github.com/advisories/GHSA-mixd-sevb-0002',",
+      "          },",
+      "          {",
+      "            title: 'Info leak in acme-mixed-sev-lib',",
+      "            severity: 'moderate',",
+      "            range: '<1.0.0',",
+      "            url: 'https://github.com/advisories/GHSA-mixd-sevc-0003',",
+      "          },",
+      "        ],",
+      "        range: '<1.0.0',",
+      "      },",
+      "    },",
+      "    metadata: { vulnerabilities: { info: 0, low: 0, moderate: 1, high: 1, critical: 1, total: 3 } },",
+      "  });",
+      "}",
+      "",
+      "function ghsaSuffixJson() {",
+      "  // Round-3 pin: the via's url ends with an extra '00' suffix after a valid-looking GHSA",
+      "  // id shape — a right-anchored regex must NOT match the id as a substring of it.",
+      "  return JSON.stringify({",
+      "    vulnerabilities: {",
+      "      'acme-suffix-lib': {",
+      "        name: 'acme-suffix-lib',",
+      "        severity: 'critical',",
+      "        via: [",
+      "          {",
+      "            title: 'RCE in acme-suffix-lib',",
+      "            severity: 'critical',",
+      "            range: '<1.0.0',",
+      "            url: 'https://github.com/advisories/GHSA-xxxx-xxxx-xxxx00',",
+      "          },",
+      "        ],",
+      "        range: '<1.0.0',",
+      "      },",
+      "    },",
+      "    metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 1, total: 1 } },",
+      "  });",
+      "}",
+      "",
+      "function mixedStringCriticalViaJson() {",
+      "  // Round-3 pin: a string via alongside a suppressible critical object via — suppressing",
+      "  // the object via must NOT lower the package below its reported (critical) severity.",
+      "  return JSON.stringify({",
+      "    vulnerabilities: {",
+      "      'acme-mixed-via-lib': {",
+      "        name: 'acme-mixed-via-lib',",
+      "        severity: 'critical',",
+      "        via: [",
+      "          'some-dep',",
+      "          {",
+      "            title: 'RCE in acme-mixed-via-lib',",
+      "            severity: 'critical',",
+      "            range: '<1.0.0',",
+      "            url: 'https://github.com/advisories/GHSA-mixd-strv-0001',",
+      "          },",
+      "        ],",
+      "        range: '<1.0.0',",
+      "      },",
+      "    },",
+      "    metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 1, total: 1 } },",
+      "  });",
+      "}",
+      "",
       "function highJson() {",
       "  return JSON.stringify({",
       "    vulnerabilities: {",
@@ -117,6 +223,22 @@ beforeAll(() => {
       "    break;",
       "  case 'critical-two':",
       "    process.stdout.write(criticalTwoJson());",
+      "    process.exit(1);",
+      "    break;",
+      "  case 'critical-zero-metadata':",
+      "    process.stdout.write(criticalZeroMetadataJson());",
+      "    process.exit(0);",
+      "    break;",
+      "  case 'critical-mixed-severity':",
+      "    process.stdout.write(criticalMixedSeverityJson());",
+      "    process.exit(1);",
+      "    break;",
+      "  case 'ghsa-suffix':",
+      "    process.stdout.write(ghsaSuffixJson());",
+      "    process.exit(1);",
+      "    break;",
+      "  case 'mixed-string-critical-via':",
+      "    process.stdout.write(mixedStringCriticalViaJson());",
       "    process.exit(1);",
       "    break;",
       "  case 'high':",
@@ -187,6 +309,8 @@ function newCounter(name: string): string {
 const GHSA_TEST_ID = "GHSA-test-fake-0001"; // matches criticalJson()'s (and criticalTwoJson()'s) via[0].url
 const GHSA_TEST_HIGH_ID = "GHSA-test-fake-0002"; // matches criticalJson()'s via[1].url (the high via)
 const GHSA_TEST_CRITICAL_2_ID = "GHSA-test-fake-0003"; // matches criticalTwoJson()'s via[1].url
+const GHSA_SUFFIX_ID = "GHSA-xxxx-xxxx-xxxx"; // ghsaSuffixJson()'s via url has an extra "00" after this
+const GHSA_MIXED_VIA_ID = "GHSA-mixd-strv-0001"; // matches mixedStringCriticalViaJson()'s object via
 
 function isoDateOffset(days: number): string {
   const d = new Date();
@@ -308,11 +432,17 @@ describe("ci-audit-critical.mjs contract — allowlist", () => {
     expect(res.status).toBe(0);
   });
 
-  it("(ii) matching entry but expires yesterday: exits 1, ALLOWLIST EXPIRED", () => {
+  it("(ii) matching entry but expires yesterday: exits 1, ALLOWLIST EXPIRED, no ALLOWLISTED, CRITICAL row printed", () => {
+    // Round-3 pin: an expired entry must never suppress — this fails if the `entry.expires >=
+    // today` check in partitionByAllowlist is replaced by `true`. The rot guard in main() would
+    // still force exit 1 in that mutant (it's computed independently), so the exit code alone
+    // can't catch it — the ALLOWLISTED/CRITICAL assertions below are load-bearing.
     const counter = newCounter("allow-expired");
     const allowlist = writeAllowlist([allowlistEntry({ expires: isoDateOffset(-1) })]);
     const res = run([], fakeEnv("critical", counter, { CI_AUDIT_ALLOWLIST: allowlist }));
 
+    expect(res.stdout).not.toContain("ALLOWLISTED");
+    expect(res.stdout).toContain("CRITICAL:");
     expect(res.stdout).toContain("ALLOWLIST EXPIRED");
     expect(res.status).toBe(1);
   });
@@ -405,6 +535,118 @@ describe("ci-audit-critical.mjs contract — allowlist", () => {
     expect(res.stdout).toContain("critical=1");
     expect(res.stdout).toContain(`ALLOWLISTED ${GHSA_TEST_ID}`);
     expect(res.status).toBe(0);
+  });
+
+  // Round-3 (MAJOR): the blocking decision must be derived by walking `vulnerabilities` itself,
+  // never from npm's `metadata.vulnerabilities.critical` rollup — a fixture where that rollup
+  // says 0 but a package entry is still `severity: "critical"` must still fail the gate.
+  it("(x) metadata.vulnerabilities.critical is 0 but a package is severity critical: exits 1", () => {
+    const counter = newCounter("critical-zero-metadata");
+    const res = run([], fakeEnv("critical-zero-metadata", counter));
+
+    expect(res.stdout).toContain("npm metadata: critical=0");
+    expect(res.stdout).toContain("CRITICAL: acme-zero-meta-lib");
+    expect(res.stdout).toContain("::error::1 critical production advisory(ies) found");
+    expect(res.status).toBe(1);
+  });
+
+  // Round-3 (MINOR 2): N in the ::error:: line is the count of rows whose OWN severity is
+  // critical — one package with a critical + high + moderate via must print exactly one
+  // CRITICAL: line (the other two print as "  also: <severity> — …" beneath it) and the error
+  // count must be exactly 1, not the 3 total remaining rows.
+  it("(xi) one package, three vias at three severities: exactly one CRITICAL: line, error count is exactly 1", () => {
+    const counter = newCounter("critical-mixed-severity");
+    const res = run([], fakeEnv("critical-mixed-severity", counter));
+
+    const criticalLines = res.stdout.split("\n").filter((l) => l.startsWith("CRITICAL:"));
+    expect(criticalLines).toHaveLength(1);
+    expect(res.stdout).toContain("  also: high —");
+    expect(res.stdout).toContain("  also: moderate —");
+    expect(res.stdout).toContain("::error::1 critical production advisory(ies) found");
+    expect(res.status).toBe(1);
+  });
+
+  // Round-3 (MINOR 6): the GHSA-id regex must be right-anchored — a via url ending
+  // "…GHSA-xxxx-xxxx-xxxx00" must NOT be treated as carrying id GHSA-xxxx-xxxx-xxxx, so an
+  // allowlist entry for that (shorter) id must not suppress it.
+  it("(xii) via url has a valid-looking GHSA id immediately followed by more alnum chars: not suppressed", () => {
+    const counter = newCounter("ghsa-suffix");
+    const allowlist = writeAllowlist([
+      allowlistEntry({ id: GHSA_SUFFIX_ID, package: "acme-suffix-lib" }),
+    ]);
+    const res = run([], fakeEnv("ghsa-suffix", counter, { CI_AUDIT_ALLOWLIST: allowlist }));
+
+    expect(res.stdout).not.toContain(`ALLOWLISTED ${GHSA_SUFFIX_ID}`);
+    expect(res.stdout).toContain("::error::");
+    expect(res.status).toBe(1);
+  });
+
+  // Round-3 (MINOR 7): a bare string via alongside a suppressible critical object via must keep
+  // the package's reported (critical) severity alive — suppressing the object via's advisory
+  // must not lower the package below what npm itself reported.
+  it("(xiii) string via + allowlisted critical object via on the same package: still exits 1", () => {
+    const counter = newCounter("mixed-string-critical-via");
+    const allowlist = writeAllowlist([
+      allowlistEntry({ id: GHSA_MIXED_VIA_ID, package: "acme-mixed-via-lib" }),
+    ]);
+    const res = run(
+      [],
+      fakeEnv("mixed-string-critical-via", counter, { CI_AUDIT_ALLOWLIST: allowlist }),
+    );
+
+    expect(res.stdout).toContain(`ALLOWLISTED ${GHSA_MIXED_VIA_ID}`);
+    expect(res.stdout).toContain("CRITICAL: acme-mixed-via-lib");
+    expect(res.stdout).toContain("::error::");
+    expect(res.status).toBe(1);
+  });
+});
+
+// Round-3 (MINOR 4+5): `expires`/`ackedOn` must be real UTC calendar dates (not just
+// YYYY-MM-DD shape), `ackedOn` is required, and the window between them is capped at 60 days —
+// all fail closed (::error::, exit 1, npm never spawned) before any audit runs.
+describe("ci-audit-critical.mjs contract — allowlist date validation", () => {
+  it("expires is shape-valid but not a real calendar date (2026-13-45): exits 1, npm never runs", () => {
+    const counter = newCounter("allow-bad-expires-date");
+    const allowlist = writeAllowlist([allowlistEntry({ expires: "2026-13-45" })]);
+    const res = run([], fakeEnv("clean", counter, { CI_AUDIT_ALLOWLIST: allowlist }));
+
+    expect(res.stdout).toContain("::error::");
+    expect(res.status).toBe(1);
+    expect(invocationCount(counter)).toBe(0);
+  });
+
+  it("ackedOn missing: exits 1, npm never runs", () => {
+    const counter = newCounter("allow-missing-ackedon");
+    const { ackedOn: _ackedOn, ...noAckedOn } = allowlistEntry();
+    const allowlist = writeAllowlist([noAckedOn]);
+    const res = run([], fakeEnv("clean", counter, { CI_AUDIT_ALLOWLIST: allowlist }));
+
+    expect(res.stdout).toContain("::error::");
+    expect(res.status).toBe(1);
+    expect(invocationCount(counter)).toBe(0);
+  });
+
+  it("expires 61 days after ackedOn: exits 1, npm never runs", () => {
+    const counter = newCounter("allow-window-61");
+    const allowlist = writeAllowlist([
+      allowlistEntry({ ackedOn: isoDateOffset(-1), expires: isoDateOffset(60) }),
+    ]);
+    const res = run([], fakeEnv("clean", counter, { CI_AUDIT_ALLOWLIST: allowlist }));
+
+    expect(res.stdout).toContain("::error::");
+    expect(res.status).toBe(1);
+    expect(invocationCount(counter)).toBe(0);
+  });
+
+  it("expires exactly 60 days after ackedOn: accepted, npm runs", () => {
+    const counter = newCounter("allow-window-60");
+    const allowlist = writeAllowlist([
+      allowlistEntry({ ackedOn: isoDateOffset(0), expires: isoDateOffset(60) }),
+    ]);
+    const res = run([], fakeEnv("clean", counter, { CI_AUDIT_ALLOWLIST: allowlist }));
+
+    expect(res.status).toBe(0);
+    expect(invocationCount(counter)).toBe(1);
   });
 });
 

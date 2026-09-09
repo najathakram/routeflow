@@ -152,8 +152,29 @@ function todayUtcDate() {
   return new Date().toISOString().slice(0, 10); // YYYY-MM-DD, UTC
 }
 
-const ALLOWLIST_REQUIRED_FIELDS = ["id", "package", "reason", "expires", "ackedBy", "followUp"];
+const ALLOWLIST_REQUIRED_FIELDS = [
+  "id",
+  "package",
+  "reason",
+  "expires",
+  "ackedBy",
+  "ackedOn",
+  "followUp",
+];
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_ALLOWLIST_WINDOW_DAYS = 60;
+const MS_PER_DAY = 86_400_000;
+
+// A real UTC calendar date, not just YYYY-MM-DD shape: "2026-13-45" and "2026-02-30" both match
+// the shape regex, but neither round-trips through Date — the first parses to Invalid Date
+// (NaN), the second silently rolls over to 2026-03-02. Round-tripping through toISOString and
+// comparing back to the original string catches both.
+function isValidUtcDate(s) {
+  if (typeof s !== "string" || !ISO_DATE_RE.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return false;
+  return d.toISOString().slice(0, 10) === s;
+}
 
 // Loads and validates the allowlist. A missing file is NOT an error (no allowlist configured
 // yet) — { ok: true, entries: [] }. A present-but-malformed file fails closed — { ok: false }
@@ -184,9 +205,30 @@ function loadAllowlist() {
         return { ok: false, entries: [] };
       }
     }
-    if (!ISO_DATE_RE.test(entry.expires)) {
+    if (!isValidUtcDate(entry.expires)) {
       console.log(
-        `::error::CI audit allowlist ${allowlistPath} entry ${entry.id} has an invalid "expires" (want YYYY-MM-DD): ${entry.expires}`,
+        `::error::CI audit allowlist ${allowlistPath} entry ${entry.id} has an invalid "expires" (want a real UTC calendar date, YYYY-MM-DD): ${entry.expires}`,
+      );
+      return { ok: false, entries: [] };
+    }
+    if (!isValidUtcDate(entry.ackedOn)) {
+      console.log(
+        `::error::CI audit allowlist ${allowlistPath} entry ${entry.id} has an invalid "ackedOn" (want a real UTC calendar date, YYYY-MM-DD): ${entry.ackedOn}`,
+      );
+      return { ok: false, entries: [] };
+    }
+    const expiresMs = Date.parse(`${entry.expires}T00:00:00Z`);
+    const ackedMs = Date.parse(`${entry.ackedOn}T00:00:00Z`);
+    const windowDays = (expiresMs - ackedMs) / MS_PER_DAY;
+    if (windowDays < 0) {
+      console.log(
+        `::error::CI audit allowlist ${allowlistPath} entry ${entry.id} has "expires" ${entry.expires} before "ackedOn" ${entry.ackedOn}`,
+      );
+      return { ok: false, entries: [] };
+    }
+    if (windowDays > MAX_ALLOWLIST_WINDOW_DAYS) {
+      console.log(
+        `::error::CI audit allowlist ${allowlistPath} entry ${entry.id} spans ${windowDays} days from "ackedOn" ${entry.ackedOn} to "expires" ${entry.expires} — max ${MAX_ALLOWLIST_WINDOW_DAYS}`,
       );
       return { ok: false, entries: [] };
     }
@@ -197,10 +239,13 @@ function loadAllowlist() {
 // The GHSA id usually lives in a `via` detail's `url`
 // (https://github.com/advisories/GHSA-xxxx-xxxx-xxxx); fall back to `.source`/`.name` in case a
 // future npm audit shape moves it.
+// Right-anchored so a malformed/longer id (e.g. a URL slug ending "…GHSA-xxxx-xxxx-xxxx00")
+// never matches as a substring — (?![0-9a-z]) refuses a match whose last group is immediately
+// followed by another alnum character, under the same /i flag as the rest of the pattern.
 function ghsaIdFromVia(v) {
   const candidates = [v.url, v.source, v.name].filter((s) => typeof s === "string");
   for (const candidate of candidates) {
-    const m = candidate.match(/GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}/i);
+    const m = candidate.match(/GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}(?![0-9a-z])/i);
     if (m) return m[0];
   }
   return null;
@@ -215,7 +260,10 @@ function advisorySeverityOf(v, fallback) {
 
 function matchingAllowlistEntry(row, allowlist) {
   if (!row.ghsaId) return null;
-  return allowlist.find((e) => e.id === row.ghsaId && e.package === row.name) || null;
+  // Exact equality, case-insensitive: the extracted id is lowercased and compared against the
+  // allowlist entry's id lowercased — never a substring/startsWith check.
+  const rowId = row.ghsaId.toLowerCase();
+  return allowlist.find((e) => e.id.toLowerCase() === rowId && e.package === row.name) || null;
 }
 
 // Splits rows into still-blocking (`remaining`) vs suppressed-by-an-unexpired-entry
@@ -306,6 +354,47 @@ function buildRows(json, severities) {
   return rows;
 }
 
+// Names (restricted to `severities`) of packages whose `via` list contains at least one bare
+// string. In real npm audit output a string via is a POINTER to another package's own top-level
+// `vulnerabilities` entry (e.g. `next`'s via list routinely includes a plain "postcss" alongside
+// two dozen detailed GHSA objects) — it is not itself an addressable advisory, so buildRows never
+// makes a row for it when detailed object vias are also present. MINOR 7: if suppression removes
+// every one of a package's detailed rows and it had a string via, we can't tell whether that via
+// independently justified the package's reported severity — so its severity is floored back in
+// by applyStringViaFloor, but ONLY when suppression would otherwise leave zero remaining rows.
+// When other non-suppressed rows already remain (e.g. `next`'s 21 non-critical advisories), the
+// package is already correctly represented and the floor must not re-add it.
+function packagesWithStringVia(json, severities) {
+  const vulns = json.vulnerabilities || {};
+  const names = new Set();
+  for (const [name, info] of Object.entries(vulns)) {
+    if (!severities.includes(info.severity)) continue;
+    const viaList = Array.isArray(info.via) ? info.via : [info.via];
+    if (viaList.some((v) => typeof v === "string")) names.add(name);
+  }
+  return names;
+}
+
+// Mutates `remaining` in place, appending one unsuppressible floor row (ghsaId null) for each
+// package in `stringViaPackages` that has zero rows left in `remaining` — see
+// packagesWithStringVia for the rule.
+function applyStringViaFloor(remaining, stringViaPackages, json) {
+  const remainingNames = new Set(remaining.map((r) => r.name));
+  for (const name of stringViaPackages) {
+    if (remainingNames.has(name)) continue;
+    const info = json.vulnerabilities[name];
+    if (!info) continue;
+    remaining.push({
+      name,
+      severity: info.severity,
+      advisorySeverity: info.severity,
+      title: "(see npm audit for detail — string via, all known advisories suppressed)",
+      range: info.range || "(range unknown)",
+      ghsaId: null,
+    });
+  }
+}
+
 function printRows(rows, { noticePrefix = false } = {}) {
   rows.forEach((r, i) => {
     const label = r.severity.toUpperCase();
@@ -342,15 +431,33 @@ function effectiveSeverityByPackage(rows) {
   return bySeverity;
 }
 
-// Rows for a package whose effective severity is still critical after suppression — always
-// labeled CRITICAL (that's why the package is still blocking) while naming both the row's own
-// advisory severity and the package's npm-reported severity, so the two are never conflated.
+// Rows for packages whose effective severity is still critical after suppression. Only rows
+// whose OWN advisorySeverity is "critical" get the CRITICAL: prefix (that's why the package is
+// still blocking); a package's other remaining, non-critical rows print underneath it as
+// "  also: <severity> — <title> — range <range>" so they're visible without being counted as
+// critical. Returns the number of CRITICAL: rows printed — the caller uses this, not
+// rows.length, as N in the ::error:: line.
 function printCriticalRemainingRows(rows) {
+  const byPackage = new Map();
   for (const r of rows) {
-    console.log(
-      `CRITICAL: ${r.name} (advisory=${r.advisorySeverity}, package=${r.severity}) — ${r.title} — range ${r.range}`,
-    );
+    if (!byPackage.has(r.name)) byPackage.set(r.name, []);
+    byPackage.get(r.name).push(r);
   }
+  let criticalCount = 0;
+  for (const packageRows of byPackage.values()) {
+    for (const r of packageRows) {
+      if (r.advisorySeverity !== "critical") continue;
+      console.log(
+        `CRITICAL: ${r.name} (advisory=${r.advisorySeverity}, package=${r.severity}) — ${r.title} — range ${r.range}`,
+      );
+      criticalCount++;
+    }
+    for (const r of packageRows) {
+      if (r.advisorySeverity === "critical") continue;
+      console.log(`  also: ${r.advisorySeverity} — ${r.title} — range ${r.range}`);
+    }
+  }
+  return criticalCount;
 }
 
 function runAttempt(level) {
@@ -391,48 +498,47 @@ function runAuditLoop({ level, reportOnly, backoffs, allowlist, today }) {
         }
         return 0;
       }
-      if (critical > 0) {
-        // npm's package-level `critical>0` is only the entry signal for "go look closer" — the
-        // pass/fail decision below is made from each package's EFFECTIVE severity after
-        // suppression, never from this count (see the header's EXPIRING ALLOWLIST section).
-        const { remaining, suppressed } = partitionByAllowlist(
-          buildRows(json, ["critical"]),
-          allowlist,
-          today,
-        );
-        console.log(`npm metadata: critical=${critical}`);
-        printSuppressed(suppressed);
+      // npm's package-level metadata rollup (`counts.critical`) is printed below as an info
+      // line ONLY — it is never read for the pass/fail decision. The decision is always derived
+      // by walking `json.vulnerabilities` itself (via buildRows/effectiveSeverityByPackage), so
+      // a stale or inconsistent rollup (metadata says 0 while a package entry is still
+      // `severity: "critical"`) can never let a real critical slip through.
+      const { remaining, suppressed } = partitionByAllowlist(
+        buildRows(json, ["critical"]),
+        allowlist,
+        today,
+      );
+      applyStringViaFloor(remaining, packagesWithStringVia(json, ["critical"]), json);
+      console.log(`npm metadata: critical=${critical}`);
+      printSuppressed(suppressed);
 
-        const effectiveSeverity = effectiveSeverityByPackage(remaining);
-        const criticalPackages = new Set(
-          [...effectiveSeverity.entries()]
-            .filter(([, severity]) => severity === "critical")
-            .map(([name]) => name),
-        );
+      const effectiveSeverity = effectiveSeverityByPackage(remaining);
+      const criticalPackages = new Set(
+        [...effectiveSeverity.entries()]
+          .filter(([, severity]) => severity === "critical")
+          .map(([name]) => name),
+      );
 
-        if (criticalPackages.size > 0) {
-          const blockingRows = remaining.filter((r) => criticalPackages.has(r.name));
-          printCriticalRemainingRows(blockingRows);
-          console.log(`::error::${blockingRows.length} critical production advisory(ies) found`);
-          return 1;
-        }
+      if (criticalPackages.size > 0) {
+        const blockingRows = remaining.filter((r) => criticalPackages.has(r.name));
+        const criticalRowCount = printCriticalRemainingRows(blockingRows);
+        console.log(`::error::${criticalRowCount} critical production advisory(ies) found`);
+        return 1;
+      }
 
-        if (suppressed.length > 0) {
-          for (const name of new Set(suppressed.map((s) => s.row.name))) {
-            const k = remaining.filter((r) => r.name === name).length;
-            if (k > 0) {
-              console.log(
-                `${name}: ${k} non-critical advisory(ies) remain (see the high-severity report step)`,
-              );
-            }
+      if (suppressed.length > 0) {
+        for (const name of new Set(suppressed.map((s) => s.row.name))) {
+          const k = remaining.filter((r) => r.name === name).length;
+          if (k > 0) {
+            console.log(
+              `${name}: ${k} non-critical advisory(ies) remain (see the high-severity report step)`,
+            );
           }
-          console.log("all critical advisories are allowlisted (expiring)");
-          return 0;
         }
-
-        console.log(`advisories: critical=0 (level=${level}) — no critical production advisories`);
+        console.log("all critical advisories are allowlisted (expiring)");
         return 0;
       }
+
       console.log(`advisories: critical=0 (level=${level}) — no critical production advisories`);
       return 0;
     }
