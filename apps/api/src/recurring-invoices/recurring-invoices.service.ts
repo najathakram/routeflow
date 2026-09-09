@@ -202,6 +202,21 @@ export class RecurringInvoicesService {
 
   // ─── Core generation logic ────────────────────────────────────────────────
 
+  /** B142: builds a one-line note when the template still references an
+   *  archived product — never blocks generation, only makes the gap visible
+   *  on the resulting invoice. Returns null when nothing is archived. */
+  private async buildArchivedItemsNote(productIds: string[]): Promise<string | null> {
+    if (productIds.length === 0) return null;
+    const products = await this.prisma.forTenant().product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, sku: true, name: true, isActive: true },
+    });
+    const archived = products.filter((p: any) => p.isActive === false);
+    if (archived.length === 0) return null;
+    const labels = archived.map((p: any) => p.sku ?? p.name).join(", ");
+    return `Note: ${labels} ${archived.length > 1 ? "are" : "is"} archived; billed as scheduled.`;
+  }
+
   private async generateInvoiceFromTemplate(ri: any) {
     // Claim the cycle BEFORE creating anything (B9 — see the history in this comment's
     // previous version). REG-B106: the claim also stamps a PROVISIONAL outcome — until
@@ -236,13 +251,23 @@ export class RecurringInvoicesService {
       return null;
     }
 
+    // B142 (cause-ruling.md §2/§3, D3 batch path): billing must NEVER pause on
+    // a catalog flag — a reject here would throw inside invoicesService.create(),
+    // and REG-B106's failure handler gives the cycle back, re-failing every
+    // night with the customer never billed (cause-refutation.md §2). Allow
+    // through and record a visible note instead.
+    const templateProductIds = [
+      ...new Set(ri.items.map((item: any) => item.productId).filter(Boolean) as string[]),
+    ];
+    const archivedNote = await this.buildArchivedItemsNote(templateProductIds);
+
     let invoice: any;
     try {
       invoice = await this.invoicesService.create({
         customerId: ri.customerId,
         discount: Number(ri.discount),
         shippingFee: Number(ri.shippingFee),
-        notes: ri.notes,
+        notes: archivedNote ? `${ri.notes ? `${ri.notes}\n` : ""}${archivedNote}` : ri.notes,
         terms: ri.terms,
         items: ri.items.map((item: any) => ({
           description: item.description,

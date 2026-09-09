@@ -173,6 +173,7 @@ export default function NewStandingOrderScreen() {
 
       <ProductPickerSheet
         visible={pickerOpen}
+        activeOnly
         onClose={() => setPickerOpen(false)}
         onSelect={(product) => {
           setLines((prev) => {

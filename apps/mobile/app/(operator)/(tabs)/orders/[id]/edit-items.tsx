@@ -2233,6 +2233,7 @@ function ProductPicker({
       <ProductPickerSheet
         visible={pickCode !== null}
         title="Which product?"
+        activeOnly
         initialSearch={pickCode ?? undefined}
         onClose={() => setPickCode(null)}
         onSelect={(prod) => {

@@ -29,6 +29,7 @@ export function ProductPickerSheet({
   onSelect,
   title = "Product",
   standaloneOnly = false,
+  activeOnly = false,
   initialSearch,
 }: {
   visible: boolean;
@@ -38,6 +39,13 @@ export function ProductPickerSheet({
   title?: string;
   /** Only offer standalone products (e.g. picking a variant PARENT). */
   standaloneOnly?: boolean;
+  /**
+   * B142: filter archived products out of the list — for the order/invoice/
+   * standing-order (template) callers, where picking one commits a brand-new
+   * line. Stock-count, PO-receive, vendor-bill-scan, and variant-parent
+   * pickers need the unfiltered catalog and leave this false.
+   */
+  activeOnly?: boolean;
   /**
    * Pre-fill the search box each time the sheet opens. Used by the sale
    * builders when a scanned code has several substring matches: the sheet opens
@@ -55,6 +63,11 @@ export function ProductPickerSheet({
 
   const { data, isLoading } = useAdminProducts({
     search: search.trim() || undefined,
+    // B142: parity with web's SearchableProductPicker — filter archived
+    // products out of the manual tap list rather than letting them be
+    // committed as a brand-new line (the scan path was already guarded).
+    // Opt-in only: see the `activeOnly` prop doc above.
+    isActive: activeOnly ? true : undefined,
     limit: 0,
   });
   const products = (data?.data ?? []).filter((p) => !standaloneOnly || !p.parentProductId);

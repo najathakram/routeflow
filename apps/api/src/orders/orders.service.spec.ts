@@ -1040,6 +1040,54 @@ describe("OrdersService", () => {
       ).rejects.toThrow(BadRequestException);
     });
 
+    // ── B142: create()'s archived-line guard, and its ONE exemption ───────────
+    // Fable train-2 fix round, item 4: the guard stays on staff/buyer create();
+    // only the driver change-request draft path (ChangeRequestsService.approve)
+    // is exempt, via an explicit `options.allowArchived` it alone passes.
+
+    it("REG-B142-E staff create rejects a new archived line", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1, user: { status: "ACTIVE" } });
+      prisma.product.findMany.mockResolvedValue([{ ...MOCK_PRODUCT, isActive: false }]);
+
+      await expect(
+        service.create(
+          { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1 }] } as any,
+          operatorPayload,
+        ),
+      ).rejects.toThrow(/archived/i);
+
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it("REG-B142-F buyer create rejects a new archived line", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.product.findMany.mockResolvedValue([{ ...MOCK_PRODUCT, isActive: false }]);
+
+      await expect(
+        service.create({ items: [{ productId: "prod-1", qty: 1 }] }, customerPayload),
+      ).rejects.toThrow(/archived/i);
+
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it("REG-B142-G change-request draft create allows an archived line via options.allowArchived", async () => {
+      // Mirrors ChangeRequestsService.approve's `this.ordersService.create(...,
+      // { skipAutoMerge: false, allowArchived: true })` call — the pseudo-buyer
+      // draft rolls an existing (possibly since-archived) line to the
+      // customer's next delivery, and must NOT hit the archived-line guard.
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.product.findMany.mockResolvedValue([{ ...MOCK_PRODUCT, isActive: false }]);
+      prisma.order.create.mockResolvedValue(MOCK_ORDER);
+
+      await service.create(
+        { items: [{ productId: "prod-1", qty: 1 }], status: "DRAFT" } as any,
+        customerPayload,
+        { allowArchived: true },
+      );
+
+      expect(prisma.order.create).toHaveBeenCalled();
+    });
+
     it("should generate an order number starting with ORD-", async () => {
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
       prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
@@ -3314,6 +3362,58 @@ describe("OrdersService", () => {
         expect.objectContaining({
           data: expect.objectContaining({ productId: "prod-B", unitPrice: 7 }),
         }),
+      );
+    });
+
+    // ─── B142: archived products reject NEW lines, not edits ─────────────────
+    // cause-ruling.md §2/§3, D3: `addProductIds` (the NEW-line hook this describe
+    // block already exercises above) is the one edge that separates a brand-new
+    // line from a qty/price edit of one that already exists — reject only there.
+
+    it("REG-B142-A a NEW line for an archived product is rejected (400)", async () => {
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      const archivedProduct = {
+        id: "prod-archived",
+        pricePerUnit: 9,
+        unitsPerBox: null,
+        isActive: false,
+      };
+      prisma.product.findUnique.mockResolvedValue(archivedProduct);
+      prisma.product.findMany.mockResolvedValue([archivedProduct]);
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ productId: "prod-archived", qty: 1 }], replaceAll: false },
+          operatorPayload,
+        ),
+      ).rejects.toThrow(/archived/i);
+
+      // No partial write — the rejected add must not have created anything.
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+    });
+
+    it("REG-B142-B qty edit of an existing archived line succeeds", async () => {
+      // The line already exists on the order (li-A); only its qty is changing —
+      // no new productId is being introduced, so `addProductIds` never includes
+      // it and the archived flag on the underlying product must not block this.
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.product.findUnique.mockResolvedValue({
+        id: "prod-A",
+        pricePerUnit: 5,
+        unitsPerBox: null,
+        isActive: false,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 20, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-A", qty: 4 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "li-A" } }),
       );
     });
 
