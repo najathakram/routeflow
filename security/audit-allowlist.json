@@ -1,0 +1,23 @@
+{
+  "$schema-note": "Expiring npm-audit allowlist for CI's critical-advisory gate (scripts/ci-audit-critical.mjs). Each entry suppresses ONE GHSA id for ONE package until `expires` (UTC, YYYY-MM-DD) — an entry whose `expires` has passed FAILS the gate even if the advisory no longer appears in that run's audit output, so the list can never rot silently. Every field is required; edit only with owner sign-off.",
+  "entries": [
+    {
+      "id": "GHSA-p293-qw3h-jr36",
+      "package": "next",
+      "reason": "Windows-filesystem RCE; production runs node:20-alpine (Linux); workstation `next dev` binds 127.0.0.1 (see apps/web dev script)",
+      "expires": "2026-09-30",
+      "ackedBy": "owner",
+      "ackedOn": "2026-09-09",
+      "followUp": "Next 15.5 upgrade (dev-pipeline run)"
+    },
+    {
+      "id": "GHSA-2xp9-vwfh-vxw4",
+      "package": "next",
+      "reason": "libheif/AVIF RCE in the image optimizer; the production web image has no images config, no sharp in the runner, and images.unoptimized: true, so /_next/image never optimizes",
+      "expires": "2026-09-30",
+      "ackedBy": "owner",
+      "ackedOn": "2026-09-09",
+      "followUp": "Next 15.5 upgrade (dev-pipeline run)"
+    }
+  ]
+}
