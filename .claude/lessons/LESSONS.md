@@ -297,18 +297,6 @@
   entry and the page's absence; a repo-wide sweep for the same shape filed 9 unbatched rows
   (B251–B259) rather than extending this one test to cover them.
 
-### L-092 · 2026-09-08 · testing · #657
-
-- **Symptom:** the marketing engine's UI-verify rounds 3–6 judged screenshots of master's build
-  for two days — a stale Docker container (`routeflow_web`, built from a retired worktree) still
-  held `:3001`, so every request the UI gate made hit master, never the branch under review.
-- **Root cause:** the UI gate never proved WHICH build actually answered on the URL under test.
-- **Lesson:** **every UI-verify pass starts with a build-identity probe on the exact URL (a
-  branch-only marker string, or the commit sha the page exposes) and records the answer in the
-  evidence — a judge never scores a screenshot without that line.**
-- **Guard:** process — add to the dev-pipeline driver prompt (skill file outside the repo) as
-  protocol step 0; no in-repo guard yet.
-
 ### L-091 · 2026-09-07 · testing · #661
 
 - **Symptom:** two deployed-E2E regression tests for real fixes stayed red for two deploys on
@@ -466,6 +454,21 @@
   `docs/runbooks/deploy-visibility-flip.md` and the `rebuild` skill.
 
 ## domain
+
+### L-100 · 2026-09-08 · domain · #678
+
+- **Symptom:** three numbering series minted cross-tenant on a null request tenant and raced to a
+  raw 500; a rolled-back settlement re-minted the same payment number.
+- **Root cause:** `forTenant()` returns the UNSCOPED client on a null tenant, so a "tenant-scoped"
+  scan is only scoped when a request tenant exists; counters inside a rolled-back tx re-issue
+  numbers; TEXT max+1 scans have no wall past 9999.
+- **Lesson:** **Mint every document number through `NumberingService.reserveNext(type, { year,
+tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()`), reserved
+  STANDALONE before any transaction that can roll back, with P2002 → 409 and a bounded retry on
+  serialization failure that reuses the reserved number; a green pin must never carry a `REG-`
+  token (the red gate reads titles).**
+- **Guard:** `apps/api/src/**/{credit-note,payment,import}-numbering.db.spec.ts` (REG-B267/B268/B269),
+  `numbering.service.spec.ts`.
 
 ### L-099 · 2026-09-08 · domain · #675
 
