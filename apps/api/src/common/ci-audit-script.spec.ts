@@ -48,16 +48,51 @@ beforeAll(() => {
       "      'acme-lib': {",
       "        name: 'acme-lib',",
       "        severity: 'critical',",
-      "        via: [{",
-      "          title: 'Remote Code Execution in acme-lib',",
-      "          severity: 'critical',",
-      "          range: '<2.0.1',",
-      "          url: 'https://github.com/advisories/GHSA-test-fake-0001',",
-      "        }],",
+      "        via: [",
+      "          {",
+      "            title: 'Remote Code Execution in acme-lib',",
+      "            severity: 'critical',",
+      "            range: '<2.0.1',",
+      "            url: 'https://github.com/advisories/GHSA-test-fake-0001',",
+      "          },",
+      "          {",
+      "            title: 'Prototype Pollution in acme-lib',",
+      "            severity: 'high',",
+      "            range: '<2.0.1',",
+      "            url: 'https://github.com/advisories/GHSA-test-fake-0002',",
+      "          },",
+      "        ],",
       "        range: '<2.0.1',",
       "      },",
       "    },",
       "    metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 1, critical: 1, total: 1 } },",
+      "  });",
+      "}",
+      "",
+      "function criticalTwoJson() {",
+      "  return JSON.stringify({",
+      "    vulnerabilities: {",
+      "      'acme-lib': {",
+      "        name: 'acme-lib',",
+      "        severity: 'critical',",
+      "        via: [",
+      "          {",
+      "            title: 'Remote Code Execution in acme-lib',",
+      "            severity: 'critical',",
+      "            range: '<2.0.1',",
+      "            url: 'https://github.com/advisories/GHSA-test-fake-0001',",
+      "          },",
+      "          {",
+      "            title: 'Arbitrary File Write in acme-lib',",
+      "            severity: 'critical',",
+      "            range: '<2.0.1',",
+      "            url: 'https://github.com/advisories/GHSA-test-fake-0003',",
+      "          },",
+      "        ],",
+      "        range: '<2.0.1',",
+      "      },",
+      "    },",
+      "    metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 1, total: 1 } },",
       "  });",
       "}",
       "",
@@ -78,6 +113,10 @@ beforeAll(() => {
       "switch (mode) {",
       "  case 'critical':",
       "    process.stdout.write(criticalJson());",
+      "    process.exit(1);",
+      "    break;",
+      "  case 'critical-two':",
+      "    process.stdout.write(criticalTwoJson());",
       "    process.exit(1);",
       "    break;",
       "  case 'high':",
@@ -145,7 +184,9 @@ function newCounter(name: string): string {
   return file;
 }
 
-const GHSA_TEST_ID = "GHSA-test-fake-0001"; // matches criticalJson()'s via[0].url above
+const GHSA_TEST_ID = "GHSA-test-fake-0001"; // matches criticalJson()'s (and criticalTwoJson()'s) via[0].url
+const GHSA_TEST_HIGH_ID = "GHSA-test-fake-0002"; // matches criticalJson()'s via[1].url (the high via)
+const GHSA_TEST_CRITICAL_2_ID = "GHSA-test-fake-0003"; // matches criticalTwoJson()'s via[1].url
 
 function isoDateOffset(days: number): string {
   const d = new Date();
@@ -312,6 +353,43 @@ describe("ci-audit-critical.mjs contract — allowlist", () => {
     const res = run([], fakeEnv("critical", counter, { CI_AUDIT_ALLOWLIST: missingPath }));
 
     expect(res.stdout).not.toContain("ALLOWLISTED");
+    expect(res.stdout).toContain("::error::");
+    expect(res.status).toBe(1);
+  });
+
+  // Round-2 fix: a critical PACKAGE is not uniformly critical — each `via` carries its own
+  // severity, and the gate's decision must be the package's EFFECTIVE severity (the max over
+  // its non-suppressed vias), not npm's package-level rollup. criticalJson() now carries one
+  // critical via (GHSA_TEST_ID) + one high via (GHSA_TEST_HIGH_ID) on the same package.
+
+  it("(vii) critical via allowlisted, high via present: exits 0, the high remainder is reported (not treated as critical)", () => {
+    const counter = newCounter("allow-critical-with-high");
+    const allowlist = writeAllowlist([allowlistEntry()]); // matches GHSA_TEST_ID (the critical via) only
+    const res = run([], fakeEnv("critical", counter, { CI_AUDIT_ALLOWLIST: allowlist }));
+
+    expect(res.stdout).toContain(`ALLOWLISTED ${GHSA_TEST_ID}`);
+    expect(res.stdout).toContain("1 non-critical advisory(ies) remain");
+    expect(res.status).toBe(0);
+  });
+
+  it("(viii) two critical vias, only one allowlisted: exits 1 and the remaining row reports its own advisory severity", () => {
+    const counter = newCounter("allow-two-critical");
+    const allowlist = writeAllowlist([allowlistEntry()]); // matches GHSA_TEST_ID; GHSA_TEST_CRITICAL_2_ID is not listed
+    const res = run([], fakeEnv("critical-two", counter, { CI_AUDIT_ALLOWLIST: allowlist }));
+
+    expect(res.stdout).toContain(`ALLOWLISTED ${GHSA_TEST_ID}`);
+    expect(res.stdout).not.toContain(`ALLOWLISTED ${GHSA_TEST_CRITICAL_2_ID}`);
+    expect(res.stdout).toContain("advisory=critical");
+    expect(res.stdout).toContain("::error::");
+    expect(res.status).toBe(1);
+  });
+
+  it("(ix) allowlisting a package's HIGH via does not suppress its remaining critical via: exits 1 (suppressing a non-critical changes nothing)", () => {
+    const counter = newCounter("allow-wrong-severity");
+    const allowlist = writeAllowlist([allowlistEntry({ id: GHSA_TEST_HIGH_ID })]); // matches the high via only
+    const res = run([], fakeEnv("critical", counter, { CI_AUDIT_ALLOWLIST: allowlist }));
+
+    expect(res.stdout).toContain(`ALLOWLISTED ${GHSA_TEST_HIGH_ID}`);
     expect(res.stdout).toContain("::error::");
     expect(res.status).toBe(1);
   });

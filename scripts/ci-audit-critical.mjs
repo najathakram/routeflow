@@ -206,6 +206,13 @@ function ghsaIdFromVia(v) {
   return null;
 }
 
+// A row's own severity for gate purposes: the via's own `severity` when the via is an object
+// that carries one, else the fallback (the package-level severity buildRows already fell back
+// to for a string via / no detail).
+function advisorySeverityOf(v, fallback) {
+  return v && typeof v === "object" && typeof v.severity === "string" ? v.severity : fallback;
+}
+
 function matchingAllowlistEntry(row, allowlist) {
   if (!row.ghsaId) return null;
   return allowlist.find((e) => e.id === row.ghsaId && e.package === row.name) || null;
@@ -271,9 +278,14 @@ function buildRows(json, severities) {
     const viaList = Array.isArray(info.via) ? info.via : [info.via];
     const detailed = viaList.filter((v) => v && typeof v === "object");
     if (detailed.length === 0) {
+      // No object via to read a per-advisory severity from (a string/transitive reference, or
+      // no via at all) — conservative fallback: keep the package's reported severity, and since
+      // ghsaId is null this row can never match an allowlist entry either (see
+      // matchingAllowlistEntry) — it cannot be suppressed.
       rows.push({
         name,
         severity: info.severity,
+        advisorySeverity: info.severity,
         title: "(see npm audit for detail)",
         range: info.range || "(range unknown)",
         ghsaId: null,
@@ -284,6 +296,7 @@ function buildRows(json, severities) {
       rows.push({
         name,
         severity: info.severity,
+        advisorySeverity: advisorySeverityOf(v, info.severity),
         title: v.title || v.name || "(untitled advisory)",
         range: v.range || info.range || "(range unknown)",
         ghsaId: ghsaIdFromVia(v),
@@ -305,6 +318,39 @@ function printRows(rows, { noticePrefix = false } = {}) {
 
 function printAdvisories(json, { severities = ["critical"], noticePrefix = false } = {}) {
   printRows(buildRows(json, severities), { noticePrefix });
+}
+
+// npm's own severity ordering.
+const SEVERITY_RANK = { critical: 4, high: 3, moderate: 2, low: 1, info: 0 };
+
+function severityRank(severity) {
+  return severity in SEVERITY_RANK ? SEVERITY_RANK[severity] : -1;
+}
+
+// A package's effective severity AFTER suppression = the max advisorySeverity over its still-
+// remaining (non-suppressed) rows. A package whose only row is the string-via/no-detail
+// fallback (advisorySeverity pinned to the package severity, ghsaId null — see buildRows) can
+// never be suppressed, so it always keeps contributing its reported severity here.
+function effectiveSeverityByPackage(rows) {
+  const bySeverity = new Map();
+  for (const row of rows) {
+    const current = bySeverity.get(row.name);
+    if (current === undefined || severityRank(row.advisorySeverity) > severityRank(current)) {
+      bySeverity.set(row.name, row.advisorySeverity);
+    }
+  }
+  return bySeverity;
+}
+
+// Rows for a package whose effective severity is still critical after suppression — always
+// labeled CRITICAL (that's why the package is still blocking) while naming both the row's own
+// advisory severity and the package's npm-reported severity, so the two are never conflated.
+function printCriticalRemainingRows(rows) {
+  for (const r of rows) {
+    console.log(
+      `CRITICAL: ${r.name} (advisory=${r.advisorySeverity}, package=${r.severity}) — ${r.title} — range ${r.range}`,
+    );
+  }
 }
 
 function runAttempt(level) {
@@ -346,18 +392,45 @@ function runAuditLoop({ level, reportOnly, backoffs, allowlist, today }) {
         return 0;
       }
       if (critical > 0) {
+        // npm's package-level `critical>0` is only the entry signal for "go look closer" — the
+        // pass/fail decision below is made from each package's EFFECTIVE severity after
+        // suppression, never from this count (see the header's EXPIRING ALLOWLIST section).
         const { remaining, suppressed } = partitionByAllowlist(
           buildRows(json, ["critical"]),
           allowlist,
           today,
         );
+        console.log(`npm metadata: critical=${critical}`);
         printSuppressed(suppressed);
-        if (remaining.length > 0) {
-          printRows(remaining);
-          console.log(`::error::${remaining.length} critical production advisory(ies) found`);
+
+        const effectiveSeverity = effectiveSeverityByPackage(remaining);
+        const criticalPackages = new Set(
+          [...effectiveSeverity.entries()]
+            .filter(([, severity]) => severity === "critical")
+            .map(([name]) => name),
+        );
+
+        if (criticalPackages.size > 0) {
+          const blockingRows = remaining.filter((r) => criticalPackages.has(r.name));
+          printCriticalRemainingRows(blockingRows);
+          console.log(`::error::${blockingRows.length} critical production advisory(ies) found`);
           return 1;
         }
-        console.log("all critical advisories are allowlisted (expiring)");
+
+        if (suppressed.length > 0) {
+          for (const name of new Set(suppressed.map((s) => s.row.name))) {
+            const k = remaining.filter((r) => r.name === name).length;
+            if (k > 0) {
+              console.log(
+                `${name}: ${k} non-critical advisory(ies) remain (see the high-severity report step)`,
+              );
+            }
+          }
+          console.log("all critical advisories are allowlisted (expiring)");
+          return 0;
+        }
+
+        console.log(`advisories: critical=0 (level=${level}) — no critical production advisories`);
         return 0;
       }
       console.log(`advisories: critical=0 (level=${level}) — no critical production advisories`);
