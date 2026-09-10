@@ -97,18 +97,18 @@
 
 ## tooling
 
-### L-102 · 2026-09-09 · tooling · #686
+### L-103 · 2026-09-10 · tooling · chore/next-15
 
-- **Symptom:** three REG-B### pins landed in `apps/web` Jest tests and every PR's `npm run
-verify` went red: `scripts/campaign-check.mjs` reported "no test titled with REG-B## found" for
-  each one, even though the tests existed and passed.
-- **Root cause:** the checker only ever read the api/mobile/pricing campaign reports —
-  `apps/web` never ran `scripts/jest-campaign-reporter.cjs`, so no `.campaign/runs/web.json`
-  existed for it to read.
-- **Lesson:** **a proof-by-test-title gate must read a report from EVERY workspace that can host
-  a pin; adding a pin to a workspace the gate doesn't yet cover is a tooling change first
-  (reporter + checker) and a pin second.**
-- **Guard:** `apps/api/src/common/campaign-check-web-report.spec.ts`.
+- **Symptom:** `npm run local:up` built fine, then `docker compose … up -d` failed on a
+  container-name conflict — piped through `| tail`, it read exit 0.
+- **Root cause:** `docker-compose.yml` hard-codes `container_name: routeflow_*` with no
+  top-level `name:` and no `-p`; from a worktree the project name defaults to the worktree
+  DIRECTORY, colliding on the SAME fixed names the main checkout's stack holds.
+- **Lesson:** **A compose file with hard-coded `container_name` needs an explicit `-p <project>`
+  (or top-level `name:`), never the cwd-derived default. Never pipe a compose/gate command
+  through `| tail`; it discards the real exit code.**
+- **Guard:** none yet — propose `-p routeflow` in `local:up`/`local:down`/`local:reset`, or a
+  top-level `name: routeflow`.
 
 ### L-083 · 2026-09-06 · tooling · campaign-check freshness
 
@@ -126,6 +126,8 @@ verify` went red: `scripts/campaign-check.mjs` reported "no test titled with REG
   `apps/api/src/common/campaign-check-freshness.spec.ts` T1–T17 (T15–T17 added in fix-round 1: the
   bound now uses `git log --first-parent` — a merge TREESAME to one parent for the path was judged
   by the OLDER pre-merge commit otherwise — and clamps to `Date.now()` on a future-dated commit).
+  Addendum (chore/next-15): after committing, regenerate every T1 workspace's report (`cd
+apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns the reporter.
 
 ### L-074 · 2026-09-05 · tooling
 
@@ -202,6 +204,9 @@ verify` went red: `scripts/campaign-check.mjs` reported "no test titled with REG
   `inputs` name those files — a `<workspace>#<task>` override is one spec away from forbidden; a
   GENERIC task with explicit inputs survives.
 - **Guard:** `turbo.json` `test:repo-truth`; `apps/api/src/common/turbo-inputs.spec.ts`.
+  Addendum (chore/next-15): moving a spec INTO the repo-truth lane must add it to the main
+  lane's `testPathIgnorePatterns` in the SAME change, or the main api lane still "collects" it,
+  runs zero assertions, and reports green.
 
 ### L-067 · 2026-09-04 · tooling · #597
 

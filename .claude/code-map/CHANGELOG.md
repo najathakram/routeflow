@@ -8,6 +8,41 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-10** — (branch `chore/next-15` #5b3b3c4e = master, Option-B follow-up) —
+  `apps/web` upgraded Next 14.2.35 → 15.5.25 (React 18 → 19.2.0, eslint 8 → 9); clears the two
+  CRITICAL npm-audit advisories the owner had allowlisted through 2026-09-30
+  (`security/audit-allowlist.json` now `entries: []`). Sixteen `[id]`-style dynamic Client
+  Component pages converted `{ params }` to `useParams()`; `customers/[id]/page.tsx`'s Suspense
+  wrapper reads it once and passes `id` down to `CustomerDetailPageInner` as a plain prop;
+  `finance/expenses/page.tsx` (a Server Component redirect stub) now `await`s its `searchParams`
+  Promise. Removed: the React-18-pin Dockerfile hack (`npm install --force --no-save
+react@18.3.1…`) and its `jest.config.js` `moduleNameMapper` twin — one repo-wide React 19 now.
+  `apps/web/.eslintrc.json` deleted (Next 15's `next lint` discovers the pre-existing flat
+  `eslint.config.mjs` first; that file drops `next/typescript` from its `compat.extends()` — it
+  was never actually linted with that ruleset under Next 14, and adding it now surfaces ~360
+  new errors, a separate piece of work). `apps/web/tsconfig.json` `target` pinned to `ES2017`.
+  `@next/eslint-plugin-next`'s `no-html-link-for-pages` became App-Router-aware in v15 (v14 only
+  matched `pages/` routes); three pre-existing, deliberate plain `<a>` cross-context navigations
+  (login → buyer portal, inventory's restock modal → vendor-bills, buyer-invite → buyer portal)
+  are newly flagged and silenced with an inline `eslint-disable-next-line` plus a comment — not
+  converted to `<Link>`, since two of the three deliberately force a full-page reload to
+  re-bootstrap the buyer auth context.
+  Four new `apps/api/src/common` repo-truth specs (`next-version`, `no-react-skew-hacks`,
+  `client-page-params`, `audit-allowlist-retired`) joined the repo-truth lane
+  (`jest.repo-truth.config.js` testRegex, `apps/api/package.json`'s main-lane
+  `testPathIgnorePatterns`, `turbo.json` `test:repo-truth` inputs, `turbo-inputs.spec.ts`'s
+  `REPO_TRUTH_SPECS` array) — new API script `smoke:pdf` (manual, real-render PDF smoke against
+  compiled templates) is NOT part of that lane (no map-tracked automated wiring; run by hand).
+  `docs/testing/lockfile-edges.md`'s "Unsatisfied peer ranges" count: 2 → 0. `web.md`, `api.md`
+  updated (see their bullets above); `mobile.md`/`packages.md` untouched (confirmed no
+  apps/mobile/packages diff). Lessons: L-103 appended (tooling, compose `-p`/container-name
+  trap); L-083 and L-062 amended in place (turbo-cache-replay pre-push trap; repo-truth
+  main-lane-exclusion simultaneity) rather than adding two more new entries — see
+  `.claude/lessons/`'s own follow-up. L-102 archived for headroom (the only entry in the active
+  40 cited nowhere outside `.claude/lessons/**`/`.claude/code-map/CHANGELOG.md` — every other
+  active entry is cited from a code-map area file, `HANDOFF.md`, `tools/bugflow/docs/**`, or
+  real source, disqualifying it under the standing rule; see `archive.md`'s grep evidence).
+
 - **2026-09-09** — (branch `docs/686-campaign-web-report-bookkeeping`, Option-B follow-up for
   #686/`ff581ce4` + #685/`0c1bc2d6` = master) — `scripts/campaign-check.mjs` now reads
   `apps/web`'s Jest campaign report (`.campaign/runs/web.json`, wired via

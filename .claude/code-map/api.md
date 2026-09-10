@@ -251,6 +251,16 @@ parent missing` when the Route row or its tenant is absent) and treats the DISTI
     `Fail on critical production advisories` / `Report high-severity advisories` steps. Contract
     spec: `src/common/ci-audit-script.spec.ts` (spawn-level, fake npm-audit driver written to an
     mkdtemp'd dir, `FAKE_MODE` critical/clean/outage/unknown, counter file proves retry count).
+- **`security/audit-allowlist.json` (emptied 2026-09-10, `chore/next-15` #5b3b3c4e)** — carried
+  two owner-acked, expiring (2026-09-30) entries for `GHSA-p293-qw3h-jr36` and
+  `GHSA-2xp9-vwfh-vxw4` (both `next`), both fixed in Next 15.5.24+; the upgrade retires both
+  entries, leaving `entries: []`. `src/common/ci-audit-script.spec.ts`'s "policy guard" describe
+  no longer pins the allowlist to exactly those two ids (that pinned the CONTENTS, which would
+  make the very next legitimate entry someone adds fail the spec) — it now accepts any valid
+  entries array, empty included, and only asserts the per-entry expiry-window shape. Which
+  advisories are RETIRED (must be absent, and must now fail the gate rather than be suppressed)
+  is `audit-allowlist-retired.spec.ts`'s job (see below) — a policy-guard spec and a
+  retirement-tripwire spec, not one spec doing both.
 - **`scripts/ci-freshness-guard.mjs` (2026-09-04, REG-E2EGUARD-403)** — replaces the e2e job's
   old inline bash freshness guard (`gh api … --jq … 2>/dev/null || true`), which treated a 4xx/5xx
   error body as a non-empty "sha" and silently emitted `run=false` on every call once the run
@@ -475,20 +485,49 @@ private …` immediately followed by a `gh repo view --json visibility` read-bac
   would replay a stale green. `jest.repo-truth.config.js` extends the `package.json` `"jest"`
   config the same way `jest.db.config.js` does (`reporters: ["default"]` — never the campaign
   reporter, which would clobber `.campaign/runs/api.json`) with `testRegex:
-"(docs-truth|no-dead-deps|no-single-schema-path)\\.spec\\.ts$"` (the third joined it
-  with wave E's schema-folder split); the main config's `testPathIgnorePatterns` excludes all three
-  by name so `npm test` never double-runs them. New API script `test:repo-truth`; root
+"(docs-truth|no-dead-deps|no-single-schema-path|client-page-params|no-react-skew-hacks|next-
+version|audit-allowlist-retired)\\.spec\\.ts$"` (the third joined it
+  with wave E's schema-folder split; the last four joined it with the Next 15 upgrade,
+  2026-09-10, `chore/next-15` #5b3b3c4e — each reads outside apps/api: `apps/web/app` (T3),
+  `apps/web/Dockerfile`/`jest.config.js` (T2), `apps/web/package.json` (T1), and
+  `security/audit-allowlist.json` (T6)); the main config's `testPathIgnorePatterns` excludes all
+  seven by name so `npm test` never double-runs them. New API script `test:repo-truth`; root
   `verify` gained the `test:repo-truth` token on the `turbo run check-types lint test` list. A
   `@routeflow/api#test` workspace-task override was tried first and reverted —
   `packages/pricing/src/package-shape.spec.ts` forbids that exact key — so `turbo.json` instead
   carries a GENERIC `test:repo-truth` task (`dependsOn: ["^build"]`, outside paths as explicit
   `$TURBO_ROOT$/…` `inputs`, `outputs: []`); only apps/api declares the script, so turbo only
   ever executes it there. `turbo-inputs.spec.ts` pins the task's inputs list, the verify/script
-  wiring, and the jest-config split (Lesson L-062, tooling). **Close-out re-check (2026-09-05):**
+  wiring, and the jest-config split (Lesson L-062, tooling — see its chore/next-15 addendum:
+  moving a spec IN must add it to the main lane's `testPathIgnorePatterns` in the SAME change).
+  **Close-out re-check (2026-09-05):**
   the inputs also carry `scripts/**`, `.github/workflows/**`, `.claude/skills/**`,
   `apps/api/scripts/**`, `apps/api/Dockerfile`, `apps/api/prisma.config.ts`, `package.json` and
   `docker-compose.yml` (no-single-schema-path's reach), and the spec pins ALL sixteen explicit
-  inputs plus the lane's exact three specs.
+  inputs plus the lane's exact three specs. **chore/next-15 (2026-09-10, #5b3b3c4e):** four more
+  explicit `inputs` (`apps/web/Dockerfile`, `apps/web/jest.config.js`, `apps/web/next.config.mjs`,
+  `security/**`) for the four new repo-truth specs' reach; `turbo-inputs.spec.ts` now pins the
+  lane's SEVEN specs via a `REPO_TRUTH_SPECS` array and it.each-checks each new spec's exclusion
+  from the main lane.
+- **`src/common/{next-version,no-react-skew-hacks,client-page-params,audit-allowlist-retired}.spec.ts`
+  (2026-09-10, `chore/next-15` #5b3b3c4e, S4 T1/T2/T3/T6)** — the Next 15 upgrade's repo-truth
+  lane additions (see above); none import runtime code, all `fs.readFileSync` the tree directly
+  (house convention, matches `no-dead-deps.spec.ts`). **`next-version.spec.ts` (T1)** pins
+  `apps/web/package.json`'s exact `next`/`eslint-config-next`/`@next/swc-win32-x64-msvc` literals
+  (`15.5.25`/`15.5.25`/`^15.5.25`) — clears the two CRITICAL advisories the
+  `security/audit-allowlist.json` entries (now retired) were carrying. **`no-react-skew-hacks.spec.ts`
+  (T2)** pins that `apps/web/Dockerfile`'s `npm install --force --no-save react@18…` line and
+  `jest.config.js`'s single-react `moduleNameMapper` are BOTH gone — a half-reverted skew (one
+  hack back, one still removed) breaks every RTL suite, so the pair is asserted together, not as
+  two independent facts. **`client-page-params.spec.ts` (T3)** source-scans `apps/web/app` for the
+  three old synchronous `params`/`searchParams` prop shapes (destructure / `props.params` / body
+  destructure) on Client Components, and for an un-awaited `params:`/`searchParams:` type
+  annotation on Server Components; counts by SITE not by file (`customers/[id]/page.tsx` has two).
+  **`audit-allowlist-retired.spec.ts` (T6)** pins that `security/audit-allowlist.json` no longer
+  carries either retired next.js GHSA id AND that the ci-audit gate now FAILS (not
+  ALLOWLISTED-suppresses) a fixture audit reporting one of them — the allowlist itself stays
+  available for a future, unrelated advisory (see the `security/audit-allowlist.json` bullet
+  above and `ci-audit-script.spec.ts`'s "policy guard" describe update).
 - **`src/common/campaign-check-freshness.spec.ts` (2026-09-06, campaign-check report freshness,
   L-083)** — contract spec for `scripts/campaign-check.mjs`'s freshness rule and its new
   `--freshness-only` pre-step (see [`INDEX`](INDEX.md)'s "Bug-register burn-down campaign" row).

@@ -99,6 +99,13 @@ after every attempt failed, and clears it itself on the next confirmed flip.
   shipping worktree content). Recovery: from a spare worktree, push an empty
   `chore(deploy): retrigger …` commit as `master` while the repo is still public, wait for
   `SUCCESS` (never `BUILDING`), then flip private. Fix: flip only after step 3's `SUCCESS`.
+- **Migration replay does not fire on `ready_for_review`.** Its `pull_request` trigger only fires
+  on opened/synchronize, so flipping a draft to ready (or the CI rerun button on a private-time
+  skipped run) leaves it SKIPPED. Dispatch it: `gh workflow run "Migration replay" --ref <branch>`
+  — never close/reopen the PR, which restarts CI under cancel-in-progress.
+- **`railway deployment list` prints stale rows first.** After a merge, wait for NEW deployment
+  ids for BOTH services to reach a terminal state (SUCCESS) before flipping private; an old
+  SKIPPED/SUCCESS row at the top is not your deploy (Window 14, 2026-09-10).
 
 ## Retirement checklist
 
