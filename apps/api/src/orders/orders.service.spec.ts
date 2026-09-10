@@ -2804,6 +2804,124 @@ describe("OrdersService", () => {
       expect(prisma.order.delete).not.toHaveBeenCalled();
     });
 
+    it("REG-B214 (T8): deleteOrder refuses (409) while an invoice it deletes sourced a credit note with unspent balance", async () => {
+      prisma.order.findUnique.mockResolvedValue(deliveredOrder);
+      prisma.creditNote.findMany.mockResolvedValue([
+        {
+          id: "cn-1",
+          creditNoteNumber: "CN-0001",
+          invoiceId: "d1",
+          amount: 50,
+          amountUsed: 0,
+          status: "ISSUED",
+          expiresAt: null,
+        },
+      ]);
+
+      await expect(service.deleteOrder("ord-1", operatorPayload)).rejects.toMatchObject({
+        response: { code: "INVOICE_HAS_UNSPENT_CREDIT" },
+      });
+      expect(prisma.order.delete).not.toHaveBeenCalled();
+      // The guard is the FIRST statement in the tx: the refusal precedes every money write,
+      // so nothing has to roll back (the mocked tx has no rollback to lean on).
+      expect(creditNotesService.releaseOrderCreditsInTx).not.toHaveBeenCalled();
+      expect((service as any).invoicesService.releaseWalletPaymentsInTx).not.toHaveBeenCalled();
+    });
+
+    it("P1: still deletes when the sourced credit note is fully spent", async () => {
+      prisma.order.findUnique.mockResolvedValue(deliveredOrder);
+      prisma.creditNote.findMany.mockResolvedValue([
+        {
+          id: "cn-1",
+          creditNoteNumber: "CN-0001",
+          invoiceId: "d1",
+          amount: 50,
+          amountUsed: 50,
+          status: "APPLIED",
+          expiresAt: null,
+        },
+      ]);
+
+      await expect(service.deleteOrder("ord-1", operatorPayload)).resolves.toEqual({
+        success: true,
+      });
+    });
+
+    it("P2: still deletes when the sourced credit note is VOID", async () => {
+      prisma.order.findUnique.mockResolvedValue(deliveredOrder);
+      prisma.creditNote.findMany.mockResolvedValue([
+        {
+          id: "cn-1",
+          creditNoteNumber: "CN-0001",
+          invoiceId: "d1",
+          amount: 50,
+          amountUsed: 0,
+          status: "VOID",
+          expiresAt: null,
+        },
+      ]);
+
+      await expect(service.deleteOrder("ord-1", operatorPayload)).resolves.toEqual({
+        success: true,
+      });
+    });
+
+    it("P3: still deletes when the sourced credit note's unspent balance has expired", async () => {
+      prisma.order.findUnique.mockResolvedValue(deliveredOrder);
+      prisma.creditNote.findMany.mockResolvedValue([
+        {
+          id: "cn-1",
+          creditNoteNumber: "CN-0001",
+          invoiceId: "d1",
+          amount: 50,
+          amountUsed: 0,
+          status: "ISSUED",
+          expiresAt: new Date(Date.now() - 86_400_000),
+        },
+      ]);
+
+      await expect(service.deleteOrder("ord-1", operatorPayload)).resolves.toEqual({
+        success: true,
+      });
+    });
+
+    // B214: the guard also runs AFTER releaseOrderCreditsInTx/releaseWalletPaymentsInTx, because
+    // those revive (un-spend/un-expire/un-VOID) a note this order's invoices sourced. First read
+    // = spent (fast path passes), second read = revived (the delete must refuse).
+    it("P5: refuses when the wallet release re-opens a sourced credit note the first read saw spent", async () => {
+      prisma.order.findUnique.mockResolvedValue(deliveredOrder);
+      prisma.creditNote.findMany
+        .mockResolvedValueOnce([
+          {
+            id: "cn-1",
+            creditNoteNumber: "CN-0001",
+            invoiceId: "d1",
+            amount: 50,
+            amountUsed: 50,
+            status: "APPLIED",
+            expiresAt: null,
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: "cn-1",
+            creditNoteNumber: "CN-0001",
+            invoiceId: "d1",
+            amount: 50,
+            amountUsed: 0,
+            status: "ISSUED",
+            expiresAt: null,
+          },
+        ]);
+
+      await expect(service.deleteOrder("ord-1", operatorPayload)).rejects.toMatchObject({
+        response: { code: "INVOICE_HAS_UNSPENT_CREDIT" },
+      });
+      expect(creditNotesService.releaseOrderCreditsInTx).toHaveBeenCalledTimes(1);
+      expect(prisma.invoice.delete).not.toHaveBeenCalled();
+      expect(prisma.order.delete).not.toHaveBeenCalled();
+    });
+
     it("non-staff callers keep the old DRAFT/PENDING/CANCELLED allowlist", async () => {
       prisma.order.findUnique.mockResolvedValue(deliveredOrder);
 
@@ -4942,6 +5060,62 @@ describe("OrdersService", () => {
       expect(upd.qty).toBe(12);
       expect(upd.boxes).toBe(2);
     });
+
+    // B214: the consolidation hard-deletes the loser's open DRAFT mirror, and a DRAFT invoice is
+    // an allowed credit-note source (CREDIT_SOURCE_EXCLUDED = VOID/WRITTEN_OFF only), so the FK
+    // ON DELETE SET NULL would orphan an open note. Third door, same shared guard.
+    it("P6: refuses the consolidation while the loser's DRAFT mirror sourced an unspent credit note", async () => {
+      const line = (id: string) => ({
+        id,
+        productId: "prod-1",
+        qty: 2,
+        unitPrice: 10,
+        subtotal: 20,
+        status: "PENDING",
+        priceType: "STANDARD",
+        originalPrice: null,
+        name: null,
+        overrideReason: null,
+        overriddenBy: null,
+        boxes: null,
+        pieces: null,
+      });
+      prisma.order.findMany.mockResolvedValue([
+        {
+          id: "w1",
+          customerId: "cust-1",
+          status: "PENDING",
+          routeRunId: null,
+          lineItems: [line("wl1")],
+        },
+        {
+          id: "l1",
+          customerId: "cust-1",
+          status: "PENDING",
+          routeRunId: null,
+          lineItems: [line("ll1")],
+        },
+      ]);
+      prisma.product.findMany.mockResolvedValue([{ id: "prod-1", unitsPerBox: null }]);
+      invoicesService.findOpenOrderDraft.mockResolvedValue({ id: "inv-loser" });
+      prisma.creditNote.findMany.mockResolvedValue([
+        {
+          id: "cn-1",
+          creditNoteNumber: "CN-0001",
+          invoiceId: "inv-loser",
+          amount: 50,
+          amountUsed: 0,
+          status: "ISSUED",
+          expiresAt: null,
+        },
+      ]);
+
+      await expect(service.forceConsolidateCustomer("cust-1")).rejects.toMatchObject({
+        response: { code: "INVOICE_HAS_UNSPENT_CREDIT" },
+      });
+      expect(prisma.invoice.delete).not.toHaveBeenCalled();
+      expect(prisma.order.delete).not.toHaveBeenCalled();
+    });
   });
 
   describe("updateShipment", () => {
@@ -6150,9 +6324,13 @@ describe("OrdersService", () => {
             unitPrice: 8.5,
             subtotal: 127.5,
             status: "PENDING",
+            deliveredQty: 0,
             trackedCategoryId: null,
           },
         ]);
+      // B135: the ADD_ITEM merge target comes from the locked held row, then its authoritative
+      // qty/price is re-read through the tx.
+      prisma.orderItem.findUnique.mockResolvedValue(line);
 
       await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
 
@@ -6541,6 +6719,410 @@ describe("OrdersService", () => {
       });
       expect(prisma.changeRequest.updateMany).not.toHaveBeenCalled();
       expect(prisma.orderItem.create).not.toHaveBeenCalled();
+    });
+
+    describe("approveChangeRequestAtStop: tx boundary (B134/B135)", () => {
+      const sharedLine = {
+        id: "li-1",
+        orderId: "ord-1",
+        productId: "prod-1",
+        qty: 24,
+        boxes: 2,
+        pieces: 0,
+        unitsPerBox: 12,
+        unitPrice: 24,
+        subtotal: 48,
+        status: "PENDING",
+        deliveredQty: 0,
+      };
+
+      /** Shared fixture for T1-T7, P4: a DECREASE change so the stock guard never fires. */
+      const setUpSharedFixture = () => {
+        prisma.changeRequest.findUnique.mockResolvedValue(
+          baseCr({
+            type: "CHANGE_QTY",
+            orderItemId: "li-1",
+            payload: { orderItemId: "li-1", newQty: 18 },
+          }),
+        );
+        prisma.orderItem.findMany.mockResolvedValue([
+          {
+            id: "li-1",
+            productId: "prod-1",
+            qty: 18,
+            unitPrice: 24,
+            subtotal: 36,
+            status: "PENDING",
+            deliveredQty: 0,
+          },
+        ]);
+      };
+
+      /**
+       * Captures the merge tx via a one-time tenantTransaction override. `onError` receives the
+       * error a failing merge threw from INSIDE that callback — T3's rollback oracle. It is a
+       * parameter rather than a second `mockImplementationOnce` in the test because a second
+       * once-implementation queues BEHIND this one and would never see the first tx.
+       */
+      const captureMergeTx = (onError?: (e: unknown) => void) => {
+        const seenTx: any = {
+          ...prisma.forTenant(),
+          $executeRaw: jest.fn().mockResolvedValue(0),
+          $queryRaw: jest.fn().mockResolvedValue([]),
+        };
+        prisma.tenantTransaction.mockImplementationOnce(async (fn: any) => {
+          try {
+            return await fn(seenTx);
+          } catch (e) {
+            onError?.(e);
+            throw e;
+          }
+        });
+        prisma.order.findUnique.mockResolvedValue(baseOrder([sharedLine]));
+        return seenTx;
+      };
+
+      it("REG-B134 (T1): the invoice un-send runs inside the merge transaction (receives the tx)", async () => {
+        setUpSharedFixture();
+        const seenTx = captureMergeTx();
+
+        await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
+
+        expect(invoicesService.revertLinkedInvoicesForOrderEdit.mock.calls[0]?.[1]).toBe(seenTx);
+      });
+
+      it("REG-B134 (T2): the un-send runs after the order row lock, never before it", async () => {
+        setUpSharedFixture();
+        const seenTx = captureMergeTx();
+
+        await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
+
+        expect(
+          invoicesService.revertLinkedInvoicesForOrderEdit.mock.invocationCallOrder[0],
+        ).toBeGreaterThan(seenTx.$executeRaw.mock.invocationCallOrder[0]);
+      });
+
+      it("REG-B134 (T3): when the merge fails (lost claim), the un-send went through the rolled-back tx", async () => {
+        setUpSharedFixture();
+        let txError: unknown;
+        const seenTx = captureMergeTx((e) => {
+          txError = e;
+        });
+        prisma.changeRequest.updateMany.mockResolvedValue({ count: 0 });
+
+        await expect(
+          service.approveChangeRequestAtStop("cr-1", operatorPayload, null),
+        ).rejects.toMatchObject({ response: { code: "CHANGE_REQUEST_ALREADY_RESOLVED" } });
+
+        // The lost claim threw from INSIDE the tx callback (txError), so the un-send it had
+        // already issued on that same tx — before the claim — rolls back with it.
+        expect(txError).toMatchObject({ response: { code: "CHANGE_REQUEST_ALREADY_RESOLVED" } });
+        expect(invoicesService.revertLinkedInvoicesForOrderEdit.mock.calls[0]?.[1]).toBe(seenTx);
+        expect(
+          invoicesService.revertLinkedInvoicesForOrderEdit.mock.invocationCallOrder[0],
+        ).toBeLessThan(prisma.changeRequest.updateMany.mock.invocationCallOrder[0]);
+      });
+
+      it("REG-B135 (T4): a stop completed between the snapshot and the lock refuses with STOP_ALREADY_COMPLETED", async () => {
+        setUpSharedFixture();
+        const LIVE_ROW = {
+          tenantId: "test-tenant",
+          status: "OUT_FOR_DELIVERY",
+          routeRun: { status: "IN_PROGRESS" },
+          routeRunStop: { status: "COMPLETED" },
+        };
+        prisma.order.findUnique.mockImplementation(async (args: any) =>
+          args?.select?.routeRunStop ? LIVE_ROW : baseOrder([sharedLine]),
+        );
+
+        await expect(
+          service.approveChangeRequestAtStop("cr-1", operatorPayload, null),
+        ).rejects.toMatchObject({ response: { code: "STOP_ALREADY_COMPLETED" } });
+      });
+
+      it("REG-B135 (T5): an order that went DELIVERED between the snapshot and the lock refuses (ORDER_STATUS)", async () => {
+        setUpSharedFixture();
+        const LIVE_ROW = {
+          tenantId: "test-tenant",
+          status: "DELIVERED",
+          routeRun: { status: "IN_PROGRESS" },
+          routeRunStop: { status: "PENDING" },
+        };
+        prisma.order.findUnique.mockImplementation(async (args: any) =>
+          args?.select?.routeRunStop ? LIVE_ROW : baseOrder([sharedLine]),
+        );
+
+        await expect(
+          service.approveChangeRequestAtStop("cr-1", operatorPayload, null),
+        ).rejects.toMatchObject({
+          response: { code: "CHANGE_WINDOW_CLOSED", reason: "ORDER_STATUS" },
+        });
+      });
+
+      it("REG-B135 (T6): a run that left IN_PROGRESS between the snapshot and the lock refuses (RUN_NOT_ACTIVE)", async () => {
+        setUpSharedFixture();
+        const LIVE_ROW = {
+          tenantId: "test-tenant",
+          status: "OUT_FOR_DELIVERY",
+          routeRun: { status: "COMPLETED" },
+          routeRunStop: { status: "PENDING" },
+        };
+        prisma.order.findUnique.mockImplementation(async (args: any) =>
+          args?.select?.routeRunStop ? LIVE_ROW : baseOrder([sharedLine]),
+        );
+
+        await expect(
+          service.approveChangeRequestAtStop("cr-1", operatorPayload, null),
+        ).rejects.toMatchObject({
+          response: { code: "CHANGE_WINDOW_CLOSED", reason: "RUN_NOT_ACTIVE" },
+        });
+      });
+
+      it("REG-B135 (T7): LINE_ALREADY_DELIVERED is judged on the locked in-tx line, not the pre-tx snapshot", async () => {
+        prisma.changeRequest.findUnique.mockResolvedValue(
+          baseCr({
+            type: "CHANGE_QTY",
+            orderItemId: "li-1",
+            payload: { orderItemId: "li-1", newQty: 18 },
+          }),
+        );
+        prisma.order.findUnique.mockResolvedValue(baseOrder([sharedLine])); // snapshot line: deliveredQty 0
+        prisma.orderItem.findMany.mockResolvedValue([
+          {
+            id: "li-1",
+            productId: "prod-1",
+            qty: 24,
+            unitPrice: 24,
+            subtotal: 48,
+            status: "PENDING",
+            deliveredQty: 24, // the held (locked) row: already delivered
+          },
+        ]);
+
+        await expect(
+          service.approveChangeRequestAtStop("cr-1", operatorPayload, null),
+        ).rejects.toMatchObject({ response: { code: "LINE_ALREADY_DELIVERED" } });
+      });
+
+      // T7's twin: the same guard's cancelled half. Without it, dropping
+      // `held?.status === "CANCELLED"` would leave every test in this file green.
+      it("P10: a line cancelled between the snapshot and the lock is refused on the locked row", async () => {
+        prisma.changeRequest.findUnique.mockResolvedValue(
+          baseCr({
+            type: "CHANGE_QTY",
+            orderItemId: "li-1",
+            payload: { orderItemId: "li-1", newQty: 18 },
+          }),
+        );
+        prisma.order.findUnique.mockResolvedValue(baseOrder([sharedLine])); // snapshot line: PENDING
+        prisma.orderItem.findMany.mockResolvedValue([
+          {
+            id: "li-1",
+            productId: "prod-1",
+            qty: 24,
+            unitPrice: 24,
+            subtotal: 48,
+            status: "CANCELLED", // the held (locked) row: cancelled since the snapshot
+            deliveredQty: 0,
+          },
+        ]);
+
+        const err = await service
+          .approveChangeRequestAtStop("cr-1", operatorPayload, null)
+          .catch((e) => e);
+
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect(err.message).toContain("already cancelled");
+      });
+
+      it("P7: the ORDER row is locked BEFORE the stop row, and the stop lock never waits (NOWAIT)", async () => {
+        setUpSharedFixture();
+        const seenTx = captureMergeTx();
+
+        await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
+
+        // Order→stop is the repo-wide acquisition order (reopenStop, the customers.service merge
+        // and purge paths); inverting it here would deadlock against them. The stop lock is
+        // therefore taken second and NOWAIT, so this tx never waits on a stop row.
+        expect(seenTx.$executeRaw.mock.calls[0][0].join("?")).toContain('"Order"');
+        const stopLockSql = seenTx.$executeRaw.mock.calls[1][0].join("?");
+        expect(stopLockSql).toContain('"RouteRunStop"');
+        expect(stopLockSql).toContain("FOR NO KEY UPDATE NOWAIT");
+        // order.findUnique call [0] is the pre-tx snapshot, [1] is the in-tx `live` re-read: both
+        // locks must be held before that re-read, or an in-flight completion stays invisible.
+        expect(seenTx.$executeRaw.mock.invocationCallOrder[1]).toBeLessThan(
+          seenTx.order.findUnique.mock.invocationCallOrder[1],
+        );
+      });
+
+      it("P11: a stop row locked by an in-flight completion (55P03) refuses with STOP_BUSY and writes nothing", async () => {
+        setUpSharedFixture();
+        const seenTx = captureMergeTx();
+        const lockErr: any = new Error("Raw query failed");
+        lockErr.meta = { code: "55P03" };
+        seenTx.$executeRaw.mockResolvedValueOnce(0).mockRejectedValueOnce(lockErr);
+
+        await expect(
+          service.approveChangeRequestAtStop("cr-1", operatorPayload, null),
+        ).rejects.toMatchObject({
+          response: { code: "CHANGE_WINDOW_CLOSED", reason: "STOP_BUSY" },
+        });
+
+        expect(invoicesService.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
+        expect(seenTx.orderItem.update).not.toHaveBeenCalled();
+        expect(seenTx.orderItem.create).not.toHaveBeenCalled();
+        expect(seenTx.changeRequest.updateMany).not.toHaveBeenCalled();
+        expect(seenTx.deliveryMutation.create).not.toHaveBeenCalled();
+        expect(seenTx.product.update).not.toHaveBeenCalled();
+      });
+
+      it("P12: the same refusal when the lock error carries only a message (no meta.code)", async () => {
+        setUpSharedFixture();
+        const seenTx = captureMergeTx();
+        seenTx.$executeRaw
+          .mockResolvedValueOnce(0)
+          .mockRejectedValueOnce(
+            new Error('could not obtain lock on row in relation "RouteRunStop"'),
+          );
+
+        await expect(
+          service.approveChangeRequestAtStop("cr-1", operatorPayload, null),
+        ).rejects.toMatchObject({
+          response: { code: "CHANGE_WINDOW_CLOSED", reason: "STOP_BUSY" },
+        });
+
+        expect(seenTx.changeRequest.updateMany).not.toHaveBeenCalled();
+      });
+
+      it("P13: a non-55P03 failure on the stop lock is rethrown unchanged, not turned into a 409", async () => {
+        setUpSharedFixture();
+        const seenTx = captureMergeTx();
+        const boom = new Error("connection terminated unexpectedly");
+        seenTx.$executeRaw.mockResolvedValueOnce(0).mockRejectedValueOnce(boom);
+
+        await expect(
+          service.approveChangeRequestAtStop("cr-1", operatorPayload, null),
+        ).rejects.toBe(boom);
+      });
+
+      it("P8: ADD_ITEM increments from the LOCKED row's qty, not the pre-tx snapshot's", async () => {
+        prisma.changeRequest.findUnique.mockResolvedValue(
+          baseCr({
+            type: "ADD_ITEM",
+            productId: "prod-1",
+            payload: { productId: "prod-1", qty: 6, boxes: null, pieces: null },
+          }),
+        );
+        // Snapshot says 24; a concurrent edit committed 12 before the lock.
+        prisma.order.findUnique.mockResolvedValue(
+          baseOrder([
+            { ...sharedLine, boxes: null, pieces: null, unitsPerBox: null, unitPrice: 1 },
+          ]),
+        );
+        const catalogProduct = {
+          id: "prod-1",
+          name: "Widget",
+          pricePerUnit: 1,
+          unitsPerBox: null,
+          category: null,
+          trackedCategoryId: null,
+        };
+        prisma.product.findUnique.mockResolvedValue(catalogProduct);
+        prisma.product.findFirst.mockResolvedValue(catalogProduct);
+        prisma.orderItem.findMany
+          .mockResolvedValueOnce([]) // getCustomerPriceHistory (hoisted, pre-tx)
+          .mockResolvedValue([
+            {
+              id: "li-1",
+              productId: "prod-1",
+              qty: 12,
+              unitPrice: 1,
+              subtotal: 12,
+              status: "PENDING",
+              deliveredQty: 0,
+            },
+          ]);
+        prisma.orderItem.findUnique.mockResolvedValue({
+          id: "li-1",
+          productId: "prod-1",
+          qty: 12,
+          boxes: null,
+          pieces: null,
+          unitsPerBox: null,
+          unitPrice: 1,
+          subtotal: 12,
+          status: "PENDING",
+          deliveredQty: 0,
+        });
+
+        await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
+
+        expect(prisma.orderItem.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: "li-1" },
+            data: expect.objectContaining({ qty: 18 }),
+          }),
+        );
+        expect(prisma.orderItem.update).not.toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ qty: 30 }) }),
+        );
+      });
+
+      it("P9: ADD_ITEM opens a NEW line when the locked row for that product is CANCELLED (snapshot says PENDING)", async () => {
+        prisma.changeRequest.findUnique.mockResolvedValue(
+          baseCr({
+            type: "ADD_ITEM",
+            productId: "prod-1",
+            payload: { productId: "prod-1", qty: 6, boxes: null, pieces: null },
+          }),
+        );
+        prisma.order.findUnique.mockResolvedValue(
+          baseOrder([
+            { ...sharedLine, boxes: null, pieces: null, unitsPerBox: null, unitPrice: 1 },
+          ]),
+        );
+        const catalogProduct = {
+          id: "prod-1",
+          name: "Widget",
+          pricePerUnit: 1,
+          unitsPerBox: null,
+          category: null,
+          trackedCategoryId: null,
+        };
+        prisma.product.findUnique.mockResolvedValue(catalogProduct);
+        prisma.product.findFirst.mockResolvedValue(catalogProduct);
+        prisma.orderItem.create.mockResolvedValue({ id: "li-new" });
+        prisma.orderItem.findMany
+          .mockResolvedValueOnce([]) // getCustomerPriceHistory (hoisted, pre-tx)
+          .mockResolvedValue([
+            {
+              id: "li-1",
+              productId: "prod-1",
+              qty: 0,
+              unitPrice: 1,
+              subtotal: 0,
+              status: "CANCELLED",
+              deliveredQty: 0,
+            },
+          ]);
+
+        await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
+
+        expect(prisma.orderItem.create).toHaveBeenCalled();
+        expect(prisma.orderItem.update).not.toHaveBeenCalled();
+      });
+
+      it("P4: the at-door approval still aborts before any claim when the un-send throws for recorded payments", async () => {
+        setUpSharedFixture();
+        prisma.order.findUnique.mockResolvedValue(baseOrder([sharedLine]));
+        invoicesService.revertLinkedInvoicesForOrderEdit.mockRejectedValueOnce(
+          new BadRequestException("invoice has payments recorded"),
+        );
+
+        await service.approveChangeRequestAtStop("cr-1", operatorPayload, null).catch((e) => e);
+
+        expect(prisma.changeRequest.updateMany).not.toHaveBeenCalled();
+      });
     });
   });
 

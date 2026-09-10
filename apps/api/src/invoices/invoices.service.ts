@@ -52,6 +52,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
 import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
@@ -5334,6 +5335,11 @@ export class InvoicesService {
         );
       }
 
+      // B214 (REG-B214): refuse while a credit note this invoice sourced still has spendable
+      // balance — deleting would orphan it (invoiceId → null) as provenance-less wallet money.
+      // Runs before any write, on rows read through this tx (L-081).
+      await assertNoUnspentSourcedCredits(tx, [id]);
+
       // Free up invoicedQty on the source order BEFORE deleting the invoice
       // items (we read them inside the helper). Otherwise a delete leaves the
       // source order's lines flagged as fully invoiced with no surviving
@@ -5344,7 +5350,8 @@ export class InvoicesService {
       // items are deleted (the ledger keeps its own snapshot; append-only, no FK).
       await this.ledger.reverseInvoiceEntries({ invoiceId: id, db: tx });
 
-      // Unlink credit notes that were generated for this invoice
+      // Unlink the remaining (closed: spent, VOID or expired) credit notes this invoice sourced;
+      // open ones were refused above.
       await tx.creditNote.updateMany({
         where: { invoiceId: id },
         data: { invoiceId: null },
