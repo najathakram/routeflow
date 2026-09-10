@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -312,11 +313,13 @@ function StatusTimeline({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function ReturnDetailPage({ params }: { params: { id: string } }) {
+export default function ReturnDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
-  const { data: ret, isLoading, isError } = useReturn(params.id);
+  const { data: ret, isLoading, isError } = useReturn(id);
   const approveReturn = useApproveReturn();
   const rejectReturn = useRejectReturn();
   const markInTransit = useMarkReturnInTransit();

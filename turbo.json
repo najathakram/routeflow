@@ -112,7 +112,13 @@
         "$TURBO_ROOT$/apps/api/Dockerfile",
         "$TURBO_ROOT$/apps/api/prisma.config.ts",
         "$TURBO_ROOT$/package.json",
-        "$TURBO_ROOT$/docker-compose.yml"
+        "$TURBO_ROOT$/docker-compose.yml",
+        // The Next 15 upgrade guards (client-page-params, no-react-skew-hacks, next-version,
+        // audit-allowlist-retired) read these beyond the apps/web/app + scripts entries above.
+        "$TURBO_ROOT$/apps/web/Dockerfile",
+        "$TURBO_ROOT$/apps/web/jest.config.js",
+        "$TURBO_ROOT$/apps/web/next.config.mjs",
+        "$TURBO_ROOT$/security/**"
       ],
       "outputs": []
     },

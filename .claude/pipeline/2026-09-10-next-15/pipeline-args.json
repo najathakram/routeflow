@@ -1,0 +1,163 @@
+{
+  "planPath": ".claude/pipeline/2026-09-10-next-15/build-plan.md",
+  "discoveryPath": ".claude/pipeline/2026-09-10-next-15/discovery.md",
+  "specPath": ".claude/pipeline/2026-09-10-next-15/spec.md",
+  "testPlanPath": ".claude/pipeline/2026-09-10-next-15/test-plan.md",
+  "lessonsPath": ".claude/lessons/LESSONS.md",
+  "scale": "major",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25",
+  "context": "apps/web Next 14.2.35->15.5.25 + React 18->19, clearing two CRITICAL advisories whose allowlist expires 2026-09-30. R5 (fonts) is deliberately OUT.",
+  "testPackages": [
+    {
+      "id": "TP1",
+      "title": "static upgrade guards (T1,T2,T3)",
+      "files": [
+        "apps/api/src/common/next-version.spec.ts",
+        "apps/api/src/common/no-react-skew-hacks.spec.ts",
+        "apps/api/src/common/client-page-params.spec.ts"
+      ],
+      "brief": "Author T1,T2,T3 exactly as specified in test-plan.md section 2. Follow the house convention modelled on apps/api/src/common/no-dead-deps.spec.ts: fs reads + REPO_ROOT=join(__dirname,'..','..','..','..'), no runtime imports. T3 MUST count destructure SITES not files (customers/[id]/page.tsx has two, lines 1902 and 4286). Each must fail today on an assertion, printing every offending file:line. Tests only - no implementation.",
+      "effort": "medium"
+    },
+    {
+      "id": "TP2",
+      "title": "allowlist-retirement guard (T6)",
+      "files": ["apps/api/src/common/audit-allowlist-retired.spec.ts"],
+      "brief": "Author T6 exactly as specified in test-plan.md section 2, same convention as TP1. Stub npm audit via CI_AUDIT_CMD pointing at a fixture the test creates, so it never hits the network. Do NOT edit the existing ci-audit-script.spec.ts - that belongs to P7.",
+      "effort": "medium"
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "npm test -w apps/api -- next-version no-react-skew-hacks client-page-params audit-allowlist-retired"
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "P1",
+      "title": "deps + lockfile (wave 1, alone)",
+      "files": ["apps/web/package.json", "package-lock.json"],
+      "brief": "Per build-plan.md 'P1 detail'. Keep eslint at ^8. Plain npm install (never --force/--no-save). Do not touch apps/mobile pins or add root react overrides.",
+      "effort": "medium",
+      "satisfies": ["R1", "R2"],
+      "provenBy": ["T1", "T2"]
+    },
+    {
+      "id": "P2",
+      "title": "remove both React-skew hacks",
+      "files": ["apps/web/Dockerfile", "apps/web/jest.config.js"],
+      "brief": "Per build-plan.md 'P2 detail'. BOTH hacks or neither - removing one is the brief's #1 risk. Keep the @/ mapper, the campaign reporter and testTimeout in jest.config.js.",
+      "effort": "medium",
+      "dependsOn": ["P1"],
+      "satisfies": ["R2"],
+      "provenBy": ["T2"]
+    },
+    {
+      "id": "P3",
+      "title": "next.config key removal",
+      "files": ["apps/web/next.config.mjs"],
+      "brief": "Per build-plan.md 'P3'. Pure deletion of experimental.serverComponentsExternalPackages - do NOT add serverExternalPackages. Leave every other key untouched.",
+      "effort": "medium",
+      "dependsOn": ["P1"],
+      "satisfies": ["R4"],
+      "provenBy": ["T3"]
+    },
+    {
+      "id": "P4",
+      "title": "params to useParams - MONEY surfaces",
+      "files": [
+        "apps/web/app/(dashboard)/invoices/[id]/page.tsx",
+        "apps/web/app/(dashboard)/invoices/[id]/edit/page.tsx",
+        "apps/web/app/(dashboard)/credit-notes/[id]/page.tsx",
+        "apps/web/app/(dashboard)/vendor-bills/[id]/page.tsx",
+        "apps/web/app/(dashboard)/estimates/[id]/page.tsx",
+        "apps/web/app/(dashboard)/bookkeeping/[transactionId]/page.tsx",
+        "apps/web/app/(dashboard)/finance/commissions/[id]/page.tsx",
+        "apps/web/app/(dashboard)/orders/[id]/page.tsx"
+      ],
+      "brief": "Apply build-plan.md's 'Client page, single site' pattern verbatim. MONEY documents: a wrong id renders another tenant's invoice/bill/order. Change ONLY params plumbing - no pricing, totals, tax or query logic. Merge useParams into the EXISTING next/navigation import; never add a second. Leave existing useParams/useSearchParams hook calls alone.",
+      "effort": "high",
+      "dependsOn": ["P1"],
+      "satisfies": ["R3"],
+      "provenBy": ["T3"]
+    },
+    {
+      "id": "P5",
+      "title": "params to useParams - ops surfaces",
+      "files": [
+        "apps/web/app/(dashboard)/customers/[id]/page.tsx",
+        "apps/web/app/(dashboard)/drivers/[id]/page.tsx",
+        "apps/web/app/(dashboard)/sales-agents/[id]/page.tsx",
+        "apps/web/app/(dashboard)/products/[id]/page.tsx",
+        "apps/web/app/(dashboard)/returns/[id]/page.tsx",
+        "apps/web/app/(dashboard)/compliance/[categoryId]/page.tsx",
+        "apps/web/app/(dashboard)/routes/[id]/page.tsx",
+        "apps/web/app/(dashboard)/routes/[id]/dispatch/page.tsx",
+        "apps/web/app/(dashboard)/routes/templates/[id]/page.tsx"
+      ],
+      "brief": "Apply build-plan.md's single-site pattern to eight files. customers/[id]/page.tsx is the EXCEPTION - follow build-plan.md's 'the two-site file' pattern verbatim (two destructure sites, 1902 and 4286; one useParams in the wrapper, id passed down as a plain prop; leave its useSearchParams at 2056 alone). Merge useParams into the existing next/navigation import.",
+      "effort": "medium",
+      "dependsOn": ["P1"],
+      "satisfies": ["R3"],
+      "provenBy": ["T3"]
+    },
+    {
+      "id": "P6",
+      "title": "server page awaits searchParams",
+      "files": ["apps/web/app/(dashboard)/finance/expenses/page.tsx"],
+      "brief": "Apply build-plan.md's 'The one Server Component' pattern verbatim. It is a legacy redirect stub - preserve the redirect behaviour exactly.",
+      "effort": "medium",
+      "dependsOn": ["P1"],
+      "satisfies": ["R3"],
+      "provenBy": ["T3"]
+    },
+    {
+      "id": "P7",
+      "title": "retire the audit allowlist",
+      "files": ["security/audit-allowlist.json", "apps/api/src/common/ci-audit-script.spec.ts"],
+      "brief": "Per build-plan.md 'P7 detail'. entries becomes []; no change to ci-audit-critical.mjs is needed. In ci-audit-script.spec.ts replace the hard-coded two-GHSA assertion at 739-740 with expect(parsed.entries).toEqual([]); LEAVE the per-entry shape/window loop at 742-754 untouched.",
+      "effort": "medium",
+      "dependsOn": ["P1"],
+      "satisfies": ["R7"],
+      "provenBy": ["T6"]
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "npm run check-types -w apps/web",
+      "npm run lint -w apps/web",
+      "npm run check-types -w apps/api"
+    ],
+    "final": [
+      "npm run check-types -w apps/web",
+      "npm run lint -w apps/web",
+      "npm test -w apps/web",
+      "npm test -w apps/api"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/web/package.json",
+        "behavior": "next is pinned >=15.5.24 - downgrade it to 14.2.35",
+        "test": "apps/api/src/common/next-version.spec.ts"
+      },
+      {
+        "file": "apps/web/Dockerfile",
+        "behavior": "the react@18 force-install hack is gone - re-add that RUN line",
+        "test": "apps/api/src/common/no-react-skew-hacks.spec.ts"
+      },
+      {
+        "file": "apps/web/app/(dashboard)/returns/[id]/page.tsx",
+        "behavior": "the page reads its route param via useParams() - restore the sync prop destructure",
+        "test": "apps/api/src/common/client-page-params.spec.ts"
+      },
+      {
+        "file": "security/audit-allowlist.json",
+        "behavior": "the allowlist suppresses nothing - re-add one GHSA entry",
+        "test": "apps/api/src/common/audit-allowlist-retired.spec.ts"
+      }
+    ]
+  }
+}

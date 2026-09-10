@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -460,12 +460,14 @@ function StopItem({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function RouteRunDetailPage({ params }: { params: { id: string } }) {
+export default function RouteRunDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
   const { toast } = useToast();
-  const { data: run, isLoading, isError } = useRouteRun(params.id);
+  const { data: run, isLoading, isError } = useRouteRun(id);
   const { mutate: optimizeRoute, isPending: isOptimizing } = useOptimizeRoute();
   const { mutate: reorderRunStops } = useReorderRunStops();
   const { mutate: deleteRun, isPending: isDeleting } = useDeleteRouteRun();
@@ -561,10 +563,10 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
     setLocalStops(reordered);
 
     reorderRunStops(
-      { runId: params.id, order: reordered.map((s) => ({ id: s.id, stopNumber: s.stopNumber })) },
+      { runId: id, order: reordered.map((s) => ({ id: s.id, stopNumber: s.stopNumber })) },
       {
         onError: (err) => {
-          queryClient.invalidateQueries({ queryKey: ["route-runs", params.id] });
+          queryClient.invalidateQueries({ queryKey: ["route-runs", id] });
           toast({ title: "Reorder failed", description: err.message, variant: "error" });
         },
       },
@@ -572,7 +574,7 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
   };
 
   const handleOptimize = () => {
-    optimizeRoute(params.id, {
+    optimizeRoute(id, {
       onSuccess: (result) => {
         if (!result.usedFallback) {
           toast({
@@ -607,7 +609,7 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
   };
 
   const handleDelete = () => {
-    deleteRun(params.id, {
+    deleteRun(id, {
       onSuccess: () => {
         toast({ title: "Route run deleted", variant: "success" });
         router.push("/routes");
@@ -620,7 +622,7 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
   const handleCancel = () => {
     if (isCancelling) return;
     updateStatus(
-      { id: params.id, status: "CANCELLED" },
+      { id: id, status: "CANCELLED" },
       {
         onSuccess: () => {
           toast({ title: "Route run cancelled", variant: "success" });
@@ -791,13 +793,13 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
         optimizeBy: settings.optimizeBy,
         avoidTolls: settings.avoidTolls,
         encodedPolyline: variant.encodedPolyline,
-        ...(reorderRun ? { runId: params.id } : {}),
+        ...(reorderRun ? { runId: id } : {}),
       },
       {
         onSuccess: () => {
           setShowVariants(false);
           setSelectedVariantKey(null);
-          queryClient.invalidateQueries({ queryKey: ["route-runs", params.id] });
+          queryClient.invalidateQueries({ queryKey: ["route-runs", id] });
           toast({
             title: "Route updated",
             description: reorderRun
@@ -1117,12 +1119,7 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
               >
                 <ul className="flex-1 space-y-2 overflow-y-auto p-4">
                   {stops.map((stop) => (
-                    <SortableStopItem
-                      key={stop.id}
-                      stop={stop}
-                      runId={params.id}
-                      draggable={true}
-                    />
+                    <SortableStopItem key={stop.id} stop={stop} runId={id} draggable={true} />
                   ))}
                 </ul>
               </SortableContext>
@@ -1131,7 +1128,7 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
             <ul className="flex-1 space-y-2 overflow-y-auto p-4">
               {stops.map((stop) => (
                 <li key={stop.id}>
-                  <StopItem stop={stop} runId={params.id} onAtDoorActions={setAtDoorStop} />
+                  <StopItem stop={stop} runId={id} onAtDoorActions={setAtDoorStop} />
                 </li>
               ))}
             </ul>

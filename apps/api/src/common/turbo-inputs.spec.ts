@@ -79,6 +79,24 @@ const OUTSIDE_API_PATHS = [
   "$TURBO_ROOT$/apps/api/prisma.config.ts",
   "$TURBO_ROOT$/package.json",
   "$TURBO_ROOT$/docker-compose.yml",
+  // The Next 15 upgrade guards' reach beyond apps/web/app, apps/web/package.json and scripts:
+  // no-react-skew-hacks.spec.ts (Dockerfile, jest.config.js), client-page-params.spec.ts
+  // (next.config.mjs), audit-allowlist-retired.spec.ts (security/audit-allowlist.json).
+  "$TURBO_ROOT$/apps/web/Dockerfile",
+  "$TURBO_ROOT$/apps/web/jest.config.js",
+  "$TURBO_ROOT$/apps/web/next.config.mjs",
+  "$TURBO_ROOT$/security/**",
+];
+
+// Specs that read outside apps/api and therefore live in the repo-truth lane (L-062).
+const REPO_TRUTH_SPECS = [
+  "docs-truth",
+  "no-dead-deps",
+  "no-single-schema-path",
+  "client-page-params",
+  "no-react-skew-hacks",
+  "next-version",
+  "audit-allowlist-retired",
 ];
 
 describe("turbo.json test:repo-truth cache-safety", () => {
@@ -128,14 +146,14 @@ describe("jest config split: main lane ignores the repo-truth specs, repo-truth 
     ).toBe(true);
   });
 
-  it("jest.repo-truth.config.js's testRegex matches exactly the three repo-truth specs", () => {
+  it("jest.repo-truth.config.js's testRegex matches exactly the repo-truth specs", () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const repoTruthConfig = require(join(REPO_ROOT, "apps/api/jest.repo-truth.config.js"));
     const regex = new RegExp(repoTruthConfig.testRegex);
-    // The lane runs EXACTLY these three — no-single-schema-path.spec.ts moved here with the
-    // wave-E schema-folder split, and a lane that silently stopped running it would leave the
-    // single-schema-path claim unproven while still reporting green.
-    for (const spec of ["docs-truth", "no-dead-deps", "no-single-schema-path"]) {
+    // The lane runs EXACTLY these — no-single-schema-path.spec.ts moved here with the wave-E
+    // schema-folder split, the four Next 15 upgrade guards with the upgrade itself, and a lane
+    // that silently stopped running one would leave its claim unproven while reporting green.
+    for (const spec of REPO_TRUTH_SPECS) {
       expect(regex.test(`src/common/${spec}.spec.ts`)).toBe(true);
     }
     // and nothing else in this same directory
@@ -150,6 +168,17 @@ describe("jest config split: main lane ignores the repo-truth specs, repo-truth 
       ),
     ).toBe(true);
   });
+
+  it.each(["client-page-params", "no-react-skew-hacks", "next-version", "audit-allowlist-retired"])(
+    "the main jest config's testPathIgnorePatterns excludes %s.spec.ts",
+    (spec) => {
+      expect(
+        (apiPkg.jest?.testPathIgnorePatterns ?? []).some((p: string) =>
+          new RegExp(p).test(`src/common/${spec}.spec.ts`),
+        ),
+      ).toBe(true);
+    },
+  );
 
   it("jest.repo-truth.config.js never inherits the campaign reporter (would clobber .campaign/runs/api.json)", () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires

@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -128,16 +129,18 @@ function RecordPaymentModal({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function TransactionDetailPage({ params }: { params: { transactionId: string } }) {
+export default function TransactionDetailPage() {
+  const params = useParams();
+  const transactionId = params.transactionId as string;
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
-  const { data: txn, isLoading, isError } = useTransaction(params.transactionId);
+  const { data: txn, isLoading, isError } = useTransaction(transactionId);
   const recordPayment = useRecordPayment();
   const downloadInvoice = useDownloadInvoice();
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
 
   const handleDownloadPdf = () => {
-    downloadInvoice.mutate(params.transactionId, {
+    downloadInvoice.mutate(transactionId, {
       onSuccess: async (result) => {
         if (!result) {
           toast({
@@ -155,7 +158,7 @@ export default function TransactionDetailPage({ params }: { params: { transactio
           const blobUrl = URL.createObjectURL(blob);
           const a = document.createElement("a");
           a.href = blobUrl;
-          a.download = `invoice-${params.transactionId}.pdf`;
+          a.download = `invoice-${transactionId}.pdf`;
           a.rel = "noopener noreferrer";
           document.body.appendChild(a);
           a.click();

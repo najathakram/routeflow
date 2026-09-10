@@ -29,6 +29,7 @@
     "db:publish:catalog:v10": "ts-node -r tsconfig-paths/register prisma/publish-plan-catalog-v10.ts",
     "db:publish:catalog:v11": "ts-node -r tsconfig-paths/register prisma/publish-plan-catalog-v11.ts",
     "db:drift": "node scripts/schema-drift.mjs",
+    "smoke:pdf": "node scripts/pdf-render-smoke.mjs",
     "postinstall": "prisma generate"
   },
   "dependencies": {
@@ -142,7 +143,11 @@
       "\\.db\\.spec\\.ts$",
       "docs-truth\\.spec\\.ts$",
       "no-dead-deps\\.spec\\.ts$",
-      "no-single-schema-path\\.spec\\.ts$"
+      "no-single-schema-path\\.spec\\.ts$",
+      "client-page-params\\.spec\\.ts$",
+      "no-react-skew-hacks\\.spec\\.ts$",
+      "next-version\\.spec\\.ts$",
+      "audit-allowlist-retired\\.spec\\.ts$"
     ],
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"

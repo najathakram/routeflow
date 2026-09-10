@@ -34,15 +34,11 @@ const nextConfig = {
   // unminified code and discovering internal logic/patterns.
   productionBrowserSourceMaps: false,
 
-  // no next/image in this app (see components/no-next-image.test.ts); disables the
-  // /_next/image optimizer — GHSA-2xp9-vwfh-vxw4
+  // Defence in depth for GHSA-2xp9-vwfh-vxw4 — fixed in Next 15.5.25 (its audit-allowlist entry
+  // is retired); the optimizer stays off because the app never renders next/image. Pinned by
+  // components/next-config-images.static.test.ts.
   images: {
     unoptimized: true,
-  },
-
-  experimental: {
-    // Prevent Next.js from bundling server-only packages into the client
-    serverComponentsExternalPackages: [],
   },
 
   async redirects() {

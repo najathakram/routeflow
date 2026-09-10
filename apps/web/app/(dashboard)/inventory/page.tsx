@@ -339,6 +339,12 @@ function QuickRestockModal({
           <h2 className="text-base font-semibold text-navy">Quick Restock</h2>
           <p className="mt-0.5 text-xs text-navy/70">
             For supplier invoices, use{" "}
+            {/* Left as a plain <a>: `no-html-link-for-pages` only became app-router-aware in
+                @next/eslint-plugin-next 15, so this pre-existing link is newly flagged by the
+                Next 15 upgrade. Switching it to <Link /> changes it to a client-side
+                navigation — a behavior change that belongs to its own diff, not this
+                upgrade. */}
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a href="/vendor-bills" className="text-brand-500 hover:underline">
               Bills &amp; Purchasing
             </a>

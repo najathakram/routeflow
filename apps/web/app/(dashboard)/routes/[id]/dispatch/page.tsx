@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import {
   ArrowLeft,
   Package2,
@@ -425,14 +426,16 @@ function OptionalStopCard({ stop, isLast }: { stop: RunPackingStop; isLast: bool
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function DispatchPage({ params }: { params: { id: string } }) {
+export default function DispatchPage() {
+  const params = useParams();
+  const id = params.id as string;
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
   const { toast } = useToast();
   const isOperator = user?.role === "OPERATOR";
 
-  const { data: run, isLoading: runLoading } = useRouteRun(params.id);
-  const { data: packingData, isLoading: packingLoading } = useRunPackingList(params.id);
+  const { data: run, isLoading: runLoading } = useRouteRun(id);
+  const { data: packingData, isLoading: packingLoading } = useRunPackingList(id);
   const { mutate: optimizeRoute, isPending: isOptimizing } = useOptimizeRoute();
   // Only needed for its depot/end coordinates — the "Open in Google Maps"
   // export points to the route's planned start/end, not just today's stops.
@@ -467,7 +470,7 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
   }, [route, packingData?.stops]);
 
   const handleOptimize = () => {
-    optimizeRoute(params.id, {
+    optimizeRoute(id, {
       onSuccess: (result) => {
         if (!result.usedFallback) {
           toast({
@@ -574,7 +577,7 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
           <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
             <div className="flex flex-1 flex-col gap-2">
               <Link
-                href={`/routes/${params.id}`}
+                href={`/routes/${id}`}
                 className="inline-flex w-fit items-center gap-1.5 text-xs font-medium text-navy/70 transition-colors hover:text-navy"
               >
                 <ArrowLeft className="h-3.5 w-3.5" />

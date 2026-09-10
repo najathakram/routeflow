@@ -1,12 +1,12 @@
 /**
  * @jest-environment node
  */
-// CI audit allowlist basis (security/audit-allowlist.json, GHSA-2xp9-vwfh-vxw4 — libheif/AVIF
-// RCE in Next's Image Optimization API). This app never renders `next/image` (see
-// components/no-next-image.test.ts), and `images.unoptimized: true` disables the
-// `/_next/image` optimizer route entirely, so the vulnerable code path is unreachable in
-// production regardless of the installed next version. Pinned here so the config can't drift
-// back to the default silently — the allowlist entry's "reason" depends on it.
+// Defence in depth for GHSA-2xp9-vwfh-vxw4 (libheif/AVIF RCE in Next's Image Optimization API).
+// Next 15.5.25 fixes the advisory, which retired its security/audit-allowlist.json entry. The pin
+// stays: this app never renders `next/image` (see components/no-next-image.test.ts), and
+// `images.unoptimized: true` disables the `/_next/image` optimizer route entirely, keeping that
+// code path unreachable regardless of the installed next version. Pinned here so the config can't
+// drift back to the default silently.
 import * as path from "path";
 import { execFileSync } from "child_process";
 import { pathToFileURL } from "url";
@@ -33,7 +33,7 @@ function loadNextConfigImages(): unknown {
   return JSON.parse(output);
 }
 
-describe("next.config.mjs images (GHSA-2xp9-vwfh-vxw4 allowlist basis)", () => {
+describe("next.config.mjs images (GHSA-2xp9-vwfh-vxw4 defence in depth)", () => {
   it("disables the /_next/image optimizer (images.unoptimized === true)", () => {
     const images = loadNextConfigImages();
     expect(images).toEqual({ unoptimized: true });

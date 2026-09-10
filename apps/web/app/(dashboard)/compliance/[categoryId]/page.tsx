@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { ArrowLeft, FileText, Layers, Loader2, Package, Receipt, ShieldCheck } from "lucide-react";
 import {
   Bar,
@@ -31,12 +32,14 @@ import { RegulatedReportPanel } from "@/components/RegulatedReportPanel";
 import { LockedPage } from "@/app/(dashboard)/_components/gates/PlanGates";
 import { CompliancePackPanel } from "./_components/CompliancePackPanel";
 
-export default function RegulatedSectionPage({ params }: { params: { categoryId: string } }) {
+export default function RegulatedSectionPage() {
+  const params = useParams();
+  const categoryId = params.categoryId as string;
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
-  const category = useTrackedCategory(params.categoryId);
-  const { data: subs = [] } = useTrackedSubcategories(params.categoryId);
+  const category = useTrackedCategory(categoryId);
+  const { data: subs = [] } = useTrackedSubcategories(categoryId);
 
   // Compliance-pack gate: ledger/filings/reports are gated on the tobacco_dealer
   // addon (bridged to REGULATED_ITEMS). Free structure (header, categories,
@@ -45,7 +48,7 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
   const { data: addonsData, isLoading: addonsLoading } = useTenantAddons();
   const packEnabled = addonsData?.addons?.includes(TOBACCO_ADDON) ?? false;
 
-  const { data: filings = [] } = useRegulatedFilings(params.categoryId, { enabled: packEnabled });
+  const { data: filings = [] } = useRegulatedFilings(categoryId, { enabled: packEnabled });
   const prepare = usePrepareFiling();
 
   React.useEffect(() => {
@@ -60,10 +63,7 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
   const year = now.getUTCFullYear();
   const currentMonth = now.getUTCMonth() + 1; // 1-12
   const from = `${year}-01-01`;
-  const ledger = useRegulatedLedger(
-    { category: params.categoryId, from },
-    { enabled: packEnabled },
-  );
+  const ledger = useRegulatedLedger({ category: categoryId, from }, { enabled: packEnabled });
 
   // Read the query's own array reference (stable across renders) so the memo
   // below doesn't recompute every render on a fresh `?? []`.
@@ -184,7 +184,7 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
           </>
         )}
         <Link
-          href={`/products?section=${params.categoryId}`}
+          href={`/products?section=${categoryId}`}
           title="View these products"
           className="block rounded-lg transition-shadow hover:ring-2 hover:ring-brand-200"
         >
@@ -279,7 +279,7 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
 
           {/* Reports — arbitrary date-range preview + CSV, separate from the filings archive below */}
           <RegulatedReportPanel
-            categoryId={params.categoryId}
+            categoryId={categoryId}
             categoryName={c.name}
             categoryDefaultTemplate={c.reportTemplate}
             reportColumnPrefs={c.reportColumnPrefs}

@@ -31,22 +31,6 @@ COPY apps/web/package.json apps/web/
 # modern npm; the old --force recipe predates that.)
 RUN npm ci
 
-# Pin React 18 at the image root for this web-only build.
-# apps/mobile pins React 19 (RN 0.83), which npm hoists to /app/node_modules,
-# leaving web's react@18 / react-dom@18 nested under apps/web. The hoisted
-# `next` then resolves the wrong React (19) and can't find react-dom at all,
-# failing the build with "Cannot find module 'react-dom/server.browser'".
-# Installing web's React 18 at the root (no --save: the shared lockfile/
-# manifests are untouched, and api/mobile builds are unaffected) makes
-# `next build` resolve a consistent React 18 runtime.
-# This is deliberately still `npm install` (npm ci cannot add packages):
-# the registry exposure is two exact-pinned, immutable versions, and --force
-# is required to override the React-19 peer ranges hoisted from the lock.
-# Decision (2026-09-03, wave E / imp-10b review): KEPT as-is — this hoisting
-# hack is tied to Next 14 requiring React 18; revisit only alongside a Next 15
-# upgrade (which supports React 19 natively), not standalone.
-RUN npm install --force --no-save react@18.3.1 react-dom@18.3.1
-
 # ── Copy full source ──
 COPY packages/ packages/
 COPY apps/web/ apps/web/

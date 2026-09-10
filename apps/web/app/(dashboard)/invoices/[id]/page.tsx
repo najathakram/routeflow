@@ -62,7 +62,7 @@ import {
   type InvoicePayment,
   type CheckStatus,
 } from "@/lib/api/invoices";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
@@ -1415,12 +1415,14 @@ function AdjustPricesPanel({ invoice, onClose }: { invoice: Invoice; onClose: ()
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function InvoiceDetailPage({ params }: { params: { id: string } }) {
+export default function InvoiceDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
-  const { data: invoice, isLoading, isError } = useInvoice(params.id);
+  const { data: invoice, isLoading, isError } = useInvoice(id);
   // Sourced from the invoice payload, NOT useInvoiceSettings(): /settings/invoice
   // is operator-only, and CUSTOMER-role users view this same document — the very
   // audience the tenant is hiding the struck-through original price from.
