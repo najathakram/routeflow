@@ -2993,6 +2993,64 @@ describe("InvoicesService", () => {
     });
   });
 
+  // The payment count that decides "block or revert" is only trustworthy while the Invoice row is
+  // held — recordPayment locks the same row before it writes. `lockRows` is what an in-tx caller
+  // (the at-door merge) passes to close that window.
+  describe("revertLinkedInvoicesForOrderEdit lockRows", () => {
+    const revertTx = () => ({
+      invoice: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ id: "inv-1", invoiceNumber: "INV-1", internalNotes: null }]),
+        update: jest.fn().mockResolvedValue({ id: "inv-1", status: "DRAFT" }),
+        count: jest.fn().mockResolvedValue(1),
+      },
+      invoicePayment: { count: jest.fn().mockResolvedValue(0) },
+      order: { findFirst: jest.fn().mockResolvedValue({ status: "PENDING" }) },
+      $executeRaw: jest.fn().mockResolvedValue(0),
+    });
+
+    it("P15: locks the Invoice row (NOWAIT) BEFORE counting its payments", async () => {
+      const tx = revertTx();
+
+      await service.revertLinkedInvoicesForOrderEdit("ord-1", tx, { lockRows: true });
+
+      const sql = tx.$executeRaw.mock.calls[0][0].join("?");
+      expect(sql).toContain('"Invoice"');
+      expect(sql).toContain("FOR NO KEY UPDATE NOWAIT");
+      expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.invoicePayment.count.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("P16: a row held by an in-flight payment (55P03) refuses as retryable CONCURRENT_UPDATE and reverts nothing", async () => {
+      const tx = revertTx();
+      const lockErr: any = new Error("Raw query failed");
+      lockErr.meta = { code: "55P03" };
+      tx.$executeRaw.mockRejectedValueOnce(lockErr);
+
+      const err = await service
+        .revertLinkedInvoicesForOrderEdit("ord-1", tx, { lockRows: true })
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toMatchObject({
+        code: "CONCURRENT_UPDATE",
+        reason: "INVOICE_BUSY",
+        retryable: true,
+      });
+      expect(tx.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("P17: without the flag no lock is taken — every existing caller is unchanged", async () => {
+      const tx = revertTx();
+
+      expect(await service.revertLinkedInvoicesForOrderEdit("ord-1", tx)).toEqual(["inv-1"]);
+
+      expect(tx.$executeRaw).not.toHaveBeenCalled();
+    });
+  });
+
   describe("unvoidInvoice restores invoicedQty", () => {
     it("re-claims each line's invoicedQty (capped at line qty) when unvoiding", async () => {
       prisma.invoice.findUnique.mockResolvedValue({

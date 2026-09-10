@@ -58,6 +58,7 @@ import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 import { startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
+import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 
 const TERM_DAYS: Record<string, number> = {
@@ -4295,8 +4296,18 @@ export class InvoicesService {
    * the reconcile provably picks it up. Anything outside the fence (split/partial
    * siblings, a delivered order) keeps the legacy revert, including its
    * throw-on-payments guard.
+   *
+   * `opts.lockRows` takes the SAME Invoice row lock `recordPayment` holds before counting that
+   * invoice's payments, so a payment cannot commit between the count and the DRAFT flip. It is
+   * opt-in because only a caller already inside a transaction can hold it usefully, and because
+   * the row is then held for the rest of that tx — the caller owns keeping Invoice last in the
+   * lock order (`lockRowsNoWait`). Contention surfaces as a retryable 409 (NOWAIT), not a wait.
    */
-  async revertLinkedInvoicesForOrderEdit(orderId: string, tx?: any): Promise<string[]> {
+  async revertLinkedInvoicesForOrderEdit(
+    orderId: string,
+    tx?: any,
+    opts?: { lockRows?: boolean },
+  ): Promise<string[]> {
     const db = tx ?? this.prisma.forTenant();
     const linked = await db.invoice.findMany({
       where: {
@@ -4328,6 +4339,9 @@ export class InvoicesService {
       // Exempt (see above): leave it SENT — the widened reconcile re-syncs it, and
       // its payments (if any) stay attached to a still-issued document.
       if (depositMirrorExempt && inv.depositPercent != null) continue;
+      // Under the caller's tx: hold the row before the count, so the payment-block below reads a
+      // state no concurrent recordPayment can change until this tx commits or rolls back.
+      if (opts?.lockRows) await lockRowsNoWait(db, "Invoice", [inv.id], "INVOICE_BUSY");
       const paymentCount = await db.invoicePayment.count({ where: { invoiceId: inv.id } });
       if (paymentCount > 0) {
         throw new BadRequestException(

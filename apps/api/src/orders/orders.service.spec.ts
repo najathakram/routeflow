@@ -12,13 +12,14 @@ import { ConfigService } from "@nestjs/config";
 // The merge paths now run inside a Postgres advisory lock (`common/db-locks.ts`,
 // R3). These specs exercise the merge FOLD's money math, not the lock, so run
 // the critical section inline — the real helper would open a `pg` pool.
+// `lockRowsNoWait` stays REAL: it is a plain `$executeRaw` on the caller's tx (no pool), and the
+// pins below assert the SQL it emits and the 409 it maps 55P03 to.
 jest.mock("../common/db-locks", () => ({
+  ...jest.requireActual("../common/db-locks"),
   withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
     acquired: true,
     value: await fn(),
   })),
-  LockTimeoutError: class LockTimeoutError extends Error {},
-  LockUnavailableError: class LockUnavailableError extends Error {},
 }));
 
 // Mock InvoicesService before it's imported — prevents Jest from traversing
@@ -40,6 +41,7 @@ jest.mock("../notifications/notifications.service", () => ({
 }));
 
 import { Reflector } from "@nestjs/core";
+import { computeLineSubtotal } from "@routeflow/pricing";
 import { OrdersService } from "./orders.service";
 import { OrdersController } from "./orders.controller";
 import { ChangeRequestsService } from "./change-requests.service";
@@ -2828,6 +2830,60 @@ describe("OrdersService", () => {
       expect((service as any).invoicesService.releaseWalletPaymentsInTx).not.toHaveBeenCalled();
     });
 
+    /** The tx deleteOrder runs its two guard calls in, with a spy-able `$executeRaw`. */
+    const captureDeleteTx = () => {
+      const seenTx: any = {
+        ...prisma.forTenant(),
+        $executeRaw: jest.fn().mockResolvedValue(0),
+        $queryRaw: jest.fn().mockResolvedValue([]),
+      };
+      prisma.tenantTransaction.mockImplementationOnce(async (fn: any) => fn(seenTx));
+      return seenTx;
+    };
+
+    // TOCTOU: the post-release read decides whether these invoices may be destroyed, so it runs
+    // under the rows' own lock — otherwise a void/restore committing in between re-opens a credit
+    // note the guard just cleared. The lock is taken LAST, after the releases already hold the
+    // InvoicePayment/CreditNote rows — voidInvoice's order. Taking Invoice FIRST would let a
+    // blocking lock acquired later close a 40P01 cycle.
+    it("P21: the post-release guard locks the invoice rows (NOWAIT) after the releases, before re-reading their credit notes", async () => {
+      prisma.order.findUnique.mockResolvedValue(deliveredOrder);
+      prisma.creditNote.findMany.mockResolvedValue([]);
+      const seenTx = captureDeleteTx();
+
+      await service.deleteOrder("ord-1", operatorPayload);
+
+      const sql = seenTx.$executeRaw.mock.calls[0][0].join("?");
+      expect(sql).toContain('"Invoice"');
+      expect(sql).toContain("FOR NO KEY UPDATE NOWAIT");
+      const lockAt = seenTx.$executeRaw.mock.invocationCallOrder[0];
+      expect(lockAt).toBeGreaterThan(
+        creditNotesService.releaseOrderCreditsInTx.mock.invocationCallOrder[0],
+      );
+      expect(lockAt).toBeGreaterThan(
+        (service as any).invoicesService.releaseWalletPaymentsInTx.mock.invocationCallOrder[0],
+      );
+      // …and still before the read it protects — the post-release credit re-read.
+      expect(lockAt).toBeLessThan(seenTx.creditNote.findMany.mock.invocationCallOrder.at(-1));
+    });
+
+    // The lock is OPT-IN, and this is the only call site that opts in. The pre-release call (like
+    // deleteInvoice and the auto-merge loser-draft call) holds no payment/credit rows yet, so
+    // locking Invoice there would make it the tx's FIRST lock — the 40P01 shape. Its residual
+    // read-then-delete window is accepted and filed.
+    it("P23: the pre-release guard call takes no row lock — deleteOrder issues exactly one", async () => {
+      prisma.order.findUnique.mockResolvedValue(deliveredOrder);
+      prisma.creditNote.findMany.mockResolvedValue([]);
+      const seenTx = captureDeleteTx();
+
+      await service.deleteOrder("ord-1", operatorPayload);
+
+      expect(seenTx.$executeRaw).toHaveBeenCalledTimes(1);
+      expect(seenTx.$executeRaw.mock.invocationCallOrder[0]).toBeGreaterThan(
+        seenTx.creditNote.findMany.mock.invocationCallOrder[0],
+      );
+    });
+
     it("P1: still deletes when the sourced credit note is fully spent", async () => {
       prisma.order.findUnique.mockResolvedValue(deliveredOrder);
       prisma.creditNote.findMany.mockResolvedValue([
@@ -2920,6 +2976,39 @@ describe("OrdersService", () => {
       expect(creditNotesService.releaseOrderCreditsInTx).toHaveBeenCalledTimes(1);
       expect(prisma.invoice.delete).not.toHaveBeenCalled();
       expect(prisma.order.delete).not.toHaveBeenCalled();
+    });
+
+    // The two refusals have different causes, so they read differently: the pre-release one names
+    // a balance the operator could have seen; the post-release one names what the delete WOULD do.
+    it("P22: the post-release refusal says the delete would hand the credit back; the pre-release one doesn't", async () => {
+      const sourcedNote = (amountUsed: number, status: string) => [
+        {
+          id: "cn-1",
+          creditNoteNumber: "CN-0001",
+          invoiceId: "d1",
+          amount: 50,
+          amountUsed,
+          status,
+          expiresAt: null,
+        },
+      ];
+      prisma.order.findUnique.mockResolvedValue(deliveredOrder);
+      prisma.creditNote.findMany
+        .mockResolvedValueOnce(sourcedNote(50, "APPLIED")) // first read: spent → passes
+        .mockResolvedValueOnce(sourcedNote(0, "ISSUED")); // revived by the release
+
+      const afterRelease: any = await service.deleteOrder("ord-1", operatorPayload).catch((e) => e);
+
+      expect(afterRelease.getResponse().message).toContain("would hand credit CN-0001");
+      expect(afterRelease.getResponse().message).not.toContain("still unspent");
+
+      prisma.creditNote.findMany.mockReset();
+      prisma.creditNote.findMany.mockResolvedValue(sourcedNote(0, "ISSUED"));
+
+      const preRelease: any = await service.deleteOrder("ord-1", operatorPayload).catch((e) => e);
+
+      expect(preRelease.getResponse().message).toContain("still unspent");
+      expect(preRelease.getResponse().message).not.toContain("would hand credit");
     });
 
     it("non-staff callers keep the old DRAFT/PENDING/CANCELLED allowlist", async () => {
@@ -6254,6 +6343,9 @@ describe("OrdersService", () => {
         }),
       );
       prisma.order.findUnique.mockResolvedValue(baseOrder([line]));
+      // B135: the priced inputs come from the LOCKED re-read of the held row (an empty re-read
+      // now refuses rather than falling back to this snapshot).
+      prisma.orderItem.findUnique.mockResolvedValue(line);
       prisma.orderItem.findMany.mockResolvedValue([
         {
           id: "li-1",
@@ -6599,6 +6691,7 @@ describe("OrdersService", () => {
         }),
       );
       prisma.order.findUnique.mockResolvedValue(baseOrder([line]));
+      prisma.orderItem.findUnique.mockResolvedValue(line); // B135 locked re-read
       prisma.orderItem.findMany.mockResolvedValue([
         {
           id: "li-1",
@@ -6658,6 +6751,7 @@ describe("OrdersService", () => {
         }),
       );
       prisma.order.findUnique.mockResolvedValue(baseOrder([line]));
+      prisma.orderItem.findUnique.mockResolvedValue(line); // B135 locked re-read
       prisma.orderItem.findMany.mockResolvedValue([
         {
           id: "li-1",
@@ -6756,6 +6850,11 @@ describe("OrdersService", () => {
             deliveredQty: 0,
           },
         ]);
+        // B135: the merge re-reads the HELD row in full for its money fields, and now fails
+        // closed when that read comes back empty. `findUnique` defaults to null, so the pins
+        // below would exercise the refusal instead of the merge — resolve the locked row (the
+        // full li-1 the order carries) so they run through the locked-row path by default.
+        prisma.orderItem.findUnique.mockResolvedValue(sharedLine);
       };
 
       /**
@@ -6789,6 +6888,17 @@ describe("OrdersService", () => {
         await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
 
         expect(invoicesService.revertLinkedInvoicesForOrderEdit.mock.calls[0]?.[1]).toBe(seenTx);
+      });
+
+      it("P18: the merge asks the un-send to hold each invoice row while it counts payments", async () => {
+        setUpSharedFixture();
+        captureMergeTx();
+
+        await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
+
+        expect(invoicesService.revertLinkedInvoicesForOrderEdit.mock.calls[0]?.[2]).toEqual({
+          lockRows: true,
+        });
       });
 
       it("REG-B134 (T2): the un-send runs after the order row lock, never before it", async () => {
@@ -6955,17 +7065,19 @@ describe("OrdersService", () => {
         );
       });
 
-      it("P11: a stop row locked by an in-flight completion (55P03) refuses with STOP_BUSY and writes nothing", async () => {
+      it("P11: a stop row locked by an in-flight completion (55P03) refuses as retryable STOP_BUSY and writes nothing", async () => {
         setUpSharedFixture();
         const seenTx = captureMergeTx();
         const lockErr: any = new Error("Raw query failed");
         lockErr.meta = { code: "55P03" };
         seenTx.$executeRaw.mockResolvedValueOnce(0).mockRejectedValueOnce(lockErr);
 
+        // A busy stop is transient, so it must NOT read as the terminal CHANGE_WINDOW_CLOSED —
+        // the resolver is told to retry.
         await expect(
           service.approveChangeRequestAtStop("cr-1", operatorPayload, null),
         ).rejects.toMatchObject({
-          response: { code: "CHANGE_WINDOW_CLOSED", reason: "STOP_BUSY" },
+          response: { code: "CONCURRENT_UPDATE", reason: "STOP_BUSY", retryable: true },
         });
 
         expect(invoicesService.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
@@ -6988,7 +7100,7 @@ describe("OrdersService", () => {
         await expect(
           service.approveChangeRequestAtStop("cr-1", operatorPayload, null),
         ).rejects.toMatchObject({
-          response: { code: "CHANGE_WINDOW_CLOSED", reason: "STOP_BUSY" },
+          response: { code: "CONCURRENT_UPDATE", reason: "STOP_BUSY", retryable: true },
         });
 
         expect(seenTx.changeRequest.updateMany).not.toHaveBeenCalled();
@@ -7003,6 +7115,96 @@ describe("OrdersService", () => {
         await expect(
           service.approveChangeRequestAtStop("cr-1", operatorPayload, null),
         ).rejects.toBe(boom);
+      });
+
+      // The shipping fee is the last money input the total took from the PRE-TX snapshot: a fee
+      // edited between that read and the lock was billed away — by the total AND by the immutable
+      // revision snapshot, which is the audit record of what the order was billed at.
+      it("P19: the total and the revision snapshot take shippingFee from the locked in-tx row, not the pre-tx snapshot", async () => {
+        setUpSharedFixture();
+        (service as any).systemConfig.get.mockResolvedValue("0"); // taxRate 0 — isolate the fee
+        const seenTx = captureMergeTx();
+        prisma.order.findUnique.mockImplementation(async (args: any) =>
+          args?.select?.routeRunStop
+            ? {
+                tenantId: "test-tenant",
+                status: "OUT_FOR_DELIVERY",
+                shippingFee: 7.5, // raised after the snapshot was taken
+                routeRun: { status: "IN_PROGRESS" },
+                routeRunStop: { status: "PENDING" },
+              }
+            : baseOrder([sharedLine], { shippingFee: 0 }),
+        );
+
+        await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
+
+        const written = seenTx.order.update.mock.calls.at(-1)[0].data;
+        expect(written.subtotal).toBe(36);
+        expect(written.total).toBe(43.5); // 36 + 0 tax + 0 category tax + 7.50 shipping
+        // D3: the same live value rides out of the tx into the revision, so the audit trail
+        // agrees with the total instead of recording the snapshot's 0.
+        const revision = prisma.orderRevision.create.mock.calls.at(-1)[0].data;
+        expect(revision.snapshot.shippingFee).toBe(7.5);
+        expect(revision.snapshot.total).toBe(43.5);
+      });
+
+      // The B135 twin of P8 for the CHANGE_QTY branch: the PRICE it bills must come from the
+      // locked row too, not from a snapshot a concurrent re-price has since overtaken.
+      it("P20: CHANGE_QTY bills the locked row's unitPrice, not the pre-tx snapshot's", async () => {
+        setUpSharedFixture(); // CHANGE_QTY li-1 → newQty 18
+        const seenTx = captureMergeTx();
+        const plainLine = {
+          id: "li-1",
+          orderId: "ord-1",
+          productId: "prod-1",
+          qty: 24,
+          boxes: null,
+          pieces: null,
+          unitsPerBox: null,
+          unitPrice: 24, // the stale snapshot price
+          subtotal: 576,
+          status: "PENDING",
+          deliveredQty: 0,
+        };
+        prisma.order.findUnique.mockResolvedValue(baseOrder([plainLine]));
+        prisma.orderItem.findUnique.mockResolvedValue({
+          ...plainLine,
+          unitPrice: 30, // re-priced under the lock, same qty
+          promoFreeUnits: null,
+        });
+
+        await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
+
+        const written = seenTx.orderItem.update.mock.calls.at(-1)[0].data;
+        expect(written.subtotal).toBe(
+          computeLineSubtotal({
+            unitPrice: 30,
+            qty: 18,
+            boxes: null,
+            pieces: null,
+            unitsPerBox: 0,
+            freeUnits: 0,
+          }),
+        );
+        expect(written.subtotal).not.toBe(24 * 18); // the snapshot price would have under-billed
+      });
+
+      // A row held under the Order lock cannot vanish inside the same tx, so an empty re-read
+      // means the lock did not hold. Falling back to the stale snapshot there would price the
+      // edit off exactly the data the lock exists to replace — refuse instead.
+      it("P24: a held row whose locked re-read comes back empty refuses as CONCURRENT_UPDATE and writes nothing", async () => {
+        setUpSharedFixture();
+        const seenTx = captureMergeTx();
+        prisma.orderItem.findUnique.mockResolvedValue(null);
+
+        await expect(
+          service.approveChangeRequestAtStop("cr-1", operatorPayload, null),
+        ).rejects.toMatchObject({
+          response: { code: "CONCURRENT_UPDATE", reason: "LINE_VANISHED", retryable: true },
+        });
+
+        expect(seenTx.orderItem.update).not.toHaveBeenCalled();
+        expect(seenTx.order.update).not.toHaveBeenCalled();
       });
 
       it("P8: ADD_ITEM increments from the LOCKED row's qty, not the pre-tx snapshot's", async () => {
