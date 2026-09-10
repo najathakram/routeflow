@@ -732,12 +732,13 @@ describe("ci-audit-critical.mjs contract — allowlist date validation", () => {
 describe("security/audit-allowlist.json (policy guard)", () => {
   const REAL_ALLOWLIST_PATH = path.resolve(__dirname, "../../../../security/audit-allowlist.json");
 
-  it("parses, carries exactly the two current next.js GHSA ids, and keeps expires within 60 days of ackedOn", () => {
+  it("parses as an entries array, and every entry keeps expires within 60 days of ackedOn", () => {
+    // Accepts ANY valid list, empty included (spec R7: "accept an empty list"). It must never pin
+    // the list's contents: the allowlist is the owner-approved expiring safety valve, and pinning it
+    // to [] would leave the per-entry shape/window loop below unreachable for the very next entry
+    // anyone adds. Which advisories are retired is audit-allowlist-retired.spec.ts's job.
     const parsed = JSON.parse(fs.readFileSync(REAL_ALLOWLIST_PATH, "utf8"));
     expect(Array.isArray(parsed.entries)).toBe(true);
-
-    const ids = parsed.entries.map((e: { id: string }) => e.id).sort();
-    expect(ids).toEqual(["GHSA-2xp9-vwfh-vxw4", "GHSA-p293-qw3h-jr36"]);
 
     for (const entry of parsed.entries) {
       expect(entry.expires).toMatch(/^\d{4}-\d{2}-\d{2}$/);

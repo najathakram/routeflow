@@ -207,6 +207,12 @@ export default function LoginPage() {
             className="rounded-lg border border-surface-border bg-surface-raised px-3 py-2 text-sm text-navy"
           >
             You&apos;re signed in to the buyer portal.{" "}
+            {/* Deliberate full-page navigation: crossing from the operator login shell into
+                the buyer portal must re-bootstrap the buyer auth context, so a soft
+                <Link /> nav is not equivalent. `no-html-link-for-pages` only became
+                app-router-aware in @next/eslint-plugin-next 15 (14.x matched `pages/` routes
+                only), which is why this line is newly flagged by the Next 15 upgrade. */}
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a href="/buyer/portal" className="text-[#0B6E6B] hover:underline font-medium">
               Go to buyer portal
             </a>

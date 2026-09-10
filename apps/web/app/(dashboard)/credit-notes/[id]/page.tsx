@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Ban,
@@ -192,12 +192,14 @@ function ApplyToInvoiceModal({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function CreditNoteDetailPage({ params }: { params: { id: string } }) {
+export default function CreditNoteDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
-  const { data: cn, isLoading, isError } = useCreditNote(params.id);
+  const { data: cn, isLoading, isError } = useCreditNote(id);
   const applyCreditNote = useApplyCreditNote();
   const voidCreditNote = useVoidCreditNote();
   const updateCreditNote = useUpdateCreditNote();

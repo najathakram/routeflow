@@ -11,7 +11,13 @@ const compat = new FlatCompat({
 
 /** @type {import("eslint").Linter.Config[]} */
 const config = [
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  // `next/core-web-vitals` only — the rule set apps/web has actually been linted
+  // with all along (Next 14's `next lint` ignored this flat config and read
+  // `.eslintrc.json`). Next 15's `next lint` discovers flat config first, so this
+  // file is now live; adding `next/typescript` here would newly surface ~360
+  // @typescript-eslint errors and is a separate piece of work, not part of the
+  // Next 15 upgrade.
+  ...compat.extends("next/core-web-vitals"),
   {
     rules: {
       // Enforce consistent import order

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, Trash2 } from "lucide-react";
 import {
   Badge,
@@ -94,7 +94,9 @@ const ACCRUAL_STATUS_OPTIONS = [
  * `sales_agents` addon exactly like the list page; the server's
  * `PlanFlagGuard` is the real enforcement, this is UX only.
  */
-export default function SalesAgentDetailPage({ params }: { params: { id: string } }) {
+export default function SalesAgentDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
   const { setTitle } = usePageTitle();
   const router = useRouter();
   const { user } = useAuth();
@@ -105,7 +107,7 @@ export default function SalesAgentDetailPage({ params }: { params: { id: string 
   const { data: addonsData, isLoading: addonsLoading } = useTenantAddons();
   const hasSalesAgents = addonsData?.addons?.includes(SALES_AGENTS_ADDON) ?? false;
 
-  const { data: agent, isLoading } = useSalesAgent(params.id, { enabled: hasSalesAgents });
+  const { data: agent, isLoading } = useSalesAgent(id, { enabled: hasSalesAgents });
 
   React.useEffect(() => {
     setTitle(agent?.name ?? "Sales Agent");

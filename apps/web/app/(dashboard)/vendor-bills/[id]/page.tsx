@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import {
   ArrowLeft,
   CreditCard,
@@ -702,11 +703,13 @@ function EditLineItems({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function VendorBillDetailPage({ params }: { params: { id: string } }) {
+export default function VendorBillDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
-  const { data: bill, isLoading, isError } = useVendorBill(params.id);
+  const { data: bill, isLoading, isError } = useVendorBill(id);
   const receiveBill = useReceiveVendorBill();
   const voidBill = useVoidVendorBill();
   const recordPayment = useRecordVendorBillPayment();

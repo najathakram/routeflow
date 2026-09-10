@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   GripVertical,
@@ -509,13 +509,15 @@ function DispatchModal({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function RouteTemplateDetailPage({ params }: { params: { id: string } }) {
+export default function RouteTemplateDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
-  const { data: route, isLoading, isError } = useRoute(params.id);
-  const { data: packingData } = useRoutePackingList(params.id);
+  const { data: route, isLoading, isError } = useRoute(id);
+  const { data: packingData } = useRoutePackingList(id);
   const { data: driversResult } = useDrivers({ status: "ACTIVE", limit: 100 });
   const drivers = driversResult?.data ?? [];
 
@@ -574,7 +576,7 @@ export default function RouteTemplateDetailPage({ params }: { params: { id: stri
       return;
     }
     updateRoute.mutate(
-      { id: params.id, name: trimmed },
+      { id: id, name: trimmed },
       {
         onSuccess: () => {
           setEditingName(false);
@@ -588,7 +590,7 @@ export default function RouteTemplateDetailPage({ params }: { params: { id: stri
 
   const handleDriverChange = (driverId: string) => {
     updateRoute.mutate(
-      { id: params.id, driverId: driverId || undefined },
+      { id: id, driverId: driverId || undefined },
       {
         onError: (err) =>
           toast({ title: "Save failed", description: err.message, variant: "error" }),
@@ -598,7 +600,7 @@ export default function RouteTemplateDetailPage({ params }: { params: { id: stri
 
   const handleToggleActive = () => {
     updateRoute.mutate(
-      { id: params.id, isActive: !route?.isActive },
+      { id: id, isActive: !route?.isActive },
       {
         onSuccess: () =>
           toast({
@@ -612,7 +614,7 @@ export default function RouteTemplateDetailPage({ params }: { params: { id: stri
   };
 
   const handleDelete = () => {
-    deleteRoute.mutate(params.id, {
+    deleteRoute.mutate(id, {
       onSuccess: () => {
         toast({ title: "Route deleted", variant: "success" });
         router.push("/routes");
@@ -623,7 +625,7 @@ export default function RouteTemplateDetailPage({ params }: { params: { id: stri
   };
 
   const handleOptimize = () => {
-    optimizeTemplate.mutate(params.id, {
+    optimizeTemplate.mutate(id, {
       onSuccess: (result) => {
         // Build stopId → new stopNumber lookup from the optimization result
         const newNumberByStopId = new Map(
@@ -669,7 +671,7 @@ export default function RouteTemplateDetailPage({ params }: { params: { id: stri
       return filtered.map((s, i) => ({ ...s, stopNumber: i + 1 }));
     });
     removeStop.mutate(
-      { routeId: params.id, stopId },
+      { routeId: id, stopId },
       {
         onError: (err) => {
           toast({ title: "Remove failed", description: err.message, variant: "error" });
@@ -694,7 +696,7 @@ export default function RouteTemplateDetailPage({ params }: { params: { id: stri
 
       reorderStops.mutate(
         {
-          routeId: params.id,
+          routeId: id,
           order: reordered.map((s) => ({ id: s.id, stopNumber: s.stopNumber })),
         },
         {
@@ -965,7 +967,7 @@ export default function RouteTemplateDetailPage({ params }: { params: { id: stri
                   </DndContext>
                 )}
 
-                <AddStopSearch routeId={params.id} existingCustomerIds={existingCustomerIds} />
+                <AddStopSearch routeId={id} existingCustomerIds={existingCustomerIds} />
               </div>
             </Tabs.Content>
 
@@ -1100,7 +1102,7 @@ export default function RouteTemplateDetailPage({ params }: { params: { id: stri
                     }
                     onClick={() => {
                       analyzeRoute.mutate(
-                        { routeId: params.id, startTime: analysisStartTime || undefined },
+                        { routeId: id, startTime: analysisStartTime || undefined },
                         { onSuccess: (result) => setAnalysisResult(result) },
                       );
                     }}
@@ -1258,11 +1260,7 @@ export default function RouteTemplateDetailPage({ params }: { params: { id: stri
       </div>
 
       {/* Dispatch modal */}
-      <DispatchModal
-        routeId={params.id}
-        open={dispatchOpen}
-        onClose={() => setDispatchOpen(false)}
-      />
+      <DispatchModal routeId={id} open={dispatchOpen} onClose={() => setDispatchOpen(false)} />
     </div>
   );
 }

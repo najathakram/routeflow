@@ -160,6 +160,11 @@ export default function BuyerInvitePage() {
       <div className="text-center">
         <AlertCircle className="mx-auto mb-4 h-12 w-12 text-danger" />
         <p className="text-sm text-navy/70 mb-6">{loadError}</p>
+        {/* Deliberate full-page navigation out of the invite flow into the buyer portal —
+            it re-bootstraps the buyer auth context, so a soft <Link /> nav is not
+            equivalent. `no-html-link-for-pages` only became app-router-aware in
+            @next/eslint-plugin-next 15, which is why this line is newly flagged. */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
         <a href="/buyer/portal" className="text-[#0B6E6B] hover:underline text-sm">
           Go to Buyer Portal
         </a>

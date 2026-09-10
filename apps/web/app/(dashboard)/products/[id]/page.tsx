@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Package,
@@ -307,18 +307,20 @@ function CostHistoryCard({ productId }: { productId: string }) {
   );
 }
 
-export default function ProductDetailPage({ params }: { params: { id: string } }) {
+export default function ProductDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
-  const { data: product, isLoading } = useProduct(params.id);
+  const { data: product, isLoading } = useProduct(id);
   const { data: allProductsResult } = useProducts({ limit: 0 });
   const { data: tierLabels } = useTierLabels();
   const updateProduct = useUpdateProduct();
   const createProduct = useCreateProduct();
   const deleteProduct = useDeleteProduct();
-  const uploadImages = useUploadProductImages(params.id);
-  const deleteImage = useDeleteProductImage(params.id);
+  const uploadImages = useUploadProductImages(id);
+  const deleteImage = useDeleteProductImage(id);
 
   const [isEditing, setIsEditing] = React.useState(false);
   const [editDraft, setEditDraft] = React.useState<Record<string, unknown>>({});
@@ -431,9 +433,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   ).sort() as string[];
 
   // Standalone products eligible as parents in the "Variant of" edit dropdown
-  const variantOfCandidates = allProducts.filter(
-    (p: any) => !p.parentProductId && p.id !== params.id,
-  );
+  const variantOfCandidates = allProducts.filter((p: any) => !p.parentProductId && p.id !== id);
 
   // Reset active image index if images change
   React.useEffect(() => {
@@ -530,7 +530,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
     };
     updateProduct.mutate(
       {
-        id: params.id,
+        id: id,
         name: composedName,
         unit: draft.unit || undefined,
         sku: draft.sku?.trim() || null,
@@ -590,7 +590,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   // ── Delete (mirrors the mobile app's confirm → toast → navigate-back flow) ─
   const handleDeleteProduct = async () => {
     try {
-      await deleteProduct.mutateAsync(params.id);
+      await deleteProduct.mutateAsync(id);
       toast({ title: "Product deleted", variant: "success" });
       router.push("/products");
     } catch (err: any) {
@@ -669,7 +669,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
     const [moved] = keys.splice(fromIdx, 1);
     keys.splice(toIdx, 0, moved);
     try {
-      await updateProduct.mutateAsync({ id: params.id, imageKeys: keys });
+      await updateProduct.mutateAsync({ id: id, imageKeys: keys });
       setActiveImageIdx(toIdx);
     } catch {
       toast({ title: "Reorder failed", variant: "error" });
@@ -823,7 +823,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
       // If the scanned product is itself a variant, resolve to its parent
       const parentId: string = found.parentProductId || found.id;
       // Don't allow linking to self
-      if (parentId === params.id) {
+      if (parentId === id) {
         toast({ title: "Cannot link a product to itself", variant: "error" });
         return;
       }
@@ -854,7 +854,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
     const doLink = () =>
       updateProduct.mutate(
         {
-          id: params.id,
+          id: id,
           parentProductId: makeVariantParentId,
           variantName: makeVariantName.trim(),
           name: newName,
@@ -901,7 +901,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const linkCandidates = allProducts.filter(
     (p: any) =>
       !p.parentProductId && // standalone only
-      p.id !== params.id && // not self
+      p.id !== id && // not self
       !existingVariantIds.has(p.id), // not already a variant of this product
   );
   const filteredLinkCandidates = linkExistingSearch
@@ -968,7 +968,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
     )
       return;
     updateProduct.mutate(
-      { id: params.id, parentProductId: null, variantName: null },
+      { id: id, parentProductId: null, variantName: null },
       {
         onSuccess: () => toast({ title: "Product unlinked — now standalone", variant: "success" }),
         onError: () => toast({ title: "Failed to unlink", variant: "error" }),
@@ -1536,7 +1536,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                         size="sm"
                         variant="secondary"
                         onClick={() =>
-                          updateProduct.mutate({ id: params.id, isActive: !product.isActive })
+                          updateProduct.mutate({ id: id, isActive: !product.isActive })
                         }
                         loading={updateProduct.isPending}
                       >
@@ -1548,7 +1548,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                           variant="secondary"
                           onClick={() =>
                             updateProduct.mutate({
-                              id: params.id,
+                              id: id,
                               isTobacco: !(product as any).isTobacco,
                             } as any)
                           }
@@ -1654,7 +1654,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                         disabled={updateProduct.isPending}
                         onToggle={() =>
                           updateProduct.mutate(
-                            { id: params.id, isFeatured: !(product as any).isFeatured } as any,
+                            { id: id, isFeatured: !(product as any).isFeatured } as any,
                             {
                               onSuccess: () =>
                                 toast({ title: "Merchandising updated", variant: "success" }),
@@ -1669,14 +1669,11 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                         active={!!(product as any).isNew}
                         disabled={updateProduct.isPending}
                         onToggle={() =>
-                          updateProduct.mutate(
-                            { id: params.id, isNew: !(product as any).isNew } as any,
-                            {
-                              onSuccess: () =>
-                                toast({ title: "Merchandising updated", variant: "success" }),
-                              onError: () => toast({ title: "Failed to update", variant: "error" }),
-                            },
-                          )
+                          updateProduct.mutate({ id: id, isNew: !(product as any).isNew } as any, {
+                            onSuccess: () =>
+                              toast({ title: "Merchandising updated", variant: "success" }),
+                            onError: () => toast({ title: "Failed to update", variant: "error" }),
+                          })
                         }
                       />
                       <MerchFlagToggle
@@ -1686,7 +1683,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                         disabled={updateProduct.isPending}
                         onToggle={() =>
                           updateProduct.mutate(
-                            { id: params.id, isDeal: !(product as any).isDeal } as any,
+                            { id: id, isDeal: !(product as any).isDeal } as any,
                             {
                               onSuccess: () =>
                                 toast({ title: "Merchandising updated", variant: "success" }),
@@ -2726,7 +2723,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
               >
                 <option value="">— Select a product —</option>
                 {allProducts
-                  .filter((p: any) => !p.parentProductId && p.id !== params.id)
+                  .filter((p: any) => !p.parentProductId && p.id !== id)
                   .map((p: any) => (
                     <option key={p.id} value={p.id}>
                       {p.name}

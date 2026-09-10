@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Ban,
@@ -68,12 +68,14 @@ function VoidConfirmModal({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function EstimateDetailPage({ params }: { params: { id: string } }) {
+export default function EstimateDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
-  const { data: estimate, isLoading, isError } = useEstimate(params.id);
+  const { data: estimate, isLoading, isError } = useEstimate(id);
   const sendEstimate = useSendEstimate();
   const acceptEstimate = useAcceptEstimate();
   const declineEstimate = useDeclineEstimate();

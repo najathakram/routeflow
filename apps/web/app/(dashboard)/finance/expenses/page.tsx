@@ -5,13 +5,14 @@ import { redirect } from "next/navigation";
 // home now — this page is kept as a redirect so bookmarks, the command
 // palette, and deep links to /finance/expenses keep working, tab included.
 // Expense creation lives at /finance/expenses/new and is untouched by this stub.
-export default function LegacyExpensesHubRedirect({
+export default async function LegacyExpensesHubRedirect({
   searchParams,
 }: {
-  searchParams: { [key: string]: string | string[] | undefined };
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
+  const sp = await searchParams;
   const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(searchParams)) {
+  for (const [key, value] of Object.entries(sp)) {
     if (value === undefined) continue;
     for (const v of Array.isArray(value) ? value : [value]) {
       query.append(key, v);

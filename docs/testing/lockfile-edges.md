@@ -149,17 +149,20 @@ That is the overrides doing exactly their job — deliberately holding the jest 
 mechanism as the fatal workspace case, one position removed; a sharp rise in this count is worth a
 look.
 
-### Unsatisfied peer ranges (4, informational)
+### Unsatisfied peer ranges (0, informational)
 
-Peer mismatches are what npm itself only warns about, so they never gate. Two are worth knowing:
+Peer mismatches are what npm itself only warns about, so they never gate. The validator has reported
+**0** since the Next 15.5 upgrade (`chore/next-15`), which resolved the two that used to be worth
+knowing:
 
-- **`react@19.2.5` against `next`'s `^18.2.0` and `react-dom`'s `^18.3.1`.** This is expected and
-  load-bearing. The lock hoists React 19; `apps/web/Dockerfile` swaps it at build time with
-  `npm install --force --no-save react@18.3.1 react-dom@18.3.1` (kept deliberately in #488 —
-  `npm ci` cannot add packages, and `--force` is required to override the React-19 peer ranges).
-  **If these two lines ever vanish, check whether that swap is still doing what it should.**
-- **`eslint@9.39.4` against `eslint-config-next`'s `^7 || ^8`.** Flat-config ESLint 9 against a
-  Next 14 config that has not published a 9-compatible peer range. Lint passes.
+- **React.** `apps/web` pinned `react`/`react-dom` `^18` while the rest of the repo was on 19, so the
+  lock hoisted React 19 against `next@14`'s `^18.2.0` peer, and `apps/web/Dockerfile` swapped it back
+  at build time with `npm install --force --no-save react@18.3.1 react-dom@18.3.1`. The upgrade moved
+  `apps/web` to `^19.2.0` and `next@15.5.25`, whose peer range accepts `^19`, so the root pair is now a
+  consistent `react`/`react-dom` 19.x and **that Dockerfile swap is gone on purpose — do not restore
+  it**. `apps/mobile` still pins React `19.2.0` exactly, so it keeps its own nested copy.
+- **ESLint.** `eslint@9` against `eslint-config-next@14`'s `^7 || ^8` peer. `eslint-config-next@15.5.25`
+  accepts `^9`.
 
 ## When the check fails
 

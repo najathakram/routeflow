@@ -27,36 +27,6 @@ const customJestConfig = {
   testTimeout: 30_000,
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/$1",
-    // Force a SINGLE `react` instance for the whole test run. apps/web's OWN
-    // package.json still pins "react"/"react-dom" to "^18" (a stale range — its
-    // @types/react is ~19.2.2 and every other workspace/hoisted consumer is on
-    // React 19), so npm installs a nested apps/web/node_modules/react@18.3.1
-    // ALONGSIDE root's hoisted react@19.2.5 (there is only ONE react-dom in the
-    // tree, root's 18.3.1 — apps/web has no nested copy, so it already resolves
-    // there consistently and needs no mapping). @routeflow/ui's Modal/Toast
-    // (Radix Dialog/Toast, resolved from root or packages/ui's nested
-    // node_modules) pick up the HOISTED react@19 while apps/web's own component
-    // files pick up the NESTED react@18 — two different `react` module instances
-    // paired with the ONE react-dom@18 in one process, which crashes any
-    // Radix-based render with "Cannot read properties of undefined (reading
-    // 'ReactCurrentDispatcher')" (confirmed via a Modal render smoke test).
-    // Pinning `react` to apps/web's local copy (which matches react-dom's 18.3.1)
-    // for every consumer fixes the pairing. Test-infra-only (no package.json/
-    // lockfile change); the underlying "^18" vs "~19.2.2" range drift in
-    // apps/web/package.json is a real dependency bug — flagged separately, not
-    // fixed here (package.json/lockfile is pD1's). react-dom itself has NO nested
-    // copy under apps/web/node_modules (only root's hoisted 18.3.1 exists, two
-    // levels up) — it's pinned here too, to that same root copy, alongside the
-    // jsx-runtime entries below, so every require of react/react-dom in a test
-    // process resolves to the exact SAME module instances apps/web's own
-    // component files use, not just version-compatible ones; two different
-    // instances of the same version still fail Radix's/React's internal identity
-    // checks (e.g. dispatcher context).
-    "^react$": "<rootDir>/node_modules/react",
-    "^react-dom$": "<rootDir>/../../node_modules/react-dom",
-    "^react-dom/(.*)$": "<rootDir>/../../node_modules/react-dom/$1",
-    "^react/jsx-runtime$": "<rootDir>/node_modules/react/jsx-runtime",
-    "^react/jsx-dev-runtime$": "<rootDir>/node_modules/react/jsx-dev-runtime",
   },
   // Deliberately NOT `<rootDir>/**/*.test.{ts,tsx}` (the brief's literal suggestion).
   // jest-config's replacePathSepForGlob() converts `\` -> `/` in a rootDir-substituted

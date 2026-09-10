@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import * as Tabs from "@radix-ui/react-tabs";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -1899,7 +1899,7 @@ type CustomerStatus = (typeof STATUS_CYCLE)[number];
  *  single enum value (a comma-list 400s) — so it's filtered client-side. */
 const OUTSTANDING_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
 
-function CustomerDetailPageInner({ params }: { params: { id: string } }) {
+function CustomerDetailPageInner({ id }: { id: string }) {
   const { setTitle } = usePageTitle();
   const router = useRouter();
   const { user } = useAuth();
@@ -1911,14 +1911,14 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
   // /routes 403s without a dispatch addon, so hide the entry point and keep the
   // modal's query off (this page is not behind the shell's RouteGuard).
   const { enabled: routesAccess } = useRoutesAccess();
-  const currentAgent = useCustomerCurrentAgent(params.id, { enabled: hasSalesAgents });
+  const currentAgent = useCustomerCurrentAgent(id, { enabled: hasSalesAgents });
   const [agentModalOpen, setAgentModalOpen] = React.useState(false);
   const closeAssignment = useCloseAssignment();
 
   const handleEndAttribution = () => {
     if (!confirm("Remove this customer's sales agent attribution?")) return;
     closeAssignment.mutate(
-      { customerId: params.id },
+      { customerId: id },
       {
         onSuccess: (data) => {
           toast({
@@ -1933,11 +1933,11 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
     );
   };
 
-  const { data: customer, isLoading } = useCustomer(params.id);
+  const { data: customer, isLoading } = useCustomer(id);
   const { data: tierLabels } = useTierLabels();
-  const { data: ordersResult, isError: ordersError } = useCustomerOrders<ApiOrder>(params.id);
-  const { data: customerRoutes } = useCustomerRoutes(params.id);
-  const { data: orderTemplates } = useOrderTemplates(params.id);
+  const { data: ordersResult, isError: ordersError } = useCustomerOrders<ApiOrder>(id);
+  const { data: customerRoutes } = useCustomerRoutes(id);
+  const { data: orderTemplates } = useOrderTemplates(id);
   const updateStatus = useUpdateCustomerStatus();
   const updateCustomer = useUpdateCustomer();
   const addAddress = useAddCustomerAddress();
@@ -1947,8 +1947,8 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
   const deleteTemplate = useDeleteOrderTemplate();
   const generateOrder = useGenerateTemplateOrder();
 
-  const { data: statement } = useCustomerStatement(params.id);
-  const { data: advancePayments } = useCustomerAdvancePayments(params.id);
+  const { data: statement } = useCustomerStatement(id);
+  const { data: advancePayments } = useCustomerAdvancePayments(id);
   const createAdvance = useCreateAdvancePayment();
   const queryClient = useQueryClient();
 
@@ -1956,7 +1956,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
     "all",
   );
   const { data: invoicesData, isLoading: invoicesLoading } = useInvoices({
-    customerId: params.id,
+    customerId: id,
     status: invoiceFilter === "paid" ? "PAID" : invoiceFilter === "void" ? "VOID" : undefined,
     limit: 50,
   });
@@ -1968,12 +1968,12 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
   }, [invoicesData, invoiceFilter]);
 
   // New hooks
-  const { data: contactPersons, isLoading: contactsLoading } = useContactPersons(params.id);
+  const { data: contactPersons, isLoading: contactsLoading } = useContactPersons(id);
   const deleteContact = useDeleteContactPerson();
   const { data: allTags } = useCustomerTags();
   const assignTag = useAssignCustomerTag();
   const removeTag = useRemoveCustomerTag();
-  const { data: chartData } = useCustomerIncomeChart(params.id);
+  const { data: chartData } = useCustomerIncomeChart(id);
 
   // Delete customer — reversible soft-delete with 8-second Undo (ux-standards).
   const softDeleteCustomer = useSoftDeleteCustomer();
@@ -1982,7 +1982,6 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
   const [isDeleteOpen, setIsDeleteOpen] = React.useState(false);
 
   const handleDeleteCustomer = () => {
-    const id = params.id;
     const name = customer?.businessName ?? "Customer";
     // Capture the pre-delete status so Undo restores exactly (not force-ACTIVE).
     const priorStatus = currentStatus;
@@ -1997,7 +1996,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
   };
 
   // Buyer Portal management
-  const { data: portalStatus, isLoading: portalLoading } = usePortalStatus(params.id);
+  const { data: portalStatus, isLoading: portalLoading } = usePortalStatus(id);
   // The shared PortalStatus type (apps/web/lib/api/customers.ts) doesn't declare
   // buyerName/buyerEmail — out of this package's file scope to touch — but the API's
   // getPortalStatus now returns them (flat, not nested under buyerAccount) while a
@@ -2017,9 +2016,9 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
   const [declineConfirmOpen, setDeclineConfirmOpen] = React.useState(false);
 
   // Tax-exempt documents
-  const { data: taxDocs = [] } = useCustomerTaxDocuments(params.id);
-  const uploadTaxDocs = useUploadCustomerTaxDocuments(params.id);
-  const deleteTaxDoc = useDeleteCustomerTaxDocument(params.id);
+  const { data: taxDocs = [] } = useCustomerTaxDocuments(id);
+  const uploadTaxDocs = useUploadCustomerTaxDocuments(id);
+  const deleteTaxDoc = useDeleteCustomerTaxDocument(id);
   // Routed through the same DocumentViewer used by the Documents tab (not a plain <img>
   // lightbox) so a PDF tax-exempt document is viewable, not just images.
   const [taxDocLightbox, setTaxDocLightbox] = React.useState<CustomerDocument | null>(null);
@@ -2081,7 +2080,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
       setWindowStart("");
       setWindowEnd("");
       updateCustomer.mutate({
-        id: params.id,
+        id: id,
         deliveryWindowStart: "",
         deliveryWindowEnd: "",
       });
@@ -2143,7 +2142,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
 
   const handleTimeWindowBlur = () => {
     updateCustomer.mutate({
-      id: params.id,
+      id: id,
       deliveryWindowStart: windowStart || undefined,
       deliveryWindowEnd: windowEnd || undefined,
     });
@@ -2172,14 +2171,14 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
     if (s === "INACTIVE" || s === "SUSPENDED") {
       setPendingStatus(s);
     } else {
-      updateStatus.mutate({ id: params.id, status: s });
+      updateStatus.mutate({ id: id, status: s });
     }
   };
 
   const confirmStatusChange = () => {
     if (!pendingStatus) return;
     updateStatus.mutate(
-      { id: params.id, status: pendingStatus },
+      { id: id, status: pendingStatus },
       { onSuccess: () => setPendingStatus(null) },
     );
   };
@@ -2187,7 +2186,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
   const handleSaveAddress = (values: AddressFormValues) => {
     if (editingAddress) {
       updateAddress.mutate(
-        { id: params.id, addrId: editingAddress.id, ...values },
+        { id: id, addrId: editingAddress.id, ...values },
         {
           onSuccess: () => {
             toast({ title: "Address updated", variant: "success" });
@@ -2207,7 +2206,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
       );
     } else {
       addAddress.mutate(
-        { id: params.id, ...values },
+        { id: id, ...values },
         {
           onSuccess: () => {
             toast({ title: "Address added", variant: "success" });
@@ -2226,7 +2225,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
 
   const handleSetPrimaryAddress = (addrId: string) => {
     updateAddress.mutate(
-      { id: params.id, addrId, isDefault: true },
+      { id: id, addrId, isDefault: true },
       {
         onError: (err: any) =>
           toast({
@@ -2241,7 +2240,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
   const handleDeleteAddress = (addrId: string) => {
     setDeleteAddressConfirmId(null);
     deleteAddress.mutate(
-      { id: params.id, addrId },
+      { id: id, addrId },
       {
         onSuccess: () => toast({ title: "Address deleted", variant: "success" }),
         // The server 409s (ConflictException) with a specific reason when a route
@@ -2337,7 +2336,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
             variant="secondary"
             size="sm"
             leftIcon={<FileText className="h-3.5 w-3.5" />}
-            href={`/invoices/new?customerId=${params.id}`}
+            href={`/invoices/new?customerId=${id}`}
           >
             New Invoice
           </Button>
@@ -2530,7 +2529,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
                           value={customer.pricingTier ?? 1}
                           onChange={(e) => {
                             updateCustomer.mutate({
-                              id: params.id,
+                              id: id,
                               pricingTier: Number(e.target.value),
                             });
                           }}
@@ -2606,7 +2605,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
                           className="rounded-full p-0.5 opacity-0 transition-opacity hover:bg-black/10 group-hover:opacity-100"
                           onClick={() =>
                             removeTag.mutate({
-                              customerId: params.id,
+                              customerId: id,
                               tagId: tag.id,
                             })
                           }
@@ -2638,7 +2637,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
                                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-surface-raised"
                                 onClick={() => {
                                   assignTag.mutate({
-                                    customerId: params.id,
+                                    customerId: id,
                                     tagId: tag.id,
                                   });
                                   setTagDropdownOpen(false);
@@ -3124,7 +3123,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
                               setPortalMsg(null);
                               sendInvite.mutate(
                                 {
-                                  id: params.id,
+                                  id: id,
                                   method: "EMAIL",
                                   overrideEmail: portalInviteEmail || undefined,
                                 },
@@ -3147,7 +3146,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
                             loading={resendInvite.isPending}
                             onClick={() => {
                               setPortalMsg(null);
-                              resendInvite.mutate(params.id, {
+                              resendInvite.mutate(id, {
                                 onSuccess: (d: { message?: string }) =>
                                   setPortalMsg(d?.message ?? "Invite resent!"),
                                 onError: () => setPortalMsg(null),
@@ -3165,7 +3164,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
                               loading={approvePortal.isPending}
                               onClick={() => {
                                 setPortalMsg(null);
-                                approvePortal.mutate(params.id, {
+                                approvePortal.mutate(id, {
                                   onSuccess: () => setPortalMsg("Buyer connection approved!"),
                                   onError: () => setPortalMsg(null),
                                 });
@@ -3195,7 +3194,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
                             loading={disconnectPortal.isPending}
                             onClick={() => {
                               setPortalMsg(null);
-                              disconnectPortal.mutate(params.id, {
+                              disconnectPortal.mutate(id, {
                                 onSuccess: () => setPortalMsg("Portal disconnected."),
                                 onError: () => setPortalMsg(null),
                               });
@@ -3610,7 +3609,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
                 ))}
               </div>
               <Link
-                href={`/invoices/new?customerId=${params.id}`}
+                href={`/invoices/new?customerId=${id}`}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand/90"
               >
                 <Plus className="h-3.5 w-3.5" />
@@ -3626,7 +3625,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
                 <FileText className="mx-auto mb-3 h-8 w-8 text-navy/20" />
                 <p className="text-sm font-medium text-navy/70">No invoices found</p>
                 <Link
-                  href={`/invoices/new?customerId=${params.id}`}
+                  href={`/invoices/new?customerId=${id}`}
                   className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand/90"
                 >
                   <Plus className="h-3.5 w-3.5" />
@@ -3983,14 +3982,14 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
 
           {isRecordPaymentOpen && (
             <CustomerRecordPaymentModal
-              customerId={params.id}
+              customerId={id}
               customerName={customer.businessName}
               onClose={() => setIsRecordPaymentOpen(false)}
               // useRecordPaymentStandalone only invalidates ["invoices"]; the Open
               // Balance headline and the advance list on this tab live under
               // ["customers", id, …] and would otherwise stay stale.
               onSuccess={() => {
-                void queryClient.invalidateQueries({ queryKey: ["customers", params.id] });
+                void queryClient.invalidateQueries({ queryKey: ["customers", id] });
               }}
             />
           )}
@@ -4016,7 +4015,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
                     if (!amt || amt <= 0) return;
                     createAdvance.mutate(
                       {
-                        customerId: params.id,
+                        customerId: id,
                         method: advanceForm.method,
                         amount: amt,
                         reference: advanceForm.reference || undefined,
@@ -4107,16 +4106,16 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
         </Tabs.Content>
 
         {/* ── Special Prices tab ─────────────────────────────────── */}
-        <SpecialPricesTab customerId={params.id} />
+        <SpecialPricesTab customerId={id} />
 
         {/* ── Comments tab ───────────────────────────────────────── */}
-        <CommentsTab customerId={params.id} />
+        <CommentsTab customerId={id} />
 
         {/* ── Documents tab ──────────────────────────────────────── */}
-        <DocumentsTab customerId={params.id} />
+        <DocumentsTab customerId={id} />
 
         {/* ── Licenses & Authorizations tab (W6b) ────────────────── */}
-        <AuthorizationsTab customerId={params.id} />
+        <AuthorizationsTab customerId={id} />
       </Tabs.Root>
 
       {/* Modals */}
@@ -4140,7 +4139,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
       <AssignRouteModal
         isOpen={isAssignRouteOpen}
         onClose={() => setIsAssignRouteOpen(false)}
-        customerId={params.id}
+        customerId={id}
         addresses={addresses.map((a: any) => ({
           id: a.id,
           label: a.label ?? "Address",
@@ -4155,13 +4154,13 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
           setIsContactModalOpen(false);
           setEditingContact(null);
         }}
-        customerId={params.id}
+        customerId={id}
         editingContact={editingContact}
       />
       <AssignAgentModal
         isOpen={agentModalOpen}
         onClose={() => setAgentModalOpen(false)}
-        customerId={params.id}
+        customerId={id}
         hasSalesAgents={hasSalesAgents}
       />
 
@@ -4188,7 +4187,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
           setIsStandingOrderOpen(false);
           setEditingTemplate(null);
         }}
-        customerId={params.id}
+        customerId={id}
         template={editingTemplate}
       />
 
@@ -4198,7 +4197,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
         onConfirm={() => {
           if (!deletingTemplateId) return;
           deleteTemplate.mutate(
-            { id: deletingTemplateId, customerId: params.id },
+            { id: deletingTemplateId, customerId: id },
             { onSuccess: () => setDeletingTemplateId(null) },
           );
         }}
@@ -4215,7 +4214,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
         onConfirm={() => {
           if (!deletingContactId) return;
           deleteContact.mutate(
-            { customerId: params.id, contactId: deletingContactId },
+            { customerId: id, contactId: deletingContactId },
             { onSuccess: () => setDeletingContactId(null) },
           );
         }}
@@ -4230,7 +4229,7 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
         open={declineConfirmOpen}
         onClose={() => setDeclineConfirmOpen(false)}
         onConfirm={() => {
-          declinePortal.mutate(params.id, {
+          declinePortal.mutate(id, {
             onSuccess: () => {
               setDeclineConfirmOpen(false);
               setPortalMsg("Request declined.");
@@ -4283,7 +4282,9 @@ function CustomerDetailPageInner({ params }: { params: { id: string } }) {
 /** `useSearchParams` (the `?tab=addresses` deep link the Edit Customer modal's
  *  honest "Addresses tab" link uses) needs a Suspense boundary above it — same
  *  wrapper `suppliers/[id]/page.tsx` uses for its `?paymentGroup=` deep link. */
-export default function CustomerDetailPage({ params }: { params: { id: string } }) {
+export default function CustomerDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
   return (
     <React.Suspense
       fallback={
@@ -4292,7 +4293,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
         </div>
       }
     >
-      <CustomerDetailPageInner params={params} />
+      <CustomerDetailPageInner id={id} />
     </React.Suspense>
   );
 }

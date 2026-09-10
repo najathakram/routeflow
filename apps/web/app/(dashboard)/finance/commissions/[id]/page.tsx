@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { Button, Badge, Card, StatCard, useToast } from "@routeflow/ui/web";
@@ -40,7 +40,9 @@ const LINE_KIND_BADGE: Record<
  * (notably the inline `regenerate` mutation, which closes over `statement`)
  * never need a non-null assertion.
  */
-export default function CommissionStatementDetailPage({ params }: { params: { id: string } }) {
+export default function CommissionStatementDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
   const { setTitle } = usePageTitle();
   const { data: addonsData, isLoading: addonsLoading } = useTenantAddons();
   const hasSalesAgents = addonsData?.addons?.includes(SALES_AGENTS_ADDON) ?? false;
@@ -49,7 +51,7 @@ export default function CommissionStatementDetailPage({ params }: { params: { id
     data: statement,
     isLoading,
     isError,
-  } = useCommissionStatement(params.id, { enabled: hasSalesAgents });
+  } = useCommissionStatement(id, { enabled: hasSalesAgents });
 
   React.useEffect(() => {
     if (statement) setTitle(statement.statementNumber);

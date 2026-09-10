@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Plus, Trash2, Search, Loader2 } from "lucide-react";
 import { Button, Card, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -328,12 +328,14 @@ function createEmptyItem(): LineItemState {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function EditInvoicePage({ params }: { params: { id: string } }) {
+export default function EditInvoicePage() {
+  const params = useParams();
+  const id = params.id as string;
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
-  const { data: invoice, isLoading, isError } = useInvoice(params.id);
+  const { data: invoice, isLoading, isError } = useInvoice(id);
   const updateInvoice = useUpdateInvoice();
 
   // Customer tier pricing (mirrors invoices/new): every product-selection path
@@ -498,7 +500,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
     if (!validate()) return;
 
     const dto = {
-      id: params.id,
+      id,
       issueDate: issueDate || undefined,
       dueDate: dueDate || undefined,
       discount: invDiscount,
@@ -541,7 +543,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
           description: "Draft invoice has been saved.",
           variant: "success",
         });
-        router.push(`/invoices/${params.id}`);
+        router.push(`/invoices/${id}`);
       },
       onError: (err: any) => {
         toast({
@@ -578,7 +580,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
     return (
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Only DRAFT invoices can be edited.</p>
-        <Button variant="secondary" href={`/invoices/${params.id}`}>
+        <Button variant="secondary" href={`/invoices/${id}`}>
           Back to Invoice
         </Button>
       </div>
@@ -588,7 +590,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
   return (
     <div className="space-y-5 p-6">
       <Link
-        href={`/invoices/${params.id}`}
+        href={`/invoices/${id}`}
         className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
@@ -882,7 +884,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
               <Button
                 className="w-full"
                 variant="secondary"
-                href={`/invoices/${params.id}`}
+                href={`/invoices/${id}`}
                 disabled={updateInvoice.isPending}
               >
                 Cancel
