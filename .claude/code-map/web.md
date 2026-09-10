@@ -123,6 +123,13 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   [`api`](api.md) pins it. Web state is TanStack Query + context.)
 - **`next.config.mjs`** — standalone output (Docker), CSP headers, X-Frame-Options DENY, image domains. **CSP `frame-src 'self' blob: https:`** (2026-08-21) — without it iframes fell back to `default-src 'self'` and every blob:/API-origin PDF preview (invoice scan, invoice builder, customer docs) rendered blank while `<img>` previews worked; `data:` deliberately excluded from frames. **`Permissions-Policy: camera=(self), geolocation=(self)`** — `camera=()` previously disabled the in-browser barcode/invoice scanner on Android Chrome ("access denied"; iOS Safari ignored it). The `headers()` CSP string itself is now built by `csp.mjs` (below) — `next.config.mjs` just computes `isDev` and calls `buildContentSecurityPolicy({ isDev, apiUrl: process.env.NEXT_PUBLIC_API_URL })`.
 - **`csp.mjs`** (2026-09-04) — `apiConnectSources(apiUrl)` + `buildContentSecurityPolicy({ isDev, apiUrl })`, extracted out of `next.config.mjs` so the policy is unit-testable (`lib/csp.test.ts`, pins the production string byte-identical). **Fixes a real bug**: `connect-src`'s dev-localhost relaxation was gated on `isDev = NODE_ENV !== "production"`, which is always `false` in a built image (`next build` forces production) — so the local Docker/E2E lane's browser could never reach `http://localhost:3000`, and login silently CSP-failed (no HTTP response, rendered as a bogus "Invalid username or password"). Fix: `apiConnectSources` adds the concrete `http:`/`ws:` origin pair to `connect-src` whenever the **baked** `NEXT_PUBLIC_API_URL` itself is `http:` (regardless of `isDev`); a normal `https://` prod build is unchanged. See `apps/web/e2e/LOCAL-LANE.md`.
+- **`components/next-config-images.static.test.ts` (updated 2026-09-10, `chore/next-15`
+  #5b3b3c4e)** — pins `next.config.mjs`'s `images: { unoptimized: true }`. Was the
+  `security/audit-allowlist.json` GHSA-2xp9-vwfh-vxw4 (libheif/AVIF RCE) allowlist's basis; Next
+  15.5.25 fixes that advisory upstream and the allowlist entry is retired (see [`api`](api.md)'s
+  `audit-allowlist-retired.spec.ts`), so the test's own docstring now frames the same assertion as
+  **defence in depth** rather than the allowlist's justification — the app still never renders
+  `next/image` and the optimizer route stays disabled regardless of the installed Next version.
 - **`lib/api-client.ts`** — axios instance, `getTenantSlugFromCookie()`, token+tenant interceptors, refresh queue. **`paramsSerializer: { indexes: null }`** (mirrors mobile's `buyerApiClient`) — array query params must go out as repeated keys (`?statuses=A&statuses=B`); axios's default `statuses[]=` survives Express's `simple` query parser as a literal `statuses[]` key and the global ValidationPipe (`forbidNonWhitelisted`) 400s it.
 - **`lib/auth.ts`** — operator auth types, login/refresh/logout, `onCrossTabTokenChange()`. ⚠️ The
   legacy bare `accessToken`/`refreshToken` keys are STILL written by the Google OAuth callbacks
@@ -899,6 +906,21 @@ center; width: 100%; white-space: nowrap`, its own `:focus-visible` ring (`outli
 `npm test -w apps/web` (script `"test": "jest"`) or `npm run test` (Turbo `test` task; `apps/web`
 now contributes alongside api/mobile).
 
+- **Next 15 `useParams()` migration (2026-09-10, `chore/next-15` #5b3b3c4e)** — every dynamic
+  Client Component page dropped the old synchronous `{ params }: { params: { id: string } }` prop
+  for `const params = useParams(); const id = params.id as string;` (`useParams` added to the
+  `next/navigation` import). Mechanical, one shape, 16 pages: `drivers/[id]`, `estimates/[id]`,
+  `orders/[id]`, `products/[id]`, `invoices/[id]`, `invoices/[id]/edit`, `credit-notes/[id]`,
+  `vendor-bills/[id]`, `returns/[id]`, `sales-agents/[id]`, `finance/commissions/[id]`,
+  `compliance/[categoryId]`, `bookkeeping/[transactionId]`, `routes/[id]`,
+  `routes/[id]/dispatch`, `routes/templates/[id]`. **`customers/[id]/page.tsx` is the exception**
+  (two sites, not one — `client-page-params.spec.ts` counts by site): the default export
+  (`CustomerDetailPage`, the `<React.Suspense>` wrapper for its `useSearchParams()` deep link)
+  now calls `useParams()` and passes `id` as a plain `string` prop into
+  `CustomerDetailPageInner({ id }: { id: string })`, which no longer takes `params` at all.
+  Guard: `apps/api/src/common/client-page-params.spec.ts` (T3) — a repo-wide source-text scan for
+  the three old-prop shapes (destructure / `props.params` / body-destructure) and, for Server
+  Components, an un-awaited `params:`/`searchParams:` annotation.
 - **`jest.config.js`** — built on `next/jest` (`createJestConfig`), `testEnvironment: "jsdom"`,
   `setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"]`. **Campaign gate artifact (2026-09-08, #686):**
   `reporters` wires `["<rootDir>/../../scripts/jest-campaign-reporter.cjs", { artifact: "web" }]`,
@@ -917,20 +939,28 @@ now contributes alongside api/mobile).
   picomatch then compiles `\.` as an escaped dot — matching nothing (confirmed via
   `npx jest --listTests` returning empty). `roots: ["<rootDir>/{app,components,lib,hooks}"]` scopes
   discovery instead, so the plain relative glob needs no rootDir anchor. Lesson **L-055**.
-  `moduleNameMapper` pins a **single `react` instance** for the whole run
-  (`^react$`/`^react/jsx-runtime$`/`^react/jsx-dev-runtime$` → `<rootDir>/node_modules/react`):
-  `apps/web/package.json` still pins `"react"`/`"react-dom"` to `^18` (a stale range — its own
-  `@types/react` is `~19.2.2` and every other workspace is on React 19), so npm installs a nested
-  `apps/web/node_modules/react@18.3.1` beside root's hoisted `react@19.2.5` while there is only ONE
-  `react-dom` (root's 18.3.1). Without the pin, `@routeflow/ui`'s Radix-based `Modal`/`Toast`
-  resolve the hoisted React 19 while `apps/web`'s own component files resolve the nested React 18 —
-  two `react` instances paired with one `react-dom`, crashing any Radix render with "Cannot read
-  properties of undefined (reading 'ReactCurrentDispatcher')". Test-infra-only fix; the underlying
-  `^18` vs `~19.2.2` range drift is a real dependency bug, flagged separately (see the wave-D
-  README "Findings for later"), not fixed here. **`testTimeout: 30_000`** (2026-09-05): RTL suites
+  **REMOVED (2026-09-10, `chore/next-15` #5b3b3c4e):** the `moduleNameMapper` single-`react`-
+  instance pin (`^react$`/`^react/jsx-runtime$`/`^react/jsx-dev-runtime$` →
+  `<rootDir>/node_modules/react`) that worked around `apps/web` pinning React 18 while the rest of
+  the repo ran React 19. The upgrade moves `apps/web`'s own `package.json` to `"react": "^19.2.0"`
+  (matching `next@15.5.25`'s peer range), so there is one React major repo-wide and the pin's
+  reason for existing is gone — do not restore it. Guard:
+  `apps/api/src/common/no-react-skew-hacks.spec.ts` (T2) pins BOTH this and the Dockerfile removal
+  below as a pair — a half-reverted skew (one hack back, the other still gone) breaks every RTL
+  suite. **`testTimeout: 30_000`** (2026-09-05): RTL suites
   mount the real providers and pay a cold SWC compile on each file's first test; under pre-push /
   CI load on a slow host that overran Jest's 5 s default twice (portal-switch T10, buyer-portal
   connect-seller) as a _timeout_, not an assertion — the ceiling is raised, green tests are no slower.
+- **`package.json` / `Dockerfile` (2026-09-10, `chore/next-15` #5b3b3c4e)** — `next` 14.2.35 →
+  `15.5.25`, `react`/`react-dom` `^18` → `^19.2.0`, `eslint` `^8` → `^9`, `eslint-config-next` →
+  `15.5.25`, `@next/swc-win32-x64-msvc` → `^15.5.25` (pins: `next-version.spec.ts` T1).
+  `Dockerfile`'s `RUN npm install --force --no-save react@18.3.1 react-dom@18.3.1` (the root-level
+  React-18 hoisting hack the [[L-062]]-adjacent jest note above referenced) is **deleted** — Next
+  15 accepts React 19 natively, so the production build no longer needs a second, force-installed
+  React copy at the image root. See `docs/testing/lockfile-edges.md`'s "Unsatisfied peer ranges"
+  section, now at 0 (was 2 — the React 18/19 peer clash and the ESLint 9-vs-Next-14-peer warning,
+  both resolved by this bump). Guard: `apps/api/src/common/no-react-skew-hacks.spec.ts` (T2, pairs
+  with the `jest.config.js` removal in 1b).
 - **`jest.setup.ts`** — `import "@testing-library/jest-dom"` plus RTL
   `configure({ asyncUtilTimeout: 10_000 })` (findBy*/waitFor headroom on slow hosts; pairs with
   `testTimeout` above).

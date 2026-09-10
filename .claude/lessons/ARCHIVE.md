@@ -1104,3 +1104,28 @@ with L-102 added.
   "minor" engine run that needs more than 4 fix rounds hands the remainder to a light loop.**
 - **Guard:** `apps/mobile/__tests__/session-teardown.test.ts` (REG-B150/B140),
   `offline-queue-identity.test.ts` (REG-B137).
+
+## Archived 2026-09-10 — headroom for L-103 (chore/next-15 #5b3b3c4e)
+
+Repo-wide grep for every active id (except L-062 and L-083, both amended in place rather than
+archived — see the lessons follow-up) found exactly one clean candidate under the standing rule
+(cited only in `.claude/lessons/**`, `.claude/pipeline/**`, `.claude/code-map/CHANGELOG.md`, or
+`.claude/code-map/_meta.json`): **L-102** (2026-09-09, tooling, guard
+`apps/api/src/common/campaign-check-web-report.spec.ts`, which stays in the tree — archiving
+loses no enforcement). Every other active entry is cited from a code-map area file
+(`web.md`/`api.md`/`mobile.md`/`INDEX.md`), `HANDOFF.md`, `tools/bugflow/docs/**`, the bug
+registry (`.claude/campaign/**`), or real source — see `local-assets/handoff/2026-09-10/
+next15-bookkeeping/archive.md` for the full per-id grep evidence. Back to 40/40 with L-103 added.
+
+### L-102 · 2026-09-09 · tooling · #686
+
+- **Symptom:** three REG-B### pins landed in `apps/web` Jest tests and every PR's `npm run
+verify` went red: `scripts/campaign-check.mjs` reported "no test titled with REG-B## found" for
+  each one, even though the tests existed and passed.
+- **Root cause:** the checker only ever read the api/mobile/pricing campaign reports —
+  `apps/web` never ran `scripts/jest-campaign-reporter.cjs`, so no `.campaign/runs/web.json`
+  existed for it to read.
+- **Lesson:** **a proof-by-test-title gate must read a report from EVERY workspace that can host
+  a pin; adding a pin to a workspace the gate doesn't yet cover is a tooling change first
+  (reporter + checker) and a pin second.**
+- **Guard:** `apps/api/src/common/campaign-check-web-report.spec.ts`.

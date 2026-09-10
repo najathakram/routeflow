@@ -10,7 +10,8 @@ Multi-tenant delivery / route-management SaaS. **npm workspaces + Turbo** monore
 
 - **API** — [`apps/api`](api.md): NestJS 11, Prisma 7 + PostgreSQL, Redis (Socket.io), JWT auth.
   Everything tenant-scoped. Jest specs.
-- **Web** — [`apps/web`](web.md): Next.js 14 App Router. The **golden reference** for flows/DTOs.
+- **Web** — [`apps/web`](web.md): Next.js 15.5 App Router (React 19; upgraded from 14/React 18
+  2026-09-10, `chore/next-15`). The **golden reference** for flows/DTOs.
   Radix + Tailwind, TanStack Query, RHF + zod. Playwright e2e **+ Jest/RTL unit tests (wave D,
   2026-09-03 — 19 spec files; was E2E-only before)**.
 - **Mobile** — [`apps/mobile`](mobile.md): Expo 55 / RN 0.83, expo-router, multi-role. Mirrors
