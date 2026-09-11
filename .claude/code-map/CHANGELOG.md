@@ -53,6 +53,13 @@ requestHash?)`'s lookup order is now **key table (this customer) → this custom
     and the DB lane `orders/order-idempotency-key.db.spec.ts` (D1-D4, PD1-PD3 against real Postgres; D3 = the
     pre-fold refusal, D4 = the in-tx P2002 rollback). Lesson **L-104** appended (domain), **L-099** archived for
     headroom. api.md/mobile.md updated; web.md/packages.md untouched (no diff there).
+- **2026-09-11** — (WP3, DECIDE-29/OPS-23 Google sign-in monitor, small dev-pipeline run) —
+  INDEX.md gains a "Where to find" row for the new `scripts/lib/google-signin-check.mjs`
+  (`checkGoogleSignIn`/`checkApexDns`) + its self-test, the `scripts/post-deploy-check.mjs`/
+  `scripts/smoke.mjs` Google-door sections, `scripts/google-signin-monitor.mjs`, and
+  `.github/workflows/google-signin-monitor.yml`; new runbook
+  `docs/runbooks/mandatory-dependencies.md` (Google OAuth client + apex DNS, break-glass, no
+  secrets/uuids/client ids). api.md/web.md/mobile.md/packages.md untouched (no diff there). Round-1 Opus corrections are in the row too: `decodeAuthError` (URL-first classification off the base64url `authError` param — the ~800 KB error page has no marker in the 64 KB body window), a POSITIVE-signal requirement for `ok` (else `unexpected_page`), the Google/Apex sections HOISTED above post-deploy-check's login gate (now 2/3; Login..Divergence 4-7), and `finalPage` (origin+pathname) as the only form a caller may log.
 
 - **2026-09-10** — (branch `chore/next-15` #5b3b3c4e = master, Option-B follow-up) —
   `apps/web` upgraded Next 14.2.35 → 15.5.25 (React 18 → 19.2.0, eslint 8 → 9); clears the two

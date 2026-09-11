@@ -1,0 +1,936 @@
+{
+  "plan": ".claude/pipeline/2026-09-11-google-signin-monitor/build-plan.md",
+  "mode": "feature",
+  "artifacts": {
+    "plan": ".claude/pipeline/2026-09-11-google-signin-monitor/build-plan.md",
+    "discovery": "",
+    "spec": "",
+    "uxSpec": "",
+    "testPlan": ".claude/pipeline/2026-09-11-google-signin-monitor/test-plan.md",
+    "designSystem": ""
+  },
+  "scale": "small",
+  "startedAt": "2026-09-11T11:07:01Z",
+  "estimatedCostUsd": 9.52,
+  "pricesAsOf": "2026-06-24",
+  "overlap": {
+    "verifyWithUiVerify": false,
+    "finalGateWithFinalPass": false,
+    "redAuditWithImplement": null
+  },
+  "verify": {
+    "ran": false,
+    "mode": "on-dispute",
+    "lazy": true,
+    "judged": 0,
+    "dropped": 0,
+    "votesCast": 0,
+    "firstVoteRefuted": 0,
+    "firstVoteRefutedRate": null,
+    "tieBreaks": 0,
+    "locationChecked": 0,
+    "locationInvalid": 0,
+    "preRefuted": 0,
+    "deferredToFixer": 0,
+    "disputed": 0,
+    "disputesDropped": 0,
+    "disputesUpheld": 0,
+    "corroborated": 0,
+    "corroboratedSkipped": 0
+  },
+  "baseline": {
+    "ran": true,
+    "note": "Baseline = the working tree exactly as the caller left it, uncommitted work included; that tree is what the commands ran against.",
+    "commands": [
+      "node -e \"for (const f of ['scripts/lib/google-signin-check.mjs','scripts/lib/google-signin-check.self-test.mjs','scripts/google-signin-monitor.mjs','scripts/smoke.mjs','scripts/post-deploy-check.mjs']) if (require('fs').existsSync(f)) require('child_process').execFileSync(process.execPath,['--check',f],{stdio:'inherit'})\"",
+      "npx prettier --check scripts/lib scripts/smoke.mjs scripts/post-deploy-check.mjs package.json",
+      "node -e \"const f='scripts/lib/google-signin-check.self-test.mjs';require('fs').existsSync(f)?require('child_process').execFileSync(process.execPath,[f],{stdio:'inherit'}):console.log('not yet created')\"",
+      "node scripts/campaign/bugs.mjs self-test"
+    ],
+    "badCommands": [],
+    "gate": {
+      "ran": true,
+      "completed": true,
+      "pass": true,
+      "results": [
+        {
+          "command": "node -e \"for (const f of ['scripts/lib/google-signin-check.mjs','scripts/lib/google-signin-check.self-test.mjs','scripts/google-signin-monitor.mjs','scripts/smoke.mjs','scripts/post-deploy-check.mjs']) if (require('fs').existsSync(f)) require('child_process').execFileSync(process.execPath,['--check',f],{stdio:'inherit'})\"",
+          "pass": true,
+          "summary": "Syntax check passed on all existing script files",
+          "executed": 5
+        },
+        {
+          "command": "npx prettier --check scripts/lib scripts/smoke.mjs scripts/post-deploy-check.mjs package.json",
+          "pass": true,
+          "summary": "All matched files use Prettier code style!",
+          "executed": -1
+        },
+        {
+          "command": "node -e \"const f='scripts/lib/google-signin-check.self-test.mjs';require('fs').existsSync(f)?require('child_process').execFileSync(process.execPath,[f],{stdio:'inherit'}):console.log('not yet created')\"",
+          "pass": true,
+          "summary": "Self-test file does not yet exist (expected): not yet created",
+          "executed": 0
+        },
+        {
+          "command": "node scripts/campaign/bugs.mjs self-test",
+          "pass": true,
+          "summary": "self-test: all checks passed",
+          "executed": -1
+        }
+      ]
+    },
+    "grounding": {
+      "ran": true,
+      "completed": true,
+      "artifacts": [
+        ".claude/pipeline/2026-09-11-google-signin-monitor/build-plan.md",
+        ".claude/pipeline/2026-09-11-google-signin-monitor/test-plan.md"
+      ],
+      "findings": []
+    }
+  },
+  "manifest": {
+    "ran": true,
+    "completed": true,
+    "note": "Facts gathered before any agent wrote anything. Unknown or unreadable files are classified HIGH.",
+    "files": [
+      {
+        "path": ".claude/pipeline/2026-09-11-google-signin-monitor/RESUME.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-11-google-signin-monitor/build-plan.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-11-google-signin-monitor/test-plan.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-11-google-signin-monitor/pipeline-args.json",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "scripts/post-deploy-check.mjs",
+        "status": "untracked",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "scripts/smoke.mjs",
+        "status": "untracked",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "scripts/lib/google-signin-check.mjs",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "scripts/lib/google-signin-check.self-test.mjs",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "scripts/google-signin-monitor.mjs",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": ".github/workflows/google-signin-monitor.yml",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "package.json",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "docs/runbooks/mandatory-dependencies.md",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/code-map/INDEX.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/code-map/_meta.json",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      }
+    ],
+    "validCommands": [
+      "node -e \"for (const f of ['scripts/lib/google-signin-check.mjs','scripts/lib/google-signin-check.self-test.mjs','scripts/google-signin-monitor.mjs','scripts/smoke.mjs','scripts/post-deploy-check.mjs']) if (require('fs').existsSync(f)) require('child_process').execFileSync(process.execPath,['--check',f],{stdio:'inherit'})\"",
+      "npx prettier --check scripts/lib scripts/smoke.mjs scripts/post-deploy-check.mjs package.json",
+      "node -e \"const f='scripts/lib/google-signin-check.self-test.mjs';require('fs').existsSync(f)?require('child_process').execFileSync(process.execPath,[f],{stdio:'inherit'}):console.log('not yet created')\"",
+      "node scripts/campaign/bugs.mjs self-test"
+    ],
+    "artifacts": [
+      ".claude/pipeline/2026-09-11-google-signin-monitor/build-plan.md",
+      ".claude/pipeline/2026-09-11-google-signin-monitor/test-plan.md"
+    ]
+  },
+  "riskSummary": {
+    "high": 6,
+    "low": 8
+  },
+  "fixRouting": {
+    "mechanical": 2,
+    "sonnetDesigned": 1,
+    "judgment": 5
+  },
+  "fixPlanning": {
+    "enabled": true,
+    "rounds": [
+      {
+        "round": 1,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 8,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 1,
+          "sonnet": 6,
+          "opus": 1
+        },
+        "waves": [
+          [2, 3, 4, 6],
+          [0, 1, 5, 7]
+        ],
+        "note": "All eight findings are fixed this round; none disputed or deferred. Wave 1 lands the independent, mostly transcriptive changes on separate files: the assertTestTenant guard in smoke.mjs (#2), the runbook corrections pointing OAuth env vars and callback paths at apps/api only (#3), the missing CHANGELOG bullet (#4), and the workflow's cost note + concurrency group with the DECIDE-29 cron untouched (#6). Wave 2 then works the check module and its self-test together: the uncaught consent-body read becomes a classified timeout/network failure that keeps finalUrl (#0), a door-body abort stops masquerading as door_http_200 while malformed JSON still does (#1), the SMOKE_GOOGLE_REQUIRED=0 branch and the non-local default get real oracles (#5), and the red-gate blocker is closed by a five-mutation probe recorded in the run dir plus a split T7 and an L-066-safe T5 ceiling (#7). The only owner-facing judgment — cadence cost — is recorded in-file rather than deferred because the 6-hourly schedule was the orchestrator's stated ruling."
+      },
+      {
+        "round": 2,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 2,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 2,
+          "sonnet": 0,
+          "opus": 0
+        },
+        "waves": [[0, 1]],
+        "note": "Round 2 closes two residual doc defects in docs/runbooks/mandatory-dependencies.md, both mechanical and executed together in one wave since they share the file: #0 replaces the unbackable \"six redirect URIs on apex/www/preview API hosts\" composition with the derivable truth (the API sends exactly the GOOGLE_REDIRECT_URI_TENANT / GOOGLE_REDIRECT_URI_PLATFORM values or their RAILWAY_PUBLIC_DOMAIN fallbacks, per resolveRedirectUri), and #1 adds the missing `door_http_<status>` clause to the red-run triage list so an API-side 5xx/shape failure is routed to apps/api logs rather than to GCP. No code, no tests, no secrets touched; post-edit greps are the verification."
+      }
+    ],
+    "deferred": []
+  },
+  "cascadeAudit": null,
+  "escalation": null,
+  "lensesRun": ["correctness", "test-quality"],
+  "radiusPack": {
+    "built": false,
+    "truncated": false,
+    "files": [],
+    "skipped": "feature-mode"
+  },
+  "siblingSweep": {
+    "ran": false,
+    "patterns": 0,
+    "hits": 0,
+    "findings": 0,
+    "skipped": "no-patterns"
+  },
+  "harnessCheck": {
+    "ran": false,
+    "issues": [],
+    "skipped": "feature-mode",
+    "note": ""
+  },
+  "testAuthoring": {
+    "ran": true,
+    "packages": [
+      {
+        "package": "TP1",
+        "status": "done",
+        "filesChanged": [
+          "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-smoke\\scripts\\lib\\google-signin-check.self-test.mjs",
+          "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-smoke\\scripts\\lib\\google-signin-check.mjs"
+        ],
+        "deviations": "Added scripts/lib/google-signin-check.mjs as a signature-only stub (exports checkGoogleSignIn, checkApexDns, resolveRequired, resolveApexRequired, DOORS, ERROR_MARKERS, all returning undefined/empty, never throwing) so the self-test's import resolves and every case fails on an assertion rather than an import error, per instruction 6. This is the only file besides the assigned test file that was touched, and it contains no real implementation."
+      }
+    ]
+  },
+  "redGate": {
+    "ran": true,
+    "remediateOn": "behavioral",
+    "properlyRed": false,
+    "structurallyRed": true,
+    "behaviorallyRed": false,
+    "attempts": 2,
+    "audits": [
+      {
+        "attempt": 1,
+        "ran": true,
+        "structurallyRed": false,
+        "behaviorallyRed": false,
+        "properlyRed": false,
+        "tests": [
+          {
+            "test": "T1 (R1 R2 R10) — both doors succeed, scripts/lib/google-signin-check.self-test.mjs:85-136",
+            "outcome": "assertion-failure",
+            "note": "7/7 assertions failed. 3 failed on real oracle values computed from the fakes (fakeApi saw 0 vs want 2; tenant-query-present false vs true; fakeGoogle saw 0 vs want 2). The other 4 failed on `got undefined` because the stub module returns undefined."
+          },
+          {
+            "test": "T2 (R2) — 4 Google error-marker variants, self-test.mjs:140-181",
+            "outcome": "assertion-failure",
+            "note": "12/12 failed, every one on `got undefined`. The four wants are distinct and plan-matching (deleted_client / invalid_client / redirect_uri_mismatch / oauth_error) but the RED run cannot show the four different fakeGoogle bodies reach different code paths."
+          },
+          {
+            "test": "T3 (R3) — not_configured required vs skipped + resolveRequired, self-test.mjs:185-250",
+            "outcome": "assertion-failure",
+            "note": "8/8 failed, all on `got undefined` (including the three pure resolveRequired cases, which the stub returns undefined for)."
+          },
+          {
+            "test": "T4 (R2) — expectedHost mismatch, self-test.mjs:254-285",
+            "outcome": "assertion-failure",
+            "note": "3/3 failed, all on `got undefined`. `wrong_host` is never distinguished from any other reason value at this gate."
+          },
+          {
+            "test": "T5/R4 — \"resolves (never rejects/throws) well under 1500ms\", self-test.mjs:307",
+            "outcome": "passed",
+            "note": "STRUCTURAL BLOCKER. Verified passing in my own run. Vacuous: the assertion is `elapsedMs < 1500`, and a stub that returns instantly satisfies it. It has no lower bound, so it cannot fail for a missing timeout budget and it is a pure wall-clock assertion."
+          },
+          {
+            "test": "T5/R4 — timeout branch (ok===false, some door reason \"timeout\"), self-test.mjs:308-313",
+            "outcome": "assertion-failure",
+            "note": "2/2 failed on `got undefined`."
+          },
+          {
+            "test": "T6 (R5) — apex DNS via injected lookupImpl, self-test.mjs:323-354",
+            "outcome": "assertion-failure",
+            "note": "9/9 failed, all on `got undefined`, including resolveApexRequired(undefined)/('1')."
+          },
+          {
+            "test": "T7/R6 — module import + section-string pins in post-deploy-check.mjs and smoke.mjs, self-test.mjs:365-379, 386-391",
+            "outcome": "assertion-failure",
+            "note": "5/5 failed on real reads of the two tracked source files (got false, want true): neither imports lib/google-signin-check.mjs, no '6. Google sign-in doors', no '7. Apex DNS', no 'google-signin:' line. Confirmed by git status --short: scripts/smoke.mjs and scripts/post-deploy-check.mjs are tracked and UNMODIFIED, so nothing has been implemented in them (the context manifest's \"untracked\" label for those two files and package.json is wrong)."
+          },
+          {
+            "test": "T7/R6 — \"does not hard-code accounts.google.com outside the module\" (both files), self-test.mjs:380-384, 392-396",
+            "outcome": "passed",
+            "note": "STRUCTURAL BLOCKER, 2 assertions. These pass because the required behavior ALREADY EXISTS: `grep -c accounts.google.com` returns 0 for both scripts/smoke.mjs and scripts/post-deploy-check.mjs. They are no-regression guards on a negative constraint, not red tests — they cannot go from red to green."
+          },
+          {
+            "test": "T8/R7 — file existence + package.json wiring, self-test.mjs:406, 417, 434-443",
+            "outcome": "assertion-failure",
+            "note": "4/4 failed on real filesystem/JSON reads (got false, want true). Verified independently: scripts/google-signin-monitor.mjs MISSING, .github/workflows/google-signin-monitor.yml MISSING, package.json has no `smoke:google` script and its `verify` chain does not contain google-signin-check.self-test."
+          },
+          {
+            "test": "T8/R7 — 5 content assertions on the monitor script and workflow YAML, self-test.mjs:407-415, 418-431",
+            "outcome": "not-run",
+            "note": "STRUCTURAL BLOCKER. Wrapped in `if (existsSync(...))`, so with both files absent these never executed: 'monitor script calls assertTestTenant', 'monitor script exits 1 on failure', 'workflow declares a schedule trigger', 'workflow declares workflow_dispatch', 'workflow runs scripts/google-signin-monitor.mjs'. None of the five names appears in the 53-line output of my run. T8's substantive oracles are therefore unproven at the RED gate."
+          }
+        ],
+        "blockers": [
+          "STRUCTURAL: T5/R4 (self-test.mjs:307) PASSES at the RED gate — `elapsedMs < 1500` is satisfied by a stub that returns instantly, so the assertion is vacuous and can never fail for a missing shared-AbortController budget (R4).",
+          "STRUCTURAL: T7/R6 (self-test.mjs:380-384) PASSES — scripts/post-deploy-check.mjs contains zero occurrences of accounts.google.com today, so the requirement is already met; this is a regression guard, not a red test.",
+          "STRUCTURAL: T7/R6 (self-test.mjs:392-396) PASSES — same for scripts/smoke.mjs (zero occurrences verified by grep).",
+          "STRUCTURAL: 5 T8/R7 assertions NOT RUN — the `if (existsSync(monitorPath))` (line 407) and `if (existsSync(workflowPath))` (line 418) guards silently skip the assertTestTenant, process.exit(1), schedule:, workflow_dispatch: and `node scripts/google-signin-monitor.mjs` checks while those files are absent, which is exactly the state the RED gate is supposed to fail in.",
+          "BEHAVIORAL: 34 of the 53 executed assertions failed on `got undefined`, not on a wrong value — scripts/lib/google-signin-check.mjs exists as an untracked 26-line signature stub whose every export returns undefined, so T1's shape checks, all of T2, all of T3, all of T4, T5's two real checks and all of T6 proved wiring only.",
+          "BEHAVIORAL: T2/R2 — all 12 assertions across the four marker variants failed identically (`undefined`); the run does not demonstrate that the four different fakeGoogle bodies drive different code paths, i.e. that `deleted_client` is discriminated from `oauth_error`.",
+          "BEHAVIORAL: T3/R3 — required-vs-skipped and the three `resolveRequired` cases all failed on `undefined`; the localhost default and the SMOKE_GOOGLE_REQUIRED override oracles are untested as oracles.",
+          "BEHAVIORAL: T4/R2 — `wrong_host` never distinguished from any other reason string (all three checks failed on `undefined`).",
+          "BEHAVIORAL: T5/R4 — the 400 ms budget is bounded only from above (<1500 ms), so a per-fetch-timeout or fail-fast implementation satisfies T5 without R4's single shared AbortController.",
+          "BEHAVIORAL: T6/R5 — all 9 checks failed on `undefined`, including the two pure `resolveApexRequired` cases.",
+          "BEHAVIORAL: R2's `door_http_<status>` and `network` reasons and the `Access blocked` error marker (both named in the build plan's WP1 hard lines) have no case in any test — an implementation omitting them ships green.",
+          "BEHAVIORAL: T8/R7 asserts only the substring `schedule:`; the plan's cron `17 */6 * * *` is unpinned, so a workflow scheduled at any interval passes R7."
+        ]
+      },
+      {
+        "attempt": 2,
+        "ran": true,
+        "structurallyRed": true,
+        "behaviorallyRed": false,
+        "properlyRed": false,
+        "tests": [
+          {
+            "test": "T1 (R1 R2 R10) — both doors succeed, request counts + tenant URL · scripts/lib/google-signin-check.self-test.mjs:85",
+            "outcome": "assertion-failure",
+            "note": "7 checks, all failed, none errored. PARTIALLY behaviorally grounded: 4 fail on the stub's `undefined` (ok, doors.length, statuses, finalUrl), but 3 fail on real observed values from the fakes — `api.requests.length` got 0 want 2, `google.requests.length` got 0 want 2, tenant=e2e-routeflow present got false. Those three prove the fake servers work and that nothing was probed."
+          },
+          {
+            "test": "T2 (R2) — Google error-page markers, 8 sub-cases · self-test.mjs:140-263",
+            "outcome": "assertion-failure",
+            "note": "24 checks, all failed on assertions. BEHAVIORALLY UNGROUNDED: every one failed with `got undefined` from the stub. The four discriminating reason strings (deleted_client / invalid_client / redirect_uri_mismatch / oauth_error) plus door_http_500, door_http_200 and network are indistinguishable at this gate — a single always-undefined implementation fails all 24 identically. Oracles themselves are plan-derived (build-plan.md R2 reason enum + ERROR_MARKERS hard lines), not back-filled from code."
+          },
+          {
+            "test": "T3 (R3) — not_configured required vs skipped + resolveRequired · self-test.mjs:267",
+            "outcome": "assertion-failure",
+            "note": "8 checks, all failed on assertions, all with `got undefined`. BEHAVIORALLY UNGROUNDED — including the three pure resolveRequired cases (localhost->false, railway->true, override '1'->true), which fail on undefined rather than on a wrong boolean, so the true/false discrimination is unproven."
+          },
+          {
+            "test": "T4 (R2) — expectedHost mismatch -> wrong_host · self-test.mjs:336",
+            "outcome": "assertion-failure",
+            "note": "3 checks, all failed on assertions, all `got undefined`. BEHAVIORALLY UNGROUNDED: wrong_host is not distinguished from any other reason at this gate."
+          },
+          {
+            "test": "T5 (R4) — hanging consent page must time out · self-test.mjs:371",
+            "outcome": "assertion-failure",
+            "note": "3 checks, all failed. PARTIALLY grounded: the timing check failed on a real computed value (`elapsedMs >= 300 && < 1500` got false — the stub returns in ~0 ms, so the LOWER bound genuinely fired); the other two (ok===false, a door with reason 'timeout') failed on undefined. The two-sided bound is the one oracle in the suite a fail-fast stub cannot satisfy by accident."
+          },
+          {
+            "test": "T6 (R5) — checkApexDns + resolveApexRequired via injected lookupImpl · self-test.mjs:412",
+            "outcome": "assertion-failure",
+            "note": "8 checks, all failed on assertions, all `got undefined`. BEHAVIORALLY UNGROUNDED: warn-vs-fail, status warn/ok, reason ENOTFOUND and address 1.2.3.4 all fail identically."
+          },
+          {
+            "test": "T7 (R6) — post-deploy-check.mjs / smoke.mjs source pins · self-test.mjs:447",
+            "outcome": "assertion-failure",
+            "note": "5 checks, all failed on real observed values (`got false`), not on undefined. Verified independently: `git status --short scripts/` shows both files tracked and UNMODIFIED, and `grep -c google-signin-check` returns 0 for each — so the red is real, and a missing file would still fail (null fallback, no existsSync skip)."
+          },
+          {
+            "test": "T8 (R7) — monitor script + workflow + package.json wiring · self-test.mjs:486",
+            "outcome": "assertion-failure",
+            "note": "10 checks, all failed on real observed values (`got false`). Verified independently: `.github/workflows/google-signin-monitor.yml` and `scripts/google-signin-monitor.mjs` do not exist, and `node -e` on package.json shows `smoke:google` undefined and the current `verify` chain containing no google-signin-check.self-test."
+          }
+        ],
+        "blockers": [
+          "STRUCTURAL: none. I ran `node scripts/lib/google-signin-check.self-test.mjs` myself in the worktree: exit 1, 209 output lines, 69 `FAIL` lines, 0 `ok` lines, and the final summary line printed — so every check was reached and failed on its own assertion. No import error (the author shipped an untracked signature-only stub at scripts/lib/google-signin-check.mjs whose exports all return undefined, which is why the module resolves), no syntax/config/fixture error, nothing passed, nothing skipped or filtered (grep for only/skip/xit found no directives — the hits are the word 'skipped' inside T3's own oracle strings).",
+          "BEHAVIORAL: T2 — all 24 checks fail with `got undefined`. The reason enum (deleted_client, invalid_client, redirect_uri_mismatch, oauth_error, door_http_500, door_http_200, network) is not discriminated by this gate; one always-undefined return fails every case identically, so the per-marker oracles are unproven until a mutation probe flips one marker's expected string against a real implementation.",
+          "BEHAVIORAL: T3 — all 8 checks fail with `got undefined`, including the three pure resolveRequired(localhost)=false / (railway)=true / (localhost,'1')=true cases. required-vs-skipped and the localhost default are wiring-proven only, not oracle-proven.",
+          "BEHAVIORAL: T4 — all 3 checks fail with `got undefined`; wrong_host is indistinguishable from every other failure reason at this gate.",
+          "BEHAVIORAL: T6 — all 8 checks fail with `got undefined`; warn-vs-fail, status warn/ok, reason ENOTFOUND and address 1.2.3.4 are all unproven as distinct oracles.",
+          "BEHAVIORAL: T1 — 4 of 7 checks fail on `undefined` (ok, doors.length, per-door status, finalUrl prefix); only the request-count/tenant-URL trio (got 0, got 0, got false) failed on real observed values.",
+          "BEHAVIORAL: T5 — 2 of 3 checks fail on `undefined`; only the two-sided wall-clock bound failed on a real computed value.",
+          "BEHAVIORAL (future wrong-reason-pass risk): T8's behavioral oracles are literal greps — `monitor?.includes(\"process.exit(1)\")` and `includes(\"assertTestTenant\")` will go green on a comment or an unreachable branch, and `includes(\"17 */6 * * *\")` pins a cosmetic string rather than a behavior. Structural by design per the plan, but they prove presence of text, not that the monitor actually exits non-zero or actually guards the tenant. The plan's manual token M1 is the only real check of that.",
+          "BEHAVIORAL (future flake risk, cites L-066): T5 asserts `elapsedMs >= 300 && elapsedMs < 1500` against a 400 ms budget. L-066 is exactly this shape — a wall-clock assertion green on CI and red on a loaded dev box (bare Node work here measured 0.6–6 s in that incident). A timeout cannot be tested without time, so this is acceptable, but the 1500 ms ceiling is tight enough that a loaded host can turn a correct implementation red.",
+          "BEHAVIORAL (over-constraint risk, not a red-gate failure): T7 folds two clauses into one boolean — imports `lib/google-signin-check.mjs` AND does not contain `accounts.google.com`. A perfectly reasonable implementation that passes `expectedHost: \"accounts.google.com\"` explicitly from post-deploy-check.mjs would fail this with no defect, and the compound form will not say which clause broke."
+        ]
+      }
+    ],
+    "remediation": {
+      "fixed": [
+        "STRUCTURAL: T5/R4 (self-test.mjs:307) PASSES at the RED gate — `elapsedMs < 1500` is satisfied by a stub that returns instantly, so the assertion is vacuous and can never fail for a missing shared-AbortController budget (R4). FIXED: the check is now two-sided — `elapsedMs >= 300 && elapsedMs < 1500` (\"T5/R4: waits out its own 400ms budget, then resolves under 1500ms\"). Verified FAIL (got false / want true) against the stub in my run.",
+        "STRUCTURAL: T7/R6 (self-test.mjs:380-384) PASSES — post-deploy-check.mjs contains zero occurrences of accounts.google.com today. FIXED: the standalone check is gone; the negative constraint is folded into the import assertion (\"post-deploy-check.mjs imports the module and hard-codes no accounts.google.com\"), which fails now (got false) and still guards the constraint after implementation.",
+        "STRUCTURAL: T7/R6 (self-test.mjs:392-396) PASSES — same for smoke.mjs. FIXED the same way: folded into \"smoke.mjs imports the module and hard-codes no accounts.google.com\", verified FAIL (got false).",
+        "STRUCTURAL: 5 T8/R7 assertions NOT RUN behind `if (existsSync(...))`. FIXED: both guards removed; monitor/workflow are read with a null fallback and each content oracle uses `?.includes(...) ?? false`, so assertTestTenant, process.exit(1), schedule:, workflow_dispatch: and `node scripts/google-signin-monitor.mjs` all execute and FAIL now (got false).",
+        "BEHAVIORAL: T8/R7 asserts only the substring `schedule:`; the plan's cron `17 */6 * * *` is unpinned. FIXED: added \"T8/R7: workflow pins the plan's cron 17 */6 * * *\", verified FAIL (got false).",
+        "BEHAVIORAL: R2's `door_http_<status>` and `network` reasons and the `Access blocked` error marker have no case in any test. FIXED: added four cases — a 200 consent page whose BODY carries `Access blocked` (expect `oauth_error`, the only reason in R2's enum for that marker), a door answering 500 (expect `door_http_500`), a door answering 200 with no `url` in the body (expect `door_http_200`), and a consent URL on a deliberately closed loopback port (expect `network`). All 8 new assertions FAIL on assertion values in my run.",
+        "BEHAVIORAL: T2 and T4 only inspect one of the two doors. FIXED (T2): runT2Case now asserts the tenant door's reason alongside the platform door's, so a per-door discrimination bug cannot hide; the new door/body-marker cases assert both doors as a `[reason, reason]` pair."
+      ],
+      "skipped": [
+        {
+          "index": 5,
+          "summary": "BEHAVIORAL: 34 of the 53 executed assertions failed on `got undefined`, not on a wrong value — scripts/lib/google-signin-check.mjs exists as an untracked 26-line signature stub whose every export returns undefined, so T1's shape checks, all of T2, all of T3, all of T4, T5's two real checks and all of T6 proved wiring only.",
+          "reason": "Not fixable in a test-only round: the behaviour does not exist yet. `got undefined` IS an assertion failure against the real oracle value (the module imports cleanly, the fakes run, the inputs are built), which is the required red form pre-implementation; the only way to turn it into a wrong-value failure would be to give the stub behaviour, i.e. write production code — forbidden here, and the auditor's own remediation says keep the stub. Verified in this session: 69/69 assertions FAIL, zero lines beginning with \"  ok  \", exit 1."
+        },
+        {
+          "index": 6,
+          "summary": "BEHAVIORAL: T2/R2 — all 12 assertions across the four marker variants failed identically (`undefined`); the run does not demonstrate that the four different fakeGoogle bodies drive different code paths, i.e. that `deleted_client` is discriminated from `oauth_error`.",
+          "reason": "Same cause: discrimination between marker bodies can only be demonstrated once checkGoogleSignIn has behaviour. The wants remain distinct per variant, and I strengthened the case set (tenant-door reason, plus a 200-body `Access blocked` variant), so the discrimination is pinned the moment WP1 lands. Proving it at the RED gate would require implementing the module."
+        },
+        {
+          "index": 7,
+          "summary": "BEHAVIORAL: T3/R3 — required-vs-skipped and the three `resolveRequired` cases all failed on `undefined`; the localhost default and the SMOKE_GOOGLE_REQUIRED override oracles are untested as oracles.",
+          "reason": "`resolveRequired` is a stub export returning undefined; the three oracles (false / true / true) are asserted exactly and fail on that undefined. Making them fail on a wrong value means implementing resolveRequired — production code, out of scope for this round."
+        },
+        {
+          "index": 8,
+          "summary": "BEHAVIORAL: T4/R2 — `wrong_host` never distinguished from any other reason string (all three checks failed on `undefined`).",
+          "reason": "Same stub cause. The oracle is already the exact pair [\"wrong_host\",\"wrong_host\"] against a fakeGoogle on 127.0.0.1 with expectedHost accounts.google.com; distinguishing it from other reasons requires the host check to exist."
+        },
+        {
+          "index": 10,
+          "summary": "BEHAVIORAL: T6/R5 — all 9 checks failed on `undefined`, including the two pure `resolveApexRequired` cases.",
+          "reason": "checkApexDns and resolveApexRequired are stub exports returning undefined; the injected lookupImpl fakes and exact oracles (ok/status/reason/address, false/true) are in place and fail on undefined. Only implementing WP1 can change the failure mode."
+        }
+      ],
+      "filesChanged": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-smoke/scripts/lib/google-signin-check.self-test.mjs"
+      ]
+    }
+  },
+  "implementation": [
+    {
+      "package": "WP1",
+      "status": "done",
+      "filesChanged": [
+        "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-smoke\\scripts\\lib\\google-signin-check.mjs"
+      ],
+      "deviations": ""
+    },
+    {
+      "package": "WP2",
+      "status": "done",
+      "filesChanged": [
+        "scripts/post-deploy-check.mjs",
+        "scripts/smoke.mjs",
+        "scripts/google-signin-monitor.mjs",
+        ".github/workflows/google-signin-monitor.yml",
+        "package.json"
+      ],
+      "deviations": ""
+    },
+    {
+      "package": "WP3",
+      "status": "done",
+      "filesChanged": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-smoke/docs/runbooks/mandatory-dependencies.md",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-smoke/.claude/code-map/INDEX.md",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-smoke/.claude/code-map/_meta.json"
+      ],
+      "deviations": "None. CHANGELOG.md was not touched even though the code-map convention mentions adding a bullet there — it's outside the file allowlist given to this package, and _meta.json's \"notes\" bullet covers the same information per the plan's actual R9 scope (\"_meta.json updatedAt\")."
+    }
+  ],
+  "gate": {
+    "pass": true,
+    "skipped": false,
+    "results": [
+      {
+        "command": "node -e \"const f='scripts/lib/google-signin-check.self-test.mjs';require('fs').existsSync(f)?require('child_process').execFileSync(process.execPath,[f],{stdio:'inherit'}):console.log('not yet created')\"",
+        "pass": true,
+        "summary": "google-signin-check.self-test: all checks passed",
+        "executed": 89
+      },
+      {
+        "command": "node scripts/campaign/bugs.mjs self-test",
+        "pass": true,
+        "summary": "self-test: all checks passed",
+        "executed": 297
+      }
+    ]
+  },
+  "buildFix": null,
+  "uiVerify": {
+    "ran": false,
+    "completed": false,
+    "viewports": [],
+    "findings": []
+  },
+  "mutationProbe": {
+    "ran": false,
+    "targets": 0,
+    "results": [],
+    "allCaught": true,
+    "allRestored": true,
+    "restoredVerified": null,
+    "checksumMismatches": [],
+    "baselineDisturbed": [],
+    "skippedTargets": [],
+    "skipped": "small-scale"
+  },
+  "finalPass": {
+    "ran": false,
+    "completed": false,
+    "skipped": "small-scale",
+    "reader": null,
+    "model": null,
+    "effort": null,
+    "fallback": false,
+    "files": [],
+    "candidates": 0,
+    "gaps": [],
+    "secondRead": false,
+    "decision": "",
+    "findings": []
+  },
+  "confirmedFindings": [
+    {
+      "file": "scripts/lib/google-signin-check.mjs",
+      "line": 135,
+      "severity": "major",
+      "summary": "The consent-page body read is not wrapped in try/catch, so checkGoogleSignIn REJECTS instead of resolving when the shared abort fires (or the socket resets) mid-body — violating its documented \"never throws\" contract and losing both doors' reason/finalUrl diagnostics.",
+      "detail": "Verified with two repros in this session against the real module. (1) Consent response sends 200 headers + a partial chunked body then holds the socket, timeoutMs 400 -> checkGoogleSignIn REJECTS with {name:\"AbortError\", message:\"This operation was aborted\"} instead of resolving with reason \"timeout\" (R2/R4). (2) Consent response sends partial body then the socket is destroyed (mid-body reset, no timeout involved, timeoutMs 5000) -> REJECTS with TypeError \"terminated\" / cause \"other side closed\". Every other failure mode in probeDoor is caught (door fetch, doorRes.json(), consent fetch), but `const bodyText = await readBodyLimited(consentRes)` at line 135 is not — and readBodyLimited's own try/finally only guards reader.cancel(), not reader.read(). Because both doors run in one Promise.all, one door's throw discards the other door's completed result entirely. Callers (google-signin-monitor.mjs, smoke.mjs, post-deploy-check.mjs) do catch it, so the run still goes RED (no false green), but the alarm prints only `google-signin: This operation was aborted` with no door name and no reason — exactly the diagnostic the plan's success signal requires (\"naming the door and Google's own error code\"), and the runbook's \"Reading a red run\" triage table then matches nothing. This is reachable in production: the real accounts.google.com consent page is a streamed HTML document, so a slow response inside the 15 s budget, or any mid-body connection reset, hits it. The self-test is green because T5 only hangs the consent request BEFORE headers (abort surfaces at the fetch call, which IS caught); no case hangs or resets the body stream after headers.",
+      "fixHint": "Wrap the readBodyLimited call in try/catch in probeDoor and map the error through classifyFetchError (AbortError -> \"timeout\", else \"network\"), returning { name, status: \"fail\", reason, finalUrl } so the door keeps its finalUrl; add a self-test case (per T5/R4) where the fake Google writes headers + a partial chunked body and then (a) never ends and (b) destroys the socket, asserting reason \"timeout\" and \"network\" respectively rather than a rejection.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "scripts/lib/google-signin-check.mjs",
+      "line": 102,
+      "severity": "minor",
+      "summary": "A timeout while reading the door's own JSON body is swallowed and reported as `door_http_200`, not `timeout`, sending the on-call down the wrong triage branch.",
+      "detail": "Verified by repro: a fake door that writes 200 JSON headers then hangs its body, with timeoutMs 400, returns {\"ok\":false,\"doors\":[{\"name\":\"platform-admin\",\"status\":\"fail\",\"reason\":\"door_http_200\"},{\"name\":\"tenant\",...\"door_http_200\"}]}. The AbortError from `await doorRes.json()` (line 102) is caught by the bare `catch { body = null }`, which then falls into the `!body?.url` branch and synthesizes `door_http_${doorRes.status}`. R2 lists `timeout` as the reason for this failure mode, and the new runbook's triage explicitly splits them: `timeout`/`network` is \"usually transient — rerun before escalating\", while a `door_http_*` reason reads as \"the API answered but with the wrong shape\" and points the reader at the API response instead of at latency/the network.",
+      "fixHint": "In the doorRes.json() catch, re-throw or record AbortError/network errors separately (e.g. capture the error and return { name, status: \"fail\", reason: classifyFetchError(err) }) so only a genuinely malformed 2xx body yields door_http_<status>.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "scripts/smoke.mjs",
+      "line": 68,
+      "severity": "minor",
+      "summary": "smoke.mjs becomes tenant-scoped for the first time but reads SMOKE_TENANT_SLUG without assertTestTenant, unlike post-deploy-check.mjs and google-signin-monitor.mjs which both guard the same variable.",
+      "detail": "Line 68 passes `process.env.SMOKE_TENANT_SLUG || \"e2e-routeflow\"` straight into checkGoogleSignIn, which sends it to prod as `/api/v1/auth/google?tenant=<slug>`. Both sibling entry points guard the identical env var (post-deploy-check.mjs line 23 and google-signin-monitor.mjs line 21 call assertTestTenant from scripts/lib/test-tenants.cjs). Scenario: `SMOKE_BASE_URL=<prod api> SMOKE_TENANT_SLUG=<live-client-slug> npm run smoke` runs without complaint and issues a live client's slug to production, where each probe also causes the API to mint a Redis OAuth nonce (google-oauth.service.ts generateAuthUrl) — while the same command through post-deploy-check or the monitor aborts on the policy guard. Impact is small (no tenant data is read or written; generateAuthUrl does not validate or touch the tenant row), but it is an inconsistency in the exact guard CLAUDE.md requires of tenant-scoped script entry points, introduced by this change.",
+      "fixHint": "Import assertTestTenant in smoke.mjs and resolve the slug once at module top (`const TENANT = assertTestTenant(process.env.SMOKE_TENANT_SLUG || \"e2e-routeflow\", \"smoke\")`), matching post-deploy-check.mjs; if smoke must stay non-aborting, at minimum skip the tenant door with a warn line when the slug is not an approved test tenant.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "docs/runbooks/mandatory-dependencies.md",
+      "line": 14,
+      "severity": "minor",
+      "summary": "The runbook says the Google OAuth client id/secret are read on both apps/api and apps/web and points at each app's .env.example, but apps/web holds no Google OAuth env var at all and the callbacks live on the API domain, not the web app.",
+      "detail": "Line 14: \"The client id/secret are read on both `apps/api` and `apps/web` from env vars named for Google OAuth (see each app's `.env.example` for the exact names)\". Verified: apps/api/.env.example lines 97-103 carry GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REDIRECT_URI_TENANT / GOOGLE_REDIRECT_URI_PLATFORM, but apps/web/.env.example has only NEXT_PUBLIC_GOOGLE_MAPS_KEY, and a grep of apps/web for GOOGLE_CLIENT/GOOGLE_REDIRECT/GOOGLE_OAUTH finds nothing outside three e2e skip messages (apps/web/Dockerfile likewise bakes only the Maps key). Line 12 compounds it: the six redirect URIs are described as \"the web app's platform-admin and tenant callback paths\", but auth.controller.ts lines 204-205 document them on the API domain (`https://<api-domain>/api/v1/auth/google/callback` and `.../platform-admin/auth/google/callback`), and line 68's general restore step repeats \"on Railway for `apps/api` and `apps/web`\". Failure scenario: during the next outage the owner follows this runbook, looks for a Google OAuth var in apps/web's .env.example (finds none), pastes the client secret into the web service where nothing reads it (widening secret exposure for no effect), and — reading \"the web app's ... callback paths\" — registers web-domain redirect URIs in the recreated client, which is precisely the `redirect_uri_mismatch` the monitor then reports. The doc also never lists the six URIs the plan's R9 asked for, and the .env.example it defers to has empty values, so the restore step cannot be completed from the runbook alone.",
+      "fixHint": "State that the OAuth client id/secret are read by apps/api only (name GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REDIRECT_URI_TENANT / GOOGLE_REDIRECT_URI_PLATFORM as living in apps/api/.env.example), attribute the redirect URIs to the API domain's two callback paths (listing the six host variants), and drop apps/web from the restore step at line 68.",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": ".claude/code-map/_meta.json",
+      "line": 6,
+      "severity": "minor",
+      "summary": "The new code-map note ends \"See CHANGELOG.md for full detail\" but CHANGELOG.md was never touched, so the reference dangles.",
+      "detail": "`git status --short` shows only `.claude/code-map/INDEX.md` and `.claude/code-map/_meta.json` modified — `.claude/code-map/CHANGELOG.md` is unchanged, and its head still begins with the previous session's content. The note field the change appends ends with \"See CHANGELOG.md for full detail.\", and the field's own trailing convention text says \"New sessions: add your note as a bullet at the top of CHANGELOG.md and REPLACE this field with it\". WP3 declared this deviation, but the shipped text still makes the claim, so a reader following it finds no 2026-09-11 bullet.",
+      "fixHint": "Either add the one-bullet CHANGELOG.md entry for this run (matching the convention the field states) or drop the \"See CHANGELOG.md for full detail.\" sentence from the new note.",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "scripts/lib/google-signin-check.self-test.mjs",
+      "line": 327,
+      "severity": "minor",
+      "severity_note": "test-quality",
+      "summary": "R3's SMOKE_GOOGLE_REQUIRED=0 escape hatch has no test case — only undefined/undefined/\"1\" are exercised, so the branch that silences the check in production is unguarded.",
+      "detail": "The resolveRequired oracles at lines 317-331 cover localhost+undefined -> false, non-local+undefined -> true, and localhost+\"1\" -> true. R3 specifies the override as `SMOKE_GOOGLE_REQUIRED=0/1`, and resolveRequired implements `if (envValue === \"0\") return false` (line 41), but nothing asserts `resolveRequired(\"https://x.up.railway.app\", \"0\") === false`. If that branch were dropped or inverted, the suite stays green while the owner's documented way to silence a known-broken door on production stops working — every post-deploy-check and every 6-hourly monitor run then fails hard with no way to stand it down short of editing code. The env-value negative is the only untested half of the knob.",
+      "fixHint": "Add one check to runT3: `resolveRequired(\"https://x.up.railway.app\", \"0\") === false` (and optionally the same for resolveApexRequired(\"0\") === false).",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": ".github/workflows/google-signin-monitor.yml",
+      "line": 18,
+      "severity": "minor",
+      "summary": "A new 6-hourly schedule is added with no note of its Actions-minutes cost, on a repo whose only other scheduled workflow was deliberately commented out for exactly that reason.",
+      "detail": "The cron `17 */6 * * *` is 4 runs/day (~120 runs/month), each a checkout + setup-node + node step billed at GitHub's 1-minute minimum per job, i.e. roughly 120-240 billed minutes/month. nightly.yml's header (lines 16-38) records the standing decision this brushes past: \"THE SCHEDULE IS DISABLED — ON PURPOSE (2026-08-30) ... A private repo draws on a metered allowance (GitHub Free: 2,000 min/mo) ... Turning it back on is a deliberate decision with a price tag, not a default\", and the repo is private except during brief deploy windows. The new workflow's header documents only the secrets, and the build plan's R7 fixes the cadence without costing it, so the next person auditing the minutes burn has nothing in-file explaining ~6-12% of the monthly allowance. Related: the workflow declares no `concurrency` group (nightly.yml does), so a manual dispatch during a scheduled run can double-bill.",
+      "fixHint": "Add a short header note stating the billed cost per run and per month against the 2,000 min/mo allowance (mirroring nightly.yml's framing) plus a `concurrency: { group: google-signin-monitor }` block — or get the cadence explicitly acknowledged/lowered by the owner before merge.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "(red-gate)",
+      "severity": "blocker",
+      "phase": "Red gate",
+      "summary": "Red gate never went properly RED — the new tests are not proven able to fail",
+      "detail": "A test that has never failed proves nothing. Auditor notes: [\"STRUCTURAL: none. I ran `node scripts/lib/google-signin-check.self-test.mjs` myself in the worktree: exit 1, 209 output lines, 69 `FAIL` lines, 0 `ok` lines, and the final summary line printed — so every check was reached and failed on its own assertion. No import error (the author shipped an untracked signature-only stub at scripts/lib/google-signin-check.mjs whose exports all return undefined, which is why the module resolves), no syntax/config/fixture error, nothing passed, nothing skipped or filtered (grep for only/skip/xit found no directives — the hits are the word 'skipped' inside T3's own oracle strings).\",\"BEHAVIORAL: T2 — all 24 checks fail with `got undefined`. The reason enum (deleted_client, invalid_client, redirect_uri_mismatch, oauth_error, door_http_500, door_http_200, network) is not discriminated by this gate; one always-undefined return fails every case identically, so the per-marker oracles are unproven until a mutation probe flips one marker's expected string against a real implementation.\",\"BEHAVIORAL: T3 — all 8 checks fail with `got undefined`, including the three pure resolveRequired(localhost)=false / (railway)=true / (localhost,'1')=true cases. required-vs-skipped and the localhost default are wiring-proven only, not oracle-proven.\",\"BEHAVIORAL: T4 — all 3 checks fail with `got undefined`; wrong_host is indistinguishable from every other failure reason at this gate.\",\"BEHAVIORAL: T6 — all 8 checks fail with `got undefined`; warn-vs-fail, status warn/ok, reason ENOTFOUND and address 1.2.3.4 are all unproven as distinct oracles.\",\"BEHAVIORAL: T1 — 4 of 7 checks fail on `undefined` (ok, doors.length, per-door status, finalUrl prefix); only the request-count/tenant-URL trio (got 0, got 0, got false) failed on real observed values.\",\"BEHAVIORAL: T5 — 2 of 3 checks fail on `undefined`; only the two-sided wall-clock bound failed on a real computed value.\",\"BEHAVIORAL (future wrong-reason-pass risk): T8's behavioral oracles are literal greps — `monitor?.includes(\\\"process.exit(1)\\\")` and `includes(\\\"assertTestTenant\\\")` will go green on a comment or an unreachable branch, and `includes(\\\"17 */6 * * *\\\")` pins a cosmetic string rather than a behavior. Structural by design per the plan, but they prove presence of text, not that the monitor actually exits non-zero or actually guards the tenant. The plan's manual token M1 is the only real check of that.\",\"BEHAVIORAL (future flake risk, cites L-066): T5 asserts `elapsedMs >= 300 && elapsedMs < 1500` against a 400 ms budget. L-066 is exactly this shape — a wall-clock assertion green on CI and red on a loaded dev box (bare Node work here measured 0.6–6 s in that incident). A timeout cannot be tested without time, so this is acceptable, but the 1500 ms ceiling is tight enough that a loaded host can turn a correct implementation red.\",\"BEHAVIORAL (over-constraint risk, not a red-gate failure): T7 folds two clauses into one boolean — imports `lib/google-signin-check.mjs` AND does not contain `accounts.google.com`. A perfectly reasonable implementation that passes `expectedHost: \\\"accounts.google.com\\\"` explicitly from post-deploy-check.mjs would fail this with no defect, and the compound form will not say which clause broke.\"]. Per-test outcomes: [{\"test\":\"T1 (R1 R2 R10) — both doors succeed, request counts + tenant URL · scripts/lib/google-signin-check.self-test.mjs:85\",\"outcome\":\"assertion-failure\",\"note\":\"7 checks, all failed, none errored. PARTIALLY behaviorally grounded: 4 fail on the stub's `undefined` (ok, doors.length, statuses, finalUrl), but 3 fail on real observed values from the fakes — `api.requests.length` got 0 want 2, `google.requests.length` got 0 want 2, tenant=e2e-routeflow present got false. Those three prove the fake servers work and that nothing was probed.\"},{\"test\":\"T2 (R2) — Google error-page markers, 8 sub-cases · self-test.mjs:140-263\",\"outcome\":\"assertion-failure\",\"note\":\"24 checks, all failed on assertions. BEHAVIORALLY UNGROUNDED: every one failed with `got undefined` from the stub. The four discriminating reason strings (deleted_client / invalid_client / redirect_uri_mismatch / oauth_error) plus door_http_500, door_http_200 and network are indistinguishable at this gate — a single always-undefined implementation fails all 24 identically. Oracles themselves are plan-derived (build-plan.md R2 reason enum + ERROR_MARKERS hard lines), not back-filled from code.\"},{\"test\":\"T3 (R3) — not_configured required vs skipped + resolveRequired · self-test.mjs:267\",\"outcome\":\"assertion-failure\",\"note\":\"8 checks, all failed on assertions, all with `got undefined`. BEHAVIORALLY UNGROUNDED — including the three pure resolveRequired cases (localhost->false, railway->true, override '1'->true), which fail on undefined rather than on a wrong boolean, so the true/false discrimination is unproven.\"},{\"test\":\"T4 (R2) — expectedHost mismatch -> wrong_host · self-test.mjs:336\",\"outcome\":\"assertion-failure\",\"note\":\"3 checks, all failed on assertions, all `got undefined`. BEHAVIORALLY UNGROUNDED: wrong_host is not distinguished from any other reason at this gate.\"},{\"test\":\"T5 (R4) — hanging consent page must time out · self-test.mjs:371\",\"outcome\":\"assertion-failure\",\"note\":\"3 checks, all failed. PARTIALLY grounded: the timing check failed on a real computed value (`elapsedMs >= 300 && < 1500` got false — the stub returns in ~0 ms, so the LOWER bound genuinely fired); the other two (ok===false, a door with reason 'timeout') failed on undefined. The two-sided bound is the one oracle in the suite a fail-fast stub cannot satisfy by accident.\"},{\"test\":\"T6 (R5) — checkApexDns + resolveApexRequired via injected lookupImpl · self-test.mjs:412\",\"outcome\":\"assertion-failure\",\"note\":\"8 checks, all failed on assertions, all `got undefined`. BEHAVIORALLY UNGROUNDED: warn-vs-fail, status warn/ok, reason ENOTFOUND and address 1.2.3.4 all fail identically.\"},{\"test\":\"T7 (R6) — post-deploy-check.mjs / smoke.mjs source pins · self-test.mjs:447\",\"outcome\":\"assertion-failure\",\"note\":\"5 checks, all failed on real observed values (`got false`), not on undefined. Verified independently: `git status --short scripts/` shows both files tracked and UNMODIFIED, and `grep -c google-signin-check` returns 0 for each — so the red is real, and a missing file would still fail (null fallback, no existsSync skip).\"},{\"test\":\"T8 (R7) — monitor script + workflow + package.json wiring · self-test.mjs:486\",\"outcome\":\"assertion-failure\",\"note\":\"10 checks, all failed on real observed values (`got false`). Verified independently: `.github/workflows/google-signin-monitor.yml` and `scripts/google-signin-monitor.mjs` do not exist, and `node -e` on package.json shows `smoke:google` undefined and the current `verify` chain containing no google-signin-check.self-test.\"}]. Remediation asked for: (none reported)",
+      "fixHint": "Strengthen the vacuous tests, or rewrite the requirement if the behavior already exists.",
+      "fixComplexity": "judgment"
+    }
+  ],
+  "confirmedByPhase": {
+    "Baseline": 0,
+    "Author tests": 0,
+    "Red gate": 1,
+    "Implement": 0,
+    "Gate & Review": 7,
+    "Verify": 0,
+    "UI verify": 0,
+    "Mutation probe": 0,
+    "Fix": 0,
+    "Final pass": 0
+  },
+  "phaseReport": [
+    {
+      "phase": "Baseline",
+      "ran": true,
+      "agents": 3,
+      "rawFindings": 0,
+      "tokens": 25193,
+      "model": "claude-haiku-4-5 (gate/grounding/manifest)",
+      "effort": "low",
+      "estUsd": 0.13,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Author tests",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": 0,
+      "tokens": 22049,
+      "model": "claude-sonnet-5",
+      "effort": "medium (a package's own effort wins)",
+      "estUsd": 0.22,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Red gate",
+      "ran": true,
+      "agents": 5,
+      "rawFindings": 1,
+      "tokens": 77158,
+      "model": "claude-haiku-4-5 (run) + claude-opus-5 (audit/remediate)",
+      "effort": "low run / high audit / high remediation",
+      "estUsd": 1.93,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Implement",
+      "ran": true,
+      "agents": 3,
+      "rawFindings": 0,
+      "tokens": 51564,
+      "model": "claude-sonnet-5",
+      "effort": "medium (a package's own effort wins)",
+      "estUsd": 0.52,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Gate & Review",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": 7,
+      "tokens": 103748,
+      "model": "claude-haiku-4-5 (gate/regate) + claude-opus-5 (build-fix, lenses)",
+      "effort": "low gate / high build-fix / deep lenses high (xhigh when any file is HIGH risk) / pattern lenses medium",
+      "estUsd": 2.59,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Verify",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-sonnet-5 (location check) + claude-opus-5 (refuters, per file) + claude-fable-5-1 (split-vote tie-break)",
+      "effort": "location check low / refuters medium (high on HIGH-risk findings) / tie-break high",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "UI verify",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-sonnet-5 (driver) + claude-opus-5 (judge)",
+      "effort": "medium driver / high judge",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Mutation probe",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-haiku-4-5 (checksums) + claude-opus-5 (probes)",
+      "effort": "low checksums / medium probes",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Fix",
+      "ran": true,
+      "agents": 17,
+      "rawFindings": 0,
+      "tokens": 165195,
+      "model": "claude-sonnet-5 (brief) + claude-fable-5-1 (plans every fix in the round; claude-opus-5 if it declines) + claude-sonnet-5 (mechanical executors) + claude-sonnet-5 (designed LOW-risk executors) + claude-opus-5 (HIGH-risk and broad-key executors, recheck) + claude-haiku-4-5 (regate)",
+      "effort": "low brief / high plan (xhigh on the fallback planner) / low mechanical / medium designed LOW-risk / high HIGH-risk and broad keys / high re-check / low gates",
+      "estUsd": 4.13,
+      "overlappedWith": null,
+      "note": "Fable-planned fixes (Sonnet brief -> Fable plan -> executors implementing the design)"
+    },
+    {
+      "phase": "Final pass",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-sonnet-5 (diff digest) + claude-opus-5 (adversarial read → candidates) + claude-fable-5-1 (decides; claude-opus-5 if it declines)",
+      "effort": "low digest / xhigh read / high decide (xhigh on the fallback decider)",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    }
+  ],
+  "fixRounds": 2,
+  "fixReports": [
+    {
+      "round": 1,
+      "plan": {
+        "round": 1,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 8,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 1,
+          "sonnet": 6,
+          "opus": 1
+        },
+        "waves": [
+          [2, 3, 4, 6],
+          [0, 1, 5, 7]
+        ],
+        "note": "All eight findings are fixed this round; none disputed or deferred. Wave 1 lands the independent, mostly transcriptive changes on separate files: the assertTestTenant guard in smoke.mjs (#2), the runbook corrections pointing OAuth env vars and callback paths at apps/api only (#3), the missing CHANGELOG bullet (#4), and the workflow's cost note + concurrency group with the DECIDE-29 cron untouched (#6). Wave 2 then works the check module and its self-test together: the uncaught consent-body read becomes a classified timeout/network failure that keeps finalUrl (#0), a door-body abort stops masquerading as door_http_200 while malformed JSON still does (#1), the SMOKE_GOOGLE_REQUIRED=0 branch and the non-local default get real oracles (#5), and the red-gate blocker is closed by a five-mutation probe recorded in the run dir plus a split T7 and an L-066-safe T5 ceiling (#7). The only owner-facing judgment — cadence cost — is recorded in-file rather than deferred because the 6-hourly schedule was the orchestrator's stated ruling."
+      },
+      "reports": [
+        {
+          "target": "scripts/smoke.mjs",
+          "route": "opus",
+          "fixed": [
+            "smoke.mjs becomes tenant-scoped for the first time but reads SMOKE_TENANT_SLUG without assertTestTenant, unlike post-deploy-check.mjs and google-signin-monitor.mjs which both guard the same variable."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-smoke/scripts/smoke.mjs",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-smoke/scripts/lib/google-signin-check.self-test.mjs"
+          ]
+        },
+        {
+          "target": "docs/runbooks/mandatory-dependencies.md",
+          "route": "sonnet",
+          "fixed": [
+            "The runbook says the Google OAuth client id/secret are read on both apps/api and apps/web and points at each app's .env.example, but apps/web holds no Google OAuth env var at all and the callbacks live on the API domain, not the web app."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-smoke\\docs\\runbooks\\mandatory-dependencies.md"
+          ]
+        },
+        {
+          "target": ".claude/code-map/_meta.json",
+          "route": "mechanical",
+          "fixed": [
+            "The new code-map note ends \"See CHANGELOG.md for full detail\" but CHANGELOG.md was never touched, so the reference dangles."
+          ],
+          "skipped": [],
+          "filesChanged": [".claude/code-map/CHANGELOG.md"]
+        },
+        {
+          "target": ".github/workflows/google-signin-monitor.yml",
+          "route": "opus",
+          "fixed": [
+            "[#0] .github/workflows/google-signin-monitor.yml: added an in-file cost note for the 6-hourly schedule (4 runs/day, ~120 runs/month, GitHub's 1-minute-per-job billing minimum, ~120-240 billed min/month = roughly 6-12% of the GitHub Free 2,000 min/mo allowance, cross-referenced to nightly.yml's ~330 min/mo framing, and stating the cadence is the owner's DECIDE-29 ruling rather than a default), plus a top-level `concurrency: { group: google-signin-monitor, cancel-in-progress: false }` block so a manual dispatch queues behind a scheduled run instead of double-billing. The cron string `17 */6 * * *`, the secrets, `timeout-minutes: 2` and the run step are byte-identical. Also added the design's T8 source pin to scripts/lib/google-signin-check.self-test.mjs asserting the workflow contains `concurrency:` and `group: google-signin-monitor`; the existing cron pin is untouched."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            ".github/workflows/google-signin-monitor.yml",
+            "scripts/lib/google-signin-check.self-test.mjs"
+          ]
+        },
+        {
+          "target": "scripts/lib/google-signin-check.mjs",
+          "route": "opus",
+          "fixed": [
+            "Consent-page body read was not wrapped in try/catch, so checkGoogleSignIn REJECTED (AbortError / TypeError terminated) instead of resolving when the shared abort fired or the socket reset mid-body, losing both doors' diagnostics. Now try/catch'd, mapping through classifyFetchError and returning { name, status: \"fail\", reason, finalUrl }; self-test gained the two T5/R4 mid-body cases (hang -> timeout, socket destroy -> network) asserting no rejection, doors.length===2 and finalUrl.",
+            "A timeout/transport failure while reading the door's own JSON body was swallowed and reported as door_http_200 instead of timeout. The doorRes.json() catch now binds the error: SyntaxError keeps the door_http_<status> path, anything else returns reason classifyFetchError(err); self-test gained 'door body hangs after 200 headers -> timeout' and 'door 200 with complete malformed JSON -> door_http_200'."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-smoke/scripts/lib/google-signin-check.mjs",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-smoke/scripts/lib/google-signin-check.self-test.mjs"
+          ]
+        },
+        {
+          "target": "scripts/lib/google-signin-check.self-test.mjs",
+          "route": "opus",
+          "fixed": [
+            "[#0] R3's SMOKE_GOOGLE_REQUIRED=0 escape hatch has no test case — added two oracles to runT3 in scripts/lib/google-signin-check.self-test.mjs: `resolveRequired(\"https://x.up.railway.app\", \"0\") === false` and `resolveApexRequired(\"0\") === false`. The design's optional correction to the existing \"defaults true for a non-local host\" oracle was NOT needed — that check already passes \"https://x.up.railway.app\" (line 324), not a localhost URL, so it was left byte-identical. No change to resolveRequired/resolveApexRequired implementations. Verified: `node scripts/lib/google-signin-check.self-test.mjs` prints all checks ok including the two new lines and exits with \"all checks passed\"; a mutation proof (in-memory copy of google-signin-check.mjs with `if (envValue === \"0\") return false;` deleted) makes resolveRequired(\"https://x.up.railway.app\",\"0\") return true, i.e. the new oracle bites. `node --check` OK; `npx prettier --write` on the file reported \"unchanged\"."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-smoke/scripts/lib/google-signin-check.self-test.mjs"
+          ]
+        },
+        {
+          "target": "(red-gate)",
+          "route": "opus",
+          "fixed": [
+            "[#0] Red gate never went properly RED — proved the self-test's oracles discriminate with a 5-mutation probe against the real scripts/lib/google-signin-check.mjs (each mutation applied one at a time and reverted byte-identically): M-1 reason mapping deleted_client->invalid_client => exit 1, only `FAIL T2/R2 deleted_client: platform door reason` + `... tenant door reason`; M-2 `if (envValue === \"0\") return false` -> `return true` => exit 1, only `FAIL T3/R3: SMOKE_GOOGLE_REQUIRED=0 silences a non-local host`; M-3 wrong_host branch status fail->ok => exit 1, only `FAIL T4/R2: ok === false on host mismatch`; M-4 checkApexDns warn->fail => exit 1, only `FAIL T6/R5: ENOTFOUND + not required -> status warn`; M-5 503 branch always skipped (ignores `required`) => exit 1, only `FAIL T3/R3: required=true -> ok === false`. Baseline and post-restore runs both exit 0 with zero FAIL lines. Recorded in .claude/pipeline/2026-09-11-google-signin-monitor/red-gate-probe.md as a run record (mutation / expected-red / observed, plus what the probe does NOT cover: T8's literal source greps, manual token M1).",
+            "[#0] T7 compound booleans split — the two `imports the module AND hard-codes no accounts.google.com` assertions (post-deploy-check.mjs and smoke.mjs) became four one-clause checks, so a red names the clause that broke and an implementation that legitimately passes expectedHost explicitly fails only the hard-code guard. Self-test check count 87 -> 89, all ok.",
+            "[#0] T5 wall-clock ceiling widened 1500 ms -> 5000 ms with the >= 300 ms floor and the 400 ms budget unchanged (L-066: a tight wall-clock bound is green on CI and red on a loaded host). No oracle weakened: the floor is what proves the timeout fires; the ceiling only proves the shared AbortController budget (R4) exists. No expected value elsewhere was changed and the T8 source pins were left in place."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-smoke/scripts/lib/google-signin-check.self-test.mjs",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-smoke/.claude/pipeline/2026-09-11-google-signin-monitor/red-gate-probe.md"
+          ],
+          "disputed": []
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "plan": {
+        "round": 2,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 2,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 2,
+          "sonnet": 0,
+          "opus": 0
+        },
+        "waves": [[0, 1]],
+        "note": "Round 2 closes two residual doc defects in docs/runbooks/mandatory-dependencies.md, both mechanical and executed together in one wave since they share the file: #0 replaces the unbackable \"six redirect URIs on apex/www/preview API hosts\" composition with the derivable truth (the API sends exactly the GOOGLE_REDIRECT_URI_TENANT / GOOGLE_REDIRECT_URI_PLATFORM values or their RAILWAY_PUBLIC_DOMAIN fallbacks, per resolveRedirectUri), and #1 adds the missing `door_http_<status>` clause to the red-run triage list so an API-side 5xx/shape failure is routed to apps/api logs rather than to GCP. No code, no tests, no secrets touched; post-edit greps are the verification."
+      },
+      "reports": [
+        {
+          "target": "docs/runbooks/mandatory-dependencies.md",
+          "route": "mechanical",
+          "fixed": [
+            "The corrected redirect-URI paragraph still asserts \"six redirect URIs ... registered on each API host in use (the production API host plus any apex/www/preview API hosts)\", a composition the repo cannot back and that R9's \"list the 6 redirect URIs\" still leaves unenumerated, so the restore step remains unexecutable from the runbook.",
+            "The \"Reading a red run\" triage table omits `door_http_<status>`, a reason the check demonstrably emits, so the on-call reading a `door_http_500` / `door_http_200` red run finds no matching branch."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-smoke\\docs\\runbooks\\mandatory-dependencies.md"
+          ]
+        }
+      ]
+    }
+  ],
+  "remainingFindings": [],
+  "clean": false
+}

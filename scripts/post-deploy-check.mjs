@@ -16,6 +16,7 @@
  */
 
 import { assertTestTenant } from "./lib/test-tenants.cjs";
+import { checkGoogleSignIn, checkApexDns } from "./lib/google-signin-check.mjs";
 
 const BASE = (process.env.SMOKE_BASE_URL || "http://localhost:3000").replace(/\/+$/, "");
 // Only approved test tenants may be smoke-tested — never a live client tenant.
@@ -140,7 +141,48 @@ async function run() {
     failures++;
   }
 
-  // ── 2. Login ─────────────────────────────────────────────────────────────────
+  // ── 2. Google sign-in doors ───────────────────────────────────────────────────
+  try {
+    const result = await checkGoogleSignIn({
+      baseUrl: BASE,
+      tenant: TENANT,
+      timeoutMs: TIMEOUT_MS,
+    });
+    for (const door of result.doors) {
+      if (door.status === "ok") {
+        pass(`google-signin: ${door.name} — reachable`);
+      } else if (door.status === "skipped") {
+        console.log(`  ⚠️  google-signin: ${door.name} — skipped (${door.reason})`);
+      } else {
+        fail(
+          `google-signin: ${door.name} — ${door.reason}${door.finalPage ? ` (${door.finalPage})` : ""}`,
+        );
+        failures++;
+      }
+    }
+  } catch (err) {
+    fail(`google-signin: ${err?.message ?? err}`);
+    failures++;
+  }
+
+  // ── 3. Apex DNS ────────────────────────────────────────────────────────────────
+  try {
+    const required = process.env.SMOKE_APEX_REQUIRED === "1";
+    const result = await checkApexDns({ hostname: "routeflow.info", required });
+    if (result.status === "ok") {
+      pass(`apex-dns: routeflow.info — resolved (${result.address})`);
+    } else if (result.status === "warn") {
+      console.log(`  ⚠️  apex-dns: routeflow.info — ${result.reason}`);
+    } else {
+      fail(`apex-dns: routeflow.info — ${result.reason}`);
+      failures++;
+    }
+  } catch (err) {
+    fail(`apex-dns: ${err?.message ?? err}`);
+    failures++;
+  }
+
+  // ── 4. Login ─────────────────────────────────────────────────────────────────
   let token = null;
   try {
     const res = await post("/api/v1/auth/login", { username: OP_USER, password: OP_PASS });
@@ -162,7 +204,7 @@ async function run() {
     process.exit(1);
   }
 
-  // ── 3. Protected endpoints + float-artifact scan ─────────────────────────────
+  // ── 5. Protected endpoints + float-artifact scan ─────────────────────────────
   const endpoints = [
     { name: "Orders list", path: "/api/v1/orders?limit=10" },
     { name: "Invoices list", path: "/api/v1/invoices?limit=10" },
@@ -205,7 +247,7 @@ async function run() {
     }
   }
 
-  // ── 4. Invoice math spot-check ────────────────────────────────────────────────
+  // ── 6. Invoice math spot-check ────────────────────────────────────────────────
   // Fetch the first invoice and verify total = subtotal + tax (within $0.01).
   try {
     const res = await get("/api/v1/invoices?limit=1", token);
@@ -244,7 +286,7 @@ async function run() {
     failures++;
   }
 
-  // ── 5. Order↔Invoice divergence guard ────────────────────────────────────────
+  // ── 7. Order↔Invoice divergence guard ────────────────────────────────────────
   // A fully-invoiced order's total must equal the sum of its non-void invoice
   // totals. This is the standing guard for the box-proration divergence class
   // (an invoice line that billed the per-box price as the whole line total).
