@@ -83,6 +83,10 @@ Those still need a human to try a real sign-in.
 consent page body second — Google's error document is ~800 KB and names the cause only in that
 parameter.
 
+A red monitor run with no alert email means the deletion-alert filter missed the event — check
+the GCP project's audit logs for the deleting principal and method name, then fix the filter (see
+"Guardrails in place" below) before doing anything else.
+
 | `reason`                     | What it means / first move                                                                                                                                                   |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `deleted_client`             | The OAuth client no longer exists — rebuild it (see "Restoring the client" above), then set the env vars on `api` + `web`.                                                   |
@@ -102,6 +106,38 @@ password break-glass login while the client is restored.
 The check makes no attempt to actually sign in — it only confirms each door still reaches a live,
 correctly configured Google consent screen, so it needs no credentials and never touches a real
 account.
+
+## Guardrails in place (2026-09-11)
+
+Following OPS-23, a set of GCP-project-level guardrails now protect this dependency directly,
+independent of the monitor:
+
+- **Deletion lien**: a resource-manager lien blocks deleting the GCP project that holds the OAuth
+  client (origin `routeflow-ops`). `gcloud alpha resource-manager liens list --project
+routeflow-506615` shows it. Remove the lien only deliberately, and re-add it immediately
+  afterward — never leave the project unliened.
+- **Project labels**: the project carries `mandatory-dependency=google-signin` and
+  `owner=routeflow-ops`, so anyone auditing GCP projects can see at a glance that this one backs a
+  live dependency and who owns it.
+- **Deletion alert**: a log-based alert policy named "Google sign-in dependency deleted" emails
+  the ops mailbox if the project itself is deleted, or if the OAuth client or brand is deleted.
+  The OAuth-deletion service and method names used in its log filter are **unverified** — Google
+  has not yet logged a client or brand deletion for the filter to be checked against. If a client
+  is ever deleted again without this alert firing, fix the filter first, before anything else.
+- **Second owner**: the org policy `iam.allowedPolicyMemberDomains` refuses any principal outside
+  the Workspace domain, so a break-glass second owner has to be a Workspace user — a consumer
+  Gmail address cannot hold Owner on this project. Recommended: a dedicated break-glass Workspace
+  user with Owner, with its credentials and 2FA kept in the password manager.
+- **Standby OAuth client**: a second Web-application OAuth client exists with the same redirect
+  URIs as the primary; its secret is kept only in the password manager. On an incident, set its
+  client id and secret on the Railway `api` and `web` services and redeploy — the steps are
+  already covered in "Restoring the client" above.
+- **Mobile needs no separate client**: the mobile app authenticates through the API's web OAuth
+  flow, returning into the app via the `routeflow://` custom scheme, so there is no separate
+  mobile OAuth client to keep alive or restore.
+- **Working path for changes**: Cloud Shell / `gcloud` is the day-to-day working path for the
+  lien, labels, and alert policy — the IAM and credentials console pages are heavy for routine
+  checks, so a human uses those only when a console click is actually required.
 
 ## Apex DNS (`routeflow.info`)
 
