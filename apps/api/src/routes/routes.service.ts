@@ -808,9 +808,32 @@ export class RoutesService {
   async createRun(dto: CreateRouteRunDto, user?: JwtPayload) {
     const route = await this.prisma.forTenant().route.findUnique({
       where: { id: dto.routeId },
-      include: { stops: { orderBy: { stopNumber: "asc" } } },
+      include: {
+        // REG-B131: a removed (soft-deleted) customer's stop is not dispatched — no RouteRunStop
+        // and, because the order sweep below runs off run.stops, no order attached either. Filtered
+        // in the query (never in JS after the fact) so the count below is the only other read. A
+        // stop with NO customer (customerId null — a manual/depot stop) is not a customer stop and
+        // stays. Stateless: restoreCustomer() clears deletedAt and the next dispatch includes it.
+        stops: {
+          where: { OR: [{ customerId: null }, { customer: { deletedAt: null } }] },
+          orderBy: { stopNumber: "asc" },
+        },
+      },
     });
     if (!route) throw new NotFoundException("Route not found");
+
+    // A stop the filter above dropped leaves no trace in the dispatch response (stopCount simply
+    // reads lower), so count the suppressed set once per dispatch — otherwise a route whose stops
+    // all belong to removed customers dispatches an empty run with no explanation anywhere.
+    const suppressedStops =
+      (await this.prisma.forTenant().routeStop.count({
+        where: { routeId: dto.routeId, customer: { deletedAt: { not: null } } },
+      })) ?? 0;
+    if (suppressedStops > 0) {
+      this.logger.warn(
+        `REG-B131: ${suppressedStops} route stop(s) skipped — customer removed (route ${dto.routeId})`,
+      );
+    }
 
     // orderIds narrows the dispatch sweep below to exactly the requested orders —
     // only meaningful for an ADHOC trip (a SCHEDULED route's stops already imply

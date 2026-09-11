@@ -643,9 +643,17 @@ export class GoogleOAuthService {
   private async acceptInviteToken(token: string, buyerAccountId: string): Promise<void> {
     // PENDING_SELLER_APPROVAL is redeemable too: a buyer-initiated request against an
     // INVITED row flips the status while PRESERVING the token, and the true invitee's
-    // emailed link must keep working. Mirrors BuyerService.acceptInvite's gate.
+    // emailed link must keep working. Mirrors BuyerService.acceptInvite's gate, including
+    // REG-B141's `customer: { deletedAt: null }`: a removed customer's invite is not
+    // redeemable, so the link is left untouched and the token is NOT consumed — restore has
+    // to be able to bring the pending invite back with the customer. The Google path ignores
+    // a non-redeemable token silently (`return`), exactly as it does an expired one.
     const link = await this.prisma.customerLink.findFirst({
-      where: { inviteToken: token, status: { in: ["INVITED", "PENDING_SELLER_APPROVAL"] } },
+      where: {
+        inviteToken: token,
+        status: { in: ["INVITED", "PENDING_SELLER_APPROVAL"] },
+        customer: { deletedAt: null },
+      },
     });
     if (!link) return;
     if (link.inviteExpiresAt && link.inviteExpiresAt < new Date()) return;

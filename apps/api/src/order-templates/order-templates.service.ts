@@ -128,9 +128,12 @@ export class OrderTemplatesService {
 
   async create(dto: CreateOrderTemplateDto) {
     if (!dto.customerId) throw new BadRequestException("customerId is required");
+    // REG-B131: a removed (soft-deleted) customer is not a standing-order target either — the cron
+    // already skips their templates, so creating one would only schedule a silent no-op. Refuse
+    // through the existing not-found branch so no customer state leaks.
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: dto.customerId } });
+      .customer.findUnique({ where: { id: dto.customerId, deletedAt: null } });
     if (!customer) throw new BadRequestException("Customer not found");
 
     const productIds = dto.items.map((i) => i.productId);

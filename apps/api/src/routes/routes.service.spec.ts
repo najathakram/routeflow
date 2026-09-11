@@ -801,6 +801,104 @@ describe("RoutesService", () => {
       expect(gateway.emitToDriver).not.toHaveBeenCalled();
     });
 
+    // REG-B131: a removed (soft-deleted) customer's stop is never dispatched — every write at that
+    // door (delivery, order, invoice) is already refused, so sending a driver there is a wasted trip.
+    describe("removed-customer stops (B131)", () => {
+      const REMOVED_AT = new Date("2026-09-01T00:00:00.000Z");
+
+      const stops = (removedAt: Date | null) => [
+        {
+          id: "rs-live",
+          stopNumber: 1,
+          customerId: "c-live",
+          customerAddressId: "a1",
+          customer: { deletedAt: null },
+        },
+        {
+          id: "rs-removed",
+          stopNumber: 2,
+          customerId: "c-removed",
+          customerAddressId: "a2",
+          customer: { deletedAt: removedAt },
+        },
+        // A manual/depot stop: no customer at all, so the relation filter must not drop it.
+        {
+          id: "rs-manual",
+          stopNumber: 3,
+          customerId: null,
+          customerAddressId: null,
+          customer: null,
+        },
+      ];
+
+      // Honest stand-in for Postgres: applies the nested `include.stops.where` the service actually
+      // sends, so a where-only fix is observable (L-081: a mock that hands back a fixed stop list
+      // cannot see one).
+      function boot(rows: any[]) {
+        prisma.route.findUnique.mockImplementation((async (args: any) => {
+          const where = args?.include?.stops?.where;
+          const matches = (r: any) =>
+            !where ||
+            where.OR.some((c: any) =>
+              Object.prototype.hasOwnProperty.call(c, "customerId")
+                ? r.customerId === c.customerId
+                : r.customer?.deletedAt === null,
+            );
+          return { ...MOCK_ROUTE, stops: rows.filter(matches) };
+        }) as any);
+        prisma.routeRun.create.mockResolvedValue({
+          ...MOCK_RUN,
+          driverId: null,
+          scheduledDate: new Date("2026-09-10"),
+          route: { id: "route-1", name: "Downtown Route" },
+          stops: [],
+        });
+        prisma.order.updateMany.mockResolvedValue({ count: 0 });
+      }
+
+      it("REG-B131 T15: createRun skips stops of removed customers and warns", async () => {
+        boot(stops(REMOVED_AT));
+        prisma.routeStop.count.mockResolvedValue(1 as any);
+        const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => {});
+
+        await service.createRun({ routeId: "route-1", scheduledDate: "2026-09-10" } as any);
+
+        const created = prisma.routeRun.create.mock.calls[0][0] as any;
+        expect(created.data.stops.create.map((s: any) => s.routeStopId)).toEqual([
+          "rs-live",
+          "rs-manual",
+        ]);
+        // The warned number must come from the suppressed set, not from any set: a count whose where
+        // is flipped (or loses the relation filter) would log a confident wrong number.
+        expect(prisma.routeStop.count).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({ customer: { deletedAt: { not: null } } }),
+          }),
+        );
+        const suppressionWarnings = warn.mock.calls
+          .map((c) => String(c[0]))
+          .filter((m) => m.includes("REG-B131"));
+        expect(suppressionWarnings).toHaveLength(1);
+        expect(suppressionWarnings[0]).toContain("1");
+        expect(suppressionWarnings[0]).toContain("route-1");
+      });
+
+      it("B131 P14: live stops are all dispatched", async () => {
+        boot(stops(null));
+        const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => {});
+
+        await service.createRun({ routeId: "route-1", scheduledDate: "2026-09-10" } as any);
+
+        const created = prisma.routeRun.create.mock.calls[0][0] as any;
+        expect(created.data.stops.create.map((s: any) => s.routeStopId)).toEqual([
+          "rs-live",
+          "rs-removed",
+          "rs-manual",
+        ]);
+        expect(warn.mock.calls.filter((c) => String(c[0]).includes("REG-B131"))).toHaveLength(0);
+      });
+    });
+
     // WP3: ad-hoc trip sweep narrowing — the SCHEDULED where-object is
     // money-critical (it controls which orders attach to a run, and thus
     // delivery payments downstream), so it is pinned by deep-equal here. The

@@ -81,9 +81,12 @@ export class RecurringInvoicesService {
   // ─── CRUD ─────────────────────────────────────────────────────────────────
 
   async create(dto: CreateRecurringInvoiceDto) {
+    // REG-B131: a removed (soft-deleted) customer is not a recurring-invoice target — the sweep
+    // already skips their schedules, so creating one would only schedule a silent no-op. Refuse
+    // through the existing not-found branch so no customer state leaks.
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: dto.customerId } });
+      .customer.findUnique({ where: { id: dto.customerId, deletedAt: null } });
     if (!customer) throw new NotFoundException("Customer not found");
 
     return this.prisma.forTenant().recurringInvoice.create({

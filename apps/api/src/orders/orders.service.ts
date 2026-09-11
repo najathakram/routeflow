@@ -340,9 +340,12 @@ export class OrdersService implements OnApplicationBootstrap {
     const where: any = {};
 
     if (user.role === UserRole.CUSTOMER) {
+      // REG-B131: `deletedAt: null` here — a removal deactivates the user but an access token
+      // minted just before it stays valid for up to 15 minutes, so a removed customer's own
+      // in-flight session must fall into the existing refusal below.
       const customer = await this.prisma
         .forTenant()
-        .customer.findFirst({ where: { userId: user.sub } });
+        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
       if (!customer) throw new ForbiddenException("Customer record not found");
       where.customerId = customer.id;
     } else if (customerId) {
@@ -491,9 +494,12 @@ export class OrdersService implements OnApplicationBootstrap {
     if (!order) throw new NotFoundException("Order not found");
 
     if (user.role === UserRole.CUSTOMER) {
+      // REG-B131: `deletedAt: null` here — a removal deactivates the user but an access token
+      // minted just before it stays valid for up to 15 minutes, so a removed customer's own
+      // in-flight session must fall into the existing refusal below.
       const customer = await this.prisma
         .forTenant()
-        .customer.findFirst({ where: { userId: user.sub } });
+        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
       if (!customer || customer.id !== order.customerId) throw new ForbiddenException();
       // A customer must never see an upsell's base price / that they were upsold.
       redactUpsellForCustomer(order);
@@ -1938,9 +1944,12 @@ export class OrdersService implements OnApplicationBootstrap {
       customerId = customer.id;
     } else {
       // Customer creates their own order
+      // REG-B131: `deletedAt: null` here, not a second check below — a removal deactivates the
+      // user but an access token minted just before it stays valid for up to 15 minutes, so a
+      // removed customer's own in-flight session must fall into the existing refusal.
       const customer = await this.prisma
         .forTenant()
-        .customer.findFirst({ where: { userId: user.sub } });
+        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
       if (!customer) throw new ForbiddenException("Customer record not found");
       customerId = customer.id;
     }
@@ -2737,9 +2746,12 @@ export class OrdersService implements OnApplicationBootstrap {
     const order = await this.findOneOrThrow(id);
 
     if (user.role === UserRole.CUSTOMER) {
+      // REG-B131: `deletedAt: null` here — a removal deactivates the user but an access token
+      // minted just before it stays valid for up to 15 minutes, so a removed customer's own
+      // in-flight session must fall into the existing refusal below.
       const customer = await this.prisma
         .forTenant()
-        .customer.findFirst({ where: { userId: user.sub } });
+        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
       if (!customer || order.customerId !== customer.id) throw new ForbiddenException();
       // Customers may only cancel their own PENDING or DRAFT orders
       if (
@@ -3303,9 +3315,11 @@ export class OrdersService implements OnApplicationBootstrap {
     // an authenticated buyer could read another customer's order status off the
     // response body. The extra read only runs on the path about to throw anyway.
     if (user?.role === UserRole.CUSTOMER && BUYER_EDIT_CLOSED_STATUSES.includes(order.status)) {
+      // REG-B131: `deletedAt: null` — a removed customer's still-valid token resolves to no
+      // owner and takes the bare 403 below, never the dispatch-state message.
       const owner = await this.prisma
         .forTenant()
-        .customer.findFirst({ where: { userId: user.sub } });
+        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
       if (!owner || order.customerId !== owner.id) throw new ForbiddenException();
       throw new ForbiddenException(
         "This order is already out for delivery. Send a change request instead.",
@@ -3451,7 +3465,11 @@ export class OrdersService implements OnApplicationBootstrap {
           (user?.role === UserRole.DRIVER && !isDiffPayload)
         ) {
           if (user.role === UserRole.CUSTOMER) {
-            const customer = await tx.customer.findFirst({ where: { userId: user.sub } });
+            // REG-B131: `deletedAt: null` — the buyer replace-all path is the last door a
+            // removed customer's still-valid session could mutate an order through.
+            const customer = await tx.customer.findFirst({
+              where: { userId: user.sub, deletedAt: null },
+            });
             if (!customer || order.customerId !== customer.id) throw new ForbiddenException();
           }
 
@@ -5828,9 +5846,12 @@ export class OrdersService implements OnApplicationBootstrap {
   async toggleUrgent(id: string, user: JwtPayload, urgent?: boolean) {
     const order = await this.findOneOrThrow(id);
     if (user.role === UserRole.CUSTOMER) {
+      // REG-B131: `deletedAt: null` here — a removal deactivates the user but an access token
+      // minted just before it stays valid for up to 15 minutes, so a removed customer's own
+      // in-flight session must fall into the existing refusal below.
       const customer = await this.prisma
         .forTenant()
-        .customer.findFirst({ where: { userId: user.sub } });
+        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
       if (!customer || customer.id !== order.customerId) throw new ForbiddenException();
     }
     // If caller provides an explicit value, SET it; otherwise toggle (legacy web clients)
@@ -5852,9 +5873,12 @@ export class OrdersService implements OnApplicationBootstrap {
     const order = await this.prisma.forTenant().order.findFirst({ where: { id: orderId } });
     if (!order) throw new NotFoundException("Order not found");
     if (user.role === UserRole.CUSTOMER) {
+      // REG-B131: `deletedAt: null` here — a removal deactivates the user but an access token
+      // minted just before it stays valid for up to 15 minutes, so a removed customer's own
+      // in-flight session must fall into the existing refusal below.
       const customer = await this.prisma
         .forTenant()
-        .customer.findFirst({ where: { userId: user.sub } });
+        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
       if (!customer || order.customerId !== customer.id) throw new ForbiddenException();
     }
     const data: Record<string, unknown> = {};
@@ -5895,9 +5919,12 @@ export class OrdersService implements OnApplicationBootstrap {
     // this any authenticated CUSTOMER could enumerate order ids and read another
     // customer's route/driver/stop/delivery-window. Mirror findOne's CUSTOMER gate.
     if (user.role === UserRole.CUSTOMER) {
+      // REG-B131: `deletedAt: null` here — a removal deactivates the user but an access token
+      // minted just before it stays valid for up to 15 minutes, so a removed customer's own
+      // in-flight session must fall into the existing refusal below.
       const customer = await this.prisma
         .forTenant()
-        .customer.findFirst({ where: { userId: user.sub } });
+        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
       if (!customer || customer.id !== order.customerId) throw new ForbiddenException();
     }
 

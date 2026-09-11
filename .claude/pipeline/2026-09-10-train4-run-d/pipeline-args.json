@@ -85,7 +85,7 @@
       "npm run check-types -w apps/web"
     ],
     "final": [
-      "cd apps/api && npx jest src/order-templates/ src/recurring-invoices/ src/invoices/invoices.service src/buyer/ src/orders/orders.scan-hardening src/common/no-bare-cron --reporters=default",
+      "cd apps/api && npx jest src/order-templates/ src/recurring-invoices/ src/invoices/invoices.service src/buyer/ src/orders/orders.service src/orders/orders.scan-hardening src/common/no-bare-cron src/auth/google-oauth.removed-customer src/authorizations/authorization-expiry src/routes/ --reporters=default",
       "cd apps/web && npx jest lib/buyer-auth-context app/buyer"
     ]
   },

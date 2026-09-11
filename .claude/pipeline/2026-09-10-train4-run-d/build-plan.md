@@ -32,7 +32,9 @@ inverse: `deletedAt = null` plus the prior user status. Nothing else reads `dele
 
 The fix is **stateless and restore-symmetric**: filter or refuse on `customer.deletedAt`, write no new state, and leave
 the soft-delete and restore code untouched. Restoring a customer (clearing `deletedAt`) brings back every behavior with no
-other write.
+other write. Precisely: restore resumes the schedule; the first tick after restore generates at most one current-cycle
+invoice/order (B46 rule — the generator advances from `max(due, now)`, so a long removal is not replayed as a backlog).
+That single make-up document is accepted behaviour, not a defect, and needs no code of its own.
 
 ### Requirements
 
@@ -713,7 +715,7 @@ Final (unit only; no DB-lane spec is touched by this run, so no DB-lane command 
 round-2 fence amendment for `apps/web/lib/buyer-auth-context.tsx`:
 
 ```bash
-cd apps/api && npx jest src/order-templates/ src/recurring-invoices/ src/invoices/invoices.service src/buyer/ src/orders/orders.scan-hardening src/common/no-bare-cron --reporters=default
+cd apps/api && npx jest src/order-templates/ src/recurring-invoices/ src/invoices/invoices.service src/buyer/ src/orders/orders.service src/orders/orders.scan-hardening src/common/no-bare-cron src/auth/google-oauth.removed-customer src/authorizations/authorization-expiry src/routes/ --reporters=default
 cd apps/web && npx jest lib/buyer-auth-context app/buyer
 ```
 
@@ -926,7 +928,7 @@ stand in).
       "npm run check-types -w apps/web"
     ],
     "final": [
-      "cd apps/api && npx jest src/order-templates/ src/recurring-invoices/ src/invoices/invoices.service src/buyer/ src/orders/orders.scan-hardening src/common/no-bare-cron --reporters=default",
+      "cd apps/api && npx jest src/order-templates/ src/recurring-invoices/ src/invoices/invoices.service src/buyer/ src/orders/orders.service src/orders/orders.scan-hardening src/common/no-bare-cron src/auth/google-oauth.removed-customer src/authorizations/authorization-expiry src/routes/ --reporters=default",
       "cd apps/web && npx jest lib/buyer-auth-context app/buyer"
     ]
   },
@@ -969,5 +971,27 @@ stand in).
 
 > Amended 2026-09-10 (lead): --reporters=default moved LAST — Jest reads positionals after it as reporter modules (proven in wf_363f0377-624 Baseline).
 
-This block and `pipeline-args.json` are the same object (3,856 bytes, under the 4 KB truncation limit). The test files
-are left out of `radiusFiles` to stay under that limit; the engine reviews them as part of the diff anyway.
+This block and `pipeline-args.json` are the same object. Size, measured not estimated: the committed file was **4,463
+bytes** after prettier, and **4,580 bytes** once the round-3 verify command above was extended. That is past 4 KB and
+close to the ~4.5 KB ceiling where a Workflow **resume** reads the stored args back truncated and dies with
+`workflow.js:260 Expected }` (reference `reference_workflow_resume_args_truncation_2026-09-05`) — so any further growth
+goes into a referenced file, not into this object. The test files are left out of `radiusFiles` for the same reason; the
+engine reviews them as part of the diff anyway.
+
+## Follow-ups filed at bookkeeping
+
+Found in the round-2 fix pass; both are out of scope for this diff (neither is a wrong value a user can
+observe), so they land as register/bookkeeping items rather than code here.
+
+- **(a) `routes.service.ts` createRun — the suppressed count and the include filter disagree on tenancy.**
+  The count runs through `forTenant()`, so Prisma injects `tenantId`; the nested `include.stops.where`
+  that actually drops removed-customer stops does not carry it. A legacy NULL-tenant `RouteStop` row is
+  therefore dropped from the dispatch but never counted, so the `REG-B131` warn can understate what it
+  skipped. Log-only — no stop is wrongly dispatched and no money moves — and NULL-tenant rows are the
+  owner's structural-backfill project, not this fix's radius.
+- **(b) `sendPortalInvite` still mints a token for a removed customer.** The invite is dead on arrival:
+  all three redemption doors (`acceptInvite`, Google sign-in's invite redemption, and the buyer-connect
+  request) now fence on `customer.deletedAt: null`, so the token can never be spent. What remains is a
+  UX wart — an operator gets a "sent" confirmation for an invite nobody can ever use — not a security
+  or correctness hole. Fix belongs with the customers-module UX pass, where the refusal message can be
+  written once for the whole removed-customer surface.

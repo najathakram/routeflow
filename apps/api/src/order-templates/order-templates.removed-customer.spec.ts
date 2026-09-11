@@ -9,6 +9,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: class extends Error {},
 }));
 
+import { BadRequestException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { OrderTemplatesService } from "./order-templates.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -160,5 +161,64 @@ describe("OrderTemplatesService.generateDailyOrders — removed customer (B131)"
     await service.generateDailyOrders();
 
     expect(warn.mock.calls.filter((c) => String(c[0]).includes("REG-B131"))).toHaveLength(0);
+  });
+});
+
+// The other side of the same rule: the cron skipping a removed customer's templates means a
+// template created for one would only ever be a silent no-op, so create() refuses it outright.
+describe("OrderTemplatesService.create — removed customer (B131)", () => {
+  let service: OrderTemplatesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  const dto = {
+    customerId: "c-1",
+    name: "Weekly",
+    daysOfWeek: [1],
+    items: [{ productId: "p-1", qty: 1 }],
+  } as any;
+
+  async function boot(deletedAt: Date | null) {
+    prisma = createMockPrisma();
+    const mod = await Test.createTestingModule({
+      providers: [
+        OrderTemplatesService,
+        { provide: PrismaService, useValue: prisma },
+        {
+          provide: TenantContextService,
+          useValue: { run: jest.fn((_id: string, fn: () => unknown) => fn()) },
+        },
+        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
+        { provide: OrdersService, useValue: {} },
+        { provide: AuthorizationGuardService, useValue: {} },
+        { provide: NotificationsService, useValue: {} },
+      ],
+    }).compile();
+    service = mod.get(OrderTemplatesService);
+    // Honest stand-in for Postgres: applies the `where` the service actually sends (findUnique
+    // carries the extended `deletedAt: null` filter), so a where-only fix is observable (L-081).
+    prisma.customer.findUnique.mockImplementation((async (args: any) => {
+      const where = args?.where ?? {};
+      if (where.deletedAt === null && deletedAt !== null) return null;
+      return { id: where.id, deletedAt };
+    }) as any);
+    // Everything past the customer gate succeeds, so pre-fix the call RESOLVED and wrote a row.
+    prisma.product.findMany.mockResolvedValue([{ id: "p-1" }] as any);
+    prisma.orderTemplate.create.mockResolvedValue({ id: "t-1" } as any);
+  }
+
+  it("REG-B131 T16: creating a standing order for a removed customer is refused", async () => {
+    await boot(REMOVED_AT);
+
+    await expect(service.create(dto)).rejects.toThrow(
+      new BadRequestException("Customer not found"),
+    );
+    expect(prisma.orderTemplate.create).not.toHaveBeenCalled();
+  });
+
+  it("B131 P15: a live customer's standing order is still created", async () => {
+    await boot(null);
+
+    await expect(service.create(dto)).resolves.toEqual({ id: "t-1" });
+    expect(prisma.orderTemplate.create).toHaveBeenCalled();
   });
 });

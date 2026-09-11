@@ -73,7 +73,7 @@ describe("BuyerAuthProvider — activeSeller reconciliation (B141)", () => {
     expect(localStorage.getItem(BUYER_KEYS.activeSeller)).toBeNull();
   });
 
-  it("REG-B141 W2: keeps a stored activeSeller that is still in the fetched sellers list", async () => {
+  it("B141 W2: keeps a stored activeSeller that is still in the fetched sellers list", async () => {
     localStorage.setItem(BUYER_KEYS.activeSeller, JSON.stringify(removed));
     (getBuyerSellers as jest.Mock).mockResolvedValue([removed, other]);
 
@@ -86,7 +86,7 @@ describe("BuyerAuthProvider — activeSeller reconciliation (B141)", () => {
     expect(localStorage.getItem(BUYER_KEYS.activeSeller)).not.toBeNull();
   });
 
-  it("REG-B141 W3: keeps the stored activeSeller when the sellers fetch fails", async () => {
+  it("B141 W3: keeps the stored activeSeller when the sellers fetch fails", async () => {
     localStorage.setItem(BUYER_KEYS.activeSeller, JSON.stringify(removed));
     (getBuyerSellers as jest.Mock).mockRejectedValue(new Error("network down"));
 
@@ -117,7 +117,7 @@ describe("BuyerAuthProvider — activeSeller reconciliation (B141)", () => {
     expect(localStorage.getItem(BUYER_KEYS.activeSeller)).toBeNull();
   });
 
-  it("REG-B141 W5: keeps the activeSeller when refreshSellers() still returns it", async () => {
+  it("B141 W5: keeps the activeSeller when refreshSellers() still returns it", async () => {
     localStorage.setItem(BUYER_KEYS.activeSeller, JSON.stringify(removed));
     (getBuyerSellers as jest.Mock).mockResolvedValue([removed, other]);
 

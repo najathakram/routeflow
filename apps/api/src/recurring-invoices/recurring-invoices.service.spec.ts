@@ -11,6 +11,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: class extends Error {},
 }));
 
+import { NotFoundException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { RecurringInvoicesService } from "./recurring-invoices.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -581,5 +582,56 @@ describe("RecurringInvoicesService.generateDueRecurringInvoices — removed cust
     await service.generateDueRecurringInvoices();
 
     expect(warn.mock.calls.filter((c) => String(c[0]).includes("REG-B131"))).toHaveLength(0);
+  });
+});
+
+// The other side of the same rule: the sweep skipping a removed customer's schedules means a
+// schedule created for one would only ever be a silent no-op, so create() refuses it outright.
+describe("RecurringInvoicesService.create — removed customer (B131)", () => {
+  let service: RecurringInvoicesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  const dto = {
+    customerId: "c-1",
+    frequency: "MONTHLY",
+    dayOfMonth: 1,
+    nextRunAt: "2026-10-01T00:00:00.000Z",
+    items: [{ description: "x", qty: 1, unitPrice: 10 }],
+  } as any;
+
+  async function boot(deletedAt: Date | null) {
+    prisma = createMockPrisma();
+    const mod = await Test.createTestingModule({
+      providers: [
+        RecurringInvoicesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: TenantContextService, useValue: {} },
+        { provide: InvoicesService, useValue: {} },
+      ],
+    }).compile();
+    service = mod.get(RecurringInvoicesService);
+    // Honest stand-in for Postgres: applies the `where` the service actually sends (findUnique
+    // carries the extended `deletedAt: null` filter), so a where-only fix is observable (L-081).
+    prisma.customer.findUnique.mockImplementation((async (args: any) => {
+      const where = args?.where ?? {};
+      if (where.deletedAt === null && deletedAt !== null) return null;
+      return { id: where.id, deletedAt };
+    }) as any);
+    // Everything past the customer gate succeeds, so pre-fix the call RESOLVED and wrote a row.
+    prisma.recurringInvoice.create.mockResolvedValue({ id: "ri-1" } as any);
+  }
+
+  it("REG-B131 T17: creating a recurring invoice for a removed customer is refused", async () => {
+    await boot(REMOVED_AT);
+
+    await expect(service.create(dto)).rejects.toThrow(new NotFoundException("Customer not found"));
+    expect(prisma.recurringInvoice.create).not.toHaveBeenCalled();
+  });
+
+  it("B131 P16: a live customer's recurring invoice is still created", async () => {
+    await boot(null);
+
+    await expect(service.create(dto)).resolves.toEqual({ id: "ri-1" });
+    expect(prisma.recurringInvoice.create).toHaveBeenCalled();
   });
 });
