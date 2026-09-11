@@ -185,12 +185,13 @@ export class OrdersController {
                 if (idempotencyKey) {
                   // B215: reads OrderIdempotencyKey (every merge wave's own key) before the Order
                   // column; the same key with a different cart is refused (409), never folded.
-                  const replayedOrderId = await this.ordersService.findOrderIdByIdempotencyKey(
+                  const replayed = await this.ordersService.findOrderIdByIdempotencyKey(
                     idempotencyKey,
                     dto.customerId!,
                     requestHash,
                   );
-                  if (replayedOrderId) {
+                  if (replayed) {
+                    const replayedOrderId = replayed.orderId;
                     // B215: the fold runs at most ONCE per key — but its convergent tail may
                     // never have run. The key commits INSIDE the fold's transaction, so a retry
                     // that arrives after that commit and before (or during) the post-fold
@@ -200,10 +201,19 @@ export class OrdersController {
                     // times — while still holding the customer advisory lock, so it cannot race
                     // a concurrent fold. The revision append is NOT re-run: it is append-only,
                     // not convergent.
+                    //
+                    // B215/R1 (round 2): the retry's own credit selection is applied ONLY on a
+                    // VERIFIED hit — the key TABLE row whose stored fingerprint matched this
+                    // body, i.e. provably the same cart the fold applied. A hit on the Order
+                    // COLUMN carries no fingerprint (nothing stored to compare), so this body may
+                    // be a DIFFERENT cart that merely reuses the key; passing its
+                    // `appliedCreditNotes` would re-point a real order's credits from an
+                    // unvalidated request. `undefined` there means "settle only, leave the stored
+                    // selection alone" (reconcileOrderAfterEdit skips the sync outright).
                     await this.ordersService.replayMergeReconcile(
                       replayedOrderId,
                       dto.customerId!,
-                      dto.appliedCreditNotes,
+                      replayed.verified ? dto.appliedCreditNotes : undefined,
                     );
                     return { kind: "merged" as const, orderId: replayedOrderId, replayed: true };
                   }

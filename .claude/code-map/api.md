@@ -1202,10 +1202,15 @@ validate()` and `buyer/strategies/buyer-jwt.strategy.ts validate()` both now cop
       `updateOrderItems(orderId, dto, user?, opts?: { idempotency?: { key, responseHash } })` — the 4th arg is
       passed ONLY when a key exists, and `recordMergeIdempotencyKey(tx, orderId, { key, responseHash })` writes
       the row INSIDE the fold's own transaction (P2002 ⇒ 409, aborting the fold; never swallowed — a swallowed
-      error leaves the tx aborted anyway); `findOrderIdByIdempotencyKey(key, customerId, requestHash?)`;
+      error leaves the tx aborted anyway);
+      `findOrderIdByIdempotencyKey(key, customerId, requestHash?) -> { orderId, verified } | null`
+      (`verified` = key-TABLE hit whose stored `responseHash` matched the request fingerprint; a
+      COLUMN hit, or any caller passing no hash, is never verified);
       private **`reconcileOrderAfterEdit(orderId, customerId, appliedCreditNotes, { postDeliveryEdit,
 skipInPlaceResync })`** and public **`replayMergeReconcile(orderId, customerId, appliedCreditNotes)`**;
-      private **`findReplayCandidateByKey(key)`**.
+      private **`findReplayCandidateByKey(key, customerId)`**. Pure helpers in
+      **`orders/merge-idempotency.ts`**: `mergeRequestHash`, `IDEMPOTENCY_KEY_CONFLICT`,
+      `IDEMPOTENCY_REPLAY_NEEDS_RECONCILE`, `shouldSkipInPlaceResync(lines)`.
       ⚠️ **Replay lookup ORDER is load-bearing** (`findOrderIdByIdempotencyKey`): tenant guard, then (a) the key
       table scoped to THIS customer via the `order` relation, then (b) this customer's own `Order.idempotencyKey`
       column, then (c) a tenant-wide key-table check that REFUSES a key held by another order. (b) must precede
@@ -1220,18 +1225,33 @@ skipInPlaceResync })`** and public **`replayMergeReconcile(orderId, customerId, 
       draft reconcile choice + the Serializable credit sync+settle) and is idempotent; the controller's merge
       branch calls `replayMergeReconcile` on its `replayed: true` path, STILL inside the customer advisory lock.
       The status event and `appendOrderRevision` stay fold-only (append-only, not convergent). `skipInPlaceResync`
-      is computed by `updateOrderItems` from the PRE-EDIT line snapshot (cumulative `invoicedQty`, which a
-      replace-all edit resets); a replay cannot reconstruct it and therefore passes `true` — it never re-issues an
-      in-place resync of a finalized/paid invoice. `create()` and its P2002 recovery both route through
-      `findReplayCandidateByKey` (table first, column fallback), so a keyed merge that fell through to `create()`
-      (its merge target vanished before the lock) replays instead of minting a duplicate.
+      is the SHARED pure predicate `shouldSkipInPlaceResync(lines)` — `updateOrderItems` evaluates it over the
+      PRE-EDIT snapshot, `replayMergeReconcile` over the order's CURRENT lines. ⚠️ **A post-delivery replay
+      reconciles or REFUSES, never silently skips** (round 2): any line still showing `invoicedQty` → route as the
+      fold would (resync when wholly invoiced, skip when partial); nothing invoiced AND no non-VOID invoice → route
+      the resync (a proven no-op); nothing invoiced BUT a non-VOID invoice survives → the replace-all fold erased
+      the cumulative `invoicedQty` the guard reads, so both branches are unsafe ⇒ `logger.warn` + 409
+      `{ code: IDEMPOTENCY_REPLAY_NEEDS_RECONCILE, orderId, message }` (mobile treats it exactly like
+      `IDEMPOTENCY_KEY_CONFLICT` — "Open order"). ⚠️ **The retry's credit selection is applied only on a VERIFIED
+      hit**: the controller passes `dto.appliedCreditNotes` to `replayMergeReconcile` when
+      `findOrderIdByIdempotencyKey` returned `verified`, and `undefined` otherwise — which
+      `reconcileOrderAfterEdit` treats as "settle only, never call `syncOrderCreditSelections`" (a column hit
+      carries no fingerprint, so its body may be a different cart). `create()` and its P2002 recovery both route
+      through `findReplayCandidateByKey(key, customerId)`, whose order is own key-table row → own `Order` column →
+      tenant-wide key-table row → tenant-wide column (the last two still 409 through the caller's ownership gate),
+      so a keyed merge that fell through to `create()` (its merge target vanished before the lock) replays instead
+      of minting a duplicate, and another customer's key-table row can no longer 409 a caller whose own
+      column-stamped order exists.
       **Tests:** `orders/orders.merge-idempotency.spec.ts` (REG-B215 T1-T3 controller replay incl. T2b's
       reconcile-on-replay + no-revision pin, T4/T5/T10/T14/T15 the in-tx key write, T6/T7 consolidation key
       hand-off, T8/T9/T12/T13/T17 the lookup order + coded bodies, T11/T11b `mergeRequestHash`, T16 `create()`'s
-      key-table replay, pins P1-P5) and the DB lane `orders/order-idempotency-key.db.spec.ts` (D1-D4 + PD1-PD3
+      key-table replay, T2c the verified-hit credit gate, T2d/T2e the post-delivery reconcile-or-refuse routing,
+      T18 the own-row-wins create() lookup, pins P1-P5) and the DB lane
+      `orders/order-idempotency-key.db.spec.ts` (D1-D4 + PD1-PD3
       against real Postgres via `jest.db.config.js` / `npm run local:test:db`; D3 is the pre-fold refusal, D4 the
-      in-tx P2002 rollback). Mobile half (cart-key rotation on customer switch, the "Open order" conflict
-      prompt) in [`mobile.md`](mobile.md). Lesson **L-104**.
+      in-tx P2002 rollback). Mobile half (PER-CUSTOMER cart keys, the "Open order" conflict prompt for
+      both 409 codes) in [`mobile.md`](mobile.md). Lesson **L-104** (round-2 refinement recorded in
+      `.claude/lessons/_meta.json`'s note — the register is at its byte cap).
     - **`foldMergeItems(existingLines, incoming)` + `deriveUnitsPerBox(row)` (R11, REG-B199, money-critical),**
       exported from the pure module **`orders/merge-items.ts`** — MOVED byte-identical out of
       `orders.controller.ts` by F06 (in-flight note above), which added `normalizeBoxUnawareSnapshots` +

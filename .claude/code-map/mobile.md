@@ -1098,6 +1098,17 @@ The wholesaler-reported "scanned items go missing / land twice" cluster. Server 
   (`resetOrderSubmitKey()`). `lib/api/orders.ts` `useCreateOrder` takes `idempotencyKey?` and sends it as the
   `idempotency-key` **HEADER, never in the body** (same idiom as `useCompleteWithPayment` in `lib/api/routes.ts`);
   `lib/api-client.ts` carries replay-safe headers across an offline replay. Server contract in `api.md` `orders/`.
+- **B215/R3 — submit keys are held PER CUSTOMER (2026-09-11, round 2).** `lib/order-submit-key.ts` keeps a
+  `Map<customerId, key>`: `getOrderSubmitKey(customerId)` mints on first use for that customer,
+  `resetOrderSubmitKey(customerId)` clears one slot, `clearAllOrderSubmitKeys()` is the explicit cart-clear path,
+  and a null/undefined customer uses a `__none__` slot. This matches the server's customer-scoped replay identity
+  without rotating anything on "Change customer" — the round-1 `keyCustomerIdRef` + onPick rotation is GONE,
+  because rotating on A→B→A handed A's still-live cart a fresh key and re-opened the duplicate window its own retry
+  needed collapsed. `NewOrderScreen` passes the selected `customerId` at the submit site, the mount reset, the
+  success reset and the 409 "Open order" wind-down; that 409 branch now also accepts
+  `IDEMPOTENCY_REPLAY_NEEDS_RECONCILE` (same "Open order" action). Tests:
+  `__tests__/order-submit-key.test.ts` (6 pure cases incl. A→B→A and reset-isolation) plus the source pins in
+  `__tests__/api-client-timeout.test.ts`.
 - **B215 — a customer switch is a NEW cart session; a spoken-for key offers the held order (2026-09-11,
   train 4 Run B)** — the submit key's replay identity is CUSTOMER-SCOPED on the server, so carrying one
   customer's key onto another's cart made the submit look like a replay of an order that is not theirs

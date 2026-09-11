@@ -1,6 +1,6 @@
 # Build plan: train 4 Run B — B215 (a same-key retry of a staff order merge folds the same items twice)
 
-> **Status: IMPLEMENTED (light-loop round 1).** The fix shipped; the design below is the plan as WRITTEN. Read
+> **Status: IMPLEMENTED (light-loop round 2).** The fix shipped; the design below is the plan as WRITTEN. Read
 > "Post-implementation corrections" at the bottom before trusting the Risks table, the bookkeeping bullet, or any
 > claim about D3 / test numbering.
 >
@@ -1003,3 +1003,35 @@ message }`; the message no longer tells the operator to mint a "new key" (no cli
    in the first pass (the parked deferred-RLS migration alone was not enough).
 10. **Test numbering:** the planned create()-replay case is **T16**, not T14 — T14 was already taken by the
     tenant-less `recordMergeIdempotencyKey` refusal. New: T2b, T11b, T16, T17, and the manual `REG-B215-M1`.
+
+## Post-implementation corrections (light-loop round 2, 2026-09-11)
+
+Opus refute-first review of `cfb3c331`; Fable's round-2 fix designs R1-R5 implemented.
+
+1. **R1 — `findOrderIdByIdempotencyKey` returns `{ orderId, verified } | null`.** `verified` is true only for a
+   key-TABLE hit whose stored `responseHash` matched the request fingerprint (a caller that passes no hash gets
+   `false`); a COLUMN hit is always `false`, since the column stores no fingerprint. The controller forwards the retry
+   body's `appliedCreditNotes` to `replayMergeReconcile` only when `verified`, `undefined` otherwise, and
+   `reconcileOrderAfterEdit` documents + keeps the explicit `!== undefined` guard around `syncOrderCreditSelections`
+   ("never touch the stored selection"). Pin `T2c` (+ positive control, + service half).
+2. **R2 — post-delivery replay reconciles or refuses.** The fold's partial-billing guard is extracted as the pure
+   `shouldSkipInPlaceResync(lines)` in `apps/api/src/orders/merge-idempotency.ts` and used by BOTH callers:
+   `updateOrderItems` over the pre-edit snapshot, `replayMergeReconcile` over the CURRENT lines. **The guard is not
+   always reproducible**, so `T2e` stands: a replace-all fold resets `invoicedQty` to 0, so "nothing invoiced" is
+   ambiguous. A non-VOID invoice count separates the two states — none → the resync is a proven no-op (route it), one
+   or more → `logger.warn` + `ConflictException({ code: IDEMPOTENCY_REPLAY_NEEDS_RECONCILE, orderId, message })`. The
+   "provably the same routing" comment is gone. Mobile's 409 handler treats the new code exactly like
+   `IDEMPOTENCY_KEY_CONFLICT` (Open order).
+3. **R3 — mobile per-customer submit keys.** `apps/mobile/lib/order-submit-key.ts` holds `Map<customerId, key>` with
+   `getOrderSubmitKey(customerId)` / `resetOrderSubmitKey(customerId)` / `clearAllOrderSubmitKeys()` and a `__none__`
+   slot; `keyCustomerIdRef` and the round-1 onPick/onChangeCustomer rotation are removed. The submit site, the mount
+   reset, the success path and the 409 "Open order" path all pass the selected `customerId`.
+4. **R4 — `findReplayCandidateByKey(key, customerId)`.** Own key-table row → own column → tenant-wide table row →
+   tenant-wide column, each loaded with the caller's `include` in ONE query (a select-then-reread would have made the
+   own-column hit invisible to the existing mock harnesses). Pin `T18`.
+5. **R5 — plan hygiene.** Both plans' Status lines now read round 2; the harness-contract notes carry the new return
+   shape and the re-verified line refs; `(proved by D3)` was already `D4` at `cfb3c331`.
+
+**Gates (round 2):** `apps/api` orders+buyer+schema-folder lane 17 suites / 480 tests green; `check-types` clean;
+`lint` 0 errors; DB lane `order-idempotency-key` 7/7; `apps/mobile` check-types clean and 127 suites / 1555 tests
+green; prettier clean on every touched file; full `apps/api` lane green (see the commit body).

@@ -37,7 +37,11 @@ import { join } from "path";
 import { AxiosHeaders } from "axios";
 import { apiClient } from "../lib/api-client";
 import { buildReplayRequestConfig } from "../lib/queue-drain";
-import { getOrderSubmitKey, resetOrderSubmitKey } from "../lib/order-submit-key";
+import {
+  clearAllOrderSubmitKeys,
+  getOrderSubmitKey,
+  resetOrderSubmitKey,
+} from "../lib/order-submit-key";
 import type { QueuedAction } from "../store/offlineQueue";
 
 /** The single response interceptor's rejection branch, straight off axios. */
@@ -156,8 +160,9 @@ describe("api-client — offline-enqueue hardening (REG-B196)", () => {
    */
   it("T-B196c (REG-B196): an offline POST /orders carries its Idempotency-Key into the queued action", async () => {
     mockIsOnline = false;
-    resetOrderSubmitKey();
-    const key = getOrderSubmitKey();
+    // B215/R3: keys are per customer — this leg only needs one customer's slot.
+    resetOrderSubmitKey("cust-1");
+    const key = getOrderSubmitKey("cust-1");
 
     await expect(
       responseRejectedHandler()(
@@ -224,18 +229,18 @@ describe("api-client — offline-enqueue hardening (REG-B196)", () => {
  * whole order. These lock the mint/reset rule and the two wiring points.
  */
 describe("order submit key — the client leg of Idempotency-Key (T-B196c / R8)", () => {
-  beforeEach(() => resetOrderSubmitKey());
+  beforeEach(() => clearAllOrderSubmitKeys());
 
   it("reuses ONE key across every retry/replay of the same cart", () => {
-    const first = getOrderSubmitKey();
-    expect(getOrderSubmitKey()).toBe(first);
+    const first = getOrderSubmitKey("cust-1");
+    expect(getOrderSubmitKey("cust-1")).toBe(first);
     expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 
   it("mints a fresh key only once the cart session ends", () => {
-    const first = getOrderSubmitKey();
-    resetOrderSubmitKey();
-    expect(getOrderSubmitKey()).not.toBe(first);
+    const first = getOrderSubmitKey("cust-1");
+    resetOrderSubmitKey("cust-1");
+    expect(getOrderSubmitKey("cust-1")).not.toBe(first);
   });
 
   it("NewOrderScreen sends the key on submit and resets it only on success", () => {
@@ -243,8 +248,11 @@ describe("order submit key — the client leg of Idempotency-Key (T-B196c / R8)"
       join(__dirname, "..", "components", "NewOrderScreen.tsx"),
       "utf8",
     );
-    expect(screenSrc).toMatch(/idempotencyKey:\s*getOrderSubmitKey\(\)/);
-    expect(screenSrc).toMatch(/resetOrderSubmitKey\(\)/);
+    // B215/R3: both calls are CUSTOMER-scoped — a bare call would key every customer's cart
+    // off one slot again, which is the wedge this round removed.
+    expect(screenSrc).toMatch(/idempotencyKey:\s*getOrderSubmitKey\(customerId\)/);
+    expect(screenSrc).toMatch(/resetOrderSubmitKey\(customerId\)/);
+    expect(screenSrc).not.toMatch(/(get|reset)OrderSubmitKey\(\)/);
     // The pre-fix claim this batch invalidates.
     expect(screenSrc).not.toMatch(/no idempotency key on POST \/orders/);
   });

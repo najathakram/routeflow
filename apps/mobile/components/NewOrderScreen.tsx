@@ -293,12 +293,6 @@ export function NewOrderScreen({
     initialCustomerName ?? null,
   );
   const customerLocked = !!initialCustomerId;
-  // B215/D2: the customer the CURRENT cart-session submit key was minted for. Set when the
-  // operator taps "Change customer" and read back when they pick one, so the key rotates on a
-  // real switch and survives a re-select of the same customer. A ref, not state — nothing
-  // renders from it.
-  const keyCustomerIdRef = useRef<string | null>(initialCustomerId ?? null);
-
   // The draft this screen is bound to. Seeded from the URL on open; kept in
   // sync afterwards via onDraftBound so a later onChangeCustomer round trip
   // (ProductPickView unmounts/remounts) resumes the SAME server draft rather
@@ -394,16 +388,10 @@ export function NewOrderScreen({
           backLabel={backLabel}
           onBack={handleBack}
           onPick={(id, name) => {
-            // B215/D2: a customer switch is a NEW cart session. The submit key is the server's
-            // replay identity, and it is customer-scoped there — carrying it across a switch
-            // made the new customer's submit look like a replay of the old customer's, which
-            // the API now refuses outright (409 IDEMPOTENCY_KEY_CONFLICT / HELD_BY_OTHER_ORDER).
-            // Rotate ONLY on a real change: re-picking the same customer is the same cart and
-            // must keep its key, or a genuine retry would mint a sibling duplicate order.
-            if (keyCustomerIdRef.current && keyCustomerIdRef.current !== id) {
-              resetOrderSubmitKey();
-            }
-            keyCustomerIdRef.current = id;
+            // B215/R3: no key rotation here. Submit keys are held PER CUSTOMER
+            // (lib/order-submit-key.ts), matching the server's customer-scoped replay identity, so
+            // picking a customer simply reads their own slot — and a switch away and back leaves
+            // the first customer's still-live cart holding the key its own retry must send.
             setPickedCustomerId(id);
             setPickedCustomerName(name);
           }}
@@ -418,11 +406,6 @@ export function NewOrderScreen({
           backLabel={backLabel}
           onBack={handleBack}
           onChangeCustomer={() => {
-            // B215/D2: remember whose cart the CURRENT submit key belongs to, so the picker's
-            // onPick above can tell a real switch from a re-select of the same customer. The key
-            // itself is not rotated here — tapping "Change" and picking the same customer back
-            // must not mint a new one.
-            keyCustomerIdRef.current = pickedCustomerId;
             setPickedCustomerId(null);
             setPickedCustomerName(null);
             // boundDraftId deliberately survives — the SAME server draft
@@ -1730,7 +1713,8 @@ function ProductPickView({
     // cart — rotating the key there re-opens the duplicate window for a
     // timed-out-but-committed submit made before the park. Rotate only for a
     // genuinely new cart session.
-    if (!initialDraft) resetOrderSubmitKey();
+    // B215/R3: scoped to THIS customer's slot — no other customer's live cart is disturbed.
+    if (!initialDraft) resetOrderSubmitKey(customerId);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot mount decision on the resume seed
   }, []);
 
@@ -1834,13 +1818,13 @@ function ProductPickView({
           : {}),
         // Sent as the Idempotency-Key header (see useCreateOrderAsDriver). The
         // SAME value on every retry/replay of this cart is the point.
-        idempotencyKey: getOrderSubmitKey(),
+        idempotencyKey: getOrderSubmitKey(customerId),
       },
       {
         onSuccess: async (order) => {
-          // This cart is now a real order; anything submitted next is a NEW
-          // order and must carry its own key.
-          resetOrderSubmitKey();
+          // This cart is now a real order; anything submitted next for THIS customer is a NEW
+          // order and must carry its own key (B215/R3: only this customer's slot is cleared).
+          resetOrderSubmitKey(customerId);
           if (mergeChoice === "merge") {
             showToast(`Merged into order ${order.orderNumber}`);
           } else if (asDraft) {
@@ -1888,9 +1872,15 @@ function ProductPickView({
           // order holds it (HELD_BY_OTHER_ORDER). The operator cannot mint a new key without
           // abandoning the cart, so a bare message wedges the screen: offer the held order
           // instead. `orderId` on the body is always the order that HOLDS the key.
+          //
+          // B215/R2 (round 2): IDEMPOTENCY_REPLAY_NEEDS_RECONCILE is handled identically. It says
+          // the key's order was already submitted and has since been dispatched, so the server
+          // refuses to guess how to reconcile its invoice — the operator's next move is exactly
+          // the same: open that order.
           if (
             errAny?.response?.status === 409 &&
-            body?.code === "IDEMPOTENCY_KEY_CONFLICT" &&
+            (body?.code === "IDEMPOTENCY_KEY_CONFLICT" ||
+              body?.code === "IDEMPOTENCY_REPLAY_NEEDS_RECONCILE") &&
             body?.orderId
           ) {
             const heldOrderId = String(body.orderId);
@@ -1906,9 +1896,9 @@ function ProductPickView({
                   label: "Open order",
                   onPress: () => {
                     // Same wind-down as the success path: the cart that owned this key is
-                    // finished with, so start a fresh cart session and retire the bound draft
-                    // before navigating away.
-                    resetOrderSubmitKey();
+                    // finished with, so start a fresh cart session for THIS customer and retire
+                    // the bound draft before navigating away.
+                    resetOrderSubmitKey(customerId);
                     void finalizeBoundDraft();
                     router.replace(`/(operator)/orders/${heldOrderId}` as any);
                   },

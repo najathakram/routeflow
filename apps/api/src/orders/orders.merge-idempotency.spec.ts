@@ -102,7 +102,11 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { IDEMPOTENCY_KEY_CONFLICT, mergeRequestHash } from "./merge-idempotency";
+import {
+  IDEMPOTENCY_KEY_CONFLICT,
+  IDEMPOTENCY_REPLAY_NEEDS_RECONCILE,
+  mergeRequestHash,
+} from "./merge-idempotency";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -288,9 +292,13 @@ function statefulOrdersService(opts: { orderKey: string | null; throwAfterFirstF
               message: "Idempotency-Key reused with a different cart",
             });
           }
-          return row.orderId;
+          // B215/R1 (round 2): a table hit with a MATCHED fingerprint is VERIFIED.
+          return { orderId: row.orderId, verified: requestHash !== undefined };
         }
-        return order.idempotencyKey === key && order.customerId === customerId ? order.id : null;
+        // Column hits carry no fingerprint — never verified.
+        return order.idempotencyKey === key && order.customerId === customerId
+          ? { orderId: order.id, verified: false }
+          : null;
       },
     ),
     // B215: the controller re-runs the convergent post-fold tail on every replay.
@@ -499,8 +507,8 @@ describe("OrdersService.replayMergeReconcile — the convergent post-fold tail (
 
     expect(invoices.reconcileOrderDraftInvoice).toHaveBeenCalledTimes(1);
     expect(invoices.reconcileOrderDraftInvoice).toHaveBeenCalledWith("ord-1", { basis: "order" });
-    // The in-place resync is NEVER re-issued on a replay: the pre-edit cumulative invoicedQty
-    // the partial-billing guard needs is gone by then.
+    // An UNDELIVERED order takes the draft-reconcile branch, so the post-delivery in-place
+    // resync never runs here (T2d/T2e cover the post-delivery routing).
     expect(invoices.resyncOrderInvoicesForEdit).not.toHaveBeenCalled();
     expect(credits.syncOrderCreditSelections).toHaveBeenCalledTimes(1);
     expect(credits.settleOrderCreditsInTx).toHaveBeenCalledTimes(1);
@@ -765,7 +773,9 @@ describe("OrdersService.findOrderIdByIdempotencyKey — table-first replay (REG-
 
     const result = await (service as any).findOrderIdByIdempotencyKey("K1", "cust-1", "h1");
 
-    expect(result).toBe("ord-1");
+    // B215/R1 (round 2): a matched table hit is VERIFIED — the retry's body is provably the cart
+    // the fold applied, so the controller may re-apply its credit selection.
+    expect(result).toEqual({ orderId: "ord-1", verified: true });
   });
 
   it("REG-B215 T9: a key-table hit with a different request fingerprint is refused", async () => {
@@ -864,7 +874,8 @@ describe("OrdersService.findOrderIdByIdempotencyKey — table-first replay (REG-
     // this legitimate replay into a permanent 409.
     const result = await (service as any).findOrderIdByIdempotencyKey("K1", "cust-1", "h1");
 
-    expect(result).toBe("ord-mine");
+    // Column hit → UNVERIFIED (the column stores no fingerprint).
+    expect(result).toEqual({ orderId: "ord-mine", verified: false });
   });
 
   it("B215 pin P5: a column-only key hit replays even when the request hash differs", async () => {
@@ -879,7 +890,7 @@ describe("OrdersService.findOrderIdByIdempotencyKey — table-first replay (REG-
     // mismatch. Guarding this behaviour against a future "compare the hash here too" change.
     const result = await (service as any).findOrderIdByIdempotencyKey("K0", "cust-1", "h-other");
 
-    expect(result).toBe("ord-col");
+    expect(result).toEqual({ orderId: "ord-col", verified: false });
   });
 
   it("B215 pin P3: with no key-table row the lookup falls back to the Order column", async () => {
@@ -890,6 +901,206 @@ describe("OrdersService.findOrderIdByIdempotencyKey — table-first replay (REG-
 
     const result = await service.findOrderIdByIdempotencyKey("K0", "cust-1");
 
-    expect(result).toBe("ord-1");
+    expect(result).toEqual({ orderId: "ord-1", verified: false });
+  });
+});
+
+// --- Round 2 (Opus refute-first review of cfb3c331) — R1/R2/R4 pins --------
+
+describe("OrdersController.create — a replay applies the retry's credits only when VERIFIED (REG-B215 T2c)", () => {
+  it("REG-B215 T2c: a COLUMN-path replay never forwards the retry body's appliedCreditNotes", async () => {
+    const { svc, order } = statefulOrdersService({ orderKey: "K0-created" });
+    const controller = buildController(svc);
+    // The key sits on the Order column only (create()'s stamp), which stores NO fingerprint —
+    // so this body is not provably the cart the fold applied. Its credit selection must not be
+    // pushed onto that order: `undefined` means "settle only, leave the stored selection alone".
+    const dto = { ...mergeDto(), appliedCreditNotes: [{ creditNoteId: "cn-retry" }] } as any;
+
+    await controller.create(dto, operatorPayload as any, "K0-created");
+
+    expect(svc.updateOrderItems).not.toHaveBeenCalled();
+    expect(svc.replayMergeReconcile).toHaveBeenCalledTimes(1);
+    expect(svc.replayMergeReconcile).toHaveBeenCalledWith(order.id, "cust-1", undefined);
+  });
+
+  it("REG-B215 T2c (positive control): a VERIFIED table hit forwards the body's selection", async () => {
+    const { svc, order } = statefulOrdersService({ orderKey: null });
+    const controller = buildController(svc);
+    const dto = { ...mergeDto(), appliedCreditNotes: [{ creditNoteId: "cn-1" }] } as any;
+    // First call folds and records the key row WITH this body's fingerprint; the identical retry
+    // is a verified table hit, so the same selection is safe to re-apply.
+    await controller.create(dto, operatorPayload as any, "K-verified");
+    await controller.create(dto, operatorPayload as any, "K-verified");
+
+    expect(svc.updateOrderItems).toHaveBeenCalledTimes(1);
+    expect(svc.replayMergeReconcile).toHaveBeenCalledTimes(1);
+    expect(svc.replayMergeReconcile).toHaveBeenCalledWith(order.id, "cust-1", [
+      { creditNoteId: "cn-1" },
+    ]);
+  });
+
+  it("REG-B215 T2c (service half): appliedCreditNotes=undefined settles WITHOUT syncing the selection", async () => {
+    const prisma = createMockPrisma();
+    const gateway = mockGateway();
+    const service = await buildOrdersService(prisma, gateway);
+    const invoices = (service as any).invoicesService;
+    const credits = (service as any).creditNotes;
+    prisma.order.findFirst.mockResolvedValue({ status: "PENDING", lineItems: [] } as any);
+
+    await service.replayMergeReconcile("ord-1", "cust-1", undefined);
+
+    expect(credits.syncOrderCreditSelections).not.toHaveBeenCalled();
+    expect(credits.settleOrderCreditsInTx).toHaveBeenCalledTimes(1);
+    expect(invoices.reconcileOrderDraftInvoice).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("OrdersService.replayMergeReconcile — post-delivery replay reconciles or refuses (REG-B215 T2d/T2e)", () => {
+  it("REG-B215 T2d: a post-delivery replay whose current lines allow the resync RE-SYNCS in place", async () => {
+    const prisma = createMockPrisma();
+    const gateway = mockGateway();
+    const service = await buildOrdersService(prisma, gateway);
+    const invoices = (service as any).invoicesService;
+    // OUT_FOR_DELIVERY, every billable line fully invoiced — the fold's own guard says "resync".
+    prisma.order.findFirst.mockResolvedValue({
+      status: "OUT_FOR_DELIVERY",
+      lineItems: [
+        { qty: 5, invoicedQty: 5 },
+        { qty: 2, invoicedQty: 2 },
+      ],
+    } as any);
+
+    await service.replayMergeReconcile("ord-1", "cust-1", undefined);
+
+    // Round 1 skipped this unconditionally, leaving the dispatched order's finalized invoice
+    // permanently out of step with the merged lines.
+    expect(invoices.resyncOrderInvoicesForEdit).toHaveBeenCalledTimes(1);
+    expect(invoices.resyncOrderInvoicesForEdit).toHaveBeenCalledWith("ord-1");
+    expect(invoices.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
+  });
+
+  it("REG-B215 T2d (partial): a post-delivery replay whose lines are PARTIALLY invoiced skips the resync and still settles", async () => {
+    const prisma = createMockPrisma();
+    const gateway = mockGateway();
+    const service = await buildOrdersService(prisma, gateway);
+    const invoices = (service as any).invoicesService;
+    const credits = (service as any).creditNotes;
+    prisma.order.findFirst.mockResolvedValue({
+      status: "DELIVERED",
+      lineItems: [
+        { qty: 5, invoicedQty: 2 },
+        { qty: 2, invoicedQty: 0 },
+      ],
+    } as any);
+
+    await service.replayMergeReconcile("ord-1", "cust-1", undefined);
+
+    // Same routing the fold would have taken: an in-place resync would expand an already-issued
+    // invoice to units it never billed.
+    expect(invoices.resyncOrderInvoicesForEdit).not.toHaveBeenCalled();
+    expect(credits.settleOrderCreditsInTx).toHaveBeenCalledTimes(1);
+  });
+
+  it("REG-B215 T2e: a post-delivery replay whose guard cannot be reproduced refuses with 409 and writes nothing", async () => {
+    const prisma = createMockPrisma();
+    const gateway = mockGateway();
+    const service = await buildOrdersService(prisma, gateway);
+    const invoices = (service as any).invoicesService;
+    const credits = (service as any).creditNotes;
+    // The replace-all fold reset invoicedQty to 0 on every recreated row, yet a non-VOID invoice
+    // still exists — partial vs wholly invoiced is now unknowable, and BOTH branches are unsafe.
+    prisma.order.findFirst.mockResolvedValue({
+      status: "OUT_FOR_DELIVERY",
+      lineItems: [
+        { qty: 5, invoicedQty: 0 },
+        { qty: 2, invoicedQty: 0 },
+      ],
+    } as any);
+    (prisma as any).invoice.count.mockResolvedValue(1);
+
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    try {
+      const err = await service
+        .replayMergeReconcile("ord-1", "cust-1", [{ creditNoteId: "cn-1" } as any])
+        .then(() => null)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err as ConflictException).getResponse()).toEqual(
+        expect.objectContaining({
+          code: IDEMPOTENCY_REPLAY_NEEDS_RECONCILE,
+          orderId: "ord-1",
+        }),
+      );
+      // Refuses LOUDLY: the warn line is the only server-side trace of a 409 below Sentry's
+      // 500 threshold.
+      expect(warn.mock.calls.some((c) => String(c[0]).includes("ord-1"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+    // No invoice call, no revision, no credit write.
+    expect(invoices.resyncOrderInvoicesForEdit).not.toHaveBeenCalled();
+    expect(invoices.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
+    expect(credits.syncOrderCreditSelections).not.toHaveBeenCalled();
+    expect(credits.settleOrderCreditsInTx).not.toHaveBeenCalled();
+    expect((prisma as any).orderRevision.create).not.toHaveBeenCalled();
+  });
+
+  it("REG-B215 T2e (control): nothing invoiced and NO invoice on the order routes the resync as a proven no-op", async () => {
+    const prisma = createMockPrisma();
+    const gateway = mockGateway();
+    const service = await buildOrdersService(prisma, gateway);
+    const invoices = (service as any).invoicesService;
+    prisma.order.findFirst.mockResolvedValue({
+      status: "DELIVERED",
+      lineItems: [{ qty: 5, invoicedQty: 0 }],
+    } as any);
+    (prisma as any).invoice.count.mockResolvedValue(0);
+
+    await service.replayMergeReconcile("ord-1", "cust-1", undefined);
+
+    // `resyncOrderInvoicesForEdit` returns null when the order has no non-VOID invoice, and the
+    // fold's guard would also have been false — so routing it is faithful, not a refusal case.
+    expect(invoices.resyncOrderInvoicesForEdit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("OrdersService.create — the caller's OWN row wins the replay lookup (REG-B215 T18)", () => {
+  it("REG-B215 T18: a key-table row for another customer never beats this customer's column-stamped order", async () => {
+    const prisma = createMockPrisma();
+    const gateway = mockGateway();
+    const service = await buildOrdersService(prisma, gateway);
+    prisma.customer.findUnique.mockResolvedValue({
+      id: "cust-1",
+      user: { status: "ACTIVE" },
+    } as any);
+    // Tenant-wide the key is held by SOMEONE ELSE's order; this customer has no key-table row.
+    (prisma as any).orderIdempotencyKey.findFirst.mockImplementation(({ where }: any) =>
+      Promise.resolve(where.order ? null : { orderId: "ord-other" }),
+    );
+    // But the key IS stamped on this customer's own order column.
+    const mine = {
+      id: "ord-mine",
+      customerId: "cust-1",
+      lineItems: [{ productId: "p1", qty: 5, status: "PENDING" }],
+    };
+    prisma.order.findFirst.mockImplementation(({ where }: any) =>
+      Promise.resolve(
+        where?.idempotencyKey || where?.id === "ord-mine" ? ({ ...mine } as any) : null,
+      ),
+    );
+
+    const result = await service.create(
+      {
+        customerId: "cust-1",
+        items: [{ productId: "p1", qty: 5 }],
+        idempotencyKey: "K-mine",
+      } as any,
+      operatorPayload as any,
+    );
+
+    // Before R4 the tenant-wide table row was fetched first and the ownership gate turned this
+    // legitimate replay into a permanent 409.
+    expect((result as any).id).toBe("ord-mine");
+    expect(prisma.order.create).not.toHaveBeenCalled();
   });
 });

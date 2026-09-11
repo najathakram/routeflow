@@ -1,6 +1,6 @@
 # Bug test plan — B215 staff-merge same-key retry re-folds (train 4 Run B)
 
-> **Status: IMPLEMENTED (light-loop round 1).** The fix shipped; every REG/pin below is GREEN in the tree. This file
+> **Status: IMPLEMENTED (light-loop round 2).** The fix shipped; every REG/pin below is GREEN in the tree. This file
 > is the plan as it was WRITTEN plus the corrections in "Post-implementation corrections" at the bottom — read that
 > section before trusting any "Fails TODAY with", any harness note, or any D3/PD1 oracle above.
 >
@@ -86,8 +86,11 @@ spec to ship.
    the delegate all exist, so the casts are cosmetic; the DB spec now reads `raw.orderIdempotencyKey` directly in D4's
    rollback oracle, and the earlier `typeof svc.recordMergeIdempotencyKey === "function"` feature probe around
    `mergeOnce`'s in-tx write is GONE — the call is unconditional, so a missing method fails loudly.
+   **Round 2:** `findOrderIdByIdempotencyKey` now resolves `{ orderId, verified } | null`, so every oracle on it
+   asserts that object (`toEqual({ orderId, verified })`), never a bare id string — D1 included.
 3. **Existing `toHaveBeenCalledWith` on `updateOrderItems`** (`orders.scan-hardening.spec.ts:720`,
-   `orders.service.spec.ts:6645`, `buyer/buyer.merge-lock.spec.ts:204`) pass three matchers. They stay green only
+   `orders.service.spec.ts:6645`, `buyer/buyer.merge-lock.spec.ts:204` — all three line refs re-verified in round 2)
+   pass three matchers. They stay green only
    because WP3 passes a 4th argument **only when a key is present** (exact code in build-plan WP3). None of those tests
    sends a key. Do not edit them.
 4. **The DB spec needs the two `jest.mock` blocks** for `../invoices/invoices.service` and
@@ -150,3 +153,32 @@ The plan above is preserved as written. These are the places it no longer descri
      customer-scoped column read now runs BEFORE the tenant-wide refusal by design.
    - **Manual only:** `REG-B215-M1` (mobile cart-key rotation on customer switch) — see build-plan.md's
      "Manual verification" table. No pure helper exists to unit-test the rotation predicate.
+
+## Post-implementation corrections (light-loop round 2, 2026-09-11)
+
+Opus refute-first review of `cfb3c331` (round 1). Four findings, all fixed with the pins below; every test in
+`orders.merge-idempotency.spec.ts` is GREEN (33) and the DB lane still runs 7/7.
+
+1. **`REG-B215 T2c` (R1) — a COLUMN-path replay must not apply the retry's credit selection.**
+   `findOrderIdByIdempotencyKey` now returns `{ orderId, verified }`; only a key-TABLE hit whose stored fingerprint
+   matched is `verified`. The controller forwards `dto.appliedCreditNotes` to `replayMergeReconcile` only then, and
+   `undefined` otherwise — which `reconcileOrderAfterEdit` treats as "settle only, never call
+   `syncOrderCreditSelections`". Three tests: the column path forwards `undefined`, a verified table hit forwards the
+   body's selection (positive control), and the service half proves sync-not-called / settle-once / reconcile-once.
+2. **`REG-B215 T2d` (R2) — a POST-DELIVERY replay reconciles instead of silently skipping.** The partial-billing guard
+   is now the shared pure predicate `shouldSkipInPlaceResync` (`merge-idempotency.ts`), evaluated over the order's
+   CURRENT lines on replay: wholly invoiced → `resyncOrderInvoicesForEdit` once; partially invoiced → skip, settle
+   still runs.
+3. **`REG-B215 T2e` (R2) — the un-reproducible case refuses loudly.** It DOES exist: a replace-all fold resets
+   `invoicedQty` to 0 on every recreated line, so when nothing shows as invoiced yet a non-VOID invoice survives, the
+   guard is unknowable and both branches are unsafe → `logger.warn` + 409
+   `IDEMPOTENCY_REPLAY_NEEDS_RECONCILE` (no invoice call, no revision, no credit write). Control test: nothing invoiced
+   AND no invoice at all routes the resync, which is a proven no-op.
+4. **`REG-B215 T18` (R4) — `create()` prefers the caller's own row.** `findReplayCandidateByKey(key, customerId)` reads
+   (1) a key-table row on this customer's order, (2) this customer's key-stamped column, (3) the tenant-wide table row,
+   (4) the tenant-wide column — (3)/(4) still 409 through the caller's ownership gate.
+5. **Mobile (R3):** submit keys are per customer (`Map<customerId, key>`); the round-1 `keyCustomerIdRef` rotation is
+   gone. New pure spec `apps/mobile/__tests__/order-submit-key.test.ts` (6 tests, picked up by the mobile jest
+   `testMatch`): same customer → same key, two customers → different keys, `reset(A)` leaves B, A→B→A returns A's
+   original key, `clearAll` empties, and the `__none__` slot for a null customer.
+6. **`(proved by D3)` staleness (R5):** already read `proved by D4` at `cfb3c331` — no edit was needed.

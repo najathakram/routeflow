@@ -59,3 +59,40 @@ export function mergeRequestHash(input: {
  * `orderId` is always the order that HOLDS the key.
  */
 export const IDEMPOTENCY_KEY_CONFLICT = "IDEMPOTENCY_KEY_CONFLICT";
+
+/**
+ * B215/R2 (round 2): a post-delivery merge REPLAY whose partial-billing routing cannot be
+ * reproduced from the order's current state. The fold's guard reads the PRE-EDIT cumulative
+ * `invoicedQty`, which a replace-all fold resets — so when the current lines show nothing
+ * invoiced while finalized invoices still exist, the replay can neither safely resync (it could
+ * expand an already-issued invoice to units it never billed) nor safely skip (it would leave the
+ * invoice permanently out of step with the edit). It refuses LOUDLY instead and points the
+ * operator at the order. Clients treat it like `IDEMPOTENCY_KEY_CONFLICT`: offer "Open order"
+ * using the body's `orderId`.
+ *
+ * Body: `{ code, orderId, message }`.
+ */
+export const IDEMPOTENCY_REPLAY_NEEDS_RECONCILE = "IDEMPOTENCY_REPLAY_NEEDS_RECONCILE";
+
+/**
+ * B215/R2: the partial-billing guard `updateOrderItems` applies to a POST-DELIVERY edit, as a
+ * pure predicate over the line rows it reads — so the replay path can evaluate the SAME rule
+ * instead of hard-coding one side of it.
+ *
+ * "Partial" is CROSS-LINE, not just within a line: a line billed for part of its qty, OR a subset
+ * of lines billed in full while siblings are entirely un-invoiced. Both make an in-place resync
+ * unsafe (it rebuilds each invoice at the full current line qty). The two safe states proceed:
+ * nothing invoiced yet, and every billable line fully invoiced.
+ *
+ * `true` = skip the in-place resync (the operator reconciles manually).
+ */
+export function shouldSkipInPlaceResync(
+  lines: ReadonlyArray<{ qty?: unknown; invoicedQty?: unknown }>,
+): boolean {
+  const billableLines = lines.filter((li) => Number(li.qty ?? 0) > 0.001);
+  const anyInvoiced = billableLines.some((li) => Number(li.invoicedQty ?? 0) > 0.001);
+  const allFullyInvoiced = billableLines.every(
+    (li) => Number(li.invoicedQty ?? 0) >= Number(li.qty ?? 0) - 0.001,
+  );
+  return anyInvoiced && !allFullyInvoiced;
+}

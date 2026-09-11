@@ -164,11 +164,14 @@ describeDb("B215 OrderIdempotencyKey — real Postgres", () => {
     const a = await seed(tenantA, "d1", `K0-${run}-d1`);
     const key = `K1-${run}-d1`;
     await mergeOnce(a, key, "h-d1");
+    // B215/R1 (round 2): the lookup returns { orderId, verified } — a table hit whose stored
+    // fingerprint matched is VERIFIED, which is what lets the controller re-apply the retry
+    // body's credit selection.
     expect(
       await tenantCtx.run(a.tenantId, () =>
         svc.findOrderIdByIdempotencyKey(key, a.customerId, "h-d1"),
       ),
-    ).toBe(a.orderId);
+    ).toEqual({ orderId: a.orderId, verified: true });
   });
 
   it("REG-B215 D2: a same-key retry never folds twice", async () => {
