@@ -227,8 +227,9 @@ Names only — see each app's example file. Never commit values.
   actually references it) with **no original file needed**. Only with `--from <path>` or
   `--from-ref <git-ref>` does it ALSO re-derive the concatenation and prove the folder
   block-identical to that original — the retired single file itself is never read implicitly. The
-  one-time lossless proof was recorded at split time against `e39bf9db` (207 blocks); re-derive it
-  any time with `node apps/api/scripts/split-prisma-schema.mjs --check --from-ref e39bf9db`. The
+  one-time lossless proof was recorded at split time against `e39bf9db` (207 blocks) and is **not**
+  re-derivable now that the folder has legitimately gained models — `--check --from-ref e39bf9db`
+  fails on block count 208 vs 207, so do not run it expecting green. The
   permanent _standing_ lossless guard going forward is the drift gate (`npm run local:drift` /
   CI replay), not a byte/block diff against a file that no longer exists. `apps/api/prisma/migrations/`
   is untouched by the split — the split generated **no** migration. `migrate diff --to-schema`

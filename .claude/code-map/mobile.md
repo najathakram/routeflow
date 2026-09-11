@@ -1098,6 +1098,21 @@ The wholesaler-reported "scanned items go missing / land twice" cluster. Server 
   (`resetOrderSubmitKey()`). `lib/api/orders.ts` `useCreateOrder` takes `idempotencyKey?` and sends it as the
   `idempotency-key` **HEADER, never in the body** (same idiom as `useCompleteWithPayment` in `lib/api/routes.ts`);
   `lib/api-client.ts` carries replay-safe headers across an offline replay. Server contract in `api.md` `orders/`.
+- **B215 — a customer switch is a NEW cart session; a spoken-for key offers the held order (2026-09-11,
+  train 4 Run B)** — the submit key's replay identity is CUSTOMER-SCOPED on the server, so carrying one
+  customer's key onto another's cart made the submit look like a replay of an order that is not theirs
+  (now a hard 409). `components/NewOrderScreen.tsx` keeps a `keyCustomerIdRef` — stamped with the outgoing
+  customer in `onChangeCustomer`, read in `CustomerPickerView`'s `onPick`, which calls `resetOrderSubmitKey()`
+  ONLY when the newly picked id differs. ⚠️ Re-picking the SAME customer must keep the key, or a genuine
+  retry mints a sibling duplicate order — which is why the rotation lives in `onPick` (the only place the new
+  id is known), not in `onChangeCustomer`. `lib/order-submit-key.ts`'s doc comment lists this as reset
+  condition (3) beside successful-submit and explicit-cart-clear. The submit `onError` handler gained a branch
+  beside `MERGE_CHOICE_REQUIRED`: a 409 whose body carries `code: "IDEMPOTENCY_KEY_CONFLICT"` + `orderId`
+  raises a "This cart was already submitted" `chooseAction` with **Open order** (→ `resetOrderSubmitKey()`,
+  `finalizeBoundDraft()`, `router.replace('/(operator)/orders/<orderId>')` — the same wind-down as the success
+  path) and Cancel, instead of wedging the screen on a bare message the operator cannot act on. No pure helper
+  was extracted for the rotation predicate, so it is covered by the manual row `REG-B215-M1` in the run's
+  `build-plan.md`. Server half + the 409 body shape in `api.md` (B215).
 - **`lib/api-client.ts` — an online timeout is not "offline" (REG-B196)** — see the "API base client" row above.
 - **Buyer scan-to-cart — the client leg of R12 (REG-B200)** — `lib/api/buyer.ts`
   `resolveBuyerProductByCode(code, signal?)` → `{product} | {notFound:true}` calls the buyer realm's own

@@ -293,6 +293,11 @@ export function NewOrderScreen({
     initialCustomerName ?? null,
   );
   const customerLocked = !!initialCustomerId;
+  // B215/D2: the customer the CURRENT cart-session submit key was minted for. Set when the
+  // operator taps "Change customer" and read back when they pick one, so the key rotates on a
+  // real switch and survives a re-select of the same customer. A ref, not state — nothing
+  // renders from it.
+  const keyCustomerIdRef = useRef<string | null>(initialCustomerId ?? null);
 
   // The draft this screen is bound to. Seeded from the URL on open; kept in
   // sync afterwards via onDraftBound so a later onChangeCustomer round trip
@@ -389,6 +394,16 @@ export function NewOrderScreen({
           backLabel={backLabel}
           onBack={handleBack}
           onPick={(id, name) => {
+            // B215/D2: a customer switch is a NEW cart session. The submit key is the server's
+            // replay identity, and it is customer-scoped there — carrying it across a switch
+            // made the new customer's submit look like a replay of the old customer's, which
+            // the API now refuses outright (409 IDEMPOTENCY_KEY_CONFLICT / HELD_BY_OTHER_ORDER).
+            // Rotate ONLY on a real change: re-picking the same customer is the same cart and
+            // must keep its key, or a genuine retry would mint a sibling duplicate order.
+            if (keyCustomerIdRef.current && keyCustomerIdRef.current !== id) {
+              resetOrderSubmitKey();
+            }
+            keyCustomerIdRef.current = id;
             setPickedCustomerId(id);
             setPickedCustomerName(name);
           }}
@@ -403,6 +418,11 @@ export function NewOrderScreen({
           backLabel={backLabel}
           onBack={handleBack}
           onChangeCustomer={() => {
+            // B215/D2: remember whose cart the CURRENT submit key belongs to, so the picker's
+            // onPick above can tell a real switch from a re-select of the same customer. The key
+            // itself is not rotated here — tapping "Change" and picking the same customer back
+            // must not mint a new one.
+            keyCustomerIdRef.current = pickedCustomerId;
             setPickedCustomerId(null);
             setPickedCustomerName(null);
             // boundDraftId deliberately survives — the SAME server draft
@@ -1840,7 +1860,14 @@ function ProductPickView({
           const errAny = err as unknown as {
             response?: {
               status?: number;
-              data?: { message?: string; code?: string; activeOrder?: any };
+              data?: {
+                message?: string;
+                code?: string;
+                activeOrder?: any;
+                // B215: present on both IDEMPOTENCY_KEY_CONFLICT bodies — the order that
+                // HOLDS the key.
+                orderId?: string;
+              };
             };
           };
           // Belt-and-braces: if the API reports 409 MERGE_CHOICE_REQUIRED (e.g. the
@@ -1854,6 +1881,40 @@ function ProductPickView({
             // Forward asDraft so a draft that races a 409 stays a draft after
             // the operator picks Merge / Create separate.
             promptMergeChoice(body.activeOrder, asDraft);
+            return;
+          }
+          // B215/D4: this cart's Idempotency-Key is already spoken for — either it replays an
+          // order whose cart differs from what's on screen now (CART_MISMATCH), or another
+          // order holds it (HELD_BY_OTHER_ORDER). The operator cannot mint a new key without
+          // abandoning the cart, so a bare message wedges the screen: offer the held order
+          // instead. `orderId` on the body is always the order that HOLDS the key.
+          if (
+            errAny?.response?.status === 409 &&
+            body?.code === "IDEMPOTENCY_KEY_CONFLICT" &&
+            body?.orderId
+          ) {
+            const heldOrderId = String(body.orderId);
+            chooseAction(
+              "This cart was already submitted",
+              String(
+                body?.message ??
+                  "This cart's submit was already recorded against an existing order.",
+              ),
+              [
+                { label: "Cancel", style: "cancel" },
+                {
+                  label: "Open order",
+                  onPress: () => {
+                    // Same wind-down as the success path: the cart that owned this key is
+                    // finished with, so start a fresh cart session and retire the bound draft
+                    // before navigating away.
+                    resetOrderSubmitKey();
+                    void finalizeBoundDraft();
+                    router.replace(`/(operator)/orders/${heldOrderId}` as any);
+                  },
+                },
+              ],
+            );
             return;
           }
           // Regulated-sale block: open the license guard and replay this exact

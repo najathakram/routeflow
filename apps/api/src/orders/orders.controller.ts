@@ -33,6 +33,7 @@ import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { CreateChangeRequestDto } from "./dto/create-change-request.dto";
 import { ResolveChangeRequestDto } from "./dto/resolve-change-request.dto";
 import { foldMergeItems } from "./merge-items";
+import { mergeRequestHash } from "./merge-idempotency";
 import { withAdvisoryLock } from "../common/db-locks";
 import {
   LOCK_UNAVAILABLE,
@@ -144,6 +145,14 @@ export class OrdersController {
           // request's turn in the lock arrives, so re-read fresh state INSIDE it
           // rather than reuse that snapshot — and write to / return THAT order,
           // never the stale one.
+          // B215: the fingerprint a same-key retry must match to be replayed (stored with the key).
+          const requestHash = idempotencyKey
+            ? mergeRequestHash({
+                customerId: dto.customerId!,
+                items: dto.items,
+                appliedCreditNotes: dto.appliedCreditNotes,
+              })
+            : undefined;
           let merged: { kind: "merged"; orderId: string; replayed: boolean } | { kind: "stale" };
           try {
             const lock = await withAdvisoryLock(
@@ -174,40 +183,64 @@ export class OrdersController {
                 // client-chosen, so a bare match could replay onto another
                 // customer's order (and hand it back through findOne below).
                 if (idempotencyKey) {
+                  // B215: reads OrderIdempotencyKey (every merge wave's own key) before the Order
+                  // column; the same key with a different cart is refused (409), never folded.
                   const replayedOrderId = await this.ordersService.findOrderIdByIdempotencyKey(
                     idempotencyKey,
                     dto.customerId!,
+                    requestHash,
                   );
-                  if (replayedOrderId)
+                  if (replayedOrderId) {
+                    // B215: the fold runs at most ONCE per key — but its convergent tail may
+                    // never have run. The key commits INSIDE the fold's transaction, so a retry
+                    // that arrives after that commit and before (or during) the post-fold
+                    // invoice resync + credit sync/settle lands here, and returning straight
+                    // away would leave the order's linked invoice and applied credits silently
+                    // out of sync forever. Re-run that tail — it is idempotent and may run N
+                    // times — while still holding the customer advisory lock, so it cannot race
+                    // a concurrent fold. The revision append is NOT re-run: it is append-only,
+                    // not convergent.
+                    await this.ordersService.replayMergeReconcile(
+                      replayedOrderId,
+                      dto.customerId!,
+                      dto.appliedCreditNotes,
+                    );
                     return { kind: "merged" as const, orderId: replayedOrderId, replayed: true };
+                  }
                 }
                 const mergedItems = foldMergeItems(current.lineItems ?? [], dto.items ?? []);
-                await this.ordersService.updateOrderItems(
-                  current.id,
-                  {
-                    items: mergedItems,
-                    // foldMergeItems returns the order's COMPLETE new line set, so
-                    // this is a full replace. R10 made `replaceAll` explicit-only —
-                    // without saying so out loud the merged absolute totals would
-                    // land in the incremental-ADD branch and be appended on top of
-                    // the untouched originals (every merged product duplicated).
-                    replaceAll: true,
-                    // Thread the operator's credit-note selection into the merge winner
-                    // so the existing sync+settle logic applies it (else it's dropped).
-                    ...(dto.appliedCreditNotes !== undefined
-                      ? { appliedCreditNotes: dto.appliedCreditNotes }
-                      : {}),
-                  } as any,
-                  user,
-                );
+                const foldDto = {
+                  items: mergedItems,
+                  // foldMergeItems returns the order's COMPLETE new line set, so
+                  // this is a full replace. R10 made `replaceAll` explicit-only —
+                  // without saying so out loud the merged absolute totals would
+                  // land in the incremental-ADD branch and be appended on top of
+                  // the untouched originals (every merged product duplicated).
+                  replaceAll: true,
+                  // Thread the operator's credit-note selection into the merge winner
+                  // so the existing sync+settle logic applies it (else it's dropped).
+                  ...(dto.appliedCreditNotes !== undefined
+                    ? { appliedCreditNotes: dto.appliedCreditNotes }
+                    : {}),
+                } as any;
+                if (idempotencyKey) {
+                  // B215: the key rides INTO updateOrderItems and commits inside the fold's own
+                  // transaction — a crash or a later throw can no longer separate the two. The
+                  // 4th argument is passed ONLY when a key exists, so keyless merges keep the
+                  // exact three-argument call.
+                  await this.ordersService.updateOrderItems(current.id, foldDto, user, {
+                    idempotency: { key: idempotencyKey, responseHash: requestHash! },
+                  });
+                } else {
+                  await this.ordersService.updateOrderItems(current.id, foldDto, user);
+                }
                 // Recorded only after the fold actually landed: a merge that threw
                 // is retryable, and a retry must re-run rather than replay a write
                 // that never happened.
                 if (idempotencyKey) {
-                  // Best-effort, and deliberately so: the fold above is COMMITTED. Answering a
-                  // landed write with a 500 invites the retry that the key exists to prevent —
-                  // and the fold computes ABSOLUTE totals, so that retry would fold the same
-                  // cart in a second time. Losing the replay guard is the cheaper failure.
+                  // Order-column stamp, kept for create()'s replay path (first key wins, best-effort,
+                  // a separate commit). Merge replay no longer depends on it: the authoritative key
+                  // row committed together with the fold above (B215).
                   try {
                     await this.ordersService.recordIdempotencyKey(current.id, idempotencyKey);
                   } catch (err) {

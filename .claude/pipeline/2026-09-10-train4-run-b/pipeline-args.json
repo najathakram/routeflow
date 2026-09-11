@@ -1,0 +1,112 @@
+{
+  "mode": "bugfix",
+  "planPath": ".claude/pipeline/2026-09-10-train4-run-b/build-plan.md",
+  "testPlanPath": ".claude/pipeline/2026-09-10-train4-run-b/bug-test-plan.md",
+  "lessonsPath": ".claude/lessons/LESSONS.md",
+  "scale": "major",
+  "context": "Train 4 Run B: B215 staff-merge same-key retry re-folds. New OrderIdempotencyKey table (additive, owner-approved migration); key row written inside updateOrderItems' own fold tx under the merge lock; replay reads it first. S4/S5 by Opus 5 (Fable 429).",
+  "radiusFiles": [
+    "apps/api/src/orders/orders.controller.ts",
+    "apps/api/src/orders/orders.service.ts",
+    "apps/api/src/orders/merge-idempotency.ts",
+    "apps/api/prisma/schema/sales.prisma",
+    "apps/api/prisma/migrations/20260911000000_order_idempotency_key_table/migration.sql",
+    "apps/api/scripts/split-prisma-schema.mjs",
+    "apps/api/src/testing/prisma-mock.ts",
+    "apps/api/src/orders/orders.merge-idempotency.spec.ts",
+    "apps/api/src/orders/order-idempotency-key.db.spec.ts",
+    "apps/api/src/orders/orders.scan-hardening.spec.ts",
+    "apps/api/src/common/db-locks.ts"
+  ],
+  "testPackages": [
+    {
+      "id": "TP1",
+      "title": "Unit REG + pins",
+      "files": [
+        "apps/api/src/orders/orders.merge-idempotency.spec.ts",
+        "apps/api/src/testing/prisma-mock.ts"
+      ],
+      "brief": "build-plan.md TP1 (T1-T10, P1-P4)"
+    },
+    {
+      "id": "TP2",
+      "title": "DB-lane REG + pins",
+      "files": ["apps/api/src/orders/order-idempotency-key.db.spec.ts"],
+      "brief": "build-plan.md TP2 (D1-D3, PD1-PD2)"
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "cd apps/api && npx jest src/orders/orders.merge-idempotency.spec.ts -t \"REG-B215\" --reporters=default",
+      "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- order-idempotency-key -t REG-B215\""
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "WP1",
+      "title": "Model + migration + MODEL_DOMAIN",
+      "files": [
+        "apps/api/prisma/schema/sales.prisma",
+        "apps/api/prisma/migrations/20260911000000_order_idempotency_key_table/migration.sql",
+        "apps/api/scripts/split-prisma-schema.mjs"
+      ],
+      "brief": "build-plan.md WP1 exact code; run prisma generate",
+      "effort": "high",
+      "provenBy": ["D1", "D2", "D3"]
+    },
+    {
+      "id": "WP2",
+      "title": "Service: table-first replay, in-tx key write, loser re-point",
+      "files": ["apps/api/src/orders/orders.service.ts"],
+      "brief": "build-plan.md WP2 Edits 1-5",
+      "dependsOn": ["WP1"],
+      "effort": "high",
+      "provenBy": ["T4", "T5", "T6", "T7", "T8", "T9", "T10", "D2", "D3"]
+    },
+    {
+      "id": "WP3",
+      "title": "Controller merge branch + fingerprint helper",
+      "files": [
+        "apps/api/src/orders/orders.controller.ts",
+        "apps/api/src/orders/merge-idempotency.ts"
+      ],
+      "brief": "build-plan.md WP3 exact code",
+      "dependsOn": ["WP2"],
+      "effort": "high",
+      "provenBy": ["T1", "T2", "T3"]
+    }
+  ],
+  "verifyCommands": {
+    "perRound": ["npm run check-types -w apps/api", "npm run lint -w apps/api"],
+    "final": [
+      "cd apps/api && npx jest src/orders/ src/buyer/buyer.merge-lock --reporters=default",
+      "node apps/api/scripts/split-prisma-schema.mjs --check",
+      "node scripts/lint-migrations.mjs --files apps/api/prisma/migrations/20260911000000_order_idempotency_key_table/migration.sql",
+      "node scripts/local-env.mjs --db -- \"cd apps/api && npx prisma migrate deploy\"",
+      "npm run local:drift",
+      "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- order-idempotency-key --passWithNoTests\""
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/api/src/orders/orders.service.ts",
+        "revertFix": true,
+        "behavior": "merge key row written in updateOrderItems' fold tx; replay reads the key table",
+        "test": "REG-B215 T4 (behavioral witness D2)"
+      },
+      {
+        "file": "apps/api/src/orders/orders.controller.ts",
+        "revertFix": true,
+        "behavior": "merge hands the key into the fold and replays by fingerprint",
+        "test": "REG-B215 T1"
+      },
+      {
+        "file": "apps/api/src/orders/merge-idempotency.ts",
+        "behavior": "identical carts hash equal, different carts differ",
+        "test": "REG-B215 T3"
+      }
+    ]
+  }
+}

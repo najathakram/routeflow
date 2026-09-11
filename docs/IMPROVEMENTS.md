@@ -410,8 +410,10 @@ so a failing type-check no longer hides a failing lint/test in the same run.
   split doesn't preserve. Only with an explicit `--from <path>` or `--from-ref <git-ref>` does
   `--check` additionally re-derive the concatenation and prove the folder **block-identical** to
   that original — the retired single file is never read implicitly. The one-time lossless proof
-  was recorded at split time against `e39bf9db` (207 blocks) and is re-derivable on demand
-  (`--check --from-ref e39bf9db`); the standing lossless guard going forward is the drift gate, not
+  was recorded at split time against `e39bf9db` (207 blocks) and is NOT re-derivable now that the
+  folder has legitimately gained models (`--check --from-ref e39bf9db` fails on block count 208 vs
+  207); the standing lossless guard going forward is the drift gate
+  (`apps/api/scripts/schema-drift.mjs` / `npm run local:drift`), not
   a repeated diff against a file that no longer exists in the tree. `prisma.config.ts` now points
   `schema` at the folder with an explicit `migrations.path`; `Dockerfile`, `schema-drift.mjs`
   (`--to-schema prisma/schema`), `scan-signatures.mjs` (which now FAILS LOUDLY on a missing schema

@@ -11,9 +11,15 @@
  * duplicate-order leg even when a queue bug re-sends the same cart twice.
  *
  * The key resets — so the NEXT cart mints a fresh key — ONLY on:
- *   - a successful submit (the cart that owned the key is now a real order;
- *     any further submit is deliberately a NEW order and must get its own key)
- *   - an explicit cart clear (the operator abandons the draft/cart on purpose)
+ *   1. a successful submit (the cart that owned the key is now a real order;
+ *      any further submit is deliberately a NEW order and must get its own key)
+ *   2. an explicit cart clear (the operator abandons the draft/cart on purpose)
+ *   3. a CUSTOMER SWITCH (B215): "Change customer" in NewOrderScreen, when the newly
+ *      picked customer differs from the one this key was minted for. The server's replay
+ *      identity is customer-scoped, so carrying one customer's key onto another's cart
+ *      makes the submit look like a replay of an order that is not theirs — the API
+ *      refuses it (409 `IDEMPOTENCY_KEY_CONFLICT` / `HELD_BY_OTHER_ORDER`) and the
+ *      screen wedges. Re-picking the SAME customer is not a switch and keeps the key.
  *
  * A failed submit (timeout, 4xx, network drop) must NOT reset the key — that
  * cart is still live, and a retry/replay needs the SAME key so server-side

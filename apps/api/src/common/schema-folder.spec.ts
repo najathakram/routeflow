@@ -30,21 +30,14 @@ const EXPECTED_FILES = [
   "tenancy.prisma",
 ].sort();
 
-// The true counts this branch's split produced — measured via
-// `node apps/api/scripts/split-prisma-schema.mjs --check`, which itself
-// proves the folder is block-identical to the original single file
-// (207 blocks: 125 models, 80 enums, 2 datasource/generator). Pinned as
-// literals per the brief; a real future model/enum addition updates both
-// the schema and this pin in the same PR.
-const EXPECTED_MODEL_COUNT = 125;
+// The folder's CURRENT counts — measured via
+// `node apps/api/scripts/split-prisma-schema.mjs --check`, which reports
+// (208 blocks: 126 models, 80 enums, 2 datasource/generator). These are not
+// the split-time counts: the folder legitimately grows. Pinned as literals
+// per the brief; a real model/enum addition updates both the schema and this
+// pin in the same PR.
+const EXPECTED_MODEL_COUNT = 126;
 const EXPECTED_ENUM_COUNT = 80;
-const EXPECTED_BLOCK_COUNT = 207;
-
-// The commit before the split, whose copy of apps/api/prisma/schema.prisma is the recorded
-// lossless-proof original for `--check --from-ref`. A shallow CI clone may not have this
-// object; case (h) below probes for it and skips itself (with a stated reason) rather than
-// failing on a clone-depth artifact unrelated to the split's own correctness.
-const ORIGINAL_REF = "e39bf9db";
 
 function listSchemaFiles(): string[] {
   if (!fs.existsSync(SCHEMA_DIR)) return [];
@@ -162,33 +155,14 @@ describe("schema folder (wave E / imp-10a, T1)", () => {
     expect(res.status).toBe(0);
   }, 130_000);
 
-  // (h) needs the pre-split blob at ORIGINAL_REF, which a depth-1 CI clone (GitHub Actions'
-  // default `actions/checkout`) cannot reach — it always `it.skip`s there, so it never proves
-  // anything in CI and is a LOCAL-only proof (a full clone, e.g. this dev machine's). The
-  // standing guard that actually runs in CI going forward is `db-migrations.yml`'s
-  // `apps/api/scripts/schema-drift.mjs` (`prisma migrate status` + `migrate diff --exit-code`
-  // against the target DB) — that is what must stay green, not this case.
-  const hasOriginalRef =
-    spawnSync("git", ["cat-file", "-e", `${ORIGINAL_REF}:apps/api/prisma/schema.prisma`], {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-    }).status === 0;
-
-  const maybeIt = hasOriginalRef ? it : it.skip;
-  maybeIt(
-    hasOriginalRef
-      ? `(h) [local-only, skipped on shallow clones] \`--check --from-ref ${ORIGINAL_REF}\` exits 0 and reports block-identical (${EXPECTED_BLOCK_COUNT} blocks)`
-      : `(h) [local-only, skipped on shallow clones] SKIPPED — ${ORIGINAL_REF}:apps/api/prisma/schema.prisma is unreachable (shallow clone), so the block-identical proof against it cannot run here`,
-    () => {
-      const res = spawnSync(
-        process.execPath,
-        [SPLIT_SCRIPT, "--check", "--from-ref", ORIGINAL_REF],
-        { cwd: REPO_ROOT, encoding: "utf8", shell: false, timeout: 120_000 },
-      );
-
-      expect(res.stdout ?? "").toContain(`block-identical (${EXPECTED_BLOCK_COUNT} blocks)`);
-      expect(res.status).toBe(0);
-    },
-    130_000,
-  );
+  // (h) RETIRED. It ran `--check --from-ref e39bf9db` and asserted the folder was still
+  // block-identical (207 blocks) to the retired single `apps/api/prisma/schema.prisma` at the
+  // commit before the split. That one-time lossless proof was recorded at split time and stands
+  // in history; it is not a property of the tree going forward — the folder has since legitimately
+  // gained models, so no value of a block count can make that comparison pass again (re-running it
+  // today reports "block count 208 in the folder vs 207 in git e39bf9db:…"). The case was also
+  // `it.skip`ped on a depth-1 CI clone, so it only ever ran locally.
+  // The standing lossless guard going forward is `apps/api/scripts/schema-drift.mjs`
+  // (`npm run local:drift` / the CI db-migrations replay), per CLAUDE.md — that is what must stay
+  // green. Case (g) above keeps enforcing the folder's own structural invariants.
 });
