@@ -119,6 +119,10 @@ local-assets/
 .claude/campaign/**/*.lock/
 .claude/campaign/bugs.jsonl.lock/
 
+# ─── Plane BUGS mirror digest (scripts/campaign/plane-sync.mjs) ───────────────
+#     sha256 short-circuit over the registry; regenerated per run, not source.
+.claude/campaign/.plane-sync-digest
+
 # ─── dev-pipeline mutation-probe scratch (throwaway jest config + probe spec) ──
 #     Written by a probe run, never part of the suite; without this a `git add -A`
 #     from any session commits another session's throwaway probes.
