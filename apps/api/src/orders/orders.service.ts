@@ -1916,6 +1916,13 @@ export class OrdersService implements OnApplicationBootstrap {
         include: { user: { select: { status: true } } },
       });
       if (!customer) throw new BadRequestException("Customer not found");
+      // B131: a removed (soft-deleted) customer is not an order target. Removal
+      // writes Customer.deletedAt (+ User.status = INACTIVE), which the
+      // SUSPENDED check below does not catch, so a stale detail page or a
+      // queued request could still create — and later invoice — an order for a
+      // customer the operator removed. Reuse the missing-customer message so no
+      // customer state leaks.
+      if (customer.deletedAt) throw new BadRequestException("Customer not found");
       if (customer.user.status === "SUSPENDED")
         throw new BadRequestException("Cannot create orders for a suspended customer");
       customerId = customer.id;
@@ -1926,6 +1933,8 @@ export class OrdersService implements OnApplicationBootstrap {
         .forTenant()
         .customer.findUnique({ where: { id: dto.customerId } });
       if (!customer) throw new BadRequestException("Customer not found");
+      // B131: same removed-customer refusal as the staff branch above.
+      if (customer.deletedAt) throw new BadRequestException("Customer not found");
       customerId = customer.id;
     } else {
       // Customer creates their own order

@@ -612,8 +612,11 @@ export class GoogleOAuthService {
       );
     }
 
+    // REG-B141: this count decides the mobile Google-login branch (sellerCount === 0 shows the
+    // "not connected to any supplier" message), so it must use the SAME definition of a usable
+    // seller as BuyerService.getSellers — a link whose customer was removed is not one.
     const sellerCount = await this.prisma.customerLink.count({
-      where: { buyerAccountId: buyer.id, status: "ACTIVE" },
+      where: { buyerAccountId: buyer.id, status: "ACTIVE", customer: { deletedAt: null } },
     });
     const tokens = await this.issueBuyerTokenPair(
       buyer.id,

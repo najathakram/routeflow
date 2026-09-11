@@ -1033,6 +1033,55 @@ describe("OrdersService", () => {
       );
     });
 
+    // ── B131 sibling: a removed (soft-deleted) customer is not an order target.
+    // Removal writes Customer.deletedAt + User.status = "INACTIVE"; the
+    // pre-existing guard only caught "SUSPENDED", so a stale detail page or a
+    // queued mobile/API request could still create an order for a removed
+    // customer — and that order could then be invoiced.
+    it("REG-B131: staff create() refuses a removed customer with the not-found message", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        pricingTier: 1,
+        deletedAt: new Date("2026-09-01T00:00:00Z"),
+        user: { status: "ACTIVE" },
+      });
+      // Everything past the customer gate is mocked to succeed, so pre-fix the
+      // call RESOLVED and wrote an order row — the distinguisher.
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+      prisma.order.create.mockResolvedValue(MOCK_ORDER);
+      (service as any).systemConfig.get.mockResolvedValue("0");
+
+      await expect(
+        service.create(
+          { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1 }] } as any,
+          operatorPayload,
+        ),
+      ).rejects.toThrow(new BadRequestException("Customer not found"));
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it("REG-B131: driver create() refuses a removed customer with the not-found message", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        pricingTier: 1,
+        deletedAt: new Date("2026-09-01T00:00:00Z"),
+      });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+      prisma.order.create.mockResolvedValue(MOCK_ORDER);
+      (service as any).systemConfig.get.mockResolvedValue("0");
+      const driverPayload = { ...operatorPayload, role: "DRIVER" as const };
+
+      await expect(
+        service.create(
+          { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1 }] } as any,
+          driverPayload,
+        ),
+      ).rejects.toThrow(new BadRequestException("Customer not found"));
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
     it("should throw BadRequestException when product not found", async () => {
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
       prisma.product.findMany.mockResolvedValue([]); // no matching products

@@ -4,6 +4,7 @@ import {
   ExecutionContext,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -16,6 +17,8 @@ import type { BuyerJwtPayload } from "../interfaces/buyer-jwt-payload.interface"
  */
 @Injectable()
 export class BuyerSellerContextGuard implements CanActivate {
+  private readonly logger = new Logger(BuyerSellerContextGuard.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -34,9 +37,16 @@ export class BuyerSellerContextGuard implements CanActivate {
       throw new ForbiddenException("This seller account is not available");
     }
 
-    // Verify active CustomerLink
+    // Verify active CustomerLink. REG-B141: removing a customer leaves its link ACTIVE on purpose (restore
+    // must bring the portal back untouched), so the removal is enforced here, on every seller-scoped
+    // request. No refresh-token revocation: BuyerRefreshToken is account-wide (no tenantId).
     const link = await this.prisma.customerLink.findFirst({
-      where: { buyerAccountId: buyer.sub, tenantId: tenant.id, status: "ACTIVE" },
+      where: {
+        buyerAccountId: buyer.sub,
+        tenantId: tenant.id,
+        status: "ACTIVE",
+        customer: { deletedAt: null },
+      },
       include: {
         customer: {
           select: { id: true, userId: true, businessName: true, email: true },
@@ -45,6 +55,18 @@ export class BuyerSellerContextGuard implements CanActivate {
     });
 
     if (!link) {
+      // REG-B141 observability: this 403 is indistinguishable from a DISCONNECTED link on the wire, and the
+      // API logs no requests, so name the removed-customer case once here (refusal path only — the happy
+      // path still issues exactly one query).
+      const removed = await this.prisma.customerLink.findFirst({
+        where: { buyerAccountId: buyer.sub, tenantId: tenant.id, status: "ACTIVE" },
+        select: { customerId: true, customer: { select: { deletedAt: true } } },
+      });
+      if (removed?.customer?.deletedAt) {
+        this.logger.warn(
+          `[B141] portal access refused: customer ${removed.customerId} at tenant ${tenant.id} is removed (buyer ${buyer.sub})`,
+        );
+      }
       throw new ForbiddenException("No active connection to this seller");
     }
 

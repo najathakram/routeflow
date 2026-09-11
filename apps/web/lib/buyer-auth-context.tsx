@@ -42,6 +42,28 @@ export function BuyerAuthProvider({ children }: { children: React.ReactNode }) {
   const [activeSeller, setActiveSellerState] = React.useState<BuyerSeller | null>(null);
   const [sellers, setSellers] = React.useState<BuyerSeller[]>([]);
 
+  // Reconcile a restored activeSeller against the sellers list the server just
+  // returned. B141: a seller that removed this buyer's customer record drops out
+  // of GET /buyer/sellers, and keeping it active would 403 every guarded request
+  // with nothing in the UI to explain it. Clearing it (state + the stored copy)
+  // lets the portal pages' `!activeSeller` redirect send the buyer back to
+  // /buyer/portal. A failed fetch never gets here, so it never clears anything.
+  const applySellers = React.useCallback((list: BuyerSeller[], restored: BuyerSeller | null) => {
+    setSellers(list);
+    if (restored && !list.some((seller) => seller.linkId === restored.linkId)) {
+      clearActiveSeller();
+      setActiveSellerState(null);
+    }
+  }, []);
+
+  // Mirror of `activeSeller` for the callbacks that reconcile a *later* fetch
+  // (refreshSellers / login), so they can read the current one without taking a
+  // dependency on it and re-identifying on every switch.
+  const activeSellerRef = React.useRef<BuyerSeller | null>(null);
+  React.useEffect(() => {
+    activeSellerRef.current = activeSeller;
+  }, [activeSeller]);
+
   // On mount: restore session from stored token (or try refresh)
   React.useEffect(() => {
     const stored = getStoredBuyer();
@@ -55,7 +77,7 @@ export function BuyerAuthProvider({ children }: { children: React.ReactNode }) {
       const token = getBuyerAccessToken();
       if (token) {
         getBuyerSellers(token)
-          .then(setSellers)
+          .then((list) => applySellers(list, storedSeller))
           .catch((err) => console.warn("[BuyerAuth] Failed to load sellers:", err?.message));
       }
       setIsLoading(false);
@@ -64,11 +86,12 @@ export function BuyerAuthProvider({ children }: { children: React.ReactNode }) {
         .then((data) => {
           if (data) {
             setBuyer(data.buyer);
-            setActiveSellerState(getStoredActiveSeller());
+            const refreshedSeller = getStoredActiveSeller();
+            setActiveSellerState(refreshedSeller);
             const token = getBuyerAccessToken();
             if (token) {
               getBuyerSellers(token)
-                .then(setSellers)
+                .then((list) => applySellers(list, refreshedSeller))
                 .catch((err) => console.warn("[BuyerAuth] Failed to load sellers:", err?.message));
             }
           } else {
@@ -79,18 +102,21 @@ export function BuyerAuthProvider({ children }: { children: React.ReactNode }) {
         })
         .finally(() => setIsLoading(false));
     }
-  }, []);
+  }, [applySellers]);
 
-  const login = React.useCallback(async (email: string, password: string): Promise<BuyerUser> => {
-    const data = await buyerLogin(email, password);
-    setBuyer(data.buyer);
-    const token = getBuyerAccessToken();
-    if (token) {
-      const list = await getBuyerSellers(token);
-      setSellers(list);
-    }
-    return data.buyer;
-  }, []);
+  const login = React.useCallback(
+    async (email: string, password: string): Promise<BuyerUser> => {
+      const data = await buyerLogin(email, password);
+      setBuyer(data.buyer);
+      const token = getBuyerAccessToken();
+      if (token) {
+        const list = await getBuyerSellers(token);
+        applySellers(list, activeSellerRef.current);
+      }
+      return data.buyer;
+    },
+    [applySellers],
+  );
 
   const register = React.useCallback(
     async (email: string, password: string, name: string): Promise<BuyerUser> => {
@@ -119,8 +145,10 @@ export function BuyerAuthProvider({ children }: { children: React.ReactNode }) {
     const token = getBuyerAccessToken();
     if (!token) return;
     const list = await getBuyerSellers(token);
-    setSellers(list);
-  }, []);
+    // Same reconcile as the mount paths: a seller removed while the tab was open
+    // must not stay active, or a Back into its pages 403s with no redirect.
+    applySellers(list, activeSellerRef.current);
+  }, [applySellers]);
 
   return (
     <BuyerAuthContext.Provider

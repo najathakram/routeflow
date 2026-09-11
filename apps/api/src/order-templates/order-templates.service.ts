@@ -309,13 +309,34 @@ export class OrderTemplatesService {
 
     let totalCreated = 0;
     let totalSkipped = 0;
+    let totalSuppressed = 0;
 
     for (const tenant of activeTenants) {
       await this.tenantCtx.run(tenant.id, async () => {
         const templates = await this.prisma.forTenant().orderTemplate.findMany({
-          where: { isActive: true, daysOfWeek: { has: dayOfWeek } },
+          // REG-B131: a removed (soft-deleted) customer's standing orders stop firing. Stateless on
+          // purpose: restoreCustomer() clears deletedAt and the template resumes with no other write.
+          where: { isActive: true, daysOfWeek: { has: dayOfWeek }, customer: { deletedAt: null } },
           include: { items: true },
         });
+
+        // REG-B131: a template the filter above dropped enters neither counter, so a tenant whose only
+        // due template belongs to a removed customer would log "0 created, 0 skipped" — identical to a
+        // day with no templates at all. Count the suppressed set once per tenant per tick (cron path).
+        const suppressed =
+          (await this.prisma.forTenant().orderTemplate.count({
+            where: {
+              isActive: true,
+              daysOfWeek: { has: dayOfWeek },
+              customer: { deletedAt: { not: null } },
+            },
+          })) ?? 0;
+        if (suppressed > 0) {
+          totalSuppressed += suppressed;
+          this.logger.warn(
+            `[tenant:${tenant.id}] REG-B131: ${suppressed} standing-order template(s) suppressed — customer removed`,
+          );
+        }
 
         for (const template of templates) {
           // Idempotency: skip if order already generated today for this template
@@ -346,7 +367,7 @@ export class OrderTemplatesService {
     }
 
     this.logger.log(
-      `Daily order generation complete: ${totalCreated} created, ${totalSkipped} skipped across ${activeTenants.length} tenant(s)`,
+      `Daily order generation complete: ${totalCreated} created, ${totalSkipped} skipped, ${totalSuppressed} suppressed (customer removed) across ${activeTenants.length} tenant(s)`,
     );
   }
 

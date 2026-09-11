@@ -434,3 +434,152 @@ describe("RecurringInvoicesService (cron continues past a failing template, pin)
     expect(invoices.create).toHaveBeenCalledTimes(2);
   });
 });
+
+// Honest stand-in for Postgres: applies the `where` the service actually sends, so a where-only fix is
+// observable (L-081: a mock that injects a fixed result cannot see one). Strict: an unmodelled filter
+// shape throws instead of silently matching.
+function matchesWhere(row: any, where: any = {}): boolean {
+  for (const [key, cond] of Object.entries(where)) {
+    if (key === "customer") {
+      const rel = (cond as any)?.is ?? cond;
+      if (
+        !rel ||
+        !Object.prototype.hasOwnProperty.call(rel, "deletedAt") ||
+        rel.deletedAt !== null
+      ) {
+        throw new Error(`matchesWhere: unsupported customer filter ${JSON.stringify(cond)}`);
+      }
+      if (row.customer.deletedAt !== null) return false;
+      continue;
+    }
+    if (cond !== null && typeof cond === "object" && !(cond instanceof Date)) {
+      const c = cond as any;
+      if ("has" in c) {
+        if (!row[key].includes(c.has)) return false;
+      } else if ("in" in c) {
+        if (!c.in.includes(row[key])) return false;
+      } else if ("lte" in c) {
+        if (!(row[key] <= c.lte)) return false;
+      } else {
+        throw new Error(`matchesWhere: unsupported filter on ${key}: ${JSON.stringify(cond)}`);
+      }
+      continue;
+    }
+    if (row[key] !== cond) return false;
+  }
+  return true;
+}
+
+const REMOVED_AT = new Date("2026-09-01T00:00:00.000Z");
+
+describe("RecurringInvoicesService.generateDueRecurringInvoices — removed customer (B131)", () => {
+  let service: RecurringInvoicesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let invoices: { create: jest.Mock; send: jest.Mock; sendEmail: jest.Mock };
+
+  const ri = (id: string, customerId: string, autoSend: boolean, deletedAt: Date | null) => ({
+    id,
+    customerId,
+    discount: 0,
+    shippingFee: 0,
+    notes: null,
+    terms: null,
+    autoSend,
+    frequency: "MONTHLY",
+    dayOfWeek: null,
+    dayOfMonth: 1,
+    isActive: true,
+    nextRunAt: new Date("2026-07-01"),
+    items: [{ description: "x", productId: null, qty: 1, unitPrice: 10, discount: 0, taxRate: 0 }],
+    customer: { id: customerId, deletedAt },
+  });
+
+  async function boot(removedAt: Date | null) {
+    prisma = createMockPrisma();
+    invoices = {
+      create: jest.fn().mockResolvedValue({ id: "inv-1" }),
+      send: jest.fn().mockResolvedValue({ id: "inv-1" }),
+      sendEmail: jest.fn().mockResolvedValue({ success: true }),
+    };
+    const mod = await Test.createTestingModule({
+      providers: [
+        RecurringInvoicesService,
+        { provide: PrismaService, useValue: prisma },
+        {
+          provide: TenantContextService,
+          useValue: { run: jest.fn((_id: string, fn: () => unknown) => fn()) },
+        },
+        { provide: InvoicesService, useValue: invoices },
+      ],
+    }).compile();
+    service = mod.get(RecurringInvoicesService);
+    const rows = [
+      ri("ri-live", "c-live", false, null),
+      ri("ri-removed", "c-removed", true, removedAt),
+    ];
+    prisma.tenant.findMany.mockResolvedValue([{ id: "tn-1" }] as any);
+    prisma.recurringInvoice.findMany.mockImplementation((async (args: any) =>
+      rows.filter((r) => matchesWhere(r, args?.where))) as any);
+    prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 1 }); // B9 CAS claim succeeds
+    prisma.recurringInvoice.update.mockResolvedValue({ id: "ri-1" } as any);
+    prisma.invoice.update.mockResolvedValue({ id: "inv-1" } as any);
+  }
+
+  it("REG-B131 T2: generateDueRecurringInvoices never invoices a removed customer", async () => {
+    await boot(REMOVED_AT);
+    await service.generateDueRecurringInvoices();
+    expect(invoices.create.mock.calls.map((c) => c[0].customerId)).toEqual(["c-live"]);
+  });
+
+  it("REG-B131 T3: generateDueRecurringInvoices never emails a removed customer's auto-send invoice", async () => {
+    await boot(REMOVED_AT);
+    await service.generateDueRecurringInvoices();
+    expect(invoices.sendEmail).toHaveBeenCalledTimes(0);
+  });
+
+  it("B131 P2: a restored customer's recurring invoice generates again", async () => {
+    await boot(null);
+    await service.generateDueRecurringInvoices();
+    expect(invoices.create.mock.calls.map((c) => c[0].customerId)).toEqual(["c-live", "c-removed"]);
+  });
+
+  // Observability of the suppression itself: when every due row belongs to a removed customer the tick
+  // returns before the per-tenant log, so that night would leave no line at all. createMockPrisma()
+  // defaults every count() to 0, which is why the tests above stay green with no extra mock.
+  it("REG-B131 T11: generateDueRecurringInvoices warns per tenant and totals the suppressed rows", async () => {
+    await boot(REMOVED_AT);
+    prisma.recurringInvoice.count.mockResolvedValue(2 as any);
+    const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => {});
+    const log = jest.spyOn((service as any).logger, "log").mockImplementation(() => {});
+
+    await service.generateDueRecurringInvoices();
+
+    // The warned number must come from the suppressed set, not from any set: a count whose where is
+    // flipped (or loses the relation filter) would log a confident wrong number, so pin the filter.
+    expect(prisma.recurringInvoice.count).toHaveBeenCalledTimes(1);
+    expect(prisma.recurringInvoice.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ customer: { deletedAt: { not: null } } }),
+      }),
+    );
+
+    const suppressionWarnings = warn.mock.calls
+      .map((c) => String(c[0]))
+      .filter((m) => m.includes("REG-B131"));
+    expect(suppressionWarnings).toHaveLength(1);
+    expect(suppressionWarnings[0]).toContain("tn-1");
+    expect(suppressionWarnings[0]).toContain("2");
+    expect(log.mock.calls.map((c) => String(c[0])).some((m) => m.includes("2 suppressed"))).toBe(
+      true,
+    );
+  });
+
+  it("B131 P11: generateDueRecurringInvoices does not warn when nothing is suppressed", async () => {
+    await boot(null);
+    const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => {});
+
+    await service.generateDueRecurringInvoices();
+
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes("REG-B131"))).toHaveLength(0);
+  });
+});
