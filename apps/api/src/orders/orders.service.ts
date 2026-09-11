@@ -4667,7 +4667,11 @@ export class OrdersService implements OnApplicationBootstrap {
     const postDeliveryEdit = POST_DELIVERY_EDIT_STATUSES.includes(order.status);
     let skipInPlaceResync = false;
     if (postDeliveryEdit) {
-      const lines = order.lineItems ?? [];
+      // Same BILLABLE filter the predicate itself applies (`shouldSkipInPlaceResync`,
+      // merge-idempotency.ts): a zero-qty row cannot carry the partial-billing answer, so it must
+      // not make this gate read as "invoiced" either — otherwise the two disagree on exactly the
+      // rows that decide the branch.
+      const lines = (order.lineItems ?? []).filter((li) => Number(li.qty ?? 0) > 0.001);
       const anyInvoiced = lines.some((li) => Number(li.invoicedQty ?? 0) > 0.001);
       if (anyInvoiced) {
         // The cumulative `invoicedQty` survived on these rows (an incremental edit, or a

@@ -13,15 +13,15 @@
  * server's replay identity is CUSTOMER-SCOPED: carrying one customer's key onto another's cart
  * makes the submit look like a replay of an order that is not theirs and the API refuses it
  * outright (409 `IDEMPOTENCY_KEY_CONFLICT` / `HELD_BY_OTHER_ORDER`). A map needs no rotation on
- * "Change customer" at all — each customer simply reads their own slot — and, unlike a rotating
- * singleton, it survives the round trip A -> B -> A: the still-live cart for A keeps the key its
- * own in-flight retry must send, instead of minting a sibling duplicate order.
+ * "Change customer" at all — each customer simply reads their own slot, so switching away from A
+ * and back leaves A's slot holding the key its own in-flight retry must send, instead of minting a
+ * sibling duplicate order.
  *
  * A customer's key is cleared — so their NEXT cart mints a fresh one — ONLY on:
  *   1. a successful submit for that customer (the cart that owned the key is now a real order;
  *      any further submit is deliberately a NEW order and must get its own key)
- *   2. an explicit cart clear (`clearAllOrderSubmitKeys()` — the operator abandons the cart on
- *      purpose, so no customer's slot is still live)
+ *   2. `clearAllOrderSubmitKeys()`, which drops every slot at once — a teardown helper (used by
+ *      the specs today; no screen path calls it)
  *   3. the 409 "Open order" wind-down for that customer (the key is already spoken for; the cart
  *      that owned it is finished with)
  *
@@ -29,8 +29,8 @@
  * still live, and a retry/replay needs the SAME key so server-side idempotency can catch it
  * instead of minting a sibling duplicate order.
  *
- * Pure module, no RN dependency — importable from screens (NewOrderScreen's
- * wedge/submit wiring) and from lib/api-client.ts alike.
+ * Pure module, no RN dependency — imported today by NewOrderScreen's submit wiring, and usable
+ * as-is from any plain-Node context (Jest).
  */
 
 /**
@@ -98,8 +98,8 @@ export function resetOrderSubmitKey(customerId: string | null | undefined): void
 }
 
 /**
- * Drop EVERY customer's key — the explicit cart-clear path, where the operator abandons the cart
- * on purpose and no slot is still live. Never call this on a submit failure.
+ * Drop EVERY customer's key at once. A teardown helper — the specs use it to isolate cases; no
+ * screen path calls it. Never call this on a submit failure.
  */
 export function clearAllOrderSubmitKeys(): void {
   keysByCustomer.clear();
