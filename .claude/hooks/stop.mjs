@@ -233,4 +233,60 @@ if (existsSync(".claude/campaign/bugs") && existsSync("scripts/campaign/bugs.mjs
       process.stderr.write(`Bug registry: ${line.trim()}\n`);
 }
 
+// ── Gate 5 — Plane BUGS mirror (reports, never blocks). DECIDE-27, 2026-09-10.
+// Mirrors the registry into Plane's BUGS project after Gate 4's own sync.
+// Never gates the turn: any outcome (skip / success / failure / crash) below
+// still falls through to the unconditional `process.exit(0)` at the end of
+// this file.
+if (existsSync("scripts/campaign/plane-sync.mjs") && existsSync(".claude/campaign/bugs.jsonl")) {
+  // `|| ""` (Gate 4's precedent, :212): spawnSync returns stdout === null when
+  // the child never starts (git missing from PATH, EACCES, EINVAL), and
+  // `null.trim()` would throw a raw stack out of a gate whose whole contract is
+  // that it never fails a turn.
+  const dirty =
+    (
+      spawnSync("git", ["status", "--porcelain", "--", ".claude/campaign"], {
+        encoding: "utf8",
+      }).stdout || ""
+    ).trim() !== "";
+  // Env-overridable so the spec can shrink it (a case proving the silent-timeout
+  // path must not wait 25 s); the default is the budget the gate ships with.
+  const gateTimeoutMs = Number(process.env.PLANE_SYNC_GATE_TIMEOUT_MS) || 25_000;
+  const proc = spawnSync(
+    "node",
+    [
+      "scripts/campaign/plane-sync.mjs",
+      "--quiet",
+      // Below the child timeout above: the child stops issuing writes and
+      // reports a partial, instead of being killed mid-write with no report.
+      "--budget-ms",
+      "18000",
+      ...(dirty ? [] : ["--if-digest-changed"]),
+    ],
+    { encoding: "utf8", timeout: gateTimeoutMs },
+  );
+  // LAST match, not the first: the child writes its one summary/skip/failed
+  // line with the bare `Plane mirror:` prefix (its warnings use
+  // `Plane mirror warn:`), and taking the first match let any earlier line
+  // that happened to share the prefix mask the real report every turn.
+  const hits = ((proc.stdout || "") + (proc.stderr || ""))
+    .trim()
+    .split(/\r?\n/)
+    .filter((l) => /^Plane mirror:/.test(l));
+  const line = hits[hits.length - 1];
+  if (line) {
+    process.stderr.write(line + "\n");
+  } else if (proc.error || proc.signal || proc.status !== 0) {
+    // A killed (timeout) or crashed child used to leave the turn completely
+    // silent — the gate reports nothing to relay and Plane could drift
+    // indefinitely with zero signal. Still non-blocking: one line, exit 0.
+    const why = proc.signal
+      ? `signal ${proc.signal}`
+      : proc.error
+        ? (proc.error.code ?? proc.error.message)
+        : `status ${proc.status}`;
+    process.stderr.write(`Plane mirror: timed out or failed (non-blocking) (${why})\n`);
+  }
+}
+
 process.exit(0);
