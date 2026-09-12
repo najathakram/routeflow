@@ -1,0 +1,52 @@
+{
+  "_fixtureNote": "Recovered phaseReport numbers from the F14 dev-pipeline run (2026-09-02, major scale). agents/rawFindings/tokens per phase are the real recovered figures; effort, overlappedWith, and note were not recorded on that run, so those fields are null throughout. estUsd per phase is derived (tokens / 1e6 x output price, rounded to cents) rather than recovered directly.",
+  "scale": "major",
+  "clean": false,
+  "startedAt": "2026-09-02T02:00:00.000Z",
+  "estimatedCostUsd": 22.85,
+  "pricesAsOf": "2026-06-24",
+  "riskSummary": { "high": 40, "low": 7 },
+  "fixRouting": { "mechanical": 3, "judgment": 10 },
+  "fixRounds": 2,
+  "phaseReport": [
+    { "phase": "Baseline", "ran": true, "agents": 3, "rawFindings": 0, "tokens": 22720, "model": "claude-haiku-4-5", "effort": null, "estUsd": 0.11, "overlappedWith": null, "note": null },
+    { "phase": "Author tests", "ran": true, "agents": 4, "rawFindings": 0, "tokens": 83161, "model": "claude-sonnet-5", "effort": null, "estUsd": 0.83, "overlappedWith": null, "note": null },
+    { "phase": "Red gate", "ran": true, "agents": 5, "rawFindings": 1, "tokens": 97807, "model": "claude-opus-5", "effort": null, "estUsd": 2.45, "overlappedWith": null, "note": null },
+    { "phase": "Implement", "ran": true, "agents": 11, "rawFindings": 0, "tokens": 139745, "model": "claude-sonnet-5", "effort": null, "estUsd": 1.40, "overlappedWith": null, "note": null },
+    { "phase": "Gate & Review", "ran": true, "agents": 9, "rawFindings": 18, "tokens": 254750, "model": "claude-opus-5", "effort": null, "estUsd": 6.37, "overlappedWith": null, "note": null },
+    { "phase": "Verify", "ran": true, "agents": 26, "rawFindings": 0, "tokens": 64923, "model": "claude-opus-5", "effort": null, "estUsd": 1.62, "overlappedWith": null, "note": null },
+    { "phase": "UI verify", "ran": false, "agents": 0, "rawFindings": 0, "tokens": 0, "model": null, "effort": null, "estUsd": 0.00, "overlappedWith": null, "note": null },
+    { "phase": "Mutation probe", "ran": true, "agents": 14, "rawFindings": 1, "tokens": 56370, "model": "claude-opus-5", "effort": null, "estUsd": 1.41, "overlappedWith": null, "note": null },
+    { "phase": "Fix", "ran": true, "agents": 18, "rawFindings": 0, "tokens": 173175, "model": "claude-opus-5", "effort": null, "estUsd": 4.33, "overlappedWith": null, "note": null },
+    { "phase": "Final pass", "ran": true, "agents": 1, "rawFindings": 1, "tokens": 86595, "model": "claude-fable-5-1", "effort": null, "estUsd": 4.33, "overlappedWith": null, "note": null }
+  ],
+  "confirmedByPhase": {
+    "Baseline": 0,
+    "Red gate": 1,
+    "Gate & Review": 17,
+    "Mutation probe": 1
+  },
+  "redGate": { "ran": true, "remediateOn": "behavioral", "properlyRed": false, "structurallyRed": true, "behaviorallyRed": false, "attempts": 2 },
+  "verify": { "ran": true, "lazy": false, "judged": 13, "dropped": 2, "votesCast": 26, "firstVoteRefuted": 2, "firstVoteRefutedRate": 0.154, "tieBreaks": 0 },
+  "uiVerify": { "ran": false, "completed": false, "findings": [], "reVerify": null },
+  "mutationProbe": { "ran": true, "skipped": null, "targets": 12, "probed": 12, "allCaught": false, "restoredVerified": true, "skippedTargets": [] },
+  "finalPass": {
+    "ran": true,
+    "completed": true,
+    "skipped": null,
+    "model": "claude-fable-5-1",
+    "effort": null,
+    "fallback": false,
+    "files": [],
+    "findings": [
+      { "severity": "minor", "file": "(example)", "summary": "one minor finding" }
+    ]
+  },
+  "overlap": { "verifyWithUiVerify": false, "finalGateWithFinalPass": false, "redAuditWithImplement": null },
+  "cascadeAudit": null,
+  "escalation": null,
+  "remainingFindings": [
+    { "severity": "minor", "file": "(example)", "summary": "one minor finding", "phase": "Final pass" }
+  ],
+  "gate": { "pass": true, "skipped": false, "results": [] }
+}

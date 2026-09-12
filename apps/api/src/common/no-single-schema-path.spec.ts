@@ -29,6 +29,11 @@ import path from "node:path";
  *     negative-existence check. That is a regression oracle, not a live path
  *     used for real I/O against an app schema, so it is exempted here rather
  *     than obscured in T1 just to dodge this scanner.
+ *   - `.claude/skills/model-routing/scripts/route-task.mjs` — a vendored house script
+ *     (chore/vendor-house-skills, 2026-09-12) whose built-in self-test hands the risk
+ *     classifier a generic example path (`prisma/schema.prisma`) as fixture data; it
+ *     never opens a schema file. Kept byte-identical to the canonical copy under
+ *     `~/.claude/skills`, so the reference is exempted here rather than edited there.
  *   - `apps/api/prisma/migrations/**` — never scanned. Migration SQL/history is
  *     not one of the directories this check walks in the first place, but the
  *     exclusion is named explicitly so a future root-widening does not silently
@@ -38,9 +43,11 @@ import path from "node:path";
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
 
 const ALLOW_LIST = new Set<string>(
-  ["apps/api/scripts/split-prisma-schema.mjs", "apps/api/src/common/schema-folder.spec.ts"].map(
-    (p) => path.join(REPO_ROOT, p),
-  ),
+  [
+    "apps/api/scripts/split-prisma-schema.mjs",
+    "apps/api/src/common/schema-folder.spec.ts",
+    ".claude/skills/model-routing/scripts/route-task.mjs",
+  ].map((p) => path.join(REPO_ROOT, p)),
 );
 
 const SCAN_DIR_ROOTS = ["apps/api/src", "apps/api/scripts", "scripts", ".github/workflows"];
@@ -298,6 +305,16 @@ describe("no single schema path references outside the allow-list (wave E / imp-
     expect(fs.existsSync(t1Path)).toBe(true);
     expect(ALLOW_LIST.has(t1Path)).toBe(true);
     expect(candidateFiles()).not.toContain(t1Path);
+  });
+
+  it("allow-list: the vendored route-task.mjs self-test is excluded — its fixture names a generic schema path, it opens none", () => {
+    const routeTaskPath = path.join(
+      REPO_ROOT,
+      ".claude/skills/model-routing/scripts/route-task.mjs",
+    );
+    expect(fs.existsSync(routeTaskPath)).toBe(true);
+    expect(ALLOW_LIST.has(routeTaskPath)).toBe(true);
+    expect(candidateFiles()).not.toContain(routeTaskPath);
   });
 
   it("allow-list: apps/api/prisma/migrations/** is never scanned", () => {

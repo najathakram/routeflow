@@ -23,21 +23,6 @@
 - **Guard:** campaign-check's freshness gate (already refuses a stale report by name with the
   regen command) — this is a usage note on WHEN to regenerate.
 
-### L-041 · 2026-09-01 · process
-
-- **Symptom:** 13 rows sat in `proven` — merged, deployed, post-deploy run already green — while
-  every scoreboard counted them outstanding. Then the run cited as their proof turned out to have
-  executed **nothing**.
-- **Root cause:** two failures stacked. The proof fires off the deploy signal and lands after the
-  session that merged the fix has ended, so the flip to `done` belongs to nobody. And the run
-  everyone pointed at (a superseded deployment) reported conclusion **success with every real step
-  `skipped`** — a green job that ran zero tests.
-- **Lesson:** **When the evidence authorizing a state change arrives asynchronously, assign the
-  flip — and when you read that evidence, read the STEP conclusions, never the job's.** A job is
-  green when it is skipped, and a suite is green when a test is skipped; neither says your proof ran.
-- **Guard:** `gh run view <id> --json jobs` — assert the specific step is `success`, not
-  `skipped`; for one test, grep the log for its `✓`. Step COUNT is not execution.
-
 ### L-035 · 2026-09-01 · process · #TBD
 
 - **Symptom:** B120's POD archive was designed onto a generic `AuditLog` row; review found
@@ -401,6 +386,23 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   proves nothing about columns.**
 - **Guard:** `gohighlevel-handoff.service.spec.ts` #1 (filters on `externalSource`, never
   `source`) + the Opus review in fix-plan.md round 2.
+
+### L-115 · 2026-09-12 · testing · #703 (W16 outage)
+
+- **Symptom:** #702 shipped a controller with per-handler `@UseGuards(AddonGuard)` in a module
+  that never imported `BillingModule`; unit specs (boundary mocks), lint and `tsc` were all green,
+  the Docker healthcheck hid the boot crash, and prod API answered 502 for 26 minutes
+  (`UnknownDependenciesException` at InstanceLoader).
+- **Root cause:** Nest resolves a guard's constructor params from the REGISTERING module's scope;
+  nothing in the gate chain compiles the Nest container, so a missing module import is invisible
+  until the process boots.
+- **Lesson:** **module wiring is a boot-time contract that boundary mocks and the type-checker
+  cannot see — any diff touching `*.module.ts` or adding a guarded controller needs a proof the
+  container compiles (the compose boot gate `local:up` → `local:validate`, or a repo-truth spec on
+  the wiring shape) before it is pushed.**
+- **Guard:** `apps/api/src/common/addon-guard-module-import.spec.ts` (every `AddonGuard` controller's
+  registering module imports `BillingModule`; proven red on the pre-fix tree) + lane rule: compose
+  boot before any push that changes module wiring.
 
 ## domain
 
