@@ -214,6 +214,12 @@ program's mid/high tiers (ZAP lane, pentest) are meant to close.
 
 ## 8. Backlog catalogue (standing reference)
 
+**Tracking rule:** every finding from a review, scanner, DAST, pentest, or audit is filed in
+the bug registry with `--tag security`, PoC-free (no exploit detail or repro steps in the
+filed row), with severity assigned by CVSS band — Critical ≥ 9.0, High 7.0–8.9,
+Medium 4.0–6.9, Low < 4.0 — and a finding already fixed elsewhere is closed via
+`bugs.mjs already-fixed <id> --pr <n> --why "<evidence>"` rather than left queued.
+
 ### Plane — ROAD epic "Security program — tooling & hardening (ASVS L1→L3)"
 
 | # | Title | Labels | Priority | Effort | Acceptance |

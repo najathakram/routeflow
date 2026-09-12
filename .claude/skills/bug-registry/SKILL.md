@@ -380,6 +380,37 @@ What that means for you:
 - **Still never hand-edit a shard.** The lock protects `bugs.mjs` from `bugs.mjs`; it cannot
   protect the ledger from an editor.
 
+## Security findings
+
+Every finding from a review, scanner, DAST, pentest, or audit is filed here — the registry is the
+system of record for security findings too, not a separate tracker. Convention:
+
+- **Tag it** `--tag security` at file time (add it later with `tag <id> add security` if a bug
+  turns out to be a security finding after the fact).
+- **PoC-free** — no exploit detail, payload, or repro steps in the filed row; a finding's `title`,
+  `location` and notes describe the defect and its impact, never how to trigger it.
+- **Severity by CVSS band**, not by gut feel: Critical ≥ 9.0, High 7.0–8.9, Medium 4.0–6.9,
+  Low < 4.0.
+- **Already fixed elsewhere** — a finding re-verified as fixed in current source, or closed by a
+  PR the audit predates, is discharged via `already-fixed`, not left `queued`:
+
+  ```bash
+  npm run bugs -- already-fixed B361 --pr 84 --why "re-verified in source — adoptOrphanedContacts scopes strictly to null-tenant rows"
+  ```
+
+  `--why` needs at least 20 characters of real evidence (a PR number plus what changed, or a
+  `file:line` re-verification note) — it is the one claim nothing else checks for you.
+
+- **Finding a security batch's rows**:
+
+  ```bash
+  npm run bugs -- list --tag security
+  npm run bugs -- list --tag security --batch F49
+  ```
+
+`docs/audit/security-findings-index.md` maps external audit finding ids (e.g. `F1-001`) to their
+registry id; `docs/security/security-testing-program.md` §8 is the standing backlog this feeds.
+
 ## Plane
 
 The registry mirrors one-way into Plane's BUGS project — see the **plane** skill for the full

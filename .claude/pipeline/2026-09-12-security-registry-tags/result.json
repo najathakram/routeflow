@@ -1,0 +1,48 @@
+{
+  "plan": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-secfile/.claude/pipeline/2026-09-12-security-registry-tags/build-plan.md",
+  "mode": "feature",
+  "scale": "small",
+  "startedAt": "2026-09-12T15:13:13Z",
+  "runId": "wf_872ec903-4aa",
+  "estimatedCostUsd": 6.94,
+  "pricesAsOf": null,
+  "fixRounds": 2,
+  "touchedFiles": [
+    "scripts/campaign/bugs.mjs",
+    "scripts/campaign/plane-sync.mjs",
+    "scripts/campaign/plane-sync.self-test.mjs",
+    "docs/audit/security-findings-index.md",
+    "docs/security/security-testing-program.md",
+    ".claude/skills/bug-registry/SKILL.md"
+  ],
+  "gate": {
+    "pass": true,
+    "note": "The automated regate recorded in phases/07-fix.json ('Verification gate still failing after fixes') was a false positive: the gate agent ran the verify commands from the wrong cwd ('...\\phases' instead of the worktree root). Re-run by hand on 2026-09-12 from the correct workdir (C:/ClaudeCode/routeflow/.claude/worktrees/rf-secfile): `node scripts/campaign/bugs.mjs self-test`, `node scripts/campaign/plane-sync.self-test.mjs`, and `node scripts/campaign/bugs.mjs stats` all exit 0 / all checks passed."
+  },
+  "phaseReport": [
+    { "phase": "Baseline", "ran": true, "agents": 3, "rawFindings": 2, "tokens": 20215, "model": "claude-haiku-4-5 (gate/grounding/manifest)", "effort": "low", "estUsd": 0.1, "overlappedWith": null, "note": "" },
+    { "phase": "Author tests", "ran": true, "agents": 2, "rawFindings": 0, "tokens": 49215, "model": "claude-sonnet-5", "effort": "medium (a package's own effort wins)", "estUsd": 0.49, "overlappedWith": null, "note": "" },
+    { "phase": "Red gate", "ran": true, "agents": 5, "rawFindings": 1, "tokens": 56472, "model": "claude-haiku-4-5 (run) + claude-opus-5 (audit/remediate)", "effort": "low run / high audit / medium remediation", "estUsd": 1.41, "overlappedWith": null, "note": "" },
+    { "phase": "Implement", "ran": true, "agents": 4, "rawFindings": 0, "tokens": 97281, "model": "claude-sonnet-5", "effort": "medium (a package's own effort wins)", "estUsd": 0.97, "overlappedWith": null, "note": "" },
+    { "phase": "Gate & Review", "ran": true, "agents": 4, "rawFindings": 4, "tokens": 45191, "model": "claude-haiku-4-5 (gate/regate) + claude-sonnet-5 (build-fix; claude-opus-5 when the manifest has a HIGH-risk file) + claude-opus-5 (lenses)", "effort": "low gate / high build-fix / deep lenses high (xhigh when any file is HIGH risk) / pattern lenses high", "estUsd": 1.13, "overlappedWith": null, "note": "" },
+    { "phase": "Verify", "ran": false, "agents": 0, "rawFindings": 0, "tokens": 0, "model": null, "effort": null, "estUsd": 0, "overlappedWith": null, "note": "never ran in the automated pipeline -- the session that launched wf_872ec903-4aa ended after Fix round 2. Hand-verified instead (see gate.note)." },
+    { "phase": "UI verify", "ran": false, "agents": 0, "rawFindings": 0, "tokens": 0, "model": null, "effort": null, "estUsd": 0, "overlappedWith": null, "note": "n/a -- no UI in this change" },
+    { "phase": "Mutation probe", "ran": false, "agents": 0, "rawFindings": 0, "tokens": 0, "model": null, "effort": null, "estUsd": 0, "overlappedWith": null, "note": "never ran -- session ended before this phase" },
+    { "phase": "Fix", "ran": true, "agents": 17, "rawFindings": 1, "tokens": 113654, "model": "claude-sonnet-5 (brief) + claude-fable-5-1 (plans every fix in the round; claude-opus-5 if it declines) + claude-sonnet-5 (mechanical executors) + claude-sonnet-5 (designed LOW-risk executors) + claude-opus-5 (HIGH-risk and broad-key executors) + claude-sonnet-5 (recheck; claude-opus-5 when the manifest has a HIGH-risk file) + claude-haiku-4-5 (regate)", "effort": "low brief / high plan (xhigh on the fallback planner) / low mechanical / medium designed LOW-risk / high HIGH-risk and broad keys / high re-check / low gates", "estUsd": 2.84, "overlappedWith": null, "note": "cumulative across 2 fix rounds (06-fix.json + 07-fix.json)" },
+    { "phase": "Final pass", "ran": false, "agents": 0, "rawFindings": 0, "tokens": 0, "model": null, "effort": null, "estUsd": 0, "overlappedWith": null, "note": "never ran -- session ended before this phase" }
+  ],
+  "remainingFindings": [
+    {
+      "file": "scripts/campaign/plane-sync.mjs",
+      "line": 877,
+      "severity": "minor",
+      "summary": "The tag-removal fix makes every untagged row's PATCH send `labels: []`, so the mirror now wipes any label applied to a BUGS item out of band (e.g. by plane-apply) the next time any other field changes.",
+      "detail": "Verified in this session: `resolveLabelIdsForTags` (plane-sync.mjs:626-641) now returns `[]` for a row with no tags, and the patch body spreads `...(labels ? { labels } : {})` (plane-sync.mjs:866-878), so `labels: []` is sent on EVERY patch of an untagged row -- not only on the one patch that follows a tag removal. Failure scenario: an operator (or `plane-apply.mjs`, which sets `body.labels = resolveLabelIds(...)` at L173 and L219) puts a triage label such as `needs-repro` on BUGS item for B300 (an untagged registry row); later the registry row's title/state/priority changes, plane-sync issues its normal one patch for that row, and the body carries `labels: []`, dropping `needs-repro`. `plane-intake.mjs:150` reads `item.labels` as meaningful data, so labels are not decorative in this workspace. The finding this fix answered only required clearing when the row previously had labels (its fixHint: \"send `labels: []` when the row's tag set is empty (or when it previously had labels)\"); the shipped version is the broader reading and takes ownership of the whole label set on untagged rows. NOT fully verified: I did not find a committed ops file that labels a BUGS item today, so this is a capability-level regression rather than an observed data loss -- no fake-server check in plane-sync.self-test.mjs covers \"untagged row + pre-existing Plane labels\" (the new T8 removal case starts from a row the mirror itself tagged).",
+      "fixHint": "Either scope the `[]` to the removal case (only send it when the item's current label set is non-empty AND the previous registry hash carried tags -- the existing item is already fetched in `existingItems`), or document in the plan/R8 that the mirror owns the BUGS label set outright and add a self-test case pinning that an untagged row with pre-existing Plane labels is intentionally cleared.",
+      "fixComplexity": "judgment",
+      "designMismatch": "design mismatch: Fable's design requires deriving \"the set of ids whose names belong to the registry tag-label vocabulary (the tag->label mapping constant)\" to compute labels = (currentIds - mirrorOwnedIds) union resolvedTagIds. No such constant exists: grep -rniE 'tag(s)?_?(label|vocab)|LABEL_BY_TAG|TAG_TO_LABEL' over scripts/, .claude/skills/bug-registry/SKILL.md and the pipeline dir returns nothing, and no TAG_LABEL/VOCAB/KNOWN_TAGS/ALLOWED_TAGS const exists in scripts/campaign/*.mjs. Tags are free-form (build-plan.md L171 validates only /^[a-z0-9][a-z0-9-]*$/), so an out-of-band label name like 'needs-repro' is indistinguishable by name from a registry tag, and the mirror persists no record of the labels it set (the registry hash at plane-sync.mjs:288 is an opaque sha over the whole row), so mirror-owned ids cannot be derived from prior state either. A per-run vocabulary derived from the union of tags across `desired` is unsound: in the T8 removal case (the fixture's only row loses its last tag) that union is empty, nothing counts as mirror-owned, and the stale label would be preserved, breaking R8's removal rule. Two premises of the design are also wrong against the code: resolveLabels (plane-client.mjs:557-563) is a read-only listAll('projects/<id>/labels/') that never creates a label (no label-create call exists in scripts/campaign/*), and the existing item's label ids are NOT already fetched -- the list query at plane-sync.mjs:647-649 requests fields 'id,name,state,priority,external_id,description_stripped,sequence_id' with no `labels`, so p.existing.labels is undefined and there is nothing to hoist. The finding itself is real (resolveLabelIdsForTags returns [] at L627 and the patch body spreads ...(labels ? { labels } : {}) at L877, so every patch of an untagged row sends labels: []); the implementable alternative is the finding's own fixHint option B -- document that the mirror owns the BUGS label set and pin it with a self-test case -- which Fable explicitly rejected, so it was not improvised here."
+    }
+  ],
+  "clean": false,
+  "note": "Session that launched wf_872ec903-4aa ended after Fix round 2 (2 fix rounds, both checkpointed); Verify/UI verify/Mutation probe/Final pass never ran. Resumed in a fresh session 2026-09-12 -- Workflow's resumeFromRunId cache is same-session-only and the journal was not on disk, so true resume was impossible. Hand-verified instead: all 3 verify commands pass cleanly (see gate.note); the recorded 'gate' blocker was a cwd artifact, not a real defect. One minor finding remains open for a human/Fable call (plane-sync.mjs:877, label-scope judgment) -- not re-litigated here. This result.json was hand-reconstructed from phases/07-fix.json's resultSoFar (verbatim phaseReport/remainingFindings) plus this session's direct verification; fields with no recorded source (manifest, riskSummary, fixRouting, redGate, mutationProbe, finalPass, cascadeAudit, escalation, uiVerify, overlap, verify, siblingSweep) are omitted rather than guessed."
+}

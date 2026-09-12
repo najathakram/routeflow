@@ -285,7 +285,19 @@ export function deriveDesired(registryDir, { wavePlacement: injectedWaves } = {}
     const wavePlacement = batch ? (wave.get(batch) ?? "unknown") : "unknown";
     const stateName = mapState(ledgerRow?.state);
     const priority = mapPriority(row.severity);
-    const hash = sha256Hex(JSON.stringify([row, ledgerRow ?? null, issue ?? null]));
+    // R8's hash-input rule: append `|tags:<sorted joined>` ONLY when the row
+    // has tags, so an untagged row's hash input — and therefore its hash —
+    // stays byte-for-byte identical to before this change (no spurious
+    // re-sync of the 282 rows that carry no tags). `row.tags` itself is
+    // stripped out of the hashed row object (`rowForHash`) so the tag SET,
+    // not the tags array's on-disk order, is what the hash reflects — the
+    // sorted-join suffix is the only place tags feed the hash.
+    const { tags: rawTags, ...rowForHash } = row;
+    const tags = Array.isArray(rawTags) ? rawTags.map(String) : [];
+    const hashInput =
+      JSON.stringify([rowForHash, ledgerRow ?? null, issue ?? null]) +
+      (tags.length ? `|tags:${[...tags].sort().join(",")}` : "");
+    const hash = sha256Hex(hashInput);
     const description_html = buildDescriptionHtml({
       row,
       ledgerRow,
@@ -301,6 +313,7 @@ export function deriveDesired(registryDir, { wavePlacement: injectedWaves } = {}
       priority,
       stateName,
       description_html,
+      tags,
       hash,
       ledgerRow,
     };
@@ -586,6 +599,47 @@ export async function runSync({
     }
     const desired = rows.map((d) => ({ ...d, stateId: stateIdByName.get(d.stateName) }));
 
+    // R8: BUGS project labels, resolved lazily and once per run — most runs
+    // mirror zero tagged rows (Gate 5's own day-to-day traffic), and this
+    // avoids the extra GET entirely until a tagged row actually needs it.
+    // `labelMap` and `loggedUnresolvedTags` are scoped to this runSync call,
+    // never module-level, so a tag that fails to resolve on one run is
+    // retried (and can succeed) on the next.
+    let labelMap = null;
+    async function labelsFor(client, projectId) {
+      if (!labelMap) labelMap = await client.resolveLabels(projectId);
+      return labelMap;
+    }
+    const loggedUnresolvedTags = new Set();
+    // Resolves a row's tags against the BUGS label map. Three outcomes, and
+    // the difference matters because Plane's PATCH leaves a key it is not
+    // sent alone: `[]` for a row with NO tags (so removing a row's last tag
+    // clears the labels the mirror previously set — a patch that omitted the
+    // key would leave them forever, since the registry hash converges and no
+    // later run revisits the row), the resolved ids for a row whose tags
+    // resolve, and `undefined` when a row HAS tags but none of them resolve
+    // (nothing is known about what the labels should be, so the key is
+    // omitted and Plane's existing set is left untouched). Logs
+    // `tag "<x>" has no Plane label in BUGS — skipped` exactly once per run
+    // per unresolved tag NAME (not once per row) — a Set keyed on the
+    // lowercase name, checked before logging.
+    async function resolveLabelIdsForTags(tags) {
+      if (!tags || !tags.length) return [];
+      const map = await labelsFor(client, project.id);
+      const ids = [];
+      for (const t of tags) {
+        const lower = String(t).toLowerCase();
+        const id = map.get(lower);
+        if (id) {
+          ids.push(id);
+        } else if (!loggedUnresolvedTags.has(lower)) {
+          loggedUnresolvedTags.add(lower);
+          console.error(`Plane mirror warn: tag "${t}" has no Plane label in BUGS — skipped`);
+        }
+      }
+      return ids.length ? ids : undefined;
+    }
+
     // Landmine 1: `description_stripped` may be missing from the list
     // response even with `fields=` requested — see planDiff's own note. No
     // `external_source` filter here (unlike v1): adoption needs to SEE the
@@ -777,6 +831,7 @@ export async function runSync({
         budgetExhausted = true;
         break;
       }
+      const labels = await resolveLabelIdsForTags(c.tags);
       const r = await client.post(
         `projects/${project.id}/work-items/`,
         {
@@ -786,6 +841,9 @@ export async function runSync({
           state: c.stateId,
           priority: c.priority,
           description_html: c.description_html,
+          // A create has no labels to clear, so an untagged row's POST body
+          // stays exactly as it was before tags existed.
+          ...(labels && labels.length ? { labels } : {}),
         },
         { ref: c.external_id },
       );
@@ -805,6 +863,7 @@ export async function runSync({
         budgetExhausted = true;
         break;
       }
+      const labels = await resolveLabelIdsForTags(p.desired.tags);
       const r = await client.patch(
         `projects/${project.id}/work-items/${p.id}/`,
         {
@@ -812,6 +871,10 @@ export async function runSync({
           state: p.desired.stateId,
           priority: p.desired.priority,
           description_html: p.desired.description_html,
+          // `labels: []` when the row carries no tags — the removal has to
+          // propagate on this one patch; `undefined` (key omitted) only when
+          // the row's tags exist but none resolve.
+          ...(labels ? { labels } : {}),
         },
         { ref: p.desired.external_id },
       );
