@@ -8,6 +8,7 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-12 — vendored house pipelines + DI-scope boot guard (`chore/vendor-house-skills`)** — `.claude/skills/{dev-pipeline,bug-pipeline,model-routing,lessons-learned}`, code-map refs and `.claude/commands` copied repo-relative (engine + machinery byte-identical, `.prettierignore`), `scripts/validate-code-map.mjs` vendored (unwired: INDEX 682 KB > 20 KB cap), `common/app-module-compile.spec.ts` compiles the real AppModule graph (red on the W16 CrmModule shape), `test/__mocks__/invoice-template.js` + moduleNameMapper. INDEX +2 rows; api.md entry deferred (1,182 KiB > 1,024 KiB pre-commit cap) until the area-file split lands.
 - **2026-09-11** — (branch `fix/train4-order-idempotency-key`, train 4 Run B, **B215**; map + lesson land
   IN-PR per the 2026-09-10 owner ruling, base `70d15a87`) — **the staff-merge replay store is now a
   per-request key ROW, and a replay re-runs the convergent post-fold tail.** The old store was the single
