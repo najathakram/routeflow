@@ -41,20 +41,29 @@ import { repoRoot } from "./plane-client.mjs";
 const SCRIPT_PATH = fileURLToPath(new URL("./plane-apply.mjs", import.meta.url));
 
 // F4 pattern: every fixture dir this run creates (ops-file dirs and ledger
-// state dirs alike) is tracked and swept in a `finally`, pinned by a
-// before/after count so a leak turns the run red instead of accumulating.
+// state dirs alike) is tracked and swept in a `finally`.
+//
+// Test-isolation fix (2026-09-12): FIXTURE_PREFIX is unique to THIS PROCESS
+// (pid + random) — never a bare "plane-apply-self-test-" literal shared by
+// every invocation, which let two overlapping runs of this script pollute
+// each other's before/after dir COUNT under load. The sweep is pinned to
+// every path THIS run recorded being gone after cleanup, never a global
+// count of other runs' dirs.
 const FIXTURE_DIRS = [];
-const FIXTURE_PREFIX = "plane-apply-self-test-";
+const FIXTURE_PREFIX = `plane-apply-self-test-${process.pid}-${Math.random().toString(36).slice(2, 8)}-`;
 const countFixtureTmpDirs = () =>
   readdirSync(tmpdir()).filter((n) => n.startsWith(FIXTURE_PREFIX)).length;
 function cleanupFixtures() {
-  for (const dir of FIXTURE_DIRS.splice(0)) {
+  const dirs = FIXTURE_DIRS.splice(0);
+  for (const dir of dirs) {
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
-      // a fixture dir that refuses to go must never turn a passing run red.
+      // a fixture dir that refuses to go must never turn a passing run red —
+      // the final leftover-path check below reports it instead.
     }
   }
+  return dirs;
 }
 function makeTmpDir() {
   const dir = mkdtempSync(join(tmpdir(), FIXTURE_PREFIX));
@@ -535,17 +544,23 @@ async function main() {
 const REAL_RUNS_PATH = join(repoRoot(), "local-assets", "plane", "runs.jsonl");
 const realRunsBefore = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
 
-const tmpDirsBefore = countFixtureTmpDirs();
+const tmpDirsBefore = countFixtureTmpDirs(); // always 0: FIXTURE_PREFIX embeds this process's own pid+random, so no dir under it can predate this run.
+let createdDirs = [];
 try {
   await main();
 } catch (err) {
   failures++;
   console.log(`  FAIL plane-apply.self-test threw: ${err?.stack ?? err}`);
 } finally {
-  cleanupFixtures();
+  createdDirs = cleanupFixtures();
 }
 check(
-  "F4: the run leaves no plane-apply-self-test-* dir behind",
+  "F4: the run leaves no dir this run created behind",
+  createdDirs.filter((d) => existsSync(d)),
+  [],
+);
+check(
+  "F4: no plane-apply-self-test-<pid>-<rand>-* dir from this run remains under tmpdir",
   countFixtureTmpDirs(),
   tmpDirsBefore,
 );

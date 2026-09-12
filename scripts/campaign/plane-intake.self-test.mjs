@@ -74,22 +74,30 @@ function locateThisWorktreeGit() {
 }
 
 // F4 pattern (plane-sync.self-test.mjs): every fixture dir this run creates
-// is tracked here and swept in a `finally`, pinned by a before/after count of
-// `plane-intake-self-test-*` dirs in tmpdir() so a leak turns the run red
-// instead of silently accumulating forever.
+// is tracked here and swept in a `finally`.
+//
+// Test-isolation fix (2026-09-12): FIXTURE_PREFIX is unique to THIS PROCESS
+// (pid + random) — never a bare "plane-intake-self-test-" literal shared by
+// every invocation, which let two overlapping runs of this script pollute
+// each other's before/after dir COUNT under load. The sweep is pinned to
+// every path THIS run recorded being gone after cleanup, never a global
+// count of other runs' dirs.
 const FIXTURE_DIRS = [];
-const FIXTURE_PREFIX = "plane-intake-self-test-";
+const FIXTURE_PREFIX = `plane-intake-self-test-${process.pid}-${Math.random().toString(36).slice(2, 8)}-`;
 const countFixtureTmpDirs = () =>
   readdirSync(tmpdir()).filter((n) => n.startsWith(FIXTURE_PREFIX)).length;
 function cleanupFixtures() {
-  for (const dir of FIXTURE_DIRS.splice(0)) {
+  const dirs = FIXTURE_DIRS.splice(0);
+  for (const dir of dirs) {
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
       // a fixture dir that refuses to go (a live handle on Windows) must never
-      // turn an otherwise-passing run red — the final count check reports it.
+      // turn an otherwise-passing run red — the final leftover-path check
+      // below reports it instead.
     }
   }
+  return dirs;
 }
 
 // A handful of runCli() calls (T15's --help/-h/--bogus probes) have no
@@ -590,17 +598,23 @@ async function main() {
 const REAL_RUNS_PATH = join(repoRoot(), "local-assets", "plane", "runs.jsonl");
 const realRunsBefore = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
 
-const tmpDirsBefore = countFixtureTmpDirs();
+const tmpDirsBefore = countFixtureTmpDirs(); // always 0: FIXTURE_PREFIX embeds this process's own pid+random, so no dir under it can predate this run.
+let createdDirs = [];
 try {
   await main();
 } catch (err) {
   failures++;
   console.log(`  FAIL plane-intake.self-test threw: ${err?.stack ?? err}`);
 } finally {
-  cleanupFixtures();
+  createdDirs = cleanupFixtures();
 }
 check(
-  "F4: the run leaves no plane-intake-self-test-* dir behind",
+  "F4: the run leaves no dir this run created behind",
+  createdDirs.filter((d) => existsSync(d)),
+  [],
+);
+check(
+  "F4: no plane-intake-self-test-<pid>-<rand>-* dir from this run remains under tmpdir",
   countFixtureTmpDirs(),
   tmpDirsBefore,
 );

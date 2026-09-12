@@ -46,21 +46,29 @@ const REAL_KNOBS = readFileSync(fileURLToPath(new URL("./plane-knobs.json", impo
 const DOCTOR_FIXTURE_PATH = join("scripts", "campaign", "plane-doctor.mjs");
 
 // F4 pattern (plane-sync.self-test.mjs / plane-triage.self-test.mjs): every
-// fixture dir this run creates is tracked and swept in a `finally`, pinned
-// by a before/after count of its own prefix under tmpdir() so a leak turns
-// the run red instead of silently accumulating forever.
+// fixture dir this run creates is tracked and swept in a `finally`.
+//
+// Test-isolation fix (2026-09-12): FIXTURE_PREFIX is unique to THIS PROCESS
+// (pid + random) — never a bare "plane-doctor-self-test-" literal shared by
+// every invocation, which let two overlapping runs of this script pollute
+// each other's before/after dir COUNT under load. The sweep is pinned to
+// every path THIS run recorded being gone after cleanup, never a global
+// count of other runs' dirs.
 const FIXTURE_DIRS = [];
-const FIXTURE_PREFIX = "plane-doctor-self-test-";
+const FIXTURE_PREFIX = `plane-doctor-self-test-${process.pid}-${Math.random().toString(36).slice(2, 8)}-`;
 const countFixtureTmpDirs = () =>
   readdirSync(tmpdir()).filter((n) => n.startsWith(FIXTURE_PREFIX)).length;
 function cleanupFixtures() {
-  for (const dir of FIXTURE_DIRS.splice(0)) {
+  const dirs = FIXTURE_DIRS.splice(0);
+  for (const dir of dirs) {
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
-      // a fixture dir that refuses to go must never turn a passing run red.
+      // a fixture dir that refuses to go must never turn a passing run red —
+      // the final leftover-path check below reports it instead.
     }
   }
+  return dirs;
 }
 
 function newFixtureDir() {
@@ -257,7 +265,7 @@ function checkTrue(name, got) {
 }
 
 async function main() {
-  const before = countFixtureTmpDirs();
+  const before = countFixtureTmpDirs(); // always 0: FIXTURE_PREFIX embeds this process's own pid+random, so no dir under it can predate this run.
 
   // ── T3a: --help before anything else, zero requests, exit 0 ────────────
   {
@@ -710,9 +718,17 @@ async function main() {
     );
   }
 
-  cleanupFixtures();
-  const after = countFixtureTmpDirs();
-  check("no leaked fixture tmp dirs", after, before);
+  const createdDirs = cleanupFixtures();
+  check(
+    "no dir this run created is left behind",
+    createdDirs.filter((d) => existsSync(d)),
+    [],
+  );
+  check(
+    "no leaked plane-doctor-self-test-<pid>-<rand>-* dirs from this run",
+    countFixtureTmpDirs(),
+    before,
+  );
 
   console.log(
     failures === 0
