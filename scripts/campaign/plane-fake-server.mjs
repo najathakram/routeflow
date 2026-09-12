@@ -70,8 +70,32 @@ export const DEFAULT_STATES = [
   { id: "state-cancelled", name: "Cancelled", group: "cancelled" },
 ];
 
-function cloneStates(list) {
-  return (list ?? DEFAULT_STATES).map((s) => ({ ...s }));
+function cloneStates(list, uuidize, nextUuid) {
+  return (list ?? DEFAULT_STATES).map((s) => ({ ...s, id: uuidize ? nextUuid() : s.id }));
+}
+
+// uuidIds seed (fix-round 2026-09-12, defect proven live): every id THIS
+// fixture defaults to is a short literal ("state-backlog", "proj-bugs",
+// "item-1", ...) that never looked uuid-shaped, so no self-test case ever
+// exercised plane-client.mjs's denylist scan against a real Plane id —
+// exactly why the scanBodyDeep bug (scanning state/labels/assignees along
+// with content) went uncaught until it hit the live workspace. `uuidIds:
+// true` swaps every id this fixture ITSELF generates (the DEFAULT_PROJECTS/
+// DEFAULT_STATES defaults, and every id born from a POST — work items,
+// comments, links, relations) to a deterministic RFC-4122 v4-shaped uuid via
+// a per-server counter, so a case can prove the client sends a real
+// Plane-shaped id through unscrubbed. Deterministic (not random) so an
+// assertion can still be written against a stable value; unique per call so
+// two entries never collide. A caller-seeded id (an explicit `{id: "..."}`
+// on a workItem/label/type/member entry, or a custom `seed.projects`/
+// `seed.states`) is left exactly as given either way — this only touches
+// ids the fixture would otherwise invent itself.
+function makeUuidFactory() {
+  let n = 0;
+  return () => {
+    n += 1;
+    return `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
+  };
 }
 
 /**
@@ -96,6 +120,17 @@ function cloneStates(list) {
  *                            once, with x-ratelimit-reset = now+1s (v1 behavior)
  *   omitDescriptionStripped boolean  list responses drop description_stripped
  *                                    (Landmine 1 fixture, v1 behavior)
+ *   uuidIds boolean   every id this fixture itself invents (the default
+ *                     projects/states, and any label/type/member/work-item/
+ *                     comment/link entry that arrives with no explicit `id`)
+ *                     is a deterministic RFC-4122 v4-shaped uuid instead of
+ *                     the short literal ("state-backlog", "item-1", ...)
+ *                     this fixture otherwise defaults to. An id a caller DID
+ *                     supply explicitly is always left exactly as given.
+ *                     See plane-client.mjs's CONTENT_KEYS fix (2026-09-12):
+ *                     the short literals never LOOKED uuid-shaped, so no
+ *                     case using them could exercise the denylist scan
+ *                     against a real Plane id.
  *
  * `requests` records every request this server receives, in order, as
  * `{method, path, query, body}`. `state` exposes the live, mutable seed data
@@ -105,7 +140,17 @@ function cloneStates(list) {
  */
 export function startFakePlane(seed = {}) {
   const requests = [];
-  const projects = (seed.projects ?? DEFAULT_PROJECTS).map((p) => ({ ...p }));
+  const uuidIds = Boolean(seed.uuidIds);
+  const nextUuid = makeUuidFactory();
+
+  // Only the DEFAULT_PROJECTS/DEFAULT_STATES this fixture invents itself are
+  // ever uuid-ized — a caller-supplied seed.projects/seed.states keeps
+  // whatever ids it wrote, uuidIds or not.
+  const usingDefaultProjects = !seed.projects;
+  const projects = (seed.projects ?? DEFAULT_PROJECTS).map((p) => ({
+    ...p,
+    id: uuidIds && usingDefaultProjects ? nextUuid() : p.id,
+  }));
   const byId = new Map(projects.map((p) => [p.id, p]));
 
   const states = {};
@@ -113,14 +158,39 @@ export function startFakePlane(seed = {}) {
   const types = {};
   const workItems = {};
   const intake = {};
+  let labelSeq = 1;
+  let typeSeq = 1;
   for (const p of projects) {
-    states[p.identifier] = cloneStates(seed.states?.[p.identifier]);
-    labels[p.identifier] = (seed.labels?.[p.identifier] ?? []).map((l) => ({ ...l }));
-    types[p.identifier] = (seed.types?.[p.identifier] ?? []).map((t) => ({ ...t }));
+    const usingDefaultStates = !seed.states?.[p.identifier];
+    states[p.identifier] = cloneStates(
+      seed.states?.[p.identifier],
+      uuidIds && usingDefaultStates,
+      nextUuid,
+    );
+    // A label/type entry with no explicit `id` gets one invented here (uuid
+    // when uuidIds, else the same style literal as items/comments/links
+    // below) — every existing case passes an explicit id, so this is purely
+    // additive.
+    labels[p.identifier] = (seed.labels?.[p.identifier] ?? []).map((l) => ({
+      ...l,
+      id: l.id ?? (uuidIds ? nextUuid() : `label-${labelSeq++}`),
+    }));
+    types[p.identifier] = (seed.types?.[p.identifier] ?? []).map((t) => ({
+      ...t,
+      id: t.id ?? (uuidIds ? nextUuid() : `type-${typeSeq++}`),
+    }));
     workItems[p.identifier] = (seed.workItems?.[p.identifier] ?? []).map((it) => ({ ...it }));
     intake[p.identifier] = (seed.intake?.[p.identifier] ?? []).map((r) => ({ ...r }));
   }
-  const members = (seed.members ?? []).map((m) => ({ ...m }));
+  let memberSeq = 1;
+  const members = (seed.members ?? []).map((m) => {
+    const id = m.id ?? (uuidIds ? nextUuid() : `member-${memberSeq++}`);
+    // resolveMember (plane-client.mjs) reads `match.member ?? match.id` — a
+    // caller-supplied `member` field (v1's shape) is kept verbatim; an
+    // invented one mirrors the invented `id` so both resolve to the same
+    // value.
+    return { ...m, id, member: m.member ?? id };
+  });
   const comments = {};
   const links = {};
 
@@ -132,7 +202,7 @@ export function startFakePlane(seed = {}) {
   };
   for (const items of Object.values(workItems)) {
     for (const it of items) {
-      if (it.id === undefined) it.id = `item-${nextItemId++}`;
+      if (it.id === undefined) it.id = uuidIds ? nextUuid() : `item-${nextItemId++}`;
       else bumpFromId(it.id);
       if (it.sequence_id === undefined) it.sequence_id = nextItemSeq++;
       else nextItemSeq = Math.max(nextItemSeq, it.sequence_id + 1);
@@ -251,7 +321,11 @@ export function startFakePlane(seed = {}) {
             });
             return res.end(JSON.stringify({ error: "rate limited" }));
           }
-          const created = { id: `item-${nextItemId++}`, sequence_id: nextItemSeq++, ...body };
+          const created = {
+            id: uuidIds ? nextUuid() : `item-${nextItemId++}`,
+            sequence_id: nextItemSeq++,
+            ...body,
+          };
           if (created.description_html) {
             created.description_stripped = stripTags(created.description_html);
           }
@@ -297,7 +371,7 @@ export function startFakePlane(seed = {}) {
         if (req.method === "GET") return send(200, { results: comments[itemId] ?? [] });
         if (req.method === "POST") {
           const created = {
-            id: `comment-${nextCommentId++}`,
+            id: uuidIds ? nextUuid() : `comment-${nextCommentId++}`,
             comment_html: body?.comment_html ?? "",
             comment_stripped: stripTags(body?.comment_html),
             created_at: new Date().toISOString(),
@@ -312,7 +386,10 @@ export function startFakePlane(seed = {}) {
         if (idx === -1) return notFound();
         if (req.method === "GET") return send(200, { results: links[itemId] ?? [] });
         if (req.method === "POST") {
-          const created = { id: `link-${nextLinkId++}`, url: body?.url ?? "" };
+          const created = {
+            id: uuidIds ? nextUuid() : `link-${nextLinkId++}`,
+            url: body?.url ?? "",
+          };
           (links[itemId] ??= []).push(created);
           return send(201, created);
         }
@@ -321,7 +398,7 @@ export function startFakePlane(seed = {}) {
 
       if (sub.length === 1 && sub[0] === "relations" && req.method === "POST") {
         if (idx === -1) return notFound();
-        return send(201, { id: `relation-${Date.now()}`, ...body });
+        return send(201, { id: uuidIds ? nextUuid() : `relation-${Date.now()}`, ...body });
       }
 
       return notFound();

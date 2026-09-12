@@ -28,7 +28,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { deriveDesired, mapPriority, registryDigest } from "./plane-sync.mjs";
-import { createClient, gitEnv, repoRoot } from "./plane-client.mjs";
+import { createClient, gitEnv, repoRoot, CLOSED_MARKER } from "./plane-client.mjs";
 import { startFakePlane, DEFAULT_STATES } from "./plane-fake-server.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./plane-sync.mjs", import.meta.url));
@@ -2189,6 +2189,128 @@ async function main() {
       { size: 2, task: "type-task", epic: "type-epic" },
     );
     await server2.close();
+  }
+
+  // T21 (defect fix 2026-09-12, R2/CONTENT_KEYS) — proven live: the old
+  // scanBodyDeep walked EVERY string in a write body, so a uuid-shaped
+  // `state` id tripped the tenant-uuid pattern purely by coincidental shape.
+  // Every case above pins plane-fake-server.mjs's literal ids
+  // ("state-backlog", "item-1", ...), which never LOOK uuid-shaped — none of
+  // them could have caught this. `uuidIds: true` makes the fixture's ids
+  // real RFC-4122-shaped uuids so this case actually exercises the fixed
+  // path: 3 queued rows POST, 1 done row (already in Backlog) PATCHes to
+  // Live, and skipped(forbidden) never appears — proving ids ride through
+  // unscrubbed. Uses startFakePlane directly (T17's pattern) rather than the
+  // startFakeServer/DEFAULT_FAKE_STATES adapter, since that adapter's whole
+  // point is the literal, non-uuid ids this case must NOT use.
+  {
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const server = await startFakePlane({ uuidIds: true, workItems: { BUGS: [] } });
+    const bugsStates = server.state.states.BUGS;
+    const backlog = bugsStates.find((s) => s.name === "Backlog");
+    const live = bugsStates.find((s) => s.name === "Live");
+    check(
+      "T21: the uuidIds fixture's Backlog/Live state ids are actually uuid-shaped",
+      { backlog: UUID_RE.test(backlog?.id ?? ""), live: UUID_RE.test(live?.id ?? "") },
+      { backlog: true, live: true },
+    );
+
+    // One item already in Plane, in Backlog, whose registry row is "done" —
+    // must PATCH state -> Live. Pushed onto the live seed data directly
+    // (server.state, per plane-fake-server.mjs's own doc comment) rather
+    // than via the seed object, since the Backlog id isn't known until after
+    // the server (and its uuidIds counter) exists.
+    server.state.workItems.BUGS.push({
+      id: "item-t21-existing",
+      sequence_id: 1,
+      external_source: "routeflow-registry",
+      external_id: "B90",
+      name: "B90 · Existing item done",
+      state: backlog.id,
+      priority: "low",
+      description_stripped: "registry-hash: stale-hash",
+    });
+    // Pre-seed a "plane-sync:closed" marker comment (alreadyClosed(), R4/R5)
+    // so this Backlog -> Live transition (wasOpen && nowClosed) does not
+    // ALSO post a fresh close comment+link — this case is about the
+    // create/patch write bodies carrying real Plane ids unscrubbed, not the
+    // close-comment path (already covered by H5/H6/T5b), so it must produce
+    // exactly one PATCH and zero extra POSTs for B90.
+    server.state.comments["item-t21-existing"] = [
+      {
+        id: "comment-t21-preexisting",
+        comment_html: "<p>closed</p>",
+        comment_stripped: CLOSED_MARKER,
+      },
+    ];
+
+    const catalogue = [
+      { ...B01_CATALOGUE_ROW, id: "B90", title: "Existing item done" },
+      ...["B91", "B92", "B93"].map((id, i) => ({
+        ...B01_CATALOGUE_ROW,
+        id,
+        title: `T21 queued row ${i + 1}`,
+      })),
+    ];
+    const ledger = {
+      F01: [
+        ledgerRow({ id: "B90", state: "done", pr: 601, proof: "REG-B90 uuid-ids regression" }),
+        ledgerRow({ id: "B91" }),
+        ledgerRow({ id: "B92" }),
+        ledgerRow({ id: "B93" }),
+      ],
+    };
+    const dir = makeFixture({ catalogue, ledger });
+    const { stdout, stderr } = await runCli([], { registryDir: dir, baseUrl: server.url });
+    const combined = stdout + stderr;
+    const posts = server.requests.filter((r) => r.method === "POST");
+    const patches = server.requests.filter((r) => r.method === "PATCH");
+    check(
+      "T21: 3 queued rows POST, 1 done row PATCHes, skipped(forbidden) absent from the summary",
+      {
+        postCount: posts.length,
+        patchCount: patches.length,
+        patchState: patches[0]?.body?.state,
+        hasSkippedForbidden: /skipped\(forbidden\)/.test(combined),
+      },
+      { postCount: 3, patchCount: 1, patchState: live.id, hasSkippedForbidden: false },
+    );
+    check(
+      "T21: the recorded PATCH body carries the real uuid-shaped state id (ids sent, not scrubbed)",
+      UUID_RE.test(patches[0]?.body?.state ?? ""),
+      true,
+    );
+    check(
+      "T21: every recorded POST body's state is the uuid-shaped Backlog id, unscrubbed",
+      posts.length > 0 && posts.every((p) => p.body?.state === backlog.id),
+      true,
+    );
+
+    // T21 negative twin (T3 still applies with uuidIds on): a forbidden
+    // literal sitting in a CONTENT field (title, here) must still be caught
+    // — the id-key exemption never widens to content.
+    const dir2 = makeFixture({
+      catalogue: [
+        { ...B01_CATALOGUE_ROW, id: "B94", title: "Invoice INV-2026-12345 double-charged" },
+      ],
+      ledger: { F01: [ledgerRow({ id: "B94" })] },
+    });
+    const before = server.requests.length;
+    const { stdout: stdout2, stderr: stderr2 } = await runCli([], {
+      registryDir: dir2,
+      baseUrl: server.url,
+    });
+    const combined2 = stdout2 + stderr2;
+    check(
+      "T21 (negative twin, T3/R2 still applies): a content-field forbidden literal is still caught with uuidIds on",
+      {
+        newPosts: server.requests.slice(before).filter((r) => r.method === "POST").length,
+        summaryHasSkippedForbidden: /skipped\(forbidden\)=1/.test(combined2),
+      },
+      { newPosts: 0, summaryHasSkippedForbidden: true },
+    );
+
+    await server.close();
   }
 
   return failures;

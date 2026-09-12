@@ -11,7 +11,17 @@
 //     issues (spec.md's binding rules: "Rate limit ≤ 50 req/min via the
 //     shared client"), independent of the per-write 260ms floor;
 //   - the denylist scan (R2) on every outbound POST/PATCH/DELETE body,
-//     recursively over every string value — a hit makes NO request;
+//     recursively over every string value that sits under a CONTENT_KEYS
+//     field (name/description*/comment*/url/title/html) — never a Plane id
+//     (state/labels/assignees/parent/type_id/issues/...), even a uuid-shaped
+//     one — a hit makes NO request. Defect fixed 2026-09-12 (proven live):
+//     the scan used to walk EVERY string regardless of key, so a uuid-shaped
+//     state/label/assignee id tripped the tenant-uuid pattern purely by
+//     coincidental shape — the first bulk sync created 0/72 and patched
+//     0/160 (skipped(forbidden)=232), and plane-apply refused every op that
+//     named a state or label. R2's "every outbound string" always meant
+//     CONTENT a human or this codebase wrote, never an id Plane itself
+//     handed back on a runtime resolve;
 //   - the write budget + ledger (R3): a per-client write counter that defers
 //     once `maxWrites` is reached, and appends one line per ACTUAL write to
 //     `.claude/campaign/.plane-writes.jsonl` (never for a deferred or
@@ -250,22 +260,52 @@ export function scanForbidden(text, patterns = loadDenylist()) {
   return null;
 }
 
+// The ONLY fields the deep scan below ever inspects — free-text content a
+// human or this codebase wrote. Every id-bearing field (state, labels,
+// assignees, parent, type_id, issues, external_id, external_source, issue,
+// cycle_id, module_id, relation_type) is deliberately absent: those carry
+// ids Plane itself handed back from a runtime resolve (resolveStates/
+// resolveLabels/resolveMember/resolveTypes, or DECIDE-27's own
+// external_id/external_source stamp), and a real Plane id is uuid-shaped —
+// exactly the tenant-uuid pattern's shape — so scanning it produced a false
+// positive on every single write that named a state or label (defect fixed
+// 2026-09-12). Exported so a self-test can pin the exact set.
+export const CONTENT_KEYS = new Set([
+  "name",
+  "description_html",
+  "description_stripped",
+  "description",
+  "comment_html",
+  "comment_stripped",
+  "url",
+  "title",
+  "html",
+]);
+
 // Recurses into every string value of a request body (nested objects and
-// arrays included) — R2's "every outbound string" applies to name,
-// description_html, comment_html, url, wherever they sit in the payload.
-function scanBodyDeep(value, patterns) {
+// arrays included), but ONLY once it has passed through a CONTENT_KEYS field
+// — `underContent` is false at the body's own top level (an object has no
+// "key" of its own) and only flips true when a key it walks into is a
+// content key; that flag then propagates to every string nested below,
+// however deep. A value sitting under a non-content (id-bearing) key is
+// walked for structure only — its strings are never scanned — so a
+// uuid-shaped state/label/assignee id can never trip a pattern meant for
+// content.
+function scanBodyDeep(value, patterns, underContent = false) {
   if (value == null) return null;
-  if (typeof value === "string") return scanForbidden(value, patterns);
+  if (typeof value === "string") {
+    return underContent ? scanForbidden(value, patterns) : null;
+  }
   if (Array.isArray(value)) {
     for (const v of value) {
-      const hit = scanBodyDeep(v, patterns);
+      const hit = scanBodyDeep(v, patterns, underContent);
       if (hit) return hit;
     }
     return null;
   }
   if (typeof value === "object") {
-    for (const v of Object.values(value)) {
-      const hit = scanBodyDeep(v, patterns);
+    for (const [k, v] of Object.entries(value)) {
+      const hit = scanBodyDeep(v, patterns, underContent || CONTENT_KEYS.has(k));
       if (hit) return hit;
     }
     return null;
