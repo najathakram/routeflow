@@ -16,6 +16,11 @@ import { CustomersService } from "../customers/customers.service";
 import { ImportModule } from "../import/import.module";
 import { ExternalRefService } from "../import/external-ref.service";
 import { GatewaysModule } from "../gateways/gateways.module";
+// BillingModule exports AddonService + AddonGuard — CrmController's per-handler
+// @UseGuards(AddonGuard) resolves AddonService from THIS module's scope, so the import is
+// a boot-time requirement (Nest throws UnknownDependenciesException at InstanceLoader
+// otherwise; see the 2026-09-12 W16 outage). Guarded by common/addon-guard-module-import.spec.ts.
+import { BillingModule } from "../billing/billing.module";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 
 import { CrmController } from "./crm.controller";
@@ -186,7 +191,7 @@ const GO_HIGH_LEVEL_POLL_SERVICE_PROVIDER = {
 };
 
 @Module({
-  imports: [EmailModule, CustomersModule, ImportModule, GatewaysModule],
+  imports: [EmailModule, CustomersModule, ImportModule, GatewaysModule, BillingModule],
   controllers: [CrmController],
   providers: [
     CrmConnectionService,
