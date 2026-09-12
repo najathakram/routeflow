@@ -1,6 +1,6 @@
 # Spec + ruling — 2026-09-12-plane-learning (Fable 5.1) — harness enforcement + learning loop
 
-**Status:** APPROVED. Branch `feat/plane-harness-learning` stacked on `feat/plane-harness` (a27dc0f1), worktree rf-plane3. Scale: major (new tools + knob file), ui false. Binding rules of the parent spec (`.claude/pipeline/2026-09-11-plane-harness/spec.md`) apply unchanged: no uuids/keys in tracked files; registry = proof; denylist on every outbound string; never delete; branch guard; all tests against the fake server (`scripts/campaign/plane-fake-server.mjs`); every script has `--help` and exits 0 without a key (except apply).
+**Status:** IMPLEMENTED (commit f6cf2262 on feat/plane-harness-learning, 2026-09-12; light loop; Opus review 2 majors + 4 minors fixed). Branch `feat/plane-harness-learning` stacked on `feat/plane-harness` (a27dc0f1), worktree rf-plane3. Scale: major (new tools + knob file), ui false. Binding rules of the parent spec (`.claude/pipeline/2026-09-11-plane-harness/spec.md`) apply unchanged: no uuids/keys in tracked files; registry = proof; denylist on every outbound string; never delete; branch guard; all tests against the fake server (`scripts/campaign/plane-fake-server.mjs`); every script has `--help` and exits 0 without a key (except apply).
 
 ## Why
 
