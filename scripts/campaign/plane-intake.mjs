@@ -56,6 +56,7 @@ import { spawnSync } from "node:child_process";
 import {
   createClient,
   EXTERNAL_SOURCE,
+  gitEnv,
   NAME_ID_RE,
   repoRoot,
   scanForbidden,
@@ -557,7 +558,14 @@ async function main() {
   if (applyMode) {
     // Precondition order, spec.md R6 / build-plan.md WP3, verbatim: dirty
     // tree, then master-ancestor, then key — each exits 2 with zero writes.
+    // Explicit cwd (process.cwd(), matching the implicit default this always
+    // ran with — never repoRoot(), which would resolve to THIS script's own
+    // worktree rather than wherever the caller invoked it from) + gitEnv()
+    // (never inherit GIT_DIR/GIT_WORK_TREE from a pre-push-hook-style
+    // ambient env — see plane-client.mjs's gitEnv() doc).
     const statusRes = spawnSync("git", ["status", "--porcelain", "--", ".claude/campaign"], {
+      cwd: process.cwd(),
+      env: gitEnv(),
       encoding: "utf8",
     });
     if (statusRes.error || statusRes.status !== 0) {
@@ -577,6 +585,8 @@ async function main() {
     }
 
     const ancestorRes = spawnSync("git", ["merge-base", "--is-ancestor", "origin/master", "HEAD"], {
+      cwd: process.cwd(),
+      env: gitEnv(),
       encoding: "utf8",
     });
     if (ancestorRes.error || ancestorRes.status !== 0) {

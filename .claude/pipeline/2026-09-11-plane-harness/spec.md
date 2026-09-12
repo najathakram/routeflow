@@ -1,6 +1,6 @@
 # Spec — 2026-09-11-plane-harness (Fable 5.1)
 
-**Status:** APPROVED. Base branch `feat/plane-bugs-mirror` @ 59121377 (worktree rf-plane2, branch `feat/plane-harness`). Scale: major. `ui: false`.
+**Status:** IMPLEMENTED (commit a05cea78 on feat/plane-harness, 2026-09-12; light loop — engine launch classifier-blocked). Base branch `feat/plane-bugs-mirror` @ 59121377 (worktree rf-plane2, branch `feat/plane-harness`). Scale: major. `ui: false`.
 
 ## Binding rules (from CLAUDE.md, blueprint.json, DECIDE-27, the 2026-09-06 evaluation)
 

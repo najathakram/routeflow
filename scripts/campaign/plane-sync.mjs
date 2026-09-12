@@ -53,6 +53,7 @@ import {
   createClient,
   CLOSED_MARKER,
   EXTERNAL_SOURCE,
+  gitEnv,
   loadDenylist,
   NAME_ID_RE,
   repoRoot,
@@ -462,6 +463,7 @@ function currentBranch() {
   try {
     res = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
       cwd: repoRoot(),
+      env: gitEnv(),
       encoding: "utf8",
       timeout: 5_000,
     });

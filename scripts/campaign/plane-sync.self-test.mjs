@@ -20,18 +20,57 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { deriveDesired, mapPriority, registryDigest } from "./plane-sync.mjs";
-import { createClient, repoRoot } from "./plane-client.mjs";
+import { createClient, gitEnv, repoRoot } from "./plane-client.mjs";
 import { startFakePlane, DEFAULT_STATES } from "./plane-fake-server.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./plane-sync.mjs", import.meta.url));
 const STOP_HOOK_PATH = fileURLToPath(new URL("../../.claude/hooks/stop.mjs", import.meta.url));
+
+// Shared throwaway-repo `git` helper (T1b/T16/T18): every fixture's own git
+// spawn uses gitEnv() (never inherits process.env's GIT_DIR/GIT_WORK_TREE
+// unscrubbed) alongside an explicit cwd — the exact fix for the reported
+// defect (gates/push.log ~11716): under the husky pre-push hook's
+// `npm run verify`, git had already exported GIT_DIR/GIT_WORK_TREE/etc. into
+// this self-test's own process, and a fixture's `git checkout -q -b feat/y`
+// inherited them and failed with "fatal: this operation must be run in a
+// work tree".
+function git(cwd, args) {
+  const res = spawnSync("git", args, { cwd, encoding: "utf8", env: gitEnv() });
+  if (res.status !== 0) {
+    throw new Error(`git ${args.join(" ")} failed in ${cwd}:\n${res.stdout}${res.stderr}`);
+  }
+  return res;
+}
+
+// Locates the running worktree's own git dir/root by walking up from THIS
+// FILE's location — used only by T18 to build a REALISTIC poisoned
+// GIT_DIR/GIT_WORK_TREE pair (the worktree this self-test actually runs
+// in), never a made-up path. Mirrors plane-client.mjs's repoRoot() walk, but
+// stops at the nearest `.git` (file or directory) rather than the
+// package.json+.claude marker pair.
+function locateThisWorktreeGit() {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    const gitPath = join(dir, ".git");
+    if (existsSync(gitPath)) {
+      const stat = statSync(gitPath);
+      if (stat.isDirectory()) return { workTreeRoot: dir, gitDir: gitPath };
+      const m = /^gitdir:\s*(.+)$/m.exec(readFileSync(gitPath, "utf8").trim());
+      return { workTreeRoot: dir, gitDir: m ? m[1].trim() : gitPath };
+    }
+    const parent = dirname(dir);
+    if (parent === dir) throw new Error("locateThisWorktreeGit: no .git found above this file");
+    dir = parent;
+  }
+}
 
 // v1's own name for the state list, kept so every case below (T1-T20) reads
 // unchanged; backed by the shared plane-fake-server.mjs module's export so
@@ -1260,16 +1299,10 @@ async function main() {
     {
       const repoDir = mkdtempSync(join(tmpdir(), FIXTURE_PREFIX));
       FIXTURE_DIRS.push(repoDir);
-      const git = (args) => {
-        const res = spawnSync("git", args, { cwd: repoDir, encoding: "utf8" });
-        if (res.status !== 0) {
-          throw new Error(`T1b setup: git ${args.join(" ")} failed:\n${res.stdout}${res.stderr}`);
-        }
-      };
-      git(["init", "-q"]);
-      git(["checkout", "-q", "-b", "feat/y"]);
-      git(["config", "user.email", "plane-sync-self-test@example.com"]);
-      git(["config", "user.name", "plane-sync-self-test"]);
+      git(repoDir, ["init", "-q"]);
+      git(repoDir, ["checkout", "-q", "-b", "feat/y"]);
+      git(repoDir, ["config", "user.email", "plane-sync-self-test@example.com"]);
+      git(repoDir, ["config", "user.name", "plane-sync-self-test"]);
       writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "throwaway" }) + "\n");
       mkdirSync(join(repoDir, ".claude"), { recursive: true });
       writeFileSync(join(repoDir, ".claude", ".keep"), "");
@@ -1281,8 +1314,8 @@ async function main() {
           readFileSync(fileURLToPath(new URL(`./${name}`, import.meta.url)), "utf8"),
         );
       }
-      git(["add", "-A"]);
-      git(["commit", "-q", "-m", "chore: seed"]);
+      git(repoDir, ["add", "-A"]);
+      git(repoDir, ["commit", "-q", "-m", "chore: seed"]);
 
       const stateDirT1b = mkdtempSync(join(tmpdir(), FIXTURE_PREFIX));
       FIXTURE_DIRS.push(stateDirT1b);
@@ -1839,34 +1872,9 @@ async function main() {
   // from a feature worktree with a real key created 282 live BUGS items —
   // this is the guard that incident forced.
   {
-    const gitEnv = () => {
-      const env = { ...process.env };
-      for (const k of [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_INDEX_FILE",
-        "GIT_COMMON_DIR",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_QUARANTINE_PATH",
-        "GIT_PREFIX",
-        "GIT_NAMESPACE",
-        "GIT_CEILING_DIRECTORIES",
-      ]) {
-        delete env[k];
-      }
-      return env;
-    };
-    const git = (cwd, args) => {
-      const res = spawnSync("git", args, { cwd, encoding: "utf8", env: gitEnv() });
-      if (res.status !== 0) {
-        throw new Error(
-          `T16 setup: git ${args.join(" ")} failed in ${cwd}:\n${res.stdout}${res.stderr}`,
-        );
-      }
-      return res;
-    };
-
+    // gitEnv()/git() are the shared module-level helpers defined near the
+    // top of this file (imported gitEnv from plane-client.mjs) — no longer
+    // redefined per-test-block.
     const repoDir = mkdtempSync(join(tmpdir(), FIXTURE_PREFIX));
     FIXTURE_DIRS.push(repoDir);
     git(repoDir, ["init", "-q"]);
@@ -1959,6 +1967,120 @@ async function main() {
       { posts: 3, exitCode: 0 },
     );
     await server.close();
+  }
+
+  // T18 (defect repro, gates/push.log ~11716) — the husky pre-push hook's
+  // `npm run verify` runs with git's own GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE/
+  // GIT_PREFIX etc. already exported into the environment (git sets these for
+  // every child it spawns, including `npm run verify`), and this self-test's
+  // OWN process inherits them. T1b/T16's fixture setup (`git checkout -q -b`
+  // in a tmpdir) failed under exactly that env with "fatal: this operation
+  // must be run in a work tree" before gitEnv() existed. This proves two
+  // things with GIT_DIR/GIT_WORK_TREE deliberately poisoned — pointed at
+  // THIS WORKTREE's own real .git/root, the closest realistic stand-in for
+  // the hook's ambient env — for the duration of the block:
+  //   (a) the fixture's own git() calls (shared helper, gitEnv()-scrubbed)
+  //       still create/checkout the temp repo's branch;
+  //   (b) plane-sync.mjs's branch guard (currentBranch(), now gitEnv()-
+  //       scrubbed) still reports the TEMP repo's branch — never this
+  //       worktree's real branch — proving the child process's own git spawn
+  //       ignores the poisoned GIT_DIR/GIT_WORK_TREE it inherited from the
+  //       env runCli passes through (env: {...process.env, ...}).
+  {
+    const { workTreeRoot, gitDir } = locateThisWorktreeGit();
+    const savedGitDir = process.env.GIT_DIR;
+    const savedGitWorkTree = process.env.GIT_WORK_TREE;
+    process.env.GIT_DIR = gitDir;
+    process.env.GIT_WORK_TREE = workTreeRoot;
+    try {
+      const repoDir = mkdtempSync(join(tmpdir(), FIXTURE_PREFIX));
+      FIXTURE_DIRS.push(repoDir);
+      let setupOk = true;
+      let setupError = "";
+      let scriptsDir;
+      try {
+        git(repoDir, ["init", "-q"]);
+        git(repoDir, ["checkout", "-q", "-b", "feat/t18"]);
+        git(repoDir, ["config", "user.email", "plane-sync-self-test@example.com"]);
+        git(repoDir, ["config", "user.name", "plane-sync-self-test"]);
+        writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "throwaway" }) + "\n");
+        mkdirSync(join(repoDir, ".claude"), { recursive: true });
+        writeFileSync(join(repoDir, ".claude", ".keep"), "");
+        scriptsDir = join(repoDir, "scripts", "campaign");
+        mkdirSync(scriptsDir, { recursive: true });
+        for (const name of ["plane-sync.mjs", "plane-client.mjs", "plane-denylist.json"]) {
+          writeFileSync(
+            join(scriptsDir, name),
+            readFileSync(fileURLToPath(new URL(`./${name}`, import.meta.url)), "utf8"),
+          );
+        }
+        git(repoDir, ["add", "-A"]);
+        git(repoDir, ["commit", "-q", "-m", "chore: seed"]);
+      } catch (err) {
+        setupOk = false;
+        setupError = err?.message ?? String(err);
+      }
+      check(
+        "T18 (defect repro): fixture git setup succeeds even with GIT_DIR/GIT_WORK_TREE pointed at the real worktree",
+        { setupOk, setupError },
+        { setupOk: true, setupError: "" },
+      );
+
+      if (setupOk) {
+        const scriptPath = join(scriptsDir, "plane-sync.mjs");
+        const stateDirT18 = mkdtempSync(join(tmpdir(), FIXTURE_PREFIX));
+        FIXTURE_DIRS.push(stateDirT18);
+        const registryDir = makeFixture({
+          catalogue: [{ ...B01_CATALOGUE_ROW, id: "B18", title: "t18 row" }],
+          ledger: { F01: [ledgerRow({ id: "B18" })] },
+        });
+        const server = await startFakeServer({ existingItems: [] });
+
+        // --check never touches git at all (it returns before currentBranch()
+        // is called) — this proves the poisoned env doesn't otherwise wedge
+        // or crash the child.
+        const checkRun = await runCli(["--check"], {
+          registryDir,
+          baseUrl: server.url,
+          stateDir: stateDirT18,
+          scriptPath,
+          allowBranch: false,
+        });
+        check(
+          "T18: --check completes (never hangs/crashes) under poisoned GIT_DIR/GIT_WORK_TREE",
+          { timedOut: checkRun.timedOut, exitCode: checkRun.code },
+          { timedOut: false, exitCode: 1 }, // exit 1 = drift (a create pending), same as T1's --check shape
+        );
+
+        // Bare run: DOES hit currentBranch(). Must report "feat/t18" (the
+        // temp repo's own branch) — never "feat/plane-harness" or whatever
+        // this worktree's real branch is — proving the scrub worked.
+        const bareRun = await runCli([], {
+          registryDir,
+          baseUrl: server.url,
+          stateDir: stateDirT18,
+          scriptPath,
+          allowBranch: false,
+        });
+        const bareLines = bareRun.stdout.split(/\r?\n/);
+        check(
+          "T18 (defect repro): branch guard reports the TEMP repo's branch (feat/t18), not the worktree's, under poisoned GIT_DIR/GIT_WORK_TREE",
+          {
+            exitCode: bareRun.code,
+            hasExpectedSkipLine: bareLines.includes(
+              "Plane mirror: skipped writes (branch feat/t18 is not master; pass --allow-branch to override)",
+            ),
+          },
+          { exitCode: 0, hasExpectedSkipLine: true },
+        );
+        await server.close();
+      }
+    } finally {
+      if (savedGitDir === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = savedGitDir;
+      if (savedGitWorkTree === undefined) delete process.env.GIT_WORK_TREE;
+      else process.env.GIT_WORK_TREE = savedGitWorkTree;
+    }
   }
 
   // T17 (Defect 1, proven live 2026-09-12) — the real Plane API returns

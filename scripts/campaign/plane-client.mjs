@@ -63,6 +63,29 @@ const MAX_RETRIES = 3;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// git exports repo-scoped vars (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE,
+// GIT_PREFIX, ...) into every child process it runs — including
+// `npm run verify` under the husky pre-push hook. A `git` spawn anywhere in
+// this family that inherits process.env verbatim can silently re-point at
+// whatever repo the OUTER git invocation happens to be, instead of the cwd
+// the caller actually intends (reference_git_worktreeconfig_bare_trap_
+// 2026-09-04; gates/push.log ~11716 — the self-test's own throwaway-repo
+// fixtures hit exactly this, "fatal: this operation must be run in a work
+// tree", under the hook's env). Every git spawn in this family (plane-sync.mjs,
+// plane-intake.mjs, and both self-tests' fixture setup) must pass
+// `env: gitEnv()` alongside an explicit `cwd` — never inherit process.env
+// into a git child unscrubbed. GIT_AUTHOR_*/GIT_COMMITTER_* are left alone:
+// harmless (an explicit -c user.name/user.email is set at every commit site
+// in this family regardless) and not part of the reported failure mode.
+const GIT_ENV_DENYLIST_RE = /^GIT_/;
+export function gitEnv(extra = {}) {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (GIT_ENV_DENYLIST_RE.test(key)) delete env[key];
+  }
+  return { ...env, ...extra };
+}
+
 export const EXTERNAL_SOURCE = "routeflow-registry";
 // "B12 · title" — the seed's name shape; the ONE definition every reader
 // imports (L-105: the id matcher has one definition every reader imports).

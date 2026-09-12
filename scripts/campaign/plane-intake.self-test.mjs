@@ -10,37 +10,37 @@
 // `spawn` (never a static top-level `import`), so a missing file surfaces as
 // an ordinary non-zero child exit / empty stdout — a clean assertion miss,
 // never a crash of this file (test-plan.md §6, build-plan.md Landmine 13).
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { startFakePlane } from "./plane-fake-server.mjs";
+import { gitEnv } from "./plane-client.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./plane-intake.mjs", import.meta.url));
 
 // Git exports repo-scoped vars (GIT_DIR, GIT_WORK_TREE, ...) into every child
 // it runs, and a spawned `git`/`node plane-intake.mjs` inherits them — the
 // same hazard .claude/hooks/stop.gate5.spec.mjs scrubs
-// (reference_git_worktreeconfig_bare_trap_2026-09-04). Scrub them here too so
-// the throwaway repo below is never silently re-pointed at the real repo.
-const GIT_KEYS = [
-  "GIT_DIR",
-  "GIT_WORK_TREE",
-  "GIT_INDEX_FILE",
-  "GIT_COMMON_DIR",
-  "GIT_OBJECT_DIRECTORY",
-  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-  "GIT_QUARANTINE_PATH",
-  "GIT_PREFIX",
-  "GIT_NAMESPACE",
-  "GIT_CEILING_DIRECTORIES",
-];
+// (reference_git_worktreeconfig_bare_trap_2026-09-04; gates/push.log ~11716).
+// Scrub them here too (via the shared gitEnv() this file's own scripts under
+// test also use) so the throwaway repo below is never silently re-pointed at
+// the real repo, and additionally never leak a real key from the ambient
+// shell into a spawned fixture git call.
 function scrubbedEnv(extra = {}) {
-  const env = { ...process.env };
-  for (const k of GIT_KEYS) delete env[k];
-  delete env.PLANE_API_KEY; // never leak a real key from the ambient shell
+  const env = gitEnv();
+  delete env.PLANE_API_KEY;
   return { ...env, ...extra };
 }
 function git(cwd, args) {
@@ -49,6 +49,28 @@ function git(cwd, args) {
     throw new Error(`git ${args.join(" ")} failed in ${cwd}:\n${res.stdout}${res.stderr}`);
   }
   return res;
+}
+
+// Locates the running worktree's own git dir/root by walking up from THIS
+// FILE's location — used only by T7e to build a REALISTIC poisoned
+// GIT_DIR/GIT_WORK_TREE pair (the worktree this self-test actually runs in),
+// never a made-up path. Mirrors plane-client.mjs's repoRoot() walk, but stops
+// at the nearest `.git` (file or directory) rather than the
+// package.json+.claude marker pair.
+function locateThisWorktreeGit() {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    const gitPath = join(dir, ".git");
+    if (existsSync(gitPath)) {
+      const stat = statSync(gitPath);
+      if (stat.isDirectory()) return { workTreeRoot: dir, gitDir: gitPath };
+      const m = /^gitdir:\s*(.+)$/m.exec(readFileSync(gitPath, "utf8").trim());
+      return { workTreeRoot: dir, gitDir: m ? m[1].trim() : gitPath };
+    }
+    const parent = dirname(dir);
+    if (parent === dir) throw new Error("locateThisWorktreeGit: no .git found above this file");
+    dir = parent;
+  }
 }
 
 // F4 pattern (plane-sync.self-test.mjs): every fixture dir this run creates
@@ -187,12 +209,18 @@ function runCli(
     baseUrl,
     apiKey = "self-test-key",
     noKey = false,
+    // T7e: deliberately re-poisons GIT_DIR/GIT_WORK_TREE back into the
+    // child's env AFTER scrubbedEnv() has stripped them — simulating a
+    // spawned plane-intake.mjs inheriting them from a git-hook-style
+    // ambient env, to prove its own git preconditions ignore them.
+    extraEnv = {},
   } = {},
 ) {
   const env = scrubbedEnv({
     ...(registryDir ? { PLANE_SYNC_REGISTRY_DIR: registryDir } : {}),
     ...(stateDir ? { PLANE_SYNC_STATE_DIR: stateDir } : {}),
     ...(baseUrl ? { PLANE_BASE_URL: baseUrl } : {}),
+    ...extraEnv,
   });
   if (noKey) delete env.PLANE_API_KEY;
   else env.PLANE_API_KEY = apiKey;
@@ -327,6 +355,54 @@ async function main() {
       String(patches[0]?.body?.name ?? "").startsWith("B1 · Scanner"),
       true,
     );
+  }
+
+  // ── T7e (defect repro, gates/push.log ~11716) — the husky pre-push hook's
+  // `npm run verify` runs with git's own GIT_DIR/GIT_WORK_TREE already
+  // exported into the environment, and a spawned `plane-intake.mjs --apply`
+  // inherits them. Its own git preconditions (`git status --porcelain` /
+  // `git merge-base --is-ancestor origin/master HEAD`) run with an explicit
+  // cwd (the temp intake repo) and gitEnv()-scrubbed env, so poisoning
+  // GIT_DIR/GIT_WORK_TREE with THIS WORKTREE's own real git dir/root — the
+  // closest realistic stand-in for the hook's ambient env — must not
+  // redirect the preconditions at the worktree; --apply must still see the
+  // temp repo as clean and master-descended and mint B1 exactly like T7
+  // phase 3. Uses its OWN fresh fake server (never the shared `server`
+  // above, whose one candidate item T7 phase 3 already adopted to B1 —
+  // reusing it here would leave zero candidates and vacuously "pass" with
+  // nothing written). ────────────────────────────────────────────────────
+  {
+    const { workTreeRoot, gitDir } = locateThisWorktreeGit();
+    const t7eServer = await startFakePlane({
+      workItems: {
+        BUGS: [{ name: "T7e candidate item", priority: "high", external_id: null }],
+      },
+    });
+    const { dir, campaignDir } = makeIntakeRepo({ dirty: false });
+    const { code } = await runCli(["--apply"], {
+      cwd: dir,
+      registryDir: campaignDir,
+      baseUrl: t7eServer.url,
+      extraEnv: { GIT_DIR: gitDir, GIT_WORK_TREE: workTreeRoot },
+    });
+    check(
+      "T7e (defect repro): --apply exits 0 against the temp repo despite poisoned GIT_DIR/GIT_WORK_TREE",
+      code,
+      0,
+    );
+    const rows = readFileSync(join(campaignDir, "bugs.jsonl"), "utf8")
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+    check(
+      "T7e: bugs.jsonl gained exactly one row (B1) despite poisoned GIT_DIR/GIT_WORK_TREE",
+      rows.length,
+      1,
+    );
+    check("T7e: the minted id is B1", rows[0]?.id, "B1");
+    const patches = t7eServer.requests.filter((r) => r.method === "PATCH");
+    check("T7e: exactly one PATCH despite poisoned GIT_DIR/GIT_WORK_TREE", patches.length, 1);
+    await t7eServer.close();
   }
 
   await server.close();
