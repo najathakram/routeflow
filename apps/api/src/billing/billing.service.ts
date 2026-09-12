@@ -14,6 +14,20 @@ import { BILLING_EVENTS, BillingEventType } from "./plan-catalog.constants";
 /** Grace period (in days) after a payment failure before suspending the tenant. */
 const PAYMENT_GRACE_DAYS = 3;
 
+/**
+ * The ONE shape that disarms a scheduled plans-as-data downgrade (L-072: never hand-type it twice).
+ * Spread by every Stripe lifecycle handler that must cancel a pending downgrade: subscription deleted,
+ * subscription updated to cancel_at_period_end, and a real reinstatement (B216). A function, not a
+ * const, so each write gets a fresh mutable `retainedUserIds` array Prisma's String[] input accepts.
+ */
+function disarmedDowngrade(): {
+  downgradeToPlanKey: null;
+  downgradeEffectiveAt: null;
+  retainedUserIds: string[];
+} {
+  return { downgradeToPlanKey: null, downgradeEffectiveAt: null, retainedUserIds: [] };
+}
+
 @Injectable()
 export class BillingService {
   private readonly logger = new Logger(BillingService.name);
@@ -538,7 +552,7 @@ export class BillingService {
     // SUSPENDED) re-adds its run-rate exactly once — idempotent against the paired
     // invoice.payment_succeeded webhook. NO-OP for a fresh Stripe checkout (planKey is null —
     // legacy Stripe doesn't set it, so emitPayingDelta short-circuits).
-    await this.transitionAndEmit(
+    const reinstated = await this.transitionAndEmit(
       tenantId,
       upserted,
       { status: { not: "ACTIVE" } },
@@ -548,6 +562,18 @@ export class BillingService {
       { source: "stripe", reason: "checkout_completed" },
     );
     this.tenantStatusGuard.invalidate(tenantId);
+
+    // B216: only a REAL reinstatement (this call won the non-ACTIVE→ACTIVE CAS) disarms a downgrade
+    // scheduled before the lapse; left armed, the 02:00 applyScheduledDowngrades sweep (which skips
+    // non-ACTIVE tenants) applies it the first night after reactivation. Never on a lost CAS (tenant
+    // already ACTIVE): that would delete a downgrade the ACTIVE tenant legitimately scheduled. A
+    // separate post-commit write, mirroring onSubscriptionDeleted; never resume() (double emit).
+    if (reinstated) {
+      await this.prisma.tenantSubscription.update({
+        where: { tenantId },
+        data: disarmedDowngrade(),
+      });
+    }
 
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
   }
@@ -588,7 +614,7 @@ export class BillingService {
     // once. The conditional flip is the idempotency key — the paired checkout.session.completed
     // webhook races here and only the winner emits — and it is a NO-OP on ordinary renewals
     // (already ACTIVE → count 0 → no ledger delta).
-    await this.transitionAndEmit(
+    const reinstated = await this.transitionAndEmit(
       sub.tenantId,
       sub,
       { status: { not: "ACTIVE" } },
@@ -598,6 +624,15 @@ export class BillingService {
       { source: "stripe", reason: "payment_succeeded" },
     );
     this.tenantStatusGuard.invalidate(sub.tenantId);
+
+    // B216: see onCheckoutCompleted — disarm ONLY when this call performed the reinstatement; an
+    // ordinary renewal (already ACTIVE → CAS count 0 → false) keeps a legitimately scheduled downgrade.
+    if (reinstated) {
+      await this.prisma.tenantSubscription.update({
+        where: { tenantId: sub.tenantId },
+        data: disarmedDowngrade(),
+      });
+    }
 
     this.logger.log(`Payment succeeded for tenant ${sub.tenantId} (customer ${customerId})`);
   }
@@ -678,12 +713,7 @@ export class BillingService {
     // re-price basePriceSnapshot on an already-churned tenant and book a second MRR delta.
     await this.prisma.tenantSubscription.update({
       where: { tenantId: sub.tenantId },
-      data: {
-        cancelAtPeriodEnd: true,
-        downgradeToPlanKey: null,
-        downgradeEffectiveAt: null,
-        retainedUserIds: [],
-      },
+      data: { cancelAtPeriodEnd: true, ...disarmedDowngrade() },
     });
 
     this.logger.log(`Subscription cancelled for tenant ${sub.tenantId} (customer ${customerId})`);
@@ -710,9 +740,7 @@ export class BillingService {
         periodStart: new Date(subscription.current_period_start * 1000),
         periodEnd: new Date(subscription.current_period_end * 1000),
         cancelAtPeriodEnd: subscription.cancel_at_period_end,
-        ...(subscription.cancel_at_period_end === true
-          ? { downgradeToPlanKey: null, downgradeEffectiveAt: null, retainedUserIds: [] }
-          : {}),
+        ...(subscription.cancel_at_period_end === true ? disarmedDowngrade() : {}),
       },
     });
 

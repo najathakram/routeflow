@@ -239,6 +239,93 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
   });
 });
 
+describe("B216 — a Stripe reinstatement disarms a downgrade scheduled before the lapse", () => {
+  // A subscription that lapsed with a downgrade armed (scheduled while ACTIVE, then the tenant dropped out).
+  const armedSub = (over: Record<string, unknown> = {}) => ({
+    tenantId: "t1",
+    planKey: "BUSINESS",
+    basePriceSnapshot: 349,
+    discount: 0,
+    stripeSubId: null,
+    downgradeToPlanKey: "STARTER",
+    downgradeEffectiveAt: new Date("2026-08-01T00:00:00.000Z"),
+    retainedUserIds: ["u-keep"],
+    ...over,
+  });
+  // The tenantSubscription.update call that touches the downgrade schedule, if any.
+  const disarmCall = (prisma: any) =>
+    prisma.tenantSubscription.update.mock.calls.find(
+      (c: any[]) => c[0]?.data && "downgradeToPlanKey" in c[0].data,
+    );
+  const DISARMED = {
+    where: { tenantId: "t1" },
+    data: { downgradeToPlanKey: null, downgradeEffectiveAt: null, retainedUserIds: [] },
+  };
+  const checkoutSession = {
+    metadata: { tenantId: "t1" },
+    subscription: "sub_1",
+    customer: "cus_1",
+  };
+
+  it("REG-B216-A onPaymentSucceeded reinstatement (CAS won) disarms the armed downgrade", async () => {
+    const { svc, prisma } = make({ sub: armedSub(), transitionCount: 1 });
+    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    expect(disarmCall(prisma)?.[0]).toEqual(DISARMED);
+  });
+
+  it("REG-B216-B onCheckoutCompleted reinstatement (CAS won) disarms the armed downgrade", async () => {
+    const { svc, prisma } = make({ sub: armedSub(), transitionCount: 1 });
+    await (svc as any).onCheckoutCompleted(checkoutSession);
+    expect(disarmCall(prisma)?.[0]).toEqual(DISARMED);
+  });
+
+  it("REG-B216-C onPaymentSucceeded with a live Stripe sub writes the disarm as its own update after the period write", async () => {
+    const { svc, prisma } = make({ sub: armedSub({ stripeSubId: "sub_1" }), transitionCount: 1 });
+    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    expect(
+      prisma.tenantSubscription.update.mock.calls.map((c: any[]) => Object.keys(c[0].data).sort()),
+    ).toEqual([
+      ["periodEnd", "periodStart"],
+      ["downgradeEffectiveAt", "downgradeToPlanKey", "retainedUserIds"],
+    ]);
+  });
+
+  it("pin B216: an ordinary renewal (CAS count 0) leaves a scheduled downgrade armed", async () => {
+    const { svc, prisma } = make({ sub: armedSub({ stripeSubId: "sub_1" }), transitionCount: 0 });
+    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    expect(disarmCall(prisma)).toBeUndefined();
+  });
+
+  it("pin B216: a checkout that loses the CAS (tenant already ACTIVE) leaves a scheduled downgrade armed", async () => {
+    const { svc, prisma } = make({ sub: armedSub(), transitionCount: 0 });
+    await (svc as any).onCheckoutCompleted(checkoutSession);
+    expect(disarmCall(prisma)).toBeUndefined();
+  });
+
+  it("pin B216: a reinstatement emits SUBSCRIPTION_RESUMED exactly once (no resume() double emit)", async () => {
+    const { svc, events } = make({ sub: armedSub(), transitionCount: 1 });
+    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    expect(
+      emitted(events).filter((t: string) => t === BILLING_EVENTS.SUBSCRIPTION_RESUMED),
+    ).toHaveLength(1);
+  });
+
+  // The fourth transitionAndEmit site (suspendOverdueTenants) is the ONE that must never disarm:
+  // a tenant that goes overdue keeps the downgrade it legitimately scheduled while ACTIVE, so the
+  // sweep can still apply it once the tenant is back. Mirroring the three disarming sites here
+  // would re-create B216 from the other direction.
+  it("pin B216: suspending an overdue tenant leaves a scheduled downgrade armed", async () => {
+    const { svc, prisma, tx } = make({
+      sub: armedSub({ stripeSubId: "sub_1" }),
+      stripeStatus: "unpaid",
+      transitionCount: 1,
+    });
+    await svc.suspendOverdueTenants();
+    expect(tx.tenant.updateMany).toHaveBeenCalled(); // the suspension CAS really ran
+    expect(disarmCall(prisma)).toBeUndefined();
+  });
+});
+
 /**
  * BillingService.syncStripeSubscriptionPrice (Platform billing — catalog-driven Stripe
  * prices batch, WP2). Fans a resolved catalog/override price out to a tenant's LIVE
