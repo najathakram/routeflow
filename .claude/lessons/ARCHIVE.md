@@ -1275,7 +1275,7 @@ fully-guarded, oldest first) it is the one archived.
 - **Guard:** `scripts/visibility-watchdog.mjs`, mandatory in
   `docs/runbooks/deploy-visibility-flip.md` and the `rebuild` skill.
 
-## Archived 2026-09-12 — least-cited, fully guarded; headroom for L-112
+## Archived 2026-09-12 — least-cited, fully guarded; headroom for L-112 and L-113
 
 One active entry archived to clear headroom for L-112 (testing, Plane bulk sync,
 feat/plane-harness-learning worktree rf-plane3): L-107. It has zero outside citations (the
@@ -1295,3 +1295,29 @@ so archiving it loses no enforcement.
   `voidInvoice`'s own order — a NOWAIT cycle is an ordering bug, not a timing one. Never add a
   code to a shared suppression set without checking every caller it also silences.**
 - **Guard:** Run A pins P15–P22 (orders.service.spec / invoices.service.spec REG pins).
+One active entry archived to clear headroom for L-112 (testing, CRM GoHighLevel handoff,
+feat/crm-gohighlevel-handoff, worktree rf-crm): L-034. Uncited by any `[[L-034]]` reference
+anywhere in the active register, and fully guarded (`turbo run test --force` + an mtime
+post-dates-the-change assertion, procedural but real and still enforceable). It is the oldest
+active entry by id among the fully-guarded, uncited candidates — `L-010`/`L-025`/`L-027`/`L-035`
+sit lower by date but each carries `Guard: none — judgment`, so they are not compaction-eligible
+under the "does the guard make the entry safe to stop reading" test; `L-041` and `L-074` are
+each cited once ([[L-041]] in L-050, [[L-074]] in L-111) and were kept for that reason.
+
+### L-034 · 2026-09-01 · tooling · #TBD
+
+- **Symptom:** `campaign-check` red on another batch's rows after a rebase, and a mutation probe
+  that reported nothing. Both were reading an artifact no run had refreshed.
+- **Root cause:** the campaign artifact is written by a jest REPORTER, so it only refreshes when
+  jest actually EXECUTES. Repo-root ledger files are not hashed inputs (`globalDependencies` is
+  the lockfile plus package manifests; the test task's `inputs` are `$TURBO_DEFAULT$`), so a
+  rebase cannot bust the cache — turbo replays a green summary and the stale artifact survives.
+  Scoped runs (`jest -t REG-B##`, one per mutation probe) narrow it to just those tests, and a
+  cache-replayed "full suite" afterwards does not overwrite that.
+- **Lesson:** **A generated artifact is evidence only when you can name the tool and the run that
+  produced it.** Extends [[L-009]]: a cache replay does not merely fail to prove the tests ran —
+  it silently PRESERVES whatever the last scoped run wrote. Same shape as regenerating a lockfile
+  with the wrong npm major: the diff reads as content drift when it is tooling drift.
+- **Guard:** force execution (`turbo run test --force` or direct `npx jest`), then assert the
+  artifact's mtime post-dates the change, before reading any gate that consumes it. Freshness is
+  verified, never inferred from a green summary.

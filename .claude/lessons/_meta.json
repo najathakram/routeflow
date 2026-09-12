@@ -1,10 +1,10 @@
 {
-  "nextId": 113,
+  "nextId": 114,
   "activeCount": 40,
-  "archivedCount": 68,
+  "archivedCount": 69,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-12T06:00:00.000Z",
+  "updatedAt": "2026-09-12T13:21:30.023Z",
   "schemaVersion": 1,
-  "note": "Appended L-112 (testing, Plane bulk sync, feat/plane-harness-learning worktree rf-plane3, 2026-09-12): the first bulk registry->Plane sync from master adopted all 160 name-keyed items but created/patched 0 rows -- the write-path denylist scanned every string instead of only CONTENT_KEYS, so Plane's own uuid-shaped ids tripped the tenant-uuid guard, a collision no test caught because the fake server's ids were short non-uuid strings. Register was at the 40-entry cap, so one entry was archived to clear headroom: L-107 (2026-09-11, domain, train-4 Run A) -- the uniquely least-cited active entry (zero outside citations found via repo-wide grep excluding .claude/lessons/**, .claude/pipeline/**, and code-map CHANGELOG/_meta), fully guarded (Run A pins P15-P22), moved to ARCHIVE.md verbatim under a new '## Archived 2026-09-12' section. nextId 113 (112 used by L-112), activeCount 40 (40 - L-107 + L-112), archivedCount 68 (67 + L-107) -- counted directly from '### L-' headers in the real files."
+  "note": "Window-16 JIT rebase of feat/crm-gohighlevel-handoff onto master 54717997 (#701): the branch lesson L-112 (any-typed Prisma mocks hide column names, CRM GoHighLevel handoff) collided with master L-112 (Plane bulk-sync denylist scope) and was renumbered L-113; its archived entry L-034 joins master L-107 under the same Archived 2026-09-12 section. nextId 114, activeCount 40 (40 - L-034 + L-113 on top of master), archivedCount 69 (68 + L-034) -- counted from ### L- headers in the real files. validate-lessons.mjs run and digest regenerated after this edit."
 }
