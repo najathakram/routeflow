@@ -1,0 +1,93 @@
+{
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-secfile/.claude/pipeline/2026-09-12-security-registry-tags/build-plan.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-secfile/.claude/pipeline/2026-09-12-security-registry-tags/test-plan.md",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-secfile/.claude/lessons/LESSONS.md",
+  "startedAt": "SET_AT_LAUNCH",
+
+  "scale": "small",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-secfile",
+  "context": "Add --tag support to bugs.mjs (file/tag/list/stats/show/sync), an already-fixed ledger state, Plane label mapping in plane-sync.mjs, and backfill 33 security-audit findings into batch F49.",
+
+  "testPackages": [
+    {
+      "id": "TP1",
+      "title": "tests-bugs",
+      "files": ["scripts/campaign/bugs.mjs"],
+      "brief": "Add self-test cases for T1-T7 (tag validation/dedup/sort, list --tag, stats byTag, show, sync preservation, already-fixed transition) using the existing mkdtempSync+BUGS_ROOT+check() pattern.",
+      "effort": "medium"
+    },
+    {
+      "id": "TP2",
+      "title": "tests-plane",
+      "files": ["scripts/campaign/plane-sync.self-test.mjs"],
+      "brief": "Add a self-test case for T8: stub label map, tagged row, assert payload labels + skip-log line + hash change.",
+      "effort": "medium"
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "node scripts/campaign/bugs.mjs self-test",
+      "node scripts/campaign/plane-sync.self-test.mjs"
+    ],
+    "expect": "fail"
+  },
+
+  "packages": [
+    {
+      "id": "P1",
+      "title": "bugs-tags",
+      "files": ["scripts/campaign/bugs.mjs"],
+      "brief": "Implement R1-R7: flags() collector, tag validation/dedup/sort, cmds.file/tag/list/stats/show updates, already-fixed subcommand mirroring cmds.discharge locking, dispatch table registration.",
+      "satisfies": ["R1", "R2", "R3", "R4", "R5", "R6", "R7"],
+      "provenBy": ["T1", "T2", "T3", "T4", "T5", "T6", "T7"],
+      "effort": "medium"
+    },
+    {
+      "id": "P2",
+      "title": "plane-labels",
+      "files": ["scripts/campaign/plane-sync.mjs"],
+      "brief": "Implement R8: lazy once-per-run label resolution, labels key on payload when non-empty, per-run skip logging for unresolved tags, conditional hash-input append.",
+      "satisfies": ["R8"],
+      "provenBy": ["T8"],
+      "effort": "medium"
+    },
+    {
+      "id": "P3",
+      "title": "backfill",
+      "files": [".claude/campaign/**"],
+      "brief": "File 33 F49 rows + tag B355-B360; discharge 27 FIXED + verified-fixed UNREVIEWED rows via already-fixed; note the 2 PARTIAL + still-present UNREVIEWED rows; report the id map.",
+      "dependsOn": ["P1"],
+      "satisfies": ["R9"],
+      "provenBy": [],
+      "effort": "medium"
+    },
+    {
+      "id": "P4",
+      "title": "docs",
+      "files": [
+        "docs/audit/security-findings-index.md",
+        "docs/security/security-testing-program.md",
+        ".claude/skills/bug-registry/SKILL.md"
+      ],
+      "brief": "Add Registry column + intro sentence to the findings index; Tracking rule paragraph in the testing program section 8; Security findings section in bug-registry/SKILL.md.",
+      "dependsOn": ["P3"],
+      "satisfies": ["R10"],
+      "provenBy": [],
+      "effort": "medium"
+    }
+  ],
+
+  "verifyCommands": {
+    "perRound": [
+      "node scripts/campaign/bugs.mjs self-test",
+      "node scripts/campaign/plane-sync.self-test.mjs"
+    ],
+    "final": [
+      "node scripts/campaign/bugs.mjs self-test",
+      "node scripts/campaign/plane-sync.self-test.mjs",
+      "node scripts/campaign/bugs.mjs stats"
+    ]
+  },
+
+  "runDir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-secfile/.claude/pipeline/2026-09-12-security-registry-tags"
+}

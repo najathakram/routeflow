@@ -214,6 +214,12 @@ program's mid/high tiers (ZAP lane, pentest) are meant to close.
 
 ## 8. Backlog catalogue (standing reference)
 
+**Tracking rule:** every finding from a review, scanner, DAST, pentest, or audit is filed in
+the bug registry with `--tag security`, PoC-free (no exploit detail or repro steps in the
+filed row), with severity assigned by CVSS band — Critical ≥ 9.0, High 7.0–8.9,
+Medium 4.0–6.9, Low < 4.0 — and a finding already fixed elsewhere is closed via
+`bugs.mjs already-fixed <id> --pr <n> --why "<evidence>"` rather than left queued.
+
 ### Plane — ROAD epic "Security program — tooling & hardening (ASVS L1→L3)"
 
 | # | Title | Labels | Priority | Effort | Acceptance |
@@ -234,16 +240,16 @@ program's mid/high tiers (ZAP lane, pentest) are meant to close.
 F12-003's remainder (mobile Docker runner still root) is tracked as Plane task 11 above — it is
 not a bug-registry item.
 
-### Registry — batch F48 (ids assigned at filing: pending PR #690)
+### Registry — batch F48 (ids assigned at filing: B355–B360)
 
 | Id | Finding | Severity | Tier |
 | --- | --- | --- | --- |
-| B355+ pending PR #690 | F11-002 — web tokens in `localStorage` | high | T2 |
-| B355+ pending PR #690 | F5-003 — shared JWT signing secret / no identity-type claim | medium | T1 |
-| B355+ pending PR #690 | F9-006 — `X-Forwarded-For` spoofing of throttler + audit IP | medium | T1 |
-| B355+ pending PR #690 | F12-005 — mobile OAuth deep-link without PKCE/state | medium | T1 |
-| B355+ pending PR #690 | F3-005 remainder — buyer registration enumeration via 409 | low | T1 |
-| B355+ pending PR #690 | F4-003 remainder — 9 `@Body() dto: any` routes | low | T1 |
+| B355 | F11-002 — web tokens in `localStorage` | high | T2 |
+| B356 | F5-003 — shared JWT signing secret / no identity-type claim | medium | T1 |
+| B357 | F9-006 — `X-Forwarded-For` spoofing of throttler + audit IP | medium | T1 |
+| B358 | F12-005 — mobile OAuth deep-link without PKCE/state | medium | T1 |
+| B359 | F3-005 remainder — buyer registration enumeration via 409 | low | T1 |
+| B360 | F4-003 remainder — 9 `@Body() dto: any` routes | low | T1 |
 
 ## 9. Sources
 

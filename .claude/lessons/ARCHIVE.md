@@ -1344,6 +1344,7 @@ gate runner's own `execFileSync` usage), so archiving it loses no enforcement.
   own exit code separately (`execFileSync`/spawnSync status), never a glued one-liner.**
 - **Guard:** the engine gate runner uses `execFileSync` with its own status check, never a
   string-glued exit-code echo.
+
 ## Archived 2026-09-12 — least-cited, fully guarded; headroom for L-115
 
 ### L-041 · 2026-09-01 · process

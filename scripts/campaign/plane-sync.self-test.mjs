@@ -144,10 +144,17 @@ async function startFakeServer({
   failFirstCreate = false,
   states = DEFAULT_FAKE_STATES,
   omitDescriptionStripped = false,
+  // T8 (R8): a plain { <lowercase name>: <id> } map, translated here into the
+  // shared fixture's own { BUGS: [{name,id}] } seed shape so every existing
+  // call site (which never passes this) is unaffected.
+  labels = null,
 } = {}) {
   const fake = await startFakePlane({
     workItems: { BUGS: existingItems },
     states: { BUGS: states },
+    labels: labels
+      ? { BUGS: Object.entries(labels).map(([name, id]) => ({ name, id })) }
+      : undefined,
     failFirstCreate,
     omitDescriptionStripped,
   });
@@ -2396,6 +2403,94 @@ async function main() {
     );
 
     await server.close();
+  }
+
+  // T8 / R8 — a tagged catalogue row's Plane payload carries `labels` for
+  // every tag that resolves against a stub {name,id} label map, logs the
+  // exact skip line for a tag that does NOT resolve (rather than failing the
+  // run), and its registry-hash differs from the same row carrying no tags
+  // at all. Fails today per test-plan.md T8: plane-sync.mjs never touches
+  // `label` (context-pack §2), so no payload carries a `labels` key and no
+  // such log line exists.
+  {
+    const taggedRow = { ...B01_CATALOGUE_ROW, tags: ["security", "nolabel"] };
+    const dir = makeFixture({ catalogue: [taggedRow] });
+    const server = await startFakeServer({ existingItems: [], labels: { security: "lbl-1" } });
+    const { stdout, stderr } = await runCli([], { registryDir: dir, baseUrl: server.url });
+    const posts = server.requests.filter((r) => r.method === "POST");
+    check(
+      "T8 (R8): exactly one POST, carrying only the resolvable tag's label",
+      { posts: posts.length, labels: posts[0]?.body?.labels },
+      { posts: 1, labels: ["lbl-1"] },
+    );
+    check(
+      "T8 (R8): the run log names the unresolved tag and says it was skipped",
+      (stdout + stderr).includes('tag "nolabel" has no Plane label in BUGS — skipped'),
+      true,
+    );
+    await server.close();
+
+    // R8 (tag removal): a row that loses its last tag must CLEAR the labels
+    // the mirror set. Plane's PATCH leaves a key it is not sent alone, and
+    // the registry hash reverts to the untagged value, so the single patch
+    // the removal triggers is the only chance to undo the label.
+    const dirRm = makeFixture({ catalogue: [{ ...B01_CATALOGUE_ROW, tags: ["security"] }] });
+    const serverRm = await startFakeServer({ existingItems: [], labels: { security: "lbl-1" } });
+    await runCli([], { registryDir: dirRm, baseUrl: serverRm.url });
+    writeFileSync(join(dirRm, "bugs.jsonl"), JSON.stringify({ ...B01_CATALOGUE_ROW }) + "\n");
+    const afterTaggedCreate = serverRm.requests.length;
+    await runCli([], { registryDir: dirRm, baseUrl: serverRm.url });
+    const rmPatches = serverRm.requests
+      .slice(afterTaggedCreate)
+      .filter((r) => r.method === "PATCH");
+    check(
+      "T8 (R8): dropping a row's last tag patches labels to [] so the stale label goes",
+      { patches: rmPatches.length, labels: rmPatches[0]?.body?.labels },
+      { patches: 1, labels: [] },
+    );
+    await serverRm.close();
+
+    // R8's hash-input rule is the SORTED tag join, not raw array order and
+    // not merely "any extra key changes the hash" (the whole-row hash at
+    // plane-sync.mjs:288 already does that trivially) — proven via
+    // `deriveDesired`, independent of any HTTP layer, so this half of T8
+    // never depends on label resolution succeeding.
+    const orderA = makeFixture({
+      catalogue: [{ ...B01_CATALOGUE_ROW, tags: ["security", "nolabel"] }],
+    });
+    const orderB = makeFixture({
+      catalogue: [{ ...B01_CATALOGUE_ROW, tags: ["nolabel", "security"] }],
+    });
+    const noTags = makeFixture({ catalogue: [{ ...B01_CATALOGUE_ROW }] });
+    const hA = deriveDesired(orderA)[0]?.hash;
+    const hB = deriveDesired(orderB)[0]?.hash;
+    const hN = deriveDesired(noTags)[0]?.hash;
+    // build-plan.md acceptance criterion 10 (untagged rows' hash is
+    // byte-for-byte identical to before this change) is what this literal
+    // pins: sha256 of the PRE-change hash input
+    // `JSON.stringify([row, ledgerRow, issue])` for the default untagged
+    // `makeFixture()` fixture, verified equal under
+    // plane-sync.mjs at HEAD and after the tag change. Comparing hashes only
+    // to each other cannot catch a later edit that adds a key to
+    // `rowForHash`, normalizes it, or moves the tag strip — that would
+    // re-sync every untagged catalogue row against Plane with the suite
+    // still green. If this fails, the hash input changed: either revert it or
+    // accept a full re-sync and re-pin the constant deliberately.
+    const UNTAGGED_ROW_HASH_AT_HEAD =
+      "6ff53aa06a8d7300533e7ea37264aa64e8f503d40e2688665fadd81c0dafd71e";
+    check(
+      "T8 (R8): the hash input uses the sorted tag join",
+      {
+        sameSetSameHash: hA === hB,
+        taggedDiffersFromUntagged: typeof hA === "string" && hA !== hN,
+        untaggedHashUnchangedFromHead: hN === UNTAGGED_ROW_HASH_AT_HEAD,
+      },
+      {
+        sameSetSameHash: true,
+        taggedDiffersFromUntagged: true,
+        untaggedHashUnchangedFromHead: true,
+      },
+    );
   }
 
   // T22 (fix 2026-09-12, plane-write-ledger-local) — a legacy ledger file

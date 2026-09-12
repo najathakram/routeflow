@@ -1,12 +1,7 @@
 {
   "mappedSha": "af8a953dcbe3bc1b0a53aaa3a367f48d5473b677",
   "generatedAt": "2026-09-12T15:48:47.902Z",
-  "areas": [
-    "api",
-    "web",
-    "mobile",
-    "packages"
-  ],
+  "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 1024,
   "notes": "**2026-09-12** — (branch `docs/703-crm-di-bookkeeping`, Option-B follow-up for hotfix #703 = master `e96c405b`) — CrmModule now imports BillingModule (AddonGuard could not resolve AddonService at boot; prod API 502 13:44Z–14:10Z); NEW repo-truth guard `apps/api/src/common/addon-guard-module-import.spec.ts` pins the wiring shape for every AddonGuard consumer. api.md gains the crm.module.ts row; web.md/mobile.md/packages.md untouched (no diff). Lesson L-115 (L-041 archived). See CHANGELOG.md for full detail. || Previous note (still accurate): **2026-09-12** — (branch `chore/vendor-house-skills`) — house pipelines vendored into `.claude/skills/` (dev-pipeline, bug-pipeline, model-routing, lessons-learned, code-map refs, commands; engine byte-identical via .prettierignore), `scripts/validate-code-map.mjs` added (unwired), NEW `apps/api/src/common/app-module-compile.spec.ts` DI-scope boot guard (+ invoice-template jest mock). INDEX.md +2 rows (the api.md section is deferred: api.md is 1,182 KiB, over the 1,024 KiB pre-commit cap, until the area-file split on chore/workflow-redesign lands); web.md/mobile.md/packages.md untouched (no diff). See CHANGELOG.md for full detail."
 }

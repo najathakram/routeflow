@@ -201,6 +201,40 @@ function flag(args, name, fallback = null) {
   return v;
 }
 
+// Like `flag`, but collects EVERY `--name` occurrence rather than only the
+// first — `--tag security --tag "audit-2026-06 security"` must contribute
+// both raw values, not just the first one `flag()` would return.
+function flags(args, name) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== `--${name}`) continue;
+    const v = args[i + 1];
+    if (v === undefined || v.startsWith("--"))
+      fail(`--${name} requires a value${v === undefined ? "" : ` (got "${v}")`}`);
+    out.push(v);
+  }
+  return out;
+}
+
+// Tag vocabulary: lowercase, digits, hyphens only, and never starting with a
+// hyphen — this is the same shape a Plane label name and a URL-safe slug
+// both already require, so a tag string is never the thing that needs
+// escaping downstream (a catalogue row, a record's front matter, a Plane
+// payload).
+const TAG_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+// `--tag` mirrors `--files`'s space-joined-value convention (one flag can
+// carry several names) AND is repeatable (`flags()` above), so a raw value
+// list first gets flattened on spaces, then validated, then deduped+sorted —
+// invalid input fails BEFORE any write, never after.
+function normalizeTags(rawValues) {
+  const all = rawValues.flatMap((v) => v.split(" ").filter(Boolean));
+  for (const t of all)
+    if (!TAG_RE.test(t))
+      fail(`invalid tag "${t}" — tags must match ${TAG_RE} (lowercase letters, digits, hyphens)`);
+  return [...new Set(all)].sort();
+}
+
 // Batches are always uppercase F##. Every command that takes one must agree —
 // `file` used to be the one command that didn't, so `file --batch f11` wrote a
 // ledger row whose own `batch` field (f11) disagreed with the shard it landed
@@ -321,6 +355,10 @@ cmds.file = (args) => {
   const location = flag(args, "location");
   const severity = flag(args, "severity", "medium");
   const filesFlag = flag(args, "files");
+  // Validated BEFORE the catalogue lock is ever taken — an invalid tag must
+  // exit 1 with the catalogue byte-for-byte unchanged, not rolled back after
+  // a partial write.
+  const tags = normalizeTags(flags(args, "tag"));
   if (!location) fail("--location is required: an agent cannot route a bug it cannot place");
   if (!(severity in SEVERITY_RANK))
     fail(`--severity must be one of ${Object.keys(SEVERITY_RANK).join("|")}`);
@@ -357,6 +395,10 @@ cmds.file = (args) => {
       batch: normBatch(flag(args, "batch"), { optional: true }),
       source: "filed",
       filedAt: new Date().toISOString(),
+      // Omitted entirely (never `null`) when empty — JSON.stringify drops an
+      // `undefined`-valued property on its own, so this needs no separate
+      // "if (tags.length)" branch the way `batch` does.
+      tags: tags.length ? tags : undefined,
     };
     const c = classify(bug);
     bug.sensitive = c.sensitive;
@@ -445,12 +487,17 @@ cmds.file = (args) => {
       // A filed bug's front matter otherwise never carries `files` (only
       // `enrich` writes it, and only for register imports) — with no files,
       // `deps` sees zero edges for it and the dependency graph can only ever
-      // get less complete as bugs get filed rather than imported.
-      if (filesFlag) {
+      // get less complete as bugs get filed rather than imported. `tags`
+      // lands the same way, next to `files`, on the same write.
+      if (filesFlag || tags.length) {
         const rec = readRecord(bug.id);
         if (rec) {
-          writeRecord(bug.id, { ...rec.front, files: filesFlag }, rec.body);
-          console.log(`  files    : ${filesFlag}`);
+          const front = { ...rec.front };
+          if (filesFlag) front.files = filesFlag;
+          if (tags.length) front.tags = tags;
+          writeRecord(bug.id, front, rec.body);
+          if (filesFlag) console.log(`  files    : ${filesFlag}`);
+          if (tags.length) console.log(`  tags     : ${tags.join(", ")}`);
         }
       }
     } catch (e) {
@@ -464,6 +511,46 @@ cmds.file = (args) => {
         `file: ${bug.id} failed after the catalogue write (${e.message}) — catalogue and ledger restored to their pre-write state`,
       );
     }
+  });
+};
+
+// Re-tagging is idempotent (adding an already-present tag or removing an
+// absent one is a no-op, not an error) so a script can call this without
+// first reading the current set. Same validation as `file --tag`; the
+// resulting set is written to BOTH the catalogue row and the record's front
+// matter, and the key is dropped entirely (never left as an empty array)
+// once the last tag is removed.
+cmds.tag = (args) => {
+  const typed = (args[0] ?? "").toUpperCase();
+  const action = args[1];
+  const rawNames = args.slice(2);
+  if (!BUG_ID_RE.test(typed) || !["add", "remove"].includes(action) || !rawNames.length)
+    fail("usage: tag <B###> add|remove <name...>");
+  const names = normalizeTags(rawNames);
+
+  withCatalogueLock(() => {
+    const id = resolveId(typed);
+    const rows = readCatalogue();
+    const idx = rows.findIndex((r) => r.id === id);
+    if (idx === -1) fail(`tag: no catalogue row for ${typed} — file it first`);
+
+    const current = new Set(rows[idx].tags ?? []);
+    if (action === "add") names.forEach((n) => current.add(n));
+    else names.forEach((n) => current.delete(n));
+    const next = [...current].sort();
+
+    if (next.length) rows[idx].tags = next;
+    else delete rows[idx].tags;
+    writeCatalogue(rows);
+
+    const rec = readRecord(id);
+    if (rec) {
+      const front = { ...rec.front };
+      if (next.length) front.tags = next;
+      else delete front.tags;
+      writeRecord(id, front, rec.body);
+    }
+    console.log(`${id}: tags ${next.length ? next.join(", ") : "(none)"}`);
   });
 };
 
@@ -1027,12 +1114,20 @@ cmds.list = (args) => {
   if (args.includes("--sensitive")) rows = rows.filter((r) => r.sensitive ?? classify(r).sensitive);
   const batch = normBatch(flag(args, "batch"), { optional: true });
   if (batch) rows = rows.filter((r) => r.batch === batch);
+  // AND-filter, same as --open/--sensitive/--batch above — a row must carry
+  // EVERY tag named on the command line, not merely one of them (there is
+  // only ever one --tag value here in practice, but the AND semantics still
+  // apply if more than one is given).
+  const tagFilter = normalizeTags(flags(args, "tag"));
+  if (tagFilter.length)
+    rows = rows.filter((r) => tagFilter.every((t) => (r.tags ?? []).includes(t)));
   rows.sort((a, b) => (SEVERITY_RANK[a.severity] ?? 4) - (SEVERITY_RANK[b.severity] ?? 4));
   for (const r of rows) {
     const st = state.get(r.id)?.state ?? "—";
     const mark = r.sensitive ? "!" : " ";
+    const tagSuffix = r.tags?.length ? ` [${r.tags.join(",")}]` : "";
     console.log(
-      `${r.id.padEnd(5)} ${String(r.severity).padEnd(8)} ${String(r.batch ?? "—").padEnd(5)} ${st.padEnd(10)} ${mark} ${r.title.slice(0, 70)}`,
+      `${r.id.padEnd(5)} ${String(r.severity).padEnd(8)} ${String(r.batch ?? "—").padEnd(5)} ${st.padEnd(10)} ${mark} ${r.title.slice(0, 70)}${tagSuffix}`,
     );
   }
   console.log(`\n${rows.length} row(s).`);
@@ -1043,16 +1138,19 @@ cmds.stats = () => {
   const state = readState();
   const bySeverity = {};
   const byState = {};
+  const byTag = {};
   let sensitive = 0;
   for (const r of catalogue) {
     bySeverity[r.severity] = (bySeverity[r.severity] || 0) + 1;
     const st = state.get(r.id)?.state ?? "uncampaigned";
     byState[st] = (byState[st] || 0) + 1;
     if (r.sensitive ?? classify(r).sensitive) sensitive++;
+    for (const t of r.tags ?? []) byTag[t] = (byTag[t] || 0) + 1;
   }
   console.log(`catalogue : ${catalogue.length} bug(s)`);
   console.log(`severity  : ${JSON.stringify(bySeverity)}`);
   console.log(`state     : ${JSON.stringify(byState)}`);
+  console.log(`tags      : ${JSON.stringify(byTag)}`);
   console.log(`carve-out : ${sensitive} sensitive / ${catalogue.length - sensitive} agent-safe`);
 };
 
@@ -1094,7 +1192,20 @@ function parseRecord(text) {
   const front = {};
   for (const line of m[1].split(/\r?\n/)) {
     const kv = /^([A-Za-z][\w]*):\s*(.*)$/.exec(line);
-    if (kv) front[kv[1]] = kv[2] === "" ? null : kv[2];
+    if (!kv) continue;
+    let v = kv[2] === "" ? null : kv[2];
+    // A field whose value is a JSON array (`tags: ["a","b"]`, written by
+    // renderFront below) round-trips back to a real array here — every other
+    // field stays a plain string, this is the only shape front matter uses
+    // for a list-valued field.
+    if (typeof v === "string" && v.startsWith("[") && v.endsWith("]")) {
+      try {
+        v = JSON.parse(v);
+      } catch {
+        /* not actually JSON — keep it as the literal string */
+      }
+    }
+    front[kv[1]] = v;
   }
   return { front, body: m[2] };
 }
@@ -1102,7 +1213,13 @@ function parseRecord(text) {
 const renderFront = (front) =>
   "---\n" +
   Object.entries(front)
-    .map(([k, v]) => (v === null || v === undefined || v === "" ? `${k}:` : `${k}: ${v}`))
+    .map(([k, v]) =>
+      v === null || v === undefined || v === ""
+        ? `${k}:`
+        : Array.isArray(v)
+          ? `${k}: ${JSON.stringify(v)}`
+          : `${k}: ${v}`,
+    )
     .join("\n") +
   "\n---\n";
 
@@ -2388,6 +2505,67 @@ cmds.prove = (args) => {
     console.log(
       `  discharge to done only after a green deploy: npm run bugs -- discharge ${batch} --evidence "..."`,
     );
+  });
+};
+
+// A finding that turns out to have been fixed by an EARLIER PR, discovered
+// while filing or re-verifying a batch (the F49 security backfill's whole
+// reason for existing) — not a fix made in THIS run, so `prove`/`discharge`'s
+// own proof shape (a passing test, a build-plan row) does not apply. This is
+// a terminal, evidence-gated state of its own, locked the same way `prove`
+// locks a single row: read, validate, write, re-read to confirm the write
+// landed — all under one hold on the row's shard.
+cmds["already-fixed"] = (args) => {
+  const typed = (args[0] ?? "").toUpperCase();
+  const prRaw = flag(args, "pr");
+  const why = flag(args, "why");
+  if (!BUG_ID_RE.test(typed) || !prRaw || !why)
+    fail('usage: already-fixed <B###> --pr <number> --why "<how/where this was verified fixed>"');
+  const id = resolveId(typed);
+  const pr = Number(prRaw);
+  if (!Number.isInteger(pr) || pr <= 0) fail(`--pr must be a positive integer (got "${prRaw}")`);
+  // A one-line "yes" is not evidence — campaign-check's own `--why`-shaped
+  // gates already draw this line at 20 chars; this is the same bar, not a
+  // stricter or looser one invented for this one command.
+  if (why.length < 20)
+    fail(
+      `--why must be at least 20 characters citing where/how this was verified fixed (got ${why.length})`,
+    );
+
+  const batch = findShardOf(id);
+  if (!batch) fail(`${id} is in no ledger shard — file it with a --batch first`);
+
+  withShardLock(batch, () => {
+    const row = readShard(batch).rows.find((r) => r.id === id);
+    if (!row)
+      fail(`${id} vanished from ${batch}.jsonl while this already-fixed waited for the lock`);
+    // Only from queued/in-flight — a row already proven, discharged, done, or
+    // itself already-fixed does not get silently re-stamped by a second call.
+    if (!["queued", "in-flight"].includes(row.state))
+      fail(
+        `${id} is "${row.state}" — already-fixed only applies to a queued or in-flight row (it is not a replacement for reopen)`,
+      );
+
+    const { what, row: after } = upsertLedgerRow(batch, {
+      ...row,
+      state: "already-fixed",
+      pr,
+      evidence: why,
+    });
+    if (after?.state !== "already-fixed" || after?.pr !== pr || after?.evidence !== why)
+      fail(
+        `ledger write for ${id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
+      );
+
+    const rec = readRecord(id);
+    if (rec) {
+      writeRecord(
+        id,
+        { ...rec.front, state: "already-fixed" },
+        appendEvent(rec.body, `state-already-fixed-${pr}`, "already-fixed", `PR #${pr}`),
+      );
+    }
+    console.log(`${id}: ${batch} row ${what} → already-fixed (PR #${pr})`);
   });
 };
 
@@ -7230,6 +7408,420 @@ cmds["self-test"] = () => {
           oldMsg: unknown.out.includes("no ledger shard"),
         },
         { code: 1, unknown: true, oldMsg: false },
+      );
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // ── T1-T7: `--tag` support (file/tag/list/stats/show/sync) + `already-fixed`
+  // (2026-09-12-security-registry-tags test plan §2). `--tag`, the `tag`
+  // subcommand and `already-fixed` do not exist yet — see that plan's §6 red
+  // gate for the expected failure per T#. `cmds.file`/`cmds.list`/`cmds.stats`/
+  // `cmds.sync` already exist and silently ignore an unrecognised flag, so
+  // those run IN-PROCESS; `tag` and `already-fixed` are unknown subcommands
+  // today, so those go through `runCli()` — the real CLI dispatch reports an
+  // unknown command as a normal (non-throwing) refusal, which keeps the
+  // failure an assertion mismatch rather than a thrown "not a function".
+
+  // T1/R1: `file --tag` dedupes + sorts across repeated flags, into both the
+  // catalogue row and the record's front matter.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file([
+        "Tag dedup fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--tag",
+        "security",
+        "--tag",
+        "audit-2026-06 security",
+      ]);
+      const row = readCatalogue().find((r) => r.id === "B1");
+      check(
+        "T1/R1: file --tag dedupes+sorts repeated --tag flags into the catalogue row",
+        row?.tags,
+        ["audit-2026-06", "security"],
+      );
+      const rec = readRecord("B1");
+      check("T1/R1: file --tag also lands in the record's front matter", rec?.front?.tags, [
+        "audit-2026-06",
+        "security",
+      ]);
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // T2/R1: an invalid tag string (uppercase/underscore) is refused, not
+  // written — via runCli, since the refusal must be a real process exit for
+  // the "catalogue unchanged" half of the assertion to mean anything.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    try {
+      process.env.BUGS_ROOT = tmp;
+      const beforeCount = readCatalogue().length;
+      const attempt = runCli(
+        [
+          "file",
+          "Bad tag fixture",
+          "--location",
+          "apps/api/src/self-test.ts",
+          "--severity",
+          "low",
+          "--tag",
+          "Bad_Tag",
+        ],
+        tmp,
+      );
+      const afterCount = readCatalogue().length;
+      check(
+        "T2/R1: file --tag rejects an invalid tag (exit 1, catalogue unchanged, stderr names it)",
+        {
+          code: attempt.code,
+          catalogueGrew: afterCount !== beforeCount,
+          namesBadTag: attempt.out.includes("Bad_Tag"),
+        },
+        { code: 1, catalogueGrew: false, namesBadTag: true },
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // T3/R3: `list --tag` AND-filters alongside `--open` — a tagged row is
+  // included, an untagged sibling is not, and a DONE row is excluded by
+  // `--open` even though it carries the tag.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    try {
+      process.env.BUGS_ROOT = tmp;
+      cmds.file([
+        "Tagged fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T1",
+        "--tag",
+        "security",
+      ]);
+      cmds.file([
+        "Untagged fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+      ]);
+      const tagListOut = capture(() => cmds.list(["--tag", "security"]));
+      check(
+        "T3/R3: list --tag security includes the tagged id, excludes the untagged one",
+        { hasB1: /\bB1\b/.test(tagListOut), hasB2: /\bB2\b/.test(tagListOut) },
+        { hasB1: true, hasB2: false },
+      );
+
+      // Flip B1's ledger row to `done` directly (bypassing prove/discharge,
+      // exactly like the sync-revisit fixture above) so `--open` --tag proves
+      // an AND-filter, not just `list --tag` alone.
+      mkdirSync(STATUS_DIR(), { recursive: true });
+      writeFileSync(
+        shardPath("F01"),
+        JSON.stringify({
+          id: "B1",
+          batch: "F01",
+          tier: "T1",
+          state: "done",
+          pr: null,
+          proof: "REG-B1",
+          evidence: null,
+        }) + "\n",
+      );
+      const doneOpenOut = capture(() => cmds.list(["--tag", "security", "--open"]));
+      const tagOnlyAfterDone = capture(() => cmds.list(["--tag", "security"]));
+      check(
+        "T3/R3: list --tag AND-filters with --open",
+        {
+          openTaggedHasB1: /\bB1\b/.test(doneOpenOut),
+          tagOnlyHasB1: /\bB1\b/.test(tagOnlyAfterDone),
+          tagOnlyHasB2: /\bB2\b/.test(tagOnlyAfterDone),
+        },
+        { openTaggedHasB1: false, tagOnlyHasB1: true, tagOnlyHasB2: false },
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // T4/R4: `stats` reports a `byTag` count for a filed row's tag.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    try {
+      process.env.BUGS_ROOT = tmp;
+      cmds.file([
+        "byTag fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+        "--tag",
+        "security",
+      ]);
+      const statsOut = capture(() => cmds.stats());
+      // Parse the printed `byTag` object rather than substring-matching the
+      // rendered JSON: a correct implementation that spaces it differently
+      // (`{ "security": 1 }`) must still pass, and an unrelated future stats
+      // line that happens to contain the substring must not make it pass.
+      const byTagLine = /^tags\s*:\s*(\{.*\})\s*$/m.exec(statsOut);
+      let byTag = byTagLine ? `unparseable: ${byTagLine[1]}` : "no byTag line in stats output";
+      if (byTagLine) {
+        try {
+          byTag = JSON.parse(byTagLine[1]);
+        } catch {
+          /* keep the unparseable marker as the got value */
+        }
+      }
+      check(
+        "T4/R4: stats reports a parsed byTag count of 1 for the one row carrying that tag",
+        byTag,
+        { security: 1 },
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // T5/R2,R5: `tag <id> add|remove` — idempotent, validated, and reflected by
+  // `show`. The `tag` subcommand does not exist today, so every step here
+  // goes through runCli (an "unknown command" refusal, not a thrown error).
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    try {
+      runCli(
+        ["file", "Tag cmd fixture", "--location", "apps/api/src/self-test.ts", "--severity", "low"],
+        tmp,
+      );
+      const catPath = join(tmp, "bugs.jsonl");
+      const readCat = () =>
+        existsSync(catPath)
+          ? readFileSync(catPath, "utf8")
+              .split(/\r?\n/)
+              .filter(Boolean)
+              .map((l) => JSON.parse(l))
+          : [];
+
+      runCli(["tag", "B1", "add", "security"], tmp);
+      runCli(["tag", "B1", "add", "security"], tmp); // repeat: must stay idempotent
+      const shownWithTag = runCli(["show", "B1"], tmp);
+      check(
+        "T5/R2,R5: tag add is idempotent, and show prints the tag while it is present",
+        {
+          tagsAfterTwoAdds: readCat().find((r) => r.id === "B1")?.tags,
+          // A tags LINE, not the bare word: `show` renders the title,
+          // location and body too, so `includes("security")` could pass with
+          // no tags rendering at all.
+          showIncludesTag: /^tags:\s*\[[^\]]*"security"[^\]]*\]\s*$/m.test(shownWithTag.out),
+        },
+        { tagsAfterTwoAdds: ["security"], showIncludesTag: true },
+      );
+
+      const afterAdd = readCat().find((r) => r.id === "B1")?.tags;
+      runCli(["tag", "B1", "remove", "security"], tmp);
+      check(
+        "T5/R2: tag add then remove drops the key",
+        {
+          afterAdd,
+          afterRemove: "tags" in (readCat().find((r) => r.id === "B1") ?? {}),
+        },
+        { afterAdd: ["security"], afterRemove: false },
+      );
+
+      const unknownId = runCli(["tag", "B999", "add", "x"], tmp);
+      const knownId = runCli(["tag", "B1", "add", "security"], tmp);
+      check(
+        "T5/R2: tag refuses an unknown id but accepts a filed one",
+        {
+          unknownCode: unknownId.code,
+          namesId: unknownId.out.includes("B999"),
+          notUnknownCommand: !/unknown command/i.test(unknownId.out),
+          knownCode: knownId.code,
+        },
+        { unknownCode: 1, namesId: true, notUnknownCommand: true, knownCode: 0 },
+      );
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // T6/R6: `sync` must preserve an existing `tags` field in front matter —
+  // `frontFor`'s output set does not include `tags`, so the pass-through merge
+  // (`{...rec.front, ...frontFor(bug, st)}`) must leave it exactly as read.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    try {
+      process.env.BUGS_ROOT = tmp;
+      cmds.file([
+        "Sync tags fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+      ]);
+      // The `tags` front matter is written HERE, by hand (the same way the T3
+      // block hand-writes a ledger shard), NOT by `file --tag`: R6 is only
+      // about sync's merge, so a broken `--tag` (R1) must not be able to
+      // masquerade as a broken merge.
+      const filed = readRecord("B1");
+      writeRecord("B1", { ...filed.front, tags: ["security"] }, filed.body);
+      cmds.sync(["--quiet"]);
+      const rec = readRecord("B1");
+      check(
+        "T6/R6: sync preserves an existing tags field via the pass-through merge",
+        rec?.front?.tags,
+        ["security"],
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // T7/R7: `already-fixed <id> --pr --why` — a locked state transition, only
+  // from queued/in-flight, gated by a >=20-char --why, and refused on replay.
+  // The subcommand does not exist today, so every call goes through runCli.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    try {
+      runCli(
+        [
+          "file",
+          "already-fixed fixture",
+          "--location",
+          "apps/api/src/self-test.ts",
+          "--severity",
+          "low",
+          "--batch",
+          "F01",
+          "--tier",
+          "T1",
+        ],
+        tmp,
+      );
+      const readRow = () => {
+        const shard = join(tmp, "status", "F01.jsonl");
+        if (!existsSync(shard)) return null;
+        const lines = readFileSync(shard, "utf8").split(/\r?\n/).filter(Boolean);
+        const rows = lines.map((l) => JSON.parse(l));
+        return rows.find((r) => r.id === "B1") ?? null;
+      };
+
+      const first = runCli(
+        ["already-fixed", "B1", "--pr", "84", "--why", "fixed in PR #84 adopt-orphans guard"],
+        tmp,
+      );
+      check(
+        "T7/R7: already-fixed transitions a queued row, recording pr + evidence",
+        {
+          code: first.code,
+          state: readRow()?.state,
+          pr: readRow()?.pr,
+          evidence: readRow()?.evidence,
+        },
+        {
+          code: 0,
+          state: "already-fixed",
+          pr: 84,
+          evidence: "fixed in PR #84 adopt-orphans guard",
+        },
+      );
+
+      const replay = runCli(
+        ["already-fixed", "B1", "--pr", "84", "--why", "fixed in PR #84 adopt-orphans guard"],
+        tmp,
+      );
+      check(
+        "T7/R7: already-fixed applies once then refuses a replay",
+        {
+          firstCode: first.code,
+          replayCode: replay.code,
+          stateAfterReplay: readRow()?.state,
+          replayNotUnknownCommand: !/unknown command/i.test(replay.out),
+        },
+        {
+          firstCode: 0,
+          replayCode: 1,
+          stateAfterReplay: "already-fixed",
+          replayNotUnknownCommand: true,
+        },
+      );
+
+      runCli(
+        [
+          "file",
+          "already-fixed short-why fixture",
+          "--location",
+          "apps/api/src/self-test.ts",
+          "--severity",
+          "low",
+          "--batch",
+          "F01",
+          "--tier",
+          "T1",
+        ],
+        tmp,
+      );
+      const readB2Row = () => {
+        const shard = join(tmp, "status", "F01.jsonl");
+        const rows = readFileSync(shard, "utf8")
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .map((l) => JSON.parse(l));
+        return rows.find((r) => r.id === "B2");
+      };
+      const shortWhy = runCli(["already-fixed", "B2", "--pr", "85", "--why", "short"], tmp);
+      // Read the row BEFORE the valid call runs — otherwise the long-why write
+      // is what this assertion sees, and the rejection proves nothing.
+      const stateAfterShort = readB2Row()?.state;
+      const longWhy = runCli(
+        ["already-fixed", "B2", "--pr", "85", "--why", "verified already fixed upstream in PR #85"],
+        tmp,
+      );
+      check(
+        "T7/R7: --why gate rejects <20 chars and accepts a valid one",
+        {
+          shortCode: shortWhy.code,
+          stateAfterShort,
+          namesWhy: /--why/.test(shortWhy.out),
+          longCode: longWhy.code,
+          stateAfterLong: readB2Row()?.state,
+        },
+        {
+          shortCode: 1,
+          stateAfterShort: "queued",
+          namesWhy: true,
+          longCode: 0,
+          stateAfterLong: "already-fixed",
+        },
       );
     } finally {
       rmSync(tmp, { recursive: true, force: true });
