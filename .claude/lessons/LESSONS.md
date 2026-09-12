@@ -11,18 +11,6 @@
 
 ## process
 
-### L-108 · 2026-09-11 · process · engine gate runner
-
-- **Symptom:** `bash -c "cmd; echo EXIT=$?"` always printed `EXIT=0` even when `cmd` failed — a
-  red gate read green.
-- **Root cause:** `$?` in that string is expanded by the OUTER shell at parse time, before the
-  child runs — it reads the echo's own status, never `cmd`'s.
-- **Lesson:** **Never place `$?` after a semicolon in the SAME `-c` string expecting the prior
-  command's status — single-quote so `$?` expands INSIDE the child, or capture each command's
-  own exit code separately (`execFileSync`/spawnSync status), never a glued one-liner.**
-- **Guard:** the engine gate runner uses `execFileSync` with its own status check, never a
-  string-glued exit-code echo.
-
 ### L-109 · 2026-09-11 · process · registry-shard commits
 
 - **Symptom:** a push after a registry-shard commit was refused by campaign-check for "stale"
@@ -576,3 +564,20 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
   `uuidIds: true` seeds + the uuid-id cases in plane-sync/plane-apply self-tests; Landmine 15
   (live shapes) in the harness build plan. Related [[L-111]] (hook/branch gate), [[L-074]]
   (fixture realism).
+
+### L-114 · 2026-09-12 · tooling · plane-learning self-test tmpdir
+
+- **Symptom:** a lead's pre-push verify failed at `plane-learning.self-test: 1 FAILURE(S)` while
+  the suite passed alone; build agents saw the same "tmpdir count blip" whenever two suites
+  overlapped on the host.
+- **Root cause:** each plane self-test proved "leaves no dir behind" by counting
+  `<name>-self-test-*` entries in the shared `os.tmpdir()` before/after — another process's
+  fixtures (a second verify chain, a builder's test run) change the count, so the invariant
+  measured the host, not the process.
+- **Lesson:** **Global counts over a shared resource (tmpdir entries, ports, ledger lines) are
+  never process invariants — a test proves cleanup by tracking the exact paths it created under a
+  per-run unique prefix and asserting those are gone, so parallel runs on one host cannot fail
+  each other.**
+- **Guard:** `FIXTURE_PREFIX` (name + pid + random) and tracked-path assertions in the six plane
+  self-tests (commit 0ed13a56); OPS flake note; one verify chain at a time remains the host rule
+  for load-sensitive suites (see [[L-070]] class).
