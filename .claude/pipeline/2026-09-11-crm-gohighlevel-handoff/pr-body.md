@@ -23,7 +23,8 @@ bell, Settings → Integrations → GoHighLevel tab, manual sandbox check `apps/
 **Proof.** Engine run `wf_79dfe9f9-496` (baseline → 7 test packages → structural RED → 5 packages → Opus/Sonnet
 lenses: 63 findings, Verify confirmed 63) crashed at its fix phase (engine `Buffer` bug, fixed upstream); finished
 as a light loop: round 1 fixed 36 root causes, round 2 fixed the Opus refute-first review's 1 blocker (a `where`
-column typo unit mocks could not see — lesson L-112) + 5 major + 4 minor. Mutation probes 6/6 caught (after
+column typo unit mocks could not see — recorded as a testing lesson in `.claude/lessons/LESSONS.md`, id
+assigned at landing) + 5 major + 4 minor. Mutation probes 6/6 caught (after
 pinning match precedence T22b–d). Coverage: 26 requirements proven by tests, 7 manual, 0 unproven. Scoped gates:
 api `src/crm` + tripwires 191 tests green, web 10 green, `split-prisma-schema --check` OK, `validate-lessons` OK.
 Full verify chain: see the checks on this PR.
