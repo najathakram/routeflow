@@ -1155,3 +1155,100 @@ list`) instead of stacking the edit sheet over the live surface; the strip's lab
   the two cannot drift.**
 - **Guard:** `apps/mobile/__tests__/edit-items-scan-price.test.ts` (REG-B263-B/C/H),
   `apps/mobile/__tests__/barcode-scanner-active.test.ts`.
+
+## Archived 2026-09-11 — least-cited, fully guarded; making room
+
+Six active entries archived together to clear headroom for the six new train-4 entries
+(L-105–L-110): L-069, L-077, L-078, L-090, L-091, L-097. All six carry a real automated guard
+that stays in the tree regardless of whether the register still narrates them (busy-batch
+pre-colouring + `readClaims` pure-fn tests; `runGh`'s 60s timeout + `visibility-watchdog-script.
+spec.ts`; `validate-lessons` + step 2 of `npm run verify` + CI; the m7 spec quoting the memo's
+basis verbatim + deployment E2E spec 22 REG-B11; spec 37 REG-B80/B144; campaign-check's
+exact-prefix rule), so archiving them loses no enforcement — least-cited, fully-guarded, per the
+standing archiving rule.
+
+### L-069 · 2026-09-04 · process · #597
+
+- **Symptom:** claiming a batch made the dispatcher offer the batch touching the same files to a
+  second agent; a copied claim grammar freed another script's leases.
+- **Root cause:** the scheduler removed in-flight work from the candidate list before building the
+  conflict graph, so taking a batch DELETED its edges; and a protocol restated by eye drifted on
+  three details, each toward the permissive read.
+- **Lesson:** **Excluding an entity from a constraint problem deletes its constraints — model
+  in-progress work as an OCCUPANT that holds capacity and keeps its edges, never as a deletion. A
+  protocol restated in a second file drifts toward whatever is permissive: extract the reading as a
+  pure function, test it against the other side's exact payloads, and make both files say they
+  change together.**
+- **Guard:** busy batches pre-coloured into wave 1, `CONFLICTING` includes `in-flight`; `readClaims`
+  is pure and asserted against the three comment sets that broke it; both files carry the
+  paired-change warning.
+
+### L-077 · 2026-09-05 · deploy · close-out re-check
+
+- **Symptom:** an unattended retry loop whose header promised "total <= ~8 min" had no upper
+  bound at all, and the marker it writes when it gives up landed where nobody looks.
+- **Root cause:** the budget counted only the sleeps between attempts — every external `gh` call
+  was unbounded, so ONE hung call outlives the whole public window; and the marker path resolved
+  against the LAUNCHING directory, so a watchdog armed from a worktree hid its failure there.
+- **Lesson:** **A retry loop is only as bounded as its slowest call — give every external call a
+  timeout and state the budget as (sum of sleeps + sum of timeouts). And a failure marker must
+  land where a reader actually looks: one fixed place, named in the runbook step that tells them
+  to check it.**
+- **Guard:** `runGh`'s 60s timeout + `visibility-watchdog-script.spec.ts` (reachable-delay list,
+  `root=` on the start line, gated overrides); the runbook names the marker path.
+
+### L-078 · 2026-09-05 · process · close-out re-check
+
+- **Symptom:** `LESSONS.md` keeps merging CLEANLY into duplicate ids — L-054 four times, then
+  L-058, L-061, L-067 and L-074, each renumbered after the fact.
+- **Root cause:** two branches append under DIFFERENT `##` section headings, so git finds no
+  textual conflict; both derived the same next id from the base they branched off, and the union
+  keeps both entries with the same number.
+- **Lesson:** **After EVERY rebase or merge, run `node scripts/validate-lessons.mjs` before
+  appending: renumber your entries to the MERGED file's `nextId` and archive back to the cap
+  first. An id belongs to whichever branch LANDS first, never to whoever wrote it first.**
+- **Guard:** `validate-lessons` (DUPLICATE ID, COUNT MISMATCH, OVER CAP), step 2 of
+  `npm run verify` and re-run in CI; carry this as a line in the rebase checklist.
+
+### L-090 · 2026-09-07 · testing · #659
+
+- **Symptom:** a server-side KPI replacing a client memo passed every unit test and failed the
+  deployment E2E — the "Awaiting confirmation" tile read 0 (deployment E2E spec 22 REG-B11 red on
+  master `e02851af`).
+- **Root cause:** the port narrowed the memo's basis (DRAFT payments across every loaded invoice →
+  DRAFT payments on the OPEN set only) while pinning the NEW, narrowed basis in its own spec — so
+  the pin agreed with the port, not with the memo the port was supposed to reproduce.
+- **Lesson:** **when a client-side derivation moves to the server, transcribe the client's basis
+  VERBATIM into the server pin FIRST — quote the memo's filter/exclusions (or lack of them) in the
+  spec's own title/comment — then port to make that pin pass. A pin written from the port's own
+  code, after the port, proves the port is internally consistent, never that it reproduces what it
+  replaced.**
+- **Guard:** the m7 spec (`invoices.service.spec.ts`) now quotes the memo's basis verbatim in its
+  title and comment; deployment E2E spec 22 REG-B11 is the standing regression signal.
+
+### L-091 · 2026-09-07 · testing · #661
+
+- **Symptom:** two deployed-E2E regression tests for real fixes stayed red for two deploys on
+  harness defects — a `getByText` on a value the page renders twice (strict-mode violation) and
+  a fixture that provisioned 25 pending orders for one customer through an API whose staff-create
+  path demands an explicit merge choice (409).
+- **Root cause:** the harness modelled the product from its own assumptions instead of through
+  the product's real contracts — an identifier's role on the page, and the API's guard for
+  repeated entities.
+- **Lesson:** **assert identifiers by ROLE (`getByRole("heading", …)`) never `getByText` when a
+  value can render more than once, and provision E2E fixtures THROUGH the product's own guards
+  (send the explicit choice the API demands — `mergeChoice: "separate"` — rather than multiplying
+  entities to dodge the guard, which pollutes the tenant).**
+- **Guard:** spec 37 REG-B80/B144 as landed; the register's T2 discharge needs the run id.
+
+### L-097 · 2026-09-08 · process · #671
+
+- **Symptom:** B245 was discharged with proof `REG-B245` while its pin tests were titled plain
+  `B245: …` — the token lived in the registry but not in the test file.
+- **Root cause:** `prove`'s `--proof` regex checks the claim text only; nothing cross-checks a
+  discharge token against the titles of the file it claims to pin.
+- **Lesson:** **A discharge proof token must match its test titles byte-for-byte — run
+  `node scripts/campaign-check.mjs`, not just `bugs.mjs sync --check`, before merging a docs
+  follow-up by rule.**
+- **Guard:** campaign-check's exact-prefix rule (already enforced) + this step in the follow-up
+  checklist.

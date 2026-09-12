@@ -11,30 +11,29 @@
 
 ## process
 
-### L-097 · 2026-09-08 · process · #671
+### L-108 · 2026-09-11 · process · engine gate runner
 
-- **Symptom:** B245 was discharged with proof `REG-B245` while its pin tests were titled plain
-  `B245: …` — the token lived in the registry but not in the test file.
-- **Root cause:** `prove`'s `--proof` regex checks the claim text only; nothing cross-checks a
-  discharge token against the titles of the file it claims to pin.
-- **Lesson:** **A discharge proof token must match its test titles byte-for-byte — run
-  `node scripts/campaign-check.mjs`, not just `bugs.mjs sync --check`, before merging a docs
-  follow-up by rule.**
-- **Guard:** campaign-check's exact-prefix rule (already enforced) + this step in the follow-up
-  checklist.
+- **Symptom:** `bash -c "cmd; echo EXIT=$?"` always printed `EXIT=0` even when `cmd` failed — a
+  red gate read green.
+- **Root cause:** `$?` in that string is expanded by the OUTER shell at parse time, before the
+  child runs — it reads the echo's own status, never `cmd`'s.
+- **Lesson:** **Never place `$?` after a semicolon in the SAME `-c` string expecting the prior
+  command's status — single-quote so `$?` expands INSIDE the child, or capture each command's
+  own exit code separately (`execFileSync`/spawnSync status), never a glued one-liner.**
+- **Guard:** the engine gate runner uses `execFileSync` with its own status check, never a
+  string-glued exit-code echo.
 
-### L-078 · 2026-09-05 · process · close-out re-check
+### L-109 · 2026-09-11 · process · registry-shard commits
 
-- **Symptom:** `LESSONS.md` keeps merging CLEANLY into duplicate ids — L-054 four times, then
-  L-058, L-061, L-067 and L-074, each renumbered after the fact.
-- **Root cause:** two branches append under DIFFERENT `##` section headings, so git finds no
-  textual conflict; both derived the same next id from the base they branched off, and the union
-  keeps both entries with the same number.
-- **Lesson:** **After EVERY rebase or merge, run `node scripts/validate-lessons.mjs` before
-  appending: renumber your entries to the MERGED file's `nextId` and archive back to the cap
-  first. An id belongs to whichever branch LANDS first, never to whoever wrote it first.**
-- **Guard:** `validate-lessons` (DUPLICATE ID, COUNT MISMATCH, OVER CAP), step 2 of
-  `npm run verify` and re-run in CI; carry this as a line in the rebase checklist.
+- **Symptom:** a push after a registry-shard commit was refused by campaign-check for "stale"
+  Jest freshness, though the test files were untouched and had passed minutes earlier.
+- **Root cause:** a registry-shard commit (`.claude/campaign/**`) moves HEAD, which the freshness
+  gate compares reports against; the pre-push hook has no docs-only bypass for this commit class.
+- **Lesson:** **After a registry-shard commit, regenerate the affected workspace's Jest
+  freshness report BEFORE verify/push — such a commit is not exempt just because it touched no
+  test file.**
+- **Guard:** campaign-check's freshness gate (already refuses a stale report by name with the
+  regen command) — this is a usage note on WHEN to regenerate.
 
 ### L-041 · 2026-09-01 · process
 
@@ -79,23 +78,43 @@
 - **Guard:** none — judgment. A gate demanding a repo file while you work in a worktree is the cue
   to check which tree that path actually lands in.
 
-### L-069 · 2026-09-04 · process · #597
-
-- **Symptom:** claiming a batch made the dispatcher offer the batch touching the same files to a
-  second agent; a copied claim grammar freed another script's leases.
-- **Root cause:** the scheduler removed in-flight work from the candidate list before building the
-  conflict graph, so taking a batch DELETED its edges; and a protocol restated by eye drifted on
-  three details, each toward the permissive read.
-- **Lesson:** **Excluding an entity from a constraint problem deletes its constraints — model
-  in-progress work as an OCCUPANT that holds capacity and keeps its edges, never as a deletion. A
-  protocol restated in a second file drifts toward whatever is permissive: extract the reading as a
-  pure function, test it against the other side's exact payloads, and make both files say they
-  change together.**
-- **Guard:** busy batches pre-coloured into wave 1, `CONFLICTING` includes `in-flight`; `readClaims`
-  is pure and asserted against the three comment sets that broke it; both files carry the
-  paired-change warning.
-
 ## tooling
+
+### L-105 · 2026-09-11 · tooling · train-4 engine gate
+
+- **Symptom:** two engine runs lost their whole Jest gate to one flag position — a spec path
+  placed after `--reporters=default` was consumed as a second reporter MODULE NAME, not a test
+  target, so the run "passed" with zero real tests executed.
+- **Root cause:** Jest's CLI keeps swallowing bare tokens after `--reporters` (a list flag) until
+  the next `--`-prefixed option — a positional placed after it belongs to the flag, not the run.
+- **Lesson:** **`--reporters=default` (or any multi-value Jest flag) must be the LAST token on
+  the command line — every positional (spec path, pattern) goes BEFORE it.**
+- **Guard:** none yet — propose an engine arg lint rejecting tokens after `--reporters=...`, plus
+  a RESUME-card review line.
+
+### L-106 · 2026-09-11 · tooling · train-4 close-out
+
+- **Symptom:** a final Jest command whose only targets were brand-new spec files exited 1 at
+  Baseline and was silently EXCLUDED from the verdict — close-out read "no regression" from a
+  command that produced no real pass/fail signal.
+- **Root cause:** Jest exits non-zero when a pattern matches zero existing tests (true at
+  Baseline, before the new spec exists); nothing distinguished that from "ran and failed."
+- **Lesson:** **A Jest invocation whose targets can legitimately not exist yet needs
+  `--passWithNoTests`; close-out must confirm the T#/REG tests actually EXECUTED (a per-test
+  result line), never infer it from exit code alone.**
+- **Guard:** none yet — propose `--passWithNoTests` on the Baseline invocation and a close-out
+  check that greps the run's JSON for the expected test titles.
+
+### L-110 · 2026-09-11 · tooling · workflow-tool resume
+
+- **Symptom:** resuming a Workflow-tool run failed with `JSON Parse error: Expected '}'` — the
+  stored `args` field was truncated mid-string.
+- **Root cause:** stored-args serialization truncates near 4 KB; a run with long inlined
+  briefs/content (not paths) lost its closing brace on write, undetected until resume.
+- **Lesson:** **Keep every Workflow-tool run's stored args under 4 KB — pass paths and short
+  briefs, never inlined content or transcripts, or resume fails opaquely.**
+- **Guard:** the RESUME card records the args byte size at launch, so a run near the limit is
+  visible before resume is relied on.
 
 ### L-103 · 2026-09-10 · tooling · chore/next-15
 
@@ -302,37 +321,6 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   entry and the page's absence; a repo-wide sweep for the same shape filed 9 unbatched rows
   (B251–B259) rather than extending this one test to cover them.
 
-### L-091 · 2026-09-07 · testing · #661
-
-- **Symptom:** two deployed-E2E regression tests for real fixes stayed red for two deploys on
-  harness defects — a `getByText` on a value the page renders twice (strict-mode violation) and
-  a fixture that provisioned 25 pending orders for one customer through an API whose staff-create
-  path demands an explicit merge choice (409).
-- **Root cause:** the harness modelled the product from its own assumptions instead of through
-  the product's real contracts — an identifier's role on the page, and the API's guard for
-  repeated entities.
-- **Lesson:** **assert identifiers by ROLE (`getByRole("heading", …)`) never `getByText` when a
-  value can render more than once, and provision E2E fixtures THROUGH the product's own guards
-  (send the explicit choice the API demands — `mergeChoice: "separate"` — rather than multiplying
-  entities to dodge the guard, which pollutes the tenant).**
-- **Guard:** spec 37 REG-B80/B144 as landed; the register's T2 discharge needs the run id.
-
-### L-090 · 2026-09-07 · testing · #659
-
-- **Symptom:** a server-side KPI replacing a client memo passed every unit test and failed the
-  deployment E2E — the "Awaiting confirmation" tile read 0 (deployment E2E spec 22 REG-B11 red on
-  master `e02851af`).
-- **Root cause:** the port narrowed the memo's basis (DRAFT payments across every loaded invoice →
-  DRAFT payments on the OPEN set only) while pinning the NEW, narrowed basis in its own spec — so
-  the pin agreed with the port, not with the memo the port was supposed to reproduce.
-- **Lesson:** **when a client-side derivation moves to the server, transcribe the client's basis
-  VERBATIM into the server pin FIRST — quote the memo's filter/exclusions (or lack of them) in the
-  spec's own title/comment — then port to make that pin pass. A pin written from the port's own
-  code, after the port, proves the port is internally consistent, never that it reproduces what it
-  replaced.**
-- **Guard:** the m7 spec (`invoices.service.spec.ts`) now quotes the memo's basis verbatim in its
-  title and comment; deployment E2E spec 22 REG-B11 is the standing regression signal.
-
 ### L-076 · 2026-09-05 · testing · F13
 
 - **Symptom:** an E2E toast assertion via bare `getByText` hit a strict-mode violation
@@ -432,20 +420,6 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 
 ## deploy
 
-### L-077 · 2026-09-05 · deploy · close-out re-check
-
-- **Symptom:** an unattended retry loop whose header promised "total <= ~8 min" had no upper
-  bound at all, and the marker it writes when it gives up landed where nobody looks.
-- **Root cause:** the budget counted only the sleeps between attempts — every external `gh` call
-  was unbounded, so ONE hung call outlives the whole public window; and the marker path resolved
-  against the LAUNCHING directory, so a watchdog armed from a worktree hid its failure there.
-- **Lesson:** **A retry loop is only as bounded as its slowest call — give every external call a
-  timeout and state the budget as (sum of sleeps + sum of timeouts). And a failure marker must
-  land where a reader actually looks: one fixed place, named in the runbook step that tells them
-  to check it.**
-- **Guard:** `runGh`'s 60s timeout + `visibility-watchdog-script.spec.ts` (reachable-delay list,
-  `root=` on the start line, gated overrides); the runbook names the marker path.
-
 ### L-057 · 2026-09-04 · deploy · #609
 
 - **Symptom:** a process restart killed the agent session inside a public-repo CI window;
@@ -475,6 +449,18 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   `apps/api/src/common/schema-folder.spec.ts` in the radius.**
 - **Guard:** REG-B215 T2b + T16 in `orders.merge-idempotency.spec.ts`; the `schema-folder.spec.ts`
   model-count pin.
+
+### L-107 · 2026-09-11 · domain · train-4 Run A
+
+- **Symptom:** a NOWAIT advisory lock taken Invoice-first cycled (Postgres 40P01) against
+  `voidInvoice`'s own lock order; separately, folding `CONCURRENT_UPDATE` into `HANDLED_CODES`
+  (to silence a duplicate toast) also silenced the delete flow's real failure toast.
+- **Root cause:** two guards on the same row acquired locks in opposite orders; and a status was
+  added to a shared toast-suppression set without checking every OTHER caller that fires on it.
+- **Lesson:** **Take the Invoice lock LAST, after dependent-row locks release, matching
+  `voidInvoice`'s own order — a NOWAIT cycle is an ordering bug, not a timing one. Never add a
+  code to a shared suppression set without checking every caller it also silences.**
+- **Guard:** Run A pins P15–P22 (orders.service.spec / invoices.service.spec REG pins).
 
 ### L-100 · 2026-09-08 · domain · #678
 
