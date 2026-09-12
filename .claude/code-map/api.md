@@ -2377,3 +2377,57 @@ scheduled."`) to the generated invoice when the template references an archived 
 - Registry: F20 (B04, B142; B151 already proven via #555) proved on #682 and discharged to done
   in this follow-up — see [`mobile.md`](mobile.md) for the client-side train-1/train-2 pieces and
   F19's discharge (#681).
+
+### 2026-09-11/12 — CRM: GoHighLevel lead-handoff connector (new module, `crm_gohighlevel` add-on, dark)
+
+- **`crm/crm.types.ts`** — re-exports `CrmConnectionStatus`/`CrmTriggerMode`/`CrmHandoffStatus`
+  from `@prisma/client` for the module's internal type-only imports.
+- **`crm/crm-identity.ts`** — pure matching/normalization helpers: `normalizeEmail(raw)`,
+  `normalizePhoneE164(raw, region)` (never returns a raw phone — E.164 or `null`),
+  `slugUsername(name)` (3-30 char slug for a new customer's username).
+- **`crm/gohighlevel/gohighlevel.client.ts`** — `CrmAuthError`/`CrmRateLimitError`/`CrmHttpError`;
+  request/response interfaces (`GoHighLevelClientCreds`, `SearchOpportunitiesParams`,
+  `GhlOpportunity`, `GhlOpportunitySearchResponse`, `GhlContact`, `GhlCustomField`, `GhlTag`,
+  `GhlPipelineStage`, `GhlPipeline`); every request carries the GHL API `Version` header (T6).
+- **`crm/crm-connection.service.ts`** — `CrmConnectionService`: `getStatus(tenantId)` (never
+  selects `secretCipher` — T41), `saveConnection(tenantId, dto, userId)` (AES-256-GCM-encrypts
+  the token — never stores raw, R1), `testConnection(tenantId, userId)` (R2),
+  `disconnect(tenantId, userId)`, `updateConfig(tenantId, dto, userId)`,
+  `listPipelines(tenantId)`, `listHandoffs(tenantId, dto)`.
+- **`crm/dto/{save-crm-connection,update-crm-config,list-handoffs}.dto.ts`** —
+  `SaveCrmConnectionDto` (`token`, `locationId`), `UpdateCrmConfigDto` (`enabled`, `dryRun`,
+  `triggerMode`, `pipelineId`, `stageId`, `stageName`, `startFrom`, `writeBackFields`,
+  `writeBackTag`, …), `ListHandoffsDto` (status/pagination filters for `GET .../handoffs`).
+- **`crm/crm.controller.ts`** — `CrmController` (`@Controller("crm/gohighlevel")`, JWT + OPERATOR
+  role + per-handler `@UseGuards(AddonGuard) @RequireAddon("crm_gohighlevel")`): `GET /`,
+  `PATCH /connection`, `POST /connection/test`, `DELETE /connection`, `PATCH /config`,
+  `GET /pipelines`, `GET /handoffs`. (Note: `addon-gate-registry.ts`'s `crm_gohighlevel.routes`
+  and `apps/web/lib/api/crm.ts` also reference `POST /sync`,
+  `POST/GET /handoffs/:id/{retry,dismiss}`, and `POST /import-existing{,/preview}` — those are
+  NOT yet routes on this controller as of WP5; `gohighlevel-poll.service.ts` has the
+  `retryHandoff`/`dismissHandoff`/`pollTenant` service methods a future controller pass would
+  wire up.)
+- **`crm/gohighlevel/gohighlevel-poll.service.ts`** — `GoHighLevelPollService`: `pollAll()` (the
+  `@LeaderCron("*/3 * * * *", "crm.pollAll")` entry point, one tenant's failure never blocks
+  another — see `crm.module.ts`), `pollTenant(tenantId, opts)` (50-page/120s budget, 10s
+  per-call timeout, cutoff enforced unless `opts.ignoreCutoff` — R11, T15),
+  `retryHandoff(id)`, `dismissHandoff(id)`; `CrmSyncCounts`/`ImportPreviewResult` result shapes.
+- **`crm/gohighlevel/gohighlevel-handoff.service.ts`** — `GoHighLevelHandoffService`:
+  `matchExistingCustomer(contact, region)` (precedence ref \u2192 email \u2192 phone \u2192 name,
+  T22-T25), `handle(...)` (create-or-link + write-back orchestration, `dryRun` short-circuits
+  before any customer or GHL write \u2014 R21).
+- **`crm/gohighlevel/gohighlevel-writeback.service.ts`** — `GoHighLevelWritebackService`:
+  `ensureCustomFields(connection)`, `writeBack(...)` (idempotent: full-overwrite custom-field
+  PUT \u2014 T34 \u2014 idempotent tag assignment, `noteWritten` guard), `nextAttemptAt(attempts, now)`
+  (retry backoff schedule, R20).
+- **`crm/crm.module.ts`** — `CrmModule`; wires the controller + services, registers the
+  `crm.pollAll` `@LeaderCron` job (see `common/no-bare-cron.spec.ts` for the bare-`@Cron` ban this
+  must satisfy) and the once-per-transition `NEEDS_ATTENTION` operator email (R12).
+- **`billing/addon-gate-registry.ts`** — new `crm_gohighlevel` entry, `state: "dark"`, `added:
+"2026-09-11"`, `reviewBy: "2027-03-11"`; grant path is Platform Admin → Tenants → add-ons.
+- **`scripts/crm-gohighlevel-check.mjs`** (repo-root `apps/api/scripts/`, WP5) — manual-only
+  sandbox check, never in a gate: logs in, saves+tests a connection against
+  `GHL_SANDBOX_TOKEN`/`GHL_SANDBOX_LOCATION_ID`, lists pipelines, then polls
+  `GET /handoffs` for up to `CRM_CHECK_POLL_TIMEOUT_MS` waiting for the cron poller to record a
+  row. `assertTestTenant()`-gated (`SMOKE_TENANT_SLUG` default `test`); prints the resolved host
+  before any call (L-074).

@@ -30,6 +30,7 @@ const EXPECTED_NAMES = [
   "regulated-filing.autoPrepareClosedFilings",
   "commission-reconciliation.reconcileCommissions",
   "tobacco-report.generateMonthlyReports",
+  "crm-gohighlevel.poll",
 ].sort();
 
 function collectSourceFiles(dir: string, out: string[] = [], includeSpecs = false): string[] {
@@ -107,11 +108,11 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("has exactly 13 `@LeaderCron(` sites, every one of them well-formed", () => {
+  it("has exactly 14 `@LeaderCron(` sites, every one of them well-formed", () => {
     const declared = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON), 0);
     const wellFormed = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON_SITE), 0);
 
-    expect(declared).toBe(13);
+    expect(declared).toBe(14);
     // A site that does not match the full `(expr, "name")` shape would be invisible to the name
     // assertions below, so pin the two counts together.
     expect(wellFormed).toBe(declared);
@@ -145,7 +146,7 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     });
   });
 
-  it("registers the 13 expected job names, all unique", () => {
+  it("registers the 14 expected job names, all unique", () => {
     const names: string[] = [];
     for (const s of sources) {
       const re = new RegExp(LEADER_CRON_SITE.source, "g");

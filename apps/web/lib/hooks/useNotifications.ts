@@ -9,7 +9,7 @@ import { useTenant } from "@/components/tenant-provider";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type NotificationType = "urgent" | "route" | "driver" | "stock" | "buyer";
+export type NotificationType = "urgent" | "route" | "driver" | "stock" | "buyer" | "crm";
 
 export interface AppNotification {
   id: string;
@@ -18,6 +18,8 @@ export interface AppNotification {
   description: string;
   timestamp: number;
   read: boolean;
+  /** Optional deep link — when set, the bell renders the item as a link (e.g. crm.lead.handoff). */
+  href?: string;
 }
 
 // ─── LocalStorage persistence ─────────────────────────────────────────────────
@@ -158,12 +160,23 @@ export function useNotifications() {
         description: `${data.buyerName} connected to ${data.customerName}`,
       });
 
+    // GoHighLevel lead handoff (spec R30) — a customer was just created/linked from a
+    // GoHighLevel lead; the bell entry links straight to the new customer record.
+    const onCrmHandoff = (data: { customerId: string; customerName: string }) =>
+      push({
+        type: "crm",
+        title: "New customer from GoHighLevel",
+        description: `${data.customerName} — finish onboarding`,
+        href: `/customers/${data.customerId}`,
+      });
+
     socket.on("order.urgent.placed", onUrgentOrder);
     socket.on("route.stop.completed", onStopCompleted);
     socket.on("driver.status.updated", onDriverStatus);
     socket.on("inventory.low.stock", onLowStock);
     socket.on("buyer.connect.requested", onBuyerConnectRequested);
     socket.on("buyer.connect.autolinked", onBuyerAutoLinked);
+    socket.on("crm.lead.handoff", onCrmHandoff);
 
     return () => {
       socket.off("order.urgent.placed", onUrgentOrder);
@@ -172,6 +185,7 @@ export function useNotifications() {
       socket.off("inventory.low.stock", onLowStock);
       socket.off("buyer.connect.requested", onBuyerConnectRequested);
       socket.off("buyer.connect.autolinked", onBuyerAutoLinked);
+      socket.off("crm.lead.handoff", onCrmHandoff);
     };
   }, [push, queryClient]);
 

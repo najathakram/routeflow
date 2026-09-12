@@ -186,6 +186,7 @@ model Tenant {
   commissionStatements     CommissionStatement[]
   commissionStatementLines CommissionStatementLine[]
   commissionPayouts        CommissionPayout[]
+  crmConnection            CrmConnection?
 
   @@index([slug])
   @@index([status])

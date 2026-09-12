@@ -1,0 +1,219 @@
+{
+  "planPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/build-plan.md",
+  "discoveryPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/discovery.md",
+  "specPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/spec.md",
+  "uxSpecPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/ux-spec.md",
+  "testPlanPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/test-plan.md",
+  "designSystemPath": ".claude/pipeline/design-system.md",
+  "lessonsPath": ".claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-12T03:58:27Z",
+  "scale": "major",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-crm",
+  "context": "GHL->RouteFlow CRM connector; dark-gated; no uiVerify.",
+  "formatCommand": "npx prettier --write",
+  "testPackages": [
+    {
+      "id": "TP1",
+      "files": ["apps/api/src/crm/crm-identity.spec.ts"],
+      "brief": "see test-plan.md TP1 (T1-T5)",
+      "title": "identity helpers"
+    },
+    {
+      "id": "TP2",
+      "files": ["apps/api/src/crm/gohighlevel/gohighlevel.client.spec.ts"],
+      "brief": "see test-plan.md TP2 (T6-T12)",
+      "title": "GHL client"
+    },
+    {
+      "id": "TP3",
+      "files": ["apps/api/src/crm/gohighlevel/gohighlevel-poll.service.spec.ts"],
+      "brief": "see test-plan.md TP3 (T13-T21,T52,T54)",
+      "title": "poll service"
+    },
+    {
+      "id": "TP4",
+      "files": ["apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.spec.ts"],
+      "brief": "see test-plan.md TP4 (T22-T31,T51)",
+      "title": "handoff service"
+    },
+    {
+      "id": "TP5",
+      "files": ["apps/api/src/crm/gohighlevel/gohighlevel-writeback.service.spec.ts"],
+      "brief": "see test-plan.md TP5 (T32-T38)",
+      "title": "write-back service"
+    },
+    {
+      "id": "TP6",
+      "files": ["apps/api/src/crm/crm.controller.spec.ts"],
+      "brief": "see test-plan.md TP6 (T39-T44,T50,T53)",
+      "title": "controller + connection service"
+    },
+    {
+      "id": "TP7",
+      "files": [
+        "apps/web/app/(dashboard)/settings/settings-gohighlevel.test.tsx",
+        "apps/web/lib/hooks/useNotifications.crm.test.ts"
+      ],
+      "brief": "see test-plan.md TP7 (T45-T49)",
+      "title": "web tab + bell"
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "cd apps/api && npx jest src/crm --maxWorkers=2",
+      "cd apps/web && npx jest settings-gohighlevel useNotifications.crm"
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "WP1",
+      "files": [
+        "apps/api/prisma/schema/platform.prisma",
+        "apps/api/prisma/schema/tenancy.prisma",
+        "apps/api/prisma/migrations/20260911120000_crm_lead_handoff/migration.sql",
+        "apps/api/scripts/split-prisma-schema.mjs",
+        "packages/types/api/enums.ts",
+        "packages/types/api/crm.ts",
+        "packages/types/index.ts",
+        "apps/api/src/common/enum-parity.spec.ts",
+        "apps/api/src/testing/prisma-mock.ts",
+        "apps/api/package.json",
+        "apps/api/src/crm/crm.types.ts"
+      ],
+      "brief": "see build-plan.md WP1",
+      "satisfies": ["R26-R28"],
+      "model": "claude-sonnet-5",
+      "effort": "medium",
+      "title": "schema + shared types"
+    },
+    {
+      "id": "WP2",
+      "files": [
+        "apps/api/src/crm/crm-identity.ts",
+        "apps/api/src/crm/gohighlevel/gohighlevel.client.ts",
+        "apps/api/src/crm/crm-connection.service.ts",
+        "apps/api/src/crm/dto/save-crm-connection.dto.ts",
+        "apps/api/src/crm/dto/update-crm-config.dto.ts",
+        "apps/api/src/crm/dto/list-handoffs.dto.ts",
+        "apps/api/src/crm/crm.controller.ts"
+      ],
+      "brief": "see build-plan.md WP2",
+      "dependsOn": ["WP1"],
+      "satisfies": ["R1-R7", "R22", "R25"],
+      "provenBy": ["T1-T12", "T39-T44", "T50", "T53"],
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "title": "api core: client, connection, controller"
+    },
+    {
+      "id": "WP3",
+      "files": [
+        "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.ts",
+        "apps/api/src/crm/gohighlevel/gohighlevel-writeback.service.ts",
+        "apps/api/src/crm/crm.module.ts",
+        "apps/api/src/app.module.ts",
+        "apps/api/src/gateways/routeflow.gateway.ts",
+        "apps/api/src/billing/addon-gate-registry.ts",
+        "apps/api/src/common/no-bare-cron.spec.ts"
+      ],
+      "brief": "see build-plan.md WP3",
+      "dependsOn": ["WP1", "WP2"],
+      "satisfies": ["R8-R21", "R23", "R24"],
+      "provenBy": ["T13-T38", "T51", "T52", "T54"],
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "title": "api handoff: poll, handoff, write-back, module, gate"
+    },
+    {
+      "id": "WP4",
+      "files": [
+        "apps/web/lib/api/crm.ts",
+        "apps/web/app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx",
+        "apps/web/app/(dashboard)/settings/_components/SettingsHub.tsx",
+        "apps/web/app/(dashboard)/settings/page.tsx",
+        "apps/web/lib/hooks/useNotifications.ts",
+        "apps/web/app/(dashboard)/layout.tsx",
+        "apps/web/app/(dashboard)/customers/page.tsx"
+      ],
+      "brief": "see build-plan.md WP4",
+      "dependsOn": ["WP1"],
+      "satisfies": ["R29-R31"],
+      "provenBy": ["T45-T49"],
+      "model": "claude-sonnet-5",
+      "effort": "medium",
+      "title": "web settings tab + bell"
+    },
+    {
+      "id": "WP5",
+      "files": [
+        "docs/adr/0004-crm-lead-handoff.md",
+        "docs/runbooks/gohighlevel-client-setup.md",
+        "apps/api/scripts/crm-gohighlevel-check.mjs",
+        ".claude/code-map/api.md",
+        ".claude/code-map/web.md",
+        ".claude/code-map/_meta.json"
+      ],
+      "brief": "see build-plan.md WP5",
+      "dependsOn": ["WP3", "WP4"],
+      "satisfies": ["R32-R33"],
+      "model": "claude-sonnet-5",
+      "effort": "low",
+      "title": "docs + sandbox check + code map"
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "npm run check-types -w apps/api",
+      "npm run check-types -w apps/web",
+      "npm run check-types -w @routeflow/types",
+      "npm run lint -w apps/api"
+    ],
+    "final": [
+      "npm test -w apps/api -- --maxWorkers=2",
+      "npm run test:repo-truth -w apps/api",
+      "npm test -w apps/web",
+      "npm run lint -w apps/web",
+      "cd apps/api && node scripts/split-prisma-schema.mjs --check",
+      "npm run validate-lock",
+      "npm run lint:migrations",
+      "npm run format:check"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "behavior": "cutoff blocks stale opps unless ignoreCutoff",
+        "test": "T15"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.ts",
+        "behavior": "match order ref>email>phone>name",
+        "test": "T22"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-writeback.service.ts",
+        "behavior": "PUT body has only customFields",
+        "test": "T34"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "behavior": "getStatus never returns secretCipher",
+        "test": "T41"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel.client.ts",
+        "behavior": "every request carries Version header",
+        "test": "T6"
+      },
+      {
+        "file": "apps/api/src/crm/crm-identity.ts",
+        "behavior": "phones normalized to E.164, never raw",
+        "test": "T3"
+      }
+    ]
+  },
+  "runDir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-crm/.claude/pipeline/2026-09-11-crm-gohighlevel-handoff"
+}

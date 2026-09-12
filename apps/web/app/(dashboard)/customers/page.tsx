@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   Pencil,
@@ -254,6 +254,14 @@ export default function CustomersPage() {
   const regulatedFilter = urlFilters.regulated;
   const [typeFilter, setTypeFilter] = React.useState("");
   const [tagFilter, setTagFilter] = React.useState("");
+  // Seed the tag filter from ?tag= (bell notification deep-links, e.g. the
+  // GoHighLevel handoff card's "routeflow-customer" tag chip) — read-once per
+  // param change, never overwrites an operator's own in-page selection.
+  const searchParams = useSearchParams();
+  React.useEffect(() => {
+    const t = searchParams.get("tag");
+    if (t) setTagFilter(t);
+  }, [searchParams]);
   const [unassignedOnly, setUnassignedOnly] = React.useState(false);
   const [isAddOpen, setIsAddOpen] = React.useState(false);
   const [isImportOpen, setIsImportOpen] = React.useState(false);

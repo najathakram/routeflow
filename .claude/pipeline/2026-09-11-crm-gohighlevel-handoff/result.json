@@ -1,0 +1,105 @@
+{
+  "mode": "light-loop",
+  "scale": "major",
+  "clean": true,
+  "startedAt": "2026-09-12T01:31:17.752Z",
+  "endedAt": "2026-09-12T12:50:49.603Z",
+  "phaseReport": [
+    {
+      "phase": "Mutation probe",
+      "ran": true,
+      "agents": 9,
+      "tokens": 5945706,
+      "model": "claude-sonnet-5",
+      "effort": null
+    },
+    {
+      "phase": "Gate & Review",
+      "ran": true,
+      "agents": 13,
+      "tokens": 21189025,
+      "model": "claude-sonnet-5",
+      "effort": null
+    },
+    {
+      "phase": "Red gate",
+      "ran": true,
+      "agents": 6,
+      "tokens": 5384638,
+      "model": "claude-sonnet-5",
+      "effort": null
+    },
+    {
+      "phase": "Verify",
+      "ran": true,
+      "agents": 13,
+      "tokens": 7917769,
+      "model": "claude-opus-5",
+      "effort": null
+    },
+    {
+      "phase": "Baseline",
+      "ran": true,
+      "agents": 4,
+      "tokens": 7058435,
+      "model": "claude-haiku-4-5-20251001",
+      "effort": null
+    },
+    {
+      "phase": "Implement",
+      "ran": true,
+      "agents": 6,
+      "tokens": 68422644,
+      "model": "claude-sonnet-5",
+      "effort": null
+    },
+    {
+      "phase": "Fix",
+      "ran": true,
+      "agents": 1,
+      "tokens": 703123,
+      "model": "claude-sonnet-5",
+      "effort": null
+    },
+    {
+      "phase": "Author tests",
+      "ran": true,
+      "agents": 8,
+      "tokens": 19199707,
+      "model": "claude-sonnet-5",
+      "effort": null
+    },
+    {
+      "phase": "Explore",
+      "ran": true,
+      "agents": 8,
+      "tokens": 21476395,
+      "model": "claude-sonnet-5",
+      "effort": null
+    },
+    {
+      "phase": "general-purpose",
+      "ran": true,
+      "agents": 14,
+      "tokens": 89832525,
+      "model": "claude-sonnet-5",
+      "effort": null
+    },
+    {
+      "phase": "Plan",
+      "ran": true,
+      "agents": 1,
+      "tokens": 7878392,
+      "model": "claude-sonnet-5",
+      "effort": null
+    }
+  ],
+  "confirmedByPhase": {
+    "gate-review": 63,
+    "verify": 63,
+    "light-loop-opus-review": 10,
+    "mutation-probe": 1
+  },
+  "remainingFindings": [],
+  "telemetry": "true"
+}

@@ -173,24 +173,6 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   `npm run local:drift` is the output-side oracle — both cheap/re-runnable, unlike a `.d.ts` diff.
   Its comment stripper treats a quote left unterminated on its line as regex text, never a string opener.
 
-### L-034 · 2026-09-01 · tooling · #TBD
-
-- **Symptom:** `campaign-check` red on another batch's rows after a rebase, and a mutation probe
-  that reported nothing. Both were reading an artifact no run had refreshed.
-- **Root cause:** the campaign artifact is written by a jest REPORTER, so it only refreshes when
-  jest actually EXECUTES. Repo-root ledger files are not hashed inputs (`globalDependencies` is
-  the lockfile plus package manifests; the test task's `inputs` are `$TURBO_DEFAULT$`), so a
-  rebase cannot bust the cache — turbo replays a green summary and the stale artifact survives.
-  Scoped runs (`jest -t REG-B##`, one per mutation probe) narrow it to just those tests, and a
-  cache-replayed "full suite" afterwards does not overwrite that.
-- **Lesson:** **A generated artifact is evidence only when you can name the tool and the run that
-  produced it.** Extends [[L-009]]: a cache replay does not merely fail to prove the tests ran —
-  it silently PRESERVES whatever the last scoped run wrote. Same shape as regenerating a lockfile
-  with the wrong npm major: the diff reads as content drift when it is tooling drift.
-- **Guard:** force execution (`turbo run test --force` or direct `npx jest`), then assert the
-  artifact's mtime post-dates the change, before reading any gate that consumes it. Freshness is
-  verified, never inferred from a green summary.
-
 ### L-010 · 2026-08-29 · tooling
 
 - **Symptom:** one workspace's tests "failed" under verify while the same code passed everywhere
@@ -417,6 +399,20 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   When you touch one side of such a branch, either exercise the other side or state plainly that
   it is unverified.**
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
+
+### L-113 · 2026-09-12 · testing · CRM GoHighLevel handoff
+
+- **Symptom:** the handoff's ExternalRef lookup used `where: { source: "gohighlevel" }` though
+  the Prisma column is `externalSource`; 99 unit tests stayed green since every Prisma call was a
+  `jest.fn()` mock typed `any` — a real client throws on statement one, so no customer is ever
+  created in prod.
+- **Root cause:** a mock-boundary spec proves control flow, not the schema contract.
+- **Lesson:** **every new Prisma call site needs a proof its `where`/`data` matches the schema —
+  a DB-lane spec, or a unit spec asserting the exact `where` against a
+  `Prisma.<Model>WhereInput` literal so `tsc` rejects an unknown column — an `any`-typed mock
+  proves nothing about columns.**
+- **Guard:** `gohighlevel-handoff.service.spec.ts` #1 (filters on `externalSource`, never
+  `source`) + the Opus review in fix-plan.md round 2.
 
 ## domain
 

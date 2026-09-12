@@ -238,6 +238,8 @@ const MODEL_DOMAIN = {
   ImportQueueItem: "platform",
   AiUsageEvent: "platform",
   IdempotencyKey: "platform",
+  CrmConnection: "platform",
+  CrmHandoff: "platform",
 
   // ─── compliance ────────────────────────────────────────────────────────────
   TobaccoReport: "compliance",

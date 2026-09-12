@@ -131,6 +131,11 @@ const GROUPS: HubGroup[] = [
         desc: "API key for invoice/bill scanning",
         href: "/settings?tab=integrations",
       },
+      {
+        label: "GoHighLevel",
+        desc: "Create customers from won leads",
+        href: "/settings?tab=gohighlevel",
+      },
     ],
   },
   {

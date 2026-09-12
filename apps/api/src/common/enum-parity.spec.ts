@@ -83,6 +83,9 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["CHANGE_REQUEST_STATUS_VALUES", "ChangeRequestStatus"],
   ["RECURRING_FREQUENCY_VALUES", "RecurringFrequency"],
   ["MOVEMENT_TYPE_VALUES", "MovementType"],
+  ["CRM_CONNECTION_STATUS_VALUES", "CrmConnectionStatus"],
+  ["CRM_TRIGGER_MODE_VALUES", "CrmTriggerMode"],
+  ["CRM_HANDOFF_STATUS_VALUES", "CrmHandoffStatus"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -112,7 +115,7 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
  *   - enum REMOVED → drop its `ENUM_TABLE` row (if it had one), then bump the constant.
  * Bumping the number without that decision is the one way to defeat this tripwire.
  */
-const PINNED_PRISMA_ENUM_COUNT = 80;
+const PINNED_PRISMA_ENUM_COUNT = 83;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

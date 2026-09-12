@@ -86,6 +86,7 @@ import { NotificationsSettingsTab } from "./_components/NotificationsSettingsTab
 import { SettingsHub } from "./_components/SettingsHub";
 import { SendingDomainCard } from "./_components/SendingDomainCard";
 import { StripeConnectCard } from "./_components/StripeConnectCard";
+import GoHighLevelSettingsTab from "./_components/GoHighLevelSettingsTab";
 import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 
@@ -2805,6 +2806,11 @@ function SettingsPageInner() {
     costing: { title: "Costing", node: <CostingTab />, width: "max-w-3xl" },
     remittance: { title: "How to pay", node: <RemittanceTab />, width: "max-w-3xl" },
     integrations: { title: "Integrations", node: <AIIntegrationsTab />, width: "max-w-3xl" },
+    gohighlevel: {
+      title: "GoHighLevel",
+      node: <GoHighLevelSettingsTab />,
+      width: "max-w-4xl",
+    },
     account: { title: "My account", node: <MyAccountTab />, width: "max-w-3xl" },
     ...(isAdmin
       ? {
