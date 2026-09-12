@@ -2389,6 +2389,7 @@ scheduled."`) to the generated invoice when the template references an archived 
   request/response interfaces (`GoHighLevelClientCreds`, `SearchOpportunitiesParams`,
   `GhlOpportunity`, `GhlOpportunitySearchResponse`, `GhlContact`, `GhlCustomField`, `GhlTag`,
   `GhlPipelineStage`, `GhlPipeline`); every request carries the GHL API `Version` header (T6).
+- **`crm/crm.module.ts`** (#703, 2026-09-12) — `imports` now carries `BillingModule` (provider/exporter of `AddonService`+`AddonGuard`); without it the per-handler `@UseGuards(AddonGuard)` in `crm.controller.ts` threw `UnknownDependenciesException` at boot (prod 502, W16). Guard: **`common/addon-guard-module-import.spec.ts`** — repo-truth: every `*.controller.ts` referencing `AddonGuard` must be registered by a module whose `imports` include `BillingModule` (walks `src/`, matches `controllers: [...]`; L-115).
 - **`crm/crm-connection.service.ts`** — `CrmConnectionService`: `getStatus(tenantId)` (never
   selects `secretCipher` — T41), `saveConnection(tenantId, dto, userId)` (AES-256-GCM-encrypts
   the token — never stores raw, R1), `testConnection(tenantId, userId)` (R2),

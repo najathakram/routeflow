@@ -11,45 +11,6 @@
 
 ## process
 
-### L-108 · 2026-09-11 · process · engine gate runner
-
-- **Symptom:** `bash -c "cmd; echo EXIT=$?"` always printed `EXIT=0` even when `cmd` failed — a
-  red gate read green.
-- **Root cause:** `$?` in that string is expanded by the OUTER shell at parse time, before the
-  child runs — it reads the echo's own status, never `cmd`'s.
-- **Lesson:** **Never place `$?` after a semicolon in the SAME `-c` string expecting the prior
-  command's status — single-quote so `$?` expands INSIDE the child, or capture each command's
-  own exit code separately (`execFileSync`/spawnSync status), never a glued one-liner.**
-- **Guard:** the engine gate runner uses `execFileSync` with its own status check, never a
-  string-glued exit-code echo.
-
-### L-109 · 2026-09-11 · process · registry-shard commits
-
-- **Symptom:** a push after a registry-shard commit was refused by campaign-check for "stale"
-  Jest freshness, though the test files were untouched and had passed minutes earlier.
-- **Root cause:** a registry-shard commit (`.claude/campaign/**`) moves HEAD, which the freshness
-  gate compares reports against; the pre-push hook has no docs-only bypass for this commit class.
-- **Lesson:** **After a registry-shard commit, regenerate the affected workspace's Jest
-  freshness report BEFORE verify/push — such a commit is not exempt just because it touched no
-  test file.**
-- **Guard:** campaign-check's freshness gate (already refuses a stale report by name with the
-  regen command) — this is a usage note on WHEN to regenerate.
-
-### L-041 · 2026-09-01 · process
-
-- **Symptom:** 13 rows sat in `proven` — merged, deployed, post-deploy run already green — while
-  every scoreboard counted them outstanding. Then the run cited as their proof turned out to have
-  executed **nothing**.
-- **Root cause:** two failures stacked. The proof fires off the deploy signal and lands after the
-  session that merged the fix has ended, so the flip to `done` belongs to nobody. And the run
-  everyone pointed at (a superseded deployment) reported conclusion **success with every real step
-  `skipped`** — a green job that ran zero tests.
-- **Lesson:** **When the evidence authorizing a state change arrives asynchronously, assign the
-  flip — and when you read that evidence, read the STEP conclusions, never the job's.** A job is
-  green when it is skipped, and a suite is green when a test is skipped; neither says your proof ran.
-- **Guard:** `gh run view <id> --json jobs` — assert the specific step is `success`, not
-  `skipped`; for one test, grep the log for its `✓`. Step COUNT is not execution.
-
 ### L-035 · 2026-09-01 · process · #TBD
 
 - **Symptom:** B120's POD archive was designed onto a generic `AuditLog` row; review found
@@ -414,6 +375,23 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 - **Guard:** `gohighlevel-handoff.service.spec.ts` #1 (filters on `externalSource`, never
   `source`) + the Opus review in fix-plan.md round 2.
 
+### L-115 · 2026-09-12 · testing · #703 (W16 outage)
+
+- **Symptom:** #702 shipped a controller with per-handler `@UseGuards(AddonGuard)` in a module
+  that never imported `BillingModule`; unit specs (boundary mocks), lint and `tsc` were all green,
+  the Docker healthcheck hid the boot crash, and prod API answered 502 for 26 minutes
+  (`UnknownDependenciesException` at InstanceLoader).
+- **Root cause:** Nest resolves a guard's constructor params from the REGISTERING module's scope;
+  nothing in the gate chain compiles the Nest container, so a missing module import is invisible
+  until the process boots.
+- **Lesson:** **module wiring is a boot-time contract that boundary mocks and the type-checker
+  cannot see — any diff touching `*.module.ts` or adding a guarded controller needs a proof the
+  container compiles (the compose boot gate `local:up` → `local:validate`, or a repo-truth spec on
+  the wiring shape) before it is pushed.**
+- **Guard:** `apps/api/src/common/addon-guard-module-import.spec.ts` (every `AddonGuard` controller's
+  registering module imports `BillingModule`; proven red on the pre-fix tree) + lane rule: compose
+  boot before any push that changes module wiring.
+
 ## domain
 
 ### L-104 · 2026-09-11 · domain · B215
@@ -576,3 +554,36 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
   `uuidIds: true` seeds + the uuid-id cases in plane-sync/plane-apply self-tests; Landmine 15
   (live shapes) in the harness build plan. Related [[L-111]] (hook/branch gate), [[L-074]]
   (fixture realism).
+
+### L-114 · 2026-09-12 · tooling · plane-learning self-test tmpdir
+
+- **Symptom:** a lead's pre-push verify failed at `plane-learning.self-test: 1 FAILURE(S)` while
+  the suite passed alone; build agents saw the same "tmpdir count blip" whenever two suites
+  overlapped on the host.
+- **Root cause:** each plane self-test proved "leaves no dir behind" by counting
+  `<name>-self-test-*` entries in the shared `os.tmpdir()` before/after — another process's
+  fixtures (a second verify chain, a builder's test run) change the count, so the invariant
+  measured the host, not the process.
+- **Lesson:** **Global counts over a shared resource (tmpdir entries, ports, ledger lines) are
+  never process invariants — a test proves cleanup by tracking the exact paths it created under a
+  per-run unique prefix and asserting those are gone, so parallel runs on one host cannot fail
+  each other.**
+- **Guard:** `FIXTURE_PREFIX` (name + pid + random) and tracked-path assertions in the six plane
+  self-tests (commit 0ed13a56); OPS flake note; one verify chain at a time remains the host rule
+  for load-sensitive suites (see [[L-070]] class).
+
+### L-116 · 2026-09-12 · tooling · plane self-test machine-root invariants
+
+- **Symptom:** a lead's pre-push verify failed at plane-learning.self-test's "real
+  machine-shared runs.jsonl byte-unchanged" check — ANOTHER session's hooks (Stop -> plane-sync,
+  SessionStart -> plane-triage) had legitimately appended to it mid-run.
+- **Root cause:** every "real file byte-identical before/after" invariant in the plane self-tests
+  binds on `machineRoot()`'s shared dir — the SAME dir every worktree resolves to (see [[L-114]])
+  — so it races any other session, not just a concurrent run of the same suite.
+- **Lesson:** **A self-test invariant must never bind to a shared machine-local file — assert
+  only on fixtures the run owns. A file another session can write at any moment needs a throwaway
+  stand-in the test controls end to end, never the real shared path.**
+- **Guard:** `PLANE_MACHINE_ROOT` (`plane-client.mjs`, gated behind `PLANE_SYNC_SELF_TEST=1`)
+  lets every plane self-test point `machineRoot()` at its own temp root; the five real-runs.jsonl
+  invariants became a temp-root-only check, and plane-learning's `T-concurrent-writer` proves
+  isolation under a genuine concurrent writer. Related [[L-114]].

@@ -1295,14 +1295,14 @@ so archiving it loses no enforcement.
   `voidInvoice`'s own order — a NOWAIT cycle is an ordering bug, not a timing one. Never add a
   code to a shared suppression set without checking every caller it also silences.**
 - **Guard:** Run A pins P15–P22 (orders.service.spec / invoices.service.spec REG pins).
-One active entry archived to clear headroom for L-112 (testing, CRM GoHighLevel handoff,
-feat/crm-gohighlevel-handoff, worktree rf-crm): L-034. Uncited by any `[[L-034]]` reference
-anywhere in the active register, and fully guarded (`turbo run test --force` + an mtime
-post-dates-the-change assertion, procedural but real and still enforceable). It is the oldest
-active entry by id among the fully-guarded, uncited candidates — `L-010`/`L-025`/`L-027`/`L-035`
-sit lower by date but each carries `Guard: none — judgment`, so they are not compaction-eligible
-under the "does the guard make the entry safe to stop reading" test; `L-041` and `L-074` are
-each cited once ([[L-041]] in L-050, [[L-074]] in L-111) and were kept for that reason.
+  One active entry archived to clear headroom for L-112 (testing, CRM GoHighLevel handoff,
+  feat/crm-gohighlevel-handoff, worktree rf-crm): L-034. Uncited by any `[[L-034]]` reference
+  anywhere in the active register, and fully guarded (`turbo run test --force` + an mtime
+  post-dates-the-change assertion, procedural but real and still enforceable). It is the oldest
+  active entry by id among the fully-guarded, uncited candidates — `L-010`/`L-025`/`L-027`/`L-035`
+  sit lower by date but each carries `Guard: none — judgment`, so they are not compaction-eligible
+  under the "does the guard make the entry safe to stop reading" test; `L-041` and `L-074` are
+  each cited once ([[L-041]] in L-050, [[L-074]] in L-111) and were kept for that reason.
 
 ### L-034 · 2026-09-01 · tooling · #TBD
 
@@ -1321,3 +1321,67 @@ each cited once ([[L-041]] in L-050, [[L-074]] in L-111) and were kept for that 
 - **Guard:** force execution (`turbo run test --force` or direct `npx jest`), then assert the
   artifact's mtime post-dates the change, before reading any gate that consumes it. Freshness is
   verified, never inferred from a green summary.
+
+## Archived 2026-09-12 — least-cited, fully guarded; headroom for L-114
+
+One active entry archived to clear headroom for L-114 (tooling, plane self-test tmpdir
+invariant, fix/plane-selftest-tmpdir worktree rf-plane3): L-108. Zero outside citations found
+(repo-wide grep excluding `.claude/lessons/**`, `.claude/pipeline/**`, and code-map
+CHANGELOG/`_meta.json`); tied at zero citations with L-109/L-110/L-111 (all 2026-09-11,
+fully guarded) — L-108 is the oldest of the tied set by id, so per the standing archiving rule
+(least-cited, fully-guarded, oldest first) it is the one archived. It carries a real automated
+guard that stays in the tree regardless of whether the register still narrates it (the engine
+gate runner's own `execFileSync` usage), so archiving it loses no enforcement.
+
+### L-108 · 2026-09-11 · process · engine gate runner
+
+- **Symptom:** `bash -c "cmd; echo EXIT=$?"` always printed `EXIT=0` even when `cmd` failed — a
+  red gate read green.
+- **Root cause:** `$?` in that string is expanded by the OUTER shell at parse time, before the
+  child runs — it reads the echo's own status, never `cmd`'s.
+- **Lesson:** **Never place `$?` after a semicolon in the SAME `-c` string expecting the prior
+  command's status — single-quote so `$?` expands INSIDE the child, or capture each command's
+  own exit code separately (`execFileSync`/spawnSync status), never a glued one-liner.**
+- **Guard:** the engine gate runner uses `execFileSync` with its own status check, never a
+  string-glued exit-code echo.
+
+## Archived 2026-09-12 — least-cited, fully guarded; headroom for L-115
+
+### L-041 · 2026-09-01 · process
+
+- **Symptom:** 13 rows sat in `proven` — merged, deployed, post-deploy run already green — while
+  every scoreboard counted them outstanding. Then the run cited as their proof turned out to have
+  executed **nothing**.
+- **Root cause:** two failures stacked. The proof fires off the deploy signal and lands after the
+  session that merged the fix has ended, so the flip to `done` belongs to nobody. And the run
+  everyone pointed at (a superseded deployment) reported conclusion **success with every real step
+  `skipped`** — a green job that ran zero tests.
+- **Lesson:** **When the evidence authorizing a state change arrives asynchronously, assign the
+  flip — and when you read that evidence, read the STEP conclusions, never the job's.** A job is
+  green when it is skipped, and a suite is green when a test is skipped; neither says your proof ran.
+- **Guard:** `gh run view <id> --json jobs` — assert the specific step is `success`, not
+  `skipped`; for one test, grep the log for its `✓`. Step COUNT is not execution.
+
+## Archived 2026-09-12 — least-cited, fully guarded; headroom for L-116
+
+One active entry archived to clear headroom for L-116 (tooling, plane self-test invariants must
+never bind to shared machine-local files, fix/plane-write-ledger-local worktree rf-plane3):
+L-109. Zero outside citations found (repo-wide grep excluding `.claude/lessons/**`,
+`.claude/pipeline/**`, and code-map CHANGELOG/`_meta.json`); tied at zero citations with
+L-110/L-111 (both 2026-09-11, fully guarded) and L-112/L-113 (2026-09-12, fully guarded) —
+L-109 is the oldest of the tied set by id, so per the standing archiving rule (least-cited,
+fully-guarded, oldest first) it is the one archived. Its own guard (campaign-check's freshness
+gate refusing a stale report by name) is an existing mechanism unrelated to this register entry,
+so archiving it loses no enforcement.
+
+### L-109 · 2026-09-11 · process · registry-shard commits
+
+- **Symptom:** a push after a registry-shard commit was refused by campaign-check for "stale"
+  Jest freshness, though the test files were untouched and had passed minutes earlier.
+- **Root cause:** a registry-shard commit (`.claude/campaign/**`) moves HEAD, which the freshness
+  gate compares reports against; the pre-push hook has no docs-only bypass for this commit class.
+- **Lesson:** **After a registry-shard commit, regenerate the affected workspace's Jest
+  freshness report BEFORE verify/push — such a commit is not exempt just because it touched no
+  test file.**
+- **Guard:** campaign-check's freshness gate (already refuses a stale report by name with the
+  regen command) — this is a usage note on WHEN to regenerate.
