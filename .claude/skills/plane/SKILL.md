@@ -59,8 +59,8 @@ second HTTP client or a direct `fetch` to Plane.
 
 ## Write budgets
 
-- **Manual** (intake/apply): ≤ 20/day; over budget refuses (exit 3) unless `--over-budget
-"<reason>"`.
+- **Manual** (intake/apply): ≤ 20/day, counted machine-wide (ledger under `machineRoot()`, not
+  per-tree `repoRoot()`); over budget refuses (exit 3) unless `--over-budget "<reason>"`.
 - **`plane-sync.mjs --max-writes`**: default 250; explicit bulk: `plane:sync -- --max-writes
 400`.
 - **Gate 5** (turn-end, non-blocking): `--max-writes 25`, never `--allow-branch` (see below).
@@ -87,8 +87,9 @@ comment-on-close, relation, or archive goes through `plane:apply`, never a live 
 
 ## Learning loop
 
-- **Runs ledger** `local-assets/plane/runs.jsonl` (gitignored) — one JSON line per tool run
-  (sync/intake/triage/apply/doctor/retro): counters, exit, error class; never a key or uuid.
+- **Runs ledger** `local-assets/plane/runs.jsonl` (gitignored, `machineRoot()`-anchored) — one
+  JSON line per tool run (sync/intake/triage/apply/doctor/retro): counters, exit, error class;
+  never a key or uuid. A legacy pre-fix file migrates forward on first use.
 - **`plane-doctor.mjs`** `[--offline] [--json]` — PASS/FAIL/WARN per check, exit 1 on FAIL. Run
   daily, in `verify` (`-- --offline`), and via `/orient`.
 - **`plane-retro.mjs`** `[--days 14] [--apply] [--json] [--out <dir>]` — Mondays via the

@@ -67,7 +67,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
@@ -1188,10 +1188,27 @@ appendRun({ tool: "m1-self-test", exit: 0, branch: ${JSON.stringify(actualBranch
 }
 
 // ── real-file invariants + cleanup (F4 pattern) ─────────────────────────────
-// Never depends on plane-client.mjs's own repoRoot()/runsPath() — REPO_ROOT
-// above is computed independently so this guard cannot be defeated by the
-// very code it is checking.
-const REAL_RUNS_PATH = join(REPO_ROOT, "local-assets", "plane", "runs.jsonl");
+// Never depends on plane-client.mjs's own repoRoot()/machineRoot()/
+// runsPath() — REPO_ROOT above is computed independently, and
+// realMachineRoot() below re-derives machineRoot()'s own `git rev-parse
+// --git-common-dir` logic (fix 2026-09-12, plane-write-ledger-local)
+// independently too, so this guard cannot be defeated by the very code it
+// is checking.
+function realMachineRoot() {
+  try {
+    const res = spawnSync("git", ["-C", REPO_ROOT, "rev-parse", "--git-common-dir"], {
+      encoding: "utf8",
+    });
+    if (res.status === 0 && res.stdout) {
+      const gitCommonDir = res.stdout.trim();
+      return dirname(isAbsolute(gitCommonDir) ? gitCommonDir : join(REPO_ROOT, gitCommonDir));
+    }
+  } catch {
+    // fall through to REPO_ROOT below
+  }
+  return REPO_ROOT;
+}
+const REAL_RUNS_PATH = join(realMachineRoot(), "local-assets", "plane", "runs.jsonl");
 const REAL_KNOBS_PATH = join(REPO_ROOT, "scripts", "campaign", "plane-knobs.json");
 const snapshot = (p) => (existsSync(p) ? readFileSync(p) : null);
 const bytesEqual = (a, b) => (a === null || b === null ? a === b : Buffer.compare(a, b) === 0);
@@ -1210,7 +1227,7 @@ try {
 
 const realFilesAfter = { runs: snapshot(REAL_RUNS_PATH), knobs: snapshot(REAL_KNOBS_PATH) };
 check(
-  "invariant: this worktree's real local-assets/plane/runs.jsonl is byte-unchanged by the suite",
+  "invariant: the real machine-shared local-assets/plane/runs.jsonl is byte-unchanged by the suite",
   bytesEqual(realFilesAfter.runs, realFilesBefore.runs),
   true,
 );

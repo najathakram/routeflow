@@ -26,7 +26,7 @@ import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { startFakePlane } from "./plane-fake-server.mjs";
-import { gitEnv, repoRoot } from "./plane-client.mjs";
+import { gitEnv, machineRoot } from "./plane-client.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./plane-intake.mjs", import.meta.url));
 
@@ -213,11 +213,15 @@ function startFailingPatchProxy(inner) {
 // deadlocking any case that needs a round trip).
 // stateDir defaults to registryDir (already a throwaway mkdtempSync dir at
 // every call site that has one) so plane-client.mjs's ledger/digest state
-// never lands in this worktree's real .claude/campaign — a spawn that
-// omitted PLANE_SYNC_STATE_DIR previously leaked real PATCH ledger lines
-// (fix-round 3 coordinator finding: B1 from a phase-3-shaped run, B5 from
-// --relink) since stateDir() falls back to repoRoot()'s own .claude/campaign
-// when nothing overrides it.
+// never lands in the real ledger — a spawn that omitted PLANE_SYNC_STATE_DIR
+// previously leaked real PATCH ledger lines (fix-round 3 coordinator
+// finding: B1 from a phase-3-shaped run, B5 from --relink) since stateDir()
+// falls back to a real ambient default when nothing overrides it — that
+// default was this worktree's own repoRoot()-anchored .claude/campaign, and
+// is now (fix 2026-09-12, plane-write-ledger-local) the machine-shared
+// machineRoot()-anchored local-assets/plane/, shared across every worktree
+// of this repo — an omitted override is a bigger blast radius today than
+// before, not a smaller one.
 function runCli(
   argv,
   {
@@ -593,9 +597,11 @@ async function main() {
 
 // Fix-round (runs.jsonl pollution, 2026-09-12): belt-and-suspenders proof
 // that every runCli() call above's PLANE_SYNC_SELF_TEST+PLANE_RUNS_PATH pair
-// actually keeps this worktree's real local-assets/plane/runs.jsonl out of
-// it — mirrors plane-sync.self-test.mjs's own F4 real-file check.
-const REAL_RUNS_PATH = join(repoRoot(), "local-assets", "plane", "runs.jsonl");
+// actually keeps the real runs.jsonl out of it — mirrors plane-sync.self-
+// test.mjs's own F4 real-file check. machineRoot()-anchored (fix 2026-09-12,
+// plane-write-ledger-local) since that is now where the real ambient
+// default lives, shared across every worktree of this repo.
+const REAL_RUNS_PATH = join(machineRoot(), "local-assets", "plane", "runs.jsonl");
 const realRunsBefore = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
 
 const tmpDirsBefore = countFixtureTmpDirs(); // always 0: FIXTURE_PREFIX embeds this process's own pid+random, so no dir under it can predate this run.
@@ -620,7 +626,7 @@ check(
 );
 const realRunsAfter = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
 check(
-  "F4: this worktree's real local-assets/plane/runs.jsonl is byte-identical before/after the suite (or absent both times)",
+  "F4: the real machine-shared local-assets/plane/runs.jsonl is byte-identical before/after the suite (or absent both times)",
   realRunsAfter,
   realRunsBefore,
 );

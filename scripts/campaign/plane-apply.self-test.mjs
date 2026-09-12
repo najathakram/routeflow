@@ -36,7 +36,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { startFakePlane } from "./plane-fake-server.mjs";
-import { repoRoot } from "./plane-client.mjs";
+import { machineRoot } from "./plane-client.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./plane-apply.mjs", import.meta.url));
 
@@ -540,8 +540,11 @@ async function main() {
 
 // Fix-round (runs.jsonl pollution, 2026-09-12): belt-and-suspenders proof
 // that every runCli() call above's PLANE_SYNC_SELF_TEST+PLANE_RUNS_PATH pair
-// keeps this worktree's real local-assets/plane/runs.jsonl untouched.
-const REAL_RUNS_PATH = join(repoRoot(), "local-assets", "plane", "runs.jsonl");
+// keeps the real runs.jsonl untouched. Fix 2026-09-12 (plane-write-ledger-
+// local) moved its ambient default from this worktree's own repoRoot() to
+// the machine-shared machineRoot() anchor every worktree of this repo
+// resolves the same way — see plane-client.mjs's machineRoot() doc comment.
+const REAL_RUNS_PATH = join(machineRoot(), "local-assets", "plane", "runs.jsonl");
 const realRunsBefore = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
 
 const tmpDirsBefore = countFixtureTmpDirs(); // always 0: FIXTURE_PREFIX embeds this process's own pid+random, so no dir under it can predate this run.
@@ -566,7 +569,7 @@ check(
 );
 const realRunsAfter = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
 check(
-  "F4: this worktree's real local-assets/plane/runs.jsonl is byte-identical before/after the suite (or absent both times)",
+  "F4: the real machine-shared local-assets/plane/runs.jsonl is byte-identical before/after the suite (or absent both times)",
   realRunsAfter,
   realRunsBefore,
 );

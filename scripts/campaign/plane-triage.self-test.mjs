@@ -23,7 +23,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { startFakePlane } from "./plane-fake-server.mjs";
-import { repoRoot } from "./plane-client.mjs";
+import { repoRoot, machineRoot } from "./plane-client.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./plane-triage.mjs", import.meta.url));
 
@@ -329,18 +329,31 @@ async function main() {
 
 // Fix-round (runs.jsonl pollution, 2026-09-12): belt-and-suspenders proof
 // that every runCli() call above's PLANE_SYNC_SELF_TEST+PLANE_RUNS_PATH pair
-// keeps this worktree's real local-assets/plane/runs.jsonl untouched.
-const REAL_RUNS_PATH = join(repoRoot(), "local-assets", "plane", "runs.jsonl");
+// keeps the real runs.jsonl untouched. machineRoot()-anchored (fix
+// 2026-09-12, plane-write-ledger-local) — that is where the real ambient
+// default now lives, shared across every worktree of this repo.
+const REAL_RUNS_PATH = join(machineRoot(), "local-assets", "plane", "runs.jsonl");
 const realRunsBefore = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
 
 // F4 (same belt-and-suspenders proof as plane-sync.self-test.mjs): every
 // runCli() call above now defaults PLANE_SYNC_STATE_DIR to its own throwaway
 // registryDir, so nothing here should ever fall through to the ambient
-// `.claude/campaign/` of whatever repo/worktree this happens to run in.
+// default — checked at BOTH the legacy per-worktree `.claude/campaign/` home
+// and the machine-shared `machineRoot()/local-assets/plane/` home the
+// 2026-09-12 fix moved the real default to.
 const REAL_CAMPAIGN_DIR = join(repoRoot(), ".claude", "campaign");
-const REAL_WRITES_LEDGER = join(REAL_CAMPAIGN_DIR, ".plane-writes.jsonl");
-const REAL_SYNC_STATE = join(REAL_CAMPAIGN_DIR, ".plane-sync-state.json");
+const REAL_LEGACY_WRITES_LEDGER = join(REAL_CAMPAIGN_DIR, ".plane-writes.jsonl");
+const REAL_LEGACY_SYNC_STATE = join(REAL_CAMPAIGN_DIR, ".plane-sync-state.json");
+const REAL_SHARED_DIR = join(machineRoot(), "local-assets", "plane");
+const REAL_WRITES_LEDGER = join(REAL_SHARED_DIR, ".plane-writes.jsonl");
+const REAL_SYNC_STATE = join(REAL_SHARED_DIR, ".plane-sync-state.json");
 const snapshotRealFiles = () => ({
+  legacyWrites: existsSync(REAL_LEGACY_WRITES_LEDGER)
+    ? readFileSync(REAL_LEGACY_WRITES_LEDGER, "utf8")
+    : null,
+  legacyState: existsSync(REAL_LEGACY_SYNC_STATE)
+    ? readFileSync(REAL_LEGACY_SYNC_STATE, "utf8")
+    : null,
   writes: existsSync(REAL_WRITES_LEDGER) ? readFileSync(REAL_WRITES_LEDGER, "utf8") : null,
   state: existsSync(REAL_SYNC_STATE) ? readFileSync(REAL_SYNC_STATE, "utf8") : null,
 });
@@ -368,18 +381,28 @@ check(
 );
 const realRunsAfter = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
 check(
-  "F4: this worktree's real local-assets/plane/runs.jsonl is byte-identical before/after the suite (or absent both times)",
+  "F4: the real machine-shared local-assets/plane/runs.jsonl is byte-identical before/after the suite (or absent both times)",
   realRunsAfter,
   realRunsBefore,
 );
 const realFilesAfter = snapshotRealFiles();
 check(
-  "F4: this worktree's real .claude/campaign/.plane-writes.jsonl is untouched by the suite",
+  "F4: this worktree's legacy .claude/campaign/.plane-writes.jsonl is untouched by the suite",
+  realFilesAfter.legacyWrites,
+  realFilesBefore.legacyWrites,
+);
+check(
+  "F4: this worktree's legacy .claude/campaign/.plane-sync-state.json is untouched by the suite",
+  realFilesAfter.legacyState,
+  realFilesBefore.legacyState,
+);
+check(
+  "F4: the real machine-shared local-assets/plane/.plane-writes.jsonl is untouched by the suite",
   realFilesAfter.writes,
   realFilesBefore.writes,
 );
 check(
-  "F4: this worktree's real .claude/campaign/.plane-sync-state.json is untouched by the suite",
+  "F4: the real machine-shared local-assets/plane/.plane-sync-state.json is untouched by the suite",
   realFilesAfter.state,
   realFilesBefore.state,
 );

@@ -31,9 +31,10 @@
 // NO PLANE UUIDS, EVER (same rule as v1) — projects resolve by `identifier`,
 // states/labels/types/members resolve by name, all at runtime. See T11's
 // literal-scan, extended to this file.
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 
 const THIS_FILE_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DENYLIST_PATH = join(THIS_FILE_DIR, "plane-denylist.json");
@@ -123,8 +124,80 @@ export function repoRoot() {
   }
 }
 
+// machineRoot() anchors machine-local state (the write ledger, plane-sync's
+// close-cache, run telemetry) on the ONE directory every worktree of this
+// repo shares — `git rev-parse --git-common-dir` resolves to the main
+// checkout's `.git` no matter which worktree (or the main checkout itself)
+// it runs from, so its PARENT is that shared directory. Defect fixed
+// 2026-09-12: stateDir()/runsPath() used to anchor on repoRoot() — THIS
+// FILE's own ancestor, a DIFFERENT directory in every worktree — so the
+// daily manual-write budget and the run telemetry both forked per tree (one
+// worktree reported "manual 10/20" while the true machine-wide total across
+// every tree was 25). Resolved via gitEnv() + an explicit `-C repoRoot()` —
+// never an inherited/ambient cwd (reference_git_worktreeconfig_bare_trap_
+// 2026-09-04, reference_bash_cwd_persists_use_git_C) — cached per process
+// since the answer cannot change mid-run. Falls back to repoRoot() (this
+// tree's own root, the pre-fix behaviour) when git itself is unavailable or
+// the spawn fails, rather than throwing — a bare/no-git environment
+// degrades to per-tree state instead of crashing every caller.
+let machineRootCache = null;
+export function machineRoot() {
+  if (machineRootCache) return machineRootCache;
+  try {
+    const result = spawnSync("git", ["-C", repoRoot(), "rev-parse", "--git-common-dir"], {
+      env: gitEnv(),
+      encoding: "utf8",
+    });
+    if (result.status === 0 && result.stdout) {
+      const gitCommonDir = result.stdout.trim();
+      const absolute = isAbsolute(gitCommonDir) ? gitCommonDir : join(repoRoot(), gitCommonDir);
+      machineRootCache = dirname(absolute);
+      return machineRootCache;
+    }
+  } catch {
+    // fall through to the repoRoot() fallback below
+  }
+  machineRootCache = repoRoot();
+  return machineRootCache;
+}
+
 export function stateDir() {
-  return process.env.PLANE_SYNC_STATE_DIR || join(repoRoot(), ".claude", "campaign");
+  return process.env.PLANE_SYNC_STATE_DIR || join(machineRoot(), "local-assets", "plane");
+}
+
+// ── legacy per-tree state migration (fix 2026-09-12) ────────────────────────
+// A worktree that wrote state before this fix landed has it sitting at one
+// of two legacy homes: the very first location (`.claude/campaign/`) or a
+// transitional per-tree `local-assets/plane/` (repoRoot()-anchored, same as
+// runsPath() used before this fix). Called lazily by every read/write site
+// below — never at module load — and is a no-op once the shared file
+// already exists at its new home; cheap enough (one existsSync per legacy
+// candidate) to call unconditionally rather than cache, and simpler than a
+// one-shot cache that could go stale when a self-test deletes the migrated
+// file mid-process. Skipped entirely under an explicit PLANE_SYNC_STATE_DIR
+// override — a test fixture must never reach into this machine's real
+// legacy files.
+export function migrateLegacyStateFile(filename) {
+  if (process.env.PLANE_SYNC_STATE_DIR) return;
+  // Always the CANONICAL shared location, never stateDir()'s own value — a
+  // caller that overrides stateDir() without also passing PLANE_SYNC_STATE_DIR
+  // isn't a real scenario in this codebase (every self-test sets both), but
+  // deriving from machineRoot() directly keeps this correct even if one day
+  // it isn't.
+  const target = join(machineRoot(), "local-assets", "plane", filename);
+  if (existsSync(target)) return;
+  const legacyDirs = [
+    join(repoRoot(), ".claude", "campaign"),
+    join(repoRoot(), "local-assets", "plane"),
+  ];
+  for (const dir of legacyDirs) {
+    const legacy = join(dir, filename);
+    if (legacy === target || !existsSync(legacy)) continue;
+    mkdirSync(dirname(target), { recursive: true });
+    renameSync(legacy, target);
+    console.error(`Plane client: migrated ${filename} to local-assets/plane/`);
+    return;
+  }
 }
 
 // ── knobs (spec 2026-09-12-plane-learning R1) ───────────────────────────────
@@ -171,13 +244,19 @@ export function knob(name) {
 }
 
 // ── run telemetry (R2) ──────────────────────────────────────────────────────
-// Machine-local, gitignored via local-assets/ — PLANE_RUNS_PATH is a
-// TEST-ONLY override, gated the same way as PLANE_KNOBS_PATH/
-// PLANE_DENYLIST_PATH (PLANE_SYNC_SELF_TEST=1 required alongside it).
+// Machine-local, gitignored via local-assets/, same machineRoot() anchor as
+// stateDir() (fix 2026-09-12 — see migrateLegacyStateFile() above) so
+// telemetry is counted machine-wide, not forked per worktree. PLANE_RUNS_PATH
+// is a TEST-ONLY override, gated the same way as PLANE_KNOBS_PATH/
+// PLANE_DENYLIST_PATH (PLANE_SYNC_SELF_TEST=1 required alongside it) — under
+// that override, migration is skipped (a test fixture must never reach into
+// this machine's real legacy runs.jsonl).
 export function runsPath() {
-  return process.env.PLANE_SYNC_SELF_TEST === "1" && process.env.PLANE_RUNS_PATH
-    ? process.env.PLANE_RUNS_PATH
-    : join(repoRoot(), "local-assets", "plane", RUNS_FILENAME);
+  if (process.env.PLANE_SYNC_SELF_TEST === "1" && process.env.PLANE_RUNS_PATH) {
+    return process.env.PLANE_RUNS_PATH;
+  }
+  migrateLegacyStateFile(RUNS_FILENAME);
+  return join(machineRoot(), "local-assets", "plane", RUNS_FILENAME);
 }
 
 // One JSON line per tool run, appended at exit (success or failure — every
@@ -317,6 +396,7 @@ function scanBodyDeep(value, patterns, underContent = false) {
 // appendFileSync per line is the atomic unit — never read-modify-write the
 // ledger. Never called for a deferred or forbidden write (see write() below).
 export function appendWrite({ tool, method, path: p, ref, reason }) {
+  migrateLegacyStateFile(LEDGER_FILENAME);
   const dir = stateDir();
   mkdirSync(dir, { recursive: true });
   const line =
@@ -335,6 +415,7 @@ export function appendWrite({ tool, method, path: p, ref, reason }) {
 // local-timezone slippage between a write made near midnight and a read made
 // moments later.
 export function writesToday({ exclude = [] } = {}) {
+  migrateLegacyStateFile(LEDGER_FILENAME);
   const file = join(stateDir(), LEDGER_FILENAME);
   if (!existsSync(file)) return 0;
   const day = new Date().toISOString().slice(0, 10);

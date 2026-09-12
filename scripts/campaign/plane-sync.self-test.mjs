@@ -25,10 +25,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { deriveDesired, mapPriority, registryDigest } from "./plane-sync.mjs";
-import { createClient, gitEnv, repoRoot, CLOSED_MARKER } from "./plane-client.mjs";
+import { createClient, gitEnv, repoRoot, machineRoot, CLOSED_MARKER } from "./plane-client.mjs";
 import { startFakePlane, DEFAULT_STATES } from "./plane-fake-server.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./plane-sync.mjs", import.meta.url));
@@ -48,6 +48,58 @@ function git(cwd, args) {
     throw new Error(`git ${args.join(" ")} failed in ${cwd}:\n${res.stdout}${res.stderr}`);
   }
   return res;
+}
+
+// Shared harness for T22/T23 (fix 2026-09-12, plane-write-ledger-local):
+// spawns a bare `node` process that imports a SPECIFIC on-disk copy of
+// plane-client.mjs (never this worktree's own copy) and exercises it — the
+// same "prove it from a real child process" pattern T16/T18 use for
+// plane-sync.mjs's branch guard. `moduleUrl` must be a `file://` URL (build
+// with `pathToFileURL`) pointing at a throwaway repo/worktree's own
+// scripts/campaign/plane-client.mjs. Deliberately NOT run through runCli()
+// — this exercises plane-client.mjs's exports directly (appendWrite/
+// writesToday/stateDir), never PLANE_SYNC_STATE_DIR, since the whole point
+// is proving the AMBIENT default (machineRoot()) and its legacy-file
+// migration, both of which a state-dir override skips outright.
+function runPlaneClientHarness(moduleUrl, { append = false } = {}) {
+  const code =
+    `const mod = await import(${JSON.stringify(moduleUrl)});` +
+    `if (${JSON.stringify(append)}) { mod.appendWrite({ tool: "self-test", method: "POST", path: "/x", ref: "1" }); }` +
+    `console.log(JSON.stringify({ writesToday: mod.writesToday(), stateDir: mod.stateDir() }));`;
+  const res = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
+    encoding: "utf8",
+    env: gitEnv(),
+  });
+  let parsed = null;
+  try {
+    const lastLine = res.stdout.split(/\r?\n/).filter(Boolean).pop();
+    parsed = lastLine ? JSON.parse(lastLine) : null;
+  } catch {
+    // leave parsed null — the caller's check() surfaces raw stdout/stderr instead
+  }
+  return { ...res, parsed };
+}
+
+// Scaffolds a throwaway git repo at a fresh mkdtempSync dir with the
+// package.json + .claude marker pair plane-client.mjs's repoRoot() walks up
+// to, plus its own committed copy of scripts/campaign/plane-client.mjs —
+// the shared setup T22 and T23 both need. Returns { repoDir, scriptsDir }.
+function makeThrowawayClientRepo() {
+  const repoDir = mkdtempSync(join(tmpdir(), FIXTURE_PREFIX));
+  FIXTURE_DIRS.push(repoDir);
+  git(repoDir, ["init", "-q"]);
+  git(repoDir, ["config", "user.email", "plane-sync-self-test@example.com"]);
+  git(repoDir, ["config", "user.name", "plane-sync-self-test"]);
+  writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "throwaway" }) + "\n");
+  mkdirSync(join(repoDir, ".claude"), { recursive: true });
+  writeFileSync(join(repoDir, ".claude", ".keep"), "");
+  const scriptsDir = join(repoDir, "scripts", "campaign");
+  mkdirSync(scriptsDir, { recursive: true });
+  writeFileSync(
+    join(scriptsDir, "plane-client.mjs"),
+    readFileSync(fileURLToPath(new URL("./plane-client.mjs", import.meta.url)), "utf8"),
+  );
+  return { repoDir, scriptsDir };
 }
 
 // Locates the running worktree's own git dir/root by walking up from THIS
@@ -2326,28 +2378,154 @@ async function main() {
     await server.close();
   }
 
+  // T22 (fix 2026-09-12, plane-write-ledger-local) — a legacy ledger file
+  // sitting at the pre-fix `.claude/campaign/.plane-writes.jsonl` home is
+  // migrated forward to the new machine-shared `local-assets/plane/` home
+  // the first time this tree's plane-client.mjs resolves the ledger, and
+  // the old path is gone afterward. This needs a REAL throwaway git repo —
+  // never PLANE_SYNC_STATE_DIR — because a state-dir override skips
+  // migration entirely (plane-client.mjs's migrateLegacyStateFile()), so
+  // every other case in this file (which always sets it) could never
+  // exercise this path.
+  {
+    const { repoDir, scriptsDir } = makeThrowawayClientRepo();
+
+    const legacyDir = join(repoDir, ".claude", "campaign");
+    const legacyLedgerPath = join(legacyDir, ".plane-writes.jsonl");
+    mkdirSync(legacyDir, { recursive: true });
+    writeFileSync(
+      legacyLedgerPath,
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        tool: "self-test-legacy",
+        method: "POST",
+        path: "/legacy",
+        ref: "0",
+      }) + "\n",
+    );
+
+    const moduleUrl = pathToFileURL(join(scriptsDir, "plane-client.mjs")).href;
+    const result = runPlaneClientHarness(moduleUrl, { append: true });
+    const newLedgerPath = join(repoDir, "local-assets", "plane", ".plane-writes.jsonl");
+
+    check(
+      "T22: harness exits 0 and prints a parseable result",
+      { status: result.status, parsed: result.parsed !== null },
+      { status: 0, parsed: true },
+    );
+    check(
+      "T22: legacy ledger migrated forward — old path gone, new path resolved, both the " +
+        "legacy line and the new write count toward writesToday()",
+      {
+        legacyGone: !existsSync(legacyLedgerPath),
+        newExists: existsSync(newLedgerPath),
+        writesToday: result.parsed?.writesToday,
+        stateDir: result.parsed?.stateDir,
+      },
+      {
+        legacyGone: true,
+        newExists: true,
+        writesToday: 2,
+        stateDir: join(repoDir, "local-assets", "plane"),
+      },
+    );
+    check(
+      "T22: the migration prints one stderr line naming the migrated file",
+      /Plane client: migrated \.plane-writes\.jsonl to local-assets\/plane\//.test(result.stderr),
+      true,
+    );
+  }
+
+  // T23 (fix 2026-09-12, plane-write-ledger-local) — two worktrees of the
+  // SAME repo must resolve the SAME machine-shared ledger, and a write from
+  // either counts toward the SAME writesToday() total. `git worktree add`
+  // off the throwaway repo's own HEAD; each worktree's own checked-out copy
+  // of plane-client.mjs (tracked, committed — worktrees share the index at
+  // the branch point) is invoked as its own child process, proving
+  // machineRoot()'s `git rev-parse --git-common-dir` lands on the SAME
+  // `.git` from either.
+  {
+    const { repoDir, scriptsDir } = makeThrowawayClientRepo();
+    git(repoDir, ["add", "package.json", ".claude/.keep", "scripts/campaign/plane-client.mjs"]);
+    git(repoDir, ["commit", "-q", "-m", "chore: seed"]);
+
+    const worktreeDir = mkdtempSync(join(tmpdir(), FIXTURE_PREFIX));
+    FIXTURE_DIRS.push(worktreeDir);
+    git(repoDir, ["worktree", "add", "-q", worktreeDir, "-b", "t23-worktree"]);
+
+    const mainModuleUrl = pathToFileURL(join(scriptsDir, "plane-client.mjs")).href;
+    const worktreeModuleUrl = pathToFileURL(
+      join(worktreeDir, "scripts", "campaign", "plane-client.mjs"),
+    ).href;
+
+    const fromMain = runPlaneClientHarness(mainModuleUrl, { append: true });
+    const fromWorktree = runPlaneClientHarness(worktreeModuleUrl, { append: true });
+
+    check(
+      "T23: both harness runs (main checkout, then its worktree) exit 0 with a parseable result",
+      {
+        mainStatus: fromMain.status,
+        mainParsed: fromMain.parsed !== null,
+        worktreeStatus: fromWorktree.status,
+        worktreeParsed: fromWorktree.parsed !== null,
+      },
+      { mainStatus: 0, mainParsed: true, worktreeStatus: 0, worktreeParsed: true },
+    );
+    check(
+      "T23: the main checkout and its worktree resolve the SAME shared ledger dir",
+      fromWorktree.parsed?.stateDir,
+      fromMain.parsed?.stateDir,
+    );
+    check(
+      "T23: a write from either worktree counts toward the SAME machine-wide writesToday() " +
+        "total — 1 after the main checkout's own write, 2 after the worktree's",
+      { afterMain: fromMain.parsed?.writesToday, afterWorktree: fromWorktree.parsed?.writesToday },
+      { afterMain: 1, afterWorktree: 2 },
+    );
+
+    try {
+      git(repoDir, ["worktree", "remove", "--force", worktreeDir]);
+    } catch {
+      // best-effort — the FIXTURE_DIRS sweep below deletes worktreeDir
+      // regardless, and a stale `.git/worktrees/*` entry inside a repoDir
+      // that is itself about to be deleted wholesale is harmless.
+    }
+  }
+
   return failures;
 }
 
 // F4 (fix-round 2b, ambient-leak guard): every runCli call now defaults
 // PLANE_SYNC_STATE_DIR to its own throwaway registryDir (see runCli above),
 // but this is the belt-and-suspenders proof that NOTHING in this suite ever
-// falls through to the ambient default — the real `.claude/campaign/` of
-// whatever repo/worktree this happens to run in. Snapshot both files this
-// worktree's own `.claude/campaign/` holds before the suite runs, assert they
-// are unchanged afterward, then delete them — they are themselves leaked
-// output from a prior (pre-fix) run of this suite (80 lines, all fake paths,
-// found 2026-09-11), not real registry state.
+// falls through to the ambient default. Fix 2026-09-12 (plane-write-ledger-
+// local) moved that ambient default from this worktree's OWN
+// `.claude/campaign/` to the MACHINE-SHARED `machineRoot()/local-assets/
+// plane/` (every worktree of this repo resolves the SAME directory there —
+// see plane-client.mjs's machineRoot()/migrateLegacyStateFile()) — snapshot
+// both the old legacy home and the new shared one, assert each is unchanged
+// afterward, then delete any leaked output from a prior (pre-fix) run of
+// this suite (80 lines, all fake paths, found 2026-09-11), not real registry
+// state.
 const REAL_CAMPAIGN_DIR = join(repoRoot(), ".claude", "campaign");
-const REAL_WRITES_LEDGER = join(REAL_CAMPAIGN_DIR, ".plane-writes.jsonl");
-const REAL_SYNC_STATE = join(REAL_CAMPAIGN_DIR, ".plane-sync-state.json");
+const REAL_LEGACY_WRITES_LEDGER = join(REAL_CAMPAIGN_DIR, ".plane-writes.jsonl");
+const REAL_LEGACY_SYNC_STATE = join(REAL_CAMPAIGN_DIR, ".plane-sync-state.json");
+const REAL_SHARED_DIR = join(machineRoot(), "local-assets", "plane");
+const REAL_WRITES_LEDGER = join(REAL_SHARED_DIR, ".plane-writes.jsonl");
+const REAL_SYNC_STATE = join(REAL_SHARED_DIR, ".plane-sync-state.json");
 // Fix-round (runs.jsonl pollution, 2026-09-12): every runCli/direct-spawn
 // case above now pins PLANE_RUNS_PATH (paired with PLANE_SYNC_SELF_TEST=1)
 // to a throwaway file, and F3c self-heals the one case that must run with
 // the marker off. This is the belt-and-suspenders proof that none of it
-// ever falls through to the real local-assets/plane/runs.jsonl.
-const REAL_RUNS_PATH = join(repoRoot(), "local-assets", "plane", "runs.jsonl");
+// ever falls through to the real machine-shared runs.jsonl.
+const REAL_RUNS_PATH = join(REAL_SHARED_DIR, "runs.jsonl");
 const snapshotRealFiles = () => ({
+  legacyWrites: existsSync(REAL_LEGACY_WRITES_LEDGER)
+    ? readFileSync(REAL_LEGACY_WRITES_LEDGER, "utf8")
+    : null,
+  legacyState: existsSync(REAL_LEGACY_SYNC_STATE)
+    ? readFileSync(REAL_LEGACY_SYNC_STATE, "utf8")
+    : null,
   writes: existsSync(REAL_WRITES_LEDGER) ? readFileSync(REAL_WRITES_LEDGER, "utf8") : null,
   state: existsSync(REAL_SYNC_STATE) ? readFileSync(REAL_SYNC_STATE, "utf8") : null,
   runs: existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null,
@@ -2368,29 +2546,42 @@ try {
 }
 const realFilesAfter = snapshotRealFiles();
 check(
-  "F4: this worktree's real .claude/campaign/.plane-writes.jsonl is untouched by the suite",
+  "F4: this worktree's legacy .claude/campaign/.plane-writes.jsonl is untouched by the suite",
+  realFilesAfter.legacyWrites,
+  realFilesBefore.legacyWrites,
+);
+check(
+  "F4: this worktree's legacy .claude/campaign/.plane-sync-state.json is untouched by the suite",
+  realFilesAfter.legacyState,
+  realFilesBefore.legacyState,
+);
+check(
+  "F4: this machine's real shared local-assets/plane/.plane-writes.jsonl is untouched by the suite",
   realFilesAfter.writes,
   realFilesBefore.writes,
 );
 check(
-  "F4: this worktree's real .claude/campaign/.plane-sync-state.json is untouched by the suite",
+  "F4: this machine's real shared local-assets/plane/.plane-sync-state.json is untouched by the suite",
   realFilesAfter.state,
   realFilesBefore.state,
 );
 check(
-  "F4: this worktree's real local-assets/plane/runs.jsonl is byte-identical before/after the suite (or absent both times)",
+  "F4: this machine's real shared local-assets/plane/runs.jsonl is byte-identical before/after the suite (or absent both times)",
   realFilesAfter.runs,
   realFilesBefore.runs,
 );
-// One-time cleanup of the leak this finding was filed against — not this
-// run's own output (already proven above), the pre-existing leaked files.
-for (const p of [REAL_WRITES_LEDGER, REAL_SYNC_STATE, REAL_RUNS_PATH]) {
-  try {
-    if (existsSync(p)) rmSync(p);
-  } catch {
-    // best-effort — never turn cleanup itself into a red suite
-  }
-}
+// NO auto-delete here (fix 2026-09-12, plane-write-ledger-local): the ORIGINAL
+// one-time cleanup below this comment (fix-round 2b) removed a confirmed
+// leak at the LEGACY per-worktree path (80 lines, all fake self-test paths,
+// found 2026-09-11) — safe to `rmSync` because that file could only ever
+// hold this suite's own leaked junk. REAL_WRITES_LEDGER/REAL_SYNC_STATE/
+// REAL_RUNS_PATH now point at the MACHINE-SHARED ledger/cache/telemetry
+// every worktree's REAL Plane operations read and write (that sharing is the
+// entire point of this fix) — silently deleting it here would destroy a
+// live daily write-budget history or sync-state cache the moment any real
+// content ever lands there. The checks above already fail loudly on any
+// mismatch; a genuine leak from THIS suite is a bug to fix, not a file to
+// paper over by deleting someone's real state.
 check(
   "F4: the run leaves no dir this run created behind",
   createdDirs.filter((d) => existsSync(d)),
