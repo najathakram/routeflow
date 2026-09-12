@@ -1,0 +1,126 @@
+{
+  "mode": "bugfix",
+  "planPath": ".claude/pipeline/2026-09-10-train4-run-d/build-plan.md",
+  "testPlanPath": ".claude/pipeline/2026-09-10-train4-run-d/bug-test-plan.md",
+  "lessonsPath": ".claude/lessons/LESSONS.md",
+  "scale": "major",
+  "context": "Train 4 Run D: B131 removed customer's crons keep firing (stateless customer.deletedAt filter, create() 404s); B141 removed customer keeps portal access (guard refuses, getSellers hides, NO token revocation). S4/S5 by Opus 5 (Fable 429).",
+  "radiusFiles": [
+    "apps/api/src/order-templates/order-templates.service.ts",
+    "apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+    "apps/api/src/invoices/invoices.service.ts",
+    "apps/api/src/buyer/guards/buyer-seller-context.guard.ts",
+    "apps/api/src/buyer/buyer.service.ts",
+    "apps/api/src/customers/customers.service.ts",
+    "apps/api/src/buyer/buyer.controller.ts",
+    "apps/api/src/payment-requests/buyer-payments.controller.ts"
+  ],
+  "siblingPatterns": [
+    {
+      "regex": "customerLink\\.(findFirst|findMany|count)\\(",
+      "note": "buyer link read w/o customer.deletedAt; see build-plan Sibling notes"
+    },
+    {
+      "regex": "isActive: true, (daysOfWeek|nextRunAt)",
+      "note": "customer-owned crons; only the 2 fixed hits expected"
+    }
+  ],
+  "testPackages": [
+    {
+      "id": "TP1",
+      "title": "B131 tests",
+      "files": [
+        "apps/api/src/order-templates/order-templates.removed-customer.spec.ts",
+        "apps/api/src/recurring-invoices/recurring-invoices.service.spec.ts",
+        "apps/api/src/invoices/invoices.service.spec.ts"
+      ],
+      "brief": "build-plan.md TP1 exact code"
+    },
+    {
+      "id": "TP2",
+      "title": "B141 tests",
+      "files": [
+        "apps/api/src/buyer/guards/buyer-seller-context.guard.spec.ts",
+        "apps/api/src/buyer/buyer-connect.spec.ts"
+      ],
+      "brief": "build-plan.md TP2 exact code"
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "cd apps/api && npx jest src/order-templates/order-templates.removed-customer src/recurring-invoices/recurring-invoices.service src/invoices/invoices.service -t \"REG-B131\" --reporters=default",
+      "cd apps/api && npx jest src/buyer/guards/buyer-seller-context.guard src/buyer/buyer-connect -t \"REG-B141\" --reporters=default"
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "WP1",
+      "title": "B131 filters",
+      "files": [
+        "apps/api/src/order-templates/order-templates.service.ts",
+        "apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+        "apps/api/src/invoices/invoices.service.ts"
+      ],
+      "brief": "build-plan.md WP1 exact code",
+      "effort": "high",
+      "provenBy": ["T1", "T2", "T3", "T4", "T5"]
+    },
+    {
+      "id": "WP2",
+      "title": "B141 guard+getSellers",
+      "files": [
+        "apps/api/src/buyer/guards/buyer-seller-context.guard.ts",
+        "apps/api/src/buyer/buyer.service.ts"
+      ],
+      "brief": "build-plan.md WP2 exact code",
+      "effort": "high",
+      "provenBy": ["T6", "T7", "T8"]
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "npm run check-types -w apps/api",
+      "npm run lint -w apps/api",
+      "npm run check-types -w apps/web"
+    ],
+    "final": [
+      "cd apps/api && npx jest src/order-templates/ src/recurring-invoices/ src/invoices/invoices.service src/buyer/ src/orders/orders.service src/orders/orders.scan-hardening src/common/no-bare-cron src/auth/google-oauth.removed-customer src/authorizations/authorization-expiry src/routes/ --reporters=default",
+      "cd apps/web && npx jest lib/buyer-auth-context app/buyer"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/api/src/order-templates/order-templates.service.ts",
+        "revertFix": true,
+        "behavior": "skip removed",
+        "test": "REG-B131 T1"
+      },
+      {
+        "file": "apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+        "revertFix": true,
+        "behavior": "skip removed",
+        "test": "REG-B131 T2"
+      },
+      {
+        "file": "apps/api/src/invoices/invoices.service.ts",
+        "revertFix": true,
+        "behavior": "404 removed",
+        "test": "REG-B131 T4"
+      },
+      {
+        "file": "apps/api/src/buyer/guards/buyer-seller-context.guard.ts",
+        "revertFix": true,
+        "behavior": "refuse removed",
+        "test": "REG-B141 T6"
+      },
+      {
+        "file": "apps/api/src/buyer/buyer.service.ts",
+        "revertFix": true,
+        "behavior": "hide removed",
+        "test": "REG-B141 T8"
+      }
+    ]
+  }
+}

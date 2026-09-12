@@ -81,9 +81,12 @@ export class RecurringInvoicesService {
   // ─── CRUD ─────────────────────────────────────────────────────────────────
 
   async create(dto: CreateRecurringInvoiceDto) {
+    // REG-B131: a removed (soft-deleted) customer is not a recurring-invoice target — the sweep
+    // already skips their schedules, so creating one would only schedule a silent no-op. Refuse
+    // through the existing not-found branch so no customer state leaks.
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: dto.customerId } });
+      .customer.findUnique({ where: { id: dto.customerId, deletedAt: null } });
     if (!customer) throw new NotFoundException("Customer not found");
 
     return this.prisma.forTenant().recurringInvoice.create({
@@ -393,13 +396,34 @@ export class RecurringInvoicesService {
 
     let totalSuccess = 0;
     let totalFail = 0;
+    let totalSuppressed = 0;
 
     for (const tenant of activeTenants) {
       await this.tenantCtx.run(tenant.id, async () => {
         const due = await this.prisma.forTenant().recurringInvoice.findMany({
-          where: { isActive: true, nextRunAt: { lte: new Date() } },
+          // REG-B131: never generate (or auto-email) for a removed customer. Stateless, so a restored
+          // customer's schedule resumes on its own; nextRunAt is left untouched while removed.
+          where: { isActive: true, nextRunAt: { lte: new Date() }, customer: { deletedAt: null } },
           include: { items: true, customer: true },
         });
+
+        // REG-B131: without this the tenant returns below before its per-tenant log whenever every due
+        // row belongs to a removed customer, leaving no line at all for that night. Count the suppressed
+        // set once per tenant per tick (cron path) so the suppression is visible and dated.
+        const suppressed =
+          (await this.prisma.forTenant().recurringInvoice.count({
+            where: {
+              isActive: true,
+              nextRunAt: { lte: new Date() },
+              customer: { deletedAt: { not: null } },
+            },
+          })) ?? 0;
+        if (suppressed > 0) {
+          totalSuppressed += suppressed;
+          this.logger.warn(
+            `[tenant:${tenant.id}] REG-B131: ${suppressed} recurring invoice(s) suppressed — customer removed`,
+          );
+        }
 
         if (due.length === 0) return;
         this.logger.log(`[tenant:${tenant.id}] Processing ${due.length} due recurring invoice(s)…`);
@@ -419,7 +443,7 @@ export class RecurringInvoicesService {
     }
 
     this.logger.log(
-      `Recurring invoices: ${totalSuccess} generated, ${totalFail} failed across ${activeTenants.length} tenant(s).`,
+      `Recurring invoices: ${totalSuccess} generated, ${totalFail} failed, ${totalSuppressed} suppressed (customer removed) across ${activeTenants.length} tenant(s).`,
     );
   }
 }

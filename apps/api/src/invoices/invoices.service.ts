@@ -345,7 +345,9 @@ export class InvoicesService {
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId } });
-    if (!customer) throw new NotFoundException("Customer not found");
+    // REG-B131: a removed (soft-deleted) customer cannot be invoiced; same 404 as a missing one. Checked
+    // on the row just read (L-081), so restoreCustomer() re-enables it with no other write.
+    if (!customer || customer.deletedAt) throw new NotFoundException("Customer not found");
 
     // Pre-fetch products for every product-linked line: box size for qty resolution
     // AND the regulated-category snapshot (so a manual regulated invoice reaches the

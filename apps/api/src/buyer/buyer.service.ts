@@ -27,7 +27,13 @@ export class BuyerService {
 
   async getSellers(buyerAccountId: string) {
     const links = await this.prisma.customerLink.findMany({
-      where: { buyerAccountId, status: { in: ["ACTIVE", "INVITED", "PENDING_SELLER_APPROVAL"] } },
+      // REG-B141: hide a seller that removed this buyer's customer record, so the switcher never offers a
+      // seller whose routes the guard refuses. Stateless: restoring the customer lists it again.
+      where: {
+        buyerAccountId,
+        status: { in: ["ACTIVE", "INVITED", "PENDING_SELLER_APPROVAL"] },
+        customer: { deletedAt: null },
+      },
       include: {
         tenant: {
           select: { id: true, name: true, slug: true },
@@ -72,7 +78,10 @@ export class BuyerService {
 
   async getInviteDetails(token: string) {
     const link = await this.prisma.customerLink.findUnique({
-      where: { inviteToken: token },
+      // REG-B141: an invite for a removed (soft-deleted) customer is not redeemable — it reads as
+      // "not found", the same shape as a consumed token, so a removed customer can never be
+      // reconnected into a portal the seller-context guard refuses. Stateless: restore re-enables it.
+      where: { inviteToken: token, customer: { deletedAt: null } },
       include: {
         tenant: { select: { id: true, name: true, slug: true } },
       },
@@ -109,7 +118,10 @@ export class BuyerService {
   async acceptInvite(token: string, buyerAccountId: string) {
     return this.prisma.$transaction(async (tx) => {
       const link = await tx.customerLink.findUnique({
-        where: { inviteToken: token },
+        // REG-B141: same gate as getInviteDetails — a removed customer's invite is not redeemable,
+        // so acceptInvite can never flip its link back to ACTIVE (no write, no tenantSlug handed
+        // back to the client) while the guard refuses every seller-scoped route.
+        where: { inviteToken: token, customer: { deletedAt: null } },
         include: { tenant: { select: { name: true, slug: true } } },
       });
 
@@ -174,9 +186,14 @@ export class BuyerService {
     // Find customer at that tenant matching the email the buyer TYPED (a claim, not proof).
     // Check both the customer's own email field AND their linked User's login email.
     const claimedEmail = dto.emailAtSeller.toLowerCase();
+    // REG-B141: a removed (soft-deleted) customer is not connectable. Filtering here — before any
+    // link read, upsert, seller email or socket emit — is what keeps the answer consistent with
+    // getSellers (hides it) and the seller-context guard (403s it): no "already connected" 409 and
+    // no "Connected!" for a portal that is refused. Stateless, so restore re-enables it.
     const customer = await this.prisma.customer.findFirst({
       where: {
         tenantId: tenant.id,
+        deletedAt: null,
         OR: [{ email: claimedEmail }, { user: { email: claimedEmail } }],
       },
       include: { user: { select: { email: true } } },

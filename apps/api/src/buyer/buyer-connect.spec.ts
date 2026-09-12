@@ -601,3 +601,201 @@ describe("BuyerService.getSellers — non-ACTIVE customer redaction (security)",
     expect(result[0].tenant.name).toBe("Acme");
   });
 });
+
+// Honest stand-in for Postgres: applies the `where` the service actually sends, so a where-only fix is
+// observable (L-081: a mock that injects a fixed result cannot see one). Strict: an unmodelled filter
+// shape throws instead of silently matching.
+function matchesWhere(row: any, where: any = {}): boolean {
+  for (const [key, cond] of Object.entries(where)) {
+    if (key === "customer") {
+      const rel = (cond as any)?.is ?? cond;
+      if (
+        !rel ||
+        !Object.prototype.hasOwnProperty.call(rel, "deletedAt") ||
+        rel.deletedAt !== null
+      ) {
+        throw new Error(`matchesWhere: unsupported customer filter ${JSON.stringify(cond)}`);
+      }
+      if (row.customer.deletedAt !== null) return false;
+      continue;
+    }
+    if (cond !== null && typeof cond === "object" && !(cond instanceof Date)) {
+      const c = cond as any;
+      if ("has" in c) {
+        if (!row[key].includes(c.has)) return false;
+      } else if ("in" in c) {
+        if (!c.in.includes(row[key])) return false;
+      } else if ("lte" in c) {
+        if (!(row[key] <= c.lte)) return false;
+      } else {
+        throw new Error(`matchesWhere: unsupported filter on ${key}: ${JSON.stringify(cond)}`);
+      }
+      continue;
+    }
+    if (row[key] !== cond) return false;
+  }
+  return true;
+}
+
+const REMOVED_AT = new Date("2026-09-01T00:00:00.000Z");
+
+describe("BuyerService.getSellers — removed customer (B141)", () => {
+  let service: BuyerService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  const sellerLink = (slug: string, deletedAt: Date | null) => ({
+    id: `l-${slug}`,
+    buyerAccountId: "b-1",
+    status: "ACTIVE",
+    linkedAt: new Date("2026-08-01"),
+    tenantId: `tn-${slug}`,
+    tenant: { id: `tn-${slug}`, name: slug, slug },
+    customer: {
+      id: `c-${slug}`,
+      businessName: "Retail Corner",
+      email: "c@example.test",
+      deletedAt,
+    },
+  });
+
+  async function boot(removedAt: Date | null) {
+    prisma = createMockPrisma();
+    const rows = [sellerLink("acme-live", null), sellerLink("acme-removed", removedAt)];
+    prisma.customerLink.findMany.mockImplementation((async (args: any) =>
+      rows.filter((r) => matchesWhere(r, args?.where))) as any);
+    prisma.tenantConfig.findFirst.mockResolvedValue(null);
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BuyerService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: EmailService, useValue: { send: jest.fn() } },
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        {
+          provide: RouteFlowGateway,
+          useValue: { emitBuyerAutoLinked: jest.fn(), emitBuyerConnectRequest: jest.fn() },
+        },
+      ],
+    }).compile();
+    service = module.get(BuyerService);
+  }
+
+  it("REG-B141 T8: GET /buyer/sellers hides a seller whose customer record was removed", async () => {
+    await boot(REMOVED_AT);
+    expect((await service.getSellers("b-1")).map((s) => s.tenant.slug)).toEqual(["acme-live"]);
+  });
+
+  it("B141 P6: getSellers lists a restored seller again", async () => {
+    await boot(null);
+    expect((await service.getSellers("b-1")).map((s) => s.tenant.slug)).toEqual([
+      "acme-live",
+      "acme-removed",
+    ]);
+  });
+});
+
+describe("BuyerService reconnect paths — removed customer (B141)", () => {
+  let service: BuyerService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let emailService: { send: jest.Mock };
+  let gateway: { emitBuyerAutoLinked: jest.Mock; emitBuyerConnectRequest: jest.Mock };
+
+  // `notifySellerOfRequest` is fired with `void`; flush before asserting it never ran.
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+  // Where-honoring stand-ins (L-081): a where-only fix is invisible to a mock that injects a
+  // fixed row, so these return the removed row ONLY while the caller has not asked for a live one.
+  function bootCustomer(deletedAt: Date | null) {
+    const row = { ...makeCustomer(), deletedAt };
+    prisma.customer.findFirst.mockImplementation((async (args: any) =>
+      args?.where?.deletedAt === null && row.deletedAt !== null ? null : row) as any);
+  }
+
+  function bootInvite(deletedAt: Date | null) {
+    const row = {
+      id: "link-r",
+      tenantId: "tenant-1",
+      status: "INVITED",
+      buyerAccountId: null,
+      inviteToken: "secret-token",
+      inviteExpiresAt: new Date("2099-01-01"),
+      inviteMethod: "EMAIL",
+      tenant: { id: "tenant-1", name: "Acme Foods", slug: "acme-foods" },
+      customer: { id: "cust-1", deletedAt },
+    };
+    prisma.customerLink.findUnique.mockImplementation((async (args: any) => {
+      const rel = args?.where?.customer;
+      if (rel?.deletedAt === null && row.customer.deletedAt !== null) return null;
+      return row;
+    }) as any);
+  }
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    emailService = { send: jest.fn().mockResolvedValue({ delivered: true }) };
+    gateway = { emitBuyerAutoLinked: jest.fn(), emitBuyerConnectRequest: jest.fn() };
+
+    prisma.tenant.findUnique.mockResolvedValue(TENANT as any);
+    prisma.tenantConfig.findFirst.mockResolvedValue({ businessName: "Acme Foods" } as any);
+    prisma.user.findMany.mockResolvedValue([{ email: "ops@acme-foods.example" }] as any);
+    prisma.buyerAccount.findUnique.mockResolvedValue({
+      email: "buyer@example.com",
+      name: "Buyer One",
+      emailVerified: true,
+    } as any);
+    prisma.customerLink.findFirst.mockResolvedValue(null);
+    prisma.customerLink.upsert.mockResolvedValue({ id: "link-1" } as any);
+    prisma.customerLink.update.mockResolvedValue({ id: "link-r" } as any);
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BuyerService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: EmailService, useValue: emailService },
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: RouteFlowGateway, useValue: gateway },
+      ],
+    }).compile();
+
+    service = module.get(BuyerService);
+  });
+
+  it("REG-B141 T9: requestSeller refuses a removed customer and writes/notifies nothing", async () => {
+    bootCustomer(REMOVED_AT);
+
+    await expect(service.requestSeller("buyer-1", DTO)).rejects.toBeInstanceOf(NotFoundException);
+    await flush();
+
+    expect(prisma.customerLink.upsert).not.toHaveBeenCalled();
+    expect(prisma.customerLink.update).not.toHaveBeenCalled();
+    expect(gateway.emitBuyerAutoLinked).not.toHaveBeenCalled();
+    expect(gateway.emitBuyerConnectRequest).not.toHaveBeenCalled();
+    expect(emailService.send).not.toHaveBeenCalled();
+  });
+
+  it("REG-B141 T10: acceptInvite treats a removed customer's invite as not found", async () => {
+    bootInvite(REMOVED_AT);
+
+    await expect(service.acceptInvite("secret-token", "buyer-1")).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(prisma.customerLink.update).not.toHaveBeenCalled();
+  });
+
+  it("B141 P7: requestSeller still connects a live (or restored) customer", async () => {
+    bootCustomer(null);
+
+    const result = await service.requestSeller("buyer-1", DTO);
+
+    expect(result.message).toContain("Connected!");
+    expect(prisma.customerLink.upsert).toHaveBeenCalled();
+  });
+
+  it("B141 P8: acceptInvite still redeems a live (or restored) customer's invite", async () => {
+    bootInvite(null);
+
+    await expect(service.acceptInvite("secret-token", "buyer-1")).resolves.toMatchObject({
+      tenantSlug: "acme-foods",
+    });
+    expect(prisma.customerLink.update).toHaveBeenCalled();
+  });
+});

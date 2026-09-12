@@ -1033,6 +1033,201 @@ describe("OrdersService", () => {
       );
     });
 
+    // ── B131 sibling: a removed (soft-deleted) customer is not an order target.
+    // Removal writes Customer.deletedAt + User.status = "INACTIVE"; the
+    // pre-existing guard only caught "SUSPENDED", so a stale detail page or a
+    // queued mobile/API request could still create an order for a removed
+    // customer — and that order could then be invoiced.
+    it("REG-B131: staff create() refuses a removed customer with the not-found message", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        pricingTier: 1,
+        deletedAt: new Date("2026-09-01T00:00:00Z"),
+        user: { status: "ACTIVE" },
+      });
+      // Everything past the customer gate is mocked to succeed, so pre-fix the
+      // call RESOLVED and wrote an order row — the distinguisher.
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+      prisma.order.create.mockResolvedValue(MOCK_ORDER);
+      (service as any).systemConfig.get.mockResolvedValue("0");
+
+      await expect(
+        service.create(
+          { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1 }] } as any,
+          operatorPayload,
+        ),
+      ).rejects.toThrow(new BadRequestException("Customer not found"));
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it("REG-B131: driver create() refuses a removed customer with the not-found message", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        pricingTier: 1,
+        deletedAt: new Date("2026-09-01T00:00:00Z"),
+      });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+      prisma.order.create.mockResolvedValue(MOCK_ORDER);
+      (service as any).systemConfig.get.mockResolvedValue("0");
+      const driverPayload = { ...operatorPayload, role: "DRIVER" as const };
+
+      await expect(
+        service.create(
+          { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1 }] } as any,
+          driverPayload,
+        ),
+      ).rejects.toThrow(new BadRequestException("Customer not found"));
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it("REG-B131 T14: a removed customer's own (still-valid) session cannot create an order", async () => {
+      // Removal deactivates the User, but an access token minted moments before it stays valid for
+      // up to 15 minutes — the buyer's own create() is the last path that could still write an
+      // order for a removed customer. Honest stand-in for Postgres: applies the `where` the
+      // service actually sends, so a where-only fix is observable (L-081).
+      prisma.customer.findFirst.mockImplementation((({ where }: any) =>
+        Promise.resolve(
+          where?.deletedAt === null
+            ? null
+            : { id: "cust-1", pricingTier: 1, deletedAt: new Date("2026-09-01T00:00:00Z") },
+        )) as any);
+      // Everything past the customer gate succeeds, so pre-fix the call RESOLVED and wrote an
+      // order row — the distinguisher.
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+      prisma.order.create.mockResolvedValue(MOCK_ORDER);
+      (service as any).systemConfig.get.mockResolvedValue("0");
+      (service as any).promotionsService.activeForCatalog.mockResolvedValue([]);
+
+      await expect(
+        service.create({ items: [{ productId: "prod-1", qty: 1 }] } as any, customerPayload),
+      ).rejects.toThrow(new ForbiddenException("Customer record not found"));
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it("B131 P13: a live self-serve customer still creates", async () => {
+      seedBuyerTierMocks(1);
+
+      await service.create({ items: [{ productId: "prod-1", qty: 1 }] }, customerPayload);
+
+      expect(prisma.order.create).toHaveBeenCalled();
+    });
+
+    // create() was only the first door. Every OTHER self-serve write path resolved the acting
+    // customer with a bare `{ userId: user.sub }`, so inside the ~15-minute access-token window a
+    // removed customer could still MUTATE an order even though they could no longer place one.
+    // Honest stand-in for Postgres in each: the fixture applies the `where` the service actually
+    // sends, so a where-only fix is observable (L-081).
+    const REMOVED_CUSTOMER = {
+      id: "cust-1",
+      pricingTier: 1,
+      deletedAt: new Date("2026-09-01T00:00:00Z"),
+    };
+    /** `findFirst` that honours `deletedAt: null`; `where.id` still serves the pricingTier read. */
+    const seedRemovedBuyerLookup = () =>
+      prisma.customer.findFirst.mockImplementation((({ where }: any) => {
+        if (where?.userId !== undefined) {
+          return Promise.resolve(where.deletedAt === null ? null : REMOVED_CUSTOMER);
+        }
+        return Promise.resolve({ pricingTier: 1 });
+      }) as any);
+
+    it("REG-B131 T18: a removed customer's session cannot edit order items", async () => {
+      seedRemovedBuyerLookup();
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "PENDING",
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 2,
+            unitPrice: 4.99,
+            subtotal: 9.98,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+          },
+        ],
+      });
+      // Everything past the ownership gate succeeds, so pre-fix the call RESOLVED and replaced
+      // the order's lines — the distinguisher.
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-1", pricePerUnit: 4.99, unitsPerBox: null },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([]);
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ productId: "prod-1", qty: 5 }] },
+          customerPayload,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it("REG-B131 T19: a removed customer's session cannot change order status", async () => {
+      seedRemovedBuyerLookup();
+      // PENDING → CANCELLED is exactly what a LIVE owner is allowed to do here, so pre-fix this
+      // resolved and wrote the status — the distinguisher.
+      prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
+      prisma.order.findFirst.mockResolvedValue(MOCK_ORDER); // cancelImpact's own read
+      prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "CANCELLED" });
+      prisma.invoice.findMany.mockResolvedValue([]);
+
+      await expect(
+        service.changeStatus("ord-1", { status: "CANCELLED" as any }, customerPayload),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it("B131 P17: a live self-serve customer still edits items", async () => {
+      prisma.customer.findFirst.mockImplementation((({ where }: any) =>
+        Promise.resolve(
+          where?.userId !== undefined ? { id: "cust-1" } : { pricingTier: 1 },
+        )) as any);
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "PENDING",
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 2,
+            unitPrice: 4.99,
+            subtotal: 9.98,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+          },
+        ],
+      });
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-1", pricePerUnit: 4.99, unitsPerBox: null },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-1", qty: 5 }] },
+        customerPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ productId: "prod-1", qty: 5 }) }),
+      );
+    });
+
     it("should throw BadRequestException when product not found", async () => {
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
       prisma.product.findMany.mockResolvedValue([]); // no matching products

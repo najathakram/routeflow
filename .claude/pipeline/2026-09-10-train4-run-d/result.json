@@ -1,0 +1,1354 @@
+{
+  "plan": ".claude/pipeline/2026-09-10-train4-run-d/build-plan.md",
+  "mode": "bugfix",
+  "artifacts": {
+    "plan": ".claude/pipeline/2026-09-10-train4-run-d/build-plan.md",
+    "discovery": "",
+    "spec": "",
+    "uxSpec": "",
+    "testPlan": ".claude/pipeline/2026-09-10-train4-run-d/bug-test-plan.md",
+    "designSystem": ""
+  },
+  "scale": "major",
+  "startedAt": "2026-09-10T22:08:25Z",
+  "estimatedCostUsd": 21.72,
+  "pricesAsOf": "2026-06-24",
+  "overlap": {
+    "verifyWithUiVerify": false,
+    "finalGateWithFinalPass": true,
+    "redAuditWithImplement": null
+  },
+  "verify": {
+    "ran": true,
+    "mode": "on-dispute",
+    "lazy": true,
+    "judged": 11,
+    "dropped": 0,
+    "votesCast": 12,
+    "firstVoteRefuted": 1,
+    "firstVoteRefutedRate": 0.091,
+    "tieBreaks": 1,
+    "locationChecked": 11,
+    "locationInvalid": 1,
+    "preRefuted": 11,
+    "deferredToFixer": 0,
+    "disputed": 0,
+    "disputesDropped": 0,
+    "disputesUpheld": 0,
+    "corroborated": 0,
+    "corroboratedSkipped": 0
+  },
+  "baseline": {
+    "ran": true,
+    "note": "Baseline = the working tree exactly as the caller left it, uncommitted work included; that tree is what the commands ran against.",
+    "commands": [
+      "npm run check-types -w apps/api",
+      "npm run lint -w apps/api",
+      "cd apps/api && npx jest src/order-templates/ src/recurring-invoices/ src/invoices/invoices.service src/buyer/ src/orders/orders.scan-hardening src/common/no-bare-cron --reporters=default"
+    ],
+    "badCommands": [],
+    "gate": {
+      "ran": true,
+      "completed": true,
+      "pass": true,
+      "results": [
+        {
+          "command": "npm run check-types -w apps/api",
+          "pass": true,
+          "summary": "Type check passed with no errors",
+          "executed": -1
+        },
+        {
+          "command": "npm run lint -w apps/api",
+          "pass": true,
+          "summary": "ESLint passed: 0 errors, 7477 warnings",
+          "executed": -1
+        },
+        {
+          "command": "cd apps/api && npx jest src/order-templates/ src/recurring-invoices/ src/invoices/invoices.service src/buyer/ src/orders/orders.scan-hardening src/common/no-bare-cron --reporters=default",
+          "pass": true,
+          "summary": "All tests passed: 26 test suites, 598 tests, 0 snapshots, 41.479s",
+          "executed": 598
+        }
+      ]
+    },
+    "grounding": {
+      "ran": true,
+      "completed": true,
+      "artifacts": [
+        ".claude/pipeline/2026-09-10-train4-run-d/build-plan.md",
+        ".claude/pipeline/2026-09-10-train4-run-d/bug-test-plan.md"
+      ],
+      "findings": [
+        {
+          "file": "(artifact)",
+          "severity": "major",
+          "summary": "Path to cause-ruling.md is incorrect in both artifacts",
+          "detail": "The artifacts reference 'local-assets/handoff/2026-09-09/planning/train4/cause-ruling.md' in the introductory text, but this file does not exist. The actual file is located at '.claude/pipeline/2026-09-10-train4-run-d/cause-ruling.md' in the worktree.",
+          "fixComplexity": "mechanical",
+          "fixHint": "Replace the path 'local-assets/handoff/2026-09-09/planning/train4/cause-ruling.md' with '.claude/pipeline/2026-09-10-train4-run-d/cause-ruling.md' in both build-plan.md (line 6) and bug-test-plan.md (line 5).",
+          "phase": "Baseline"
+        }
+      ]
+    }
+  },
+  "manifest": {
+    "ran": true,
+    "completed": true,
+    "note": "Facts gathered before any agent wrote anything. Unknown or unreadable files are classified HIGH.",
+    "files": [
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-run-d/build-plan.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-run-d/bug-test-plan.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-run-d/cause-brief.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-run-d/cause-refutation.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-run-d/cause-ruling.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-run-d/RESUME.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-run-d/pipeline-args.json",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/invoices/invoices.service.ts",
+        "status": "modified",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/invoices/invoices.service.spec.ts",
+        "status": "modified",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+        "status": "modified",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/recurring-invoices/recurring-invoices.service.spec.ts",
+        "status": "modified",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/order-templates/order-templates.service.ts",
+        "status": "modified",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/order-templates/order-templates.removed-customer.spec.ts",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/buyer/buyer.service.ts",
+        "status": "modified",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/buyer/buyer-connect.spec.ts",
+        "status": "modified",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/buyer/guards/buyer-seller-context.guard.ts",
+        "status": "modified",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/buyer/guards/buyer-seller-context.guard.spec.ts",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      }
+    ],
+    "validCommands": [
+      "npm run check-types -w apps/api",
+      "npm run lint -w apps/api",
+      "cd apps/api && npx jest src/order-templates/ src/recurring-invoices/ src/invoices/invoices.service src/buyer/ src/orders/orders.scan-hardening src/common/no-bare-cron --reporters=default"
+    ],
+    "artifacts": [
+      ".claude/pipeline/2026-09-10-train4-run-d/build-plan.md",
+      ".claude/pipeline/2026-09-10-train4-run-d/bug-test-plan.md"
+    ]
+  },
+  "riskSummary": {
+    "high": 10,
+    "low": 7
+  },
+  "fixRouting": {
+    "mechanical": 1,
+    "sonnetDesigned": 1,
+    "judgment": 10
+  },
+  "fixPlanning": {
+    "enabled": true,
+    "rounds": [
+      {
+        "round": 1,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 11,
+          "dispute": 0,
+          "defer": 1
+        },
+        "routes": {
+          "mechanical": 1,
+          "sonnet": 6,
+          "opus": 4
+        },
+        "waves": [[0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11]],
+        "note": "Round 1 keeps the owner's B131 three-site fence for invoice-minting code (estimates create/convert, credit-notes, import, approveBuyerRequest, listPendingPortalApprovals are recorded as Sibling-notes follow-up rows with the owner-ruling question on accepted estimates, and R6's wording is qualified) while closing the cheap, clearly-wrong siblings that the B141/B131 change itself exposes: google-oauth sellerCount gets the same deletedAt filter as getSellers (#1); requestSeller and acceptInvite refuse a removed customer through their existing not-found branches so no CustomerLink write or seller notification can happen (#3/#9); OrdersService.create staff/driver branches refuse a removed customer (#10); the guard logs one warn line with tenantId+customerId on the refusal path only, leaving its query and message untouched (#5); the web buyer context drops a stored activeSeller absent from the fetched list (#7); both crons count and warn suppressed rows per tenant without changing what fires (#11); and the stale cause-ruling path is corrected (#0). #4 (in-product Restore UI as a landing condition) is deferred as an owner scope call. All fixes run in one wave (build-plan.md and buyer.service.ts are shared across several findings and the engine serializes by file). Close-out items outside the diff: run the drafted B141 read-only report before the deploy window so the locked-out population is a number, and file the deferred Restore-UI question with the owner."
+      },
+      {
+        "round": 2,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 6,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 0,
+          "sonnet": 5,
+          "opus": 1
+        },
+        "waves": [
+          [1, 2],
+          [0, 3, 4, 5]
+        ],
+        "note": "Round 2 fixes all six findings; nothing is disputed or deferred. Wave 1 rewrites the two plan documents and the collided test ids: #1 amends build-plan.md for every api deviation (google-oauth admitted to the fence, sibling note closed, the second-query constraint qualified for the cron counts and the guard diagnostic, criterion 4 and the summary strings corrected) and #2 renumbers the recurring-invoices and google-oauth round-2 tests to REG-B131 T11 / REG-B141 T11 / B141 P9 and records them in bug-test-plan.md. Wave 2 runs after those documents settle: #0 keeps the web reconcile hunk and admits it through a round-2 fence amendment plus web-lane verifyCommands (`check-types -w apps/web`, `jest lib/buyer-auth-context app/buyer`) so the gate covers it; #3 demotes both green-on-base T10 negative controls to pins B131 P4/P5; #4 makes both suppression-count tests assert the count where-clause so a flipped or dropped `deletedAt` filter turns them red; #5 routes refreshSellers (and any login-path sellers load) through applySellers via an activeSellerRef, pinned by W4/W5. Same-file pairs (#0/#5 on buyer-auth-context, #3/#4 on the order-templates spec) share a wave so the engine serializes them, and the doc files edited by both waves (build-plan.md, bug-test-plan.md, the recurring-invoices spec) are touched by wave 1 first."
+      }
+    ],
+    "deferred": [
+      {
+        "file": "apps/web/app/(dashboard)/customers/[id]/page.tsx",
+        "summary": "The change makes \"Remove customer\" silently kill standing orders, recurring invoices and portal access, but the only in-product way to reverse it is the 8-second Undo toast.",
+        "reason": "Owner call on scope: the reviewer asks for new web UI (a removed/archived filter on the customers list plus a Restore action on the detail page, which mobile-mirrors-web would then owe on mobile) as a condition of this landing. That is outside the owner's three-site B131 fence and is a product decision — ship this fix with the 8-second Undo plus the existing idempotent POST /customers/:id/restore and open a follow-up web PR, or hold the landing until the Restore UI ships. The restore payload semantics (which status to restore to when priorStatus is not known after the toast expires) also need a ruling before a UI can be designed exactly."
+      }
+    ]
+  },
+  "cascadeAudit": null,
+  "escalation": null,
+  "lensesRun": [
+    "correctness",
+    "spec-compliance",
+    "test-quality",
+    "edge-cases-and-security",
+    "operability",
+    "scope-coverage"
+  ],
+  "radiusPack": {
+    "built": true,
+    "truncated": false,
+    "files": [
+      "apps/api/src/order-templates/order-templates.service.ts",
+      "apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+      "apps/api/src/invoices/invoices.service.ts",
+      "apps/api/src/buyer/guards/buyer-seller-context.guard.ts",
+      "apps/api/src/buyer/buyer.service.ts",
+      "apps/api/src/buyer/buyer-connect.spec.ts",
+      "apps/api/src/order-templates/order-templates.removed-customer.spec.ts",
+      "apps/api/src/buyer/guards/buyer-seller-context.guard.spec.ts",
+      "apps/api/src/customers/customers.service.ts",
+      "apps/api/src/buyer/buyer.controller.ts",
+      "apps/api/src/payment-requests/buyer-payments.controller.ts"
+    ],
+    "skipped": null
+  },
+  "siblingSweep": {
+    "ran": false,
+    "patterns": 0,
+    "hits": 0,
+    "findings": 0,
+    "skipped": "no-patterns"
+  },
+  "harnessCheck": {
+    "ran": true,
+    "issues": [],
+    "skipped": null,
+    "note": ""
+  },
+  "testAuthoring": {
+    "ran": true,
+    "packages": [
+      {
+        "package": "TP1",
+        "status": "done",
+        "filesChanged": [
+          "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F25\\apps\\api\\src\\order-templates\\order-templates.removed-customer.spec.ts",
+          "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F25\\apps\\api\\src\\recurring-invoices\\recurring-invoices.service.spec.ts",
+          "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F25\\apps\\api\\src\\invoices\\invoices.service.spec.ts"
+        ],
+        "deviations": ""
+      },
+      {
+        "package": "TP2",
+        "status": "done",
+        "filesChanged": [
+          "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F25\\apps\\api\\src\\buyer\\guards\\buyer-seller-context.guard.spec.ts",
+          "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F25\\apps\\api\\src\\buyer\\buyer-connect.spec.ts"
+        ],
+        "deviations": ""
+      }
+    ]
+  },
+  "redGate": {
+    "ran": true,
+    "remediateOn": "behavioral",
+    "properlyRed": true,
+    "structurallyRed": true,
+    "behaviorallyRed": true,
+    "attempts": 1,
+    "audits": [
+      {
+        "attempt": 1,
+        "ran": true,
+        "structurallyRed": true,
+        "behaviorallyRed": true,
+        "properlyRed": true,
+        "tests": [
+          {
+            "test": "REG-B131 T1: generateDailyOrders skips an active template whose customer was removed — apps/api/src/order-templates/order-templates.removed-customer.spec.ts:113",
+            "outcome": "assertion-failure",
+            "note": "Re-ran myself: fails at line 115 with expected [\"t-live\"], received [\"t-live\",\"t-removed\"] — exactly the plan's 'Fails TODAY with' column. Reaches its assertion; the service's real where ({isActive:true, daysOfWeek:{has:dayOfWeek}}, order-templates.service.ts:316) is applied through matchesWhere, so a where-only fix is observable (L-081)."
+          },
+          {
+            "test": "REG-B131 T2: generateDueRecurringInvoices never invoices a removed customer — apps/api/src/recurring-invoices/recurring-invoices.service.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Attempt-1 output: expected [\"c-live\"], received [\"c-live\",\"c-removed\"] — matches the plan. Reproduced in my full-suite run (5 failures, same set). Fixture's customer is fully populated because the real query uses include:{customer:true} (recurring-invoices.service.ts), so no projection gap here."
+          },
+          {
+            "test": "REG-B131 T3: generateDueRecurringInvoices never emails a removed customer's auto-send invoice — apps/api/src/recurring-invoices/recurring-invoices.service.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Attempt-1 output: expected 0 sendEmail calls, received 1 — its own value, distinct from T2's. I verified it cannot pass vacuously: findMany is awaited OUTSIDE the per-row try/catch in generateDueRecurringInvoices, so a matchesWhere 'unsupported filter' throw propagates and errors the test instead of yielding 0 calls."
+          },
+          {
+            "test": "REG-B131 T4: create() refuses a removed customer with the not-found 404 — apps/api/src/invoices/invoices.service.spec.ts:8183",
+            "outcome": "assertion-failure",
+            "note": "Attempt-1 output: 'Received promise resolved instead of rejected. Resolved to value {\"customer\":{},\"id\":\"inv-2\",...}' — the plan's expected today-value. Pins the exception TYPE (NotFoundException), not merely 'throws'. Uses a plain mockResolvedValue fixture (row-check fix), consistent with the plan."
+          },
+          {
+            "test": "REG-B131 T5: create() for a removed customer writes no invoice row — apps/api/src/invoices/invoices.service.spec.ts:8187",
+            "outcome": "assertion-failure",
+            "note": "Reproduced in my full-suite run: expected 0 calls to prisma.invoice.create, received 1, with the full DRAFT invoice payload printed. Distinct oracle from T4. Caveat: the `.catch(() => undefined)` makes it pass on ANY throw; T4 in the same file is what actually pins the cause."
+          },
+          {
+            "test": "REG-B141 T6: the seller-context guard refuses a removed customer's ACTIVE link — apps/api/src/buyer/guards/buyer-seller-context.guard.spec.ts:75",
+            "outcome": "assertion-failure",
+            "note": "Re-ran myself: 'Received promise resolved instead of rejected. Resolved to value: true' — the plan's value. Guard is constructed directly with a fake prisma and genuinely executes (proved by T7's output showing a fully populated req.buyerCustomer)."
+          },
+          {
+            "test": "REG-B141 T7: a refused removed customer never reaches req.buyerCustomer — apps/api/src/buyer/guards/buyer-seller-context.guard.spec.ts:80",
+            "outcome": "assertion-failure",
+            "note": "Re-ran myself: fails at line 82 — expected undefined, received {customerId:\"c-1\", tenantId:\"tn-1\", tenantSlug:\"acme\", customer:{...deletedAt:2026-09-01...}, userId:\"u-1\"}, matching the plan. Caveat: `.catch(() => undefined)` means it also passes on an unmodelled-filter throw; T6 is the load-bearing oracle of the pair."
+          },
+          {
+            "test": "REG-B141 T8: GET /buyer/sellers hides a seller whose customer record was removed — apps/api/src/buyer/buyer-connect.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Attempt-1 output: expected [\"acme-live\"], received [\"acme-live\",\"acme-removed\"] — its own value. Reproduced in my full-suite run. The real where uses status:{in:[...]} which matchesWhere models."
+          },
+          {
+            "test": "B131 P1: a restored customer's template fires again — apps/api/src/order-templates/order-templates.removed-customer.spec.ts:118",
+            "outcome": "passed",
+            "note": "PLAN-DESIGNATED GREEN PIN, explicitly outside the red gate (bug-test-plan.md 'Pins' section, L-060: a pin red today would be a live defect report). Verified green by me today. Carries no REG- token, so the redGate commands never collect it. NOT a structural blocker."
+          },
+          {
+            "test": "B131 P2: a restored customer's recurring invoice generates again — apps/api/src/recurring-invoices/recurring-invoices.service.spec.ts",
+            "outcome": "passed",
+            "note": "Plan-designated green pin outside the red gate. I ran it individually (`-t \"P2: a restored customer\"`): 1 passed. Restore-symmetry control for T2/T3."
+          },
+          {
+            "test": "B131 P3: create() still invoices a live customer (fixture control) — apps/api/src/invoices/invoices.service.spec.ts:8192",
+            "outcome": "passed",
+            "note": "Plan-designated green pin outside the red gate; it is the harness-validity control for T4/T5 (proves the fixture reaches invoice.create when deletedAt is null). My first filter attempt collected 0 tests because -t \"...create() still...\" parses () as a regex group; re-ran as -t \"B131 P3\" and it passed."
+          },
+          {
+            "test": "B141 P4: a live or restored customer passes the guard and populates req.buyerCustomer — apps/api/src/buyer/guards/buyer-seller-context.guard.spec.ts:85",
+            "outcome": "passed",
+            "note": "Plan-designated green pin outside the red gate. Verified green by me today. Guards against an over-broad fix that refuses live customers too."
+          },
+          {
+            "test": "B141 P5: a DISCONNECTED link is still refused for a live customer — apps/api/src/buyer/guards/buyer-seller-context.guard.spec.ts:90",
+            "outcome": "passed",
+            "note": "Plan-designated green pin outside the red gate. Verified green by me today. Freezes the pre-existing status filter behavior."
+          },
+          {
+            "test": "B141 P6: getSellers lists a restored seller again — apps/api/src/buyer/buyer-connect.spec.ts",
+            "outcome": "passed",
+            "note": "Plan-designated green pin outside the red gate. Ran individually (-t \"B141 P6\"): 1 passed."
+          }
+        ],
+        "blockers": [
+          "NOTE ON THE VERDICT (read first): all 8 REG-tagged tests — the entire red gate as defined by bug-test-plan.md's redGate.commands (-t \"REG-B131\" / -t \"REG-B141\") — ran and failed on an assertion, each on its own distinct plan-specified wrong value. The 6 additional new tests (P1-P6) pass, but the plan designates them GREEN-today/GREEN-after pins deliberately OUTSIDE the red gate (L-060), they carry no REG- token so the gate never collects them, and P3 exists precisely to prove the T4/T5 harness is valid. I therefore did NOT count them as structural blockers; structurallyRed is computed over the 8 gated tests. If the engine requires literally every new test to be red, flip structurallyRed to false on that technicality — but the correct action would be to reclassify, not to edit the pins.",
+          "BEHAVIORAL: T1, T6, T7, T8 will pass for the WRONG reason if the fix is a row check rather than a where filter. The fakes apply `where` but do not model Prisma select/include projection, while all three queries omit deletedAt today: buyer-seller-context.guard.ts:41-45 selects only {id,userId,businessName,email}; buyer.service.ts:35-37 (getSellers) selects only {id,businessName,email}; order-templates.service.ts:315-318 does `include: { items: true }` with no customer at all. The fixtures put deletedAt on every row unconditionally, so `if (row.customer.deletedAt) …` turns these green while production reads undefined and stays broken. Only a `customer: { deletedAt: null }` where-filter fix is genuinely proven by these tests. The mutation probe should test exactly this: add a row-check-only fix WITHOUT widening the select and confirm the tests still fail.",
+          "BEHAVIORAL: T7 (`req.buyerCustomer` toBeUndefined) and T5 (`invoice.create` not.toHaveBeenCalled) both wrap the call in `.catch(() => undefined)`, so they pass on ANY throw — including matchesWhere's own 'unsupported customer filter' error. Neither proves the fix alone; each depends on its paired primary oracle (T6 / T4) in the same file to pin the exception type. Acceptable as a pair, but do not treat a green T5 or T7 as independent evidence. (I confirmed T3 does NOT share this weakness: recurringInvoice.findMany is awaited outside the per-row try/catch, so a filter-shape throw errors the test.)",
+          "BEHAVIORAL (minor, no action needed): the `matchesWhere` helper is duplicated verbatim in 4 spec files. It is strict — it throws on any customer-filter shape other than {deletedAt:null} or {is:{deletedAt:null}} — which is what makes a differently shaped fix fail loudly, but it also means a fix using e.g. `customer: { deletedAt: { equals: null } }` will error rather than pass, and the author will need to widen the helper rather than assume the fix is wrong."
+        ]
+      }
+    ],
+    "remediation": null
+  },
+  "implementation": [
+    {
+      "package": "WP1",
+      "status": "done",
+      "filesChanged": [
+        "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F25\\apps\\api\\src\\order-templates\\order-templates.service.ts",
+        "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F25\\apps\\api\\src\\recurring-invoices\\recurring-invoices.service.ts",
+        "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F25\\apps\\api\\src\\invoices\\invoices.service.ts"
+      ],
+      "deviations": ""
+    },
+    {
+      "package": "WP2",
+      "status": "done",
+      "filesChanged": [
+        "apps/api/src/buyer/guards/buyer-seller-context.guard.ts",
+        "apps/api/src/buyer/buyer.service.ts"
+      ],
+      "deviations": ""
+    }
+  ],
+  "gate": {
+    "pass": true,
+    "skipped": false,
+    "results": [
+      {
+        "command": "cd apps/api && npx jest src/order-templates/ src/recurring-invoices/ src/invoices/invoices.service src/buyer/ src/orders/orders.scan-hardening src/common/no-bare-cron --reporters=default",
+        "pass": true,
+        "summary": "Test Suites: 28 passed, 28 total; Tests: 621 passed, 621 total; Time: 25.936 s",
+        "executed": 621
+      }
+    ]
+  },
+  "buildFix": null,
+  "uiVerify": {
+    "ran": false,
+    "completed": false,
+    "viewports": [],
+    "findings": []
+  },
+  "mutationProbe": {
+    "ran": true,
+    "targets": 5,
+    "probed": 5,
+    "skippedTargets": [],
+    "results": [
+      {
+        "file": "apps/api/src/order-templates/order-templates.service.ts",
+        "kind": "revert-fix",
+        "fallback": "",
+        "defect": "Reverted to HEAD, removing the `customer: { deletedAt: null }` clause from the generateDailyOrders template `findMany` where (REG-B131 skip-removed-customer fix).",
+        "caught": true,
+        "restored": true,
+        "backupPath": "C:/Users/nakram/AppData/Local/Temp/revertprobe-api-order-templates.service.ts",
+        "preHash": "c7028fb2c42e52e7ebbf0d9333a760f6335bd2f91350c81e3fda325dd3320f06",
+        "postHash": "c7028fb2c42e52e7ebbf0d9333a760f6335bd2f91350c81e3fda325dd3320f06",
+        "evidence": "`npx jest src/order-templates/order-templates.removed-customer.spec.ts -t \"REG-B131 T1\"` with the fix reverted: 1 failed, 1 skipped. Assertion failure at order-templates.removed-customer.spec.ts:115 — `expect(received).toEqual(expected) // deep equality`, Array [\"t-live\", + \"t-removed\"] vs expected [\"t-live\"], i.e. the removed customer's template still fired. This is a behavioral assertion failure, not a compile/collection error. Restore verified: postHash == preHash and `cmp -s` reported IDENTICAL; temp backup deleted; `git status --short` shows the file still ` M` (fix present) and no stray backup in the tree.",
+        "target": "REG-B131 T1"
+      },
+      {
+        "file": "apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+        "kind": "revert-fix",
+        "defect": "Reverted to HEAD, removing the `customer: { deletedAt: null }` scope from the due-recurring-invoice query in generateDueRecurringInvoices (REG-B131 skip-removed guard).",
+        "caught": true,
+        "evidence": "REG-B131 T2 FAILED on assertion (1 failed, 17 skipped): `expect(received).toEqual(expected)` at recurring-invoices.service.spec.ts:531 — Array [\"c-live\", + \"c-removed\"] i.e. invoices.create was called for the removed customer c-removed once the deletedAt scope was gone.",
+        "restored": true,
+        "backupPath": "C:\\Users\\nakram\\AppData\\Local\\Temp\\revertprobe-recurring-invoices-recurring-invoices.service.ts",
+        "preHash": "02eebdd79ae0ebbb9c690ae3f41d789369a7595e149913b4430b3a0c56ac93e9",
+        "postHash": "02eebdd79ae0ebbb9c690ae3f41d789369a7595e149913b4430b3a0c56ac93e9",
+        "fallback": "",
+        "target": "REG-B131 T2"
+      },
+      {
+        "file": "apps/api/src/invoices/invoices.service.ts",
+        "kind": "revert-fix",
+        "defect": "Reverted the REG-B131 guard in InvoicesService.create() back to committed `if (!customer) throw new NotFoundException(\"Customer not found\")`, dropping the `|| customer.deletedAt` soft-deleted-customer check.",
+        "caught": true,
+        "restored": true,
+        "backupPath": "C:\\Users\\nakram\\AppData\\Local\\Temp\\revertprobe-api-invoices.service.ts",
+        "preHash": "a8f0825f1fd2cca3e0b4fc0e51932057f54268f04a7fc81be0b94fbe3804253d",
+        "postHash": "a8f0825f1fd2cca3e0b4fc0e51932057f54268f04a7fc81be0b94fbe3804253d",
+        "fallback": "",
+        "evidence": "`npx jest src/invoices/invoices.service.spec.ts -t \"REG-B131 T4\"` on the reverted file: 1 failed, 318 skipped. Failure — InvoicesService > create() — removed customer (B131) > REG-B131 T4: create() refuses a removed customer with the not-found 404: \"expect(received).rejects.toBeInstanceOf() / Received promise resolved instead of rejected / Resolved to value: {\\\"customer\\\": {}, \\\"id\\\": \\\"inv-2\\\", \\\"items\\\": [], \\\"payments\\\": []}\" at invoices/invoices.service.spec.ts:8183. That is a behavior assertion (an invoice was created for a removed customer), not a compile/collection error. After restore, sha256 matches preHash, `cmp -s` reported IDENTICAL, `git diff` shows the same blob index 3a8d9936 as before the probe, and the temp backup was deleted.",
+        "target": "REG-B131 T4"
+      },
+      {
+        "file": "apps/api/src/buyer/guards/buyer-seller-context.guard.ts",
+        "kind": "revert-fix",
+        "defect": "Reverted the guard to HEAD, removing the `customer: { deletedAt: null }` condition from the ACTIVE CustomerLink lookup, so a soft-removed customer's ACTIVE link is accepted again.",
+        "caught": true,
+        "evidence": "FAIL src/buyer/guards/buyer-seller-context.guard.spec.ts › REG-B141 T6: the seller-context guard refuses a removed customer's ACTIVE link — \"expect(received).rejects.toBeInstanceOf() / Received promise resolved instead of rejected / Resolved to value: true\" at buyer/guards/buyer-seller-context.guard.spec.ts:76:11. Tests: 1 failed, 3 skipped, 4 total. Assertion failure on behavior (guard allowed the removed customer), not a compile or collection error.",
+        "restored": true,
+        "backupPath": "C:\\Users\\nakram\\AppData\\Local\\Temp\\revertprobe-api-buyer-seller-context.guard.ts",
+        "preHash": "d4cae56957c61214443c3842afdd55f5b5a9d3152ec07f66a47fb0d81f1cfa51",
+        "postHash": "d4cae56957c61214443c3842afdd55f5b5a9d3152ec07f66a47fb0d81f1cfa51",
+        "fallback": "",
+        "target": "REG-B141 T6"
+      },
+      {
+        "file": "apps/api/src/buyer/buyer.service.ts",
+        "kind": "revert-fix",
+        "defect": "Reverted getSellers' `customer: { deletedAt: null }` where-clause so removed customers' sellers are listed again",
+        "caught": true,
+        "restored": true,
+        "backupPath": "C:\\Users\\nakram\\AppData\\Local\\Temp\\revertprobe-buyer-buyer.service.ts",
+        "preHash": "951af4253f18079b3109b88e2b66bf517b473722442f4144e3f9233c98d02b9a",
+        "postHash": "951af4253f18079b3109b88e2b66bf517b473722442f4144e3f9233c98d02b9a",
+        "fallback": "",
+        "evidence": "REG-B141 T8 FAILED on its assertion with the fix reverted (buyer/buyer-connect.spec.ts:684): `expect(received).toEqual(expected) // deep equality — Expected - 0, Received + 1: Array [ \"acme-live\", + \"acme-removed\" ]`. Jest summary: `Test Suites: 1 failed, 1 total; Tests: 1 failed, 19 skipped, 20 total`. Not a compile/collection error — the suite compiled and the other 19 tests were skipped by the -t filter. Backup deleted after cmp -s confirmed the restored file is byte-identical (both hashes 951af425...).",
+        "target": "REG-B141 T8"
+      }
+    ],
+    "allCaught": true,
+    "allRestored": true,
+    "restoredVerified": true,
+    "checksumMismatches": [],
+    "baselineDisturbed": [],
+    "note": ""
+  },
+  "finalPass": {
+    "ran": true,
+    "completed": true,
+    "skipped": null,
+    "reader": "claude-opus-5",
+    "model": "claude-fable-5-1",
+    "effort": "high",
+    "fallback": false,
+    "files": [
+      "apps/api/src/invoices/invoices.service.ts",
+      "apps/api/src/invoices/invoices.service.spec.ts",
+      "apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+      "apps/api/src/recurring-invoices/recurring-invoices.service.spec.ts",
+      "apps/api/src/order-templates/order-templates.service.ts",
+      "apps/api/src/order-templates/order-templates.removed-customer.spec.ts",
+      "apps/api/src/buyer/buyer.service.ts",
+      "apps/api/src/buyer/buyer-connect.spec.ts",
+      "apps/api/src/buyer/guards/buyer-seller-context.guard.ts",
+      "apps/api/src/buyer/guards/buyer-seller-context.guard.spec.ts"
+    ],
+    "candidates": 10,
+    "gaps": [
+      "Enumerate every @LeaderCron site (the list no-bare-cron.spec already asserts against) and check each customer-reaching send (notifications.sendToCustomer, messaging.notifyEvent with customerId, email to customer) for a customer.deletedAt filter — #1 was found by reading one file, not by sweeping the set, and invoice overdue/dunning reminders were not shown to have been checked.",
+      "The customer restore path in customers.service.ts (Undo toast / POST /customers/:id/restore): confirm it flips User.status back to ACTIVE and leaves CustomerLink usable, so the guard's refusal and getSellers' hiding are actually restore-symmetric as the plan claims; the reader cited only the soft-delete branch."
+    ],
+    "secondRead": true,
+    "decision": "All six candidates are real. Two are major and should be fixed before this lands: #0 (GoogleOAuthService.acceptInviteToken is a third invite-redemption path never enrolled in the round-1 removed-customer gate, so a removed customer's invite still activates via Google sign-in and burns the token) and #1 (the daily license-expiry sweep still pushes, emails and SMSes removed customers — the B131 symptom class through a fourth cron, refuting the plan's two-cron sweep claim). The four minors (#2 route dispatch dead end, #3 self-service order branch unenrolled for the residual token lifetime, #4 undocumented make-up invoice + auto-email on restore, #5 REG-B131 orders specs collected by no documented command) are recorded for the fixer and the plan: #3 and #5 are cheap to close in this diff, #4 needs a written decision (bill-on-restore vs. reschedule), #2 can be deferred to a route-cleanup item. Two coverage gaps remain worth one read each: a systematic sweep of all @LeaderCron sites for customer-reaching sends, and the customer restore path to prove the claimed restore symmetry.\nSecond read: All four second-read candidates are real. Two are major and belong in the same fix round as findings already open: #0 (GoogleOAuthService.acceptInviteToken redeems a removed customer's invite and destroys the token — the Google twin of the acceptInvite/requestSeller gap, missed despite the round-2 edit in the same file) and #1 (authorization-expiry.runExpirySweep is the third customer-reaching @LeaderCron and still sends to removed customers, metered to the seller — B131's own class, established by a full sweep of the 13 pinned jobs). Two are minor: #2 (order-template and recurring-invoice create() accept a removed customer, producing schedules the new cron filters make permanent no-ops; findOne is still reachable) and #3 (OrdersService.create's customer-role branch is unguarded, so a pre-removal token can order until expiry — the plan's completeness claim must be corrected). The fixer should apply the same customer.deletedAt refusal to #0 and #1 (with a REG spec each, and a skipped-count in the expiry cron summary consistent with the open cron-summary finding), add deletedAt checks to the two schedule create() methods and the third orders branch, and amend the build-plan Sibling notes. The restore-symmetry check produced no candidate. The cron sweep is now complete against the pinned set and no further gaps are named — the run ends here.",
+    "findings": [
+      {
+        "file": "apps/api/src/auth/google-oauth.service.ts",
+        "line": 647,
+        "severity": "major",
+        "summary": "A THIRD invite-redemption path — GoogleOAuthService.acceptInviteToken — was never enrolled in round 1's removed-customer gate, so a removed customer's invite is still redeemable via Google sign-in: it flips the link ACTIVE and permanently burns the invite token.",
+        "detail": "State path: (1) seller invites customer C → CustomerLink{status:INVITED, inviteToken:T, customerId:C}; (2) seller removes C → Customer.deletedAt set, link untouched (customers.service.ts:2045-2046, soft branch writes only deletedAt + User INACTIVE — verified); (3) the buyer completes Google sign-in with T in the OAuth state (web/buyer/invite/[token]/page.tsx:123 puts invite_token in the /auth/google query; auth.controller.ts:226→244 forwards it; google-oauth.service.ts:178 embeds it in state; :334 reads it back; :609-611 calls acceptInviteToken). acceptInviteToken (:643-664) reads `customerLink.findFirst({ where: { inviteToken: token, status: { in: [\"INVITED\",\"PENDING_SELLER_APPROVAL\"] } } })` at :647 with NO `customer: { deletedAt: null }` — its own comment at :645 claims it \"Mirrors BuyerService.acceptInvite's gate\", which round 1 amended to carry exactly that filter (buyer.service.ts:120 per the digest) — and then WRITES at :653-661 `{ buyerAccountId, status: \"ACTIVE\", inviteToken: null, inviteExpiresAt: null, linkedAt: now }`. Consequences, all verified in code: (a) a removed customer's link goes ACTIVE, the write R6 and the round-1 fence amendment exist to prevent (the plan records only customers.service.ts approveBuyerRequest as an out-of-fence twin, and google-oauth.service.ts was admitted INTO scope by the round-2 amendment); (b) the invite token is nulled, which restore cannot undo — the seller must mint a new invite, so it is not restore-symmetric; (c) the same request then computes the newly-filtered `sellerCount` at :618 → 0, while auth.controller.ts:337 sets `linked: profile.inviteToken ? \"true\" : \"false\"` unconditionally, so the callback (web/(auth)/auth/google/callback/page.tsx:147) sends the buyer to /buyer/portal?linked=true and portal/page.tsx:332-360 shows \"Seller connected successfully. Welcome!\" over a seller list that getSellers now hides. Reachability beyond the race (page loaded while C was live, seller removes C during the Google round-trip, or a tab left open): GET /api/v1/auth/google?tenant=<slug>&context=portal&invite_token=<T> is unauthenticated, so a buyer holding their own emailed token can re-redeem it after removal.",
+        "fixHint": "Add the same relation filter used by BuyerService.acceptInvite to the findFirst at google-oauth.service.ts:647 (`customer: { deletedAt: null }`) so a removed customer's token is treated as not found (the method already `return`s silently on no match, so no new error shape). While there, consider that `linked` at auth.controller.ts:337 is derived from the presence of the token rather than from a successful redemption, so it will still claim \"connected\" after the skip.",
+        "fixComplexity": "judgment",
+        "phase": "Final pass",
+        "decision": "Round 1 gated BuyerService.acceptInvite on customer.deletedAt; acceptInviteToken's own comment claims to mirror that gate but its findFirst carries no such filter, so the Google-sign-in redemption path still flips a removed customer's link ACTIVE and burns the token. Same state, third unenrolled path, distinct from the already-listed sellerCount minor.",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/src/authorizations/authorization-expiry.service.ts",
+        "line": 141,
+        "severity": "major",
+        "summary": "A fourth customer-owned daily cron keeps contacting removed customers by push, email and SMS/WhatsApp — the license-expiry sweep has no customer.deletedAt filter, refuting the build plan's sweep claim that only the two fixed crons are customer-owned schedules.",
+        "detail": "`runExpirySweep` (@LeaderCron(\"0 3 * * *\"), :57) runs per ACTIVE tenant and calls processTenant, which reads `forTenant().customerAuthorization.findMany({ where: { status: \"VERIFIED\", expiresAt: { lt: now } } })` at :100 and `{ status: \"VERIFIED\", expiresAt: { gte: now, lt: now+31d } }` at :141 — neither carries `customer: { deletedAt: null }`. For each matching row it calls `this.notify(...)` → :203 `notifications.sendToCustomer(auth.customerId, ...)` → notifications.service.ts:178-183 resolves the customer's userId with no status/deletedAt filter → sendToUser (:93-116) reads every DeviceToken for that user (soft delete deletes no tokens) and pushes; and `messaging.notifyEvent(NotificationEvent.LICENSE_EXPIRING, { customerId })` at :126 and :167 → messaging.service.ts:264-288 → notify (:195-236) → sendMessage (:85-122), which resolves the customer by id (`db.customer.findFirst({ where: { id: customerId } })`, no deletedAt filter) and sends over every enabled channel (EMAIL / SMS / WHATSAPP). Failure scenario: a tenant removes customer C on 2026-09-10 while C holds a VERIFIED tobacco licence expiring 2026-10-05. At 03:00 on 2026-09-11 the 30-day bucket fires: C's business email/phone receives \"License expiring in 30 day(s)…\" plus a push, and the sweep repeats for the 7-day and 1-day buckets and once more at the VERIFIED→EXPIRED flip (each bucket is once-only via expiringSoonNotifiedBucket, so up to four messages after removal). This is R2's exact prohibition (\"never generate, and so never email\") in a module nobody enrolled, and it is recorded nowhere: build-plan.md's Sibling notes end with \"Sweep result at master … only the two fixed crons are customer-owned schedules\", which is false — the sweep's own pattern (`isActive: true, (daysOfWeek|nextRunAt)`, pipeline-args.json siblingPatterns) structurally cannot match `status: \"VERIFIED\", expiresAt: …`, which is why the gap survived every file-scoped lens.",
+        "fixHint": "Either add `customer: { deletedAt: null }` to both customerAuthorization reads (:100 and :141 — stateless and restore-symmetric like the two fixed crons, though it also stops the VERIFIED→EXPIRED status flip, so decide whether the flip should still happen silently while the notification is suppressed), or suppress only the two customer-facing sends (notifications.sendToCustomer at :203 and messaging.notifyEvent at :126/:167) and keep operator notices. At minimum, correct the build plan's sweep claim and record this as a follow-up row.",
+        "fixComplexity": "judgment",
+        "phase": "Final pass",
+        "decision": "The evidence traces a concrete send chain (customerAuthorization findMany with no customer filter -> sendToCustomer/notifyEvent -> push, email, SMS) that contacts a removed customer daily, which is exactly B131's symptom class and directly refutes the plan's sweep claim that only two crons are customer-owned.",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/src/routes/routes.service.ts",
+        "line": 809,
+        "severity": "minor",
+        "summary": "Route dispatch still puts a removed customer on the driver's run, and this diff's new driver-branch refusal in OrdersService.create then fails the at-stop order with \"Customer not found\" — a live-operations dead end recorded nowhere.",
+        "detail": "The soft delete leaves RouteStop/RouteCustomer rows intact (customers.service.ts:2044-2047 writes only Customer.deletedAt + User INACTIVE; only mergeCustomers and batchDelete touch route rows, and both hard-delete instead). `createRun` reads `forTenant().route.findUnique({ include: { stops: { orderBy: { stopNumber: \"asc\" } } } })` at :808-811 with no customer filter and then creates a RouteRunStop for EVERY stop at :917-925 (`stops: { create: route.stops.map(s => ({ … customerId: s.customerId … })) }`). routes.service.ts contains no occurrence of `deletedAt` at all (verified by grep). Failure scenario: customer C is on scheduled route R; the operator removes C on Monday; on Tuesday the operator dispatches R and the driver's run still contains C's stop with C's business name and address (getLiveRoutes at :735-750 includes `customer: { select: { businessName: true } }`, so C is rendered normally). The driver drives to C and creates the order at the stop — POST /orders with role DRIVER — and now hits the new gate added by this diff (orders.service.ts:1734-1735, `if (customer.deletedAt) throw new BadRequestException(\"Customer not found\")`), so the driver is told the shop they are standing in front of does not exist. Before this diff the order succeeded. So B131's \"standing schedule keeps firing\" shape survives in the routes module (never mentioned in build-plan.md's Sibling notes or its sweep result), and the diff's own sibling fix converts it from a silent wrong delivery into a driver-facing phantom error with no explanation.",
+        "fixHint": "Decide the intended end state for route assignments on removal and either (a) filter removed customers out of dispatch (add `customer: { deletedAt: null }` to the stops include at :809-811, or skip them in the :917-925 create) and surface a count the way the two crons now log their suppressed sets, or (b) keep dispatching and give the driver branch a distinguishable message. Either way record it — today neither the route nor the driver error mentions removal.",
+        "fixComplexity": "judgment",
+        "phase": "Final pass",
+        "decision": "RouteStop rows survive the soft delete and createRun copies every stop, so a removed customer stays on the driver's run; the diff's new driver-branch refusal then turns the at-stop order into a bare 'Customer not found'. Pre-existing route gap made visibly worse by this change, but a live-ops annoyance rather than a money or access defect.",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/src/orders/orders.service.ts",
+        "line": 1741,
+        "severity": "minor",
+        "summary": "The third branch of the same OrdersService.create was not enrolled: a CUSTOMER-role user ordering for themselves resolves their customer row with no deletedAt check, so a removed customer can still place an order (and thus be invoiced) for the life of their access token.",
+        "detail": "The sibling fix added `if (customer.deletedAt) throw new BadRequestException(\"Customer not found\")` to the staff branch (:1721) and the driver branch (:1735), but the self-service branch at :1738-1743 still does `forTenant().customer.findFirst({ where: { userId: user.sub } })` and only rejects `!customer`. Reachability is bounded but real: removal sets User.status = INACTIVE (customers.service.ts:2046), and login refuses non-ACTIVE (auth.service.ts:61) and refresh refuses it too (auth.service.ts:245-248) — but JwtStrategy.validate (auth/strategies/jwt.strategy.ts:21-30) never re-reads the User row, so an already-issued access token keeps working until it expires (JWT_EXPIRES_IN default \"15m\", config/configuration.ts:112). Failure scenario: a CUSTOMER-role user has the web/mobile ordering screen open; the operator removes them; within the remaining token lifetime the user submits their cart; the order is created for a removed customer, and createInvoiceFromOrder is explicitly in-bounds per the plan, so that order is then legitimately invoiceable — the exact outcome the staff/driver gate was added to prevent. build-plan.md's Sibling notes state \"The customer-role branch … untouched\" without saying why it is safe.",
+        "fixHint": "Either add the same `deletedAt` refusal to the branch at :1738-1743 (its existing ForbiddenException(\"Customer record not found\") is the natural shape, keeping the message unchanged), or record in the plan why a 15-minute post-removal window on the self-order path is acceptable.",
+        "fixComplexity": "judgment",
+        "phase": "Final pass",
+        "decision": "Two of three branches of the same create() were enrolled and the self-service branch was not; reachability is bounded to the remaining access-token lifetime (~15m) because login and refresh already refuse INACTIVE users, so it is an inconsistency worth closing, not a blocker.",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+        "line": 238,
+        "severity": "minor",
+        "summary": "Restoring a removed customer mints an immediate make-up recurring invoice — and auto-emails it — on the next midnight tick, a money write the plan's \"restore-symmetric, no other write\" framing never mentions.",
+        "detail": "The new filter at :403 suppresses due rows while the customer is removed and deliberately leaves nextRunAt untouched (\"a restored customer's schedule resumes on its own\"). But generateInvoiceFromTemplate's B46 advance is `advanceFrom = dueAt > now ? dueAt : now` (:237-239), i.e. a backlogged template is billed ONCE on selection and re-scheduled into the future. Failure scenario: MONTHLY template, dayOfMonth 1, nextRunAt 2026-07-01, autoSend true. Customer removed 2026-06-15; the 07-01, 08-01 and 09-01 ticks skip it (filter) and nextRunAt stays 2026-07-01. Operator restores the customer on 2026-09-20 (Undo or POST /customers/:id/restore). At 00:00 on 2026-09-21 the row is due again, generateInvoiceFromTemplate claims it, advances nextRunAt to 2026-10-01, mints a full monthly invoice dated today via invoicesService.create, and — because autoSend is set — emails it to the customer (:325-327). So \"restore\" is not a pure re-enable: it produces one immediate customer-visible invoice and email for a cycle the fix intentionally skipped. R6, the objective (\"resumes with no other write\") and acceptance criterion 6 (\"the diff contains no writes\") are all literally true of the diff while the composed behavior bills the customer the moment they are restored; no test or plan line covers it, and the suppression warning added in round 2 gives no hint that a make-up invoice is pending.",
+        "fixHint": "Decide the intended resume semantics and record it: either accept the single make-up invoice (then say so in the plan, and consider mentioning the pending catch-up in the suppression warning), or, if a removal window must not be billed at all, advance nextRunAt past the missed cycles on resume rather than billing one — a behavior change that needs an owner ruling since it also changes deactivate/activate (B46).",
+        "fixComplexity": "judgment",
+        "phase": "Final pass",
+        "decision": "The B46 advance rule means a template suppressed during removal is billed once and auto-emailed on the first tick after restore; that is a plausible intended 'resume' semantic, but it is an undocumented money write on the restore path the plan frames as write-free, so it needs a documented decision rather than a silent default.",
+        "unadjudicated": false
+      },
+      {
+        "file": ".claude/pipeline/2026-09-10-train4-run-d/build-plan.md",
+        "line": 716,
+        "severity": "minor",
+        "summary": "The two new REG-B131 specs that are the only regression cover for the orders.service.ts sibling fix are collected by no command this run documents — the final verify command matches src/orders/orders.scan-hardening, not src/orders/orders.service.",
+        "detail": "The round-1/2 sibling fix added `if (customer.deletedAt) …` to orders.service.ts:1721 and :1735, pinned only by the two tests added to apps/api/src/orders/orders.service.spec.ts (\"REG-B131: staff create() refuses a removed customer…\", \"REG-B131: driver create() refuses…\"). Neither red-gate command (build-plan.md:706-709 / pipeline-args.json redGate) nor the final verification command (build-plan.md:716, duplicated at :929) selects that file. Verified this session: `cd apps/api && npx jest src/order-templates/ src/recurring-invoices/ src/invoices/invoices.service src/buyer/ src/orders/orders.scan-hardening src/common/no-bare-cron --listTests` returns 28 files and orders/orders.service.spec.ts is not among them; running the command itself gives 28 suites / 621 tests passing, none of them the orders pair. Running them separately (`npx jest src/orders/orders.service src/auth/`) passes 16 suites / 374 tests, so the tests are sound — only unreached by the documented gates. Consequence: a revert of either orders.service.ts hunk (the mutation-probe table at build-plan.md:722-734 does not list the file either) goes undetected by every command this run records. This is a second, distinct instance of the already-reported google-oauth spec gap: that finding names apps/api/src/auth/google-oauth.removed-customer.spec.ts; this one is apps/api/src/orders/orders.service.spec.ts, a different file added by a different fence amendment.",
+        "fixHint": "Add `src/orders/orders.service` (and `src/auth/google-oauth.removed-customer`) to the final verification command at build-plan.md:716 and to the mirrored string at :929, and add the orders.service.ts row to the mutation-probe table so the sibling fixes carry a revert probe like the five primary files.",
+        "fixComplexity": "mechanical",
+        "phase": "Final pass",
+        "decision": "The only cover for the orders.service.ts sibling fix lives in orders.service.spec.ts, which the reader verified is selected by neither red-gate command nor the final verify command; full CI would still run it, but the run's documented proof tokens do not map to it.",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/src/auth/google-oauth.service.ts",
+        "line": 648,
+        "severity": "major",
+        "summary": "GoogleOAuthService.acceptInviteToken is the Google twin of the invite path this run gated, and it still redeems a removed customer's invite — writing the link ACTIVE and destroying the invite token irreversibly.",
+        "detail": "Evidence. `acceptInviteToken` (google-oauth.service.ts:643-663) reads `this.prisma.customerLink.findFirst({ where: { inviteToken: token, status: { in: [\"INVITED\",\"PENDING_SELLER_APPROVAL\"] } } })` at line 648 — no `customer: { deletedAt: null }` — and then at 652-661 writes `customerLink.update({ where: { id: link.id }, data: { buyerAccountId, status: \"ACTIVE\", inviteToken: null, inviteExpiresAt: null, linkedAt: new Date() } })`. It is called at line 610 of the same file from the Google sign-in flow whenever `profile.inviteToken` is present (the seller's invite email carries the token through OAuth state). The round-2 fence amendment edited THIS file 29 lines above (sellerCount at 618-620) and left this untouched; the new google-oauth.removed-customer.spec.ts covers only sellerCount (its two test titles are REG-B141 T11 and B141 P9 — verified by grep).\n\nFailure scenario. Seller invites customer C (CustomerLink INVITED, inviteToken T emailed). Seller removes C — `CustomersService.deleteCustomer` soft branch (customers.service.ts:2044-2048) writes only `Customer.deletedAt` + `User.status=INACTIVE` and never touches the link. The buyer clicks the emailed invite and picks \"Continue with Google\": acceptInviteToken matches the link, flips it ACTIVE, binds buyerAccountId and NULLs inviteToken/inviteExpiresAt. The identical action via password sign-in goes through `BuyerService.acceptInvite` (buyer.service.ts:120-131), which this run gated with `customer: { deletedAt: null }` and which now 404s with no write (pinned by REG-B141 T10) — so the same invite link succeeds or fails purely by sign-in method.\n\nWhy it matters beyond cosmetics. (a) It is a CustomerLink write for a removed customer: build-plan R6 (lines ~46-52) states \"There are no isActive writes, no CustomerLink writes\" for the fixed paths, and the Sibling notes admit exactly one exception (`customers.service.ts approveBuyerRequest`). This is a second, undocumented one. (b) It is strictly worse than that exception because it CONSUMES the invite: after `restoreCustomer` (customers.service.ts:1965-1983 — verified to clear `deletedAt` and set `User.status` back to ACTIVE/SUSPENDED, with no CustomerLink write, so every other fixed path is genuinely restore-symmetric) the seller's outstanding invite token is gone and the link's buyerAccountId is whoever happened to click. Nothing restores it. (c) Within the same response, `sellerCount` (line 618, now filtered) returns 0, so the mobile client shows \"not connected to any supplier\" while the DB holds a fresh ACTIVE link — exactly the inconsistency class the round-2 amendment claims to have fixed.",
+        "fixHint": "Add `customer: { deletedAt: null }` to the where at google-oauth.service.ts:648 (the method already returns silently when no link matches, so no new error shape is needed), and pin it with a REG-B141 test in google-oauth.removed-customer.spec.ts asserting `customerLink.update` is never called for a removed customer's token.",
+        "fixComplexity": "judgment",
+        "phase": "Final pass",
+        "decision": "Line 648 reads the CustomerLink by inviteToken with no customer.deletedAt filter and 652-661 writes status ACTIVE while nulling the token, so a removed customer's invite is redeemed irreversibly through the Google path; it is the exact twin of the already-confirmed acceptInvite/requestSeller finding and the round-2 fence edit in this same file (sellerCount) stopped 29 lines short of it, with the new spec covering only sellerCount.",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/src/authorizations/authorization-expiry.service.ts",
+        "line": 100,
+        "severity": "major",
+        "summary": "The nightly authorization-expiry cron still pushes, WhatsApps/SMSes and emails a removed customer (metered to the seller) and consumes their warning buckets — the third customer-reaching @LeaderCron, and the only one the run never swept.",
+        "detail": "Cron sweep (focused item #1), from `grep -rn \"@LeaderCron\" src` plus a check that no other scheduler exists (`@Interval`/`@Timeout`/`setInterval(` return zero non-spec hits): the 13 jobs are authorization-expiry.runExpirySweep, billing-cron.expireTrials/expireGrace/applyScheduledDowngrades/applyScheduledCancellations/rollCycles, billing.suspendOverdueTenants, order-templates.generateDailyOrders, orders.cronSweepPendingOrders, recurring-invoices.generateDueRecurringInvoices, regulated-filing.autoPrepareClosedFilings, commission-reconciliation.reconcileCommissions, tobacco-report.generateMonthlyReports — the same set no-bare-cron.spec.ts:20-33 pins. Of these, exactly three reach a customer: the two this run fixed, and authorization-expiry.runExpirySweep (line 57, \"0 3 * * *\"). The other ten contain no `sendToCustomer`/`notifyEvent` (grep on regulated-filing-cron, tobacco-report, commission-reconciliation: zero email/notifications/messaging hits; billing-* are tenant-level; orders.cronSweepPendingOrders only calls sweepAllPendingOrders, a merge with no send). There is NO invoice overdue/dunning cron at all: the only reminder sender is the operator-triggered `POST /invoices/:id/send-reminder` (invoices.controller.ts:209 → invoices.service.ts:3940), which is consistent with the plan's documented \"invoicing already-delivered work is legitimate receivables\" allowance.\n\nEvidence in the unswept cron. `processTenant` reads `customerAuthorization.findMany` at line 100 (VERIFIED, expiresAt < now) and line 141 (expiring within 31 days) with no `customer: { deletedAt: null }`. Per row it then (1) calls `notify()` → `notifications.sendToCustomer(auth.customerId, subject, body)` at line 203; `NotificationsService.sendToCustomer` (notifications.service.ts:172-184) resolves `customer.findFirst({ where: { id } , select: { userId } })` with no deletedAt filter and pushes to the removed customer's still-registered device tokens; and (2) calls `messaging.notifyEvent(NotificationEvent.LICENSE_EXPIRING, { customerId })` at lines 126 and 167 → messaging.service.ts:260 → `notify()` (194) → `sendMessage()` (85), whose customer read at 92-103 also has no deletedAt filter, so the message goes out on every ENABLED channel (WhatsApp/SMS/EMAIL), is metered to the tenant (`meter.increment(tenantId, MeterKey.MSGS, 1)`, ~181) and writes a Message row + thread bump.\n\nFailure scenario. Seller removes customer C on Sep 1 (Customer.deletedAt set; C's standing orders and recurring invoices are now correctly suppressed by this run's fix). C's licence expires Sep 5. At 03:00 on Sep 5 the sweep flips the authorization to EXPIRED, pushes \"License expired: <category>\" to C's phone, sends C the LICENSE_EXPIRING template over WhatsApp/SMS/email on the seller's metered quota, and emails the seller's own operators about a customer they deleted. The 30/7/1 warning path (line 141) does the same before expiry.\n\nRestore asymmetry. The sweep also writes the removed customer's rows while removed: `customerAuthorization.update({ status: \"EXPIRED\", expiryNotifiedAt })` (~106) and `{ expiringSoonNotifiedBucket: bucket }` (~155), plus an audit row. Because `last <= bucket` skips an already-stamped bucket (line ~152), a customer removed then restored never receives the 7-day/1-day warning that was consumed while they were removed — the opposite of the stateless, restore-symmetric property R6 claims for this defect class.\n\nSame shape, not a cron (for the fixer's radius): `stock-alerts/stock-alert.service.ts:117` pushes \"Back in stock\" to a removed customer and first claims the alert (`status: NOTIFIED, notifiedAt`, ~110), so that alert is consumed and never re-fires after restore.",
+        "fixHint": "Add `customer: { deletedAt: null }` to both `customerAuthorization.findMany` where-clauses (lines 100 and 141) so a removed customer is neither notified nor bucket-stamped; decide explicitly whether the VERIFIED→EXPIRED flip should still happen for a removed customer (a status-only flip with the two sends skipped is the restore-symmetric option, since the licence really did expire). Pin with a REG spec asserting `notifications.sendToCustomer` and `messaging.notifyEvent` are not called for a removed customer. Treat stock-alert.service.ts:117 as the same fix if the owner widens the radius.",
+        "fixComplexity": "judgment",
+        "phase": "Final pass",
+        "decision": "The sweep enumerates the 13 @LeaderCron jobs pinned by no-bare-cron.spec and shows authorization-expiry.runExpirySweep is the third and only unfixed customer-reaching cron, so a removed customer still receives push/SMS/WhatsApp/email metered to the seller and consumes warning buckets — the same defect class as B131 itself, not a new one.",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/src/order-templates/order-templates.service.ts",
+        "line": 134,
+        "severity": "minor",
+        "summary": "Both schedule create() methods in the two files this run edited still accept a removed customer, so a new standing order / recurring invoice is accepted, listed, and can never fire — the new cron filters make it a permanent silent no-op.",
+        "detail": "Evidence. `OrderTemplatesService.create` (order-templates.service.ts:129-134) reads `forTenant().customer.findUnique({ where: { id: dto.customerId } })` and rejects only `!customer` (line 134) — no `deletedAt` check. Its twin `RecurringInvoicesService.create` (recurring-invoices.service.ts:83-87) has the identical shape (`if (!customer) throw new NotFoundException(\"Customer not found\")` at line 87). This run added `customer: { deletedAt: null }` to the cron read of BOTH services (order-templates.service.ts ~316, recurring-invoices.service.ts ~400), so anything created for a removed customer is unreachable by the only thing that would ever run it.\n\nReachability through the normal UI (not just a stale tab). `CustomersService.findOne` (customers.service.ts:448-457) has NO `deletedAt` filter — contrast `findAll`, which does (line 126, \"Exclude soft-deleted customers (RF-197)\") — so `/customers/<id>` still renders for a removed customer (bookmark, browser Back after the 8-second Undo toast expires, or a bell-notification deep link). That page's Standing Orders tab carries an \"Add Standing Order\" button (apps/web/app/(dashboard)/customers/[id]/page.tsx ~3405-3425, which POSTs via the `@/lib/api/order-templates` import at line 141).\n\nFailure scenario. Operator removes customer C, then reopens C's detail page and adds a standing order for the last outstanding delivery. The API returns 201, the template appears in the list with C's business name and its weekdays, and `generateDailyOrders` never generates anything from it: the new relation filter drops it, and the only trace is the new per-tenant WARN `REG-B131: N standing-order template(s) suppressed — customer removed`, which is a server log, not a product surface. Identical for `POST /recurring-invoices`: the schedule is created with a `nextRunAt` that is never advanced and never billed.\n\nWhy this is a gap in this run rather than a pre-existing sibling. The run deliberately gated the money write in this same shape — `InvoicesService.create` now refuses a removed customer with the not-found 404 (R3, invoices.service.ts:345) — and the plan's Sibling notes enumerate the other unfiltered customer reads it chose to defer (estimates.service.ts create/convertToInvoice, credit-notes.service.ts ~310, import.service.ts ~941, manual generateOrder, createInvoiceFromOrder). Neither schedule `create()` appears anywhere in the plan — not in the fence, not in R1-R6, not in the Sibling notes — even though both live in the two files the run edited, and the run's own filters are what turn them into silent no-ops.",
+        "fixHint": "Add the same `if (customer.deletedAt) throw …` guard used by InvoicesService.create to order-templates.service.ts:134 (keep the existing BadRequestException message) and recurring-invoices.service.ts:87 (keep NotFoundException), reusing the missing-customer message so no customer state leaks; pin each with a REG-B131 test asserting `orderTemplate.create` / `recurringInvoice.create` is never called. If the owner instead wants these creates allowed, the deferral needs to be a written Sibling-note row, because today the behavior is undocumented.",
+        "fixComplexity": "judgment",
+        "phase": "Final pass",
+        "decision": "Both create() methods reject only !customer (order-templates 134, recurring-invoices 87) while the cron reads now filter customer.deletedAt, and findOne has no deletedAt filter so the page is reachable; the result is an accepted, listed schedule that can never fire — an inconsistency with the invoice create() rule, but a silent no-op rather than a money or access defect.",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/src/orders/orders.service.ts",
+        "line": 1741,
+        "severity": "minor",
+        "summary": "The round-3 OrdersService.create fix covers only two of the method's three branches, so the plan's claim that \"no new post-removal order can be created and then invoiced\" is false for a customer-role session whose access token predates the removal.",
+        "detail": "Evidence. `OrdersService.create` resolves the target customer in three branches (orders.service.ts:1708-1745). The staff branch got `if (customer.deletedAt) throw new BadRequestException(\"Customer not found\")` (line 1723) and the DRIVER branch the same (line 1734). The third branch — \"Customer creates their own order\", lines 1738-1744 — resolves `forTenant().customer.findFirst({ where: { userId: user.sub } })` and checks only `!customer`, with no deletedAt test. The plan's Sibling note (build-plan lines ~757-762) states \"`OrdersService.create` now refuses a removed customer on the staff and driver branches … so no new post-removal order can be created and then invoiced. The customer-role branch … untouched\" — it records the omission but never argues the branch is unreachable, and the completeness claim in the same sentence does not hold.\n\nWhy the branch is reachable after removal. Removal writes `User.status = \"INACTIVE\"` (customers.service.ts:2047), but `JwtStrategy.validate` (apps/api/src/auth/strategies/jwt.strategy.ts:19-30) trusts the token payload and never re-reads the User row, so an access token minted before removal keeps working until it expires; only the next login (`auth.service.ts:61`, `if (user.status !== \"ACTIVE\") return null`) and the next refresh (`auth.service.ts:245`) see INACTIVE. Default lifetime is `JWT_EXPIRES_IN ?? \"15m\"` (apps/api/src/config/configuration.ts:112); prod may set it longer, which widens the window.\n\nFailure scenario. A CUSTOMER-role user has the order screen open on the mobile/web customer app. The operator removes them (their standing orders and recurring invoices stop, their invoice create 404s). Within the remaining token life the customer taps Submit: POST /orders takes the third branch, resolves their own still-existing Customer row, and writes a real PENDING order for a removed customer — which lands in the operator's queue for a customer the customers list no longer shows, and which `createInvoiceFromOrder` will then invoice (the plan allows that only for orders placed BEFORE removal).\n\nUnpinned. `git diff HEAD -- apps/api/src/orders/orders.service.spec.ts` adds exactly two REG-B131 tests, both driving `prisma.customer.findUnique` (the staff and driver branches); the self-serve branch uses `prisma.customer.findFirst` and is not exercised.",
+        "fixHint": "Either add the same `if (customer.deletedAt) throw …` to the self-serve branch at orders.service.ts:1741 (message: keep the existing ForbiddenException(\"Customer record not found\") shape for that branch so no customer state leaks) with a REG-B131 spec driving `prisma.customer.findFirst`, or — if the owner wants it deferred — correct the Sibling note so it stops claiming no post-removal order can be created, and record the JwtStrategy token-window reason.",
+        "fixComplexity": "judgment",
+        "phase": "Final pass",
+        "decision": "The customer-role branch (1738-1744) resolves by userId with no deletedAt test while the staff and driver branches got the guard, and the run itself records that B141 revokes no token, so a pre-removal customer token can still create an order until it expires; the plan's completeness claim is false but the window is bounded by token TTL.",
+        "unadjudicated": false
+      }
+    ]
+  },
+  "confirmedFindings": [
+    {
+      "file": "(artifact)",
+      "severity": "major",
+      "summary": "Path to cause-ruling.md is incorrect in both artifacts",
+      "detail": "The artifacts reference 'local-assets/handoff/2026-09-09/planning/train4/cause-ruling.md' in the introductory text, but this file does not exist. The actual file is located at '.claude/pipeline/2026-09-10-train4-run-d/cause-ruling.md' in the worktree.",
+      "fixComplexity": "mechanical",
+      "fixHint": "Replace the path 'local-assets/handoff/2026-09-09/planning/train4/cause-ruling.md' with '.claude/pipeline/2026-09-10-train4-run-d/cause-ruling.md' in both build-plan.md (line 6) and bug-test-plan.md (line 5).",
+      "phase": "Baseline"
+    },
+    {
+      "file": "apps/api/src/auth/google-oauth.service.ts",
+      "line": 615,
+      "severity": "minor",
+      "summary": "Google sign-in's `sellerCount` is not filtered by `customer.deletedAt` while `getSellers` now is, so mobile's Google login takes the \"you have a seller\" branch and then opens an empty seller picker with no message.",
+      "detail": "Buyer B's only CustomerLink is ACTIVE and its Customer was removed (deletedAt set). Buyer B signs in with Google on mobile: `google-oauth.service.ts:615` counts `customerLink.count({ where: { buyerAccountId, status: \"ACTIVE\" } })` with no `customer: { deletedAt: null }` clause, so sellerCount = 1. That value is passed through `auth.controller.ts:336` into the redirect bundle and parsed at `apps/mobile/lib/buyer-auth.ts:366`. In `apps/mobile/app/(auth)/customer-login.tsx:111` the `sellerCount === 0` branch is therefore skipped, and line 118 calls `getBuyerSellers()` -> `BuyerService.getSellers`, which after this change returns `[]`. `sellers.length === 1` is false, so line 124 calls `showSellerPicker([])`, which at lines 140-143 just does `setPendingSellers([]); setSellerPickerOpen(true)` — the buyer gets an empty picker modal and no explanation, instead of the existing \"Your account is not connected to any supplier...\" message. The password-login path is unaffected because it checks `sellers.length === 0` after fetching (customer-login.tsx:70). Verified by reading all four files; not covered by any test (the full api unit lane, 4431 tests, is green because no spec exercises this cross-file combination). The build plan lists this count under Sibling notes as \"cosmetic (a number)\" — the mobile caller path shows it also selects a UI branch.",
+      "fixHint": "Add `customer: { deletedAt: null }` to the `customerLink.count` where-clause at apps/api/src/auth/google-oauth.service.ts:615 so the count agrees with getSellers (this is the follow-up row the plan already anticipated). If that file must stay out of this run's scope, instead make apps/mobile/app/(auth)/customer-login.tsx:118-124 check `sellers.length === 0` after the fetch and show the same message the password path uses at line 70. Either way, keep the sellerCount and getSellers definitions of \"a seller I can use\" identical.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/estimates/estimates.service.ts",
+      "line": 307,
+      "severity": "minor",
+      "summary": "A second operator-reachable path creates a NEW invoice for a soft-deleted customer, bypassing the create() guard added for R3, and it is recorded nowhere in the plan (neither the scope fence nor Sibling notes).",
+      "detail": "EstimatesService.convertToInvoice (apps/api/src/estimates/estimates.service.ts:257-310, reached by POST /estimates/:id/convert-to-invoice at estimates.controller.ts:48) writes `tx.invoice.create({ data: { customerId: est.customerId, status: \"DRAFT\", ... } })` with no customer lookup and no deletedAt check (verified: `grep -n deletedAt src/estimates/*.ts` returns nothing for the non-spec files). Failure scenario: remove customer X on web (soft branch sets Customer.deletedAt), then open X's ACCEPTED estimate and convert it. The estimate is still listed — findAll (~line 183-201) builds its `where` from customerId/status/date/search only, no customer.deletedAt filter — so this is normal-UI reachable, not just a raw API call. The estimate flips to CONVERTED and a new DRAFT invoice is minted for the removed customer: exactly the state R3 blocks on the InvoicesService.create path (which I verified now 404s, T4/T5 green). This does not violate any acceptance criterion — the plan deliberately fences scope to the owner's three B131 sites — but the plan's Objective presents InvoicesService.create as the manual-invoicing surface and its Sibling notes DO record the analogous unfixed paths (createInvoiceFromOrder as legitimate receivables, recurring 'generate now', manual generateOrder, google-oauth sellerCount). Estimate conversion is a third manual path of the same shape and is absent from that list, so it will not be picked up as a follow-up row unless recorded.",
+      "severity_note": "",
+      "fixComplexity": "judgment",
+      "fixHint": "Do not widen this run's diff. Record it as a follow-up row in the plan's Sibling notes alongside the other manual paths, with the owner deciding whether converting a pre-removal ACCEPTED estimate is legitimate receivables (like createInvoiceFromOrder) or must 404 like create(). If it is later fixed, the check belongs on the estimate's customer row inside convertToInvoice's transaction, mirroring create()'s `if (!customer || customer.deletedAt)`. One further path I did not fully trace and cannot claim: ImportService also creates invoices directly (apps/api/src/import/import.service.ts:941) — its customer resolution for soft-deleted rows needs checking before assuming it is safe.",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/buyer/buyer.service.ts",
+      "line": 183,
+      "severity": "major",
+      "summary": "requestSeller and acceptInvite never check customer.deletedAt, so a locked-out buyer gets success or \"already connected\" for a seller getSellers now hides and the guard 403s.",
+      "detail": "State: customer C at seller S is soft-removed; its CustomerLink is still ACTIVE (the plan's premise). (a) C's buyer, now 403'd everywhere and no longer seeing S in the switcher, calls POST /buyer/request-seller to reconnect. The customer lookup at line 183-189 has no deletedAt filter, so it finds the removed row, then line 218-220 returns 409 \"You are already connected to this seller\" -- while GET /buyer/sellers returns nothing for S and every guarded route says \"No active connection to this seller\". Three contradictory answers; neither the buyer nor support can tell which is true. (b) With emailProven (a different buyer, or the same buyer whose link was DISCONNECTED before removal) the upsert at line 255-271 WRITES a new ACTIVE CustomerLink onto a soft-deleted customer, emits emitBuyerAutoLinked to the seller's operators (a realtime \"buyer connected\" toast for a customer they removed) and returns \"Connected! You can now view your orders and invoices from this seller\" -- after which getSellers hides it and all 45 guarded routes 403. (c) The unproven branch (line 302-345) writes a PENDING_SELLER_APPROVAL link, emails the seller and queues an approval for a removed customer, promising \"You'll see them in your seller list once approved\", which getSellers can no longer honour. acceptInvite (line 116-160) is the same shape: a pre-removal invite is still redeemable, flips the link ACTIVE and returns tenantSlug, which the web client stores as activeSeller. The plan's scope fence excludes these routes, so this is a follow-up row, not an in-run fix -- but it is not in the plan's Sibling notes and it is the door buyers will actually push on after deploy.",
+      "fixHint": "File as a follow-up: add customer.deletedAt IS NULL to requestSeller's customer lookup and to getInviteDetails/acceptInvite's link read, returning the same not-found/expired shape as a missing record, so a removed customer cannot be (re)connected or notified about. Do not widen it into the duplicated portal-link twins (L-072).",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/web/app/(dashboard)/customers/[id]/page.tsx",
+      "line": 1990,
+      "severity": "major",
+      "summary": "The change makes \"Remove customer\" silently kill standing orders, recurring invoices and portal access, but the only in-product way to reverse it is the 8-second Undo toast.",
+      "detail": "The whole safety story of this fix is restore symmetry (R6, \"Restore (Undo, or the restore endpoint) reverses all of it immediately\"). In the product, restore is wired ONLY to the undo callback of runUndoable at line 1990-1995 (useRestoreCustomer is referenced nowhere else in apps/web -- verified by grep); the customers list filters deletedAt: null (apps/api/src/customers/customers.service.ts:126), so a removed customer disappears from every list, and while findOne (customers.service.ts:448-457) does NOT filter deletedAt so the detail page is reachable by direct URL, that page renders no Restore control. Scenario: an operator mis-clicks Remove on a live customer and misses the 8-second toast. Before this change the damage was cosmetic (hidden from the list). After it: that customer's 06:00 template tick and 00:00 recurring tick stop firing, manual invoicing 404s, and their buyer is 403'd out of the portal -- and the only remedy is a hand-crafted POST /customers/:id/restore (or a DB write), which no operator can issue from the UI.",
+      "fixHint": "Before or with this landing, give the removal an in-product reversal: an archived/removed filter on the customers list plus a Restore action on the detail page for a customer with deletedAt set (the API endpoint already exists and is idempotent). Web work, so a separate PR is fine, but do not treat R6 as satisfied by the API endpoint alone.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review",
+      "locationInvalid": true
+    },
+    {
+      "file": "apps/api/src/buyer/guards/buyer-seller-context.guard.ts",
+      "line": 55,
+      "severity": "minor",
+      "summary": "The new refusal emits no log, audit row or Sentry event, so the plan's stated monitoring (\"watch 403 'No active connection to this seller' rates\") has no source to read.",
+      "detail": "The guard's only new outcome is throw ForbiddenException at line 55, reached now for a removed customer's ACTIVE link. Nothing records it: main.ts registers no request/status logging (grep of main.ts for use(/Logger/morgan/pino finds only helmet and the body parser), app.module.ts registers no APP_INTERCEPTOR or APP_FILTER (only APP_GUARDs), and the one catch-all filter, common/sentry-exception.filter.ts:13-14, captures only status >= 500. 2am scenario: a buyer calls support saying their orders and invoices vanished at seller S; the operator says they removed nobody. Railway logs contain no line for the refusal, Sentry has no event, and the API cannot distinguish this 403 from a DISCONNECTED link. Diagnosis requires a direct DB read of Customer.deletedAt. Compounding it, the plan drafted a read-only report to size the population this guard locks out at deploy (build-plan.md Data repair, B141 row) but deliberately does not run it, so the count of live buyers who lose access the moment this deploys is unknown going in.",
+      "fixHint": "Cheapest shape that keeps one query: select deletedAt with the other customer fields and check it on the returned row instead of in the where (the same L-081-style row check invoices.service.ts:346 uses), then logger.warn once with tenantId + customerId before throwing the unchanged ForbiddenException -- REG-B141 T6/T7 still pass, since they assert the exception and req.buyerCustomer, not the where shape. Separately, run the drafted B141 read-only report before the deploy window so the blast radius is a number, not a guess.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/estimates/estimates.service.ts",
+      "line": 307,
+      "severity": "minor",
+      "summary": "A removed customer can still be invoiced through estimate conversion, which bypasses the new InvoicesService.create guard entirely.",
+      "detail": "POST /estimates/:id/convert-to-invoice (estimates.controller.ts:48-52) calls convertToInvoice, which reserves an invoice number and writes tx.invoice.create with customerId: est.customerId at line 307-311. It never reads Customer and never touches InvoicesService.create (grep confirms create()'s only non-spec callers are invoices.controller.ts:53 and recurring-invoices.service.ts:266), so the R3 404 does not apply. Scenario: an ACCEPTED estimate exists for customer C; C is removed; an operator opens the estimates list (unfiltered by customer deletedAt) and clicks Convert -> a real invoice with a burned invoice number is created for a removed customer, the exact symptom R3 claims to close. Note this may be a deliberate parallel to createInvoiceFromOrder (committed work is legitimate receivables), which the plan fenced out on purpose -- so it needs a ruling, not a reflex fix.",
+      "fixHint": "File as a follow-up row for an owner ruling: either treat an accepted estimate like an already-placed order (documented exception, no change) or add the same deletedAt refusal to convertToInvoice ahead of numbering.reserveNext so no invoice number is burned.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/web/lib/buyer-auth-context.tsx",
+      "line": 51,
+      "severity": "minor",
+      "summary": "The buyer client restores activeSeller from localStorage and never reconciles it against the fetched sellers list, so a removed buyer lands on a wall of unexplained 403s on their last-used seller.",
+      "detail": "The plan's Risks table left this for the reviewer to note; it is reachable. On mount, buyer-auth-context.tsx:46-52 sets activeSeller from localStorage and only refreshes the sellers list in the background, never dropping an activeSeller that has disappeared from that list. buyer-api-client.ts:19-32 keeps attaching X-Tenant-Slug from that stored object on every request, so every guarded query 403s; the portal pages redirect to /buyer/portal only when activeSeller is null (e.g. dashboard/page.tsx:195), which it is not. Scenario: seller S removes customer C at 09:00; C's buyer reloads their dashboard tab and sees error states across every card with no message that access was withdrawn. They are not bricked -- the 403 is not treated as an auth failure (buyer-api-client.ts:54 refreshes on 401 only, so other wholesalers keep working, and /buyer/portal is a picker that renders \"No sellers connected yet\"), but nothing in the UI tells them what happened or steers them back to the picker.",
+      "fixHint": "When the sellers list resolves, clear activeSeller (and its stored copy) if its linkId is no longer present, then let the existing !activeSeller redirect send the buyer to /buyer/portal; ideally show a one-line \"this seller ended your portal access\" notice. Web-only follow-up, out of this run's fence.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/estimates/estimates.service.ts",
+      "line": 49,
+      "severity": "major",
+      "summary": "R3's \"a removed customer cannot be invoiced\" gate is bypassable: EstimatesService.create accepts a soft-deleted customer and convertToInvoice mints the invoice with a direct tx.invoice.create, never through the newly-guarded InvoicesService.create.",
+      "detail": "Verified by reading the file at this worktree: `create()` (lines 46-49) reads `forTenant().customer.findUnique({ where: { id: dto.customerId } })` and only rejects `!customer` — no `deletedAt` check, unlike the fixed `InvoicesService.create` (invoices.service.ts:348). `convertToInvoice` (lines 257-345) writes the invoice itself at line ~307 (`tx.invoice.create({ data: { customerId: est.customerId, ... } })`) and does not call `InvoicesService.create`. Failure scenario: operator removes customer C (soft delete, `deletedAt` set); with C's id (stale page, saved URL, mobile cache, API client) they POST /estimates for C — accepted — mark it ACCEPTED, then POST the convert endpoint. A real numbered Invoice row for the removed customer C is created, which is exactly the outcome R3 forbids and T4/T5 pin only for the `InvoicesService.create` path. The plan's Sibling notes list does not mention estimates at all, so this second invoice-minting site is neither fixed nor recorded.",
+      "fixHint": "Either add the same row-level guard to EstimatesService.create/convertToInvoice (`if (!customer || customer.deletedAt) throw new NotFoundException(\"Customer not found\")`, and re-read the customer at convert time), or — if the owner's three-site fence stands — add estimates (and credit-notes.service.ts:310, which has the same unfiltered customer read) to the build plan's Sibling notes as follow-up rows so R3's partial coverage is recorded rather than implied.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/buyer/buyer.service.ts",
+      "line": 183,
+      "severity": "major",
+      "summary": "requestSeller still matches a removed customer, so a buyer can (re)connect to one: it writes an ACTIVE/PENDING CustomerLink and notifies the seller, which contradicts R6's \"no other write while removed\" and leaves a dead portal the new guard silently refuses.",
+      "detail": "Verified by reading buyer.service.ts 160-365: `requestSeller` looks up the seller-side customer with `this.prisma.customer.findFirst({ where: { tenantId, OR: [{ email }, { user: { email } }] } })` (line 183) — no `deletedAt: null`. If the sign-in email is proven it then `customerLink.upsert(... status: \"ACTIVE\", linkedAt: now, inviteToken: null ...)` (lines 250-271) and emits `emitBuyerAutoLinked`; if unproven it writes `PENDING_SELLER_APPROVAL` (lines 300-325), emails the seller (`notifySellerOfRequest`) and emits `emitBuyerConnectRequest`. The seller-side approval path has no deletedAt guard either (customers.service.ts:2735 `approveBuyerRequest` — `customerLink.findFirst({ where: { customerId, tenantId } })` then writes `status: \"ACTIVE\"`), and customers.service.ts:2780 `listPendingPortalApprovals` will show the request for a customer the seller already removed. Failure scenarios: (a) buyer whose customer record was removed calls POST /buyer/sellers/request with a proven email — gets \"Connected! You can now view your orders and invoices from this seller\", yet every seller-scoped route 403s (\"No active connection to this seller\") and getSellers hides the seller, so the portal is a dead end with a success message; (b) the removed customer's link row is rewritten (buyerAccountId/status/linkedAt overwritten, any inviteToken cleared), so a later restoreCustomer() no longer restores the prior portal state — the plan's R6 claim (\"restore brings back every behavior with no other write\") no longer holds for the CustomerLink; (c) the seller gets an email/bell request for a customer they deleted. No work package or Sibling note covers this path.",
+      "fixHint": "Add `deletedAt: null` to the customer lookup in requestSeller (making it a 404 \"No customer account found with that email at this seller\"), and/or refuse approveBuyerRequest for a removed customer; at minimum record both, plus listPendingPortalApprovals, in the build plan's Sibling notes and drop the unqualified \"no other write while removed\" wording from R6.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 1716,
+      "severity": "minor",
+      "summary": "OrdersService.create still accepts a soft-deleted customer (it checks only user.status === \"SUSPENDED\", while removal writes INACTIVE), and createInvoiceFromOrder is explicitly in-bounds — so new orders and their invoices can still be produced for a removed customer.",
+      "detail": "Verified by reading orders.service.ts 1701-1735: the staff branch reads `forTenant().customer.findUnique({ where: { id: dto.customerId }, include: { user: { select: { status: true } } } })`, rejects only `!customer` and `customer.user.status === \"SUSPENDED\"` (line 1716-1718). CustomersService.deleteCustomer's soft branch writes `User.status = \"INACTIVE\"` (per the plan, customers.service.ts ~2039-2049), which that check does not catch; the driver branch (1721-1727) checks nothing beyond existence. Failure scenario: operator removes customer C, then a stale customer-detail page or a queued mobile/API request posts an order with C's id — the order is created, and because the plan explicitly keeps `createInvoiceFromOrder` in bounds (\"invoicing already-delivered work is legitimate receivables\"), that post-removal order can be invoiced, reaching the same end state R3 blocks on the manual path. The plan's Sibling notes cover manual order-template generation but not OrdersService.create, so this sibling is unrecorded.",
+      "fixHint": "Decide explicitly: either reject `customer.deletedAt` in OrdersService.create's staff and driver branches (same BadRequest as \"Customer not found\"), or add it to the build plan's Sibling notes as a follow-up row and note that createInvoiceFromOrder's allowance only covers orders placed before removal.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/order-templates/order-templates.service.ts",
+      "line": 318,
+      "severity": "minor",
+      "summary": "Templates and recurring invoices suppressed by the new relation filter are invisible in the cron summaries -- they are not even counted as skipped.",
+      "detail": "generateDailyOrders' summary log (line 351) reports totalCreated/totalSkipped, but a template dropped by the new where clause never enters the loop, so it lands in neither counter: a tenant whose only due template belongs to a removed customer logs \"0 created, 0 skipped\", identical to a day with no templates at all. recurring-invoices.service.ts:402 is worse: with the removed customer filtered out, due.length becomes 0 and the function returns before the per-tenant log (line 408), so that tenant produces no line whatsoever, and the global summary (line 424) reports 0 generated. Scenario: an operator reports \"customer X's standing order stopped and their monthly invoice never arrived\" three weeks after a removal nobody remembers; the logs for those 21 nights are indistinguishable from a quiet schedule, so there is no way to confirm the suppression happened, or when it started, without querying deletedAt against Order.templateId/Invoice.recurringInvoiceId rows -- which is exactly the historical blindness the plan's own B131 report row admits it cannot fully reconstruct.",
+      "fixHint": "Emit the suppressed count once per tenant per tick. Either keep the filter and log a single count of the excluded set (one extra cheap count per tenant per day, on a cron path, not a request path), or fetch as before and skip in-loop with totalSkipped++ plus a warn naming customerId -- REG-B131 T1/T2/T3 and P1/P2 pass either way, since they assert which templates reached createOrderFromTemplate / invoicesService.create, not the where shape.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    }
+  ],
+  "confirmedByPhase": {
+    "Baseline": 1,
+    "Author tests": 0,
+    "Red gate": 0,
+    "Implement": 0,
+    "Gate & Review": 11,
+    "Verify": 0,
+    "UI verify": 0,
+    "Mutation probe": 0,
+    "Fix": 0,
+    "Final pass": 0
+  },
+  "phaseReport": [
+    {
+      "phase": "Baseline",
+      "ran": true,
+      "agents": 4,
+      "rawFindings": 1,
+      "tokens": 35025,
+      "model": "claude-haiku-4-5 (gate/grounding/manifest) + claude-sonnet-5 (harness check)",
+      "effort": "low / low harness check",
+      "estUsd": 0.18,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Author tests",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": 0,
+      "tokens": 26768,
+      "model": "claude-sonnet-5",
+      "effort": "medium (a package's own effort wins)",
+      "estUsd": 0.27,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Red gate",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": 0,
+      "tokens": 20473,
+      "model": "claude-haiku-4-5 (run) + claude-opus-5 (audit/remediate)",
+      "effort": "low run / high audit / high remediation",
+      "estUsd": 0.51,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Implement",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": 0,
+      "tokens": 9372,
+      "model": "claude-sonnet-5",
+      "effort": "medium (a package's own effort wins)",
+      "estUsd": 0.09,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Gate & Review",
+      "ran": true,
+      "agents": 8,
+      "rawFindings": 11,
+      "tokens": 210807,
+      "model": "claude-haiku-4-5 (gate/regate) + claude-opus-5 (build-fix, lenses) + claude-sonnet-5 (radius pack)",
+      "effort": "low gate / high build-fix / deep lenses high (xhigh when any file is HIGH risk) / pattern lenses medium / low radius pack",
+      "estUsd": 5.27,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Verify",
+      "ran": true,
+      "agents": 11,
+      "rawFindings": 0,
+      "tokens": 66556,
+      "model": "claude-sonnet-5 (location check) + claude-opus-5 (refuters, per file) + claude-fable-5-1 (split-vote tie-break)",
+      "effort": "location check low / refuters medium (high on HIGH-risk findings) / tie-break high",
+      "estUsd": 1.66,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "UI verify",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-sonnet-5 (driver) + claude-opus-5 (judge)",
+      "effort": "medium driver / high judge",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Mutation probe",
+      "ran": true,
+      "agents": 7,
+      "rawFindings": 0,
+      "tokens": 15764,
+      "model": "claude-haiku-4-5 (checksums) + claude-opus-5 (probes)",
+      "effort": "low checksums / medium probes",
+      "estUsd": 0.39,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Fix",
+      "ran": true,
+      "agents": 20,
+      "rawFindings": 0,
+      "tokens": 262983,
+      "model": "claude-sonnet-5 (brief) + claude-fable-5-1 (plans every fix in the round; claude-opus-5 if it declines) + claude-sonnet-5 (mechanical executors) + claude-sonnet-5 (designed LOW-risk executors) + claude-opus-5 (HIGH-risk and broad-key executors, recheck) + claude-haiku-4-5 (regate)",
+      "effort": "low brief / high plan (xhigh on the fallback planner) / low mechanical / medium designed LOW-risk / high HIGH-risk and broad keys / high re-check / low gates",
+      "estUsd": 6.57,
+      "overlappedWith": null,
+      "note": "Fable-planned fixes (Sonnet brief -> Fable plan -> executors implementing the design)"
+    },
+    {
+      "phase": "Final pass",
+      "ran": true,
+      "agents": 6,
+      "rawFindings": 10,
+      "tokens": 135679,
+      "model": "claude-sonnet-5 (diff digest) + claude-opus-5 (adversarial read → candidates) + claude-fable-5-1 (decides; claude-opus-5 if it declines)",
+      "effort": "low digest / xhigh read / high decide (xhigh on the fallback decider)",
+      "estUsd": 6.78,
+      "overlappedWith": null,
+      "note": "includes the final full gate (Haiku), which ran beside the final pass"
+    }
+  ],
+  "fixRounds": 2,
+  "fixReports": [
+    {
+      "round": 1,
+      "plan": {
+        "round": 1,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 11,
+          "dispute": 0,
+          "defer": 1
+        },
+        "routes": {
+          "mechanical": 1,
+          "sonnet": 6,
+          "opus": 4
+        },
+        "waves": [[0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11]],
+        "note": "Round 1 keeps the owner's B131 three-site fence for invoice-minting code (estimates create/convert, credit-notes, import, approveBuyerRequest, listPendingPortalApprovals are recorded as Sibling-notes follow-up rows with the owner-ruling question on accepted estimates, and R6's wording is qualified) while closing the cheap, clearly-wrong siblings that the B141/B131 change itself exposes: google-oauth sellerCount gets the same deletedAt filter as getSellers (#1); requestSeller and acceptInvite refuse a removed customer through their existing not-found branches so no CustomerLink write or seller notification can happen (#3/#9); OrdersService.create staff/driver branches refuse a removed customer (#10); the guard logs one warn line with tenantId+customerId on the refusal path only, leaving its query and message untouched (#5); the web buyer context drops a stored activeSeller absent from the fetched list (#7); both crons count and warn suppressed rows per tenant without changing what fires (#11); and the stale cause-ruling path is corrected (#0). #4 (in-product Restore UI as a landing condition) is deferred as an owner scope call. All fixes run in one wave (build-plan.md and buyer.service.ts are shared across several findings and the engine serializes by file). Close-out items outside the diff: run the drafted B141 read-only report before the deploy window so the locked-out population is a number, and file the deferred Restore-UI question with the owner."
+      },
+      "reports": [
+        {
+          "target": "(artifact)",
+          "route": "mechanical",
+          "fixed": ["Path to cause-ruling.md is incorrect in both artifacts"],
+          "skipped": [],
+          "filesChanged": [
+            ".claude/pipeline/2026-09-10-train4-run-d/build-plan.md",
+            ".claude/pipeline/2026-09-10-train4-run-d/bug-test-plan.md"
+          ]
+        },
+        {
+          "target": "apps/api/src/auth/google-oauth.service.ts",
+          "route": "opus",
+          "fixed": [
+            "Google sign-in's `sellerCount` is not filtered by `customer.deletedAt` while `getSellers` now is, so mobile's Google login takes the \"you have a seller\" branch and then opens an empty seller picker with no message."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/auth/google-oauth.service.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/auth/google-oauth.removed-customer.spec.ts"
+          ]
+        },
+        {
+          "target": "apps/api/src/estimates/estimates.service.ts",
+          "route": "opus",
+          "fixed": [
+            "[#0] Second operator-reachable path creates a NEW invoice for a soft-deleted customer (estimate conversion) is recorded nowhere in the plan — recorded as follow-up rows in build-plan.md's Sibling notes per Fable's design (no code diff widened). Four rows added exactly once each: (a) `estimates.service.ts` create() ~45-49 accepts a soft-deleted customer (verified: line 49 is `if (!customer) throw new NotFoundException(\"Customer not found\");`, and `grep -n deletedAt apps/api/src/estimates/*.ts` returns nothing); (b) `estimates.service.ts` convertToInvoice ~257-345 mints the invoice itself at ~307 via `tx.invoice.create({ data: { customerId: est.customerId, ... } })` after `numbering.reserveNext(\"INVOICE\")` (~279), bypassing InvoicesService.create — flagged as needing an owner ruling, with the note that any future guard must sit ahead of reserveNext so no number is burned; (c) `credit-notes.service.ts` ~310 unfiltered `customer.findFirst({ where: { id: dto.customerId }, select: { id, businessName } })`; (d) `import.service.ts` ~941 writes invoices directly and resolves the customer by name at ~598 (`businessName: { contains, mode: \"insensitive\" }`) with no deletedAt filter — I verified that resolution site rather than leaving it unverified.",
+            "[#1] A removed customer can still be invoiced through estimate conversion — same single set of Sibling-notes rows as [#0] (Fable: duplicate, no separate rows). Verified after editing that each of the four rows appears exactly once (grep counts: 2 estimates rows, 1 credit-notes row, 1 import row); no duplicates introduced and no code changed.",
+            "[#2] R3's gate is bypassable via EstimatesService.create + convertToInvoice, and R3's partial coverage was implied rather than recorded — the convertToInvoice row now states explicitly that \"R3's coverage is `InvoicesService.create` only\" and that the estimate stays listed because `findAll` (~183-201) has no `customer.deletedAt` filter, so the path is normal-UI reachable. The owner's three-site B131 code fence stands: no change to estimates.service.ts, credit-notes.service.ts or import.service.ts (`git diff --stat` over those three directories is empty)."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-10-train4-run-d/build-plan.md"
+          ],
+          "disputed": []
+        },
+        {
+          "target": "apps/api/src/buyer/buyer.service.ts",
+          "route": "opus",
+          "fixed": [
+            "requestSeller and acceptInvite never check customer.deletedAt, so a locked-out buyer gets success or \"already connected\" for a seller getSellers now hides and the guard 403s. — fixed: added deletedAt: null to requestSeller's customer.findFirst and customer: { deletedAt: null } to the getInviteDetails/acceptInvite customerLink.findUnique where-clauses; pinned by new REG-B141 T9/T10 (+ P7/P8) in buyer-connect.spec.ts, both proven red with the guards reverted.",
+            "requestSeller still matches a removed customer, so a buyer can (re)connect to one: it writes an ACTIVE/PENDING CustomerLink and notifies the seller, which contradicts R6's \"no other write while removed\" and leaves a dead portal the new guard silently refuses. — code covered by the same buyer.service.ts edit (not duplicated, per the design); plan updated: R6 wording qualified to the fixed paths, a fence-amendment note added, and Sibling-notes rows filed for customers.service.ts approveBuyerRequest (line 2736, verified) and listPendingPortalApprovals (line 2780, verified). customers.service.ts left untouched."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F25\\apps\\api\\src\\buyer\\buyer.service.ts",
+            "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F25\\apps\\api\\src\\buyer\\buyer-connect.spec.ts",
+            "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F25\\.claude\\pipeline\\2026-09-10-train4-run-d\\build-plan.md"
+          ]
+        },
+        {
+          "target": "apps/api/src/buyer/guards/buyer-seller-context.guard.ts",
+          "route": "opus",
+          "fixed": [
+            "[#0] Refusal path in BuyerSellerContextGuard now emits an observability signal: added `private readonly logger = new Logger(BuyerSellerContextGuard.name)` and, inside the unchanged `if (!link)` branch, one diagnostic `customerLink.findFirst({ where: { buyerAccountId, tenantId, status: \"ACTIVE\" }, select: { customerId, customer: { select: { deletedAt } } } })`; when that row's `customer.deletedAt` is set it logs one `logger.warn(\"[B141] portal access refused: customer <customerId> at tenant <tenantId> is removed (buyer <sub>)\")` before throwing the byte-identical `ForbiddenException(\"No active connection to this seller\")`. Implemented exactly as Fable's design: the primary link query, its where-clause (including `customer: { deletedAt: null }`), the happy path and `req.buyerCustomer` are untouched, so the extra query runs only on a refusal and the happy path still issues exactly one CustomerLink query (pinned by P4). Verified: `npx jest src/buyer/guards/buyer-seller-context.guard --verbose` = 5/5 pass (T6, T6b, T7, P4, P5).",
+            "[#0] tests: REG-B141 T6 strengthened to assert `logger.warn` was called exactly once with a message containing the customer id (`c-1`) and tenant id (`tn-1`) while still asserting ForbiddenException; new `B141 T6b` (no ACTIVE link at all -> `boot([])`) asserts warn is NOT called. Deviation from the design's test mechanics, deliberate and reported: instead of hand-mocking a second findFirst return value I left the existing honest `matchesWhere` stand-in in place (it already answers the diagnostic lookup from the same row, giving `customerId` + `customer.deletedAt` — L-081: a mock that injects a fixed result cannot see a where-shape change), and spied `Logger.prototype.warn` in a describe-level `beforeEach` (house style, e.g. apps/api/src/billing/addon.guard.spec.ts:142) with `afterEach(() => jest.restoreAllMocks())` so T7's refusal does not leak a WARN line into jest output. T7, P4, P5 assertions unchanged.",
+            "[#0] NOT part of the code change, and NOT done: the finding's second half (\"run the drafted B141 read-only report before the deploy window so the blast radius is a number\"). build-plan.md's Data repair section states the reports are proposed only — \"None is written in this run\" — and `report-b141-post-removal-buyer-activity.mjs` does not exist in this worktree; it also needs prod access via `railway run --service postgres`, which is outside this fix's scope. This remains an owner/pre-deploy action item, unaddressed by this diff."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/buyer/guards/buyer-seller-context.guard.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/buyer/guards/buyer-seller-context.guard.spec.ts"
+          ]
+        },
+        {
+          "target": "apps/web/lib/buyer-auth-context.tsx",
+          "route": "opus",
+          "fixed": [
+            "[#0] buyer client now reconciles a restored activeSeller against the fetched sellers list: added `applySellers(list, restored)` in BuyerAuthProvider (apps/web/lib/buyer-auth-context.tsx) called from BOTH places the list resolves (stored-session branch and the buyerRefreshTokens branch). It calls setSellers(list) and, only when the seller restored from storage is non-null and no entry shares its linkId, clears both state (setActiveSellerState(null)) and the stored copy (clearActiveSeller() — previously an unused import), so the existing `!activeSeller` redirect sends the buyer to /buyer/portal instead of a wall of 403s. A rejected getBuyerSellers never reaches the reconcile (it lands in the existing .catch), so a failed fetch clears nothing. Nothing else touched: no buyer-api-client.ts, no 401 refresh logic, no portal pages, and no notice state (Fable marked that optional/not required). Effect deps became [applySellers] (stable useCallback). Evidence: new spec apps/web/lib/buyer-auth-context.test.tsx (REG-B141 W1/W2/W3) passes 3/3 (`npx jest lib/buyer-auth-context`); mutation probe — neutralising the reconcile condition made W1 fail while W2/W3 stayed green; `npx tsc --noEmit` in apps/web clean; `npx eslint` on both files = 0 errors (2 pre-existing no-console warnings on the untouched catch handlers at lines 73/87); the 6 buyer-adjacent web suites (app/buyer, components/PortalSwitchLink, lib/presence-cookies) stay green 23/23; prettier reported both files already formatted. SCOPE FLAG FOR THE COORDINATOR: the approved build plan fences web out of this run — its scope fence says \"Any edit to ... schema, migrations, web, mobile\" is out of scope, and its Risks table logs this exact item as \"Buyer web/mobile shows a raw 403 after removal ... Not verified in the clients here; reviewer notes only\"; the finding itself calls it \"Web-only follow-up, out of this run's fence\". I implemented it because Fable's design explicitly decided it after seeing that text, but the hunk is one self-contained file plus one new test and can be dropped from this diff (or moved to the follow-up PR) without touching the api B131/B141 changes if the fence is enforced. Note also that the run's given verification commands are api-only, so this web change is NOT covered by them — I ran the web lane commands above instead."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/lib/buyer-auth-context.tsx",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/lib/buyer-auth-context.test.tsx"
+          ]
+        },
+        {
+          "target": "apps/api/src/orders/orders.service.ts",
+          "route": "opus",
+          "fixed": [
+            "[#0] OrdersService.create accepted a soft-deleted customer (only `user.status === \"SUSPENDED\"` was checked, while removal writes `Customer.deletedAt` + `User.status = \"INACTIVE\"`), so a post-removal order could be created and later invoiced. Implemented Fable's design exactly: added `if (customer.deletedAt) throw new BadRequestException(\"Customer not found\");` to the staff branch (after `if (!customer)`, before the SUSPENDED check) and to the driver branch (after its `if (!customer)`), in apps/api/src/orders/orders.service.ts. The customer-role branch, the include shape, idempotency, advisory locks, auto-merge, createInvoiceFromOrder and change-requests.service.ts are untouched. Added two REG-B131 specs to apps/api/src/orders/orders.service.spec.ts (staff + driver: rejects with BadRequestException(\"Customer not found\") and `prisma.order.create` never called); both PASS with the fix and both FAIL on the reverted service file with \"Received promise resolved instead of rejected\" (revert probe run in this session). Recorded the sibling in build-plan.md Sibling notes per the design: createInvoiceFromOrder's allowance covers only orders placed before removal, and create() now refuses a removed customer on the staff and driver branches."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/orders/orders.service.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/orders/orders.service.spec.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-10-train4-run-d/build-plan.md"
+          ],
+          "disputed": []
+        },
+        {
+          "target": "apps/api/src/order-templates/order-templates.service.ts",
+          "route": "opus",
+          "fixed": [
+            "Templates and recurring invoices suppressed by the new relation filter are invisible in the cron summaries -- they are not even counted as skipped."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/order-templates/order-templates.service.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/order-templates/order-templates.removed-customer.spec.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/recurring-invoices/recurring-invoices.service.spec.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "plan": {
+        "round": 2,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 6,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 0,
+          "sonnet": 5,
+          "opus": 1
+        },
+        "waves": [
+          [1, 2],
+          [0, 3, 4, 5]
+        ],
+        "note": "Round 2 fixes all six findings; nothing is disputed or deferred. Wave 1 rewrites the two plan documents and the collided test ids: #1 amends build-plan.md for every api deviation (google-oauth admitted to the fence, sibling note closed, the second-query constraint qualified for the cron counts and the guard diagnostic, criterion 4 and the summary strings corrected) and #2 renumbers the recurring-invoices and google-oauth round-2 tests to REG-B131 T11 / REG-B141 T11 / B141 P9 and records them in bug-test-plan.md. Wave 2 runs after those documents settle: #0 keeps the web reconcile hunk and admits it through a round-2 fence amendment plus web-lane verifyCommands (`check-types -w apps/web`, `jest lib/buyer-auth-context app/buyer`) so the gate covers it; #3 demotes both green-on-base T10 negative controls to pins B131 P4/P5; #4 makes both suppression-count tests assert the count where-clause so a flipped or dropped `deletedAt` filter turns them red; #5 routes refreshSellers (and any login-path sellers load) through applySellers via an activeSellerRef, pinned by W4/W5. Same-file pairs (#0/#5 on buyer-auth-context, #3/#4 on the order-templates spec) share a wave so the engine serializes them, and the doc files edited by both waves (build-plan.md, bug-test-plan.md, the recurring-invoices spec) are touched by wave 1 first."
+      },
+      "reports": [
+        {
+          "target": ".claude/pipeline/2026-09-10-train4-run-d/build-plan.md",
+          "route": "sonnet",
+          "fixed": [
+            "The plan was not amended for this round's api deviations: its fence still forbids the google-oauth.service.ts edit, its Sibling note still calls that count an unfixed \"candidate follow-up\", its \"no second query to read deletedAt\" constraint is now violated three times, acceptance criterion 4 is now false, and the Observability section quotes the old cron summary strings."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-10-train4-run-d/build-plan.md"
+          ]
+        },
+        {
+          "target": "apps/api/src/recurring-invoices/recurring-invoices.service.spec.ts",
+          "route": "opus",
+          "fixed": [
+            "[#0] Colliding T#/P# ids renamed so each token names one oracle, and the round-2 ids documented in bug-test-plan.md. Verified the collisions first by grepping every REG/pin title in apps/api/src (all four collisions in the finding reproduced exactly). Applied Fable's design verbatim: recurring-invoices.service.spec.ts:549 `REG-B131 T9: generateDueRecurringInvoices warns per tenant and totals the suppressed rows` -> `REG-B131 T11: ...`; auth/google-oauth.removed-customer.spec.ts:101 `REG-B141 T9:` -> `REG-B141 T11:` and :107 `B141 P7:` -> `B141 P9:`. T11/P9 were confirmed free by grep before each rename. Only the `it(...)` title strings changed - no test body, fixture or assertion was touched, and the in-body `REG-B131` log-message filters were left alone. Plan updated: three Red-set rows (REG-B131 T9 order-templates suppression warn+summary, REG-B131 T11 recurring-invoices suppression warn+summary, REG-B141 T11 Google sellerCount) and one Pins row (B141 P9), plus the 'Proof tokens for close-out' line extended with the new ids and the one-token-one-test statement. Evidence: `cd apps/api && npx jest src/recurring-invoices src/auth/google-oauth.removed-customer.spec.ts src/order-templates src/buyer --reporters=default` = 26 suites / 275 tests passed; `-t \"REG-B131 T11\"`, `-t \"REG-B141 T11\"` and `-t \"B141 P9\"` each selected exactly 1 test (274 skipped, 1 passed); `npm run check-types -w apps/api` clean. RESIDUAL, by design, not an oversight: `REG-B131 T10` still names two tests (order-templates.removed-customer.spec.ts:147 and recurring-invoices.service.spec.ts:568) - Fable's design for [#0] says 'do NOT touch its T10 - #3 owns that line', so finding #3's fix must renumber it and add its plan row. A token-uniqueness count over apps/api/src shows every other REG/pin id at exactly 1. The plan also still lacks Red-set/Pins rows for `REG-B131 T10`, `REG-B141 T9`/`T10` and `B141 P7`/`P8` in buyer-connect.spec.ts; the design scoped my plan append to the four rows above, so those rows belong to the findings that own those tests."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/recurring-invoices/recurring-invoices.service.spec.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/auth/google-oauth.removed-customer.spec.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-10-train4-run-d/bug-test-plan.md"
+          ],
+          "disputed": []
+        },
+        {
+          "target": "apps/web/lib/buyer-auth-context.tsx",
+          "route": "opus",
+          "fixed": [
+            "[#0] Web reconcile hunk outside the plan's scope fence and outside the run's verifyCommands — took Fable's option (a): admitted the two web files in a new fence-amendment blockquote, rewrote the Risks row, and added the web lane to the Acceptance criteria + BOTH verifyCommands sets (build-plan.md prose block, its embedded JSON block, and pipeline-args.json). DEVIATION from the design, disclosed: the design said to put the blockquote directly under the round-1 amendment headed \"Fence amendment, review round 2 (2026-09-10)\", but a round-2 amendment with exactly that heading already exists at build-plan.md:77-81 (this round's google-oauth.service.ts sellerCount fix, made by a peer engineer). To avoid two identical headings I placed mine immediately AFTER it, at line 83, headed \"Fence amendment, review round 2 (2026-09-10) - web client\". Substance is as designed: it names apps/web/lib/buyer-auth-context.tsx + the new apps/web/lib/buyer-auth-context.test.tsx, gives the revocation-ruled-out reason, the linkId reconcile, and the never-clears-on-a-rejected-fetch property. Verified by tool: both added commands run green here - `npm run check-types -w apps/web` clean, `cd apps/web && npx jest lib/buyer-auth-context app/buyer` = 5 suites / 14 tests passed. The plan's single embedded ```json block re-parses as valid JSON and pipeline-args.json re-parses as valid JSON after the edit.",
+            "[#1] refreshSellers() (and login()) did a bare setSellers, so a seller removed while the tab was open left a stale activeSeller. Added `activeSellerRef` + a `useEffect` mirror of activeSeller, and routed both `refreshSellers` (line ~145) and `login` (line ~107) through `applySellers(list, activeSellerRef.current)`, adding `applySellers` to both dep arrays. applySellers itself and the two mount-path wirings are byte-unchanged; setSellers([]) in register/logout left as is. Added REG-B141 W4 (refreshSellers returns a list without S -> activeSeller null and the stored copy gone) and W5 (negative control: list still contains S -> activeSeller stays S, stored copy intact) to apps/web/lib/buyer-auth-context.test.tsx, driving refreshSellers through a button + @testing-library/user-event (already a devDependency of apps/web, ^14). Verified: all 5 tests green; mutation probe (reverted refreshSellers to `setSellers(list)`) turned W4 RED and left W1/W2/W3/W5 green, then the file was restored and re-verified."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/lib/buyer-auth-context.tsx",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/lib/buyer-auth-context.test.tsx",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-10-train4-run-d/build-plan.md",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-10-train4-run-d/pipeline-args.json"
+          ]
+        },
+        {
+          "target": "apps/api/src/order-templates/order-templates.removed-customer.spec.ts",
+          "route": "opus",
+          "fixed": [
+            "[#0] Renamed both negative-control tests from REG titles to pin titles: order-templates.removed-customer.spec.ts:147 'REG-B131 T10' -> 'B131 P10', recurring-invoices.service.spec.ts:568 'REG-B131 T10' -> 'B131 P11' (P10/P11 rather than Fable's P4/P5 because B141 P4/P5 already exist at buyer-seller-context.guard.spec.ts:103,109 and the plan's Pins table is one shared P sequence with P1-P9 used; the design's grep escape clause covers this). Test bodies unchanged. Both pins added to bug-test-plan.md's Pins table with their oracle, plus a clause on the proof-tokens line stating they are pins outside the red gate. Verified: `-t \"REG-B131\"` across both files now selects exactly T1/T2/T3/T9/T11 (5 tests, no pins); `-t \"B131 P10\"` and `-t \"B131 P11\"` each select exactly one test.",
+            "[#1] Strengthened REG-B131 T9 (order-templates.removed-customer.spec.ts) and REG-B131 T11 (recurring-invoices.service.spec.ts) to assert the count query's own filter: `expect(prisma.orderTemplate.count).toHaveBeenCalledTimes(1)` plus `toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ customer: { deletedAt: { not: null } } }) }))` (recurringInvoice.count in the twin). DEVIATION from the design: `tenantId: \"tn-1\"` was omitted from the where objectContaining because neither service's count where carries a tenantId key (order-templates.service.ts:326-333, recurring-invoices.service.ts:410-417) - tenant scoping is via prisma.forTenant() + tenantCtx.run, and createMockPrisma().forTenant() returns the same model surface with no where injection (apps/api/src/testing/prisma-mock.ts:222), so asserting tenantId would fail against correct code. Mutation probe run as the design required: flipping both count filters to `deletedAt: null` turned T9 and T11 red (Received: {\"where\": {\"customer\": {\"deletedAt\": null}, ...}}); services restored and md5sum -c confirmed them byte-identical to pre-probe."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/order-templates/order-templates.removed-customer.spec.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/recurring-invoices/recurring-invoices.service.spec.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-10-train4-run-d/bug-test-plan.md"
+          ]
+        }
+      ]
+    }
+  ],
+  "remainingFindings": [
+    {
+      "file": "apps/web/app/(dashboard)/customers/[id]/page.tsx",
+      "line": 1990,
+      "severity": "major",
+      "summary": "The change makes \"Remove customer\" silently kill standing orders, recurring invoices and portal access, but the only in-product way to reverse it is the 8-second Undo toast.",
+      "detail": "The whole safety story of this fix is restore symmetry (R6, \"Restore (Undo, or the restore endpoint) reverses all of it immediately\"). In the product, restore is wired ONLY to the undo callback of runUndoable at line 1990-1995 (useRestoreCustomer is referenced nowhere else in apps/web -- verified by grep); the customers list filters deletedAt: null (apps/api/src/customers/customers.service.ts:126), so a removed customer disappears from every list, and while findOne (customers.service.ts:448-457) does NOT filter deletedAt so the detail page is reachable by direct URL, that page renders no Restore control. Scenario: an operator mis-clicks Remove on a live customer and misses the 8-second toast. Before this change the damage was cosmetic (hidden from the list). After it: that customer's 06:00 template tick and 00:00 recurring tick stop firing, manual invoicing 404s, and their buyer is 403'd out of the portal -- and the only remedy is a hand-crafted POST /customers/:id/restore (or a DB write), which no operator can issue from the UI.",
+      "fixHint": "Before or with this landing, give the removal an in-product reversal: an archived/removed filter on the customers list plus a Restore action on the detail page for a customer with deletedAt set (the API endpoint already exists and is idempotent). Web work, so a separate PR is fine, but do not treat R6 as satisfied by the API endpoint alone.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review",
+      "locationInvalid": true,
+      "deferred": "Owner call on scope: the reviewer asks for new web UI (a removed/archived filter on the customers list plus a Restore action on the detail page, which mobile-mirrors-web would then owe on mobile) as a condition of this landing. That is outside the owner's three-site B131 fence and is a product decision — ship this fix with the 8-second Undo plus the existing idempotent POST /customers/:id/restore and open a follow-up web PR, or hold the landing until the Restore UI ships. The restore payload semantics (which status to restore to when priorStatus is not known after the toast expires) also need a ruling before a UI can be designed exactly."
+    },
+    {
+      "file": ".claude/pipeline/2026-09-10-train4-run-d/build-plan.md",
+      "line": 559,
+      "severity": "minor",
+      "summary": "The new google-oauth REG spec is run by NO command of this run: it matches neither red-gate command nor the api final verifyCommands, so REG-B141 T11 sits in the documented Red set with no documented command that can execute it.",
+      "detail": "Verified with jest --listTests from apps/api: `npx jest src/buyer/guards/buyer-seller-context.guard src/buyer/buyer-connect --listTests | grep -ci google-oauth` = 0, and `npx jest src/order-templates/ src/recurring-invoices/ src/invoices/invoices.service src/buyer/ src/orders/orders.scan-hardening src/common/no-bare-cron --listTests | grep -ci google-oauth` = 0. No pattern in either list matches src/auth/. So the round-2 google-oauth.service.ts fix (sellerCount where-clause, admitted by the amendment at build-plan.md:77-81, which claims it is \"pinned by the google-oauth removed-customer spec\") has exactly the gating gap that finding #1 flagged for the web hunk: bug-test-plan.md:28-43 lists `REG-B141 T11` inside the Red set (\"in the red gate\") and its Commands section then gives a B141 red-gate command that cannot select it. Failure scenario: a close-out reviewer runs the plan's red-gate and final commands, sees them green, and concludes the google-oauth change is proven; a mutation that reverts that where-clause (there is also no mutationProbe row for google-oauth.service.ts) is invisible to every command the plan names. The spec does run in the repo-wide api lane (rootDir src, testRegex .*\\.spec\\.ts$), so CI catches it — the gap is this run's own gate chain, not CI.",
+      "fixHint": "Append `src/auth/google-oauth.removed-customer` to the B141 red-gate command (build-plan.md:559, its JSON twin at :893, pipeline-args.json:29) and to the api final command (build-plan.md:716, :929, pipeline-args.json:39), and add a mutationProbe row {file: apps/api/src/auth/google-oauth.service.ts, revertFix: true, test: \"REG-B141 T11\"}. Note this grows pipeline-args.json — see the 4 KB finding.",
+      "fixComplexity": "mechanical"
+    },
+    {
+      "file": ".claude/pipeline/2026-09-10-train4-run-d/bug-test-plan.md",
+      "line": 44,
+      "severity": "minor",
+      "summary": "The Red set / Pins tables are still incomplete: no rows for REG-B141 T9/T10 and B141 P7/P8 (the round-1 buyer-connect tests) and none for the five web tests REG-B141 W1-W5, so the proof tokens still do not map 1:1 to documented oracles.",
+      "detail": "Finding #3's fix hint was to append the undocumented ids to the Red set and Pins tables \"so the proof tokens map 1:1\". Four of the ids it named were renamed and documented (REG-B131 T9/T11, B141 P9, plus P10/P11 from finding #4), but the ids it cited on the other side of the collisions are still absent: grep of bug-test-plan.md finds no row for `REG-B141 T9` (buyer-connect.spec.ts:762, requestSeller refuses), `REG-B141 T10` (:775, acceptInvite treats the invite as not found), `B141 P7` (:784) or `B141 P8` (:793) — all four exist as tests and pass. The five web tests added under the round-2 amendment (apps/web/lib/buyer-auth-context.test.tsx, REG-B141 W1-W5) appear only in build-plan.md's criterion 9 and Risks row; bug-test-plan.md documents none of them and its \"Proof tokens for close-out\" line (line 91) enumerates only \"T6-T8, plus T11 in google-oauth\". Failure scenario: a close-out reviewer reconciling green proof tokens against the test plan finds five REG-B141 W tokens and four buyer-connect B141 tokens with no oracle, no \"fails today with\" value and no file row — the artifact that is supposed to define the red bar cannot be used to audit the run's own tests. The fixer disclosed this residual explicitly in its report.",
+      "fixHint": "Append Red-set rows for REG-B141 T9 and T10 (buyer-connect.spec.ts, with their pre-fix wrong values) and Pins rows for B141 P7/P8, plus a short web sub-table (or a fifth section) for REG-B141 W1-W5 naming apps/web/lib/buyer-auth-context.test.tsx and the `cd apps/web && npx jest lib/buyer-auth-context app/buyer` lane, then extend the proof-tokens line at :91 to list them.",
+      "fixComplexity": "mechanical"
+    },
+    {
+      "file": ".claude/pipeline/2026-09-10-train4-run-d/bug-test-plan.md",
+      "line": 91,
+      "severity": "minor",
+      "summary": "The plan's new claim \"Each `-t \"<token>\"` selects exactly one test\" is false: T# tokens are prefixes of the new T1x ids, so `-t \"REG-B131 T1\"` selects both T1 and T11.",
+      "detail": "Verified by running the token: `cd apps/api && npx jest src/order-templates/order-templates.removed-customer src/recurring-invoices/recurring-invoices.service src/invoices/invoices.service -t \"REG-B131 T1\" --reporters=default --verbose` = \"341 skipped, 2 passed\", selecting `REG-B131 T11` (recurring-invoices suppression warn) as well as `REG-B131 T1` (order-templates skip). -t is a substring/regex match on the full name, and the round-2 renumbering to T11 (and pins P10/P11) created prefix collisions with the pre-existing T1 and P1 tokens; `-t \"B131 P1\"` likewise selects P1, P10 and P11. build-plan.md's mutationProbe row for order-templates.service.ts names the test as `REG-B131 T1`. Failure scenario: probing the order-templates revert with the documented token runs two tests in two services; the probe still reddens (T1 fails, T11 is unaffected), so no probe verdict is wrong today, but the one-token-one-oracle contract the plan now asserts is not true, and a future engine that counts \"1 selected test\" per token as a harness check would report a mismatch.",
+      "fixHint": "Either quote the tokens with their colon in the plan and in mutationProbe (`REG-B131 T1:`, which is unique), or state in the proof-tokens line that a token is a prefix match and list the pairs (T1/T11, P1/P10/P11).",
+      "fixComplexity": "mechanical"
+    },
+    {
+      "file": ".claude/pipeline/2026-09-10-train4-run-d/build-plan.md",
+      "line": 972,
+      "severity": "minor",
+      "summary": "The \"same object (3,856 bytes, under the 4 KB truncation limit)\" claim is now wrong (3,951 bytes raw), and because lint-staged runs prettier --write on staged .json, the file that actually gets committed is 4,463 bytes — over the documented 4 KB Workflow-resume limit.",
+      "detail": "Measured this session: pipeline-args.json is 3,951 bytes (plan still says 3,856 — the round-2 web-lane commands added ~100 bytes and the count was not updated). `npx prettier --check` on it exits 1 (it is the only pipeline-args.json in the repo that is not prettier-clean: the same check on the tracked .claude/pipeline/2026-09-01-F13-recurring-standing/pipeline-args.json exits 0), and .husky/pre-commit runs `npx lint-staged`, whose only rule is `*.{...,json,md,...}: [prettier --write]`. Copying the file to a scratchpad and running prettier --write yields 4,463 bytes, matching the plan's own embedded (prettier-formatted) JSON block at 4,463 bytes. Failure scenario: the coordinator stages the planning dir, the pre-commit hook expands pipeline-args.json past 4,096 bytes, and a later relaunch/resume of this run hits the recorded truncation trap (workflow.js:260 \"Expected }\" on args cut short) — the exact failure the plan's parenthetical exists to prevent. Honest scope: the >4 KB-after-prettier condition predates this round (pre-fix prettier size was already ~4.35 KB); what this round added is ~100 bytes and a byte count that is now demonstrably wrong. Adding the google-oauth spec to the commands (finding above) grows it further.",
+      "fixHint": "Correct the byte figure at :972 and state which form it refers to; then keep the committed file under 4 KB — either add `.claude/pipeline/**/pipeline-args.json` to .prettierignore (so lint-staged cannot expand it) or trim the object (drop `context` prose / the two siblingPatterns notes) so the prettier-formatted form is under 4,096 bytes. Re-measure with `npx prettier --write` on a copy after editing.",
+      "fixComplexity": "mechanical"
+    },
+    {
+      "file": "apps/api/src/auth/google-oauth.service.ts",
+      "line": 647,
+      "severity": "major",
+      "summary": "A THIRD invite-redemption path — GoogleOAuthService.acceptInviteToken — was never enrolled in round 1's removed-customer gate, so a removed customer's invite is still redeemable via Google sign-in: it flips the link ACTIVE and permanently burns the invite token.",
+      "detail": "State path: (1) seller invites customer C → CustomerLink{status:INVITED, inviteToken:T, customerId:C}; (2) seller removes C → Customer.deletedAt set, link untouched (customers.service.ts:2045-2046, soft branch writes only deletedAt + User INACTIVE — verified); (3) the buyer completes Google sign-in with T in the OAuth state (web/buyer/invite/[token]/page.tsx:123 puts invite_token in the /auth/google query; auth.controller.ts:226→244 forwards it; google-oauth.service.ts:178 embeds it in state; :334 reads it back; :609-611 calls acceptInviteToken). acceptInviteToken (:643-664) reads `customerLink.findFirst({ where: { inviteToken: token, status: { in: [\"INVITED\",\"PENDING_SELLER_APPROVAL\"] } } })` at :647 with NO `customer: { deletedAt: null }` — its own comment at :645 claims it \"Mirrors BuyerService.acceptInvite's gate\", which round 1 amended to carry exactly that filter (buyer.service.ts:120 per the digest) — and then WRITES at :653-661 `{ buyerAccountId, status: \"ACTIVE\", inviteToken: null, inviteExpiresAt: null, linkedAt: now }`. Consequences, all verified in code: (a) a removed customer's link goes ACTIVE, the write R6 and the round-1 fence amendment exist to prevent (the plan records only customers.service.ts approveBuyerRequest as an out-of-fence twin, and google-oauth.service.ts was admitted INTO scope by the round-2 amendment); (b) the invite token is nulled, which restore cannot undo — the seller must mint a new invite, so it is not restore-symmetric; (c) the same request then computes the newly-filtered `sellerCount` at :618 → 0, while auth.controller.ts:337 sets `linked: profile.inviteToken ? \"true\" : \"false\"` unconditionally, so the callback (web/(auth)/auth/google/callback/page.tsx:147) sends the buyer to /buyer/portal?linked=true and portal/page.tsx:332-360 shows \"Seller connected successfully. Welcome!\" over a seller list that getSellers now hides. Reachability beyond the race (page loaded while C was live, seller removes C during the Google round-trip, or a tab left open): GET /api/v1/auth/google?tenant=<slug>&context=portal&invite_token=<T> is unauthenticated, so a buyer holding their own emailed token can re-redeem it after removal.",
+      "fixHint": "Add the same relation filter used by BuyerService.acceptInvite to the findFirst at google-oauth.service.ts:647 (`customer: { deletedAt: null }`) so a removed customer's token is treated as not found (the method already `return`s silently on no match, so no new error shape). While there, consider that `linked` at auth.controller.ts:337 is derived from the presence of the token rather than from a successful redemption, so it will still claim \"connected\" after the skip.",
+      "fixComplexity": "judgment",
+      "phase": "Final pass",
+      "decision": "Round 1 gated BuyerService.acceptInvite on customer.deletedAt; acceptInviteToken's own comment claims to mirror that gate but its findFirst carries no such filter, so the Google-sign-in redemption path still flips a removed customer's link ACTIVE and burns the token. Same state, third unenrolled path, distinct from the already-listed sellerCount minor.",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/src/authorizations/authorization-expiry.service.ts",
+      "line": 141,
+      "severity": "major",
+      "summary": "A fourth customer-owned daily cron keeps contacting removed customers by push, email and SMS/WhatsApp — the license-expiry sweep has no customer.deletedAt filter, refuting the build plan's sweep claim that only the two fixed crons are customer-owned schedules.",
+      "detail": "`runExpirySweep` (@LeaderCron(\"0 3 * * *\"), :57) runs per ACTIVE tenant and calls processTenant, which reads `forTenant().customerAuthorization.findMany({ where: { status: \"VERIFIED\", expiresAt: { lt: now } } })` at :100 and `{ status: \"VERIFIED\", expiresAt: { gte: now, lt: now+31d } }` at :141 — neither carries `customer: { deletedAt: null }`. For each matching row it calls `this.notify(...)` → :203 `notifications.sendToCustomer(auth.customerId, ...)` → notifications.service.ts:178-183 resolves the customer's userId with no status/deletedAt filter → sendToUser (:93-116) reads every DeviceToken for that user (soft delete deletes no tokens) and pushes; and `messaging.notifyEvent(NotificationEvent.LICENSE_EXPIRING, { customerId })` at :126 and :167 → messaging.service.ts:264-288 → notify (:195-236) → sendMessage (:85-122), which resolves the customer by id (`db.customer.findFirst({ where: { id: customerId } })`, no deletedAt filter) and sends over every enabled channel (EMAIL / SMS / WHATSAPP). Failure scenario: a tenant removes customer C on 2026-09-10 while C holds a VERIFIED tobacco licence expiring 2026-10-05. At 03:00 on 2026-09-11 the 30-day bucket fires: C's business email/phone receives \"License expiring in 30 day(s)…\" plus a push, and the sweep repeats for the 7-day and 1-day buckets and once more at the VERIFIED→EXPIRED flip (each bucket is once-only via expiringSoonNotifiedBucket, so up to four messages after removal). This is R2's exact prohibition (\"never generate, and so never email\") in a module nobody enrolled, and it is recorded nowhere: build-plan.md's Sibling notes end with \"Sweep result at master … only the two fixed crons are customer-owned schedules\", which is false — the sweep's own pattern (`isActive: true, (daysOfWeek|nextRunAt)`, pipeline-args.json siblingPatterns) structurally cannot match `status: \"VERIFIED\", expiresAt: …`, which is why the gap survived every file-scoped lens.",
+      "fixHint": "Either add `customer: { deletedAt: null }` to both customerAuthorization reads (:100 and :141 — stateless and restore-symmetric like the two fixed crons, though it also stops the VERIFIED→EXPIRED status flip, so decide whether the flip should still happen silently while the notification is suppressed), or suppress only the two customer-facing sends (notifications.sendToCustomer at :203 and messaging.notifyEvent at :126/:167) and keep operator notices. At minimum, correct the build plan's sweep claim and record this as a follow-up row.",
+      "fixComplexity": "judgment",
+      "phase": "Final pass",
+      "decision": "The evidence traces a concrete send chain (customerAuthorization findMany with no customer filter -> sendToCustomer/notifyEvent -> push, email, SMS) that contacts a removed customer daily, which is exactly B131's symptom class and directly refutes the plan's sweep claim that only two crons are customer-owned.",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/src/routes/routes.service.ts",
+      "line": 809,
+      "severity": "minor",
+      "summary": "Route dispatch still puts a removed customer on the driver's run, and this diff's new driver-branch refusal in OrdersService.create then fails the at-stop order with \"Customer not found\" — a live-operations dead end recorded nowhere.",
+      "detail": "The soft delete leaves RouteStop/RouteCustomer rows intact (customers.service.ts:2044-2047 writes only Customer.deletedAt + User INACTIVE; only mergeCustomers and batchDelete touch route rows, and both hard-delete instead). `createRun` reads `forTenant().route.findUnique({ include: { stops: { orderBy: { stopNumber: \"asc\" } } } })` at :808-811 with no customer filter and then creates a RouteRunStop for EVERY stop at :917-925 (`stops: { create: route.stops.map(s => ({ … customerId: s.customerId … })) }`). routes.service.ts contains no occurrence of `deletedAt` at all (verified by grep). Failure scenario: customer C is on scheduled route R; the operator removes C on Monday; on Tuesday the operator dispatches R and the driver's run still contains C's stop with C's business name and address (getLiveRoutes at :735-750 includes `customer: { select: { businessName: true } }`, so C is rendered normally). The driver drives to C and creates the order at the stop — POST /orders with role DRIVER — and now hits the new gate added by this diff (orders.service.ts:1734-1735, `if (customer.deletedAt) throw new BadRequestException(\"Customer not found\")`), so the driver is told the shop they are standing in front of does not exist. Before this diff the order succeeded. So B131's \"standing schedule keeps firing\" shape survives in the routes module (never mentioned in build-plan.md's Sibling notes or its sweep result), and the diff's own sibling fix converts it from a silent wrong delivery into a driver-facing phantom error with no explanation.",
+      "fixHint": "Decide the intended end state for route assignments on removal and either (a) filter removed customers out of dispatch (add `customer: { deletedAt: null }` to the stops include at :809-811, or skip them in the :917-925 create) and surface a count the way the two crons now log their suppressed sets, or (b) keep dispatching and give the driver branch a distinguishable message. Either way record it — today neither the route nor the driver error mentions removal.",
+      "fixComplexity": "judgment",
+      "phase": "Final pass",
+      "decision": "RouteStop rows survive the soft delete and createRun copies every stop, so a removed customer stays on the driver's run; the diff's new driver-branch refusal then turns the at-stop order into a bare 'Customer not found'. Pre-existing route gap made visibly worse by this change, but a live-ops annoyance rather than a money or access defect.",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 1741,
+      "severity": "minor",
+      "summary": "The third branch of the same OrdersService.create was not enrolled: a CUSTOMER-role user ordering for themselves resolves their customer row with no deletedAt check, so a removed customer can still place an order (and thus be invoiced) for the life of their access token.",
+      "detail": "The sibling fix added `if (customer.deletedAt) throw new BadRequestException(\"Customer not found\")` to the staff branch (:1721) and the driver branch (:1735), but the self-service branch at :1738-1743 still does `forTenant().customer.findFirst({ where: { userId: user.sub } })` and only rejects `!customer`. Reachability is bounded but real: removal sets User.status = INACTIVE (customers.service.ts:2046), and login refuses non-ACTIVE (auth.service.ts:61) and refresh refuses it too (auth.service.ts:245-248) — but JwtStrategy.validate (auth/strategies/jwt.strategy.ts:21-30) never re-reads the User row, so an already-issued access token keeps working until it expires (JWT_EXPIRES_IN default \"15m\", config/configuration.ts:112). Failure scenario: a CUSTOMER-role user has the web/mobile ordering screen open; the operator removes them; within the remaining token lifetime the user submits their cart; the order is created for a removed customer, and createInvoiceFromOrder is explicitly in-bounds per the plan, so that order is then legitimately invoiceable — the exact outcome the staff/driver gate was added to prevent. build-plan.md's Sibling notes state \"The customer-role branch … untouched\" without saying why it is safe.",
+      "fixHint": "Either add the same `deletedAt` refusal to the branch at :1738-1743 (its existing ForbiddenException(\"Customer record not found\") is the natural shape, keeping the message unchanged), or record in the plan why a 15-minute post-removal window on the self-order path is acceptable.",
+      "fixComplexity": "judgment",
+      "phase": "Final pass",
+      "decision": "Two of three branches of the same create() were enrolled and the self-service branch was not; reachability is bounded to the remaining access-token lifetime (~15m) because login and refresh already refuse INACTIVE users, so it is an inconsistency worth closing, not a blocker.",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+      "line": 238,
+      "severity": "minor",
+      "summary": "Restoring a removed customer mints an immediate make-up recurring invoice — and auto-emails it — on the next midnight tick, a money write the plan's \"restore-symmetric, no other write\" framing never mentions.",
+      "detail": "The new filter at :403 suppresses due rows while the customer is removed and deliberately leaves nextRunAt untouched (\"a restored customer's schedule resumes on its own\"). But generateInvoiceFromTemplate's B46 advance is `advanceFrom = dueAt > now ? dueAt : now` (:237-239), i.e. a backlogged template is billed ONCE on selection and re-scheduled into the future. Failure scenario: MONTHLY template, dayOfMonth 1, nextRunAt 2026-07-01, autoSend true. Customer removed 2026-06-15; the 07-01, 08-01 and 09-01 ticks skip it (filter) and nextRunAt stays 2026-07-01. Operator restores the customer on 2026-09-20 (Undo or POST /customers/:id/restore). At 00:00 on 2026-09-21 the row is due again, generateInvoiceFromTemplate claims it, advances nextRunAt to 2026-10-01, mints a full monthly invoice dated today via invoicesService.create, and — because autoSend is set — emails it to the customer (:325-327). So \"restore\" is not a pure re-enable: it produces one immediate customer-visible invoice and email for a cycle the fix intentionally skipped. R6, the objective (\"resumes with no other write\") and acceptance criterion 6 (\"the diff contains no writes\") are all literally true of the diff while the composed behavior bills the customer the moment they are restored; no test or plan line covers it, and the suppression warning added in round 2 gives no hint that a make-up invoice is pending.",
+      "fixHint": "Decide the intended resume semantics and record it: either accept the single make-up invoice (then say so in the plan, and consider mentioning the pending catch-up in the suppression warning), or, if a removal window must not be billed at all, advance nextRunAt past the missed cycles on resume rather than billing one — a behavior change that needs an owner ruling since it also changes deactivate/activate (B46).",
+      "fixComplexity": "judgment",
+      "phase": "Final pass",
+      "decision": "The B46 advance rule means a template suppressed during removal is billed once and auto-emailed on the first tick after restore; that is a plausible intended 'resume' semantic, but it is an undocumented money write on the restore path the plan frames as write-free, so it needs a documented decision rather than a silent default.",
+      "unadjudicated": false
+    },
+    {
+      "file": ".claude/pipeline/2026-09-10-train4-run-d/build-plan.md",
+      "line": 716,
+      "severity": "minor",
+      "summary": "The two new REG-B131 specs that are the only regression cover for the orders.service.ts sibling fix are collected by no command this run documents — the final verify command matches src/orders/orders.scan-hardening, not src/orders/orders.service.",
+      "detail": "The round-1/2 sibling fix added `if (customer.deletedAt) …` to orders.service.ts:1721 and :1735, pinned only by the two tests added to apps/api/src/orders/orders.service.spec.ts (\"REG-B131: staff create() refuses a removed customer…\", \"REG-B131: driver create() refuses…\"). Neither red-gate command (build-plan.md:706-709 / pipeline-args.json redGate) nor the final verification command (build-plan.md:716, duplicated at :929) selects that file. Verified this session: `cd apps/api && npx jest src/order-templates/ src/recurring-invoices/ src/invoices/invoices.service src/buyer/ src/orders/orders.scan-hardening src/common/no-bare-cron --listTests` returns 28 files and orders/orders.service.spec.ts is not among them; running the command itself gives 28 suites / 621 tests passing, none of them the orders pair. Running them separately (`npx jest src/orders/orders.service src/auth/`) passes 16 suites / 374 tests, so the tests are sound — only unreached by the documented gates. Consequence: a revert of either orders.service.ts hunk (the mutation-probe table at build-plan.md:722-734 does not list the file either) goes undetected by every command this run records. This is a second, distinct instance of the already-reported google-oauth spec gap: that finding names apps/api/src/auth/google-oauth.removed-customer.spec.ts; this one is apps/api/src/orders/orders.service.spec.ts, a different file added by a different fence amendment.",
+      "fixHint": "Add `src/orders/orders.service` (and `src/auth/google-oauth.removed-customer`) to the final verification command at build-plan.md:716 and to the mirrored string at :929, and add the orders.service.ts row to the mutation-probe table so the sibling fixes carry a revert probe like the five primary files.",
+      "fixComplexity": "mechanical",
+      "phase": "Final pass",
+      "decision": "The only cover for the orders.service.ts sibling fix lives in orders.service.spec.ts, which the reader verified is selected by neither red-gate command nor the final verify command; full CI would still run it, but the run's documented proof tokens do not map to it.",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/src/auth/google-oauth.service.ts",
+      "line": 648,
+      "severity": "major",
+      "summary": "GoogleOAuthService.acceptInviteToken is the Google twin of the invite path this run gated, and it still redeems a removed customer's invite — writing the link ACTIVE and destroying the invite token irreversibly.",
+      "detail": "Evidence. `acceptInviteToken` (google-oauth.service.ts:643-663) reads `this.prisma.customerLink.findFirst({ where: { inviteToken: token, status: { in: [\"INVITED\",\"PENDING_SELLER_APPROVAL\"] } } })` at line 648 — no `customer: { deletedAt: null }` — and then at 652-661 writes `customerLink.update({ where: { id: link.id }, data: { buyerAccountId, status: \"ACTIVE\", inviteToken: null, inviteExpiresAt: null, linkedAt: new Date() } })`. It is called at line 610 of the same file from the Google sign-in flow whenever `profile.inviteToken` is present (the seller's invite email carries the token through OAuth state). The round-2 fence amendment edited THIS file 29 lines above (sellerCount at 618-620) and left this untouched; the new google-oauth.removed-customer.spec.ts covers only sellerCount (its two test titles are REG-B141 T11 and B141 P9 — verified by grep).\n\nFailure scenario. Seller invites customer C (CustomerLink INVITED, inviteToken T emailed). Seller removes C — `CustomersService.deleteCustomer` soft branch (customers.service.ts:2044-2048) writes only `Customer.deletedAt` + `User.status=INACTIVE` and never touches the link. The buyer clicks the emailed invite and picks \"Continue with Google\": acceptInviteToken matches the link, flips it ACTIVE, binds buyerAccountId and NULLs inviteToken/inviteExpiresAt. The identical action via password sign-in goes through `BuyerService.acceptInvite` (buyer.service.ts:120-131), which this run gated with `customer: { deletedAt: null }` and which now 404s with no write (pinned by REG-B141 T10) — so the same invite link succeeds or fails purely by sign-in method.\n\nWhy it matters beyond cosmetics. (a) It is a CustomerLink write for a removed customer: build-plan R6 (lines ~46-52) states \"There are no isActive writes, no CustomerLink writes\" for the fixed paths, and the Sibling notes admit exactly one exception (`customers.service.ts approveBuyerRequest`). This is a second, undocumented one. (b) It is strictly worse than that exception because it CONSUMES the invite: after `restoreCustomer` (customers.service.ts:1965-1983 — verified to clear `deletedAt` and set `User.status` back to ACTIVE/SUSPENDED, with no CustomerLink write, so every other fixed path is genuinely restore-symmetric) the seller's outstanding invite token is gone and the link's buyerAccountId is whoever happened to click. Nothing restores it. (c) Within the same response, `sellerCount` (line 618, now filtered) returns 0, so the mobile client shows \"not connected to any supplier\" while the DB holds a fresh ACTIVE link — exactly the inconsistency class the round-2 amendment claims to have fixed.",
+      "fixHint": "Add `customer: { deletedAt: null }` to the where at google-oauth.service.ts:648 (the method already returns silently when no link matches, so no new error shape is needed), and pin it with a REG-B141 test in google-oauth.removed-customer.spec.ts asserting `customerLink.update` is never called for a removed customer's token.",
+      "fixComplexity": "judgment",
+      "phase": "Final pass",
+      "decision": "Line 648 reads the CustomerLink by inviteToken with no customer.deletedAt filter and 652-661 writes status ACTIVE while nulling the token, so a removed customer's invite is redeemed irreversibly through the Google path; it is the exact twin of the already-confirmed acceptInvite/requestSeller finding and the round-2 fence edit in this same file (sellerCount) stopped 29 lines short of it, with the new spec covering only sellerCount.",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/src/authorizations/authorization-expiry.service.ts",
+      "line": 100,
+      "severity": "major",
+      "summary": "The nightly authorization-expiry cron still pushes, WhatsApps/SMSes and emails a removed customer (metered to the seller) and consumes their warning buckets — the third customer-reaching @LeaderCron, and the only one the run never swept.",
+      "detail": "Cron sweep (focused item #1), from `grep -rn \"@LeaderCron\" src` plus a check that no other scheduler exists (`@Interval`/`@Timeout`/`setInterval(` return zero non-spec hits): the 13 jobs are authorization-expiry.runExpirySweep, billing-cron.expireTrials/expireGrace/applyScheduledDowngrades/applyScheduledCancellations/rollCycles, billing.suspendOverdueTenants, order-templates.generateDailyOrders, orders.cronSweepPendingOrders, recurring-invoices.generateDueRecurringInvoices, regulated-filing.autoPrepareClosedFilings, commission-reconciliation.reconcileCommissions, tobacco-report.generateMonthlyReports — the same set no-bare-cron.spec.ts:20-33 pins. Of these, exactly three reach a customer: the two this run fixed, and authorization-expiry.runExpirySweep (line 57, \"0 3 * * *\"). The other ten contain no `sendToCustomer`/`notifyEvent` (grep on regulated-filing-cron, tobacco-report, commission-reconciliation: zero email/notifications/messaging hits; billing-* are tenant-level; orders.cronSweepPendingOrders only calls sweepAllPendingOrders, a merge with no send). There is NO invoice overdue/dunning cron at all: the only reminder sender is the operator-triggered `POST /invoices/:id/send-reminder` (invoices.controller.ts:209 → invoices.service.ts:3940), which is consistent with the plan's documented \"invoicing already-delivered work is legitimate receivables\" allowance.\n\nEvidence in the unswept cron. `processTenant` reads `customerAuthorization.findMany` at line 100 (VERIFIED, expiresAt < now) and line 141 (expiring within 31 days) with no `customer: { deletedAt: null }`. Per row it then (1) calls `notify()` → `notifications.sendToCustomer(auth.customerId, subject, body)` at line 203; `NotificationsService.sendToCustomer` (notifications.service.ts:172-184) resolves `customer.findFirst({ where: { id } , select: { userId } })` with no deletedAt filter and pushes to the removed customer's still-registered device tokens; and (2) calls `messaging.notifyEvent(NotificationEvent.LICENSE_EXPIRING, { customerId })` at lines 126 and 167 → messaging.service.ts:260 → `notify()` (194) → `sendMessage()` (85), whose customer read at 92-103 also has no deletedAt filter, so the message goes out on every ENABLED channel (WhatsApp/SMS/EMAIL), is metered to the tenant (`meter.increment(tenantId, MeterKey.MSGS, 1)`, ~181) and writes a Message row + thread bump.\n\nFailure scenario. Seller removes customer C on Sep 1 (Customer.deletedAt set; C's standing orders and recurring invoices are now correctly suppressed by this run's fix). C's licence expires Sep 5. At 03:00 on Sep 5 the sweep flips the authorization to EXPIRED, pushes \"License expired: <category>\" to C's phone, sends C the LICENSE_EXPIRING template over WhatsApp/SMS/email on the seller's metered quota, and emails the seller's own operators about a customer they deleted. The 30/7/1 warning path (line 141) does the same before expiry.\n\nRestore asymmetry. The sweep also writes the removed customer's rows while removed: `customerAuthorization.update({ status: \"EXPIRED\", expiryNotifiedAt })` (~106) and `{ expiringSoonNotifiedBucket: bucket }` (~155), plus an audit row. Because `last <= bucket` skips an already-stamped bucket (line ~152), a customer removed then restored never receives the 7-day/1-day warning that was consumed while they were removed — the opposite of the stateless, restore-symmetric property R6 claims for this defect class.\n\nSame shape, not a cron (for the fixer's radius): `stock-alerts/stock-alert.service.ts:117` pushes \"Back in stock\" to a removed customer and first claims the alert (`status: NOTIFIED, notifiedAt`, ~110), so that alert is consumed and never re-fires after restore.",
+      "fixHint": "Add `customer: { deletedAt: null }` to both `customerAuthorization.findMany` where-clauses (lines 100 and 141) so a removed customer is neither notified nor bucket-stamped; decide explicitly whether the VERIFIED→EXPIRED flip should still happen for a removed customer (a status-only flip with the two sends skipped is the restore-symmetric option, since the licence really did expire). Pin with a REG spec asserting `notifications.sendToCustomer` and `messaging.notifyEvent` are not called for a removed customer. Treat stock-alert.service.ts:117 as the same fix if the owner widens the radius.",
+      "fixComplexity": "judgment",
+      "phase": "Final pass",
+      "decision": "The sweep enumerates the 13 @LeaderCron jobs pinned by no-bare-cron.spec and shows authorization-expiry.runExpirySweep is the third and only unfixed customer-reaching cron, so a removed customer still receives push/SMS/WhatsApp/email metered to the seller and consumes warning buckets — the same defect class as B131 itself, not a new one.",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/src/order-templates/order-templates.service.ts",
+      "line": 134,
+      "severity": "minor",
+      "summary": "Both schedule create() methods in the two files this run edited still accept a removed customer, so a new standing order / recurring invoice is accepted, listed, and can never fire — the new cron filters make it a permanent silent no-op.",
+      "detail": "Evidence. `OrderTemplatesService.create` (order-templates.service.ts:129-134) reads `forTenant().customer.findUnique({ where: { id: dto.customerId } })` and rejects only `!customer` (line 134) — no `deletedAt` check. Its twin `RecurringInvoicesService.create` (recurring-invoices.service.ts:83-87) has the identical shape (`if (!customer) throw new NotFoundException(\"Customer not found\")` at line 87). This run added `customer: { deletedAt: null }` to the cron read of BOTH services (order-templates.service.ts ~316, recurring-invoices.service.ts ~400), so anything created for a removed customer is unreachable by the only thing that would ever run it.\n\nReachability through the normal UI (not just a stale tab). `CustomersService.findOne` (customers.service.ts:448-457) has NO `deletedAt` filter — contrast `findAll`, which does (line 126, \"Exclude soft-deleted customers (RF-197)\") — so `/customers/<id>` still renders for a removed customer (bookmark, browser Back after the 8-second Undo toast expires, or a bell-notification deep link). That page's Standing Orders tab carries an \"Add Standing Order\" button (apps/web/app/(dashboard)/customers/[id]/page.tsx ~3405-3425, which POSTs via the `@/lib/api/order-templates` import at line 141).\n\nFailure scenario. Operator removes customer C, then reopens C's detail page and adds a standing order for the last outstanding delivery. The API returns 201, the template appears in the list with C's business name and its weekdays, and `generateDailyOrders` never generates anything from it: the new relation filter drops it, and the only trace is the new per-tenant WARN `REG-B131: N standing-order template(s) suppressed — customer removed`, which is a server log, not a product surface. Identical for `POST /recurring-invoices`: the schedule is created with a `nextRunAt` that is never advanced and never billed.\n\nWhy this is a gap in this run rather than a pre-existing sibling. The run deliberately gated the money write in this same shape — `InvoicesService.create` now refuses a removed customer with the not-found 404 (R3, invoices.service.ts:345) — and the plan's Sibling notes enumerate the other unfiltered customer reads it chose to defer (estimates.service.ts create/convertToInvoice, credit-notes.service.ts ~310, import.service.ts ~941, manual generateOrder, createInvoiceFromOrder). Neither schedule `create()` appears anywhere in the plan — not in the fence, not in R1-R6, not in the Sibling notes — even though both live in the two files the run edited, and the run's own filters are what turn them into silent no-ops.",
+      "fixHint": "Add the same `if (customer.deletedAt) throw …` guard used by InvoicesService.create to order-templates.service.ts:134 (keep the existing BadRequestException message) and recurring-invoices.service.ts:87 (keep NotFoundException), reusing the missing-customer message so no customer state leaks; pin each with a REG-B131 test asserting `orderTemplate.create` / `recurringInvoice.create` is never called. If the owner instead wants these creates allowed, the deferral needs to be a written Sibling-note row, because today the behavior is undocumented.",
+      "fixComplexity": "judgment",
+      "phase": "Final pass",
+      "decision": "Both create() methods reject only !customer (order-templates 134, recurring-invoices 87) while the cron reads now filter customer.deletedAt, and findOne has no deletedAt filter so the page is reachable; the result is an accepted, listed schedule that can never fire — an inconsistency with the invoice create() rule, but a silent no-op rather than a money or access defect.",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 1741,
+      "severity": "minor",
+      "summary": "The round-3 OrdersService.create fix covers only two of the method's three branches, so the plan's claim that \"no new post-removal order can be created and then invoiced\" is false for a customer-role session whose access token predates the removal.",
+      "detail": "Evidence. `OrdersService.create` resolves the target customer in three branches (orders.service.ts:1708-1745). The staff branch got `if (customer.deletedAt) throw new BadRequestException(\"Customer not found\")` (line 1723) and the DRIVER branch the same (line 1734). The third branch — \"Customer creates their own order\", lines 1738-1744 — resolves `forTenant().customer.findFirst({ where: { userId: user.sub } })` and checks only `!customer`, with no deletedAt test. The plan's Sibling note (build-plan lines ~757-762) states \"`OrdersService.create` now refuses a removed customer on the staff and driver branches … so no new post-removal order can be created and then invoiced. The customer-role branch … untouched\" — it records the omission but never argues the branch is unreachable, and the completeness claim in the same sentence does not hold.\n\nWhy the branch is reachable after removal. Removal writes `User.status = \"INACTIVE\"` (customers.service.ts:2047), but `JwtStrategy.validate` (apps/api/src/auth/strategies/jwt.strategy.ts:19-30) trusts the token payload and never re-reads the User row, so an access token minted before removal keeps working until it expires; only the next login (`auth.service.ts:61`, `if (user.status !== \"ACTIVE\") return null`) and the next refresh (`auth.service.ts:245`) see INACTIVE. Default lifetime is `JWT_EXPIRES_IN ?? \"15m\"` (apps/api/src/config/configuration.ts:112); prod may set it longer, which widens the window.\n\nFailure scenario. A CUSTOMER-role user has the order screen open on the mobile/web customer app. The operator removes them (their standing orders and recurring invoices stop, their invoice create 404s). Within the remaining token life the customer taps Submit: POST /orders takes the third branch, resolves their own still-existing Customer row, and writes a real PENDING order for a removed customer — which lands in the operator's queue for a customer the customers list no longer shows, and which `createInvoiceFromOrder` will then invoice (the plan allows that only for orders placed BEFORE removal).\n\nUnpinned. `git diff HEAD -- apps/api/src/orders/orders.service.spec.ts` adds exactly two REG-B131 tests, both driving `prisma.customer.findUnique` (the staff and driver branches); the self-serve branch uses `prisma.customer.findFirst` and is not exercised.",
+      "fixHint": "Either add the same `if (customer.deletedAt) throw …` to the self-serve branch at orders.service.ts:1741 (message: keep the existing ForbiddenException(\"Customer record not found\") shape for that branch so no customer state leaks) with a REG-B131 spec driving `prisma.customer.findFirst`, or — if the owner wants it deferred — correct the Sibling note so it stops claiming no post-removal order can be created, and record the JwtStrategy token-window reason.",
+      "fixComplexity": "judgment",
+      "phase": "Final pass",
+      "decision": "The customer-role branch (1738-1744) resolves by userId with no deletedAt test while the staff and driver branches got the guard, and the run itself records that B141 revokes no token, so a pre-removal customer token can still create an order until it expires; the plan's completeness claim is false but the window is bounded by token TTL.",
+      "unadjudicated": false
+    }
+  ],
+  "clean": false
+}

@@ -8205,6 +8205,53 @@ describe("InvoicesService", () => {
       );
     });
   });
+
+  describe("create() — removed customer (B131)", () => {
+    const REMOVED_AT = new Date("2026-09-01T00:00:00.000Z");
+    const dto = {
+      customerId: "cust-1",
+      items: [{ productId: "prod-plain", description: "Soda", qty: 2, unitPrice: 3 }],
+    };
+    // Same fixture as "create() does NOT touch the ledger for a purely non-regulated invoice" (RF-1).
+    const arrange = (deletedAt: Date | null) => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        isTaxExempt: false,
+        deletedAt,
+      } as any);
+      prisma.product.findMany.mockResolvedValue([
+        {
+          id: "prod-plain",
+          unitsPerBox: null,
+          trackedCategoryId: null,
+          trackedSubcategoryId: null,
+        },
+      ] as any);
+      prisma.invoice.findFirst.mockResolvedValue(null);
+      prisma.invoice.create.mockResolvedValue({
+        id: "inv-2",
+        items: [],
+        customer: {},
+        payments: [],
+      } as any);
+    };
+
+    it("REG-B131 T4: create() refuses a removed customer with the not-found 404", async () => {
+      arrange(REMOVED_AT);
+      await expect(service.create(dto as any)).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it("REG-B131 T5: create() for a removed customer writes no invoice row", async () => {
+      arrange(REMOVED_AT);
+      await service.create(dto as any).catch(() => undefined);
+      expect(prisma.invoice.create).not.toHaveBeenCalled();
+    });
+
+    it("B131 P3: create() still invoices a live customer (fixture control)", async () => {
+      arrange(null);
+      await expect(service.create(dto as any)).resolves.toMatchObject({ id: "inv-2" });
+    });
+  });
 });
 
 /**
