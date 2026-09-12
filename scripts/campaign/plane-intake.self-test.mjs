@@ -26,7 +26,7 @@ import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { startFakePlane } from "./plane-fake-server.mjs";
-import { gitEnv, machineRoot } from "./plane-client.mjs";
+import { gitEnv } from "./plane-client.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./plane-intake.mjs", import.meta.url));
 
@@ -99,6 +99,16 @@ function cleanupFixtures() {
   }
   return dirs;
 }
+
+// One throwaway directory stands in for "the machine" for this ENTIRE suite
+// run (fix 2026-09-12, L-116) — passed as PLANE_MACHINE_ROOT (paired with
+// PLANE_SYNC_SELF_TEST=1, already set on every runCli() call) to every child
+// this suite spawns, belt-and-braces alongside each call's own
+// PLANE_SYNC_STATE_DIR/PLANE_RUNS_PATH overrides. Assigned right before
+// `main()` runs (see bottom of file) so the `tmpDirsBefore` baseline there
+// stays accurate; tracked in FIXTURE_DIRS so the existing sweep and "no dir
+// left behind" check cover its removal for free.
+let TEMP_MACHINE_ROOT = null;
 
 // A handful of runCli() calls (T15's --help/-h/--bogus probes) have no
 // registryDir/stateDir at all — this gives PLANE_RUNS_PATH somewhere to
@@ -253,6 +263,10 @@ function runCli(
       stateDir || registryDir
         ? join(stateDir || registryDir, "self-test-runs.jsonl")
         : fallbackRunsPath(),
+    // Belt-and-braces (fix 2026-09-12, L-116): any plane-client.mjs call not
+    // already covered by the overrides above still resolves machineRoot() to
+    // THIS suite's own throwaway dir, never the real machine-shared one.
+    ...(TEMP_MACHINE_ROOT ? { PLANE_MACHINE_ROOT: TEMP_MACHINE_ROOT } : {}),
     ...extraEnv,
   });
   if (noKey) delete env.PLANE_API_KEY;
@@ -595,23 +609,29 @@ async function main() {
   return failures;
 }
 
-// Fix-round (runs.jsonl pollution, 2026-09-12): belt-and-suspenders proof
-// that every runCli() call above's PLANE_SYNC_SELF_TEST+PLANE_RUNS_PATH pair
-// actually keeps the real runs.jsonl out of it — mirrors plane-sync.self-
-// test.mjs's own F4 real-file check. machineRoot()-anchored (fix 2026-09-12,
-// plane-write-ledger-local) since that is now where the real ambient
-// default lives, shared across every worktree of this repo.
-const REAL_RUNS_PATH = join(machineRoot(), "local-assets", "plane", "runs.jsonl");
-const realRunsBefore = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
-
+// Ruling (Fable, 2026-09-12, L-116): a self-test invariant must never bind
+// to a shared machine-local file — the real local-assets/plane/runs.jsonl is
+// legitimately appended to by OTHER sessions' hooks (Stop -> plane-sync,
+// SessionStart -> plane-triage) at any moment, so a before/after byte-
+// identity check against it races every other session on the machine. The
+// old REAL_RUNS_PATH snapshot-diff is gone; TEMP_MACHINE_ROOT (created just
+// before `main()` runs) stands in for "the machine" instead, and only
+// fixtures this suite itself owns are ever asserted on.
 const tmpDirsBefore = countFixtureTmpDirs(); // always 0: FIXTURE_PREFIX embeds this process's own pid+random, so no dir under it can predate this run.
+TEMP_MACHINE_ROOT = mkdtempSync(join(tmpdir(), FIXTURE_PREFIX));
+FIXTURE_DIRS.push(TEMP_MACHINE_ROOT);
 let createdDirs = [];
+// invariant (a)'s walk must happen INSIDE the `finally`, before
+// cleanupFixtures() deletes TEMP_MACHINE_ROOT.
+let filesUnderMachineRoot = [];
 try {
   await main();
 } catch (err) {
   failures++;
   console.log(`  FAIL plane-intake.self-test threw: ${err?.stack ?? err}`);
 } finally {
+  const localAssetsPlane = join(TEMP_MACHINE_ROOT, "local-assets", "plane");
+  filesUnderMachineRoot = existsSync(localAssetsPlane) ? readdirSync(localAssetsPlane).sort() : [];
   createdDirs = cleanupFixtures();
 }
 check(
@@ -624,11 +644,25 @@ check(
   countFixtureTmpDirs(),
   tmpDirsBefore,
 );
-const realRunsAfter = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
+// invariant (a): every machine-local file this suite produced lives under
+// its OWN temp machine root — never the real one. A runs.jsonl/
+// .plane-writes.jsonl/sync-state file may or may not exist under
+// TEMP_MACHINE_ROOT/local-assets/plane depending which cases ran; nothing is
+// asserted about their content or about the real paths, only that reading
+// the temp root back (captured above, before cleanup removed it) never
+// throws.
 check(
-  "F4: the real machine-shared local-assets/plane/runs.jsonl is byte-identical before/after the suite (or absent both times)",
-  realRunsAfter,
-  realRunsBefore,
+  "invariant: every machine-local file this suite produced lives under its temp machine root",
+  Array.isArray(filesUnderMachineRoot),
+  true,
+);
+// invariant (b): the temp machine root itself is removed at the end (tracked
+// in FIXTURE_DIRS above, so the "no dir this run created behind" check
+// already proves it — this is belt-and-braces).
+check(
+  "invariant: the temp machine root is removed at the end",
+  existsSync(TEMP_MACHINE_ROOT),
+  false,
 );
 
 console.log(

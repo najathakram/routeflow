@@ -140,9 +140,24 @@ export function repoRoot() {
 // tree's own root, the pre-fix behaviour) when git itself is unavailable or
 // the spawn fails, rather than throwing — a bare/no-git environment
 // degrades to per-tree state instead of crashing every caller.
+//
+// PLANE_MACHINE_ROOT is a TEST-ONLY override (fix 2026-09-12, L-116), gated
+// the same way as PLANE_DENYLIST_PATH/PLANE_KNOBS_PATH/PLANE_RUNS_PATH:
+// honoured ONLY when PLANE_SYNC_SELF_TEST=1 is ALSO set. Without it, every
+// self-test's "real file byte-identical before/after" invariant raced any
+// OTHER session's hooks (Stop -> plane-sync, SessionStart -> plane-triage)
+// that legitimately append to the real machine-shared runs.jsonl while the
+// suite runs — this anchor makes that race cross-worktree, since every tree
+// resolves to the SAME shared directory. A self-test that wants isolation
+// points this at its own temp root instead of asserting the real files are
+// untouched.
 let machineRootCache = null;
 export function machineRoot() {
   if (machineRootCache) return machineRootCache;
+  if (process.env.PLANE_SYNC_SELF_TEST === "1" && process.env.PLANE_MACHINE_ROOT) {
+    machineRootCache = process.env.PLANE_MACHINE_ROOT;
+    return machineRootCache;
+  }
   try {
     const result = spawnSync("git", ["-C", repoRoot(), "rev-parse", "--git-common-dir"], {
       env: gitEnv(),
@@ -175,10 +190,11 @@ export function stateDir() {
 // candidate) to call unconditionally rather than cache, and simpler than a
 // one-shot cache that could go stale when a self-test deletes the migrated
 // file mid-process. Skipped entirely under an explicit PLANE_SYNC_STATE_DIR
-// override — a test fixture must never reach into this machine's real
-// legacy files.
+// override, or under the PLANE_MACHINE_ROOT self-test override above — a
+// test fixture must never reach into this machine's real legacy files.
 export function migrateLegacyStateFile(filename) {
   if (process.env.PLANE_SYNC_STATE_DIR) return;
+  if (process.env.PLANE_SYNC_SELF_TEST === "1" && process.env.PLANE_MACHINE_ROOT) return;
   // Always the CANONICAL shared location, never stateDir()'s own value — a
   // caller that overrides stateDir() without also passing PLANE_SYNC_STATE_DIR
   // isn't a real scenario in this codebase (every self-test sets both), but

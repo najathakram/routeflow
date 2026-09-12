@@ -11,17 +11,6 @@
 
 ## process
 
-### L-109 · 2026-09-11 · process · registry-shard commits
-
-- **Symptom:** a push after a registry-shard commit was refused by campaign-check for "stale"
-  Jest freshness, though the test files were untouched and had passed minutes earlier.
-- **Root cause:** a registry-shard commit (`.claude/campaign/**`) moves HEAD, which the freshness
-  gate compares reports against; the pre-push hook has no docs-only bypass for this commit class.
-- **Lesson:** **After a registry-shard commit, regenerate the affected workspace's Jest
-  freshness report BEFORE verify/push — such a commit is not exempt just because it touched no
-  test file.**
-- **Guard:** campaign-check's freshness gate (already refuses a stale report by name with the
-  regen command) — this is a usage note on WHEN to regenerate.
 
 ### L-035 · 2026-09-01 · process · #TBD
 
@@ -583,3 +572,19 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
 - **Guard:** `FIXTURE_PREFIX` (name + pid + random) and tracked-path assertions in the six plane
   self-tests (commit 0ed13a56); OPS flake note; one verify chain at a time remains the host rule
   for load-sensitive suites (see [[L-070]] class).
+
+### L-116 · 2026-09-12 · tooling · plane self-test machine-root invariants
+
+- **Symptom:** a lead's pre-push verify failed at plane-learning.self-test's "real
+  machine-shared runs.jsonl byte-unchanged" check — ANOTHER session's hooks (Stop -> plane-sync,
+  SessionStart -> plane-triage) had legitimately appended to it mid-run.
+- **Root cause:** every "real file byte-identical before/after" invariant in the plane self-tests
+  binds on `machineRoot()`'s shared dir — the SAME dir every worktree resolves to (see [[L-114]])
+  — so it races any other session, not just a concurrent run of the same suite.
+- **Lesson:** **A self-test invariant must never bind to a shared machine-local file — assert
+  only on fixtures the run owns. A file another session can write at any moment needs a throwaway
+  stand-in the test controls end to end, never the real shared path.**
+- **Guard:** `PLANE_MACHINE_ROOT` (`plane-client.mjs`, gated behind `PLANE_SYNC_SELF_TEST=1`)
+  lets every plane self-test point `machineRoot()` at its own temp root; the five real-runs.jsonl
+  invariants became a temp-root-only check, and plane-learning's `T-concurrent-writer` proves
+  isolation under a genuine concurrent writer. Related [[L-114]].

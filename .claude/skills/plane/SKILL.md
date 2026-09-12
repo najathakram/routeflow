@@ -9,7 +9,7 @@ description: >
 
 # Skill: Plane workspace routine
 
-Pointers, not prose — see each script's `--help` for flags; this is the map.
+Pointers, not prose — see each script's `--help` for flags.
 
 ## What lives where
 
@@ -18,7 +18,7 @@ Pointers, not prose — see each script's `--help` for flags; this is the map.
 - **ROAD** — programs as Epics with Plan/Build/Land tasks; modules = programs, cycles = weeks.
 - **OPS** — windows/incidents/due-dated items. **DECIDE** — one item per owner ruling.
 - **CLIENT** — client asks; the ONLY project allowing a real business name. Never put a client
-  name in BUGS/ROAD/OPS/DECIDE, code, tests, or the code map (CLAUDE.md policy).
+  name in BUGS/ROAD/OPS/DECIDE, code, tests, or the code map.
 
 No PQL, no custom properties, no webhooks, no cycle/module automation for ROAD — out of scope.
 
@@ -32,8 +32,8 @@ No PQL, no custom properties, no webhooks, no cycle/module automation for ROAD �
 - **Bugs filed straight in Plane** (no `B### ·` prefix) return via `plane:intake` (list) then
   `plane:intake -- --apply` — **only** on a clean tree (`.claude/campaign`) descended from
   `origin/master`; ids mint on master-merged trees only.
-- **Scheduled**: `routeflow-plane-daily` (machine-local, not a file here) runs the triage brief
-  daily; owner closes each cycle Monday in the Plane UI.
+- **Scheduled**: `routeflow-plane-daily` (machine-local) runs the daily triage brief; owner
+  closes each cycle Monday in Plane.
 
 ## The four scripts (`scripts/campaign/`)
 
@@ -68,29 +68,30 @@ second HTTP client or a direct `fetch` to Plane.
 
 ## Branch guard (R14 — incident 2026-09-11 23:26Z)
 
-`plane-sync.mjs` writes ONLY when the current branch is `master`/`main`, or `--allow-branch` is
-passed; otherwise it lists/diffs but makes zero POST/PATCH, exit 0. **Why**: a v1 Gate 5 hook run
-from a feature worktree created 282 live BUGS items (160 dupes) — a hook inherits the session's
-cwd/credentials, so writes must be dry off the integration branch. Never pass `--allow-branch`
-from an automated hook.
+`plane-sync.mjs` writes ONLY on `master`/`main`, or with `--allow-branch`; otherwise it
+lists/diffs, zero POST/PATCH, exit 0. **Why**: a v1 Gate 5 hook run from a feature worktree
+created 282 live BUGS items (160 dupes) — hooks inherit session cwd/credentials, so writes stay
+dry off the integration branch; never pass `--allow-branch` from an automated hook.
 
 ## Denylist
 
 `plane-denylist.json` — every outbound string is scanned before it is printed/written; a hit is
 dropped/failed, never printed. Patterns: tenant uuid, invoice number, email, connection string,
-jwt, `*.up.railway.app` host, api-key token. Never put real tenant data in a Plane item.
+jwt, `*.up.railway.app` host, api-key token.
 
 ## Classifier reality
 
-In auto mode, MCP `workitem`/`comment`/`relation` **create** calls pass; `workitem update`
-(state moves, field edits) does **not** — the classifier blocks it. Any state change,
-comment-on-close, relation, or archive goes through `plane:apply`, never a live MCP update.
+In auto mode, MCP `workitem`/`comment`/`relation` **create** passes; `workitem update` (state
+moves, field edits) does **not** — the classifier blocks it. State changes, comment-on-close,
+relation, archive: all go through `plane:apply`, never a live MCP update.
 
 ## Learning loop
 
 - **Runs ledger** `local-assets/plane/runs.jsonl` (gitignored, `machineRoot()`-anchored) — one
   JSON line per tool run (sync/intake/triage/apply/doctor/retro): counters, exit, error class;
-  never a key or uuid. A legacy pre-fix file migrates forward on first use.
+  never a key or uuid. A legacy pre-fix file migrates forward on first use. Self-tests use
+  `PLANE_MACHINE_ROOT` (gated on `PLANE_SYNC_SELF_TEST=1`) to point `machineRoot()` at a temp
+  dir — never assert on the real shared file (L-116).
 - **`plane-doctor.mjs`** `[--offline] [--json]` — PASS/FAIL/WARN per check, exit 1 on FAIL. Run
   daily, in `verify` (`-- --offline`), and via `/orient`.
 - **`plane-retro.mjs`** `[--days 14] [--apply] [--json] [--out <dir>]` — Mondays via the
@@ -105,5 +106,4 @@ landing without sync` when a landing skipped the sync — report-only, never blo
 
 ## Setup / owner-only
 
-Key + MCP re-registration trap, workspace slug: `local-assets/plane/OWNER-STEPS.md`
-(gitignored, machine-local).
+Key/MCP re-registration trap, workspace slug: `local-assets/plane/OWNER-STEPS.md` (gitignored).

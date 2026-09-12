@@ -67,7 +67,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
@@ -123,6 +123,16 @@ function cleanupFixtures() {
 function freshRunsPath() {
   return join(makeTmpDir(), "runs.jsonl");
 }
+
+// One throwaway directory stands in for "the machine" for this ENTIRE suite
+// run (fix 2026-09-12, L-116) — passed as PLANE_MACHINE_ROOT (paired with
+// PLANE_SYNC_SELF_TEST=1, unconditionally set by runCli() below) to every
+// child this suite spawns, belt-and-braces alongside whatever
+// PLANE_SYNC_STATE_DIR/PLANE_RUNS_PATH/PLANE_KNOBS_PATH overrides each call
+// site already passes. Assigned right before `main()` runs (see bottom of
+// file) via makeTmpDir(), so it is tracked in FIXTURE_DIRS like every other
+// fixture and its removal is covered by the existing sweep for free.
+let TEMP_MACHINE_ROOT = null;
 
 // ── registry fixtures (bugs.jsonl / status/<batch>.jsonl / board.json) ─────
 const catalogueRow = (overrides = {}) => ({
@@ -297,7 +307,16 @@ function startAlways500Server() {
 // override this file passes is honoured and an accidental leak of the same
 // var into a real run stays inert.
 function runCli(scriptPath, argv, { env: overrides = {}, timeoutMs = 15_000 } = {}) {
-  const env = { ...process.env, PLANE_SYNC_SELF_TEST: "1", ...overrides };
+  const env = {
+    ...process.env,
+    PLANE_SYNC_SELF_TEST: "1",
+    // Belt-and-braces (fix 2026-09-12, L-116): resolves machineRoot() to
+    // THIS suite's own throwaway dir for any call not already covered by a
+    // more specific override — never the real machine-shared one. A caller
+    // can still override it via `overrides` (none currently need to).
+    ...(TEMP_MACHINE_ROOT ? { PLANE_MACHINE_ROOT: TEMP_MACHINE_ROOT } : {}),
+    ...overrides,
+  };
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [scriptPath, ...argv], {
       env,
@@ -356,6 +375,25 @@ function runRetro(argv, { runsPath, knobsPath }) {
 function readLines(path) {
   if (!existsSync(path)) return [];
   return readFileSync(path, "utf8").trim().split(/\r?\n/).filter(Boolean);
+}
+
+// T-concurrent-writer's writer child (fix 2026-09-12, L-116): imports
+// plane-client.mjs by absolute file:// URL (same pattern runKnobsProbe()
+// uses) and calls its REAL appendRun() in a loop against `machineRoot`,
+// proving PLANE_MACHINE_ROOT holds up under genuine concurrent writes, not
+// just a single call. Never touches the actual machine-shared runs.jsonl —
+// `machineRoot` is always a throwaway fixture dir the caller owns.
+function startRunsWriter(machineRoot, { count = 20, delayMs = 15 } = {}) {
+  const code =
+    `const mod = await import(${JSON.stringify(CLIENT_URL)});` +
+    `for (let i = 0; i < ${count}; i++) {` +
+    `  mod.appendRun({ tool: "self-test-writer", exit: 0, durationMs: 1, gets: 0, writes: 0, deferred: 0, forbidden: { count: 0, byPattern: {} }, rateLimitSleeps: 0, retries: 0 });` +
+    `  await new Promise((r) => setTimeout(r, ${delayMs}));` +
+    `}`;
+  return spawn(process.execPath, ["--input-type=module", "-e", code], {
+    env: { ...process.env, PLANE_SYNC_SELF_TEST: "1", PLANE_MACHINE_ROOT: machineRoot },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
 }
 
 // ── assertion helper (repo convention) ──────────────────────────────────────
@@ -1184,57 +1222,125 @@ appendRun({ tool: "m1-self-test", exit: 0, branch: ${JSON.stringify(actualBranch
     );
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  // T-concurrent-writer (fix 2026-09-12, L-116) — proves PLANE_MACHINE_ROOT
+  // gives real isolation under CONCURRENCY, not just under a single call.
+  // Fixture root R stands in for "the real" machine root (NEVER the actual
+  // real file — this suite must never touch that): a writer child appends
+  // ~20 runs.jsonl lines to it in a loop with small delays. AT THE SAME
+  // TIME, a representative slice of this suite's own probes (plane-doctor
+  // --offline, one plane-retro run) execute against a DIFFERENT temp root
+  // T. If T's runs.jsonl were ever affected by R's concurrent writer, or an
+  // interleaved write corrupted either file, this catches it.
+  // ══════════════════════════════════════════════════════════════════════
+  {
+    const R = makeTmpDir();
+    const T = makeTmpDir();
+    const writer = startRunsWriter(R, { count: 20, delayMs: 15 });
+    const writerClosed = new Promise((resolve) => writer.on("close", resolve));
+    const writerTimeout = setTimeout(() => writer.kill(), 10_000);
+
+    // Give the writer a head start so several lines land before the probes
+    // below run concurrently with the rest of its loop.
+    await new Promise((r) => setTimeout(r, 50));
+
+    await runCli(DOCTOR_PATH, ["--offline"], { env: { PLANE_MACHINE_ROOT: T } });
+    const knobsPath = makeKnobsFile();
+    const outDir = makeTmpDir();
+    await runCli(RETRO_PATH, ["--days", "14", "--out", outDir], {
+      env: { PLANE_MACHINE_ROOT: T, PLANE_KNOBS_PATH: knobsPath },
+    });
+
+    await writerClosed;
+    clearTimeout(writerTimeout);
+
+    const tRunsLines = readLines(join(T, "local-assets", "plane", "runs.jsonl"));
+    const tTools = tRunsLines.map((l) => tryParseJson(l)?.tool).sort();
+    const rRunsLines = readLines(join(R, "local-assets", "plane", "runs.jsonl"));
+
+    check(
+      "T-concurrent-writer: the doctor+retro probes against root T append exactly their own two lines",
+      { count: tRunsLines.length, tools: tTools },
+      { count: 2, tools: ["plane-doctor", "plane-retro"] },
+    );
+    check(
+      "T-concurrent-writer: R's runs.jsonl grew — proves the writer really wrote to its own root",
+      rRunsLines.length >= 15,
+      true,
+    );
+    check(
+      "T-concurrent-writer: T's runs.jsonl is unaffected by R's concurrent writer " +
+        "(no self-test-writer line crossed over)",
+      tTools.every((t) => t !== "self-test-writer"),
+      true,
+    );
+    // R and T are both tracked via makeTmpDir() above — cleaned up by the
+    // suite-wide FIXTURE_DIRS sweep in the `finally` at the bottom of this
+    // file, same as every other fixture in this suite.
+  }
+
   return failures;
 }
 
 // ── real-file invariants + cleanup (F4 pattern) ─────────────────────────────
 // Never depends on plane-client.mjs's own repoRoot()/machineRoot()/
-// runsPath() — REPO_ROOT above is computed independently, and
-// realMachineRoot() below re-derives machineRoot()'s own `git rev-parse
-// --git-common-dir` logic (fix 2026-09-12, plane-write-ledger-local)
-// independently too, so this guard cannot be defeated by the very code it
-// is checking.
-function realMachineRoot() {
-  try {
-    const res = spawnSync("git", ["-C", REPO_ROOT, "rev-parse", "--git-common-dir"], {
-      encoding: "utf8",
-    });
-    if (res.status === 0 && res.stdout) {
-      const gitCommonDir = res.stdout.trim();
-      return dirname(isAbsolute(gitCommonDir) ? gitCommonDir : join(REPO_ROOT, gitCommonDir));
-    }
-  } catch {
-    // fall through to REPO_ROOT below
-  }
-  return REPO_ROOT;
-}
-const REAL_RUNS_PATH = join(realMachineRoot(), "local-assets", "plane", "runs.jsonl");
+// runsPath() — REPO_ROOT above is computed independently, so this guard
+// cannot be defeated by the very code it is checking.
+//
+// Ruling (Fable, 2026-09-12, L-116): a self-test invariant must never bind
+// to a shared machine-local file — the real local-assets/plane/runs.jsonl is
+// legitimately appended to by OTHER sessions' hooks (Stop -> plane-sync,
+// SessionStart -> plane-triage) at any moment, so a before/after byte-
+// identity check against it races every other session on the machine. The
+// old realMachineRoot()/REAL_RUNS_PATH snapshot-diff machinery that only
+// served that check is gone (see the temp-machine-root invariant below
+// instead). scripts/campaign/plane-knobs.json stays: it is a TRACKED REPO
+// FILE, not machine-local — nothing else in this worktree writes to it
+// concurrently with this suite, so the race this ruling guards against does
+// not apply to it.
 const REAL_KNOBS_PATH = join(REPO_ROOT, "scripts", "campaign", "plane-knobs.json");
 const snapshot = (p) => (existsSync(p) ? readFileSync(p) : null);
 const bytesEqual = (a, b) => (a === null || b === null ? a === b : Buffer.compare(a, b) === 0);
-const realFilesBefore = { runs: snapshot(REAL_RUNS_PATH), knobs: snapshot(REAL_KNOBS_PATH) };
+const realFilesBefore = { knobs: snapshot(REAL_KNOBS_PATH) };
 
 const tmpDirsBefore = countFixtureTmpDirs(); // always 0: FIXTURE_PREFIX embeds this process's own pid+random, so no dir under it can predate this run.
+TEMP_MACHINE_ROOT = makeTmpDir();
 let createdDirs = [];
+// invariant (a)'s walk must happen INSIDE the `finally`, before
+// cleanupFixtures() deletes TEMP_MACHINE_ROOT.
+let filesUnderMachineRoot = [];
 try {
   await main();
 } catch (err) {
   failures++;
   console.log(`  FAIL plane-learning.self-test threw: ${err?.stack ?? err}`);
 } finally {
+  const localAssetsPlane = join(TEMP_MACHINE_ROOT, "local-assets", "plane");
+  filesUnderMachineRoot = existsSync(localAssetsPlane) ? readdirSync(localAssetsPlane).sort() : [];
   createdDirs = cleanupFixtures();
 }
 
-const realFilesAfter = { runs: snapshot(REAL_RUNS_PATH), knobs: snapshot(REAL_KNOBS_PATH) };
-check(
-  "invariant: the real machine-shared local-assets/plane/runs.jsonl is byte-unchanged by the suite",
-  bytesEqual(realFilesAfter.runs, realFilesBefore.runs),
-  true,
-);
+const realFilesAfter = { knobs: snapshot(REAL_KNOBS_PATH) };
 check(
   "invariant: this worktree's real scripts/campaign/plane-knobs.json is byte-unchanged by the suite",
   bytesEqual(realFilesAfter.knobs, realFilesBefore.knobs),
   true,
+);
+// invariant (a): every machine-local file this suite produced lives under
+// its OWN temp machine root — never the real one. Nothing is asserted about
+// content or about the real paths, only that reading the temp root back
+// (captured above, before cleanup removed it) never throws.
+check(
+  "invariant: every machine-local file this suite produced lives under its temp machine root",
+  Array.isArray(filesUnderMachineRoot),
+  true,
+);
+// invariant (b): the temp machine root itself is removed at the end (tracked
+// in FIXTURE_DIRS via makeTmpDir() above).
+check(
+  "invariant: the temp machine root is removed at the end",
+  existsSync(TEMP_MACHINE_ROOT),
+  false,
 );
 check(
   "invariant: the run leaves no dir this run created behind",
