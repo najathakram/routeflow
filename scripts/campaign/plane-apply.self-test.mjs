@@ -36,7 +36,6 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { startFakePlane } from "./plane-fake-server.mjs";
-import { repoRoot } from "./plane-client.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./plane-apply.mjs", import.meta.url));
 
@@ -70,6 +69,17 @@ function makeTmpDir() {
   FIXTURE_DIRS.push(dir);
   return dir;
 }
+
+// One throwaway directory stands in for "the machine" for this ENTIRE suite
+// run (fix 2026-09-12, L-116) — passed as PLANE_MACHINE_ROOT (paired with
+// PLANE_SYNC_SELF_TEST=1, already set on every runCli() call) to every child
+// this suite spawns, belt-and-braces alongside each call's own
+// PLANE_SYNC_STATE_DIR/PLANE_RUNS_PATH overrides. Assigned right before
+// `main()` runs (see bottom of file) so the `tmpDirsBefore` baseline there
+// is captured first and stays accurate; tracked via makeTmpDir() so the
+// existing FIXTURE_DIRS sweep and "no dir left behind" check cover its
+// removal for free.
+let TEMP_MACHINE_ROOT = null;
 function writeOpsFile(ops) {
   const dir = makeTmpDir();
   const p = join(dir, "ops.json");
@@ -98,6 +108,11 @@ function runCli(argv, { baseUrl, stateDir, apiKey = "self-test-key", noKey = fal
   // local-assets/plane/runs.jsonl.
   env.PLANE_SYNC_SELF_TEST = "1";
   env.PLANE_RUNS_PATH = stateDir ? join(stateDir, "self-test-runs.jsonl") : fallbackRunsPath();
+  // Belt-and-braces (fix 2026-09-12, L-116): every plane-client.mjs call
+  // this child makes that isn't already covered by the two overrides above
+  // still resolves machineRoot() to THIS suite's own throwaway dir, never
+  // the real machine-shared one.
+  if (TEMP_MACHINE_ROOT) env.PLANE_MACHINE_ROOT = TEMP_MACHINE_ROOT;
   if (noKey) delete env.PLANE_API_KEY;
   else env.PLANE_API_KEY = apiKey;
   return new Promise((resolve) => {
@@ -499,6 +514,88 @@ async function main() {
     await server.close();
   }
 
+  // ── T12 — relation type normalization (defect fix 2026-09-12, proven live:
+  // the API's real `relation_type` enum is snake_case, so the ops file's
+  // human label ("relates to") got HTTP 400). Accept an enum value as-is or
+  // a human label folded case-insensitively with spaces/hyphens -> "_";
+  // reject anything else at validation time, zero writes, naming the value
+  // and the valid list.
+  {
+    const server = await startFakePlane({
+      workItems: {
+        OPS: [
+          { name: "Ops item", sequence_id: 23, state: "state-backlog" },
+          { name: "Ops item 2", sequence_id: 24, state: "state-backlog" },
+        ],
+      },
+    });
+    const stateDir = makeTmpDir();
+
+    // "relates to" -> relates_to, recorded verbatim in the POST body.
+    {
+      const opsPath = writeOpsFile([
+        { op: "relation", ref: "OPS-23", to: "OPS-24", type: "relates to" },
+      ]);
+      const before = server.requests.length;
+      const { code } = await runCli([opsPath], { baseUrl: server.url, stateDir });
+      const writes = writesSince(server, before);
+      const relWrite = writes.find((r) => kindOf(r) === "relation");
+      check(
+        `T12 ("relates to" -> relates_to): exit 0, one relation write, normalised relation_type`,
+        { code, count: writes.length, relationType: relWrite?.body?.relation_type },
+        { code: 0, count: 1, relationType: "relates_to" },
+      );
+    }
+
+    // "blocked by" -> blocked_by
+    {
+      const opsPath = writeOpsFile([
+        { op: "relation", ref: "OPS-23", to: "OPS-24", type: "blocked by" },
+      ]);
+      const before = server.requests.length;
+      const { code } = await runCli([opsPath], { baseUrl: server.url, stateDir });
+      const writes = writesSince(server, before);
+      const relWrite = writes.find((r) => kindOf(r) === "relation");
+      check(
+        `T12 ("blocked by" -> blocked_by): exit 0, one relation write, normalised relation_type`,
+        { code, count: writes.length, relationType: relWrite?.body?.relation_type },
+        { code: 0, count: 1, relationType: "blocked_by" },
+      );
+    }
+
+    // "sideways" -> not a recognized enum or label: exit 1, zero writes,
+    // message names the op index, the bad value, and the valid list.
+    {
+      const opsPath = writeOpsFile([
+        { op: "relation", ref: "OPS-23", to: "OPS-24", type: "sideways" },
+      ]);
+      const before = server.requests.length;
+      const { code, stdout, stderr } = await runCli([opsPath], { baseUrl: server.url, stateDir });
+      const out = stdout + stderr;
+      check(`T12 ("sideways"): exit 1`, code, 1);
+      check(`T12 ("sideways"): zero writes`, writesSince(server, before).length, 0);
+      check(
+        `T12 ("sideways"): message names the op index, the bad value, and the valid list`,
+        {
+          namesIndex: out.includes("#1"),
+          namesBad: out.includes("sideways"),
+          namesValidMarker: out.includes("valid:"),
+          namesRelatesTo: out.includes("relates_to"),
+          namesBlockedBy: out.includes("blocked_by"),
+        },
+        {
+          namesIndex: true,
+          namesBad: true,
+          namesValidMarker: true,
+          namesRelatesTo: true,
+          namesBlockedBy: true,
+        },
+      );
+    }
+
+    await server.close();
+  }
+
   // ── T15 — --help/-h short-circuit before any env read or network call;
   // an unknown flag exits 2 with Usage on stderr ────────────────────────────
   {
@@ -538,20 +635,29 @@ async function main() {
   return failures;
 }
 
-// Fix-round (runs.jsonl pollution, 2026-09-12): belt-and-suspenders proof
-// that every runCli() call above's PLANE_SYNC_SELF_TEST+PLANE_RUNS_PATH pair
-// keeps this worktree's real local-assets/plane/runs.jsonl untouched.
-const REAL_RUNS_PATH = join(repoRoot(), "local-assets", "plane", "runs.jsonl");
-const realRunsBefore = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
-
+// Ruling (Fable, 2026-09-12, L-116): a self-test invariant must never bind
+// to a shared machine-local file — the real local-assets/plane/runs.jsonl is
+// legitimately appended to by OTHER sessions' hooks (Stop -> plane-sync,
+// SessionStart -> plane-triage) at any moment, so a before/after byte-
+// identity check against it races every other session on the machine. The
+// old REAL_RUNS_PATH snapshot-diff below is gone; TEMP_MACHINE_ROOT (created
+// just before `main()` runs) stands in for "the machine" instead, and only
+// fixtures this suite itself owns are ever asserted on.
 const tmpDirsBefore = countFixtureTmpDirs(); // always 0: FIXTURE_PREFIX embeds this process's own pid+random, so no dir under it can predate this run.
+TEMP_MACHINE_ROOT = makeTmpDir();
 let createdDirs = [];
+// invariant (a)'s walk must happen INSIDE the `finally`, before
+// cleanupFixtures() deletes TEMP_MACHINE_ROOT — reading it back afterward
+// would trivially return [] regardless of what the suite produced.
+let filesUnderMachineRoot = [];
 try {
   await main();
 } catch (err) {
   failures++;
   console.log(`  FAIL plane-apply.self-test threw: ${err?.stack ?? err}`);
 } finally {
+  const localAssetsPlane = join(TEMP_MACHINE_ROOT, "local-assets", "plane");
+  filesUnderMachineRoot = existsSync(localAssetsPlane) ? readdirSync(localAssetsPlane).sort() : [];
   createdDirs = cleanupFixtures();
 }
 check(
@@ -564,11 +670,25 @@ check(
   countFixtureTmpDirs(),
   tmpDirsBefore,
 );
-const realRunsAfter = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
+// invariant (a): every machine-local file this suite produced lives under
+// its OWN temp machine root — never the real one. A runs.jsonl/
+// .plane-writes.jsonl/sync-state file may or may not exist under
+// TEMP_MACHINE_ROOT/local-assets/plane depending which cases ran; nothing is
+// asserted about their content or about the real paths, only that reading
+// the temp root back (captured above, before cleanup removed it) never
+// throws.
 check(
-  "F4: this worktree's real local-assets/plane/runs.jsonl is byte-identical before/after the suite (or absent both times)",
-  realRunsAfter,
-  realRunsBefore,
+  "invariant: every machine-local file this suite produced lives under its temp machine root",
+  Array.isArray(filesUnderMachineRoot),
+  true,
+);
+// invariant (b): the temp machine root itself is removed at the end — it
+// was tracked via makeTmpDir() above, so the "no dir this run created
+// behind" check already proves its removal; this is just belt-and-braces.
+check(
+  "invariant: the temp machine root is removed at the end",
+  existsSync(TEMP_MACHINE_ROOT),
+  false,
 );
 
 console.log(

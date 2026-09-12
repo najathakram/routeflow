@@ -58,6 +58,7 @@ import {
   knob,
   loadDenylist,
   loadKnobs,
+  migrateLegacyStateFile,
   NAME_ID_RE,
   repoRoot,
   stateDir,
@@ -412,10 +413,15 @@ export function planDiff(desired, existingItems) {
 }
 
 // ── comment-on-close local cache (R4) — .plane-sync-state.json under
-// stateDir(), gitignored. `{closed: {"B###": ts}}`. A missing/unparsable file
-// reads as "nothing cached" rather than throwing — the fallback (listing the
-// item's own comments) still catches an already-closed item either way.
+// stateDir(), gitignored, machine-shared (fix 2026-09-12: stateDir() anchors
+// on machineRoot(), the parent of `git rev-parse --git-common-dir`, so every
+// worktree of this repo reads/writes the SAME cache — see plane-client.mjs's
+// migrateLegacyStateFile()/machineRoot() doc comments). A missing/unparsable
+// file reads as "nothing cached" rather than throwing — the fallback
+// (listing the item's own comments) still catches an already-closed item
+// either way.
 function loadSyncStateCache() {
+  migrateLegacyStateFile(SYNC_STATE_FILENAME);
   const p = join(stateDir(), SYNC_STATE_FILENAME);
   if (!existsSync(p)) return { closed: {} };
   try {
@@ -429,6 +435,7 @@ function loadSyncStateCache() {
 }
 
 function saveSyncStateCache(cache) {
+  migrateLegacyStateFile(SYNC_STATE_FILENAME);
   const dir = stateDir();
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, SYNC_STATE_FILENAME), JSON.stringify(cache));

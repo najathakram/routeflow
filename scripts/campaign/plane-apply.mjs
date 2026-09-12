@@ -65,6 +65,26 @@ const REF_RE = /^([A-Za-z][A-Za-z0-9]*)-(\d+)$/;
 
 const DEFAULT_MAX_WRITES = 20;
 
+// Defect fix 2026-09-12: the live Plane REST API's `relation_type` is a
+// snake_case enum — a human relation label ("relates to") sent verbatim (the
+// ops file's own vocabulary) got HTTP 400 `"relates to" is not a valid
+// choice`. Accept an enum value as-is, or a human label normalised
+// case-insensitively with spaces/hyphens folded to underscores
+// ("relates to"/"Relates to"/"blocked by" → `relates_to`/`relates_to`/
+// `blocked_by`) — reject anything else at validation time, before any
+// write, per the Fable ruling.
+const RELATION_TYPES = [
+  "blocking",
+  "blocked_by",
+  "start_before",
+  "start_after",
+  "finish_before",
+  "finish_after",
+  "relates_to",
+  "duplicate",
+];
+const RELATION_TYPE_SET = new Set(RELATION_TYPES);
+
 // ── ops-file validation + plan building (zero network writes) ──────────────
 // Builds one execute() closure per op, in file order, after EVERY ref/name in
 // the whole file has resolved. Throws an Error carrying `.opIndex` (0-based)
@@ -84,6 +104,18 @@ async function buildPlan(client, ops, overBudgetReason) {
     const m = REF_RE.exec(String(ref ?? ""));
     if (!m) fail(index, `${field} "${ref}" is not a valid identifier (expected PROJECT-N)`);
     return { identifier: m[1], seq: Number(m[2]) };
+  }
+
+  // Accepts an enum value as-is; accepts a human label ignoring case and
+  // with spaces/hyphens folded to underscores; rejects anything else here
+  // (validation time, zero writes made) — never at write time.
+  function normalizeRelationType(raw, index) {
+    const normalized = String(raw ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/[\s-]+/g, "_");
+    if (RELATION_TYPE_SET.has(normalized)) return normalized;
+    fail(index, `unknown relation type "${raw}" (valid: ${RELATION_TYPES.join(", ")})`);
   }
 
   async function getProjectCtx(identifier, index) {
@@ -243,6 +275,7 @@ async function buildPlan(client, ops, overBudgetReason) {
       if (!op.ref) fail(index, `relation requires "ref"`);
       if (!op.to) fail(index, `relation requires "to"`);
       if (!op.type) fail(index, `relation requires "type"`);
+      const relationType = normalizeRelationType(op.type, index);
       const { ctx, item } = await resolveItem(op.ref, index);
       const { item: toItem } = await resolveItem(op.to, index, "to");
       // Landmine 15: built-in dependencies take `{relation_type, issues}`;
@@ -250,10 +283,10 @@ async function buildPlan(client, ops, overBudgetReason) {
       // outward/inward label, which no resolver in plane-client.mjs exposes
       // (no relation-definitions endpoint is wired there) — validate the
       // response status, not the body shape, per the same landmine's note.
-      const body = { relation_type: op.type, issues: [toItem.id] };
+      const body = { relation_type: relationType, issues: [toItem.id] };
       plan.push({
         index,
-        label: `relation ${op.ref} -> ${op.to} (${op.type})`,
+        label: `relation ${op.ref} -> ${op.to} (${relationType})`,
         execute: () =>
           client.post(`projects/${ctx.project.id}/work-items/${item.id}/relations/`, body, {
             ref: op.ref,

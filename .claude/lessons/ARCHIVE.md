@@ -1360,3 +1360,27 @@ gate runner's own `execFileSync` usage), so archiving it loses no enforcement.
   green when it is skipped, and a suite is green when a test is skipped; neither says your proof ran.
 - **Guard:** `gh run view <id> --json jobs` — assert the specific step is `success`, not
   `skipped`; for one test, grep the log for its `✓`. Step COUNT is not execution.
+
+## Archived 2026-09-12 — least-cited, fully guarded; headroom for L-116
+
+One active entry archived to clear headroom for L-116 (tooling, plane self-test invariants must
+never bind to shared machine-local files, fix/plane-write-ledger-local worktree rf-plane3):
+L-109. Zero outside citations found (repo-wide grep excluding `.claude/lessons/**`,
+`.claude/pipeline/**`, and code-map CHANGELOG/`_meta.json`); tied at zero citations with
+L-110/L-111 (both 2026-09-11, fully guarded) and L-112/L-113 (2026-09-12, fully guarded) —
+L-109 is the oldest of the tied set by id, so per the standing archiving rule (least-cited,
+fully-guarded, oldest first) it is the one archived. Its own guard (campaign-check's freshness
+gate refusing a stale report by name) is an existing mechanism unrelated to this register entry,
+so archiving it loses no enforcement.
+
+### L-109 · 2026-09-11 · process · registry-shard commits
+
+- **Symptom:** a push after a registry-shard commit was refused by campaign-check for "stale"
+  Jest freshness, though the test files were untouched and had passed minutes earlier.
+- **Root cause:** a registry-shard commit (`.claude/campaign/**`) moves HEAD, which the freshness
+  gate compares reports against; the pre-push hook has no docs-only bypass for this commit class.
+- **Lesson:** **After a registry-shard commit, regenerate the affected workspace's Jest
+  freshness report BEFORE verify/push — such a commit is not exempt just because it touched no
+  test file.**
+- **Guard:** campaign-check's freshness gate (already refuses a stale report by name with the
+  regen command) — this is a usage note on WHEN to regenerate.
