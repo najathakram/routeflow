@@ -1,0 +1,870 @@
+{
+  "plan": ".claude/pipeline/2026-09-10-train4-damage-report/build-plan.md",
+  "mode": "feature",
+  "artifacts": {
+    "plan": ".claude/pipeline/2026-09-10-train4-damage-report/build-plan.md",
+    "discovery": "",
+    "spec": "",
+    "uxSpec": "",
+    "testPlan": ".claude/pipeline/2026-09-10-train4-damage-report/test-plan.md",
+    "designSystem": ""
+  },
+  "scale": "small",
+  "startedAt": "2026-09-10T17:12:09Z",
+  "estimatedCostUsd": 9.74,
+  "pricesAsOf": "2026-06-24",
+  "overlap": {
+    "verifyWithUiVerify": false,
+    "finalGateWithFinalPass": false,
+    "redAuditWithImplement": null
+  },
+  "verify": {
+    "ran": false,
+    "mode": "on-dispute",
+    "lazy": true,
+    "judged": 0,
+    "dropped": 0,
+    "votesCast": 0,
+    "firstVoteRefuted": 0,
+    "firstVoteRefutedRate": null,
+    "tieBreaks": 0,
+    "locationChecked": 0,
+    "locationInvalid": 0,
+    "preRefuted": 0,
+    "deferredToFixer": 0,
+    "disputed": 0,
+    "disputesDropped": 0,
+    "disputesUpheld": 0,
+    "corroborated": 0,
+    "corroboratedSkipped": 0
+  },
+  "baseline": {
+    "ran": true,
+    "note": "Baseline = the working tree exactly as the caller left it, uncommitted work included; that tree is what the commands ran against.",
+    "commands": [
+      "node -e \"const f='apps/api/scripts/report-train4-damage.mjs';require('fs').existsSync(f)?require('child_process').execFileSync(process.execPath,['--check',f],{stdio:'inherit'}):console.log('report script not yet created')\"",
+      "npm run check-types -w apps/api",
+      "npm run lint -w apps/api",
+      "cd apps/api && npx jest src/common/train4-damage-report-script --passWithNoTests --reporters=default",
+      "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- train4-damage-report --passWithNoTests\""
+    ],
+    "badCommands": [],
+    "gate": {
+      "ran": true,
+      "completed": true,
+      "pass": true,
+      "results": [
+        {
+          "command": "node -e \"const f='apps/api/scripts/report-train4-damage.mjs';require('fs').existsSync(f)?require('child_process').execFileSync(process.execPath,['--check',f],{stdio:'inherit'}):console.log('report script not yet created')\"",
+          "pass": true,
+          "summary": "report script not yet created",
+          "executed": -1
+        },
+        {
+          "command": "npm run check-types -w apps/api",
+          "pass": true,
+          "summary": "TypeScript check passed with no errors",
+          "executed": -1
+        },
+        {
+          "command": "npm run lint -w apps/api",
+          "pass": true,
+          "summary": "ESLint passed (exit code 0, warnings only)",
+          "executed": -1
+        },
+        {
+          "command": "cd apps/api && npx jest src/common/train4-damage-report-script --passWithNoTests --reporters=default",
+          "pass": true,
+          "summary": "No tests found, exiting with code 0",
+          "executed": 0
+        },
+        {
+          "command": "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- train4-damage-report --passWithNoTests\"",
+          "pass": true,
+          "summary": "No tests found, exiting with code 0",
+          "executed": 0
+        }
+      ]
+    },
+    "grounding": {
+      "ran": true,
+      "completed": true,
+      "artifacts": [
+        ".claude/pipeline/2026-09-10-train4-damage-report/build-plan.md",
+        ".claude/pipeline/2026-09-10-train4-damage-report/test-plan.md"
+      ],
+      "findings": [
+        {
+          "file": "(artifact)",
+          "line": 206,
+          "severity": "major",
+          "summary": "File path is incomplete; the guard file actually exists in a subdirectory",
+          "detail": "In (artifact) .claude/pipeline/2026-09-10-train4-damage-report/build-plan.md: The artifact claims the guard file is at `buyer-seller-context.guard.ts:57` but the actual file is located at `apps/api/src/buyer/guards/buyer-seller-context.guard.ts`. The artifact omits the `guards/` subdirectory in the path.",
+          "fixComplexity": "mechanical",
+          "fixHint": "Change `buyer-seller-context.guard.ts:57` to `apps/api/src/buyer/guards/buyer-seller-context.guard.ts:57` (or at minimum `buyer/guards/buyer-seller-context.guard.ts:57` for consistency with other file references)",
+          "phase": "Baseline"
+        }
+      ]
+    }
+  },
+  "manifest": {
+    "ran": true,
+    "completed": true,
+    "note": "Facts gathered before any agent wrote anything. Unknown or unreadable files are classified HIGH.",
+    "files": [
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-damage-report/build-plan.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-damage-report/test-plan.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-damage-report/pipeline-args.json",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-damage-report/RESUME.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/common/train4-damage-report-script.spec.ts",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/common/train4-damage-report.db.spec.ts",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/scripts/report-train4-damage.mjs",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      }
+    ],
+    "validCommands": [
+      "node -e \"const f='apps/api/scripts/report-train4-damage.mjs';require('fs').existsSync(f)?require('child_process').execFileSync(process.execPath,['--check',f],{stdio:'inherit'}):console.log('report script not yet created')\"",
+      "npm run check-types -w apps/api",
+      "npm run lint -w apps/api",
+      "cd apps/api && npx jest src/common/train4-damage-report-script --passWithNoTests --reporters=default",
+      "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- train4-damage-report --passWithNoTests\""
+    ],
+    "artifacts": [
+      ".claude/pipeline/2026-09-10-train4-damage-report/build-plan.md",
+      ".claude/pipeline/2026-09-10-train4-damage-report/test-plan.md"
+    ]
+  },
+  "riskSummary": {
+    "high": 1,
+    "low": 6
+  },
+  "fixRouting": {
+    "mechanical": 1,
+    "sonnetDesigned": 2,
+    "judgment": 4
+  },
+  "fixPlanning": {
+    "enabled": true,
+    "rounds": [
+      {
+        "round": 1,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 6,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 1,
+          "sonnet": 2,
+          "opus": 3
+        },
+        "waves": [[0, 1, 2, 3, 4, 5]],
+        "note": "Round 1 fixes all six findings in a single wave (five of them touch report-train4-damage.mjs and/or train4-damage-report.db.spec.ts, so the engine serializes them by file). Script changes: the ACT BEFORE line drops the string-comparator re-sort and prints the chronologically first armed date as ISO (#0); fetchB215 pushes only the tenant filter into the window CTE, strips the three jsonb snapshot columns from the sort tuple in favour of LAG(id)/LAG(id,2), and loads snapshots per candidate in a second read-only query — deliberately NOT moving the source/editedById predicates into the CTE, which would change LAG semantics (#1); the four plan-listed labelled buckets are added to the labels maps and a per-section amounts line prints candidateTotal/mrrDeltaSum/buyerPaymentRequestAmount (#2). Test changes: a fifth armed tenant with a weekday-later-but-earlier date pins the ACT BEFORE ordering; an O215e non-EDIT-between-EDITs near-miss pins the B215 semantics; DM135C/DM135D single-predicate near-misses pin B135's type filter and 20 s upper edge; T4/T5/T8/T14 are strengthened so each fails on its own oracle and a no-op stub cannot pass T14 (#3, #5). The build-plan path typo is a mechanical edit (#4). Expected values from the plan (confirmedPairs=1/O215a, unconfirmablePairs=1/O215d, orphaned=2, spendableRemaining=40, mrrDeltaSum=-50, etc.) must all stay unchanged; tenants moves 4->5 and armedAfterReinstatement 1->2 as a direct consequence of the #0 fixture."
+      },
+      {
+        "round": 2,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 4,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 0,
+          "sonnet": 2,
+          "opus": 2
+        },
+        "waves": [[1, 2], [0], [3]],
+        "note": "Round 2 fixes all four findings. Wave 1 edits only the DB spec: a fifth B135 mutation (ADD_ON at DONE+5min) that pins the late-merge window's lower bound, and a Wed/Fri armed-downgrade pair so the B216 fixture keeps discriminating the defaulted Date sort on any host UTC offset. Wave 2 (after the spec edits, since its test also lands in that file) rescopes the B215 LAG window's CTE by the ORDER's tenant instead of the nullable OrderRevision.tenantId, keeps the unscoped case free of the extra semi-join and keeps the outer candidate filter unchanged, with a NULL-middle-revision seed that is red on the current code. Wave 3 clears the check-types gate as an environment fix (build packages/pricing, then npm ci if needed) with an explicit ban on stubs or tsconfig edits; the 45 TS2307 errors sit in files this diff never touched."
+      }
+    ],
+    "deferred": []
+  },
+  "cascadeAudit": null,
+  "escalation": null,
+  "lensesRun": ["correctness", "test-quality"],
+  "radiusPack": {
+    "built": false,
+    "truncated": false,
+    "files": [],
+    "skipped": "feature-mode"
+  },
+  "siblingSweep": {
+    "ran": false,
+    "patterns": 0,
+    "hits": 0,
+    "findings": 0,
+    "skipped": "no-patterns"
+  },
+  "harnessCheck": {
+    "ran": false,
+    "issues": [],
+    "skipped": "feature-mode",
+    "note": ""
+  },
+  "testAuthoring": {
+    "ran": true,
+    "packages": [
+      {
+        "package": "TP1",
+        "status": "done",
+        "filesChanged": ["apps/api/src/common/train4-damage-report-script.spec.ts"],
+        "deviations": ""
+      },
+      {
+        "package": "TP2",
+        "status": "done",
+        "filesChanged": ["apps/api/src/common/train4-damage-report.db.spec.ts"],
+        "deviations": "None. Wrote only the one file assigned to TP2. TP1's apps/api/src/common/train4-damage-report-script.spec.ts appears untracked in the worktree from a sibling package/stage — I did not touch it."
+      }
+    ]
+  },
+  "redGate": {
+    "ran": true,
+    "remediateOn": "behavioral",
+    "properlyRed": false,
+    "structurallyRed": true,
+    "behaviorallyRed": false,
+    "attempts": 2,
+    "audits": [
+      {
+        "attempt": 1,
+        "ran": true,
+        "structurallyRed": false,
+        "behaviorallyRed": false,
+        "properlyRed": false,
+        "tests": [
+          {
+            "test": "TDR-T1 no write-capable SQL keyword appears in any non-comment line (apps/api/src/common/train4-damage-report-script.spec.ts:49)",
+            "outcome": "error",
+            "note": "Re-ran myself: fails with `ENOENT: no such file or directory ... report-train4-damage.mjs` thrown from `fs.readFileSync` inside `codeLines()` (spec line 30), reached from line 50. It never executes an `expect`, so this is a setup/fixture failure, not an assertion failure."
+          },
+          {
+            "test": "TDR-T2 read-only session is set as the FIRST query, before every other query (train4-damage-report-script.spec.ts:56)",
+            "outcome": "error",
+            "note": "Same ENOENT thrown at codeLines (line 30), reached from line 57. No assertion executed."
+          },
+          {
+            "test": "TDR-T3 no write-mode flag is declared in source (train4-damage-report-script.spec.ts:84)",
+            "outcome": "error",
+            "note": "Same ENOENT thrown at codeLines (line 30). No assertion executed."
+          },
+          {
+            "test": "TDR-T4 an unknown flag exits 2 before any connection is attempted (train4-damage-report-script.spec.ts:92)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 100 on `expect(res.status).toBe(2)`, received 1. That is the test's own oracle value (test-plan T4 predicts exactly `Expected: 2, Received: 1`), but the received 1 is node's MODULE_NOT_FOUND exit code, not a flag-validation path — the discrimination it claims (2 for unknown flag vs 1 for a connection failure) is untested today."
+          },
+          {
+            "test": "TDR-T5 no connection string exits 1 naming the failure (train4-damage-report-script.spec.ts:105)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 108 on the guard `expect(res.stderr).not.toContain(\"Cannot find module\")`, with node's MODULE_NOT_FOUND stack as the received string. It never reaches its own oracle (`status === 1` and stderr matching /No usable connection string/). The guard is good practice — it is what keeps this test from being a false red — but the plan's oracle is unexercised."
+          },
+          {
+            "test": "TDR-T6 B134 buckets (apps/api/src/common/train4-damage-report.db.spec.ts:1061)",
+            "outcome": "assertion-failure",
+            "note": "Per the supplied runner output, fails at line 1062, which I confirmed by reading the file is `expect(jsonRun.status).toBe(0)` — the shared precondition, Expected 0 / Received 1 (script missing). None of the seeded oracles (candidates=1, candidateInvoiceIds=[I134a], candidateTotal=100, the two CONTEXT buckets, the labels) is reached. I did not re-run the DB lane myself."
+          },
+          {
+            "test": "TDR-T7 B135 late merges (train4-damage-report.db.spec.ts:1076)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 1077 = `expect(jsonRun.status).toBe(0)`. lateMerges/changeRequestIds/mutationIds/lateNoteContext and the LOWER_BOUND/CONTEXT labels are never evaluated."
+          },
+          {
+            "test": "TDR-T8 B214 orphaned notes (train4-damage-report.db.spec.ts:1089)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 1090 = `expect(jsonRun.status).toBe(0)`. orphaned=2 / spendableRemaining=40 / expiredRemaining=5 never evaluated."
+          },
+          {
+            "test": "TDR-T9 B215 double folds (train4-damage-report.db.spec.ts:1102)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 1103 = `expect(jsonRun.status).toBe(0)`. confirmedPairs/unconfirmablePairs/keyedOrders never evaluated."
+          },
+          {
+            "test": "TDR-T10 B216 reinstated downgrades (train4-damage-report.db.spec.ts:1117)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 1118 = `expect(jsonRun.status).toBe(0)`. mrrDeltaSum=-50, seatsFreedNear=2, armed buckets and the ordinal regex never evaluated."
+          },
+          {
+            "test": "TDR-T11 B131 removed-customer generation (train4-damage-report.db.spec.ts:1136)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 1137 = `expect(jsonRun.status).toBe(0)`. templateOrders/recurringInvoices/manualInvoices oracles never evaluated."
+          },
+          {
+            "test": "TDR-T12 B141 post-removal buyer activity (train4-damage-report.db.spec.ts:1153)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 1154 = `expect(jsonRun.status).toBe(0)`. customerSideEdits / unmarkedOrdersUpperBound / buyerPaymentRequestAmount=12.5 never evaluated."
+          },
+          {
+            "test": "TDR-T13 output carries no identifiers (train4-damage-report.db.spec.ts:1170)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 1171 = `expect(jsonRun.status).toBe(0)`. The whole R3 oracle (no SECRET/tenant id/slug/email in JSON, human output or JSONL; tenants=4; `#N` ordinals) is unexercised."
+          },
+          {
+            "test": "TDR-T14 run leaves the database unchanged (train4-damage-report.db.spec.ts:1209)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 1210 = `expect(jsonRun.status).toBe(0)`. The snapshot-equality oracle over 19 tables is never reached; the test plan itself predicts this (`same (status check first)`)."
+          }
+        ],
+        "blockers": [
+          "STRUCTURAL: TDR-T1, TDR-T2 and TDR-T3 are ERRORS, not assertion failures — `codeLines()` calls `fs.readFileSync(SCRIPT)` on a file that does not exist, so an ENOENT is thrown at train4-damage-report-script.spec.ts:30 before any `expect` runs (confirmed by re-running the suite in this session).",
+          "STRUCTURAL: TDR-T2 can pass vacuously once the script exists — if `SET default_transaction_read_only = on` appears in source BEFORE any `.query(` occurrence (a hoisted `const RO_SQL = ...`, or the SQL kept in a constants block), `queryIndices.filter(idx => idx <= readOnlySetIndex)` is empty, `Math.max(...[])` is `-Infinity`, `otherQueryIndices` becomes every index, and `expect(-Infinity).toBeLessThan(idx)` passes for all of them without proving anything about ordering.",
+          "BEHAVIORAL: TDR-T6 through TDR-T14 all fail on the same shared precondition `expect(jsonRun.status).toBe(0)` (Expected 0, Received 1) — I confirmed by reading the file that every reported failure line (1062, 1077, 1090, 1103, 1118, 1137, 1154, 1171, 1210) is that identical line. Not one of the nine reaches its own seeded oracle, so the wiring is proven and the oracles are not.",
+          "BEHAVIORAL: TDR-T5 fails on its module-not-found guard at line 108, never on its own oracle (`status === 1` plus stderr matching /No usable connection string/).",
+          "BEHAVIORAL: TDR-T4's failure value (status 1) comes from node's MODULE_NOT_FOUND exit, not from a connection attempt, so the distinction the test exists to draw — exit 2 for an unknown flag versus exit 1 for a connection failure — is not yet exercised in either direction."
+        ]
+      },
+      {
+        "attempt": 2,
+        "ran": true,
+        "structurallyRed": true,
+        "behaviorallyRed": false,
+        "properlyRed": false,
+        "tests": [
+          {
+            "test": "TDR-T1 no write-capable SQL keyword appears in any non-comment line (apps/api/src/common/train4-damage-report-script.spec.ts:58)",
+            "outcome": "assertion-failure",
+            "note": "Re-ran myself: fails at spec line 37 `expect(fs.existsSync(SCRIPT)).toBe(true)` inside codeLines(). The authors deliberately converted the would-be ENOENT into an assertion, so it is a real assertion failure — but the failure is 'file absent', not the regex oracle /\\b(INSERT|UPDATE|DELETE|TRUNCATE|ALTER|DROP)\\b/i."
+          },
+          {
+            "test": "TDR-T2 read-only session is set as the FIRST query, before every other query (train4-damage-report-script.spec.ts:65)",
+            "outcome": "assertion-failure",
+            "note": "Fails at the same existsSync assertion (line 37, reported via call site 66). Its own oracle (contains `SET default_transaction_read_only = on`, >1 `.query(`, SET's query index lowest) was never reached."
+          },
+          {
+            "test": "TDR-T3 no write-mode flag is declared in source (train4-damage-report-script.spec.ts:103)",
+            "outcome": "assertion-failure",
+            "note": "Fails at existsSync (line 37, call site 104). Its own oracle (source contains none of --execute/--live/--apply/--fix/--repair) was never reached."
+          },
+          {
+            "test": "TDR-T4 an unknown flag exits 2 before any connection is attempted (train4-damage-report-script.spec.ts:111)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 119 with `Expected: 2, Received: 1` — the test's own plan-stated expected value (R5: unknown flag exits 2). The received 1 is node's MODULE_NOT_FOUND exit, so the exit-2 path is stated but not yet exercised. Stderr correctly shows no ECONNREFUSED."
+          },
+          {
+            "test": "TDR-T5 no connection string exits 1 naming the failure (train4-damage-report-script.spec.ts:124)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 127 on the absence guard `expect(res.stderr).not.toContain(\"Cannot find module\")` — received stderr is the MODULE_NOT_FOUND stack. Its real oracles (status 1, /No usable connection string/) were never reached."
+          },
+          {
+            "test": "TDR-T6 B134 buckets (apps/api/src/common/train4-damage-report.db.spec.ts:1062)",
+            "outcome": "assertion-failure",
+            "note": "Re-ran the DB lane myself against the compose Postgres: fails at line 1063 `expect(jsonRun.status).toBe(0)` — Expected 0, Received 1. beforeAll seeding succeeded (no hook error), so the fixture compiles and matches the live schema; the section oracles (candidates=1, candidateInvoiceIds=[I134a], candidateTotal=100, the two CONTEXT buckets, UPPER_BOUND labels) were never evaluated."
+          },
+          {
+            "test": "TDR-T7 B135 late merges (train4-damage-report.db.spec.ts:1077)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 1078 on the same shared `jsonRun.status === 0` guard. lateMerges=1 / changeRequestIds=[CR135a] / mutationIds=[DM135a] / lateNoteContext=1 never evaluated."
+          },
+          {
+            "test": "TDR-T8 B214 orphaned notes (train4-damage-report.db.spec.ts:1090)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 1091 on the shared status guard. orphaned=2, spendableRemaining=40, expiredRemaining=5 never evaluated."
+          },
+          {
+            "test": "TDR-T9 B215 double folds (train4-damage-report.db.spec.ts:1103)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 1104 on the shared status guard. confirmedPairs=1/[O215a], unconfirmablePairs=1/[O215d], keyedOrders=1 never evaluated."
+          },
+          {
+            "test": "TDR-T10 B216 reinstated downgrades (train4-damage-report.db.spec.ts:1118)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 1119 on the shared status guard. appliedAfterReinstatement=1, mrrDeltaSum=-50, seatsFreedNear=2, armed buckets and the /^#\\d+$/ ordinal never evaluated."
+          },
+          {
+            "test": "TDR-T11 B131 removed-customer generation (train4-damage-report.db.spec.ts:1137)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 1138 on the shared status guard. templateOrders/recurringInvoices/manualInvoices oracles never evaluated."
+          },
+          {
+            "test": "TDR-T12 B141 post-removal buyer activity (train4-damage-report.db.spec.ts:1154)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 1155 on the shared status guard. customerSideEdits=1, unmarkedOrdersUpperBound=1, buyerPaymentRequestAmount=12.5 never evaluated."
+          },
+          {
+            "test": "TDR-T13 output carries no identifiers (train4-damage-report.db.spec.ts:1171)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 1172 on the shared status guard. The leak scan (SECRET marker, 4 tenant ids, 4 slugs, 6 seeded emails across --json stdout, human stdout+stderr and every .jsonl under --out-dir), tenants=4 and the JSONL class/bucket/label/tenant shape were never evaluated."
+          },
+          {
+            "test": "TDR-T14 run leaves the database unchanged (train4-damage-report.db.spec.ts:1216)",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 1217 on the shared status guard. The 19-table before/after count+max(timestamp) snapshot comparison — the real read-only proof — was never evaluated. Cleanup verified: 0 rows left in Tenant matching 'qa-damage-%' after my run."
+          }
+        ],
+        "blockers": [
+          "BEHAVIORAL: T1, T2 and T3 fail identically on `expect(fs.existsSync(SCRIPT)).toBe(true)` (spec line 37) — 'the script file is absent', not on the no-write-keyword regex, the read-only-SET ordering, or the write-flag absence. Their oracles are unproven at this gate.",
+          "BEHAVIORAL: T5 fails on its absence guard `not.toContain(\"Cannot find module\")`, not on its own oracle (status 1 + /No usable connection string/). The plan documents this as the expected red, but the oracle is untested.",
+          "BEHAVIORAL: T6-T14 (all 9 DB tests) fail on one shared precondition, `expect(jsonRun.status).toBe(0)` — Expected 0, Received 1 — from a single beforeAll CLI run. Not one section-specific expected value (counts, id lists, exact amounts, bound labels) was evaluated. This is exactly the 'every assertion fails identically on the wiring' pattern; the near-miss seeds are in the DB but have proven nothing yet.",
+          "BEHAVIORAL: Only T4 failed on a value that is its own plan oracle (Expected 2 for an unknown flag), and even there the received 1 comes from node's MODULE_NOT_FOUND, not from the script's own flag/connection paths.",
+          "BEHAVIORAL (future wrong-reason risk): T1 and T3 are pure source-text absence pins — an empty or do-nothing stub script satisfies both. They gain bite only from T6-T14, which live in the DB lane and do not run on every push.",
+          "BEHAVIORAL (future wrong-reason risk): T2 pins SOURCE order of `.query(` occurrences, not execution order (the spec says so in a NOTE) and forces a `.query(`-shaped client; an implementation using $queryRaw or a query helper would fail or vacuously satisfy it. T14 is the only real read-only proof, and it is DB-lane only.",
+          "BEHAVIORAL (future wrong-reason risk): T1's codeLines() drops only lines starting with //, * or /*, so a usage banner or printed caveat containing DELETE/--execute inside a string produces a false red (the spec documents this as deliberately strict).",
+          "BEHAVIORAL (future wrong-reason risk): T8 expects `creditNoteIds` to equal `[CN_A_ID, CN_B_ID].sort()` — it bakes in an ascending-id ordering the script must happen to produce; insertion-order output would go red for a formatting reason, not a counting bug.",
+          "BEHAVIORAL (future wrong-reason risk): T14 also passes for a stub that exits 0 and prints well-formed JSON without querying anything; it proves 'no writes', never 'work was done'."
+        ]
+      }
+    ],
+    "remediation": {
+      "fixed": [
+        "STRUCTURAL blocker 1 — TDR-T1/T2/T3 threw ENOENT from fs.readFileSync inside codeLines() instead of failing an assertion: added `expect(fs.existsSync(SCRIPT)).toBe(true);` as the first statement of codeLines() (train4-damage-report-script.spec.ts:37). Verified by re-running the suite: all three now report `expect(received).toBe(expected) / Expected: true / Received: false` at line 37, reached from lines 59, 66 and 73 — assertion failures, not errors. codeLines() still reads the real file, so T1/T3 keep their real oracles once the script lands (no tolerant `return \"\"` fallback was added).",
+        "STRUCTURAL blocker 2 — TDR-T2's `Math.max(...[])` vacuous-pass hole: split out `const precedingQueryIndices = queryIndices.filter((idx) => idx <= readOnlySetIndex);`, added `expect(precedingQueryIndices.length).toBeGreaterThan(0);` with a comment naming the -Infinity failure mode, then `const ownQueryIndex = Math.max(...precedingQueryIndices);`. A hoisted `const RO_SQL = ...` above every `.query(` now fails T2 instead of satisfying every `toBeLessThan`.",
+        "TDR-T2 over-trust risk — added a NOTE in the test body stating that T2 pins SOURCE order of `.query(` occurrences, not execution order (a helper defined lower but invoked first would satisfy it), and that TDR-T14's DB-side snapshot equality is the real read-only proof.",
+        "TDR-T13 `expect(parsed.tenant).toBeDefined()` passed for null and for any leaked slug — tightened to `expect(parsed.tenant).toMatch(/^#\\d+$/)`, matching the `byTenant` ordinal assertion above it, with a comment saying why toBeDefined() was insufficient.",
+        "TDR-T13 scanned only `files[0]` of the `.jsonl` files written under --out-dir — a second file was a leak hole. Replaced the single readFileSync with `files.flatMap(...)` over every `.jsonl` in outDir; the per-line forbidden-needle loop and shape assertions now run over all of them. `expect(files.length).toBeGreaterThan(0)` is unchanged.",
+        "Pre-existing compile error in train4-damage-report.db.spec.ts (not flagged by the auditor, would have failed the whole DB lane at ts-jest compile rather than on any assertion): `TS2322 Type 'Record<string, unknown>' is not assignable to type 'JsonNull | InputJsonValue'` at line 776, the `billingEvent()` seed helper's `payload` parameter. Changed the parameter type to `Prisma.InputJsonObject` and extended the existing @prisma/client import to `import { PrismaClient, type Prisma }`. All 16 call sites pass primitive object literals, so no seeded value changed. Verified: standalone tsc over the file with the workspace's compilerOptions (module/moduleResolution nodenext, target ES2023, strictNullChecks, esModuleInterop, allowSyntheticDefaultImports) now reports no errors for this file."
+      ],
+      "skipped": [
+        {
+          "index": 3,
+          "summary": "BEHAVIORAL: TDR-T6 through TDR-T14 all fail on the shared precondition `expect(jsonRun.status).toBe(0)` (Expected 0, Received 1) — not one reaches its own seeded oracle.",
+          "reason": "Cannot be fixed by a test edit. The failure is that apps/api/scripts/report-train4-damage.mjs does not exist, so node exits MODULE_NOT_FOUND(1) for both CLI runs in beforeAll. Creating even a skeleton script is production code, which this round forbids, and the auditor's own remediation says these need no test edit at the RED gate (they are the mutation probe's job, test-plan §9 targets 1-4). Re-run the DB lane after the script's first skeleton lands and confirm T6-T14 then fail on their seeded values."
+        },
+        {
+          "index": 4,
+          "summary": "BEHAVIORAL: TDR-T5 fails on its module-not-found guard at line 108 (now 127), never on its own oracle (status === 1 plus stderr matching /No usable connection string/).",
+          "reason": "Same cause: the script under test does not exist. The `expect(res.stderr).not.toContain(\"Cannot find module\")` guard is exactly what keeps this from being a false red and must stay; it will stop firing once the script exists. Confirmed in this session's run — T5's received string is node's MODULE_NOT_FOUND stack."
+        },
+        {
+          "index": 5,
+          "summary": "BEHAVIORAL: TDR-T4's received status 1 comes from node's MODULE_NOT_FOUND exit, not a connection attempt, so the exit-2-unknown-flag vs exit-1-connection-failure discrimination is untested in either direction.",
+          "reason": "Same cause. T4 already fails as an assertion (`expect(res.status).toBe(2)`, received 1 — confirmed by re-running the suite), which is the correct RED shape; the discrimination can only be exercised once the script exists."
+        }
+      ],
+      "filesChanged": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api/src/common/train4-damage-report-script.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api/src/common/train4-damage-report.db.spec.ts"
+      ]
+    }
+  },
+  "implementation": [
+    {
+      "package": "WP1",
+      "status": "done",
+      "filesChanged": ["apps/api/scripts/report-train4-damage.mjs"],
+      "deviations": ""
+    }
+  ],
+  "gate": {
+    "pass": true,
+    "skipped": false,
+    "results": [
+      {
+        "command": "cd apps/api && npx jest src/common/train4-damage-report-script --passWithNoTests --reporters=default",
+        "pass": true,
+        "summary": "5 tests passed (TDR-T1 through TDR-T5): contract validation for report-train4-damage.mjs script",
+        "executed": 5
+      },
+      {
+        "command": "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- train4-damage-report --passWithNoTests\"",
+        "pass": true,
+        "summary": "9 tests passed (TDR-T6 through TDR-T14): DB-backed damage report validation against real Postgres",
+        "executed": 9
+      }
+    ]
+  },
+  "buildFix": null,
+  "uiVerify": {
+    "ran": false,
+    "completed": false,
+    "viewports": [],
+    "findings": []
+  },
+  "mutationProbe": {
+    "ran": false,
+    "targets": 0,
+    "results": [],
+    "allCaught": true,
+    "allRestored": true,
+    "restoredVerified": null,
+    "checksumMismatches": [],
+    "baselineDisturbed": [],
+    "skippedTargets": [],
+    "skipped": "small-scale"
+  },
+  "finalPass": {
+    "ran": false,
+    "completed": false,
+    "skipped": "small-scale",
+    "reader": null,
+    "model": null,
+    "effort": null,
+    "fallback": false,
+    "files": [],
+    "candidates": 0,
+    "gaps": [],
+    "secondRead": false,
+    "decision": "",
+    "findings": []
+  },
+  "confirmedFindings": [
+    {
+      "file": "apps/api/scripts/report-train4-damage.mjs",
+      "line": 859,
+      "severity": "major",
+      "summary": "emitHuman re-sorts armedEffectiveDates with Array#sort's default (string) comparator on Date objects, so the ACT BEFORE header can name a later date than the true earliest armed downgrade.",
+      "detail": "Verified against the compose DB: TenantSubscription.downgradeEffectiveAt is `timestamp without time zone`, and node-postgres parses it to a JS Date (constructor Date confirmed). Line 609-611 correctly sorts armedEffectiveDates with a numeric comparator, but line 859 does `[...b216.armedEffectiveDates].sort()[0]`, which compares String(Date) — i.e. it orders by WEEKDAY NAME. Verified counterexample run in node: `[Tue Sep 01 2026, Thu Sep 03 2026].sort()[0]` returns Thu Sep 03 2026. So with two or more armedAfterReinstatement tenants (e.g. effective dates Tue 2026-09-01 and Thu 2026-09-03), the human report prints `ACT BEFORE Thu Sep 03 2026 …` and the owner misses the 2026-09-01 downgrade — the exact money outcome the build plan's Risks table calls out (\"one more plan flip + MRR delta per tenant at 02:00\") and prints FIRST for that reason. The fixture cannot see this: only tenant B is armedAfterReinstatement, so armedEffectiveDates has length 1 and the bad sort is a no-op in T10/T13. Secondary: the value is interpolated as a raw Date, so the line prints a machine-locale/timezone string (\"Tue Sep 01 2026 00:00:00 GMT-0500 (Central Daylight Time)\") instead of an ISO date.",
+      "fixHint": "Drop the re-sort — use `b216.armedEffectiveDates[0]` (already chronologically sorted at lines 609-611) — and print it as `new Date(x).toISOString()`. Add a second armed-after-reinstatement tenant to the DB spec whose effective date is chronologically earlier but alphabetically later by weekday, and assert the ACT BEFORE line names it.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/scripts/report-train4-damage.mjs",
+      "line": 398,
+      "severity": "major",
+      "summary": "B215's window CTE is unfiltered and lags three snapshot JSON columns over the entire OrderRevision table, so --tenant does not reduce its work and a prod run can hit the 45s statement_timeout and lose the whole report.",
+      "detail": "The `revs` CTE (lines 398-408) computes LAG over `\"OrderRevision\"` with NO WHERE clause, carrying `r.snapshot`, `LAG(r.snapshot)` and `LAG(r.snapshot, 2)`; every predicate, including `${tenantClause()}`, is applied only in the outer query (lines 411-414). EXPLAIN of that exact SQL against the compose DB proves the tenant predicate is NOT pushed into the CTE (it cannot be — tenantId is not in the window's `PARTITION BY r.\"orderId\"` key): `Subquery Scan on revs  Filter: (… revs.\"tenantId\" = ANY (…) …) -> WindowAgg -> Sort (Sort Key: r.\"orderId\", r.\"revisionNumber\") -> Seq Scan on \"OrderRevision\" r`. On prod that means a full seq scan of OrderRevision plus a sort of the whole table with three copies of each row's `snapshot` jsonb in the tuple, before a single row is discarded. If it exceeds `SET statement_timeout = '45s'` (line 899) the query rejects, main() rejects, and the process exits 1 having printed nothing — B215 is the 4th of seven sequential sections in main() (lines 903-911), so the already-computed B134/B135/B214 results are thrown away too and the owner gets no report at all. This also defeats the mitigation the build plan states for its own risk row: \"The window query returns candidate pairs only. Snapshots load per candidate. The owner can scope with --tenant\" — the implementation does neither.",
+      "fixHint": "Move the filters into the CTE: `FROM \"OrderRevision\" r WHERE r.source = 'EDIT' AND r.\"editedById\" IS NOT NULL ${tenantClause(\"r\")}` (tenantClause already accepts an alias), and drop `snapshot`/`LAG(snapshot)`/`LAG(snapshot,2)` from the window so it returns only candidate `(orderId, revisionNumber, prevRevisionNumber)` triples; then load the three snapshots per candidate in a second query keyed on those ids, as the plan describes. Re-run the DB lane — T9's expected values (confirmedPairs=1/O215a, unconfirmablePairs=1/O215d) must be unchanged.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/scripts/report-train4-damage.mjs",
+      "line": 869,
+      "severity": "minor",
+      "summary": "The human report prints no monetary amount at all and omits four fields the build-plan section table lists as labelled buckets (spendableRemaining, expiredRemaining, recurringInvoicesEmailed, earliestKeyedOrderAt).",
+      "detail": "emitHuman prints one line per entry of `report.labels[sec]` (lines 869-871), and the labels maps carry only the count buckets. Confirmed by running human mode against the compose DB in this session: the output contains no candidateTotal, spendableRemaining, expiredRemaining, mrrDeltaSum, seatsFreedNear, recurringInvoicesEmailed, buyerPaymentRequestAmount, earliestKeyedOrderAt or armedEffectiveDates line — not one money figure appears anywhere in the report the owner is meant to read to decide whether repairs are needed. build-plan.md's section table lists `spendable, spendableRemaining → UPPER_BOUND`, `expired, expiredRemaining → CONTEXT`, `keyedOrders, earliestKeyedOrderAt → CONTEXT` and `recurringInvoices (+recurringInvoiceIds), recurringInvoicesEmailed → LOWER_BOUND` — those four are outside the `(+…)` parentheses the table uses for id arrays, i.e. labelled buckets — while R4 requires each bucket's label \"in both human and JSON output\" and acceptance criterion 3 requires the human run to print \"every bucket label\". Impact is limited because the amounts are all present in the --json document and per-row in the JSONL (B214 findings carry `remaining`), so nothing is lost, only unreadable from the console summary.",
+      "fixHint": "Add `spendableRemaining`/`expiredRemaining` (B214), `recurringInvoicesEmailed` (B131) and `earliestKeyedOrderAt` (B215) to their sections' `labels` maps — emitHuman then prints them automatically with the right label — and consider one explicit money line per section for candidateTotal, mrrDeltaSum and buyerPaymentRequestAmount. Existing label assertions in T6-T12 check specific keys, not exhaustiveness, so they stay green.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/common/train4-damage-report.db.spec.ts",
+      "line": 575,
+      "severity": "minor",
+      "summary": "B135's only near-miss mutation (DM135B) is excluded by two predicates at once, so neither `dm.type IN ('ADD_ON','REFUSED')` nor the 20-second upper edge of the window is pinned by T7.",
+      "detail": "DM135B is seeded as type DELIVERED **and** at `DONE + 1 s`, which is before CR135A's `resolvedAt` (`DONE + 10 min`) — so it fails the type filter and the `dm.\"createdAt\" >= lm.\"resolvedAt\"` lower bound independently. Traced through the script's LEFT JOIN (lines 249-254): remove `AND dm.type IN ('ADD_ON','REFUSED')` and mutationIds is still `[DM135A]` (DM135B is outside the window), so T7 stays green; widen `+ interval '20 seconds'` to any larger interval and mutationIds is still `[DM135A]` (nothing is seeded between +20 s and later), so T7 stays green again. Only the lower bound is actually pinned (dropping `>=` would pull DM135B in and turn T7 red). A near-miss that fails two predicates at once proves neither — the type filter and the window's upper edge are asserted by nothing.",
+      "fixHint": "Seed two more DeliveryMutations on O135/RS1 that must stay out of mutationIds: one DELIVERED at `at(DONE, 10*MIN + 3*SEC)` (inside the window, wrong type — pins the type filter) and one ADD_ON at `at(DONE, 10*MIN + 25*SEC)` (right type, outside the 20 s window — pins the upper edge). T7's `expect(s.mutationIds).toEqual([DM135A_ID])` then goes red if either predicate is loosened.",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "(artifact)",
+      "line": 206,
+      "severity": "major",
+      "summary": "File path is incomplete; the guard file actually exists in a subdirectory",
+      "detail": "In (artifact) .claude/pipeline/2026-09-10-train4-damage-report/build-plan.md: The artifact claims the guard file is at `buyer-seller-context.guard.ts:57` but the actual file is located at `apps/api/src/buyer/guards/buyer-seller-context.guard.ts`. The artifact omits the `guards/` subdirectory in the path.",
+      "fixComplexity": "mechanical",
+      "fixHint": "Change `buyer-seller-context.guard.ts:57` to `apps/api/src/buyer/guards/buyer-seller-context.guard.ts:57` (or at minimum `buyer/guards/buyer-seller-context.guard.ts:57` for consistency with other file references)",
+      "phase": "Baseline"
+    },
+    {
+      "file": "(red-gate)",
+      "severity": "blocker",
+      "phase": "Red gate",
+      "summary": "Red gate never went properly RED — the new tests are not proven able to fail",
+      "detail": "A test that has never failed proves nothing. Auditor notes: [\"BEHAVIORAL: T1, T2 and T3 fail identically on `expect(fs.existsSync(SCRIPT)).toBe(true)` (spec line 37) — 'the script file is absent', not on the no-write-keyword regex, the read-only-SET ordering, or the write-flag absence. Their oracles are unproven at this gate.\",\"BEHAVIORAL: T5 fails on its absence guard `not.toContain(\\\"Cannot find module\\\")`, not on its own oracle (status 1 + /No usable connection string/). The plan documents this as the expected red, but the oracle is untested.\",\"BEHAVIORAL: T6-T14 (all 9 DB tests) fail on one shared precondition, `expect(jsonRun.status).toBe(0)` — Expected 0, Received 1 — from a single beforeAll CLI run. Not one section-specific expected value (counts, id lists, exact amounts, bound labels) was evaluated. This is exactly the 'every assertion fails identically on the wiring' pattern; the near-miss seeds are in the DB but have proven nothing yet.\",\"BEHAVIORAL: Only T4 failed on a value that is its own plan oracle (Expected 2 for an unknown flag), and even there the received 1 comes from node's MODULE_NOT_FOUND, not from the script's own flag/connection paths.\",\"BEHAVIORAL (future wrong-reason risk): T1 and T3 are pure source-text absence pins — an empty or do-nothing stub script satisfies both. They gain bite only from T6-T14, which live in the DB lane and do not run on every push.\",\"BEHAVIORAL (future wrong-reason risk): T2 pins SOURCE order of `.query(` occurrences, not execution order (the spec says so in a NOTE) and forces a `.query(`-shaped client; an implementation using $queryRaw or a query helper would fail or vacuously satisfy it. T14 is the only real read-only proof, and it is DB-lane only.\",\"BEHAVIORAL (future wrong-reason risk): T1's codeLines() drops only lines starting with //, * or /*, so a usage banner or printed caveat containing DELETE/--execute inside a string produces a false red (the spec documents this as deliberately strict).\",\"BEHAVIORAL (future wrong-reason risk): T8 expects `creditNoteIds` to equal `[CN_A_ID, CN_B_ID].sort()` — it bakes in an ascending-id ordering the script must happen to produce; insertion-order output would go red for a formatting reason, not a counting bug.\",\"BEHAVIORAL (future wrong-reason risk): T14 also passes for a stub that exits 0 and prints well-formed JSON without querying anything; it proves 'no writes', never 'work was done'.\"]. Per-test outcomes: [{\"test\":\"TDR-T1 no write-capable SQL keyword appears in any non-comment line (apps/api/src/common/train4-damage-report-script.spec.ts:58)\",\"outcome\":\"assertion-failure\",\"note\":\"Re-ran myself: fails at spec line 37 `expect(fs.existsSync(SCRIPT)).toBe(true)` inside codeLines(). The authors deliberately converted the would-be ENOENT into an assertion, so it is a real assertion failure — but the failure is 'file absent', not the regex oracle /\\\\b(INSERT|UPDATE|DELETE|TRUNCATE|ALTER|DROP)\\\\b/i.\"},{\"test\":\"TDR-T2 read-only session is set as the FIRST query, before every other query (train4-damage-report-script.spec.ts:65)\",\"outcome\":\"assertion-failure\",\"note\":\"Fails at the same existsSync assertion (line 37, reported via call site 66). Its own oracle (contains `SET default_transaction_read_only = on`, >1 `.query(`, SET's query index lowest) was never reached.\"},{\"test\":\"TDR-T3 no write-mode flag is declared in source (train4-damage-report-script.spec.ts:103)\",\"outcome\":\"assertion-failure\",\"note\":\"Fails at existsSync (line 37, call site 104). Its own oracle (source contains none of --execute/--live/--apply/--fix/--repair) was never reached.\"},{\"test\":\"TDR-T4 an unknown flag exits 2 before any connection is attempted (train4-damage-report-script.spec.ts:111)\",\"outcome\":\"assertion-failure\",\"note\":\"Fails at line 119 with `Expected: 2, Received: 1` — the test's own plan-stated expected value (R5: unknown flag exits 2). The received 1 is node's MODULE_NOT_FOUND exit, so the exit-2 path is stated but not yet exercised. Stderr correctly shows no ECONNREFUSED.\"},{\"test\":\"TDR-T5 no connection string exits 1 naming the failure (train4-damage-report-script.spec.ts:124)\",\"outcome\":\"assertion-failure\",\"note\":\"Fails at line 127 on the absence guard `expect(res.stderr).not.toContain(\\\"Cannot find module\\\")` — received stderr is the MODULE_NOT_FOUND stack. Its real oracles (status 1, /No usable connection string/) were never reached.\"},{\"test\":\"TDR-T6 B134 buckets (apps/api/src/common/train4-damage-report.db.spec.ts:1062)\",\"outcome\":\"assertion-failure\",\"note\":\"Re-ran the DB lane myself against the compose Postgres: fails at line 1063 `expect(jsonRun.status).toBe(0)` — Expected 0, Received 1. beforeAll seeding succeeded (no hook error), so the fixture compiles and matches the live schema; the section oracles (candidates=1, candidateInvoiceIds=[I134a], candidateTotal=100, the two CONTEXT buckets, UPPER_BOUND labels) were never evaluated.\"},{\"test\":\"TDR-T7 B135 late merges (train4-damage-report.db.spec.ts:1077)\",\"outcome\":\"assertion-failure\",\"note\":\"Fails at line 1078 on the same shared `jsonRun.status === 0` guard. lateMerges=1 / changeRequestIds=[CR135a] / mutationIds=[DM135a] / lateNoteContext=1 never evaluated.\"},{\"test\":\"TDR-T8 B214 orphaned notes (train4-damage-report.db.spec.ts:1090)\",\"outcome\":\"assertion-failure\",\"note\":\"Fails at line 1091 on the shared status guard. orphaned=2, spendableRemaining=40, expiredRemaining=5 never evaluated.\"},{\"test\":\"TDR-T9 B215 double folds (train4-damage-report.db.spec.ts:1103)\",\"outcome\":\"assertion-failure\",\"note\":\"Fails at line 1104 on the shared status guard. confirmedPairs=1/[O215a], unconfirmablePairs=1/[O215d], keyedOrders=1 never evaluated.\"},{\"test\":\"TDR-T10 B216 reinstated downgrades (train4-damage-report.db.spec.ts:1118)\",\"outcome\":\"assertion-failure\",\"note\":\"Fails at line 1119 on the shared status guard. appliedAfterReinstatement=1, mrrDeltaSum=-50, seatsFreedNear=2, armed buckets and the /^#\\\\d+$/ ordinal never evaluated.\"},{\"test\":\"TDR-T11 B131 removed-customer generation (train4-damage-report.db.spec.ts:1137)\",\"outcome\":\"assertion-failure\",\"note\":\"Fails at line 1138 on the shared status guard. templateOrders/recurringInvoices/manualInvoices oracles never evaluated.\"},{\"test\":\"TDR-T12 B141 post-removal buyer activity (train4-damage-report.db.spec.ts:1154)\",\"outcome\":\"assertion-failure\",\"note\":\"Fails at line 1155 on the shared status guard. customerSideEdits=1, unmarkedOrdersUpperBound=1, buyerPaymentRequestAmount=12.5 never evaluated.\"},{\"test\":\"TDR-T13 output carries no identifiers (train4-damage-report.db.spec.ts:1171)\",\"outcome\":\"assertion-failure\",\"note\":\"Fails at line 1172 on the shared status guard. The leak scan (SECRET marker, 4 tenant ids, 4 slugs, 6 seeded emails across --json stdout, human stdout+stderr and every .jsonl under --out-dir), tenants=4 and the JSONL class/bucket/label/tenant shape were never evaluated.\"},{\"test\":\"TDR-T14 run leaves the database unchanged (train4-damage-report.db.spec.ts:1216)\",\"outcome\":\"assertion-failure\",\"note\":\"Fails at line 1217 on the shared status guard. The 19-table before/after count+max(timestamp) snapshot comparison — the real read-only proof — was never evaluated. Cleanup verified: 0 rows left in Tenant matching 'qa-damage-%' after my run.\"}]. Remediation asked for: (none reported)",
+      "fixHint": "Strengthen the vacuous tests, or rewrite the requirement if the behavior already exists.",
+      "fixComplexity": "judgment"
+    }
+  ],
+  "confirmedByPhase": {
+    "Baseline": 1,
+    "Author tests": 0,
+    "Red gate": 1,
+    "Implement": 0,
+    "Gate & Review": 4,
+    "Verify": 0,
+    "UI verify": 0,
+    "Mutation probe": 0,
+    "Fix": 0,
+    "Final pass": 0
+  },
+  "phaseReport": [
+    {
+      "phase": "Baseline",
+      "ran": true,
+      "agents": 3,
+      "rawFindings": 1,
+      "tokens": 0,
+      "model": "claude-haiku-4-5 (gate/grounding/manifest)",
+      "effort": "low",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Author tests",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-sonnet-5",
+      "effort": "medium (a package's own effort wins)",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Red gate",
+      "ran": true,
+      "agents": 5,
+      "rawFindings": 1,
+      "tokens": 0,
+      "model": "claude-haiku-4-5 (run) + claude-opus-5 (audit/remediate)",
+      "effort": "low run / high audit / high remediation",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Implement",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": 0,
+      "tokens": 272489,
+      "model": "claude-sonnet-5",
+      "effort": "medium (a package's own effort wins)",
+      "estUsd": 2.72,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Gate & Review",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": 4,
+      "tokens": 88832,
+      "model": "claude-haiku-4-5 (gate/regate) + claude-opus-5 (build-fix, lenses)",
+      "effort": "low gate / high build-fix / deep lenses high (xhigh when any file is HIGH risk) / pattern lenses medium",
+      "estUsd": 2.22,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Verify",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-sonnet-5 (location check) + claude-opus-5 (refuters, per file) + claude-fable-5-1 (split-vote tie-break)",
+      "effort": "location check low / refuters medium (high on HIGH-risk findings) / tie-break high",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "UI verify",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-sonnet-5 (driver) + claude-opus-5 (judge)",
+      "effort": "medium driver / high judge",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Mutation probe",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-haiku-4-5 (checksums) + claude-opus-5 (probes)",
+      "effort": "low checksums / medium probes",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Fix",
+      "ran": true,
+      "agents": 16,
+      "rawFindings": 1,
+      "tokens": 191995,
+      "model": "claude-sonnet-5 (brief) + claude-fable-5-1 (plans every fix in the round; claude-opus-5 if it declines) + claude-sonnet-5 (mechanical executors) + claude-sonnet-5 (designed LOW-risk executors) + claude-opus-5 (HIGH-risk and broad-key executors, recheck) + claude-haiku-4-5 (regate)",
+      "effort": "low brief / high plan (xhigh on the fallback planner) / low mechanical / medium designed LOW-risk / high HIGH-risk and broad keys / high re-check / low gates",
+      "estUsd": 4.8,
+      "overlappedWith": null,
+      "note": "Fable-planned fixes (Sonnet brief -> Fable plan -> executors implementing the design)"
+    },
+    {
+      "phase": "Final pass",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-sonnet-5 (diff digest) + claude-opus-5 (adversarial read → candidates) + claude-fable-5-1 (decides; claude-opus-5 if it declines)",
+      "effort": "low digest / xhigh read / high decide (xhigh on the fallback decider)",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    }
+  ],
+  "fixRounds": 2,
+  "fixReports": [
+    {
+      "round": 1,
+      "plan": {
+        "round": 1,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 6,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 1,
+          "sonnet": 2,
+          "opus": 3
+        },
+        "waves": [[0, 1, 2, 3, 4, 5]],
+        "note": "Round 1 fixes all six findings in a single wave (five of them touch report-train4-damage.mjs and/or train4-damage-report.db.spec.ts, so the engine serializes them by file). Script changes: the ACT BEFORE line drops the string-comparator re-sort and prints the chronologically first armed date as ISO (#0); fetchB215 pushes only the tenant filter into the window CTE, strips the three jsonb snapshot columns from the sort tuple in favour of LAG(id)/LAG(id,2), and loads snapshots per candidate in a second read-only query — deliberately NOT moving the source/editedById predicates into the CTE, which would change LAG semantics (#1); the four plan-listed labelled buckets are added to the labels maps and a per-section amounts line prints candidateTotal/mrrDeltaSum/buyerPaymentRequestAmount (#2). Test changes: a fifth armed tenant with a weekday-later-but-earlier date pins the ACT BEFORE ordering; an O215e non-EDIT-between-EDITs near-miss pins the B215 semantics; DM135C/DM135D single-predicate near-misses pin B135's type filter and 20 s upper edge; T4/T5/T8/T14 are strengthened so each fails on its own oracle and a no-op stub cannot pass T14 (#3, #5). The build-plan path typo is a mechanical edit (#4). Expected values from the plan (confirmedPairs=1/O215a, unconfirmablePairs=1/O215d, orphaned=2, spendableRemaining=40, mrrDeltaSum=-50, etc.) must all stay unchanged; tenants moves 4->5 and armedAfterReinstatement 1->2 as a direct consequence of the #0 fixture."
+      },
+      "reports": [
+        {
+          "target": "apps/api/scripts/report-train4-damage.mjs",
+          "route": "opus",
+          "fixed": [
+            "[#0] emitHuman's ACT BEFORE header no longer re-sorts armedEffectiveDates with Array#sort's default (string) comparator - it takes armedEffectiveDates[0] (already numerically sorted in fetchB216) and prints it via a new formatBucketValue() as an ISO timestamp. DB spec gained a FIFTH fixture tenant E (qa-damage-<sfx>-e / -tenant-e, added to TENANT_IDS/TENANT_SLUGS so scoping+teardown+leak-scan cover it) with only a Tenant row, one armed TenantSubscription and two BillingEvents; its downgradeEffectiveAt is a TUESDAY two days BEFORE tenant B's THURSDAY (both at 12:00 local so the weekday survives the timestamp-without-time-zone read-back skew), i.e. chronologically first but string-sorted last. T10 now asserts armedAfterReinstatement=2, 2 ordinals, armedEffectiveDates=[E,B], that a defaulted sort would name B, and that human stdout contains `ACT BEFORE <E ISO>` and NOT `<B ISO>`. T13 tenants 4->5. DEVIATION FROM DESIGN (evidence-backed): the design said assert armedEffectiveDates[0] === the new tenant's JS Date .toISOString(); I measured against the compose DB that Prisma writes the UTC wall clock into `timestamp without time zone` and node-postgres reads it back as LOCAL time (wrote 2026-09-20T17:00:00.000Z, read back 2026-09-20T22:00:00.000Z, sameInstant:false), so the in-memory Date is NOT the value the script sees; the expected ISO is therefore read back from the DB with the spec's own pool in beforeAll (armedIsoB/armedIsoE) - an oracle independent of the script under test.",
+            "[#1] fetchB215's window CTE no longer lags jsonb over the whole OrderRevision table and now honours --tenant. The CTE keeps only ids (LAG(r.id) / LAG(r.id,2) as prevId/prevPrevId; snapshot, LAG(snapshot) and LAG(snapshot,2) removed) and filters `WHERE TRUE ${tenantClause(\"r\")}`; the source/editedById/120s predicates stay in the outer query so LAG still sees the immediately preceding revision whatever its source. A second query through the same `q` helper (`SELECT id, snapshot FROM \"OrderRevision\" WHERE id = ANY($1::text[])`) loads the de-duplicated candidate snapshots into a Map and assigns curSnapshot/prevSnapshot/prevPrevSnapshot; the bucket loop and findings shape are byte-identical. EXPLAIN against the compose DB now shows `Seq Scan on \"OrderRevision\" r  Filter: (\"tenantId\" = ANY (...))` INSIDE the CTE (previously the filter sat only on the outer Subquery Scan). DB spec gained near-miss order O215f (named O215f because O215e was already taken by a different near-miss): r1 EDIT qty 4, r2 source CHANGE_REQUEST qty 5 (+20s), r3 EDIT qty 6 (+40s), same editor - the revision() helper took an optional `source` param. T9 asserts O215f appears in neither id list, with confirmedPairs=1/[O215a], unconfirmablePairs=1/[O215d], keyedOrders=1 unchanged.",
+            "[#2] The human report now prints every labelled bucket and every monetary total. Added labels: B214 spendableRemaining=UPPER_BOUND, expiredRemaining=CONTEXT; B131 recurringInvoicesEmailed=LOWER_BOUND; B215 earliestKeyedOrderAt=CONTEXT (JSON section values unchanged). emitHuman's labels loop formats values through formatBucketValue (Date/ISO-looking string -> ISO, null -> \"(none)\", numbers as before), and a new MONEY_FIELDS map {B134:[candidateTotal], B216:[mrrDeltaSum], B141:[buyerPaymentRequestAmount]} prints `amounts: <field>=<value>` right after it. The id-listing loop, byTenant line and CANNOT_DECIDE prose are untouched (extra label keys match no findings and are skipped). T8 now pins the two new B214 labels; T13 pins /spendableRemaining: 40\\s+\\[UPPER_BOUND\\]/, /expiredRemaining: 5\\s+\\[CONTEXT\\]/, /recurringInvoicesEmailed: \\d+\\s+\\[LOWER_BOUND\\]/, /earliestKeyedOrderAt: .*\\[CONTEXT\\]/, /candidateTotal=100/, /mrrDeltaSum=-50/, /buyerPaymentRequestAmount=12\\.5/."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api/scripts/report-train4-damage.mjs",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api/src/common/train4-damage-report.db.spec.ts"
+          ]
+        },
+        {
+          "target": "apps/api/src/common/train4-damage-report.db.spec.ts",
+          "route": "sonnet",
+          "fixed": [
+            "B135's only near-miss mutation (DM135B) is excluded by two predicates at once, so neither `dm.type IN ('ADD_ON','REFUSED')` nor the 20-second upper edge of the window is pinned by T7."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api/src/common/train4-damage-report.db.spec.ts"
+          ]
+        },
+        {
+          "target": "(artifact)",
+          "route": "mechanical",
+          "fixed": ["File path is incomplete; the guard file actually exists in a subdirectory"],
+          "skipped": [],
+          "filesChanged": [".claude/pipeline/2026-09-10-train4-damage-report/build-plan.md"]
+        },
+        {
+          "target": "(red-gate)",
+          "route": "opus",
+          "fixed": [
+            "Red gate never went properly RED — the new tests are not proven able to fail (finding [#0]): implemented Fable's design exactly — T8 compares creditNoteIds order-insensitively; T14 now parses the JSON stdout of the run its snapshot pair measured and pins sections.B214.orphaned === 2 plus tenants === 5, so a stub that exits 0 with well-formed JSON fails T14 itself (mutation-probed: stub gave `Expected: 2, Received: 0` at spec line 1357); T4 asserts the script's own literal `Unknown flag: --execute` on stderr FIRST (negative control: a MODULE_NOT_FOUND run exits 1 with stderr not containing that literal); T5 puts status===1 and /No usable connection string/ before the `Cannot find module` guard. T1/T2/T3 source pins and T13's leak scan left unchanged; the script was not touched."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api/src/common/train4-damage-report.db.spec.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api/src/common/train4-damage-report-script.spec.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "plan": {
+        "round": 2,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 4,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 0,
+          "sonnet": 2,
+          "opus": 2
+        },
+        "waves": [[1, 2], [0], [3]],
+        "note": "Round 2 fixes all four findings. Wave 1 edits only the DB spec: a fifth B135 mutation (ADD_ON at DONE+5min) that pins the late-merge window's lower bound, and a Wed/Fri armed-downgrade pair so the B216 fixture keeps discriminating the defaulted Date sort on any host UTC offset. Wave 2 (after the spec edits, since its test also lands in that file) rescopes the B215 LAG window's CTE by the ORDER's tenant instead of the nullable OrderRevision.tenantId, keeps the unscoped case free of the extra semi-join and keeps the outer candidate filter unchanged, with a NULL-middle-revision seed that is red on the current code. Wave 3 clears the check-types gate as an environment fix (build packages/pricing, then npm ci if needed) with an explicit ban on stubs or tsconfig edits; the 45 TS2307 errors sit in files this diff never touched."
+      },
+      "reports": [
+        {
+          "target": "apps/api/src/common/train4-damage-report.db.spec.ts",
+          "route": "sonnet",
+          "fixed": [
+            "The two new B135 near-misses pin the mutation type filter and the window's 20-second upper edge, but nothing pins its lower edge: removing `dm.\"createdAt\" >= lm.\"resolvedAt\"` leaves all nine DB tests green.",
+            "T10's fixture-discriminating assertion (`[E,B].sort()[0]` must be B) depends on the machine's UTC offset being under +12, so the DB lane goes red on a UTC+13/+14 host for a reason that is not a product defect."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": ["apps/api/src/common/train4-damage-report.db.spec.ts"]
+        },
+        {
+          "target": "apps/api/scripts/report-train4-damage.mjs",
+          "route": "opus",
+          "fixed": [
+            "The fix for the B215 window pushed the tenant predicate INSIDE the LAG window CTE, but OrderRevision.tenantId is nullable — so under --tenant a NULL-tenant revision is dropped from the window and LAG pairs non-adjacent revisions, both inventing and losing double-fold candidates."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-watchdog\\apps\\api\\scripts\\report-train4-damage.mjs",
+            "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-watchdog\\apps\\api\\src\\common\\train4-damage-report.db.spec.ts"
+          ],
+          "disputed": []
+        },
+        {
+          "target": "(gate)",
+          "route": "opus",
+          "fixed": [
+            "[#0] Verification gate still failing after fixes (45 TS2307 'Cannot find module @routeflow/pricing' in apps/api) — resolved as an environment/build-artifact issue exactly as designed, with NO source edits. Evidence from this session, all run from C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog: (1) First re-run of `npm run check-types -w apps/api` already exited 0 (EXIT=0, tsc --noEmit, no diagnostics) — so the TS2307 burst was a transient/stale state of packages/pricing/dist in the executor's environment, not a code defect; the workspace symlink node_modules/@routeflow/pricing -> packages/pricing is present and packages/pricing/dist contains index.d.ts + pricing.d.ts (built 2026-09-09). (2) I still ran the design's step 1, `npm run build -w packages/pricing` -> BUILD_EXIT=0, then re-ran `npm run check-types -w apps/api` -> CT_EXIT=0. `npm ci` was NOT needed (step 2 of the design was not reached, since TS2307 did not persist). (3) Full re-verification, all green: `node --check apps/api/scripts/report-train4-damage.mjs` OK; `npm run lint -w apps/api` LINT_EXIT=0 (7477 pre-existing warnings, 0 errors); TP1 `cd apps/api && npx jest src/common/train4-damage-report-script --reporters=default` -> 5/5 pass (TDR-T1..T5); TP2 behavioral DB gate `node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- train4-damage-report --passWithNoTests\"` -> 9/9 pass (TDR-T6..T14) against the running routeflow_postgres compose container. (4) Invariant held: `git status --short` still shows only the planning dir plus the three intended untracked files — apps/api/scripts/report-train4-damage.mjs, apps/api/src/common/train4-damage-report-script.spec.ts, apps/api/src/common/train4-damage-report.db.spec.ts. No tsconfig path, ambient declaration, import, or any of the 45 flagged files was touched. Formatter step skipped: no files were modified, so there was nothing to run Prettier on; the only artifact regenerated is the gitignored packages/pricing/dist build output."
+          ],
+          "skipped": [],
+          "filesChanged": []
+        }
+      ]
+    }
+  ],
+  "remainingFindings": [],
+  "clean": false
+}
