@@ -217,6 +217,16 @@ function runCli(
   // this happens to run in), so a harness case can never write into a real
   // registry (test-plan.md §7).
   if (stateDir) env.PLANE_SYNC_STATE_DIR = stateDir;
+  // Fix-round (runs.jsonl pollution): every runCli invocation appends one
+  // telemetry line via plane-client.mjs's appendRun() in a `finally` inside
+  // plane-sync.mjs's main() — success OR failure. runsPath() only honours a
+  // PLANE_RUNS_PATH override when PLANE_SYNC_SELF_TEST=1 is ALSO set (same
+  // gate as PLANE_DENYLIST_PATH/PLANE_KNOBS_PATH), so both must be set on
+  // every call here or the child falls through to the real
+  // local-assets/plane/runs.jsonl of whatever repo/worktree this runs in —
+  // exactly the leak the final invariant below now guards against.
+  env.PLANE_SYNC_SELF_TEST = "1";
+  env.PLANE_RUNS_PATH = join(stateDir || registryDir, "self-test-runs.jsonl");
   if (noKey) delete env.PLANE_API_KEY;
   else env.PLANE_API_KEY = apiKey;
   const effectiveArgv =
@@ -1448,6 +1458,10 @@ async function main() {
       PLANE_API_KEY: "self-test-key",
       PLANE_DENYLIST_PATH: missingPath,
       PLANE_SYNC_SELF_TEST: "1",
+      // Marker is set above, so runsPath() would honour a PLANE_RUNS_PATH
+      // override too — set one so this run's appendRun() (finally, even on
+      // this fail-closed exit) never lands in the real runs.jsonl.
+      PLANE_RUNS_PATH: join(dir, "self-test-runs.jsonl"),
     };
     const { code, stdout, stderr } = await new Promise((resolve) => {
       const child = spawn(process.execPath, [SCRIPT_PATH, "--allow-branch"], {
@@ -1495,6 +1509,10 @@ async function main() {
       PLANE_API_KEY: "self-test-key",
       PLANE_DENYLIST_PATH: emptyPath,
       PLANE_SYNC_SELF_TEST: "1",
+      // Same as F3 above: the marker is set, so it must be paired with a
+      // PLANE_RUNS_PATH override to keep this run's telemetry line out of
+      // the real runs.jsonl.
+      PLANE_RUNS_PATH: join(emptyDenylistDir, "self-test-runs.jsonl"),
     };
     const { code, stdout, stderr } = await new Promise((resolve) => {
       const child = spawn(process.execPath, [SCRIPT_PATH, "--allow-branch"], {
@@ -1544,8 +1562,19 @@ async function main() {
       PLANE_SYNC_STATE_DIR: dir,
       PLANE_API_KEY: "self-test-key",
       PLANE_DENYLIST_PATH: nonexistentPath,
-      // deliberately NOT setting PLANE_SYNC_SELF_TEST
+      // deliberately NOT setting PLANE_SYNC_SELF_TEST — this case exists to
+      // prove the override is ignored without it. That also means
+      // runsPath() cannot be redirected via PLANE_RUNS_PATH here (same
+      // marker gates both), so the real script's appendRun() WILL append one
+      // line to this worktree's real local-assets/plane/runs.jsonl. Snapshot
+      // it immediately before/after this one spawn and put it back exactly
+      // as found, so the suite-wide "untouched by the suite" invariant below
+      // still holds — this is the one deliberate exception, self-healed
+      // rather than avoided.
     };
+    const runsSnapshotBeforeF3c = existsSync(REAL_RUNS_PATH)
+      ? readFileSync(REAL_RUNS_PATH, "utf8")
+      : null;
     const { code, stdout, stderr } = await new Promise((resolve) => {
       const child = spawn(process.execPath, [SCRIPT_PATH, "--allow-branch"], {
         env,
@@ -1561,6 +1590,15 @@ async function main() {
         resolve({ code: c, stdout: out, stderr: err });
       });
     });
+    if (runsSnapshotBeforeF3c === null) {
+      try {
+        if (existsSync(REAL_RUNS_PATH)) rmSync(REAL_RUNS_PATH);
+      } catch {
+        // best-effort — never turn cleanup itself into a red suite
+      }
+    } else {
+      writeFileSync(REAL_RUNS_PATH, runsSnapshotBeforeF3c);
+    }
     const writes = server.requests.filter(
       (r) => r.method === "PATCH" || r.method === "POST",
     ).length;
@@ -2168,9 +2206,16 @@ async function main() {
 const REAL_CAMPAIGN_DIR = join(repoRoot(), ".claude", "campaign");
 const REAL_WRITES_LEDGER = join(REAL_CAMPAIGN_DIR, ".plane-writes.jsonl");
 const REAL_SYNC_STATE = join(REAL_CAMPAIGN_DIR, ".plane-sync-state.json");
+// Fix-round (runs.jsonl pollution, 2026-09-12): every runCli/direct-spawn
+// case above now pins PLANE_RUNS_PATH (paired with PLANE_SYNC_SELF_TEST=1)
+// to a throwaway file, and F3c self-heals the one case that must run with
+// the marker off. This is the belt-and-suspenders proof that none of it
+// ever falls through to the real local-assets/plane/runs.jsonl.
+const REAL_RUNS_PATH = join(repoRoot(), "local-assets", "plane", "runs.jsonl");
 const snapshotRealFiles = () => ({
   writes: existsSync(REAL_WRITES_LEDGER) ? readFileSync(REAL_WRITES_LEDGER, "utf8") : null,
   state: existsSync(REAL_SYNC_STATE) ? readFileSync(REAL_SYNC_STATE, "utf8") : null,
+  runs: existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null,
 });
 const realFilesBefore = snapshotRealFiles();
 
@@ -2196,9 +2241,14 @@ check(
   realFilesAfter.state,
   realFilesBefore.state,
 );
+check(
+  "F4: this worktree's real local-assets/plane/runs.jsonl is byte-identical before/after the suite (or absent both times)",
+  realFilesAfter.runs,
+  realFilesBefore.runs,
+);
 // One-time cleanup of the leak this finding was filed against — not this
 // run's own output (already proven above), the pre-existing leaked files.
-for (const p of [REAL_WRITES_LEDGER, REAL_SYNC_STATE]) {
+for (const p of [REAL_WRITES_LEDGER, REAL_SYNC_STATE, REAL_RUNS_PATH]) {
   try {
     if (existsSync(p)) rmSync(p);
   } catch {

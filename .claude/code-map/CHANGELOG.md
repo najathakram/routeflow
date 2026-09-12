@@ -60,6 +60,30 @@ requestHash?)`'s lookup order is now **key table (this customer) → this custom
   `.github/workflows/google-signin-monitor.yml`; new runbook
   `docs/runbooks/mandatory-dependencies.md` (Google OAuth client + apex DNS, break-glass, no
   secrets/uuids/client ids). api.md/web.md/mobile.md/packages.md untouched (no diff there). Round-1 Opus corrections are in the row too: `decodeAuthError` (URL-first classification off the base64url `authError` param — the ~800 KB error page has no marker in the 64 KB body window), a POSITIVE-signal requirement for `ok` (else `unexpected_page`), the Google/Apex sections HOISTED above post-deploy-check's login gate (now 2/3; Login..Divergence 4-7), and `finalPage` (origin+pathname) as the only form a caller may log.
+- **2026-09-12** — (branch `feat/plane-harness-learning`, in-PR bookkeeping, WP3 of
+  `.claude/pipeline/2026-09-12-plane-learning/`) — new `scripts/campaign/plane-doctor.mjs`
+  (`npm run plane:doctor` / `-- --offline`): one-shot harness health check, one
+  `PASS`/`WARN`/`FAIL <name>: <detail>` line per check (knobs, denylist, `--help` on all six
+  plane-\*.mjs tools, `.claude/settings.json` SessionStart+Stop hooks, `package.json` `plane:*`
+  scripts + `verify` wiring, `.gitignore` coverage, the skill file's size cap, Gate 5's
+  `--max-writes`/never-`--allow-branch` argv shape, the machine-local scheduled-task file
+  WARN-only, `local-assets/plane/ops/` WARN-only; online: `projects/` identifiers, the
+  `runs.jsonl`-vs-`.claude/campaign/status` "landing without sync" WARN, and an on-master-only
+  `plane-sync --check` drift WARN), exits 1 iff any FAIL, never a write, `--json` shape, one
+  `appendRun()` telemetry line per run (skipped for `--help`). New INDEX.md row (**Plane
+  learning — doctor**) alongside the existing Plane harness v2 rows. Coverage: new
+  `scripts/campaign/plane-doctor.self-test.mjs` — spawns a byte-for-byte copy of
+  plane-doctor.mjs + plane-client.mjs dropped into a scaffolded temp repo (its own
+  `package.json`+`.claude` marker, `--help`-only stub tools) since this file's offline checks
+  resolve every path via `repoRoot()`, never an env override; covers the T3 oracles (all-PASS
+  fixture, SessionStart-hook-missing FAIL, scheduled-task-absent WARN, 5-project online PASS
+  within the 3-GET budget, landing-without-sync WARN via a real `git init` + old `runs.jsonl`
+  line + a newer status commit, no-key WARN-skip, `--json` shape, telemetry shape, and the
+  Gate-5 comment-vs-code `--allow-branch` distinction), all green. plane-retro.mjs (WP4) and
+  the `package.json`/`verify` wiring (WP5) are owned by sibling work packages in the same PR —
+  until they land, this repo's own `plane-doctor.mjs --offline` correctly FAILs on `help`
+  (`plane-retro.mjs (missing)`) and `package` (`missing scripts: plane:doctor, plane:retro`),
+  which is expected mid-PR, not a defect in this file.
 
 - **2026-09-10** — (branch `chore/next-15` #5b3b3c4e = master, Option-B follow-up) —
   `apps/web` upgraded Next 14.2.35 → 15.5.25 (React 18 → 19.2.0, eslint 8 → 9); clears the two

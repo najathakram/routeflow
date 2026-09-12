@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "knobs": {
+    "clientRatePerMin": { "value": 50, "min": 20, "max": 55, "autoTune": true },
+    "triageGetBudget": { "value": 16, "min": 12, "max": 40, "autoTune": true },
+    "gate5MaxWrites": { "value": 25, "min": 5, "max": 60, "autoTune": true },
+    "syncMaxWrites": { "value": 250, "min": 50, "max": 500, "autoTune": true },
+    "applyManualBudgetPerDay": { "value": 20, "min": 10, "max": 40, "autoTune": false },
+    "staleStartedDays": { "value": 7, "min": 3, "max": 21, "autoTune": true }
+  },
+  "history": []
+}

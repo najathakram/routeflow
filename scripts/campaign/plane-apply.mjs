@@ -49,13 +49,20 @@
 // whole purpose is to write (spec.md binding rules single it out by name).
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { createClient, scanForbidden, writesToday } from "./plane-client.mjs";
+import {
+  appendRun,
+  createClient,
+  knob,
+  loadKnobs,
+  scanForbidden,
+  writesToday,
+} from "./plane-client.mjs";
+import { currentBranch } from "./plane-sync.mjs";
 
 // "<PROJECT>-<sequence_id>", the only ref shape spec.md gives (`ROAD-15`,
 // `OPS-23`, …) — the project identifier is everything before the last "-".
 const REF_RE = /^([A-Za-z][A-Za-z0-9]*)-(\d+)$/;
 
-const MANUAL_BUDGET_PER_DAY = 20;
 const DEFAULT_MAX_WRITES = 20;
 
 // ── ops-file validation + plan building (zero network writes) ──────────────
@@ -315,25 +322,30 @@ export async function runApply({
   maxWrites = DEFAULT_MAX_WRITES,
   overBudget = null,
   apiKey,
+  // spec 2026-09-12-plane-learning R1: default from the `applyManualBudgetPerDay`
+  // knob when the caller (main()) doesn't pass one explicitly — kept as an
+  // explicit parameter (not read here via knob()) so runApply stays usable
+  // standalone with the same fallback plane-apply always had.
+  manualBudgetLimit = 20,
 } = {}) {
   let raw;
   try {
     raw = readFileSync(opsPath, "utf8");
   } catch (err) {
     process.stderr.write(`plane-apply: cannot read ops file "${opsPath}": ${err.message}\n`);
-    return { exitCode: 1 };
+    return { exitCode: 1, applied: 0, deferred: 0, clientSummary: null };
   }
   let parsed;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
     process.stderr.write(`plane-apply: invalid JSON in "${opsPath}": ${err.message}\n`);
-    return { exitCode: 1 };
+    return { exitCode: 1, applied: 0, deferred: 0, clientSummary: null };
   }
   const ops = Array.isArray(parsed?.ops) ? parsed.ops : null;
   if (!ops) {
     process.stderr.write(`plane-apply: ops file must be {"ops":[...]}\n`);
-    return { exitCode: 1 };
+    return { exitCode: 1, applied: 0, deferred: 0, clientSummary: null };
   }
 
   const client = createClient({ apiKey, tool: "plane-apply", maxWrites });
@@ -350,13 +362,13 @@ export async function runApply({
   } catch (err) {
     const idx = typeof err.opIndex === "number" ? err.opIndex + 1 : null;
     process.stderr.write(`${idx != null ? `#${idx} ` : ""}${err.message}\n`);
-    return { exitCode: 1 };
+    return { exitCode: 1, applied: 0, deferred: 0, clientSummary: client.summary() };
   }
 
   if (dryRun) {
     for (const p of plan) console.log(`#${p.index + 1} ${p.label}`);
     console.log(`Plane apply: dry-run — ${plan.length} op(s) would write, 0 written`);
-    return { exitCode: 0 };
+    return { exitCode: 0, applied: 0, deferred: 0, clientSummary: client.summary() };
   }
 
   // Manual write-budget refusal (R3) — historical ledger across every tool
@@ -365,12 +377,12 @@ export async function runApply({
   // leaves the run at zero writes.
   if (!overBudget) {
     const alreadyToday = writesToday({ exclude: ["plane-sync"] });
-    if (alreadyToday + plan.length > MANUAL_BUDGET_PER_DAY) {
+    if (alreadyToday + plan.length > manualBudgetLimit) {
       process.stderr.write(
         `plane-apply: refusing — manual writes today (${alreadyToday}) + this run (${plan.length}) ` +
-          `would exceed the ${MANUAL_BUDGET_PER_DAY}/day budget; pass --over-budget "<reason>" to proceed\n`,
+          `would exceed the ${manualBudgetLimit}/day budget; pass --over-budget "<reason>" to proceed\n`,
       );
-      return { exitCode: 3 };
+      return { exitCode: 3, applied: 0, deferred: 0, clientSummary: client.summary() };
     }
   }
 
@@ -398,22 +410,22 @@ export async function runApply({
         // string during validation, so the shared client's own scan should
         // never fire here — but never silently treat it as success if it does.
         process.stderr.write(`#${p.index + 1} ${p.label} forbidden (${result.forbidden.name})\n`);
-        return { exitCode: 1 };
+        return { exitCode: 1, applied, deferred, clientSummary: client.summary() };
       }
       applied++;
       console.log(`#${p.index + 1} ${p.label} → ok`);
     } catch (err) {
       process.stderr.write(`#${p.index + 1} ${p.label} → failed: ${err?.message ?? err}\n`);
       process.stderr.write(`plane-apply: stopped after ${applied} of ${plan.length} writes\n`);
-      return { exitCode: 1 };
+      return { exitCode: 1, applied, deferred, clientSummary: client.summary() };
     }
   }
   if (deferred > 0) {
     console.log(`Plane apply: applied=${applied} deferred=${deferred}`);
-    return { exitCode: 4 };
+    return { exitCode: 4, applied, deferred, clientSummary: client.summary() };
   }
   console.log(`Plane apply: ${applied} write(s) applied`);
-  return { exitCode: 0 };
+  return { exitCode: 0, applied, deferred, clientSummary: client.summary() };
 }
 
 // ── CLI ──────────────────────────────────────────────────────────────────
@@ -465,19 +477,87 @@ async function main() {
   }
   const opsPath = positionals[0];
 
-  // R8: unlike every other plane-*.mjs script, a missing key is NOT a silent
-  // skip — this script's whole purpose is to write.
-  const apiKey = process.env.PLANE_API_KEY;
-  if (!apiKey) {
-    process.stderr.write("plane-apply: missing PLANE_API_KEY (refusing to run without a key)\n");
-    process.exitCode = 2;
-    return;
-  }
+  // R2 telemetry (spec 2026-09-12-plane-learning): started/rec set up BEFORE
+  // loadKnobs() so a `knobs invalid: <name>` throw still gets exactly one
+  // runs.jsonl line via the finally below — --help/usage exits above are the
+  // only ones that write none.
+  const started = Date.now();
+  const rec = { tool: "plane-apply", flags: argv, branch: currentBranch() };
+  const zeroClientSummary = () => ({
+    writes: 0,
+    deferred: 0,
+    forbidden: 0,
+    gets: 0,
+    rateLimitSleeps: 0,
+    retries: 0,
+  });
 
-  // NEVER process.exit() here — see plane-sync.mjs's identical note (a forced
-  // exit can race fetch/undici's keep-alive socket teardown on Windows).
-  const result = await runApply({ opsPath, dryRun, maxWrites, overBudget, apiKey });
-  process.exitCode = result.exitCode;
+  try {
+    // R1: loaded right after --help/usage handling, before any process.env
+    // read (including PLANE_API_KEY below) or network request (T1). Printed
+    // explicitly so the exact "knobs invalid: <name>" text always reaches
+    // stderr.
+    let manualBudgetLimit;
+    try {
+      loadKnobs();
+      manualBudgetLimit = knob("applyManualBudgetPerDay");
+    } catch (err) {
+      // See plane-sync.mjs's identical note: T1's contract is an out-of-range
+      // VALUE in an otherwise present file — that hard-fails. A missing/
+      // unreadable file falls back to the knob's documented default.
+      if (/^knobs invalid:/.test(String(err?.message ?? ""))) {
+        process.stderr.write(`plane-apply: ${err.message}\n`);
+        process.exitCode = 1;
+        rec.error = `${err?.name ?? "Error"}: ${String(err.message).slice(0, 200)}`;
+        return;
+      }
+      console.error(`plane-apply: knobs unavailable (${err?.message ?? err}) — using defaults`);
+      manualBudgetLimit = 20;
+    }
+
+    // R8: unlike every other plane-*.mjs script, a missing key is NOT a silent
+    // skip — this script's whole purpose is to write.
+    const apiKey = process.env.PLANE_API_KEY;
+    if (!apiKey) {
+      process.stderr.write("plane-apply: missing PLANE_API_KEY (refusing to run without a key)\n");
+      process.exitCode = 2;
+      return;
+    }
+
+    // NEVER process.exit() here — see plane-sync.mjs's identical note (a forced
+    // exit can race fetch/undici's keep-alive socket teardown on Windows).
+    const result = await runApply({
+      opsPath,
+      dryRun,
+      maxWrites,
+      overBudget,
+      apiKey,
+      manualBudgetLimit,
+    });
+    process.exitCode = result.exitCode;
+    rec.apply = { applied: result.applied ?? 0, deferred: result.deferred ?? 0 };
+    if (result.clientSummary) rec.clientSummary = result.clientSummary;
+  } catch (err) {
+    rec.error = `${err?.name ?? "Error"}: ${String(err?.message ?? err).slice(0, 200)}`;
+  } finally {
+    // R2's `forbidden` field is `{count, byPattern}` — apply's own denylist
+    // scan (checkDenylist, in buildPlan) fails the WHOLE run as a validation
+    // error before any write, so a hit there surfaces via `rec.error`
+    // ("... forbidden (<pattern>)") rather than incrementing this count; a
+    // client-level forbidden here is the belt-and-braces guard in the write
+    // loop, which should never fire given validation already screened every
+    // outbound string.
+    const { clientSummary, ...restRec } = rec;
+    const summary = clientSummary ?? zeroClientSummary();
+    const { forbidden: forbiddenCount, ...restSummary } = summary;
+    appendRun({
+      ...restRec,
+      exit: process.exitCode ?? 0,
+      durationMs: Date.now() - started,
+      ...restSummary,
+      forbidden: { count: forbiddenCount ?? 0, byPattern: {} },
+    });
+  }
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {

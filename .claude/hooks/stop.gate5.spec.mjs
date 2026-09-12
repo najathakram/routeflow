@@ -515,6 +515,135 @@ function report(name, ok, detail) {
   );
 }
 
+// ── T6a-c / R6 (2026-09-12-plane-learning) — the usage guard: Gate 5 reads
+// `runs.jsonl` (via PLANE_RUNS_PATH, honoured only with PLANE_SYNC_SELF_TEST=1
+// — the same gated-override pattern plane-client.mjs's denylist override
+// uses) and, on `master` only, prints `Plane: last sync <age> ago`, plus
+// `Plane: WARN landing without sync` when R3's rule trips (the last sync run
+// is NOT newer than the newest commit touching `.claude/campaign/status` on
+// the current branch). Report-only: exit 0 in every case below.
+//
+// Pre-implementation, Gate 5 has no usage-guard lines at all, so every one of
+// these three cases fails on its string assertion below — a true RED, never
+// a crash (the hook still runs its existing plane-sync child-relay logic
+// unmodified and reaches the unconditional `process.exit(0)`).
+function oneHourAgoSyncLine() {
+  return (
+    JSON.stringify({
+      ts: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      tool: "plane-sync",
+      version: 1,
+      exit: 0,
+      gets: 3,
+      writes: 0,
+      deferred: 0,
+    }) + "\n"
+  );
+}
+
+function writeStatusShard(dir) {
+  const statusDir = join(dir, ".claude", "campaign", "status");
+  mkdirSync(statusDir, { recursive: true });
+  writeFileSync(join(statusDir, "F01.jsonl"), '{"id":"F01"}\n');
+}
+
+// ── T6a / R6 — master, one recent sync run, no status-shard commit yet:
+// prints "Plane: last sync", and R3's rule has nothing to trip against yet
+// (no commit has ever touched `.claude/campaign/status`), so no WARN ───────
+{
+  const dir = makeGate5Repo();
+  git(dir, ["branch", "-M", "master"]);
+  const runsPath = join(dir, "runs.jsonl");
+  writeFileSync(runsPath, oneHourAgoSyncLine());
+  const env = scrubbedEnv({ PLANE_SYNC_SELF_TEST: "1", PLANE_RUNS_PATH: runsPath });
+
+  const res = await runStopHook(dir, env);
+  const merged = res.stdout + res.stderr;
+
+  const exitOk = res.status === 0;
+  const hasLastSync = /Plane: last sync/.test(merged);
+  const noWarnYet = !/Plane: WARN landing without sync/.test(merged);
+
+  const details = [];
+  if (!exitOk) details.push(`      expected exit 0, got ${res.status}`);
+  if (!hasLastSync) details.push('      expected output to include "Plane: last sync"');
+  if (!noWarnYet) {
+    details.push(
+      '      did not expect "Plane: WARN landing without sync" (no status-shard commit yet)',
+    );
+  }
+  report(
+    "T6a/R6 — master, recent sync run, no status commit: 'Plane: last sync', no WARN",
+    exitOk && hasLastSync && noWarnYet,
+    [...details, `      stdout:\n${res.stdout}`, `      stderr:\n${res.stderr}`].join("\n"),
+  );
+}
+
+// ── T6b / R6 — master, then a NEWER commit touches
+// `.claude/campaign/status/F01.jsonl`: the last sync (1h old) is no longer
+// newer than the newest status-touching commit (just now) → WARN, alongside
+// the last-sync line that still prints on master ───────────────────────────
+{
+  const dir = makeGate5Repo();
+  git(dir, ["branch", "-M", "master"]);
+  const runsPath = join(dir, "runs.jsonl");
+  writeFileSync(runsPath, oneHourAgoSyncLine());
+  writeStatusShard(dir);
+  git(dir, ["add", "-A"]);
+  git(dir, ["commit", "-q", "-m", "chore: status shard"]);
+  const env = scrubbedEnv({ PLANE_SYNC_SELF_TEST: "1", PLANE_RUNS_PATH: runsPath });
+
+  const res = await runStopHook(dir, env);
+  const merged = res.stdout + res.stderr;
+
+  const exitOk = res.status === 0;
+  const hasLastSync = /Plane: last sync/.test(merged);
+  const hasWarn = /Plane: WARN landing without sync/.test(merged);
+
+  const details = [];
+  if (!exitOk) details.push(`      expected exit 0, got ${res.status}`);
+  if (!hasLastSync) details.push('      expected output to still include "Plane: last sync"');
+  if (!hasWarn) details.push('      expected output to include "Plane: WARN landing without sync"');
+  report(
+    "T6b/R6 — master, newer commit touching .claude/campaign/status: adds WARN landing without sync",
+    exitOk && hasLastSync && hasWarn,
+    [...details, `      stdout:\n${res.stdout}`, `      stderr:\n${res.stderr}`].join("\n"),
+  );
+}
+
+// ── T6c / R6 — same WARN-triggering state as T6b, but off master (feat/x):
+// neither usage-guard line prints — R6, verbatim, "on master only" ─────────
+{
+  const dir = makeGate5Repo();
+  git(dir, ["branch", "-M", "feat/x"]);
+  const runsPath = join(dir, "runs.jsonl");
+  writeFileSync(runsPath, oneHourAgoSyncLine());
+  writeStatusShard(dir);
+  git(dir, ["add", "-A"]);
+  git(dir, ["commit", "-q", "-m", "chore: status shard"]);
+  const env = scrubbedEnv({ PLANE_SYNC_SELF_TEST: "1", PLANE_RUNS_PATH: runsPath });
+
+  const res = await runStopHook(dir, env);
+  const merged = res.stdout + res.stderr;
+
+  const exitOk = res.status === 0;
+  const neitherLine =
+    !/Plane: last sync/.test(merged) && !/Plane: WARN landing without sync/.test(merged);
+
+  const details = [];
+  if (!exitOk) details.push(`      expected exit 0, got ${res.status}`);
+  if (!neitherLine) {
+    details.push(
+      '      expected neither "Plane: last sync" nor "Plane: WARN landing without sync" off master',
+    );
+  }
+  report(
+    "T6c/R6 — off master (feat/x): neither usage-guard line prints, even with the WARN condition true",
+    exitOk && neitherLine,
+    [...details, `      stdout:\n${res.stdout}`, `      stderr:\n${res.stderr}`].join("\n"),
+  );
+}
+
 // ── F4 — the scaffold repos this run created are all gone ────────────────────
 cleanupRepos();
 report(
@@ -523,7 +652,7 @@ report(
   `      tmpdir stop-gate5-spec-* count: before=${tmpDirsBefore} after=${countSpecTmpDirs()}`,
 );
 
-const TOTAL_CASES = 7;
+const TOTAL_CASES = 10;
 if (failed > 0) {
   console.log(`\nstop.gate5.spec FAILED — ${failed}/${TOTAL_CASES} case(s).`);
   process.exit(1);

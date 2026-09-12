@@ -22,12 +22,21 @@
 // `create` (which has no natural ref) carries an explicit `"project"` field
 // below. If WP5 lands requiring `project` on every op instead, these fixture
 // ops files need one field added, not a rewrite.
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { startFakePlane } from "./plane-fake-server.mjs";
+import { repoRoot } from "./plane-client.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./plane-apply.mjs", import.meta.url));
 
@@ -62,10 +71,24 @@ function writeOpsFile(ops) {
 // Runs plane-apply.mjs out-of-process via async `spawn` (never `spawnSync`
 // — the fake Plane server lives on this harness process's own event loop, so
 // a synchronous spawn would block it while the child's request is pending).
+function fallbackRunsPath() {
+  return join(
+    tmpdir(),
+    `${FIXTURE_PREFIX}runs-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  );
+}
+
 function runCli(argv, { baseUrl, stateDir, apiKey = "self-test-key", noKey = false } = {}) {
   const env = { ...process.env };
   if (baseUrl) env.PLANE_BASE_URL = baseUrl;
   if (stateDir) env.PLANE_SYNC_STATE_DIR = stateDir;
+  // Fix-round (runs.jsonl pollution): plane-apply.mjs's main() appends one
+  // telemetry line via appendRun() in a `finally` on every run. runsPath()
+  // only honours PLANE_RUNS_PATH when PLANE_SYNC_SELF_TEST=1 is ALSO set —
+  // both required here or the child writes into this worktree's real
+  // local-assets/plane/runs.jsonl.
+  env.PLANE_SYNC_SELF_TEST = "1";
+  env.PLANE_RUNS_PATH = stateDir ? join(stateDir, "self-test-runs.jsonl") : fallbackRunsPath();
   if (noKey) delete env.PLANE_API_KEY;
   else env.PLANE_API_KEY = apiKey;
   return new Promise((resolve) => {
@@ -426,6 +449,12 @@ async function main() {
   return failures;
 }
 
+// Fix-round (runs.jsonl pollution, 2026-09-12): belt-and-suspenders proof
+// that every runCli() call above's PLANE_SYNC_SELF_TEST+PLANE_RUNS_PATH pair
+// keeps this worktree's real local-assets/plane/runs.jsonl untouched.
+const REAL_RUNS_PATH = join(repoRoot(), "local-assets", "plane", "runs.jsonl");
+const realRunsBefore = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
+
 const tmpDirsBefore = countFixtureTmpDirs();
 try {
   await main();
@@ -439,6 +468,12 @@ check(
   "F4: the run leaves no plane-apply-self-test-* dir behind",
   countFixtureTmpDirs(),
   tmpDirsBefore,
+);
+const realRunsAfter = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
+check(
+  "F4: this worktree's real local-assets/plane/runs.jsonl is byte-identical before/after the suite (or absent both times)",
+  realRunsAfter,
+  realRunsBefore,
 );
 
 console.log(

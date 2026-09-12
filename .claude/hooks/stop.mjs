@@ -33,13 +33,25 @@
  * (too slow/fragile per-file with Prisma); type-checks live in the pre-push hook.
  */
 import { execSync, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Invoke prettier directly via node — this repo's root has no node_modules/.bin
 // shim, so `npx prettier` fails on Windows. Fall back to npx where the shim exists.
 function prettierCli() {
   const local = "node_modules/prettier/bin/prettier.cjs";
   return existsSync(local) ? `node "${local}"` : "npx prettier";
+}
+
+// Human age string for the R6 usage guard below — "45s"/"12m"/"3h"/"2d".
+function formatAge(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
 }
 
 function sh(cmd) {
@@ -293,6 +305,59 @@ if (existsSync("scripts/campaign/plane-sync.mjs") && existsSync(".claude/campaig
         : `status ${proc.status}`;
     process.stderr.write(`Plane mirror: timed out or failed (non-blocking) (${why})\n`);
   }
+}
+
+// ── Gate 5 continued — usage guard (R6, 2026-09-12-plane-learning). Report-only,
+// master/main only: prints the age of the newest `plane-sync` run recorded in
+// `runs.jsonl`, and warns when a landing (a commit touching
+// `.claude/campaign/status`) is newer than that sync — or no sync run exists at
+// all. Never blocks: wrapped end-to-end in try/catch, and still falls through
+// to the unconditional `process.exit(0)` below on any outcome.
+try {
+  const branch = sh("git rev-parse --abbrev-ref HEAD").out.trim();
+  if (branch === "master" || branch === "main") {
+    const clientPath = fileURLToPath(
+      new URL("../../scripts/campaign/plane-client.mjs", import.meta.url),
+    );
+    if (existsSync(clientPath)) {
+      const { runsPath, gitEnv } = await import(pathToFileURL(clientPath).href);
+      const rp = runsPath();
+      let lastSyncTs = null;
+      if (existsSync(rp)) {
+        for (const line of (readFileSync(rp, "utf8") || "").split(/\r?\n/).filter(Boolean)) {
+          try {
+            const rec = JSON.parse(line);
+            const t = rec && rec.tool === "plane-sync" ? Date.parse(rec.ts) : NaN;
+            if (!Number.isNaN(t) && (lastSyncTs === null || t > lastSyncTs)) lastSyncTs = t;
+          } catch {
+            // one malformed line must never take down the guard — skip it
+          }
+        }
+      }
+      if (lastSyncTs !== null) {
+        process.stderr.write(`Plane: last sync ${formatAge(Date.now() - lastSyncTs)} ago\n`);
+      }
+      const statusLog = spawnSync(
+        "git",
+        ["log", "-1", "--format=%H %cI", "--", ".claude/campaign/status"],
+        { encoding: "utf8", env: gitEnv() },
+      );
+      const statusLine = (statusLog.stdout || "").trim();
+      let sha = "";
+      let warn = lastSyncTs === null;
+      if (statusLine) {
+        const [commitSha, commitIso] = statusLine.split(" ");
+        sha = commitSha;
+        const commitTs = Date.parse(commitIso);
+        if (lastSyncTs === null || (!Number.isNaN(commitTs) && commitTs > lastSyncTs)) warn = true;
+      }
+      if (warn) {
+        process.stderr.write(`Plane: WARN landing without sync (${sha})\n`);
+      }
+    }
+  }
+} catch {
+  // the usage guard is advisory-only — never let it block or crash the turn
 }
 
 process.exit(0);

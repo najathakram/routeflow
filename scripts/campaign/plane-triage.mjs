@@ -29,16 +29,12 @@
 // second copy of that comparison.
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createClient, repoRoot, writesToday } from "./plane-client.mjs";
-import { deriveDesired, planDiff } from "./plane-sync.mjs";
+import { appendRun, createClient, loadKnobs, repoRoot, writesToday } from "./plane-client.mjs";
+import { currentBranch, deriveDesired, planDiff } from "./plane-sync.mjs";
 
 const WANTED_PROJECTS = ["BUGS", "ROAD", "OPS", "DECIDE", "CLIENT"];
 const BRIEF_BYTE_CAP = 1536;
 const MANUAL_WRITE_CAP = 20; // spec.md R3's manual-budget ceiling (informational here)
-// Defect 2: the whole brief's GET ceiling. The fixed section (projects/ +
-// states/ + the four page-1 GETs) is spent first; BUGS pagination gets
-// whatever remains — see the BUGS block in gatherTriage below.
-const GET_BUDGET = 16;
 
 const isoDateOnly = (d) => d.toISOString().slice(0, 10);
 
@@ -72,7 +68,11 @@ function computeBugsDrift(registryDir, bugsStatesMap, existingItems) {
 // ── network gather (never throws — a failure mid-flight is captured on
 // payload.error and whatever was already gathered is returned as-is, so a
 // partial brief still reports the sections it reached) ─────────────────────
-async function gatherTriage({ apiKey, registryDir, days }) {
+// `getBudget` defaults to the `triageGetBudget` knob (spec 2026-09-12-plane-
+// learning R1) — the caller (main()) resolves it via loadKnobs()/knob() once,
+// before any request, and threads it through here rather than this function
+// reading the knob itself.
+async function gatherTriage({ apiKey, registryDir, days, getBudget }) {
   const payload = {
     overdue: [],
     dueSoon: [],
@@ -84,6 +84,7 @@ async function gatherTriage({ apiKey, registryDir, days }) {
     syncWrites: 0,
     countsByProject: [],
     error: null,
+    clientSummary: null,
   };
 
   // Ledger reads are a local file, not network — attempted independently of
@@ -194,7 +195,7 @@ async function gatherTriage({ apiKey, registryDir, days }) {
         1 +
         statesByIdent.size +
         ["ROAD", "OPS", "DECIDE", "CLIENT"].filter((ident) => byIdent.get(ident)).length;
-      const maxBugsPages = Math.max(1, GET_BUDGET - nonBugsGets);
+      const maxBugsPages = Math.max(1, getBudget - nonBugsGets);
 
       let bugsItems = [];
       let cursor;
@@ -224,6 +225,7 @@ async function gatherTriage({ apiKey, registryDir, days }) {
     payload.error = err?.message ?? String(err);
   }
 
+  payload.clientSummary = client.summary();
   return payload;
 }
 
@@ -293,35 +295,108 @@ async function main() {
     }
   }
 
-  const asJson = argv.includes("--json");
-  let days = 7;
-  const daysIdx = argv.indexOf("--days");
-  if (daysIdx !== -1) {
-    const raw = Number(argv[daysIdx + 1]);
-    if (Number.isFinite(raw) && raw > 0) days = raw;
-    else
-      process.stderr.write(
-        `Plane triage warn: ignoring --days "${argv[daysIdx + 1] ?? ""}" (not a positive number)\n`,
+  // R2 telemetry (spec 2026-09-12-plane-learning): started/rec set up BEFORE
+  // loadKnobs() so a `knobs invalid: <name>` throw still gets exactly one
+  // runs.jsonl line via the finally below — --help/usage exits above are the
+  // only ones that write none.
+  const started = Date.now();
+  const rec = { tool: "plane-triage", flags: argv, branch: currentBranch() };
+  let clientSummaryForRun = {
+    writes: 0,
+    deferred: 0,
+    forbidden: 0,
+    gets: 0,
+    rateLimitSleeps: 0,
+    retries: 0,
+  };
+
+  try {
+    // R1: loaded right after --help/usage handling, before any process.env
+    // read or network request (T1). Printed explicitly so the exact "knobs
+    // invalid: <name>" text always reaches stderr.
+    let knobs;
+    try {
+      knobs = loadKnobs();
+    } catch (err) {
+      // See plane-sync.mjs's identical note: T1's contract is an out-of-range
+      // VALUE in an otherwise present file — that hard-fails. A missing/
+      // unreadable file falls back to this tool's documented defaults rather
+      // than refusing to run (this script never blocks a turn over Plane).
+      if (/^knobs invalid:/.test(String(err?.message ?? ""))) {
+        process.stderr.write(`Plane triage: ${err.message}\n`);
+        process.exitCode = 1;
+        rec.error = `${err?.name ?? "Error"}: ${String(err.message).slice(0, 200)}`;
+        return;
+      }
+      console.error(
+        `Plane triage warn: knobs unavailable (${err?.message ?? err}) — using defaults`,
       );
-  }
+      knobs = { knobs: { staleStartedDays: { value: 7 }, triageGetBudget: { value: 16 } } };
+    }
 
-  const apiKey = process.env.PLANE_API_KEY;
-  if (!apiKey) {
-    process.stdout.write("Plane triage: skipped (no PLANE_API_KEY)\n");
+    const asJson = argv.includes("--json");
+    // `--days` default comes from the `staleStartedDays` knob; a CLI flag
+    // still overrides it.
+    let days = knobs.knobs.staleStartedDays.value;
+    const daysIdx = argv.indexOf("--days");
+    if (daysIdx !== -1) {
+      const raw = Number(argv[daysIdx + 1]);
+      if (Number.isFinite(raw) && raw > 0) days = raw;
+      else
+        process.stderr.write(
+          `Plane triage warn: ignoring --days "${argv[daysIdx + 1] ?? ""}" (not a positive number)\n`,
+        );
+    }
+    // knobs.knobs here is either the real loaded object or this catch
+    // block's own fallback shape above — both carry `triageGetBudget`, so
+    // this never re-throws the way a bare `knob()` call could.
+    const getBudget = knobs.knobs.triageGetBudget.value;
+
+    const apiKey = process.env.PLANE_API_KEY;
+    if (!apiKey) {
+      process.stdout.write("Plane triage: skipped (no PLANE_API_KEY)\n");
+      process.exitCode = 0;
+      rec.skipped = "no PLANE_API_KEY";
+      return;
+    }
+
+    const registryDir =
+      process.env.PLANE_SYNC_REGISTRY_DIR || join(repoRoot(), ".claude", "campaign");
+    const payload = await gatherTriage({ apiKey, registryDir, days, getBudget });
+
+    if (asJson) {
+      process.stdout.write(`${JSON.stringify({ days, ...payload }, null, 2)}\n`);
+    } else {
+      process.stdout.write(`${renderBrief(payload, days)}\n`);
+    }
     process.exitCode = 0;
-    return;
-  }
 
-  const registryDir =
-    process.env.PLANE_SYNC_REGISTRY_DIR || join(repoRoot(), ".claude", "campaign");
-  const payload = await gatherTriage({ apiKey, registryDir, days });
-
-  if (asJson) {
-    process.stdout.write(`${JSON.stringify({ days, ...payload }, null, 2)}\n`);
-  } else {
-    process.stdout.write(`${renderBrief(payload, days)}\n`);
+    if (payload.clientSummary) clientSummaryForRun = payload.clientSummary;
+    rec.triage = {
+      overdue: payload.overdue.length,
+      dueSoon: payload.dueSoon.length,
+      openRulings: payload.openRulings.length,
+      staleStarted: payload.staleStarted.length,
+      drift: payload.driftCount,
+      partial: payload.error === "page cap",
+    };
+  } catch (err) {
+    process.exitCode = 1;
+    rec.error = `${err?.name ?? "Error"}: ${String(err?.message ?? err).slice(0, 200)}`;
+  } finally {
+    // R2's `forbidden` field is `{count, byPattern}`; this script never
+    // writes, so a forbidden hit here (from the shared client's own guard,
+    // never actually reachable on a read-only path) has no per-pattern
+    // breakdown to report.
+    const { forbidden: forbiddenCount, ...restSummary } = clientSummaryForRun;
+    appendRun({
+      ...rec,
+      exit: process.exitCode ?? 0,
+      durationMs: Date.now() - started,
+      ...restSummary,
+      forbidden: { count: forbiddenCount ?? 0, byPattern: {} },
+    });
   }
-  process.exitCode = 0;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
