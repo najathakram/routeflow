@@ -97,6 +97,30 @@ export const ADDON_GATE_REGISTRY: Readonly<Record<string, AddonGateEntry>> = {
     grantPath: 'Platform Admin → Tenants → [tenant] → add-ons (addonKey "order_delivery")',
     backfill: "Live before the registry existed; no change.",
   },
+  crm_gohighlevel: {
+    state: "dark",
+    added: "2026-09-11",
+    routes: [
+      "GET /crm/gohighlevel",
+      "PATCH /crm/gohighlevel/connection",
+      "POST /crm/gohighlevel/connection/test",
+      "DELETE /crm/gohighlevel/connection",
+      "GET /crm/gohighlevel/pipelines",
+      "PATCH /crm/gohighlevel/config",
+      "POST /crm/gohighlevel/sync",
+      "GET /crm/gohighlevel/handoffs",
+      "POST /crm/gohighlevel/handoffs/:id/retry",
+      "POST /crm/gohighlevel/handoffs/:id/dismiss",
+      "POST /crm/gohighlevel/import-existing/preview",
+      "POST /crm/gohighlevel/import-existing",
+    ],
+    grantPath:
+      'Platform Admin → Tenants → [tenant] → add-ons (AddonService.enableAddon writes addonKey "crm_gohighlevel")',
+    backfill:
+      "New feature 2026-09-11: no tenant has a connection; gate stays dark through the pilot; " +
+      "flip after the blast-radius report",
+    reviewBy: "2027-03-11",
+  },
   developer_mode: {
     state: "enforced",
     added: "2026-08-21",

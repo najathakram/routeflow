@@ -1,0 +1,527 @@
+{
+  "seq": 5,
+  "idempotencyKey": "2026-09-11-crm-gohighlevel-handoff:Gate & Review:1",
+  "phase": {
+    "phase": "Gate & Review",
+    "ran": true,
+    "agents": 10,
+    "rawFindings": 63,
+    "tokens": 136789,
+    "model": "claude-haiku-4-5 (gate/regate) + claude-sonnet-5 (build-fix; claude-opus-5 when the manifest has a HIGH-risk file) + claude-opus-5 (lenses)",
+    "effort": "low gate / high build-fix / deep lenses high (xhigh when any file is HIGH risk) / pattern lenses high",
+    "estUsd": 3.42,
+    "overlappedWith": null,
+    "note": ""
+  },
+  "totals": { "agents": 30, "tokens": 681499, "estUsd": 9.48 },
+  "findingsBySeverity": { "blocker": 24, "major": 28, "minor": 14 },
+  "findingSummaries": [
+    "CrmController implements only 7 of the 12 routes the feature declares; sync, retry, dismiss and import-existing have no HTTP surface at all.",
+    "crm.types.ts re-exports only the three Prisma enums, but two spec files import GHL DTO types from it, so those suites cannot compile.",
+    "saveConnection and updateConfig return the raw Prisma CrmConnection row, so both endpoints respond with the encrypted token (secretCipher) to the browser.",
+    "listPipelines ignores its tenantId and calls the shared empty-credential GoHighLevelClient singleton, so GET /crm/gohighlevel/pipelines can never succeed for any tenant.",
+    "retryHandoff reads handoff.connectionId, a column that does not exist on CrmHandoff, so it always passes a null connection into handle() and throws a TypeError.",
+    "runWriteback hardcodes attempts:0 and noteWritten:false, and noteWritten is never persisted anywhere, so the R20 backoff never escalates and the GHL note is re-posted on every retry.",
+    "A write-back failure re-opens a CREATED row as WRITEBACK_PENDING, and the next poll tick re-runs the whole forward path, relabelling it LINKED and firing a second operator notification.",
+    "importExisting delegates to pollTenant, which early-returns zero counts unless the connection is already enabled — the opposite of the state a client is in when importing history.",
+    "disconnect clears only secretCipher/status/enabled, leaving tokenLast4, locationName, lastError, attentionNotifiedAt and customFieldIds from the forward paths, so the UI still claims a key is stored.",
+    "updateConfig computes first-save defaults for a row that does not exist, then unconditionally calls prisma.update, which throws P2025 as an unhandled 500.",
+    "The container reads handoffs.data, but GET /crm/gohighlevel/handoffs returns a bare array, so the Activity table is permanently empty in production.",
+    "'Save & test' never tests, and the Preview/Import, Retry and Dismiss controls are wired to nothing — four dead controls in the shipped tab.",
+    "The controller gates on the CRM_ADDON_KEY constant, but addon-gate-registry.spec's scanner only recognizes quoted literals, so P1b fails for the new crm_gohighlevel row.",
+    "testConnection on a disconnected connection flips status DISCONNECTED -> NEEDS_ATTENTION, telling the operator RouteFlow lost access when they deliberately disconnected.",
+    "saveConnection emulates upsert with update-then-catch-P2025-then-create, which races and drops connectedById on the update path.",
+    "Six spec-required routes are missing from CrmController, so R8 (sync), R22 (retry/dismiss) and R23 (import-existing) have no HTTP surface at all.",
+    "The controller gates on the CRM_ADDON_KEY constant, so addon-gate-registry.spec's P1b (\"every registry key has at least one live call site\") goes red for the new crm_gohighlevel row.",
+    "GET /crm/gohighlevel/pipelines calls a DI singleton GoHighLevelClient built with an empty token and empty locationId, so R3 can never succeed for any tenant.",
+    "Write-back is invoked with handoff id undefined on the normal poll path, so R20's WRITEBACK_PENDING/backoff never records and a failed write-back is silently terminal.",
+    "noteWritten is never persisted as true after a successful note, so R19(4)'s idempotency guard is inert and retries duplicate the GHL note.",
+    "The tab has no pipeline/stage picker or \"Start from\" input, and the Enable switch is disabled until stageId is set — so STAGE mode can never be turned on from the UI.",
+    "pollTenant discards handle()'s result, so created/linked/needsReview/dryRun/failed in the R8 counts are always zero.",
+    "The phone match compares the normalized E.164 value against raw stored columns, so R15(c) under-matches whenever a customer's phone is not already E.164.",
+    "A 429 records lastError but does not skip the tenant until Retry-After elapses, so the next 3-minute tick re-hits a rate-limited GoHighLevel account.",
+    "retryHandoff reconstructs the opportunity from a payload key that the dry-run writer never produces, so a retried lead loses its deal name, value and source.",
+    "T51 constructs `CrmHttpError` with the wrong number of arguments, diverging from the real class's contract used everywhere else in production code.",
+    "T31/T31b mock `ghlClient.listTags()` as an array of plain strings, a shape the real GoHighLevel client never returns.",
+    "matchExistingCustomer queries customers, external refs and users with no tenant predicate and without forTenant(), so a GHL lead can be linked to another tenant's customer.",
+    "@RequireAddon is called with a constant, so addon-gate-registry.spec.ts's P1b finds zero call sites for the new crm_gohighlevel row and the api test suite goes red.",
+    "GET /crm/gohighlevel/pipelines calls a shared empty-credential GoHighLevel client, so it authenticates as nobody and 500s for every tenant.",
+    "Five routes declared in the addon-gate registry and called by the web client are not implemented on the controller, so sync/retry/dismiss/import all 404.",
+    "retryHandoff reads handoff.connectionId, a column CrmHandoff does not have, then calls handle() with null and throws a TypeError after already mutating the row.",
+    "Write-back failures on a first-time handoff update CrmHandoff by id:undefined, so the failure is swallowed and the R20 backoff never schedules a retry.",
+    "A single opportunity with a missing contactId throws out of pollTenant and permanently stalls that tenant's polling.",
+    "retryHandoff and dismissHandoff address CrmHandoff rows by id alone with no tenant predicate, an IDOR the moment the declared routes are wired.",
+    "updateConfig's first-save branch is unreachable — it computes defaults for a missing row and then unconditionally calls prisma.update, which throws P2025.",
+    "CrmSyncCounts only ever reports fetched/new; created, linked, needsReview, dryRun and failed are always zero.",
+    "previewImportExisting skips the enabled/secretCipher guard pollTenant applies, so it builds a client with an empty token and throws CrmAuthError to the caller.",
+    "testConnection writes GoHighLevel's raw location country into defaultRegion, bypassing the ISO-3166 validation the DTO enforces, which can silently disable phone matching.",
+    "getStatus loads every CrmHandoff row for the tenant into memory just to compute six counts.",
+    "listPipelines() calls the shared empty-credential GoHighLevelClient singleton, so GET /crm/gohighlevel/pipelines always 401s and the connector can never be enabled.",
+    "matchExistingCustomer runs unscoped Prisma queries, so a GoHighLevel lead can be linked to another tenant's customer.",
+    "Five routes declared in the add-on registry and called by the web client do not exist on the controller.",
+    "The new crm_gohighlevel registry row has no literal @RequireAddon call site, so addon-gate-registry.spec.ts P1b goes red.",
+    "Write-back failures on a first-pass handoff are silently discarded — the row never becomes WRITEBACK_PENDING and is never retried.",
+    "noteWritten is never set to true and attempts is hardcoded to 0, so retries duplicate the GHL note and the backoff never terminates.",
+    "One failing opportunity aborts the rest of the tenant's poll tick permanently — no per-opportunity isolation.",
+    "retryHandoff reads handoff.connectionId, a column that does not exist on CrmHandoff, so every retry passes a null connection and 500s.",
+    "retryHandoff and dismissHandoff take no tenantId and act on unscoped findUnique/update by id — a cross-tenant IDOR once the routes are wired.",
+    "previewImportExisting has no time budget and issues one DB query per opportunity, and it leaks CrmAuthError as a 500 on a disconnected connection.",
+    "getStatus loads every CrmHandoff row for the tenant to compute six counts in memory, on a hot path invalidated by every mutation.",
+    "ensureTags fetches the location's entire GoHighLevel tag list on every single handoff, multiplying external API calls against the rate limit the design is trying to avoid.",
+    "The poll's budget-exhaustion path writes the opaque string \"budget\" into the operator-visible lastError field.",
+    "The new crm_gohighlevel registry row has zero recognized @RequireAddon call sites, so the pre-existing P1b regression test now fails.",
+    "The controller has no routes for POST /crm/gohighlevel/sync, /handoffs/:id/retry, /handoffs/:id/dismiss, /import-existing/preview, or /import-existing, even though they are required by spec R8/R22/R23",
+    "crm.types.ts does not re-export GhlContact/GhlOpportunity/GhlCustomField, which two of its own consuming spec files import from it, producing TS2305 compile errors.",
+    "ux-spec Card 2 (trigger-mode radio, pipeline/stage Selects, 'Start from' date) is entirely absent from the shipped tab, so an operator can never enable STAGE-triggered automation from the UI.",
+    "The Activity table is missing the 'When' (relative time) column required by ux-spec's table layout.",
+    "The Activity card has no loading or error state — a failed or in-flight handoffs query renders the same 'No leads yet' empty-state text as a genuinely empty log.",
+    "The 'Import existing leads' button is visually present but wired to nothing — clicking it does nothing.",
+    "The Needs-attention banner is missing the 'Test again' button ux-spec explicitly requires."
+  ],
+  "mode": "feature",
+  "scale": "major",
+  "startedAt": "2026-09-12T03:58:27Z",
+  "args": {
+    "planPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/build-plan.md",
+    "discoveryPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/discovery.md",
+    "specPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/spec.md",
+    "uxSpecPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/ux-spec.md",
+    "testPlanPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/test-plan.md",
+    "designSystemPath": ".claude/pipeline/design-system.md",
+    "lessonsPath": ".claude/lessons/LESSONS.md",
+    "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-crm",
+    "runDir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-crm/.claude/pipeline/2026-09-11-crm-gohighlevel-handoff"
+  },
+  "resultSoFar": {
+    "mode": "feature",
+    "scale": "major",
+    "startedAt": "2026-09-12T03:58:27Z",
+    "phaseReport": [
+      {
+        "phase": "Baseline",
+        "ran": true,
+        "agents": 3,
+        "rawFindings": 4,
+        "tokens": 52653,
+        "model": "claude-haiku-4-5 (gate/grounding/manifest)",
+        "effort": "low",
+        "estUsd": 0.26,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Author tests",
+        "ran": true,
+        "agents": 7,
+        "rawFindings": 0,
+        "tokens": 98554,
+        "model": "claude-sonnet-5",
+        "effort": "medium (a package's own effort wins)",
+        "estUsd": 0.99,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Red gate",
+        "ran": true,
+        "agents": 5,
+        "rawFindings": 1,
+        "tokens": 57891,
+        "model": "claude-haiku-4-5 (run) + claude-opus-5 (audit/remediate)",
+        "effort": "low run / high audit / medium remediation",
+        "estUsd": 1.45,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Implement",
+        "ran": true,
+        "agents": 5,
+        "rawFindings": 0,
+        "tokens": 335612,
+        "model": "claude-sonnet-5",
+        "effort": "medium (a package's own effort wins)",
+        "estUsd": 3.36,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Gate & Review",
+        "ran": true,
+        "agents": 10,
+        "rawFindings": 63,
+        "tokens": 136789,
+        "model": "claude-haiku-4-5 (gate/regate) + claude-sonnet-5 (build-fix; claude-opus-5 when the manifest has a HIGH-risk file) + claude-opus-5 (lenses)",
+        "effort": "low gate / high build-fix / deep lenses high (xhigh when any file is HIGH risk) / pattern lenses high",
+        "estUsd": 3.42,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Verify",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "UI verify",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Mutation probe",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Fix",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Final pass",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      }
+    ],
+    "remainingFindings": [
+      {
+        "file": "apps/api/src/crm/crm.controller.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      { "file": "apps/api/src/crm/crm.types.ts", "severity": "blocker", "phase": "Gate & Review" },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm.controller.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm.controller.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm.controller.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      { "file": "apps/api/src/crm/crm.module.ts", "severity": "blocker", "phase": "Gate & Review" },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-writeback.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.spec.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.spec.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm.controller.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm.controller.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-writeback.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm.controller.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/billing/addon-gate-registry.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-writeback.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/billing/addon-gate-registry.spec.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm.controller.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      { "file": "apps/api/src/crm/crm.types.ts", "severity": "major", "phase": "Gate & Review" },
+      {
+        "file": "apps/web/app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      { "file": "(gate-command)", "severity": "major", "phase": "Baseline" },
+      { "file": "(gate-command)", "severity": "major", "phase": "Baseline" },
+      { "file": "(artifact)", "severity": "major", "phase": "Baseline" },
+      { "file": "(artifact)", "severity": "major", "phase": "Baseline" },
+      { "file": "(red-gate)", "severity": "blocker", "phase": "Red gate" }
+    ],
+    "clean": null
+  },
+  "resultSoFarTruncated": true,
+  "commit": {
+    "message": "wip(pipeline): 2026-09-11-crm-gohighlevel-handoff checkpoint Gate & Review"
+  }
+}

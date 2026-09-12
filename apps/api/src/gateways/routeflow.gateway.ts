@@ -125,6 +125,14 @@ export interface BuyerPaymentRequestPayload {
   requestedAt: string;
 }
 
+/** CRM (GoHighLevel) lead handoff — spec R24. Never sent for a dry-run preview. */
+export interface CrmHandoffPayload {
+  customerId: string;
+  customerName: string;
+  status: "CREATED" | "LINKED";
+  source: "gohighlevel";
+}
+
 // ─── Gateway ──────────────────────────────────────────────────────────────────
 
 @WebSocketGateway({
@@ -273,5 +281,10 @@ export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnec
   /** A buyer declared a cash payment (or a card payment settled) — seller attention. */
   emitBuyerPaymentRequest(tenantId: string | null, payload: BuyerPaymentRequestPayload) {
     this.server.to(this.tenantRoom(tenantId, "operators")).emit("buyer.payment.requested", payload);
+  }
+
+  /** A GoHighLevel lead was created/linked into a RouteFlow customer (spec R24). */
+  emitCrmHandoff(tenantId: string | null, payload: CrmHandoffPayload) {
+    this.server.to(this.tenantRoom(tenantId, "operators")).emit("crm.lead.handoff", payload);
   }
 }

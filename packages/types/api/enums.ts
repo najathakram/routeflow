@@ -260,3 +260,25 @@ export const MOVEMENT_TYPE_VALUES = [
   "COST_BASIS",
 ] as const;
 export type MovementType = (typeof MOVEMENT_TYPE_VALUES)[number];
+
+export const CRM_CONNECTION_STATUS_VALUES = [
+  "CONNECTED",
+  "NEEDS_ATTENTION",
+  "DISCONNECTED",
+] as const;
+export type CrmConnectionStatus = (typeof CRM_CONNECTION_STATUS_VALUES)[number];
+
+export const CRM_TRIGGER_MODE_VALUES = ["STAGE", "WON"] as const;
+export type CrmTriggerMode = (typeof CRM_TRIGGER_MODE_VALUES)[number];
+
+export const CRM_HANDOFF_STATUS_VALUES = [
+  "PENDING",
+  "CREATED",
+  "LINKED",
+  "WRITEBACK_PENDING",
+  "NEEDS_REVIEW",
+  "DRY_RUN",
+  "SKIPPED",
+  "FAILED",
+] as const;
+export type CrmHandoffStatus = (typeof CRM_HANDOFF_STATUS_VALUES)[number];

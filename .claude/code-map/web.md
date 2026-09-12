@@ -1528,3 +1528,25 @@ today]`, under the shared `["invoices"]`-prefix invalidation every payment mutat
   gets the marketing site on `/pricing` (R11 — see the middleware carve-out under `(marketing)/`
   above; B249 is the gap this project's Desktop-Chrome-only run does NOT cover); T13
   below-the-fold `.reveal-pending` clears on scroll and stays opaque under reduced-motion.
+
+### 2026-09-11/12 — CRM: Settings → GoHighLevel tab (new, R29-R31, ux-spec.md)
+
+- **`lib/api/crm.ts`** — TanStack Query hooks for the CRM tab: `useCrmStatus()`,
+  `useCrmPipelines()`, `useCrmHandoffs(params)`, `useSaveCrmConnection()`,
+  `useTestCrmConnection()`, `useDisconnectCrm()`, `useUpdateCrmConfig()`, `useSyncCrmNow()`,
+  `usePreviewCrmImport()`, `useImportExistingCrmLeads()`; query keys `crmStatusKey`,
+  `crmHandoffsKey(params)`, `crmPipelinesKey`. Calls `POST /crm/gohighlevel/sync` and the
+  `import-existing`/`handoffs/:id/*` routes that `crm.controller.ts` does not yet implement (see
+  api.md's WP5 note) — the tab's "Check now" / import actions will 404 until a controller pass
+  adds them.
+- **`app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx`** —
+  `GoHighLevelSettingsTab(props: GoHighLevelSettingsTabProps)` (presentational, all four
+  ux-spec.md cards: Connection / trigger config / Options / Activity) and default export
+  `GoHighLevelSettingsTabConnected()` (wires the hooks above). Types: `CrmActivityRow`,
+  `CrmConfigView`, `GoHighLevelSettingsTabProps`.
+- **`app/(dashboard)/settings/_components/SettingsHub.tsx`** / **`.../settings/page.tsx`** — add
+  the "GoHighLevel" tab entry alongside the existing settings tabs.
+- **`lib/hooks/useNotifications.ts`** — extended for the CRM `NEEDS_ATTENTION` /
+  stale-poll notification surfaces the bell/Activity-card states rely on.
+- **`app/(dashboard)/layout.tsx`** / **`app/(dashboard)/customers/page.tsx`** — bell entry point
+  and a CRM-linked-customer affordance per ux-spec.md's "Entry points" section.

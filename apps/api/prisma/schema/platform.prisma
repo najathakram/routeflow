@@ -695,3 +695,83 @@ model IdempotencyKey {
 
   @@index([createdAt])
 }
+
+enum CrmConnectionStatus {
+  CONNECTED
+  NEEDS_ATTENTION
+  DISCONNECTED
+}
+
+enum CrmTriggerMode {
+  STAGE
+  WON
+}
+
+enum CrmHandoffStatus {
+  PENDING
+  CREATED
+  LINKED
+  WRITEBACK_PENDING
+  NEEDS_REVIEW
+  DRY_RUN
+  SKIPPED
+  FAILED
+}
+
+model CrmConnection {
+  id                  String              @id @default(uuid())
+  tenantId            String              @unique
+  provider            String              @default("gohighlevel")
+  locationId          String
+  locationName        String?
+  secretCipher        String?
+  tokenLast4          String?
+  status              CrmConnectionStatus @default(DISCONNECTED)
+  enabled             Boolean             @default(false)
+  dryRun              Boolean             @default(true)
+  triggerMode         CrmTriggerMode      @default(STAGE)
+  pipelineId          String?
+  stageId             String?
+  stageName           String?
+  startFrom           DateTime            @default(now())
+  writeBackFields     Boolean             @default(true)
+  writeBackTag        Boolean             @default(true)
+  writeBackNote       Boolean             @default(true)
+  markWon             Boolean             @default(false)
+  customFieldIds      Json?
+  defaultRegion       String              @default("US")
+  lastPollAt          DateTime?
+  lastSuccessAt       DateTime?
+  nextPollAt          DateTime?
+  lastError           String?
+  attentionNotifiedAt DateTime?
+  connectedById       String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  tenant              Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([enabled, status])
+}
+
+model CrmHandoff {
+  id              String           @id @default(uuid())
+  tenantId        String
+  provider        String           @default("gohighlevel")
+  opportunityId   String
+  contactId       String
+  opportunityName String?
+  contactName     String?
+  status          CrmHandoffStatus @default(PENDING)
+  customerId      String?
+  matchedBy       String?
+  reason          String?
+  payload         Json?
+  attempts        Int              @default(0)
+  nextAttemptAt   DateTime?
+  noteWritten     Boolean          @default(false)
+  createdAt       DateTime         @default(now())
+  processedAt     DateTime?
+
+  @@unique([tenantId, provider, opportunityId])
+  @@index([tenantId, status, createdAt])
+}

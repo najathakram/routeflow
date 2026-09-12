@@ -167,6 +167,8 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     // spread — a per-spec `(prisma as any).auditLog = ...` only reaches the returned
     // object, never this one.
     auditLog: modelProxy(),
+    crmConnection: modelProxy(),
+    crmHandoff: modelProxy(),
   });
 
   const txModels = () => ({

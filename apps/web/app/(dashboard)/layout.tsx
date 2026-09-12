@@ -620,7 +620,7 @@ function NotificationIcon({ type }: { type: AppNotification["type"] }) {
         <Truck className="h-4 w-4 text-brand-500" />
       </span>
     );
-  if (type === "buyer")
+  if (type === "buyer" || type === "crm")
     return (
       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-50">
         <Users className="h-4 w-4 text-brand-500" />
@@ -880,13 +880,23 @@ function Header({
                         )}
                       >
                         <NotificationIcon type={n.type} />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-navy">{n.title}</p>
-                          <p className="mt-0.5 text-xs text-navy/70 leading-snug">
-                            {n.description}
-                          </p>
-                          <p className="mt-1 text-[10px] text-navy/30">{timeAgo(n.timestamp)}</p>
-                        </div>
+                        {n.href ? (
+                          <Link href={n.href} className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-navy">{n.title}</p>
+                            <p className="mt-0.5 text-xs text-navy/70 leading-snug">
+                              {n.description}
+                            </p>
+                            <p className="mt-1 text-[10px] text-navy/30">{timeAgo(n.timestamp)}</p>
+                          </Link>
+                        ) : (
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-navy">{n.title}</p>
+                            <p className="mt-0.5 text-xs text-navy/70 leading-snug">
+                              {n.description}
+                            </p>
+                            <p className="mt-1 text-[10px] text-navy/30">{timeAgo(n.timestamp)}</p>
+                          </div>
+                        )}
                       </li>
                     ))}
                   </ul>
