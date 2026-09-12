@@ -261,6 +261,12 @@ if (existsSync("scripts/campaign/plane-sync.mjs") && existsSync(".claude/campaig
       // reports a partial, instead of being killed mid-write with no report.
       "--budget-ms",
       "18000",
+      // R12: a hook must never bulk-write — bulk runs are explicit
+      // (`npm run plane:sync -- --max-writes 400`). Never pass
+      // `--allow-branch` here (R14/T16b): a hook inherits the session's cwd
+      // and credentials, so writes off master must stay opt-in only.
+      "--max-writes",
+      "25",
       ...(dirty ? [] : ["--if-digest-changed"]),
     ],
     { encoding: "utf8", timeout: gateTimeoutMs },

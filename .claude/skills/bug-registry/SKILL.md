@@ -380,6 +380,14 @@ What that means for you:
 - **Still never hand-edit a shard.** The lock protects `bugs.mjs` from `bugs.mjs`; it cannot
   protect the ledger from an editor.
 
+## Plane
+
+The registry mirrors one-way into Plane's BUGS project — see the **plane** skill for the full
+routine. Front door: `npm run plane:intake` turns a human-created Plane item into a ready
+`bugs.mjs file ...` command (the only Plane → registry path). Mirror: `npm run plane:sync`
+pushes registry state into Plane. **Never edit registry state from Plane** — the registry is
+proof; Plane is a view.
+
 ## House rules that outrank anything here
 
 - **Never name a live client** in a record — slug, business name, product, invoice or order number,

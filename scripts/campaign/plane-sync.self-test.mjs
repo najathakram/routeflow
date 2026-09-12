@@ -13,7 +13,6 @@
 // child process (`node plane-sync.mjs ...`) against both — never a hand copy
 // of its request-building logic — so a passing case proves the actual
 // script's HTTP behavior, not this file's idea of it.
-import { createServer } from "node:http";
 import {
   existsSync,
   mkdirSync,
@@ -21,134 +20,91 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { deriveDesired, mapPriority, registryDigest } from "./plane-sync.mjs";
+import { createClient, gitEnv, repoRoot } from "./plane-client.mjs";
+import { startFakePlane, DEFAULT_STATES } from "./plane-fake-server.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./plane-sync.mjs", import.meta.url));
 const STOP_HOOK_PATH = fileURLToPath(new URL("../../.claude/hooks/stop.mjs", import.meta.url));
 
-// ── fake Plane server ───────────────────────────────────────────────────────
-// Routes only what the build plan's endpoint list names: project lookup,
-// state lookup, work-item list/create/patch. Anything else is a 404 so a
-// wrong URL fails loudly instead of silently 200-ing.
-// Plane's list payload exposes a plain-text `description_stripped` derived
-// from the submitted HTML; the fake derives it the same way, so an item the
-// script itself created reads back the way the real API would return it.
-const stripTags = (html) =>
-  String(html ?? "")
-    .replace(/<[^>]*>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+// Shared throwaway-repo `git` helper (T1b/T16/T18): every fixture's own git
+// spawn uses gitEnv() (never inherits process.env's GIT_DIR/GIT_WORK_TREE
+// unscrubbed) alongside an explicit cwd — the exact fix for the reported
+// defect (gates/push.log ~11716): under the husky pre-push hook's
+// `npm run verify`, git had already exported GIT_DIR/GIT_WORK_TREE/etc. into
+// this self-test's own process, and a fixture's `git checkout -q -b feat/y`
+// inherited them and failed with "fatal: this operation must be run in a
+// work tree".
+function git(cwd, args) {
+  const res = spawnSync("git", args, { cwd, encoding: "utf8", env: gitEnv() });
+  if (res.status !== 0) {
+    throw new Error(`git ${args.join(" ")} failed in ${cwd}:\n${res.stdout}${res.stderr}`);
+  }
+  return res;
+}
 
-const DEFAULT_FAKE_STATES = [
-  { id: "state-backlog", name: "Backlog" },
-  { id: "state-inprogress", name: "In progress" },
-  { id: "state-landing", name: "Landing" },
-  { id: "state-live", name: "Live" },
-  { id: "state-cancelled", name: "Cancelled" },
-];
+// Locates the running worktree's own git dir/root by walking up from THIS
+// FILE's location — used only by T18 to build a REALISTIC poisoned
+// GIT_DIR/GIT_WORK_TREE pair (the worktree this self-test actually runs
+// in), never a made-up path. Mirrors plane-client.mjs's repoRoot() walk, but
+// stops at the nearest `.git` (file or directory) rather than the
+// package.json+.claude marker pair.
+function locateThisWorktreeGit() {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    const gitPath = join(dir, ".git");
+    if (existsSync(gitPath)) {
+      const stat = statSync(gitPath);
+      if (stat.isDirectory()) return { workTreeRoot: dir, gitDir: gitPath };
+      const m = /^gitdir:\s*(.+)$/m.exec(readFileSync(gitPath, "utf8").trim());
+      return { workTreeRoot: dir, gitDir: m ? m[1].trim() : gitPath };
+    }
+    const parent = dirname(dir);
+    if (parent === dir) throw new Error("locateThisWorktreeGit: no .git found above this file");
+    dir = parent;
+  }
+}
 
-// `states` lets a case model a workspace missing one of the mapped states.
-// `omitDescriptionStripped` models Landmine 1 — a real Plane list response
-// that drops `description_stripped` even though `fields=` asked for it.
-function startFakeServer({
+// v1's own name for the state list, kept so every case below (T1-T20) reads
+// unchanged; backed by the shared plane-fake-server.mjs module's export so
+// there is one definition of "what a fresh BUGS workspace's states look
+// like" rather than two that can drift apart.
+const DEFAULT_FAKE_STATES = DEFAULT_STATES;
+
+// Thin adapter over the shared `startFakePlane` (plane-fake-server.mjs,
+// extracted TP1 2026-09-11-plane-harness): every v1 case below was written
+// against this exact shape (`server.items`, `server.requests`, `server.url`,
+// `server.close()`), scoped to the single BUGS project the harness's Given/
+// Then never needed to name. Rather than rewrite ~20 passing cases, this
+// translates the old options into the shared module's seed and re-exposes
+// its BUGS-project work-items array under the old `.items` name — the
+// underlying HTTP server is now the one plane-intake/-triage/-apply's
+// self-tests import too, never a second re-implementation of it.
+async function startFakeServer({
   existingItems = [],
   failFirstCreate = false,
   states = DEFAULT_FAKE_STATES,
   omitDescriptionStripped = false,
 } = {}) {
-  const requests = [];
-  const items = existingItems.map((it) => ({ ...it }));
-  let createFailuresLeft = failFirstCreate ? 1 : 0;
-  let nextItemId = items.length + 1;
-
-  const server = createServer((req, res) => {
-    let raw = "";
-    req.on("data", (c) => (raw += c));
-    req.on("end", () => {
-      const u = new URL(req.url, "http://127.0.0.1");
-      let body = null;
-      if (raw) {
-        try {
-          body = JSON.parse(raw);
-        } catch {
-          body = raw;
-        }
-      }
-      requests.push({
-        method: req.method,
-        path: u.pathname,
-        query: Object.fromEntries(u.searchParams),
-        body,
-      });
-
-      const send = (status, obj) => {
-        const buf = Buffer.from(JSON.stringify(obj));
-        res.writeHead(status, { "content-type": "application/json" });
-        res.end(buf);
-      };
-
-      const isWorkItemsCollection = /\/projects\/proj-bugs\/work-items\/$/.test(u.pathname);
-      const patchMatch = /\/projects\/proj-bugs\/work-items\/([^/]+)\/$/.exec(u.pathname);
-
-      if (req.method === "POST" && isWorkItemsCollection && createFailuresLeft > 0) {
-        createFailuresLeft--;
-        res.writeHead(429, {
-          "content-type": "application/json",
-          "x-ratelimit-reset": String(Math.floor(Date.now() / 1000) + 1),
-        });
-        res.end(JSON.stringify({ error: "rate limited" }));
-        return;
-      }
-
-      if (req.method === "GET" && /\/projects\/$/.test(u.pathname)) {
-        return send(200, { results: [{ id: "proj-bugs", identifier: "BUGS", name: "Bugs" }] });
-      }
-      if (req.method === "GET" && /\/projects\/proj-bugs\/states\/$/.test(u.pathname)) {
-        return send(200, { results: states });
-      }
-      if (req.method === "GET" && isWorkItemsCollection) {
-        const listed = omitDescriptionStripped
-          ? items.map(({ description_stripped: _dropped, ...rest }) => rest)
-          : items;
-        return send(200, { results: listed, next_cursor: null, next_page_results: false });
-      }
-      if (req.method === "POST" && isWorkItemsCollection) {
-        const created = { id: `item-${nextItemId++}`, ...body };
-        if (body?.description_html) created.description_stripped = stripTags(body.description_html);
-        items.push(created);
-        return send(201, created);
-      }
-      if (req.method === "PATCH" && patchMatch) {
-        const idx = items.findIndex((it) => it.id === patchMatch[1]);
-        if (idx !== -1) {
-          items[idx] = { ...items[idx], ...body };
-          if (body?.description_html) {
-            items[idx].description_stripped = stripTags(body.description_html);
-          }
-        }
-        return send(200, items[idx] ?? {});
-      }
-      return send(404, { error: `fake Plane server: no route for ${req.method} ${u.pathname}` });
-    });
+  const fake = await startFakePlane({
+    workItems: { BUGS: existingItems },
+    states: { BUGS: states },
+    failFirstCreate,
+    omitDescriptionStripped,
   });
-
-  return new Promise((resolve) => {
-    server.listen(0, "127.0.0.1", () => {
-      const { port } = server.address();
-      resolve({
-        url: `http://127.0.0.1:${port}`,
-        requests,
-        items,
-        close: () => new Promise((r) => server.close(r)),
-      });
-    });
-  });
+  return {
+    url: fake.url,
+    requests: fake.requests,
+    items: fake.state.workItems.BUGS,
+    close: fake.close,
+  };
 }
 
 // ── registry fixture ────────────────────────────────────────────────────────
@@ -223,12 +179,50 @@ function makeFixture({
 // server above listens on this same harness process's event loop, and a
 // synchronous spawn blocks that loop while the child's request to the server
 // is still pending, deadlocking every case that needs a round trip.
-function runCli(argv, { registryDir, baseUrl, apiKey = "self-test-key", noKey = false } = {}) {
+function runCli(
+  argv,
+  {
+    registryDir,
+    baseUrl,
+    apiKey = "self-test-key",
+    noKey = false,
+    // F4 test-isolation (fix-round 2b): every invocation must set
+    // PLANE_SYNC_STATE_DIR so a run of this suite never touches the real
+    // `.claude/campaign/.plane-writes.jsonl` / `.plane-sync-state.json` of
+    // whatever repo/worktree it happens to run in. Defaulting to `registryDir`
+    // (always a throwaway `makeFixture()`/mkdtempSync dir tracked in
+    // FIXTURE_DIRS and swept in the `finally` below) means every one of this
+    // file's ~50 call sites gets isolation for free — only T16's own repo
+    // fixture passes an explicit, separate `stateDir` (it needs the ledger to
+    // live apart from the throwaway git repo it builds).
+    stateDir = registryDir,
+    // T16 (R14): the branch guard resolves via a REPO_ROOT computed from the
+    // running script's OWN file location, so proving it needs the CLI to run
+    // as a copy planted inside a throwaway git repo — never SCRIPT_PATH (this
+    // worktree). Every other caller omits this and gets the real script.
+    scriptPath = SCRIPT_PATH,
+    // R14 landed while this file still runs from a feature worktree (this
+    // branch, not master) — every case above T16 predates the branch guard
+    // and expects real writes, so this helper auto-appends --allow-branch by
+    // default (unless already present) so the guard never silently zeroes
+    // those cases' POST/PATCH counts on a non-master branch. T16 itself is
+    // the one caller that must observe the UNGUARDED no-flag behavior, so its
+    // run 1/run 3 pass `allowBranch: false` to suppress the injection.
+    allowBranch = true,
+  } = {},
+) {
   const env = { ...process.env, PLANE_SYNC_REGISTRY_DIR: registryDir, PLANE_BASE_URL: baseUrl };
+  // Always an explicit throwaway dir when a case cares where the ledger/cache
+  // land — never the ambient default (`.claude/campaign` of whatever repo
+  // this happens to run in), so a harness case can never write into a real
+  // registry (test-plan.md §7).
+  if (stateDir) env.PLANE_SYNC_STATE_DIR = stateDir;
   if (noKey) delete env.PLANE_API_KEY;
   else env.PLANE_API_KEY = apiKey;
+  const effectiveArgv =
+    allowBranch && !argv.includes("--allow-branch") ? [...argv, "--allow-branch"] : argv;
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [SCRIPT_PATH, ...argv], {
+    const child = spawn(process.execPath, [scriptPath, ...effectiveArgv], {
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -1109,8 +1103,1076 @@ async function main() {
     );
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  // Harness wave (.claude/pipeline/2026-09-11-plane-harness, test-plan.md
+  // T1-T6/T11/T15 — labelled H1.. below to avoid colliding with the T1-T20
+  // labels above, which prove a DIFFERENT, older spec's R1-R7). None of
+  // plane-client.mjs / the denylist / --max-writes / comment-on-close /
+  // adoption / --help exist in plane-sync.mjs yet, so every case here is
+  // expected RED on its stated assertion, never a crash (build-plan.md's
+  // own "must fail with" table).
+  // ══════════════════════════════════════════════════════════════════════
+
+  // H1 (T1, R1) — adoption: an existing BUGS item with a null external_id
+  // whose name matches "B<n> · ..." is PATCHed to stamp external_id, never
+  // re-created. B13 already carries a matching, up-to-date mirrored item so
+  // this case isolates the oracle to B12's adoption alone.
+  {
+    const dir = makeFixture({
+      catalogue: [
+        { ...B01_CATALOGUE_ROW, id: "B12", title: "x" },
+        { ...B01_CATALOGUE_ROW, id: "B13", title: "y" },
+      ],
+      ledger: { F01: [ledgerRow({ id: "B12" }), ledgerRow({ id: "B13" })] },
+    });
+    const b13Hash = deriveDesired(dir, { wavePlacement: new Map() }).find(
+      (r) => r.external_id === "B13",
+    )?.hash;
+    const existingItems = [
+      {
+        id: "item-b12",
+        name: "B12 · x",
+        state: "state-backlog",
+        priority: "low",
+        external_id: null,
+        external_source: null,
+        sequence_id: 5,
+      },
+      {
+        id: "item-b13",
+        name: "B13 · y",
+        state: "state-backlog",
+        priority: "low",
+        external_id: "B13",
+        external_source: "routeflow-registry",
+        description_stripped: `registry-hash: ${b13Hash}`,
+        sequence_id: 6,
+      },
+    ];
+    const server = await startFakeServer({ existingItems });
+    await runCli([], { registryDir: dir, baseUrl: server.url, stateDir: dir });
+    const patches1 = server.requests.filter((r) => r.method === "PATCH");
+    const b12Patch = patches1.find((p) => p.path.endsWith("/work-items/item-b12/"));
+    const posts1 = server.requests.filter((r) => r.method === "POST");
+    check(
+      "H1 (harness T1/R1): run 1 adopts B12 via one PATCH stamping external_id, zero POST creates",
+      {
+        patchCount: patches1.length,
+        adoptionBody: b12Patch && {
+          external_source: b12Patch.body?.external_source,
+          external_id: b12Patch.body?.external_id,
+        },
+        postCount: posts1.length,
+      },
+      {
+        patchCount: 1,
+        adoptionBody: { external_source: "routeflow-registry", external_id: "B12" },
+        postCount: 0,
+      },
+    );
+    const before2 = server.requests.length;
+    await runCli([], { registryDir: dir, baseUrl: server.url, stateDir: dir });
+    const writes2 = server.requests
+      .slice(before2)
+      .filter((r) => r.method === "POST" || r.method === "PATCH").length;
+    check("H1 (harness T1/R1): run 2 issues zero writes once adopted", writes2, 0);
+    await server.close();
+  }
+
+  // H2 (T2, R1) — two adoption candidates for one id: adopt the LOWEST
+  // sequence_id, warn `duplicate candidate B12`, never delete the loser.
+  {
+    // Registry title is "a" so the desired name ("B12 · a") matches the
+    // adopted (seq-5) candidate's name exactly — otherwise planDiff legitimately
+    // issues a second, rename PATCH after adoption, and the patchCount:1 oracle
+    // below (adoption only) would conflate the two into one number.
+    const dir = makeFixture({
+      catalogue: [{ ...B01_CATALOGUE_ROW, id: "B12", title: "a" }],
+      ledger: { F01: [ledgerRow({ id: "B12" })] },
+    });
+    const existingItems = [
+      {
+        id: "item-dup-9",
+        name: "B12 · b",
+        state: "state-backlog",
+        priority: "low",
+        external_id: null,
+        sequence_id: 9,
+      },
+      {
+        id: "item-dup-5",
+        name: "B12 · a",
+        state: "state-backlog",
+        priority: "low",
+        external_id: null,
+        sequence_id: 5,
+      },
+    ];
+    const server = await startFakeServer({ existingItems });
+    const { stdout, stderr } = await runCli([], {
+      registryDir: dir,
+      baseUrl: server.url,
+      stateDir: dir,
+    });
+    const patches = server.requests.filter((r) => r.method === "PATCH");
+    const deletes = server.requests.filter((r) => r.method === "DELETE");
+    check(
+      "H2 (harness T2/R1): adopts only the lower sequence_id (5), warns duplicate, never deletes",
+      {
+        patchCount: patches.length,
+        patchTargetsSeq5: patches.some((p) => p.path.endsWith("/work-items/item-dup-5/")),
+        warned: (stdout + stderr).includes("duplicate candidate B12"),
+        deleteCount: deletes.length,
+      },
+      { patchCount: 1, patchTargetsSeq5: true, warned: true, deleteCount: 0 },
+    );
+    await server.close();
+  }
+
+  // T1b (fix-round 2b, F1/Opus #1) — adoption is a WRITE: --check and
+  // --dry-run must issue ZERO PATCH/POST for an adoptable candidate, report
+  // it separately as "would adopt N", and --check must still treat it as
+  // drift (exit 1). B12 here is a null-external_id "B12 · x" the registry
+  // also carries — exactly H1's fixture, but read under --check/--dry-run
+  // instead of a real run.
+  {
+    const makeB12Fixture = () =>
+      makeFixture({
+        catalogue: [{ ...B01_CATALOGUE_ROW, id: "B12", title: "x" }],
+        ledger: { F01: [ledgerRow({ id: "B12" })] },
+      });
+    const b12ExistingItems = () => [
+      {
+        id: "item-b12",
+        name: "B12 · x",
+        state: "state-backlog",
+        priority: "low",
+        external_id: null,
+        external_source: null,
+        sequence_id: 5,
+      },
+    ];
+
+    // --check: zero writes, "would adopt 1", exit 1 (drift).
+    {
+      const dir = makeB12Fixture();
+      const server = await startFakeServer({ existingItems: b12ExistingItems() });
+      const { code, stdout, stderr } = await runCli(["--check"], {
+        registryDir: dir,
+        baseUrl: server.url,
+      });
+      const writes = server.requests.filter(
+        (r) => r.method === "PATCH" || r.method === "POST",
+      ).length;
+      check(
+        "T1b (F1): --check on an adoptable candidate makes zero PATCH/POST, reports would adopt 1, exits 1",
+        { writes, exitCode: code, mentionsWouldAdopt: (stdout + stderr).includes("would adopt 1") },
+        { writes: 0, exitCode: 1, mentionsWouldAdopt: true },
+      );
+      await server.close();
+    }
+
+    // --dry-run: zero writes, "would adopt 1", exit 0 (never fails a turn).
+    {
+      const dir = makeB12Fixture();
+      const server = await startFakeServer({ existingItems: b12ExistingItems() });
+      const { code, stdout, stderr } = await runCli(["--dry-run"], {
+        registryDir: dir,
+        baseUrl: server.url,
+      });
+      const writes = server.requests.filter(
+        (r) => r.method === "PATCH" || r.method === "POST",
+      ).length;
+      check(
+        "T1b (F1): --dry-run on an adoptable candidate makes zero PATCH/POST, reports would adopt 1, exits 0",
+        { writes, exitCode: code, mentionsWouldAdopt: (stdout + stderr).includes("would adopt 1") },
+        { writes: 0, exitCode: 0, mentionsWouldAdopt: true },
+      );
+      await server.close();
+    }
+
+    // R14 interaction: the SAME adoptable candidate, off master, with no
+    // --allow-branch — the R14 branch guard (T16) must gate the adoption
+    // PATCH exactly like any other write, so total writes stay 0. Uses a
+    // throwaway git repo the same way T16 does (the branch guard resolves
+    // REPO_ROOT from the running script's own file location).
+    {
+      const repoDir = mkdtempSync(join(tmpdir(), FIXTURE_PREFIX));
+      FIXTURE_DIRS.push(repoDir);
+      git(repoDir, ["init", "-q"]);
+      git(repoDir, ["checkout", "-q", "-b", "feat/y"]);
+      git(repoDir, ["config", "user.email", "plane-sync-self-test@example.com"]);
+      git(repoDir, ["config", "user.name", "plane-sync-self-test"]);
+      writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "throwaway" }) + "\n");
+      mkdirSync(join(repoDir, ".claude"), { recursive: true });
+      writeFileSync(join(repoDir, ".claude", ".keep"), "");
+      const scriptsDir = join(repoDir, "scripts", "campaign");
+      mkdirSync(scriptsDir, { recursive: true });
+      for (const name of ["plane-sync.mjs", "plane-client.mjs", "plane-denylist.json"]) {
+        writeFileSync(
+          join(scriptsDir, name),
+          readFileSync(fileURLToPath(new URL(`./${name}`, import.meta.url)), "utf8"),
+        );
+      }
+      git(repoDir, ["add", "-A"]);
+      git(repoDir, ["commit", "-q", "-m", "chore: seed"]);
+
+      const stateDirT1b = mkdtempSync(join(tmpdir(), FIXTURE_PREFIX));
+      FIXTURE_DIRS.push(stateDirT1b);
+      const registryDir = makeB12Fixture();
+      const server = await startFakeServer({ existingItems: b12ExistingItems() });
+      const run = await runCli([], {
+        registryDir,
+        baseUrl: server.url,
+        stateDir: stateDirT1b,
+        scriptPath: join(scriptsDir, "plane-sync.mjs"),
+        allowBranch: false,
+      });
+      const writes = server.requests.filter(
+        (r) => r.method === "PATCH" || r.method === "POST",
+      ).length;
+      check(
+        "T1b (F1, R14): an adoptable candidate off master without --allow-branch issues zero writes",
+        { writes, exitCode: run.code },
+        { writes: 0, exitCode: 0 },
+      );
+      await server.close();
+    }
+  }
+
+  // H3 (T3, R2) — denylist: a forbidden string in an outbound field skips
+  // the write, is counted `skipped(forbidden)`, names the id+pattern, and
+  // the matched text itself never reaches stdout/stderr.
+  {
+    const dir = makeFixture({
+      catalogue: [
+        { ...B01_CATALOGUE_ROW, id: "B77", title: "Invoice INV-2026-12345 double-charged" },
+      ],
+      ledger: { F01: [ledgerRow({ id: "B77" })] },
+    });
+    const server = await startFakeServer({ existingItems: [] });
+    const { stdout, stderr } = await runCli([], {
+      registryDir: dir,
+      baseUrl: server.url,
+      stateDir: dir,
+    });
+    const combined = stdout + stderr;
+    const posts = server.requests.filter((r) => r.method === "POST");
+    check(
+      "H3 (harness T3/R2): a denylist hit skips the write, is counted, never prints the match",
+      {
+        postCount: posts.length,
+        summaryHasSkippedForbidden: /skipped\(forbidden\)=1/.test(combined),
+        neverPrintsInvoiceNumber: !combined.includes("INV-2026-12345"),
+        namesIdAndPattern: combined.includes("B77 forbidden (invoice-number)"),
+      },
+      {
+        postCount: 0,
+        summaryHasSkippedForbidden: true,
+        neverPrintsInvoiceNumber: true,
+        namesIdAndPattern: true,
+      },
+    );
+    await server.close();
+  }
+
+  // H4 (T4, R3) — write budget + ledger: `--max-writes 3` against 5 queued
+  // creates caps writes at 3, defers the rest, and appends exactly 3
+  // well-shaped lines (ts,tool,method,path,ref — never a body) to the ledger.
+  {
+    const catalogue = ["B21", "B22", "B23", "B24", "B25"].map((id, i) => ({
+      ...B01_CATALOGUE_ROW,
+      id,
+      title: `Budget row ${i + 1}`,
+    }));
+    const ledger = { F01: catalogue.map((r) => ledgerRow({ id: r.id })) };
+    const dir = makeFixture({ catalogue, ledger });
+    const server = await startFakeServer({ existingItems: [] });
+    const { code, stdout, stderr } = await runCli(["--max-writes", "3"], {
+      registryDir: dir,
+      baseUrl: server.url,
+      stateDir: dir,
+    });
+    const posts = server.requests.filter((r) => r.method === "POST");
+    const ledgerPath = join(dir, ".plane-writes.jsonl");
+    const ledgerLines = existsSync(ledgerPath)
+      ? readFileSync(ledgerPath, "utf8")
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .map((l) => {
+            try {
+              return JSON.parse(l);
+            } catch {
+              return null;
+            }
+          })
+      : [];
+    check(
+      "H4 (harness T4/R3): --max-writes 3 caps POSTs, defers 2, ledger has exactly 3 well-shaped lines",
+      {
+        postCount: posts.length,
+        exitCode: code,
+        deferredInSummary: /deferred=2/.test(stdout + stderr),
+        ledgerLineCount: ledgerLines.length,
+        ledgerShapeOk: ledgerLines.every(
+          (l) =>
+            l && !("body" in l) && ["ts", "tool", "method", "path", "ref"].every((k) => k in l),
+        ),
+      },
+      {
+        postCount: 3,
+        exitCode: 0,
+        deferredInSummary: true,
+        ledgerLineCount: 3,
+        ledgerShapeOk: true,
+      },
+    );
+    await server.close();
+  }
+
+  // F3 (fix-round 2b, Opus #5) — a missing denylist must fail CLOSED: the
+  // pre-fix loadDenylist() returned [] on a missing file, so R2's write scan
+  // silently disabled itself instead of blocking every write. PLANE_DENYLIST_PATH
+  // is a test-only override (plane-client.mjs) pointed at a path that does
+  // not exist; plane-sync's main() must exit non-zero, make zero requests,
+  // and name the missing path — before any network call.
+  {
+    const dir = makeFixture();
+    const server = await startFakeServer({ existingItems: [] });
+    const missingPath = join(tmpdir(), `plane-denylist-missing-${process.pid}-${Date.now()}.json`);
+    const env = {
+      ...process.env,
+      PLANE_SYNC_REGISTRY_DIR: dir,
+      PLANE_BASE_URL: server.url,
+      PLANE_SYNC_STATE_DIR: dir,
+      PLANE_API_KEY: "self-test-key",
+      PLANE_DENYLIST_PATH: missingPath,
+      PLANE_SYNC_SELF_TEST: "1",
+    };
+    const { code, stdout, stderr } = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [SCRIPT_PATH, "--allow-branch"], {
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let out = "";
+      let err = "";
+      child.stdout.on("data", (c) => (out += c));
+      child.stderr.on("data", (c) => (err += c));
+      const timer = setTimeout(() => child.kill(), 15_000);
+      child.on("close", (c) => {
+        clearTimeout(timer);
+        resolve({ code: c, stdout: out, stderr: err });
+      });
+    });
+    check(
+      "F3: a missing PLANE_DENYLIST_PATH fails closed — exit != 0, zero requests, names the path",
+      {
+        exitNonZero: code !== 0,
+        requestCount: server.requests.length,
+        mentionsDenylistMissing: (stdout + stderr).includes("denylist missing"),
+      },
+      { exitNonZero: true, requestCount: 0, mentionsDenylistMissing: true },
+    );
+    await server.close();
+  }
+
+  // F3b (fix-round 3, NEW-2) — a present-but-empty denylist (`patterns: []`)
+  // must fail CLOSED exactly like a missing file: with the self-test marker
+  // set, plane-sync's main() must exit non-zero, make zero writes, and name
+  // the empty/malformed condition — never silently scan with zero patterns.
+  {
+    const dir = makeFixture();
+    const server = await startFakeServer({ existingItems: [] });
+    const emptyDenylistDir = mkdtempSync(join(tmpdir(), FIXTURE_PREFIX));
+    FIXTURE_DIRS.push(emptyDenylistDir);
+    const emptyPath = join(emptyDenylistDir, "plane-denylist.json");
+    writeFileSync(emptyPath, JSON.stringify({ patterns: [] }));
+    const env = {
+      ...process.env,
+      PLANE_SYNC_REGISTRY_DIR: dir,
+      PLANE_BASE_URL: server.url,
+      PLANE_SYNC_STATE_DIR: dir,
+      PLANE_API_KEY: "self-test-key",
+      PLANE_DENYLIST_PATH: emptyPath,
+      PLANE_SYNC_SELF_TEST: "1",
+    };
+    const { code, stdout, stderr } = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [SCRIPT_PATH, "--allow-branch"], {
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let out = "";
+      let err = "";
+      child.stdout.on("data", (c) => (out += c));
+      child.stderr.on("data", (c) => (err += c));
+      const timer = setTimeout(() => child.kill(), 15_000);
+      child.on("close", (c) => {
+        clearTimeout(timer);
+        resolve({ code: c, stdout: out, stderr: err });
+      });
+    });
+    const writes = server.requests.filter(
+      (r) => r.method === "PATCH" || r.method === "POST",
+    ).length;
+    check(
+      "F3b (NEW-2): an empty/malformed denylist fails closed — exit != 0, 0 writes, names the reason",
+      {
+        exitNonZero: code !== 0,
+        writes,
+        mentionsEmptyOrMalformed: (stdout + stderr).includes("denylist empty or malformed"),
+      },
+      { exitNonZero: true, writes: 0, mentionsEmptyOrMalformed: true },
+    );
+    await server.close();
+  }
+
+  // F3c (fix-round 3, NEW-1) — PLANE_DENYLIST_PATH present WITHOUT the
+  // PLANE_SYNC_SELF_TEST marker must be ignored outright: the run proceeds
+  // against the REAL denylist (loudly warning it did so) rather than either
+  // honouring an attacker-controlled override or failing closed on it.
+  {
+    const dir = makeFixture();
+    const server = await startFakeServer({ existingItems: [] });
+    const nonexistentPath = join(
+      tmpdir(),
+      `plane-denylist-unarmed-${process.pid}-${Date.now()}.json`,
+    );
+    const env = {
+      ...process.env,
+      PLANE_SYNC_REGISTRY_DIR: dir,
+      PLANE_BASE_URL: server.url,
+      PLANE_SYNC_STATE_DIR: dir,
+      PLANE_API_KEY: "self-test-key",
+      PLANE_DENYLIST_PATH: nonexistentPath,
+      // deliberately NOT setting PLANE_SYNC_SELF_TEST
+    };
+    const { code, stdout, stderr } = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [SCRIPT_PATH, "--allow-branch"], {
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let out = "";
+      let err = "";
+      child.stdout.on("data", (c) => (out += c));
+      child.stderr.on("data", (c) => (err += c));
+      const timer = setTimeout(() => child.kill(), 15_000);
+      child.on("close", (c) => {
+        clearTimeout(timer);
+        resolve({ code: c, stdout: out, stderr: err });
+      });
+    });
+    const writes = server.requests.filter(
+      (r) => r.method === "PATCH" || r.method === "POST",
+    ).length;
+    check(
+      "F3c (NEW-1): an unmarked PLANE_DENYLIST_PATH is ignored — run proceeds on the real denylist",
+      {
+        exitCode: code,
+        writes,
+        mentionsIgnored: (stdout + stderr).includes(
+          "PLANE_DENYLIST_PATH ignored outside self-tests",
+        ),
+      },
+      { exitCode: 0, writes: 1, mentionsIgnored: true },
+    );
+    await server.close();
+  }
+
+  // H5 (T5, R4/R5) — comment-on-close + state-map completeness, 3 runs.
+  // B45 is ALREADY in a completed-group state (Done, distinct from Live —
+  // R5) so its Live patch must NOT comment; B46 transitions from an open
+  // state and must get exactly one comment + one PR link. Runs 2/3 prove
+  // idempotency via the local cache, then via the cache-loss fallback
+  // (listing the item's own comments and finding the marker already there).
+  {
+    const dir = makeFixture({
+      catalogue: [
+        { ...B01_CATALOGUE_ROW, id: "B45", title: "z" },
+        { ...B01_CATALOGUE_ROW, id: "B46", title: "w" },
+      ],
+      ledger: {
+        F01: [
+          ledgerRow({ id: "B45", state: "done", pr: 678, proof: "REG-B45", roundSha: "abc1234" }),
+          ledgerRow({ id: "B46", state: "done", pr: 681 }),
+        ],
+      },
+    });
+    const statesWithDone = [
+      ...DEFAULT_STATES,
+      { id: "state-done", name: "Done", group: "completed" },
+    ];
+    const existingItems = [
+      {
+        id: "item-b45",
+        name: "B45 · z",
+        state: "state-done",
+        priority: "low",
+        external_id: "B45",
+        external_source: "routeflow-registry",
+        description_stripped: "registry-hash: stale-b45",
+        sequence_id: 1,
+      },
+      {
+        id: "item-b46",
+        name: "B46 · w",
+        state: "state-backlog",
+        priority: "low",
+        external_id: "B46",
+        external_source: "routeflow-registry",
+        description_stripped: "registry-hash: stale-b46",
+        sequence_id: 2,
+      },
+    ];
+    const server = await startFakeServer({ existingItems, states: statesWithDone });
+
+    await runCli([], { registryDir: dir, baseUrl: server.url, stateDir: dir });
+    const patches1 = server.requests.filter((r) => r.method === "PATCH");
+    const b45Patch = patches1.find((p) => p.path.endsWith("/work-items/item-b45/"));
+    const b46Patch = patches1.find((p) => p.path.endsWith("/work-items/item-b46/"));
+    const commentPosts1 = server.requests.filter(
+      (r) => r.method === "POST" && /\/work-items\/[^/]+\/comments\/$/.test(r.path),
+    );
+    const linkPosts1 = server.requests.filter(
+      (r) => r.method === "POST" && /\/work-items\/[^/]+\/links\/$/.test(r.path),
+    );
+    const b45Comments = commentPosts1.filter((r) => r.path.includes("item-b45"));
+    const b46Comments = commentPosts1.filter((r) => r.path.includes("item-b46"));
+    const b46Links = linkPosts1.filter((r) => r.path.includes("item-b46"));
+    check(
+      "H5 (harness T5/R4,R5): run 1 patches both to Live; only B46 (was open) gets a comment+link",
+      {
+        b45PatchState: b45Patch?.body?.state,
+        b46PatchState: b46Patch?.body?.state,
+        b45CommentCount: b45Comments.length,
+        b46CommentCount: b46Comments.length,
+        b46CommentHasPr: b46Comments[0]?.body?.comment_html?.includes("PR #681") ?? false,
+        b46CommentHasMarker:
+          b46Comments[0]?.body?.comment_html?.includes("plane-sync:closed") ?? false,
+        b46LinkCount: b46Links.length,
+        b46LinkUrlEndsPull681: b46Links[0]?.body?.url?.endsWith("/pull/681") ?? false,
+      },
+      {
+        b45PatchState: "state-live",
+        b46PatchState: "state-live",
+        b45CommentCount: 0,
+        b46CommentCount: 1,
+        b46CommentHasPr: true,
+        b46CommentHasMarker: true,
+        b46LinkCount: 1,
+        b46LinkUrlEndsPull681: true,
+      },
+    );
+
+    const before2 = server.requests.length;
+    await runCli([], { registryDir: dir, baseUrl: server.url, stateDir: dir });
+    const run2CommentLinkWrites = server.requests
+      .slice(before2)
+      .filter((r) => r.method === "POST" && /\/(comments|links)\/$/.test(r.path)).length;
+    check(
+      "H5 (harness T5): run 2 (local cache present) issues zero comment/link writes",
+      run2CommentLinkWrites,
+      0,
+    );
+
+    rmSync(join(dir, ".plane-sync-state.json"), { force: true });
+    const before3 = server.requests.length;
+    await runCli([], { registryDir: dir, baseUrl: server.url, stateDir: dir });
+    const run3CommentLinkWrites = server.requests
+      .slice(before3)
+      .filter((r) => r.method === "POST" && /\/(comments|links)\/$/.test(r.path)).length;
+    check(
+      "H5 (harness T5): run 3 (cache deleted, fake lists B46's own prior comment) issues zero comment/link writes",
+      run3CommentLinkWrites,
+      0,
+    );
+    await server.close();
+  }
+
+  // T5b (fix-round 2b, F2/Opus #7) — the existing item's `state` is an id
+  // ABSENT from the workspace's current state list (renamed/stale — a state
+  // deleted or renamed in Plane after the item last moved). idToGroup.get()
+  // on that id returns undefined; the pre-fix `!["completed","cancelled"]
+  // .includes(undefined)` read as true, i.e. "was open", so a close comment
+  // could post for an item whose prior openness was never actually observed.
+  // Fixed behavior: unknown previous group -> no comment, one warn line.
+  {
+    const dir = makeFixture({
+      catalogue: [{ ...B01_CATALOGUE_ROW, id: "B90", title: "ghost state" }],
+      ledger: { F01: [ledgerRow({ id: "B90", state: "done" })] },
+    });
+    const existingItems = [
+      {
+        id: "item-b90",
+        name: "B90 · ghost state",
+        state: "state-ghost", // not in DEFAULT_STATES — unknown to idToGroup
+        priority: "low",
+        external_id: "B90",
+        external_source: "routeflow-registry",
+        description_stripped: "registry-hash: stale-b90",
+        sequence_id: 1,
+      },
+    ];
+    const server = await startFakeServer({ existingItems });
+    const { stdout, stderr } = await runCli([], {
+      registryDir: dir,
+      baseUrl: server.url,
+      stateDir: dir,
+    });
+    const patches = server.requests.filter((r) => r.method === "PATCH");
+    const b90Patch = patches.find((p) => p.path.endsWith("/work-items/item-b90/"));
+    const commentPosts = server.requests.filter(
+      (r) => r.method === "POST" && /\/work-items\/[^/]+\/comments\/$/.test(r.path),
+    );
+    check(
+      "T5b (F2): unknown previous state group patches to Live but posts no close comment, and warns",
+      {
+        patchCount: patches.length,
+        b90PatchState: b90Patch?.body?.state,
+        commentCount: commentPosts.length,
+        warned: (stdout + stderr).includes(
+          "state state-ghost unknown, skipping close comment for B90",
+        ),
+      },
+      { patchCount: 1, b90PatchState: "state-live", commentCount: 0, warned: true },
+    );
+    await server.close();
+  }
+
+  // H6 (T6, R4) — creating an item whose ledger state is ALREADY done posts
+  // no comment (the description block already carries the proof). NOTE: this
+  // case is expected to read GREEN even before R4 ships — see the run
+  // report; it is a regression lock added at the same time comment-on-close
+  // itself lands, not a discriminator of its absence (test-plan.md's own
+  // reverse-check for T6 says the same: "untestable without comment-on-close
+  // code to exempt in the first place").
+  {
+    const dir = makeFixture({
+      catalogue: [{ ...B01_CATALOGUE_ROW, id: "B50", title: "already done on file" }],
+      ledger: { F01: [ledgerRow({ id: "B50", state: "done", pr: 600 })] },
+    });
+    const server = await startFakeServer({ existingItems: [] });
+    await runCli([], { registryDir: dir, baseUrl: server.url, stateDir: dir });
+    const posts = server.requests.filter(
+      (r) => r.method === "POST" && /\/work-items\/$/.test(r.path),
+    );
+    const commentPosts = server.requests.filter(
+      (r) => r.method === "POST" && /\/comments\/$/.test(r.path),
+    );
+    const linkPosts = server.requests.filter(
+      (r) => r.method === "POST" && /\/links\/$/.test(r.path),
+    );
+    check(
+      "H6 (harness T6/R4): creating an already-done item posts no comment/link",
+      {
+        createCount: posts.length,
+        createdState: posts[0]?.body?.state,
+        commentCount: commentPosts.length,
+        linkCount: linkPosts.length,
+      },
+      { createCount: 1, createdState: "state-live", commentCount: 0, linkCount: 0 },
+    );
+    await server.close();
+  }
+
+  // H11 (T11, R9) — the literal-scan extends to every new file this feature
+  // adds, guarded by existsSync exactly like the pre-implementation-safe
+  // convention test-plan.md §6 requires (an absent file reports `false`, a
+  // clean assertion miss, never a thrown ENOENT).
+  {
+    const uuidRe = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+    const apiKeyLiteralRe = /PLANE_API_KEY\s*=\s*["'`][^"'`]/;
+    const NEW_FILES = [
+      "plane-client.mjs",
+      "plane-intake.mjs",
+      "plane-triage.mjs",
+      "plane-apply.mjs",
+      "plane-fake-server.mjs",
+    ];
+    const results = {};
+    const want = {};
+    for (const name of NEW_FILES) {
+      const p = fileURLToPath(new URL(`./${name}`, import.meta.url));
+      if (!existsSync(p)) {
+        results[name] = { exists: false };
+      } else {
+        const src = readFileSync(p, "utf8");
+        results[name] = {
+          exists: true,
+          uuid: uuidRe.test(src),
+          keyLiteral: apiKeyLiteralRe.test(src),
+        };
+      }
+      want[name] = { exists: true, uuid: false, keyLiteral: false };
+    }
+    check(
+      "H11 (harness T11/R9): every new script file exists and carries no uuid/key literal",
+      results,
+      want,
+    );
+  }
+
+  // H15 (T15, R13) — --help/-h short-circuits BEFORE any env read or network
+  // call, on every input (valid key + reachable server; no key + unreachable
+  // base URL); an unknown flag exits 2 with Usage on stderr. Base URL is
+  // ALWAYS a local fake server or a closed local port here — never the real
+  // default — so a not-yet-implemented --help can never fall through to a
+  // live network call the way the 2026-09-11 incident did.
+  {
+    const dir = makeFixture();
+    const server = await startFakeServer({ existingItems: [] });
+    const helpWithKey = await runCli(["--help"], { registryDir: dir, baseUrl: server.url });
+    check(
+      "H15a (harness T15/R13): --help exits 0 with Usage before any network call, even with a valid key + reachable server",
+      {
+        exitCode: helpWithKey.code,
+        stdoutHasUsage: helpWithKey.stdout.includes("Usage:"),
+        stdoutNamesScript: helpWithKey.stdout.includes("plane-sync"),
+        requestCount: server.requests.length,
+      },
+      { exitCode: 0, stdoutHasUsage: true, stdoutNamesScript: true, requestCount: 0 },
+    );
+    await server.close();
+
+    const dir2 = makeFixture();
+    const helpNoKey = await runCli(["--help"], {
+      registryDir: dir2,
+      baseUrl: "http://127.0.0.1:1", // closed port; nothing listens
+      noKey: true,
+    });
+    check(
+      "H15b (harness T15/R13): --help exits 0 with Usage even with no key and an unreachable base URL",
+      { exitCode: helpNoKey.code, stdoutHasUsage: helpNoKey.stdout.includes("Usage:") },
+      { exitCode: 0, stdoutHasUsage: true },
+    );
+
+    const dir3 = makeFixture();
+    const bogus = await runCli(["--bogus"], {
+      registryDir: dir3,
+      baseUrl: "http://127.0.0.1:1",
+      noKey: true,
+    });
+    check(
+      "H15c (harness T15/R13): an unknown flag exits 2 with Usage on stderr",
+      { exitCode: bogus.code, stderrHasUsage: bogus.stderr.includes("Usage:") },
+      { exitCode: 2, stderrHasUsage: true },
+    );
+  }
+
+  // T16 (R14, spec.md; ruling-s4-s5.md) — branch guard: plane-sync writes
+  // ONLY on master/main, or with --allow-branch. The guard resolves the
+  // branch from a REPO_ROOT computed from the SCRIPT'S OWN file location
+  // (plane-sync.mjs:60-63's REPO_ROOT / plane-client.mjs's repoRoot() — both
+  // "resolved from this file's own location, independent of cwd"), so
+  // proving it needs a REAL git repo sitting at that computed root — never
+  // this worktree. This copies plane-sync.mjs + its one relative dependency
+  // (plane-client.mjs) into <tmp>/scripts/campaign/ and scaffolds
+  // <tmp>/package.json + <tmp>/.claude — the marker pair plane-client.mjs's
+  // repoRoot() walks up to — so the copy's REPO_ROOT lands on the throwaway
+  // repo when it runs. Incident 2026-09-11 23:26Z (spec.md R14): Gate 5 run
+  // from a feature worktree with a real key created 282 live BUGS items —
+  // this is the guard that incident forced.
+  {
+    // gitEnv()/git() are the shared module-level helpers defined near the
+    // top of this file (imported gitEnv from plane-client.mjs) — no longer
+    // redefined per-test-block.
+    const repoDir = mkdtempSync(join(tmpdir(), FIXTURE_PREFIX));
+    FIXTURE_DIRS.push(repoDir);
+    git(repoDir, ["init", "-q"]);
+    git(repoDir, ["checkout", "-q", "-b", "feat/x"]);
+    git(repoDir, ["config", "user.email", "plane-sync-self-test@example.com"]);
+    git(repoDir, ["config", "user.name", "plane-sync-self-test"]);
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "throwaway" }) + "\n");
+    mkdirSync(join(repoDir, ".claude"), { recursive: true });
+    writeFileSync(join(repoDir, ".claude", ".keep"), "");
+    const scriptsDir = join(repoDir, "scripts", "campaign");
+    mkdirSync(scriptsDir, { recursive: true });
+    for (const name of ["plane-sync.mjs", "plane-client.mjs", "plane-denylist.json"]) {
+      writeFileSync(
+        join(scriptsDir, name),
+        readFileSync(fileURLToPath(new URL(`./${name}`, import.meta.url)), "utf8"),
+      );
+    }
+    writeFileSync(join(repoDir, "README.md"), "seed\n");
+    git(repoDir, ["add", "-A"]);
+    git(repoDir, ["commit", "-q", "-m", "chore: seed"]);
+    const scriptPath = join(scriptsDir, "plane-sync.mjs");
+
+    const stateDirT16 = mkdtempSync(join(tmpdir(), FIXTURE_PREFIX));
+    FIXTURE_DIRS.push(stateDirT16);
+    const registryDir = makeFixture({
+      catalogue: ["B01", "B02", "B03"].map((id) => ({
+        ...B01_CATALOGUE_ROW,
+        id,
+        title: `${id} row`,
+      })),
+      ledger: { F01: ["B01", "B02", "B03"].map((id) => ledgerRow({ id })) },
+    });
+
+    let server = await startFakeServer({ existingItems: [] });
+
+    // Run 1 — no flags, on feat/x: zero writes, the exact skip line, exit 0.
+    const run1 = await runCli([], {
+      registryDir,
+      baseUrl: server.url,
+      stateDir: stateDirT16,
+      scriptPath,
+      allowBranch: false,
+    });
+    const run1Posts = server.requests.filter((r) => r.method === "POST").length;
+    check("T16 (R14) run 1: zero POST on feat/x without --allow-branch", run1Posts, 0);
+    const run1Lines = run1.stdout.split(/\r?\n/);
+    check(
+      "T16 (R14) run 1: exact skip line on stdout, exit 0",
+      {
+        exitCode: run1.code,
+        hasSkipLine: run1Lines.includes(
+          "Plane mirror: skipped writes (branch feat/x is not master; pass --allow-branch to override)",
+        ),
+      },
+      { exitCode: 0, hasSkipLine: true },
+    );
+
+    // Run 2 — same repo/server, --allow-branch: all 3 registry rows create.
+    const beforeRun2 = server.requests.length;
+    const run2 = await runCli(["--allow-branch"], {
+      registryDir,
+      baseUrl: server.url,
+      stateDir: stateDirT16,
+      scriptPath,
+    });
+    const run2Posts = server.requests.slice(beforeRun2).filter((r) => r.method === "POST").length;
+    check(
+      "T16 (R14) run 2: --allow-branch on feat/x issues 3 POSTs, exit 0",
+      { posts: run2Posts, exitCode: run2.code },
+      { posts: 3, exitCode: 0 },
+    );
+    await server.close();
+
+    // Run 3 — the temp repo switches to master; a FRESH fake server (never
+    // the one runs 1-2 already populated) proves the branch, not a leftover
+    // item, is what let the writes through.
+    git(repoDir, ["checkout", "-b", "master"]);
+    server = await startFakeServer({ existingItems: [] });
+    const run3 = await runCli([], {
+      registryDir,
+      baseUrl: server.url,
+      stateDir: stateDirT16,
+      scriptPath,
+      allowBranch: false,
+    });
+    const run3Posts = server.requests.filter((r) => r.method === "POST").length;
+    check(
+      "T16 (R14) run 3: on master without flags, 3 POSTs on a fresh fake, exit 0",
+      { posts: run3Posts, exitCode: run3.code },
+      { posts: 3, exitCode: 0 },
+    );
+    await server.close();
+  }
+
+  // T18 (defect repro, gates/push.log ~11716) — the husky pre-push hook's
+  // `npm run verify` runs with git's own GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE/
+  // GIT_PREFIX etc. already exported into the environment (git sets these for
+  // every child it spawns, including `npm run verify`), and this self-test's
+  // OWN process inherits them. T1b/T16's fixture setup (`git checkout -q -b`
+  // in a tmpdir) failed under exactly that env with "fatal: this operation
+  // must be run in a work tree" before gitEnv() existed. This proves two
+  // things with GIT_DIR/GIT_WORK_TREE deliberately poisoned — pointed at
+  // THIS WORKTREE's own real .git/root, the closest realistic stand-in for
+  // the hook's ambient env — for the duration of the block:
+  //   (a) the fixture's own git() calls (shared helper, gitEnv()-scrubbed)
+  //       still create/checkout the temp repo's branch;
+  //   (b) plane-sync.mjs's branch guard (currentBranch(), now gitEnv()-
+  //       scrubbed) still reports the TEMP repo's branch — never this
+  //       worktree's real branch — proving the child process's own git spawn
+  //       ignores the poisoned GIT_DIR/GIT_WORK_TREE it inherited from the
+  //       env runCli passes through (env: {...process.env, ...}).
+  {
+    const { workTreeRoot, gitDir } = locateThisWorktreeGit();
+    const savedGitDir = process.env.GIT_DIR;
+    const savedGitWorkTree = process.env.GIT_WORK_TREE;
+    process.env.GIT_DIR = gitDir;
+    process.env.GIT_WORK_TREE = workTreeRoot;
+    try {
+      const repoDir = mkdtempSync(join(tmpdir(), FIXTURE_PREFIX));
+      FIXTURE_DIRS.push(repoDir);
+      let setupOk = true;
+      let setupError = "";
+      let scriptsDir;
+      try {
+        git(repoDir, ["init", "-q"]);
+        git(repoDir, ["checkout", "-q", "-b", "feat/t18"]);
+        git(repoDir, ["config", "user.email", "plane-sync-self-test@example.com"]);
+        git(repoDir, ["config", "user.name", "plane-sync-self-test"]);
+        writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "throwaway" }) + "\n");
+        mkdirSync(join(repoDir, ".claude"), { recursive: true });
+        writeFileSync(join(repoDir, ".claude", ".keep"), "");
+        scriptsDir = join(repoDir, "scripts", "campaign");
+        mkdirSync(scriptsDir, { recursive: true });
+        for (const name of ["plane-sync.mjs", "plane-client.mjs", "plane-denylist.json"]) {
+          writeFileSync(
+            join(scriptsDir, name),
+            readFileSync(fileURLToPath(new URL(`./${name}`, import.meta.url)), "utf8"),
+          );
+        }
+        git(repoDir, ["add", "-A"]);
+        git(repoDir, ["commit", "-q", "-m", "chore: seed"]);
+      } catch (err) {
+        setupOk = false;
+        setupError = err?.message ?? String(err);
+      }
+      check(
+        "T18 (defect repro): fixture git setup succeeds even with GIT_DIR/GIT_WORK_TREE pointed at the real worktree",
+        { setupOk, setupError },
+        { setupOk: true, setupError: "" },
+      );
+
+      if (setupOk) {
+        const scriptPath = join(scriptsDir, "plane-sync.mjs");
+        const stateDirT18 = mkdtempSync(join(tmpdir(), FIXTURE_PREFIX));
+        FIXTURE_DIRS.push(stateDirT18);
+        const registryDir = makeFixture({
+          catalogue: [{ ...B01_CATALOGUE_ROW, id: "B18", title: "t18 row" }],
+          ledger: { F01: [ledgerRow({ id: "B18" })] },
+        });
+        const server = await startFakeServer({ existingItems: [] });
+
+        // --check never touches git at all (it returns before currentBranch()
+        // is called) — this proves the poisoned env doesn't otherwise wedge
+        // or crash the child.
+        const checkRun = await runCli(["--check"], {
+          registryDir,
+          baseUrl: server.url,
+          stateDir: stateDirT18,
+          scriptPath,
+          allowBranch: false,
+        });
+        check(
+          "T18: --check completes (never hangs/crashes) under poisoned GIT_DIR/GIT_WORK_TREE",
+          { timedOut: checkRun.timedOut, exitCode: checkRun.code },
+          { timedOut: false, exitCode: 1 }, // exit 1 = drift (a create pending), same as T1's --check shape
+        );
+
+        // Bare run: DOES hit currentBranch(). Must report "feat/t18" (the
+        // temp repo's own branch) — never "feat/plane-harness" or whatever
+        // this worktree's real branch is — proving the scrub worked.
+        const bareRun = await runCli([], {
+          registryDir,
+          baseUrl: server.url,
+          stateDir: stateDirT18,
+          scriptPath,
+          allowBranch: false,
+        });
+        const bareLines = bareRun.stdout.split(/\r?\n/);
+        check(
+          "T18 (defect repro): branch guard reports the TEMP repo's branch (feat/t18), not the worktree's, under poisoned GIT_DIR/GIT_WORK_TREE",
+          {
+            exitCode: bareRun.code,
+            hasExpectedSkipLine: bareLines.includes(
+              "Plane mirror: skipped writes (branch feat/t18 is not master; pass --allow-branch to override)",
+            ),
+          },
+          { exitCode: 0, hasExpectedSkipLine: true },
+        );
+        await server.close();
+      }
+    } finally {
+      if (savedGitDir === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = savedGitDir;
+      if (savedGitWorkTree === undefined) delete process.env.GIT_WORK_TREE;
+      else process.env.GIT_WORK_TREE = savedGitWorkTree;
+    }
+  }
+
+  // T17 (Defect 1, proven live 2026-09-12) — the real Plane API returns
+  // `members/` and `projects/{id}/work-item-types/` as BARE ARRAYS, not the
+  // `{results, next_cursor, ...}` envelope every other listed endpoint uses.
+  // plane-client.mjs's `listAll` (and therefore `resolveTypes`/`resolveMember`,
+  // unchanged callers of it) must accept both shapes: this called
+  // `resolveTypes`/`resolveMember` in-process against the shared fake server,
+  // never spawning the CLI — same in-process convention as the
+  // deriveDesired/mapPriority/registryDigest cases above. Root cause: against
+  // the live workspace `resolveTypes` read `page?.results` off a bare array
+  // (always undefined) and found zero types, so plane-apply's dry run failed
+  // with `#1 no work-item type named "Task" in project ROAD` although ROAD has
+  // Task (default) and Epic.
+  {
+    const ROAD_PROJECT_ID = "proj-road"; // plane-fake-server.mjs's DEFAULT_PROJECTS
+    const seededTypes = [
+      { id: "type-task", name: "Task" },
+      { id: "type-epic", name: "Epic" },
+    ];
+    const seededMembers = [
+      { id: "member-lead", member: "member-lead", display_name: "ClaudeLead" },
+    ];
+
+    // Live-mirroring default: plane-fake-server.mjs now serves both routes as
+    // bare arrays.
+    const server = await startFakePlane({ types: { ROAD: seededTypes }, members: seededMembers });
+    const client = createClient({
+      apiKey: "self-test-key",
+      baseUrl: server.url,
+      tool: "plane-sync-self-test",
+    });
+    const types = await client.resolveTypes(ROAD_PROJECT_ID);
+    check(
+      'T17: resolveTypes resolves both seeded types (name -> id) from a bare-array response, e.g. "Task" -> type-task',
+      { size: types.size, task: types.get("task"), epic: types.get("epic") },
+      { size: 2, task: "type-task", epic: "type-epic" },
+    );
+    const memberId = await client.resolveMember("ClaudeLead");
+    check(
+      "T17: resolveMember resolves the seeded member id from a bare-array members/ response",
+      memberId,
+      "member-lead",
+    );
+    await server.close();
+
+    // Negative twin: a fake configured to serve work-item-types/ back in the
+    // OLD {results, ...} envelope must resolve identically — listAll
+    // tolerates both shapes, it doesn't just switch which one it assumes.
+    const server2 = await startFakePlane({
+      types: { ROAD: seededTypes },
+      members: seededMembers,
+      workItemTypesEnvelope: true,
+    });
+    const client2 = createClient({
+      apiKey: "self-test-key",
+      baseUrl: server2.url,
+      tool: "plane-sync-self-test",
+    });
+    const typesFromEnvelope = await client2.resolveTypes(ROAD_PROJECT_ID);
+    check(
+      "T17 (negative twin): resolveTypes resolves both seeded types when work-item-types/ is served as the {results,...} envelope",
+      {
+        size: typesFromEnvelope.size,
+        task: typesFromEnvelope.get("task"),
+        epic: typesFromEnvelope.get("epic"),
+      },
+      { size: 2, task: "type-task", epic: "type-epic" },
+    );
+    await server2.close();
+  }
+
   return failures;
 }
+
+// F4 (fix-round 2b, ambient-leak guard): every runCli call now defaults
+// PLANE_SYNC_STATE_DIR to its own throwaway registryDir (see runCli above),
+// but this is the belt-and-suspenders proof that NOTHING in this suite ever
+// falls through to the ambient default — the real `.claude/campaign/` of
+// whatever repo/worktree this happens to run in. Snapshot both files this
+// worktree's own `.claude/campaign/` holds before the suite runs, assert they
+// are unchanged afterward, then delete them — they are themselves leaked
+// output from a prior (pre-fix) run of this suite (80 lines, all fake paths,
+// found 2026-09-11), not real registry state.
+const REAL_CAMPAIGN_DIR = join(repoRoot(), ".claude", "campaign");
+const REAL_WRITES_LEDGER = join(REAL_CAMPAIGN_DIR, ".plane-writes.jsonl");
+const REAL_SYNC_STATE = join(REAL_CAMPAIGN_DIR, ".plane-sync-state.json");
+const snapshotRealFiles = () => ({
+  writes: existsSync(REAL_WRITES_LEDGER) ? readFileSync(REAL_WRITES_LEDGER, "utf8") : null,
+  state: existsSync(REAL_SYNC_STATE) ? readFileSync(REAL_SYNC_STATE, "utf8") : null,
+});
+const realFilesBefore = snapshotRealFiles();
 
 // F4: the fixture sweep runs in a `finally`, and the summary/exit moved OUT of
 // main() to keep it reachable — `process.exit()` never runs a finally block.
@@ -1122,6 +2184,26 @@ try {
   console.log(`  FAIL plane-sync.self-test threw: ${err?.stack ?? err}`);
 } finally {
   cleanupFixtures();
+}
+const realFilesAfter = snapshotRealFiles();
+check(
+  "F4: this worktree's real .claude/campaign/.plane-writes.jsonl is untouched by the suite",
+  realFilesAfter.writes,
+  realFilesBefore.writes,
+);
+check(
+  "F4: this worktree's real .claude/campaign/.plane-sync-state.json is untouched by the suite",
+  realFilesAfter.state,
+  realFilesBefore.state,
+);
+// One-time cleanup of the leak this finding was filed against — not this
+// run's own output (already proven above), the pre-existing leaked files.
+for (const p of [REAL_WRITES_LEDGER, REAL_SYNC_STATE]) {
+  try {
+    if (existsSync(p)) rmSync(p);
+  } catch {
+    // best-effort — never turn cleanup itself into a red suite
+  }
 }
 check(
   "F4: the run leaves no plane-sync-self-test-* dir behind",

@@ -118,6 +118,21 @@ If the smoke probe passes → deploy is verified. Report the result to the user.
 
 ---
 
+## Step 4 — Plane landing update
+
+After `npm run post-deploy-check` passes, land this window's Plane state:
+
+```bash
+npm run plane:sync
+npm run plane:apply -- local-assets/plane/ops/<window>.json
+```
+
+(`<window>.json` is that landing's ops file under `local-assets/plane/ops/`, if one exists for
+this window — see the **plane** skill.) `plane:sync` mirrors the registry; `plane:apply` makes
+the state moves/comments/relations the MCP classifier itself cannot.
+
+---
+
 ## Quick reference
 
 | Step | What                    | Command                                                                                                                                                                                                          |
