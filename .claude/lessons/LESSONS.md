@@ -436,18 +436,6 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 - **Guard:** REG-B215 T2b + T16 in `orders.merge-idempotency.spec.ts`; the `schema-folder.spec.ts`
   model-count pin.
 
-### L-107 · 2026-09-11 · domain · train-4 Run A
-
-- **Symptom:** a NOWAIT advisory lock taken Invoice-first cycled (Postgres 40P01) against
-  `voidInvoice`'s own lock order; separately, folding `CONCURRENT_UPDATE` into `HANDLED_CODES`
-  (to silence a duplicate toast) also silenced the delete flow's real failure toast.
-- **Root cause:** two guards on the same row acquired locks in opposite orders; and a status was
-  added to a shared toast-suppression set without checking every OTHER caller that fires on it.
-- **Lesson:** **Take the Invoice lock LAST, after dependent-row locks release, matching
-  `voidInvoice`'s own order — a NOWAIT cycle is an ordering bug, not a timing one. Never add a
-  code to a shared suppression set without checking every caller it also silences.**
-- **Guard:** Run A pins P15–P22 (orders.service.spec / invoices.service.spec REG pins).
-
 ### L-100 · 2026-09-08 · domain · #678
 
 - **Symptom:** three numbering series minted cross-tenant on a null request tenant and raced to a
@@ -573,3 +561,22 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
   home.**
 - **Guard:** `plane-sync.mjs` R14 branch guard + `--max-writes` (25), tests T16/T16b;
   `dedupe-2026-09-12.mjs` cleaned dupes. Sibling [[L-074]].
+
+### L-112 · 2026-09-12 · testing · Plane bulk sync
+
+- **Symptom:** the first bulk registry→Plane sync from master adopted all 160 name-keyed items
+  but created 0 of 72 rows and patched 0 of 160 (`skipped(forbidden)=232`), and plane-apply
+  refused every op with `forbidden (tenant-uuid)` — despite the full suite (T1–T18 plus an Opus
+  review and re-check) having been green.
+- **Root cause:** the write-path denylist scanned every string in a request body, so Plane's own
+  uuid-shaped state/label/assignee ids tripped the tenant-uuid pattern; the fake server's ids
+  were short strings (`state-1`), so no test could ever see the collision — the fixture's data
+  shape was less realistic than production's on exactly the axis the guard keyed on.
+- **Lesson:** **A fake/fixture must reproduce the production SHAPE of every value a guard keys
+  on (id formats, timestamp offsets, envelope vs bare array), and a content filter must be
+  scoped to the content fields it protects — never to "every string" — because a guard tested
+  only against toy shapes is a guard that fires first in production.**
+- **Guard:** `scripts/campaign/plane-client.mjs` scans `CONTENT_KEYS` only; `plane-fake-server.mjs`
+  `uuidIds: true` seeds + the uuid-id cases in plane-sync/plane-apply self-tests; Landmine 15
+  (live shapes) in the harness build plan. Related [[L-111]] (hook/branch gate), [[L-074]]
+  (fixture realism).
