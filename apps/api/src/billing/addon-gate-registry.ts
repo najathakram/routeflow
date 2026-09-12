@@ -117,8 +117,10 @@ export const ADDON_GATE_REGISTRY: Readonly<Record<string, AddonGateEntry>> = {
     grantPath:
       'Platform Admin → Tenants → [tenant] → add-ons (AddonService.enableAddon writes addonKey "crm_gohighlevel")',
     backfill:
-      "New feature 2026-09-11: no tenant has a connection; gate stays dark through the pilot; " +
-      "flip after the blast-radius report",
+      "New feature 2026-09-11: no tenant has a connection; gate stays dark through the pilot. " +
+      "Owner ruling 2026-09-12: BILLABLE add-on at $9.99/month — a follow-up publishes the sellable " +
+      "AddonSku (FLAT, granting this key) in the next catalog version; flip to enforced only after that " +
+      "SKU exists, the pilot tenant holds it, and the blast-radius report is clean",
     reviewBy: "2027-03-11",
   },
   developer_mode: {

@@ -32,8 +32,9 @@ Full verify chain: see the checks on this PR.
 cron is a no-op; the gate is dark. Rollback = `enabled=false` or revert. Pilot: client call, token created together
 on screen share, one week in preview mode, then live.
 
-**Owner decisions still open (non-blocking):** billable add-on or bundled; email admins per handoff (default: bell
-
-- activity log only). Default phone region is `US` (owner ruling 2026-09-12).
+**Owner rulings (2026-09-12).** Billable add-on at **$9.99/month** — this PR ships the dark gate only; a
+follow-up publishes the sellable `AddonSku` (flat, granting `crm_gohighlevel`) in the next catalog version, after
+which the gate flips to enforced. Default phone region `US`. Still open, non-blocking: email admins per handoff
+(default is the bell and the activity log only).
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

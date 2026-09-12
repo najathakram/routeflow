@@ -73,6 +73,11 @@ the spec calls for it) — see `crm-identity.ts` and T22-T25 in the test plan.
   criterion).
 - Latency is bounded by the poll interval (up to ~3 minutes), which the runbook sets as the
   client's expectation up front rather than promising real-time sync.
+- **Pricing (owner ruling 2026-09-12): the connector is a billable add-on at $9.99 per month.**
+  This ADR's branch ships only the dark gate; a follow-up billing change publishes the sellable
+  `AddonSku` (flat monthly, granting the `crm_gohighlevel` key) in the next plan-catalog version
+  and, if the catalog is mirrored to Stripe, its price. The gate flips to `enforced` only after
+  that SKU exists and the pilot tenant holds it.
 - A stuck `NEEDS_ATTENTION` connection needs an operator to re-paste a token; the once-per
   -transition email (R12) and the UI's stale-poll warning are the two surfaces that catch this
   before support does.
