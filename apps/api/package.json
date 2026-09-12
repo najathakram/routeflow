@@ -160,6 +160,7 @@
       "^@react-pdf/renderer$": "<rootDir>/../test/__mocks__/react-pdf-renderer.js",
       "^../invoices/invoice-pdf-template$": "<rootDir>/../test/__mocks__/invoice-pdf-template.js",
       "^./invoice-pdf-template$": "<rootDir>/../test/__mocks__/invoice-pdf-template.js",
+      "^./invoice-template$": "<rootDir>/../test/__mocks__/invoice-template.js",
       "^../tobacco/tobacco-report-pdf$": "<rootDir>/../test/__mocks__/tobacco-report-pdf.js",
       "^./tobacco-report-pdf$": "<rootDir>/../test/__mocks__/tobacco-report-pdf.js",
       "^../buyer/statement-pdf-template$": "<rootDir>/../test/__mocks__/statement-pdf-template.js",

@@ -18,3 +18,22 @@ docs/design-package/
 # Playwright auth storage-state artifacts (gitignored, machine-written by
 # e2e/setup/auth.setup.ts — a local e2e run must not dirty format:check)
 apps/web/e2e/setup/.auth/
+
+# vendored house engine — byte-identical to ~/.claude/skills/dev-pipeline; never reformat
+.claude/skills/dev-pipeline/pipeline.js
+.claude/skills/dev-pipeline/scripts/light-loop.js
+
+# vendored house pipeline machinery (dev-pipeline/model-routing/code-map scripts) — same
+# byte-identical-to-the-canonical-~/.claude/skills-copy rule as pipeline.js/light-loop.js above;
+# a repo-wide prettier --write on these produced 200-4600-line reformatting diffs against the
+# lead machine's canonical copies with none of this repo's own history, so they're excluded
+# rather than reformatted.
+.claude/skills/dev-pipeline/scripts/closeout.mjs
+.claude/skills/dev-pipeline/scripts/dry-run.mjs
+.claude/skills/dev-pipeline/scripts/light-loop-dry-run.mjs
+.claude/skills/dev-pipeline/scripts/test-cap-fable-brief.mjs
+.claude/skills/model-routing/scripts/route-task.mjs
+.claude/skills/model-routing/scripts/pipeline-ledger.mjs
+.claude/skills/model-routing/scripts/session-usage.mjs
+.claude/skills/model-routing/scripts/fixtures/f14-result.json
+.claude/skills/code-map/reference/extract-signatures.mjs
