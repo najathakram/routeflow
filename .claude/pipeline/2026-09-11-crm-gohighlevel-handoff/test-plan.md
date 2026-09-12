@@ -2,7 +2,7 @@
 
 > **Stage S4 — "how we'll know".** Authored by Fable 5 on `2026-09-11` (ruling `ruling.md`); this
 > file is the S5-transcription of that ruling's §A into the full template.
-> Status: `APPROVED`
+> Status: `IMPLEMENTED` (2026-09-12; T1–T54 green, coverage-matrix.md)
 > Requirement IDs `R#` come from [spec.md](./spec.md). UI expectations come from
 > [ux-spec.md](./ux-spec.md). Work packages in [build-plan.md](./build-plan.md) reference the
 > `T#` ids defined here.

@@ -1,6 +1,6 @@
 # UX spec — Settings → GoHighLevel tab, operator bell entry
 
-- **Status:** APPROVED · covers **R29–R31** of `spec.md` · design tokens: `.claude/pipeline/design-system.md`
+- **Status:** IMPLEMENTED (2026-09-12) · covers **R29–R31** of `spec.md` · design tokens: `.claude/pipeline/design-system.md`
   (repo cache — never invent a token; use the existing Card / Badge / Button / Input / Select / Switch / Table /
   toast primitives already used by `settings/page.tsx` and `settings/_components/StripeConnectCard.tsx`).
 - Audience: a non-technical operator. Copy is plain English; no API words ("token" is called "connection key",

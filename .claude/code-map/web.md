@@ -1535,10 +1535,10 @@ today]`, under the shared `["invoices"]`-prefix invalidation every payment mutat
   `useCrmPipelines()`, `useCrmHandoffs(params)`, `useSaveCrmConnection()`,
   `useTestCrmConnection()`, `useDisconnectCrm()`, `useUpdateCrmConfig()`, `useSyncCrmNow()`,
   `usePreviewCrmImport()`, `useImportExistingCrmLeads()`; query keys `crmStatusKey`,
-  `crmHandoffsKey(params)`, `crmPipelinesKey`. Calls `POST /crm/gohighlevel/sync` and the
-  `import-existing`/`handoffs/:id/*` routes that `crm.controller.ts` does not yet implement (see
-  api.md's WP5 note) — the tab's "Check now" / import actions will 404 until a controller pass
-  adds them.
+  `crmHandoffsKey(params)`, `crmPipelinesKey`; plus `useRetryHandoff()` / `useDismissHandoff()`
+  (fix round 1). Calls `POST /crm/gohighlevel/sync`, `import-existing{,/preview}` and
+  `handoffs/:id/{retry,dismiss}` — all 12 routes exist in `crm.controller.ts` since fix round 1
+  (F1); the handoffs list is the `{data,total,page,limit}` envelope.
 - **`app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx`** —
   `GoHighLevelSettingsTab(props: GoHighLevelSettingsTabProps)` (presentational, all four
   ux-spec.md cards: Connection / trigger config / Options / Activity) and default export

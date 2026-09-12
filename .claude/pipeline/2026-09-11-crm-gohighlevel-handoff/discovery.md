@@ -1,6 +1,6 @@
 # Discovery — GoHighLevel → RouteFlow lead handoff
 
-- **Status:** APPROVED (owner, 2026-09-11) · **Scale:** major · **ui:** true · **Route:** dev-pipeline
+- **Status:** IMPLEMENTED (2026-09-12, commits 939c7e44 · 0869623b · 316f1118) · **Scale:** major · **ui:** true · **Route:** dev-pipeline
 - **Run dir:** `.claude/pipeline/2026-09-11-crm-gohighlevel-handoff/` · **Branch:** `feat/crm-gohighlevel-handoff` · **Base:** `83af7853` (origin/master)
 
 ## Problem, in the requester's words

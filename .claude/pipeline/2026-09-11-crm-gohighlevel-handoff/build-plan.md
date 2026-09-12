@@ -2,7 +2,7 @@
 
 > **Stage S5 — "how".** Authored by Fable 5 on `2026-09-11` (ruling `ruling.md`); this file is
 > the S5-transcription of that ruling's §B–§E into the full template.
-> Status: `APPROVED`
+> Status: `IMPLEMENTED` (2026-09-12; WP1–WP5 landed in 939c7e44, fix rounds 1–2 in fix-plan.md)
 > Inputs: [discovery.md](./discovery.md), [spec.md](./spec.md) (`R1`–`R33`),
 > [ux-spec.md](./ux-spec.md), [test-plan.md](./test-plan.md) (`T1`–`T54`).
 

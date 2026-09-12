@@ -1,6 +1,6 @@
 # Spec — GoHighLevel → RouteFlow lead handoff
 
-- **Status:** APPROVED · **Scale:** major · **ui:** true · **Base:** `83af7853`
+- **Status:** IMPLEMENTED (2026-09-12; rebased onto master `d6e0e9e5`) · **Scale:** major · **ui:** true · **Base:** `83af7853`
 - Companion artifacts in this dir: `discovery.md`, `ux-spec.md`, `test-plan.md`, `build-plan.md`, `context-pack.md`.
 - External contracts (GHL API v2, header `Version: 2021-07-28`, base `https://services.leadconnectorhq.com`,
   `Authorization: Bearer <PIT>`) are fixed in §GHL below; the build must not invent endpoints beyond them.
