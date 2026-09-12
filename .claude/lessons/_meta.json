@@ -1,10 +1,10 @@
 {
-  "nextId": 115,
+  "nextId": 116,
   "activeCount": 40,
-  "archivedCount": 70,
+  "archivedCount": 71,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-12T15:15:22.003Z",
+  "updatedAt": "2026-09-12T15:15:27.943Z",
   "schemaVersion": 1,
-  "note": "Window-17 JIT rebase of chore/vendor-house-skills onto master 7ed7b431 (#705 landed L-114, archived L-108): this branch's cherry-picked #703 bookkeeping keeps L-115 (testing, Nest DI scope) and its L-041 archival; ARCHIVE sections unioned in order. nextId 115, activeCount 40, archivedCount 70 — counted from ### L- headers in the real files by the rebase resolver."
+  "note": "Window-17 JIT rebase of chore/vendor-house-skills onto master 7ed7b431 (#705 landed L-114, archived L-108): this branch's cherry-picked #703 bookkeeping keeps L-115 (testing, Nest DI scope) and its L-041 archival; ARCHIVE sections unioned in order. nextId 116, activeCount 40, archivedCount 71 — counted from ### L- headers in the real files by the rebase resolver."
 }

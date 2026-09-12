@@ -1344,3 +1344,19 @@ gate runner's own `execFileSync` usage), so archiving it loses no enforcement.
   own exit code separately (`execFileSync`/spawnSync status), never a glued one-liner.**
 - **Guard:** the engine gate runner uses `execFileSync` with its own status check, never a
   string-glued exit-code echo.
+## Archived 2026-09-12 — least-cited, fully guarded; headroom for L-115
+
+### L-041 · 2026-09-01 · process
+
+- **Symptom:** 13 rows sat in `proven` — merged, deployed, post-deploy run already green — while
+  every scoreboard counted them outstanding. Then the run cited as their proof turned out to have
+  executed **nothing**.
+- **Root cause:** two failures stacked. The proof fires off the deploy signal and lands after the
+  session that merged the fix has ended, so the flip to `done` belongs to nobody. And the run
+  everyone pointed at (a superseded deployment) reported conclusion **success with every real step
+  `skipped`** — a green job that ran zero tests.
+- **Lesson:** **When the evidence authorizing a state change arrives asynchronously, assign the
+  flip — and when you read that evidence, read the STEP conclusions, never the job's.** A job is
+  green when it is skipped, and a suite is green when a test is skipped; neither says your proof ran.
+- **Guard:** `gh run view <id> --json jobs` — assert the specific step is `success`, not
+  `skipped`; for one test, grep the log for its `✓`. Step COUNT is not execution.
