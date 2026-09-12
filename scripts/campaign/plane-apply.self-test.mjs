@@ -499,6 +499,88 @@ async function main() {
     await server.close();
   }
 
+  // ── T12 — relation type normalization (defect fix 2026-09-12, proven live:
+  // the API's real `relation_type` enum is snake_case, so the ops file's
+  // human label ("relates to") got HTTP 400). Accept an enum value as-is or
+  // a human label folded case-insensitively with spaces/hyphens -> "_";
+  // reject anything else at validation time, zero writes, naming the value
+  // and the valid list.
+  {
+    const server = await startFakePlane({
+      workItems: {
+        OPS: [
+          { name: "Ops item", sequence_id: 23, state: "state-backlog" },
+          { name: "Ops item 2", sequence_id: 24, state: "state-backlog" },
+        ],
+      },
+    });
+    const stateDir = makeTmpDir();
+
+    // "relates to" -> relates_to, recorded verbatim in the POST body.
+    {
+      const opsPath = writeOpsFile([
+        { op: "relation", ref: "OPS-23", to: "OPS-24", type: "relates to" },
+      ]);
+      const before = server.requests.length;
+      const { code } = await runCli([opsPath], { baseUrl: server.url, stateDir });
+      const writes = writesSince(server, before);
+      const relWrite = writes.find((r) => kindOf(r) === "relation");
+      check(
+        `T12 ("relates to" -> relates_to): exit 0, one relation write, normalised relation_type`,
+        { code, count: writes.length, relationType: relWrite?.body?.relation_type },
+        { code: 0, count: 1, relationType: "relates_to" },
+      );
+    }
+
+    // "blocked by" -> blocked_by
+    {
+      const opsPath = writeOpsFile([
+        { op: "relation", ref: "OPS-23", to: "OPS-24", type: "blocked by" },
+      ]);
+      const before = server.requests.length;
+      const { code } = await runCli([opsPath], { baseUrl: server.url, stateDir });
+      const writes = writesSince(server, before);
+      const relWrite = writes.find((r) => kindOf(r) === "relation");
+      check(
+        `T12 ("blocked by" -> blocked_by): exit 0, one relation write, normalised relation_type`,
+        { code, count: writes.length, relationType: relWrite?.body?.relation_type },
+        { code: 0, count: 1, relationType: "blocked_by" },
+      );
+    }
+
+    // "sideways" -> not a recognized enum or label: exit 1, zero writes,
+    // message names the op index, the bad value, and the valid list.
+    {
+      const opsPath = writeOpsFile([
+        { op: "relation", ref: "OPS-23", to: "OPS-24", type: "sideways" },
+      ]);
+      const before = server.requests.length;
+      const { code, stdout, stderr } = await runCli([opsPath], { baseUrl: server.url, stateDir });
+      const out = stdout + stderr;
+      check(`T12 ("sideways"): exit 1`, code, 1);
+      check(`T12 ("sideways"): zero writes`, writesSince(server, before).length, 0);
+      check(
+        `T12 ("sideways"): message names the op index, the bad value, and the valid list`,
+        {
+          namesIndex: out.includes("#1"),
+          namesBad: out.includes("sideways"),
+          namesValidMarker: out.includes("valid:"),
+          namesRelatesTo: out.includes("relates_to"),
+          namesBlockedBy: out.includes("blocked_by"),
+        },
+        {
+          namesIndex: true,
+          namesBad: true,
+          namesValidMarker: true,
+          namesRelatesTo: true,
+          namesBlockedBy: true,
+        },
+      );
+    }
+
+    await server.close();
+  }
+
   // ── T15 — --help/-h short-circuit before any env read or network call;
   // an unknown flag exits 2 with Usage on stderr ────────────────────────────
   {
