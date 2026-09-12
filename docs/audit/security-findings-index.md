@@ -38,7 +38,7 @@ treat it as unconfirmed either way, not as "still open."
 | F9-001 | Pagination `limit` unbounded across list endpoints | FIXED (#85 initial `@Max`; hardened via `common/pagination.ts` `MAX_LIST_LIMIT`/`clampLimit` in #247 — note: products/suppliers/buyer price-sort caps left as pre-existing bounds, not re-derived) |
 | F9-004 | Redis throttler failed OPEN on Redis error, disabling rate limiting incl. login brute-force protection | FIXED (#85 — fails closed). RF-160 (the `POST /auth/login` limit itself, 10/5min per IP) made env-configurable via `AUTH_LOGIN_THROTTLE_LIMIT`/`AUTH_LOGIN_THROTTLE_TTL_MS`: prod default unchanged; local override documented (wave B′) |
 | F11-001 | No real Content-Security-Policy header on web despite a "strict CSP" comment | FIXED (#86 — real CSP + `X-Frame-Options: DENY`) |
-| F11-002 | Access AND refresh tokens for all identities stored in JS-readable `localStorage` | OPEN (confirmed still open 2026-07-13 — cross-domain web/API cookie design needed; `COOKIE_SECRET` provisioned but unused) — tracked: registry batch F48, pending PR #690 |
+| F11-002 | Access AND refresh tokens for all identities stored in JS-readable `localStorage` | OPEN (confirmed still open 2026-07-13 — cross-domain web/API cookie design needed; `COOKIE_SECRET` provisioned but unused) — tracked: registry B355 (batch F48) |
 | F12-001 | Production dependency tree contained critical + high CVEs | PARTIAL (CI `npm audit` gate added #247, blocks on critical; version bumps were deferred at that time and have continued incrementally since, most recently the 99-bump Dependabot sweep #463 on 2026-08-28 — current full-tree CVE count not re-verified for this index) |
 
 ## Medium
@@ -47,11 +47,11 @@ treat it as unconfirmed either way, not as "still open."
 | -- | ----- | ------ |
 | F2-002 | BOLA: `GET /orders/:id/tracking` disclosed any order's delivery/driver info to any authenticated user | FIXED (#247 — CUSTOMER ownership gate added, mirrors `findOne`) |
 | F3-004 | Password-reset token transmitted in URL query string | FIXED (#247 — token captured into state then stripped from the URL; `Referrer-Policy: no-referrer` on the route) |
-| F5-003 | Buyer and staff JWTs shared one signing secret; refresh tokens carried no identity discriminator | OPEN (confirmed still open 2026-07-13) — tracked: registry batch F48, pending PR #690 |
+| F5-003 | Buyer and staff JWTs shared one signing secret; refresh tokens carried no identity discriminator | OPEN (confirmed still open 2026-07-13) — tracked: registry B356 (batch F48) |
 | F5-004 | Tenant secrets stored in plaintext in `SystemConfig` | FIXED (#247 — `SECRET_KEYS` allowlist encrypted via `EncryptionService`) |
-| F9-006 | `trust proxy=2` with default throttler tracker enabled `X-Forwarded-For` spoofing of per-IP rate limit and audit IP | OPEN (confirmed still open 2026-07-13; deployment-topology-dependent) — tracked: registry batch F48, pending PR #690 |
+| F9-006 | `trust proxy=2` with default throttler tracker enabled `X-Forwarded-For` spoofing of per-IP rate limit and audit IP | OPEN (confirmed still open 2026-07-13; deployment-topology-dependent) — tracked: registry B357 (batch F48) |
 | F12-002 | `runStartupMigration()` executes raw `ALTER TABLE` DDL on every API boot | FIXED (PR-1 `imp-03a`, 2026-09-03 — boot DDL deleted from `main.ts` and `platform-config.service.ts`; read-only drift gate `apps/api/scripts/schema-drift.mjs` + static tripwire `src/common/no-runtime-ddl.spec.ts`) |
-| F12-005 | Google OAuth deep-link callback (mobile) established a session purely from `routeflow://` URL query-param tokens | OPEN (confirmed still open 2026-07-13 — no state/PKCE nonce) — tracked: registry batch F48, pending PR #690 |
+| F12-005 | Google OAuth deep-link callback (mobile) established a session purely from `routeflow://` URL query-param tokens | OPEN (confirmed still open 2026-07-13 — no state/PKCE nonce) — tracked: registry B358 (batch F48) |
 
 ## Low
 
@@ -60,9 +60,9 @@ treat it as unconfirmed either way, not as "still open."
 | F2-005 | Missing object-level authorization on `GET /orders/:id` and `PATCH /orders/:id/urgent` for non-CUSTOMER roles | FIXED (re-verified 2026-09-11 — orders.service.ts:474-491 and :5396-5403 ownership gates; DRIVER excluded at orders.controller.ts:471-473) |
 | F2-006 | Run chat messages readable by any authenticated role; no role or participant check on `GET /messages` | FIXED (re-verified 2026-09-11 — messages.service.ts:23-37 assertRunChatParticipant on create and findByRun) |
 | F2-007 | Unauthenticated Google Places proxy endpoints (paid API) | FIXED (re-verified 2026-09-11 — public-places.controller.ts:39,49,115 carry @UseGuards(JwtAuthGuard)) |
-| F3-005 | Buyer login and registration leaked account existence/status (user enumeration) | PARTIAL (re-verified 2026-09-11 — login side fixed: buyer-auth.service.ts:198-217 constant "Invalid credentials", covered by buyer-auth.security.spec.ts; registration still returns a distinct 409 at :40-45 → registry batch F48, pending PR #690) |
+| F3-005 | Buyer login and registration leaked account existence/status (user enumeration) | PARTIAL (re-verified 2026-09-11 — login side fixed: buyer-auth.service.ts:198-217 constant "Invalid credentials", covered by buyer-auth.security.spec.ts; registration still returns a distinct 409 at :40-45 → registry B359 (batch F48)) |
 | F4-002 | User-controlled Prisma `orderBy` field name in `customers.findAll` | FIXED (re-verified 2026-09-11 — customers.service.ts:160-183 validSortFields allowlist) |
-| F4-003 | Systemic: multiple mutation endpoints accept `@Body() dto: any`, bypassing the global ValidationPipe | PARTIAL (re-verified 2026-09-11 — 9 routes still use @Body() dto: any: customers.controller.ts:216,228,306,312; estimates.controller.ts:14; inventory.controller.ts:171,193,213; returns.controller.ts:26 → registry batch F48, pending PR #690) |
+| F4-003 | Systemic: multiple mutation endpoints accept `@Body() dto: any`, bypassing the global ValidationPipe | PARTIAL (re-verified 2026-09-11 — 9 routes still use @Body() dto: any: customers.controller.ts:216,228,306,312; estimates.controller.ts:14; inventory.controller.ts:171,193,213; returns.controller.ts:26 → registry B360 (batch F48)) |
 | F8-003 | Raw Prisma/exception messages echoed to client in bulk-import `errors` arrays | UNREVIEWED |
 | F9-007 | Expensive route-optimization endpoints relied only on the global 100/60s throttle | FIXED (re-verified 2026-09-11 — route-optimization.controller.ts:6-8 OPTIMIZE_THROTTLE 10/60s on every optimize/analyze/variants route) |
 | F9-008 | CSV import had byte-size caps but no row-count cap | FIXED (re-verified 2026-09-11 — import.service.ts:21 MAX_IMPORT_ROWS=20000 enforced at :72-75) |
