@@ -1129,3 +1129,29 @@ verify` went red: `scripts/campaign-check.mjs` reported "no test titled with REG
   a pin; adding a pin to a workspace the gate doesn't yet cover is a tooling change first
   (reporter + checker) and a pin second.**
 - **Guard:** `apps/api/src/common/campaign-check-web-report.spec.ts`.
+
+## Archived 2026-09-11 — headroom for L-104 (fix/train4-order-idempotency-key, B215)
+
+Register was 40/40 and 39.9/40.0 KB, so L-104 needed a slot. **L-099** (2026-09-08, domain) is the
+archived entry: a repo-wide grep for the literal id finds exactly two citations outside
+`.claude/lessons/**`, and both are HISTORICAL records rather than active pointers —
+`.claude/code-map/CHANGELOG.md`'s dated #675 section and `.claude/code-map/mobile.md`'s
+"Lessons: L-099 appended" line — so nothing reads it as a live rule. Its guards
+(`apps/mobile/__tests__/edit-items-scan-price.test.ts`,
+`apps/mobile/__tests__/barcode-scanner-active.test.ts`) stay in the tree, so archiving loses no
+enforcement. Back to 40/40 with L-104 added.
+
+### L-099 · 2026-09-08 · domain · #675
+
+- **Symptom:** editing a scanned line's price on mobile tore the camera down and cost 5 taps + 2
+  camera lifecycles; the list surface and the scan surface disagreed on margin-floor wording.
+- **Root cause:** the screen swapped SURFACES through a mode ternary (`showPicker ? picker :
+list`) instead of stacking the edit sheet over the live surface; the strip's label was a
+  literal, independent of the line's margin class.
+- **Lesson:** **A sheet that must return to a live surface (camera, map, scanner) MOUNTS OVER
+  that surface with a pause prop (`active={!editing}`), never swaps the surface out; any
+  secondary surface that repeats a classification (margin class, status) derives it from the
+  same helper the primary surface uses, and a source-text pin extracts the primary's literals so
+  the two cannot drift.**
+- **Guard:** `apps/mobile/__tests__/edit-items-scan-price.test.ts` (REG-B263-B/C/H),
+  `apps/mobile/__tests__/barcode-scanner-active.test.ts`.

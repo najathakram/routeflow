@@ -50,7 +50,12 @@ import {
   RouteRunStatus,
 } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
-import { CreateOrderDto } from "./dto/create-order.dto";
+import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
+import {
+  IDEMPOTENCY_KEY_CONFLICT,
+  IDEMPOTENCY_REPLAY_NEEDS_RECONCILE,
+  shouldSkipInPlaceResync,
+} from "./merge-idempotency";
 import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
@@ -86,6 +91,19 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
  * Operators and drivers keep editing at every live stage.
  */
 const BUYER_EDIT_CLOSED_STATUSES: OrderStatus[] = [
+  OrderStatus.OUT_FOR_DELIVERY,
+  OrderStatus.PARTIALLY_DELIVERED,
+  OrderStatus.DELIVERED,
+];
+
+/**
+ * B215: the statuses whose linked invoice(s) are re-synced IN PLACE after an item edit
+ * (`postDeliveryEdit`) instead of reconciled as an open pending-mirror draft. Read by
+ * `updateOrderItems` AND by `replayMergeReconcile`, so a replayed merge routes the
+ * convergent reconcile exactly as the fold that landed did — the list may not drift
+ * between the two callers.
+ */
+const POST_DELIVERY_EDIT_STATUSES: string[] = [
   OrderStatus.OUT_FOR_DELIVERY,
   OrderStatus.PARTIALLY_DELIVERED,
   OrderStatus.DELIVERED,
@@ -1137,6 +1155,13 @@ export class OrdersService implements OnApplicationBootstrap {
               }
             }
             for (const loser of losers) {
+              // B215: a loser's merge keys follow its cart onto the winner. The FK cascade would
+              // otherwise delete them with the loser, and a retry of that merge would fold the
+              // same cart into the winner a second time.
+              await tx.orderIdempotencyKey.updateMany({
+                where: { orderId: loser.id },
+                data: { orderId: winner.id },
+              });
               await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
               await tx.order.delete({ where: { id: loser.id } });
             }
@@ -1433,6 +1458,13 @@ export class OrdersService implements OnApplicationBootstrap {
                 await tx.invoiceItem.deleteMany({ where: { invoiceId: loserDraft.id } });
                 await tx.invoice.delete({ where: { id: loserDraft.id } });
               }
+              // B215: a loser's merge keys follow its cart onto the winner. The FK cascade would
+              // otherwise delete them with the loser, and a retry of that merge would fold the
+              // same cart into the winner a second time.
+              await tx.orderIdempotencyKey.updateMany({
+                where: { orderId: loser.id },
+                data: { orderId: winner.id },
+              });
               await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
               await tx.order.delete({ where: { id: loser.id } });
             }
@@ -1634,16 +1666,147 @@ export class OrdersService implements OnApplicationBootstrap {
    * idempotencyKey])` the column is stored under — and scoped to `customerId`
    * on top of that, because the key is client-chosen: a bare key match would
    * let one client's string replay onto a DIFFERENT customer's order.
+   *
+   * B215/R1 (round 2): returns `verified` alongside the id. `verified: true` means the hit came
+   * from the key TABLE and its stored `responseHash` matched this request's fingerprint — i.e.
+   * the retry's body is provably the SAME cart the fold applied, so the caller may re-apply that
+   * body's credit-note selection on replay. A hit on the Order COLUMN carries no fingerprint
+   * (nothing is stored to compare), so it is `verified: false`: the body may be a different cart
+   * that merely reuses the key, and its `appliedCreditNotes` must NOT be applied to the order the
+   * replay hands back — see `replayMergeReconcile` / `reconcileOrderAfterEdit`.
    */
   async findOrderIdByIdempotencyKey(
     idempotencyKey: string,
     customerId: string,
-  ): Promise<string | null> {
+    requestHash?: string,
+  ): Promise<{ orderId: string; verified: boolean } | null> {
+    // B215: `forTenant()` hands back the UNSCOPED client when the session carries no tenant
+    // (prisma.service.ts `forTenant`), so for such a caller the lookups below would search
+    // every tenant's rows. Refuse up front — before any read and before the controller enters
+    // the fold — mirroring the identical guard in `create()`. `recordMergeIdempotencyKey`
+    // keeps the same check as the fail-closed backstop inside the fold's transaction.
+    if (!this.prisma.getTenantId()) {
+      this.logger.warn(`idempotency key refused: no tenant scope key=${idempotencyKey}`);
+      throw new ForbiddenException("Idempotency-Key requires a tenant-scoped session");
+    }
+    // B215: every staff merge wave records its OWN key in OrderIdempotencyKey (written inside
+    // the fold's transaction by recordMergeIdempotencyKey), so that table is the authoritative
+    // replay store for the merge branch. Scoped to THIS customer through the order relation —
+    // the key is client-chosen, so a bare match could replay onto another customer's order.
+    const keyed = await this.prisma.forTenant().orderIdempotencyKey.findFirst({
+      where: { key: idempotencyKey, order: { customerId } },
+      select: { orderId: true, responseHash: true },
+    });
+    if (keyed) {
+      if (requestHash !== undefined && keyed.responseHash !== requestHash) {
+        this.logger.warn(
+          `idempotency replay refused: cart mismatch tenant=${this.prisma.getTenantId()} ` +
+            `customer=${customerId} order=${keyed.orderId} key=${idempotencyKey}`,
+        );
+        // B215: machine-readable body — the mobile client cannot mint a fresh key without
+        // abandoning the cart, so it needs `orderId` to offer "Open order" instead of wedging
+        // the screen on a bare message.
+        throw new ConflictException({
+          code: IDEMPOTENCY_KEY_CONFLICT,
+          reason: "CART_MISMATCH",
+          orderId: keyed.orderId,
+          message:
+            "Idempotency-Key reused with a different cart — open the existing order to edit it, or retry it unchanged",
+        });
+      }
+      // VERIFIED only when a fingerprint was supplied AND matched: a caller that passes no
+      // `requestHash` (the db-spec's bare two-argument probe, any future keyless caller) has
+      // proven nothing about the body, so it gets the same unverified treatment as a column hit.
+      return { orderId: keyed.orderId, verified: requestHash !== undefined };
+    }
+    // The single Order column: keys stamped by create() and by recordIdempotencyKey. Unchanged.
+    // B215: deliberately NOT compared against `requestHash` — the column stores no fingerprint,
+    // and its main producer is the create -> retry path (the first POST creates the order and
+    // stamps the key; the retry finds it pending and enters the merge branch). Refusing that
+    // replay for want of a hash would re-open the double-write this fix exists to close, so a
+    // column-only hit is replay-eligible. The key TABLE, which does store the hash, is the only
+    // path that refuses on a mismatch. Pinned by P5.
+    //
+    // B215 (lookup ORDER, D3): this customer-scoped column read runs BEFORE the tenant-wide
+    // `heldByAnotherOrder` check below. Both are "the key exists somewhere in this tenant", but
+    // only this one proves it is THIS customer's own order — checking the tenant-wide table
+    // first refused a legitimate replay of the caller's own key with a 409 whenever the key sat
+    // on the Order column here and any other customer happened to hold a key-table row.
     const existing = await this.prisma.forTenant().order.findFirst({
       where: { idempotencyKey, customerId },
       select: { id: true },
     });
-    return existing?.id ?? null;
+    // UNVERIFIED by construction: the column stores no fingerprint, so this hit proves only
+    // "this customer's order already used this key", never "with this cart".
+    if (existing) return { orderId: existing.id, verified: false };
+    // B215: the key may already belong to ANOTHER customer's order in this tenant. The in-tx
+    // insert catches that through `@@unique([tenantId, key])`, but only after
+    // `revertLinkedInvoicesForOrderEdit` has committed on its own connection (outside the fold)
+    // and the whole fold has run — so a 409 there leaves a linked invoice flipped SENT -> DRAFT
+    // for an edit that never landed. Refuse here instead: this lookup runs inside the customer
+    // advisory lock, before any write. The P2002 branch of `recordMergeIdempotencyKey` stays as
+    // the backstop for a true race (a customer-keyed lock does not serialize against another
+    // customer's fold).
+    const heldByAnotherOrder = await this.prisma.forTenant().orderIdempotencyKey.findFirst({
+      where: { key: idempotencyKey },
+      select: { orderId: true },
+    });
+    if (heldByAnotherOrder) {
+      this.logger.warn(
+        `idempotency key already held by another order: refused before the fold ` +
+          `tenant=${this.prisma.getTenantId()} customer=${customerId} ` +
+          `order=${heldByAnotherOrder.orderId} key=${idempotencyKey}`,
+      );
+      throw new ConflictException({
+        code: IDEMPOTENCY_KEY_CONFLICT,
+        reason: "HELD_BY_OTHER_ORDER",
+        orderId: heldByAnotherOrder.orderId,
+        message: "Idempotency-Key already used for a different order",
+      });
+    }
+    return null;
+  }
+
+  /**
+   * B215: `create()`'s replay candidate for `idempotencyKey`, loaded with the include its
+   * caller's ownership + cart checks read.
+   *
+   * Consults the OrderIdempotencyKey TABLE first and the Order COLUMN only as a fallback: a
+   * keyed request that reached the merge branch has its key in the table alone (the fold writes
+   * it there), and such a request CAN fall through to `create()` — the merge target vanishing
+   * before the advisory lock is the live path — so a column-only lookup would miss the replay
+   * and mint a duplicate order.
+   *
+   * B215/R4 (round 2): the CALLER'S OWN row wins. Lookup order is (1) a key-TABLE row on an
+   * order belonging to `customerId`, (2) this customer's key-stamped Order COLUMN, (3) only then
+   * the tenant-wide table row — which the caller's ownership gate still turns into a 409. Without
+   * step 1/2 a key-table row belonging to ANOTHER customer was fetched first and 409'd a caller
+   * whose own column-stamped order was sitting right there (the same D3 ordering bug already
+   * fixed in `findOrderIdByIdempotencyKey`).
+   */
+  private async findReplayCandidateByKey(idempotencyKey: string, customerId: string) {
+    const include = {
+      customer: { select: { id: true, businessName: true } },
+      lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
+    };
+    const load = (where: Record<string, unknown>) =>
+      this.prisma.forTenant().order.findFirst({ where, include });
+    // (1) a key-table row on an order that is THIS customer's.
+    const owned = await this.prisma.forTenant().orderIdempotencyKey.findFirst({
+      where: { key: idempotencyKey, order: { customerId } },
+      select: { orderId: true },
+    });
+    if (owned) return load({ id: owned.orderId });
+    // (2) this customer's own key-stamped Order column.
+    const ownColumn = await load({ idempotencyKey, customerId });
+    if (ownColumn) return ownColumn;
+    // (3) the tenant-wide key-table row — the caller's ownership gate turns this into a 409.
+    const keyed = await this.prisma
+      .forTenant()
+      .orderIdempotencyKey.findFirst({ where: { key: idempotencyKey }, select: { orderId: true } });
+    // (4) and finally the tenant-wide column, which is likewise gated by ownership. Unchanged
+    // behaviour for a key stamped on another customer's order: found, then refused.
+    return load(keyed ? { id: keyed.orderId } : { idempotencyKey });
   }
 
   /**
@@ -1672,6 +1835,41 @@ export class OrdersService implements OnApplicationBootstrap {
       });
     } catch (e: any) {
       if (e?.code !== "P2002") throw e;
+    }
+  }
+
+  /**
+   * B215: record a staff merge's Idempotency-Key in OrderIdempotencyKey through the FOLD's own
+   * transaction client `tx`, so the key and the fold commit — or roll back — together. Called
+   * only from updateOrderItems' transaction callback. A P2002 means the key already belongs to
+   * another request (every same-customer retry is answered by the replay pre-check before the
+   * fold), so it aborts the fold with a 409: swallowing an error inside a Postgres transaction
+   * would leave the transaction aborted anyway. Uses only this.prisma (the DB lane builds this
+   * service without DI).
+   */
+  async recordMergeIdempotencyKey(
+    tx: any,
+    orderId: string,
+    idem: { key: string; responseHash: string },
+  ): Promise<void> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) {
+      this.logger.warn(`idempotency key refused: no tenant scope key=${idem.key}`);
+      throw new ForbiddenException("Idempotency-Key requires a tenant-scoped session");
+    }
+    try {
+      await tx.orderIdempotencyKey.create({
+        data: { tenantId, key: idem.key, orderId, responseHash: idem.responseHash },
+      });
+    } catch (e: any) {
+      if (e?.code === "P2002") {
+        this.logger.warn(
+          `idempotency key already held by another order: fold rolled back ` +
+            `tenant=${tenantId} order=${orderId} key=${idem.key}`,
+        );
+        throw new ConflictException("Idempotency-Key already used for a different order");
+      }
+      throw e;
     }
   }
 
@@ -1743,13 +1941,8 @@ export class OrdersService implements OnApplicationBootstrap {
     // another caller's order or fall through to a write that would P2002 on
     // the same constraint anyway.
     if (idempotencyKey) {
-      const existing = await this.prisma.forTenant().order.findFirst({
-        where: { idempotencyKey },
-        include: {
-          customer: { select: { id: true, businessName: true } },
-          lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
-        },
-      });
+      // B215: table first, then the Order column (findReplayCandidateByKey).
+      const existing = await this.findReplayCandidateByKey(idempotencyKey, customerId);
       if (existing) {
         if (existing.customerId !== customerId) {
           throw new ConflictException("Idempotency-Key already used for a different order");
@@ -2332,15 +2525,9 @@ export class OrdersService implements OnApplicationBootstrap {
                   .toLowerCase()
                   .includes("idempotencykey"));
           if (hitIdempotencyConstraint) {
-            const existing = await this.prisma.forTenant().order.findFirst({
-              where: { idempotencyKey },
-              include: {
-                customer: { select: { id: true, businessName: true } },
-                lineItems: {
-                  include: { product: { select: { id: true, name: true, unit: true } } },
-                },
-              },
-            });
+            // B215: same table-then-column lookup as the pre-check above, so the row that won
+            // the race is found whether it was stamped on the column or written to the table.
+            const existing = await this.findReplayCandidateByKey(idempotencyKey!, customerId);
             // Same ownership gate as the pre-check above: the row that won the
             // race is only OUR replay if it belongs to this caller.
             if (existing && existing.customerId !== customerId) {
@@ -3066,7 +3253,14 @@ export class OrdersService implements OnApplicationBootstrap {
     );
   }
 
-  async updateOrderItems(orderId: string, dto: UpdateOrderItemsDto, user?: JwtPayload) {
+  async updateOrderItems(
+    orderId: string,
+    dto: UpdateOrderItemsDto,
+    user?: JwtPayload,
+    // B215: set ONLY by the staff create-merge branch (OrdersController.create). Not reachable
+    // from a request body — the PATCH routes and the buyer merge call with three arguments.
+    opts?: { idempotency?: { key: string; responseHash: string } },
+  ) {
     const order = await this.prisma.forTenant().order.findUnique({
       where: { id: orderId },
       include: {
@@ -3156,9 +3350,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // a SENT pending-mirror flips to DRAFT so the reconcile below re-syncs into it, and
     // a paid one throws cleanly before any mutation so money never detaches from a sent
     // document. No-op when there's no such invoice.
-    const postDeliveryEdit = ["OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "DELIVERED"].includes(
-      order.status,
-    );
+    const postDeliveryEdit = POST_DELIVERY_EDIT_STATUSES.includes(order.status);
     if (!postDeliveryEdit) {
       await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId);
     }
@@ -4277,6 +4469,11 @@ export class OrdersService implements OnApplicationBootstrap {
                 : {}),
           },
         });
+        // B215: the merge's replay key commits in THIS transaction, atomically with the fold —
+        // never a second, later commit that a crash or a post-commit throw can split off.
+        if (opts?.idempotency) {
+          await this.recordMergeIdempotencyKey(tx, orderId, opts.idempotency);
+        }
         return { subtotal, tax, total, shouldRevert, shippingFee };
       },
       // Headroom over Prisma's 5s default: the merge branch issues per-line
@@ -4284,61 +4481,44 @@ export class OrdersService implements OnApplicationBootstrap {
       { timeout: 15_000 },
     );
 
-    // Keep the order's linked invoice(s) in lockstep with the edit.
-    //  - Undelivered edit: re-sync the open pending-mirror draft at order basis
-    //    (no-op when there's no open draft) — unchanged.
-    //  - Post-delivery edit (R1): the order may carry SENT / PAID / delivery-batch
-    //    invoices, not just an open draft. Rebuild each in place from the edited
-    //    lines at order basis, KEEP payments, recompute status/balance, and re-sync
-    //    the regulated ledger — so the invoice tracks the correction and simply shows
-    //    the new balance. Never blocks (bails on an unclean partition).
-    if (postDeliveryEdit) {
-      // R1b SAFETY (two adversarial-review catches): a PARTIALLY-invoiced order must NOT
-      // be auto-resynced — rebuilding its finalized/paid invoice at the full order qty
-      // would inflate an already-issued document with units/lines it never billed.
-      // "Partial" is CROSS-LINE, not just within a line: it covers both a line billed for
-      // only part of its qty (createPartialFromOrder qty subset) AND a subset of LINES
-      // billed at full qty while sibling lines are entirely un-invoiced (line subset).
-      // So: skip when SOMETHING is invoiced but NOT everything is fully invoiced. The two
-      // safe states still proceed — nothing invoiced yet (pure pending-mirror) and every
-      // line fully invoiced (safe to expand for a qty increase / added line). Read from
-      // the PRE-EDIT snapshot (reliable cumulative invoicedQty — the replace-all edit path
-      // resets it to 0 on recreated rows, so a post-mutation read would miss it). When
-      // partial, skip the in-place resync entirely; the operator reconciles it manually.
-      const billableLines = (order.lineItems ?? []).filter((li) => Number(li.qty ?? 0) > 0.001);
-      const anyInvoiced = billableLines.some((li) => Number(li.invoicedQty ?? 0) > 0.001);
-      const allFullyInvoiced = billableLines.every(
-        (li) => Number(li.invoicedQty ?? 0) >= Number(li.qty ?? 0) - 0.001,
-      );
-      const hasPartialBilling = anyInvoiced && !allFullyInvoiced;
-      if (!hasPartialBilling) {
-        await this.invoicesService.resyncOrderInvoicesForEdit(orderId);
-      }
-    } else {
-      await this.invoicesService.reconcileOrderDraftInvoice(orderId, { basis: "order" });
-    }
+    // R1b SAFETY (two adversarial-review catches): a PARTIALLY-invoiced order must NOT
+    // be auto-resynced — rebuilding its finalized/paid invoice at the full order qty
+    // would inflate an already-issued document with units/lines it never billed.
+    // "Partial" is CROSS-LINE, not just within a line: it covers both a line billed for
+    // only part of its qty (createPartialFromOrder qty subset) AND a subset of LINES
+    // billed at full qty while sibling lines are entirely un-invoiced (line subset).
+    // So: skip when SOMETHING is invoiced but NOT everything is fully invoiced. The two
+    // safe states still proceed — nothing invoiced yet (pure pending-mirror) and every
+    // line fully invoiced (safe to expand for a qty increase / added line). Read from
+    // the PRE-EDIT snapshot (reliable cumulative invoicedQty — the replace-all edit path
+    // resets it to 0 on recreated rows, so a post-mutation read would miss it). When
+    // partial, skip the in-place resync entirely; the operator reconciles it manually.
+    //
+    // B215: computed HERE, never inside reconcileOrderAfterEdit, precisely because it reads
+    // the pre-edit snapshot this scope still holds — a replay has no access to it.
+    //
+    // B215/R2 (round 2): the RULE itself is `shouldSkipInPlaceResync` (merge-idempotency.ts), so
+    // the replay path evaluates the same predicate over the rows it can see rather than
+    // hard-coding one side of this decision. Only the ROWS differ (pre-edit snapshot here).
+    const skipInPlaceResync = postDeliveryEdit
+      ? shouldSkipInPlaceResync(order.lineItems ?? [])
+      : false;
 
-    // Credit-note intents: sync operator selection changes, then settle (shrink or
-    // top-up) against the order's current invoices. Runs even when line-resync was
-    // skipped for partial billing — the credits are payment-level, not line-level.
-    // Staff-only: apply the same role gate as the shipping fee — when the caller
-    // is NOT OPERATOR/TENANT_ADMIN, treat dto.appliedCreditNotes as undefined
+    // Staff-only credit intents: apply the same role gate as the shipping fee — when the
+    // caller is NOT OPERATOR/TENANT_ADMIN, treat dto.appliedCreditNotes as undefined
     // (drivers/customers can't manage credits).
     const isStaffCreditEdit =
       user?.role === UserRole.OPERATOR || user?.role === UserRole.TENANT_ADMIN;
-    await this.prisma.tenantTransaction(
-      async (tx) => {
-        if (isStaffCreditEdit && dto.appliedCreditNotes !== undefined) {
-          await this.creditNotes.syncOrderCreditSelections(
-            tx,
-            orderId,
-            order.customerId,
-            dto.appliedCreditNotes,
-          );
-        }
-        await this.creditNotes.settleOrderCreditsInTx(tx, orderId);
-      },
-      { isolationLevel: "Serializable" },
+
+    // B215: the CONVERGENT tail — invoice resync/reconcile + credit sync/settle. Extracted so a
+    // REPLAYED merge can re-run exactly this and nothing else (replayMergeReconcile): the fold
+    // above runs at most once per key, while everything in here is idempotent and may run N
+    // times. The status event and the revision append BELOW stay fold-only.
+    await this.reconcileOrderAfterEdit(
+      orderId,
+      order.customerId,
+      isStaffCreditEdit ? dto.appliedCreditNotes : undefined,
+      { postDeliveryEdit, skipInPlaceResync },
     );
 
     if (shouldRevert) {
@@ -4373,6 +4553,163 @@ export class OrdersService implements OnApplicationBootstrap {
         },
         transaction: true,
       },
+    });
+  }
+
+  /**
+   * B215: the CONVERGENT post-fold tail of an item edit. Exactly what `updateOrderItems` ran
+   * after its fold transaction, in the same order: the invoice resync / draft-invoice reconcile
+   * choice, then the Serializable credit-note sync + settle. Every step here is idempotent, so
+   * this may run N times for ONE fold — which is the point: a replayed merge re-runs it (see
+   * `replayMergeReconcile`) instead of leaving the order's invoice and applied credits out of
+   * sync forever. The two steps that are NOT convergent — the status event and the
+   * `appendOrderRevision` snapshot — deliberately stay in `updateOrderItems`.
+   *
+   * `appliedCreditNotes === undefined` means "DO NOT call syncOrderCreditSelections at all — leave
+   * the stored selection exactly as it is": a non-staff caller, a request that sent no selection,
+   * or (B215/R1, round 2) an UNVERIFIED replay, whose body is not provably the cart the fold
+   * applied and therefore must not re-point this order's credits. The settle still runs in every
+   * case, since credits are payment-level and settling is convergent. The skip is explicit here
+   * (the `!== undefined` guard below) rather than delegated to `syncOrderCreditSelections`'s own
+   * `undefined` early-return, so the contract is readable at the call site that depends on it.
+   *
+   * `routing` is passed in rather than derived here: `skipInPlaceResync` depends on which line
+   * rows the caller can see (the fold holds the PRE-EDIT snapshot; a replay has only current
+   * rows), even though the RULE is shared — `shouldSkipInPlaceResync` in merge-idempotency.ts.
+   */
+  private async reconcileOrderAfterEdit(
+    orderId: string,
+    customerId: string,
+    appliedCreditNotes: AppliedCreditNoteDto[] | undefined,
+    routing: { postDeliveryEdit: boolean; skipInPlaceResync: boolean },
+  ): Promise<void> {
+    // Keep the order's linked invoice(s) in lockstep with the edit.
+    //  - Undelivered edit: re-sync the open pending-mirror draft at order basis
+    //    (no-op when there's no open draft) — unchanged.
+    //  - Post-delivery edit (R1): the order may carry SENT / PAID / delivery-batch
+    //    invoices, not just an open draft. Rebuild each in place from the edited
+    //    lines at order basis, KEEP payments, recompute status/balance, and re-sync
+    //    the regulated ledger — so the invoice tracks the correction and simply shows
+    //    the new balance. Never blocks (bails on an unclean partition).
+    if (routing.postDeliveryEdit) {
+      if (!routing.skipInPlaceResync) {
+        await this.invoicesService.resyncOrderInvoicesForEdit(orderId);
+      }
+    } else {
+      await this.invoicesService.reconcileOrderDraftInvoice(orderId, { basis: "order" });
+    }
+
+    // Credit-note intents: sync operator selection changes, then settle (shrink or
+    // top-up) against the order's current invoices. Runs even when line-resync was
+    // skipped for partial billing — the credits are payment-level, not line-level.
+    await this.prisma.tenantTransaction(
+      async (tx) => {
+        // EXPLICIT skip: `undefined` means "never touch the stored selection" (see the doc
+        // comment) — an unverified replay lands here and must not re-point this order's credits.
+        if (appliedCreditNotes !== undefined) {
+          await this.creditNotes.syncOrderCreditSelections(
+            tx,
+            orderId,
+            customerId,
+            appliedCreditNotes,
+          );
+        }
+        await this.creditNotes.settleOrderCreditsInTx(tx, orderId);
+      },
+      { isolationLevel: "Serializable" },
+    );
+  }
+
+  /**
+   * B215: re-run the convergent tail above for a merge that was REPLAYED rather than folded.
+   *
+   * The replay key now commits inside the fold's own transaction, so a retry that arrives after
+   * the fold committed but before (or during) the tail is answered by the replay lookup and
+   * returns immediately — leaving the order's linked invoice and applied credits permanently
+   * unreconciled unless the replay re-runs this. Invariant: the fold runs AT MOST ONCE per key;
+   * this reconcile is idempotent and may run on every replay. Called by the controller's merge
+   * branch on its `replayed: true` path, still inside the customer advisory lock.
+   *
+   * Tenant guard mirrors `findOrderIdByIdempotencyKey`: `forTenant()` hands back the UNSCOPED
+   * client for a session with no tenant, so refuse before any read.
+   *
+   * B215/R2 (round 2): a POST-DELIVERY replay either reconciles or REFUSES LOUDLY — it never
+   * silently skips the invoice work (the previous unconditional `skipInPlaceResync: true` left a
+   * dispatched order's finalized invoice permanently out of step with the merged lines). The
+   * partial-billing rule is re-evaluated over the CURRENT lines with the fold's own predicate
+   * (`shouldSkipInPlaceResync`); only the case where those rows genuinely cannot carry the answer
+   * throws 409 `IDEMPOTENCY_REPLAY_NEEDS_RECONCILE`.
+   */
+  async replayMergeReconcile(
+    orderId: string,
+    customerId: string,
+    appliedCreditNotes: AppliedCreditNoteDto[] | undefined,
+  ): Promise<void> {
+    if (!this.prisma.getTenantId()) {
+      this.logger.warn(`replay reconcile refused: no tenant scope order=${orderId}`);
+      throw new ForbiddenException("Replay reconcile requires a tenant-scoped session");
+    }
+    // Customer-scoped, so a replay can never reconcile another customer's order.
+    const order = await this.prisma.forTenant().order.findFirst({
+      where: { id: orderId, customerId },
+      select: {
+        status: true,
+        lineItems: { select: { qty: true, invoicedQty: true } },
+      },
+    });
+    if (!order) {
+      this.logger.warn(`replay reconcile skipped: order not found order=${orderId}`);
+      return;
+    }
+    // Derived from the CURRENT status, which is provably the same routing the fold used: the
+    // only status the fold itself changes is CONFIRMED -> PENDING, and both are outside
+    // POST_DELIVERY_EDIT_STATUSES.
+    const postDeliveryEdit = POST_DELIVERY_EDIT_STATUSES.includes(order.status);
+    let skipInPlaceResync = false;
+    if (postDeliveryEdit) {
+      // Same BILLABLE filter the predicate itself applies (`shouldSkipInPlaceResync`,
+      // merge-idempotency.ts): a zero-qty row cannot carry the partial-billing answer, so it must
+      // not make this gate read as "invoiced" either — otherwise the two disagree on exactly the
+      // rows that decide the branch.
+      const lines = (order.lineItems ?? []).filter((li) => Number(li.qty ?? 0) > 0.001);
+      const anyInvoiced = lines.some((li) => Number(li.invoicedQty ?? 0) > 0.001);
+      if (anyInvoiced) {
+        // The cumulative `invoicedQty` survived on these rows (an incremental edit, or a
+        // re-stamp by a later invoice sync), so the fold's own predicate answers over the
+        // current lines: resync when the order is wholly invoiced, skip when partially.
+        skipInPlaceResync = shouldSkipInPlaceResync(lines);
+      } else {
+        // Nothing shows as invoiced. Two indistinguishable states produce that:
+        //   (a) the order genuinely has nothing billed — then `resyncOrderInvoicesForEdit` is a
+        //       provable no-op (it returns null when the order has no non-VOID invoice), and the
+        //       fold's guard would also have been false, so routing the resync is faithful; or
+        //   (b) the replace-all fold RESET `invoicedQty` to 0 on every recreated row, erasing the
+        //       pre-edit cumulative billing the guard reads — in which case partial vs wholly
+        //       invoiced is unknowable from current state, and BOTH branches are unsafe (a resync
+        //       could expand an already-issued invoice to units it never billed; a skip leaves the
+        //       finalized invoice out of step with the merge forever).
+        // A surviving non-VOID invoice is what separates them: (a) has none.
+        const invoiceCount = await this.prisma
+          .forTenant()
+          .invoice.count({ where: { orderId, status: { not: InvoiceStatus.VOID } } });
+        if (invoiceCount > 0) {
+          this.logger.warn(
+            `replay reconcile cannot reproduce the partial-billing guard: refusing ` +
+              `tenant=${this.prisma.getTenantId()} customer=${customerId} order=${orderId} ` +
+              `status=${order.status} invoices=${invoiceCount}`,
+          );
+          throw new ConflictException({
+            code: IDEMPOTENCY_REPLAY_NEEDS_RECONCILE,
+            orderId,
+            message:
+              "This order was already submitted and later dispatched; open it to reconcile its invoice",
+          });
+        }
+      }
+    }
+    await this.reconcileOrderAfterEdit(orderId, customerId, appliedCreditNotes, {
+      postDeliveryEdit,
+      skipInPlaceResync,
     });
   }
 

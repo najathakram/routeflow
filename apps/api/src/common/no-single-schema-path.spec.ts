@@ -18,9 +18,10 @@ import path from "node:path";
  *     retired path (`--from`/`--from-ref` resolve `apps/api/prisma/schema.prisma`
  *     at a git ref via `git show <ref>:...`). `--check` enforces the structural
  *     invariants on every run; the block-identity proof against the original
- *     single file was recorded at split time (`e39bf9db`, 207 blocks) and can be
- *     re-derived with `--check --from-ref e39bf9db` when git history is
- *     available; the permanent lossless guard is the drift gate (`npm run
+ *     single file was recorded at split time (`e39bf9db`, 207 blocks) and is NOT
+ *     re-derivable now that the folder has legitimately gained models
+ *     (`--check --from-ref e39bf9db` fails on block count 208 vs 207); the
+ *     permanent lossless guard is the drift gate (`npm run
  *     local:drift` / CI replay: folder datamodel == migration history).
  *   - `apps/api/src/common/schema-folder.spec.ts` (T1, sibling spec) — its own
  *     case (b) asserts the retired single file no longer exists on disk, which

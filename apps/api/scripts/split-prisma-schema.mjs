@@ -17,9 +17,11 @@
  *                             required — it is read directly — but once the single file is
  *                             gone (the normal state after this split has landed), --write
  *                             requires one of --from/--from-ref and says so if omitted.
- *                             Idempotent: re-running `--write --from-ref e39bf9db` against
- *                             this tree reproduces byte-identical output to what is checked
- *                             in today.
+ *                             Deterministic: re-running `--write --from-ref <ref>` reproduces
+ *                             byte-identical output for a ref whose model set matches the
+ *                             folder's. `e39bf9db` is NOT such a ref any more — the folder has
+ *                             legitimately gained models since the split, so re-splitting that
+ *                             blob no longer reproduces what is checked in today.
  *   --check [--from <file> | --from-ref <git-ref>]
  *                             ALWAYS verifies the folder's structural invariants, with no
  *                             original file needed: the 7-file set, `_base` holds exactly
@@ -44,7 +46,12 @@
  *                             never the word "block-identical" — because the original
  *                             lossless proof was recorded once, at split time, against
  *                             e39bf9db (207 blocks; see docs/IMPROVEMENTS.md item 10), and is
- *                             not re-derived on every run.
+ *                             not re-derived on every run. --from/--from-ref is therefore only
+ *                             meaningful for a ref whose model set matches the folder's, and
+ *                             e39bf9db no longer does — `--check --from-ref e39bf9db` now FAILS
+ *                             on block count 208 vs 207, so do not run it expecting green. The
+ *                             standing lossless guard going forward is the drift gate
+ *                             (apps/api/scripts/schema-drift.mjs / `npm run local:drift`).
  *   --print-map               Dump the model → file map as TSV and exit.
  *
  * Losslessness is defined on *blocks*, not bytes: parseBlocks() treats a block as the text
@@ -150,6 +157,7 @@ const MODEL_DOMAIN = {
   RouteRun: "sales",
   RouteRunStop: "sales",
   Order: "sales",
+  OrderIdempotencyKey: "sales",
   OrderRevision: "sales",
   ChangeRequest: "sales",
   OrderItem: "sales",

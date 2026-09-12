@@ -8,6 +8,52 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-11** — (branch `fix/train4-order-idempotency-key`, train 4 Run B, **B215**; map + lesson land
+  IN-PR per the 2026-09-10 owner ruling, base `70d15a87`) — **the staff-merge replay store is now a
+  per-request key ROW, and a replay re-runs the convergent post-fold tail.** The old store was the single
+  first-key-wins `Order.idempotencyKey` column, so a later merge wave's key was silently dropped and its
+  retry folded the cart AGAIN (the fold writes ABSOLUTE totals ⇒ the order inflated). NEW model
+  **`OrderIdempotencyKey`** in `prisma/schema/sales.prisma` (migration `20260911000000_order_idempotency_key_table`,
+  additive: `@@unique([tenantId, key])`, `@@index([orderId])`, `responseHash`, order FK `onDelete: Cascade`,
+  `Order.mergeIdempotencyKeys` back-relation) — mapped `sales` in `split-prisma-schema.mjs`'s `MODEL_DOMAIN`,
+  added to `apps/api/scripts/apply-rls.js`'s `TENANT_TABLES` (the step that actually arms RLS in prod, missed in
+  the first pass) and to the parked `prisma/deferred-rls/20260909000000_rls` arrays. NEW pure module
+  **`apps/api/src/orders/merge-idempotency.ts`**: `mergeRequestHash({customerId, items?, appliedCreditNotes?})`
+  (sha256 over canonical JSON; BOTH lists stable-serialized then SORTED, so neither's wire order can turn an
+  honest retry into a cart mismatch) and the error-code const `IDEMPOTENCY_KEY_CONFLICT`.
+  `orders.service.ts`: `recordMergeIdempotencyKey(tx, orderId, {key, responseHash})` writes the row inside the
+  FOLD's own transaction (P2002 ⇒ 409 aborting the fold); `updateOrderItems`'s 4th arg
+  `opts?: { idempotency? }` is passed only when a key exists; `findOrderIdByIdempotencyKey(key, customerId,
+requestHash?)`'s lookup order is now **key table (this customer) → this customer's Order column → tenant-wide
+  key-table refusal** — the column read MUST precede the tenant-wide check, or a legitimate replay of the
+  caller's own key 409s whenever any other customer holds a key row; both 409s carry
+  `{code: IDEMPOTENCY_KEY_CONFLICT, reason: "CART_MISMATCH"|"HELD_BY_OTHER_ORDER", orderId, message}`. The
+  post-fold tail was extracted to private **`reconcileOrderAfterEdit(orderId, customerId, appliedCreditNotes,
+{postDeliveryEdit, skipInPlaceResync})`** (invoice resync / draft reconcile + the Serializable credit
+  sync+settle) with public **`replayMergeReconcile(orderId, customerId, appliedCreditNotes)`** called from the
+  controller's merge branch on its `replayed: true` path, still inside the customer advisory lock — the status
+  event and `appendOrderRevision` stay fold-only (append-only, not convergent), and a replay passes
+  `skipInPlaceResync: true` because the pre-edit cumulative `invoicedQty` the partial-billing guard needs is gone
+  by then. `create()` and its P2002 recovery both route through private `findReplayCandidateByKey(key)` (table
+  first, column fallback), so a keyed merge that fell through to `create()` replays instead of minting a
+  duplicate. `POST_DELIVERY_EDIT_STATUSES` is now one module const read by both callers.
+  **Schema-spec collateral:** `schema-folder.spec.ts`'s model-count pin 125 → 126 and its **case (h) RETIRED** —
+  it asserted the folder still block-identical (207 blocks) to the retired single `schema.prisma` at `e39bf9db`,
+  a one-time split-time proof that no block count can satisfy once the folder legitimately gains models (208 vs
+  207), and it `it.skip`ped itself on a depth-1 CI clone anyway; the standing lossless guard is
+  `apps/api/scripts/schema-drift.mjs` (`npm run local:drift` / the CI db-migrations replay). `CLAUDE.md`,
+  `no-single-schema-path.spec.ts`, `split-prisma-schema.mjs`'s header and `docs/IMPROVEMENTS.md` say so too.
+  **Mobile (`mobile.md`):** `NewOrderScreen.tsx` rotates the cart-session submit key on a REAL customer switch
+  (a `keyCustomerIdRef` stamped in `onChangeCustomer`, compared in `onPick` — re-picking the same customer keeps
+  its key) and its submit `onError` gained an `IDEMPOTENCY_KEY_CONFLICT` branch offering "Open order" (navigate
+  by the body's `orderId`, reset the key, retire the bound draft) instead of wedging on a bare message;
+  `lib/order-submit-key.ts`'s doc comment lists the switch as reset condition (3).
+  **Tests:** `orders/orders.merge-idempotency.spec.ts` (REG-B215 T1-T17 + pins P1-P5, incl. T2b reconcile-on-replay
+  - no-revision, T11b credit-set order-insensitivity, T16 `create()`'s key-table replay, T17 the lookup order)
+    and the DB lane `orders/order-idempotency-key.db.spec.ts` (D1-D4, PD1-PD3 against real Postgres; D3 = the
+    pre-fold refusal, D4 = the in-tx P2002 rollback). Lesson **L-104** appended (domain), **L-099** archived for
+    headroom. api.md/mobile.md updated; web.md/packages.md untouched (no diff there).
+
 - **2026-09-10** — (branch `chore/next-15` #5b3b3c4e = master, Option-B follow-up) —
   `apps/web` upgraded Next 14.2.35 → 15.5.25 (React 18 → 19.2.0, eslint 8 → 9); clears the two
   CRITICAL npm-audit advisories the owner had allowlisted through 2026-09-30

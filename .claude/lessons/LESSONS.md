@@ -460,6 +460,22 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 
 ## domain
 
+### L-104 · 2026-09-11 · domain · B215
+
+- **Symptom:** a same-key retry of a staff order merge folded the same cart in twice; once the key
+  committed with the fold, the retry replayed instead — and skipped the post-fold invoice resync +
+  credit sync/settle, leaving the order's invoice and credits out of sync forever.
+- **Root cause:** the key committed INSIDE the fold's transaction while the convergent tail after
+  it stayed outside, so "already done" was true of the irreversible step and false of everything
+  after it. The same diff's new Prisma model also failed `schema-folder.spec.ts`'s model-count
+  pin.
+- **Lesson:** **An idempotency key must cover the whole unit of work: commit the key with the
+  irreversible step, and make every step after it convergent and re-run on replay; append-only
+  steps (a revision snapshot) stay behind the key. Any Prisma model change puts
+  `apps/api/src/common/schema-folder.spec.ts` in the radius.**
+- **Guard:** REG-B215 T2b + T16 in `orders.merge-idempotency.spec.ts`; the `schema-folder.spec.ts`
+  model-count pin.
+
 ### L-100 · 2026-09-08 · domain · #678
 
 - **Symptom:** three numbering series minted cross-tenant on a null request tenant and raced to a
@@ -474,21 +490,6 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
   token (the red gate reads titles).**
 - **Guard:** `apps/api/src/**/{credit-note,payment,import}-numbering.db.spec.ts` (REG-B267/B268/B269),
   `numbering.service.spec.ts`.
-
-### L-099 · 2026-09-08 · domain · #675
-
-- **Symptom:** editing a scanned line's price on mobile tore the camera down and cost 5 taps + 2
-  camera lifecycles; the list surface and the scan surface disagreed on margin-floor wording.
-- **Root cause:** the screen swapped SURFACES through a mode ternary (`showPicker ? picker :
-list`) instead of stacking the edit sheet over the live surface; the strip's label was a
-  literal, independent of the line's margin class.
-- **Lesson:** **A sheet that must return to a live surface (camera, map, scanner) MOUNTS OVER
-  that surface with a pause prop (`active={!editing}`), never swaps the surface out; any
-  secondary surface that repeats a classification (margin class, status) derives it from the
-  same helper the primary surface uses, and a source-text pin extracts the primary's literals so
-  the two cannot drift.**
-- **Guard:** `apps/mobile/__tests__/edit-items-scan-price.test.ts` (REG-B263-B/C/H),
-  `apps/mobile/__tests__/barcode-scanner-active.test.ts`.
 
 ### L-098 · 2026-09-08 · domain · #673
 

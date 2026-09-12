@@ -81,8 +81,9 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   and prove the folder **block-identical** to that original (multiset of whitespace-normalized
   top-level blocks), printing `block-identical (N blocks)`. The retired single file itself is
   NEVER read implicitly (no `git show HEAD:...` fallback) — the one-time lossless proof against
-  it was recorded at split time (`e39bf9db`, 207 blocks) and is re-derivable on demand with
-  `--check --from-ref e39bf9db`, not re-run on every invocation; `--print-map` dumps the map as
+  it was recorded at split time (`e39bf9db`, 207 blocks) and is NOT re-derivable now that the folder
+  has legitimately gained models (`--check --from-ref e39bf9db` fails on block count 208 vs 207; the
+  standing lossless guard is `schema-drift.mjs` / `npm run local:drift`); `--print-map` dumps the map as
   TSV. ⚠️ **Enum-ownership invariant is membership, not "first referencing model"**: literal
   "first, in original file order" is NOT reconstructable from the folder alone — domains
   interleave in the pre-split single file in ways a domain split does not preserve (verified:
@@ -94,8 +95,9 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   strict order-accurate proof lives in the `--from`/`--from-ref` block comparison. A block is the
   text from the end of the previous block's `}` to its own, so preceding `///`/`//` comments and
   blank lines travel with it and nothing between blocks is lost. Output is deterministic —
-  re-running `--write --from-ref e39bf9db` reproduces byte-identical output to what's checked in
-  (verified). Line-based parser: it hard-fails on any top-level construct not matching
+  re-running `--write --from-ref <ref>` reproduces byte-identical output for a ref whose model set
+  matches the folder's (verified at split time against `e39bf9db`; that no longer holds — the folder
+  has since gained models). Line-based parser: it hard-fails on any top-level construct not matching
   `^(datasource|generator|model|enum|type|view) Name {` and on trailing text after the last block. ⚠️ `prod-migrate.mjs` keeps its own fail-closed `RAILWAY_PROXY_VARS`
   pre-check BEFORE calling `resolveDatabaseUrl` — the helper's `DATABASE_URL` fallback exists for
   `schema-drift.mjs` (read-only) and must never reach a script that writes schema; it also prints
@@ -657,15 +659,17 @@ version|audit-allowlist-retired)\\.spec\\.ts$"` (the third joined it
   `Object.keys(PrismaEnums.$Enums).length === PINNED_PRISMA_ENUM_COUNT` (80) — as a triage
   tripwire: a new/removed generated enum must be triaged into `ENUM_TABLE` (or deliberately left
   unmirrored) BEFORE the constant is bumped. **`schema-folder.spec.ts` (2026-09-04, wave E / imp-10a, T1; cases (g)/(h) reworked
-  wave E structure)** — pins `prisma/schema/` to exactly the 7 domain files, 125 model + 80 enum
+  wave E structure; case (h) RETIRED 2026-09-11)** — pins `prisma/schema/` to exactly the 7 domain
+  files, 126 model + 80 enum
   blocks total, `_base.prisma` holding only datasource+generator, every model/enum name unique,
   `prisma.config.ts` pointing `schema` at the folder with an explicit `migrations.path`. Case (g)
   spawns `split-prisma-schema.mjs --check` with **no original given** — must exit 0, stdout
-  contains `structural invariants hold`, never `block-identical`. Case (h) spawns `--check
---from-ref e39bf9db` — must exit 0, stdout contains `block-identical (207 blocks)`; it SKIPS
-  itself (stated reason in the test name) when `git cat-file -e e39bf9db:...schema.prisma` fails
-  (a shallow CI clone lacking that object), rather than failing on a clone-depth artifact unrelated
-  to the split's own correctness. Every oracle degrades to an empty/zero result (not a thrown
+  contains `structural invariants hold`, never `block-identical`. **Case (h) is RETIRED** (a
+  replacement comment in the spec says why): it spawned `--check --from-ref e39bf9db` expecting
+  `block-identical (207 blocks)`, a one-time split-time proof that cannot pass again now the folder
+  has legitimately gained models (208 vs 207), and it `it.skip`ped itself on a depth-1 CI clone so it
+  only ever ran locally. The standing lossless guard is `apps/api/scripts/schema-drift.mjs`
+  (`npm run local:drift` / the CI db-migrations replay). Every oracle degrades to an empty/zero result (not a thrown
   ENOENT) when the folder is absent, so each case fails on its own value pre-split.
   **`no-single-schema-path.spec.ts`** (T2, same date/item; stripper rewritten wave E structure) —
   walks `apps/api/{src,scripts}`, root `scripts/`, `.github/workflows/`,
@@ -1180,6 +1184,74 @@ validate()` and `buyer/strategies/buyer-jwt.strategy.ts validate()` both now cop
       pre-existing row and every client that sends no key is untouched — no backfill, no writer before this deploy.
       ⚠️ **The staff auto-merge branch in the CONTROLLER returns without ever reaching `create()`**, so it checks
       and stamps the key itself, and stamps it only AFTER the fold landed (a merge that threw must re-run, not replay).
+    - **B215 merge replay key table + replay reconcile (2026-09-11, train 4 Run B — migration
+      `20260911000000_order_idempotency_key_table`, additive).** The staff-merge branch's replay store is now
+      per-request, not the single `Order.idempotencyKey` column (which is first-key-wins, so a later merge wave's
+      key was silently dropped and its retry folded the cart AGAIN — absolute totals, so the order inflated).
+      NEW model **`OrderIdempotencyKey`** (`prisma/schema/sales.prisma`; `@@unique([tenantId, key])`,
+      `@@index([orderId])`, `responseHash`, `order` FK `onDelete: Cascade`; `Order.mergeIdempotencyKeys`
+      back-relation) — mapped `sales` in `split-prisma-schema.mjs`'s `MODEL_DOMAIN`, listed in
+      `scripts/apply-rls.js`'s `TENANT_TABLES` (the step that actually arms RLS in prod) and in the PARKED
+      `prisma/deferred-rls/20260909000000_rls` arrays. NEW pure module **`orders/merge-idempotency.ts`** —
+      `mergeRequestHash({customerId, items?, appliedCreditNotes?})` (sha256 over a canonical-JSON projection;
+      BOTH `items` and `appliedCreditNotes` are stable-serialized then SORTED, so neither list's wire order can
+      turn an honest retry into a cart mismatch) and the error-code const `IDEMPOTENCY_KEY_CONFLICT`
+      (no shared `packages/types` error-code module exists — codes live next to the code that throws them,
+      like `MERGE_CHOICE_REQUIRED`).
+      ⚠️ **Service signatures (current):** `create(dto, user, options?: { skipAutoMerge?, allowArchived? })`;
+      `updateOrderItems(orderId, dto, user?, opts?: { idempotency?: { key, responseHash } })` — the 4th arg is
+      passed ONLY when a key exists, and `recordMergeIdempotencyKey(tx, orderId, { key, responseHash })` writes
+      the row INSIDE the fold's own transaction (P2002 ⇒ 409, aborting the fold; never swallowed — a swallowed
+      error leaves the tx aborted anyway);
+      `findOrderIdByIdempotencyKey(key, customerId, requestHash?) -> { orderId, verified } | null`
+      (`verified` = key-TABLE hit whose stored `responseHash` matched the request fingerprint; a
+      COLUMN hit, or any caller passing no hash, is never verified);
+      private **`reconcileOrderAfterEdit(orderId, customerId, appliedCreditNotes, { postDeliveryEdit,
+skipInPlaceResync })`** and public **`replayMergeReconcile(orderId, customerId, appliedCreditNotes)`**;
+      private **`findReplayCandidateByKey(key, customerId)`**. Pure helpers in
+      **`orders/merge-idempotency.ts`**: `mergeRequestHash`, `IDEMPOTENCY_KEY_CONFLICT`,
+      `IDEMPOTENCY_REPLAY_NEEDS_RECONCILE`, `shouldSkipInPlaceResync(lines)`.
+      ⚠️ **Replay lookup ORDER is load-bearing** (`findOrderIdByIdempotencyKey`): tenant guard, then (a) the key
+      table scoped to THIS customer via the `order` relation, then (b) this customer's own `Order.idempotencyKey`
+      column, then (c) a tenant-wide key-table check that REFUSES a key held by another order. (b) must precede
+      (c) — the reverse turned a legitimate replay of the caller's own column key into a permanent 409 whenever
+      any other customer held a key-table row. Both 409s carry a machine-readable body
+      `{ code: IDEMPOTENCY_KEY_CONFLICT, reason: "CART_MISMATCH" | "HELD_BY_OTHER_ORDER", orderId, message }` —
+      `orderId` is always the order that HOLDS the key, because no client can mint a new key without abandoning
+      its cart. The column branch is still deliberately NOT hash-compared (pin P5).
+      ⚠️ **A replay must re-run the CONVERGENT tail.** The key commits inside the fold tx, so a retry arriving
+      after that commit but before the post-fold work would otherwise leave the order's linked invoice and
+      applied credits out of sync forever. `reconcileOrderAfterEdit` is exactly that tail (invoice resync /
+      draft reconcile choice + the Serializable credit sync+settle) and is idempotent; the controller's merge
+      branch calls `replayMergeReconcile` on its `replayed: true` path, STILL inside the customer advisory lock.
+      The status event and `appendOrderRevision` stay fold-only (append-only, not convergent). `skipInPlaceResync`
+      is the SHARED pure predicate `shouldSkipInPlaceResync(lines)` — `updateOrderItems` evaluates it over the
+      PRE-EDIT snapshot, `replayMergeReconcile` over the order's CURRENT lines. ⚠️ **A post-delivery replay
+      reconciles or REFUSES, never silently skips** (round 2): any line still showing `invoicedQty` → route as the
+      fold would (resync when wholly invoiced, skip when partial); nothing invoiced AND no non-VOID invoice → route
+      the resync (a proven no-op); nothing invoiced BUT a non-VOID invoice survives → the replace-all fold erased
+      the cumulative `invoicedQty` the guard reads, so both branches are unsafe ⇒ `logger.warn` + 409
+      `{ code: IDEMPOTENCY_REPLAY_NEEDS_RECONCILE, orderId, message }` (mobile treats it exactly like
+      `IDEMPOTENCY_KEY_CONFLICT` — "Open order"). ⚠️ **The retry's credit selection is applied only on a VERIFIED
+      hit**: the controller passes `dto.appliedCreditNotes` to `replayMergeReconcile` when
+      `findOrderIdByIdempotencyKey` returned `verified`, and `undefined` otherwise — which
+      `reconcileOrderAfterEdit` treats as "settle only, never call `syncOrderCreditSelections`" (a column hit
+      carries no fingerprint, so its body may be a different cart). `create()` and its P2002 recovery both route
+      through `findReplayCandidateByKey(key, customerId)`, whose order is own key-table row → own `Order` column →
+      tenant-wide key-table row → tenant-wide column (the last two still 409 through the caller's ownership gate),
+      so a keyed merge that fell through to `create()` (its merge target vanished before the lock) replays instead
+      of minting a duplicate, and another customer's key-table row can no longer 409 a caller whose own
+      column-stamped order exists.
+      **Tests:** `orders/orders.merge-idempotency.spec.ts` (REG-B215 T1-T3 controller replay incl. T2b's
+      reconcile-on-replay + no-revision pin, T4/T5/T10/T14/T15 the in-tx key write, T6/T7 consolidation key
+      hand-off, T8/T9/T12/T13/T17 the lookup order + coded bodies, T11/T11b `mergeRequestHash`, T16 `create()`'s
+      key-table replay, T2c the verified-hit credit gate, T2d/T2e the post-delivery reconcile-or-refuse routing,
+      T18 the own-row-wins create() lookup, pins P1-P5) and the DB lane
+      `orders/order-idempotency-key.db.spec.ts` (D1-D4 + PD1-PD3
+      against real Postgres via `jest.db.config.js` / `npm run local:test:db`; D3 is the pre-fold refusal, D4 the
+      in-tx P2002 rollback). Mobile half (PER-CUSTOMER cart keys, the "Open order" conflict prompt for
+      both 409 codes) in [`mobile.md`](mobile.md). Lesson **L-104** (round-2 refinement recorded in
+      `.claude/lessons/_meta.json`'s note — the register is at its byte cap).
     - **`foldMergeItems(existingLines, incoming)` + `deriveUnitsPerBox(row)` (R11, REG-B199, money-critical),**
       exported from the pure module **`orders/merge-items.ts`** — MOVED byte-identical out of
       `orders.controller.ts` by F06 (in-flight note above), which added `normalizeBoxUnawareSnapshots` +

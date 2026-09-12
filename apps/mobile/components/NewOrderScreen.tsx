@@ -293,7 +293,6 @@ export function NewOrderScreen({
     initialCustomerName ?? null,
   );
   const customerLocked = !!initialCustomerId;
-
   // The draft this screen is bound to. Seeded from the URL on open; kept in
   // sync afterwards via onDraftBound so a later onChangeCustomer round trip
   // (ProductPickView unmounts/remounts) resumes the SAME server draft rather
@@ -389,6 +388,10 @@ export function NewOrderScreen({
           backLabel={backLabel}
           onBack={handleBack}
           onPick={(id, name) => {
+            // B215/R3: no key rotation here. Submit keys are held PER CUSTOMER
+            // (lib/order-submit-key.ts), matching the server's customer-scoped replay identity, so
+            // picking a customer simply reads their own slot — and a switch away and back leaves
+            // the first customer's still-live cart holding the key its own retry must send.
             setPickedCustomerId(id);
             setPickedCustomerName(name);
           }}
@@ -1710,7 +1713,8 @@ function ProductPickView({
     // cart — rotating the key there re-opens the duplicate window for a
     // timed-out-but-committed submit made before the park. Rotate only for a
     // genuinely new cart session.
-    if (!initialDraft) resetOrderSubmitKey();
+    // B215/R3: scoped to THIS customer's slot — no other customer's live cart is disturbed.
+    if (!initialDraft) resetOrderSubmitKey(customerId);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot mount decision on the resume seed
   }, []);
 
@@ -1814,13 +1818,13 @@ function ProductPickView({
           : {}),
         // Sent as the Idempotency-Key header (see useCreateOrderAsDriver). The
         // SAME value on every retry/replay of this cart is the point.
-        idempotencyKey: getOrderSubmitKey(),
+        idempotencyKey: getOrderSubmitKey(customerId),
       },
       {
         onSuccess: async (order) => {
-          // This cart is now a real order; anything submitted next is a NEW
-          // order and must carry its own key.
-          resetOrderSubmitKey();
+          // This cart is now a real order; anything submitted next for THIS customer is a NEW
+          // order and must carry its own key (B215/R3: only this customer's slot is cleared).
+          resetOrderSubmitKey(customerId);
           if (mergeChoice === "merge") {
             showToast(`Merged into order ${order.orderNumber}`);
           } else if (asDraft) {
@@ -1840,7 +1844,14 @@ function ProductPickView({
           const errAny = err as unknown as {
             response?: {
               status?: number;
-              data?: { message?: string; code?: string; activeOrder?: any };
+              data?: {
+                message?: string;
+                code?: string;
+                activeOrder?: any;
+                // B215: present on both IDEMPOTENCY_KEY_CONFLICT bodies — the order that
+                // HOLDS the key.
+                orderId?: string;
+              };
             };
           };
           // Belt-and-braces: if the API reports 409 MERGE_CHOICE_REQUIRED (e.g. the
@@ -1854,6 +1865,46 @@ function ProductPickView({
             // Forward asDraft so a draft that races a 409 stays a draft after
             // the operator picks Merge / Create separate.
             promptMergeChoice(body.activeOrder, asDraft);
+            return;
+          }
+          // B215/D4: this cart's Idempotency-Key is already spoken for — either it replays an
+          // order whose cart differs from what's on screen now (CART_MISMATCH), or another
+          // order holds it (HELD_BY_OTHER_ORDER). The operator cannot mint a new key without
+          // abandoning the cart, so a bare message wedges the screen: offer the held order
+          // instead. `orderId` on the body is always the order that HOLDS the key.
+          //
+          // B215/R2 (round 2): IDEMPOTENCY_REPLAY_NEEDS_RECONCILE is handled identically. It says
+          // the key's order was already submitted and has since been dispatched, so the server
+          // refuses to guess how to reconcile its invoice — the operator's next move is exactly
+          // the same: open that order.
+          if (
+            errAny?.response?.status === 409 &&
+            (body?.code === "IDEMPOTENCY_KEY_CONFLICT" ||
+              body?.code === "IDEMPOTENCY_REPLAY_NEEDS_RECONCILE") &&
+            body?.orderId
+          ) {
+            const heldOrderId = String(body.orderId);
+            chooseAction(
+              "This cart was already submitted",
+              String(
+                body?.message ??
+                  "This cart's submit was already recorded against an existing order.",
+              ),
+              [
+                { label: "Cancel", style: "cancel" },
+                {
+                  label: "Open order",
+                  onPress: () => {
+                    // Same wind-down as the success path: the cart that owned this key is
+                    // finished with, so start a fresh cart session for THIS customer and retire
+                    // the bound draft before navigating away.
+                    resetOrderSubmitKey(customerId);
+                    void finalizeBoundDraft();
+                    router.replace(`/(operator)/orders/${heldOrderId}` as any);
+                  },
+                },
+              ],
+            );
             return;
           }
           // Regulated-sale block: open the license guard and replay this exact

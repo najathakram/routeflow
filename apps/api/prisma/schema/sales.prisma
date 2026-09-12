@@ -613,6 +613,7 @@ model Order {
   revisions         OrderRevision[]
   changeRequests    ChangeRequest[]
   orderCreditNotes  OrderCreditNote[]
+  mergeIdempotencyKeys OrderIdempotencyKey[]
 
   // RF-014: prevent duplicate order numbers within the same tenant.
   // NULL values are treated as distinct by PostgreSQL, so rows with
@@ -630,6 +631,28 @@ model Order {
   @@index([requestedDeliveryDate])
   @@index([orderDate])
   @@index([tenantId])
+}
+
+/// B215: one row per staff-merge Idempotency-Key. Written by
+/// OrdersService.recordMergeIdempotencyKey INSIDE updateOrderItems' own transaction, so the key
+/// commits or rolls back together with the fold it guards. An order may hold many keys (every
+/// merge wave keeps its own); a key belongs to exactly one order per tenant. `responseHash` is the
+/// SHA-256 fingerprint (merge-idempotency.ts mergeRequestHash) of the request whose result this
+/// row replays — a same-key retry with a different cart is refused (409). The consolidation
+/// sweeps re-point a loser's rows onto the winner before deleting the loser.
+/// NOT the global `IdempotencyKey` model (platform.prisma — RoutesService stop replay).
+model OrderIdempotencyKey {
+  id           String   @id @default(uuid())
+  tenantId     String
+  key          String
+  orderId      String
+  responseHash String
+  createdAt    DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, key])
+  @@index([orderId])
 }
 
 /// Append-only version history of an order's editable state (P5-08). One row is

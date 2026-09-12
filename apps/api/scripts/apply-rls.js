@@ -29,6 +29,7 @@ const TENANT_TABLES = [
   "DeliveryMutation",
   "Order",
   "OrderItem",
+  "OrderIdempotencyKey",
   "OrderTemplate",
   "OrderTemplateItem",
   "Transaction",

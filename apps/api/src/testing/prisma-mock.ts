@@ -116,6 +116,11 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     tobaccoReport: modelProxy(),
     tenantConfig: modelProxy(),
     idempotencyKey: modelProxy(),
+    // B215: OrdersController.create's staff merge branch replays a same-key
+    // retry through this table first, written inside updateOrderItems' own
+    // fold transaction (recordMergeIdempotencyKey) — see
+    // orders.merge-idempotency.spec.ts.
+    orderIdempotencyKey: modelProxy(),
     passwordResetToken: modelProxy(),
     saleDraft: modelProxy(),
     trackedCategory: modelProxy(),
