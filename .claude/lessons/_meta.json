@@ -1,10 +1,10 @@
 {
-  "nextId": 114,
+  "nextId": 115,
   "activeCount": 40,
-  "archivedCount": 69,
+  "archivedCount": 70,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-12T13:21:30.023Z",
+  "updatedAt": "2026-09-12T14:00:00.000Z",
   "schemaVersion": 1,
-  "note": "Window-16 JIT rebase of feat/crm-gohighlevel-handoff onto master 54717997 (#701): the branch lesson L-112 (any-typed Prisma mocks hide column names, CRM GoHighLevel handoff) collided with master L-112 (Plane bulk-sync denylist scope) and was renumbered L-113; its archived entry L-034 joins master L-107 under the same Archived 2026-09-12 section. nextId 114, activeCount 40 (40 - L-034 + L-113 on top of master), archivedCount 69 (68 + L-034) -- counted from ### L- headers in the real files. validate-lessons.mjs run and digest regenerated after this edit."
+  "note": "Rebase of fix/plane-selftest-tmpdir (worktree rf-plane3) onto master e96c405b, which had already landed #701/#702's L-113 (CRM GoHighLevel handoff, nextId advanced to 114): our commit's L-114 (tooling, plane-learning self-test tmpdir invariant) is confirmed correct as-is, no renumber needed. Register was at the 40-entry cap, so L-108 (2026-09-11, process, engine gate runner) was archived to clear headroom -- zero outside citations found (repo-wide grep excluding .claude/lessons/**, .claude/pipeline/**, and code-map CHANGELOG/_meta.json), tied at zero citations with L-109/L-110/L-111 and the oldest of that tied set by id, fully guarded (the engine gate runner's own execFileSync usage) -- moved to ARCHIVE.md verbatim under a new 2026-09-12 section following master's own L-034 archival section. nextId 115, activeCount 40 (40 - L-108 + L-114), archivedCount 70 (69 + L-108) -- counted directly from '### L-' headers in the real files."
 }

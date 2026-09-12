@@ -86,8 +86,19 @@ const CLIENT_URL = pathToFileURL(
 ).href;
 
 // ── fixture-dir bookkeeping (F4 pattern, plane-sync.self-test.mjs) ─────────
+//
+// Test-isolation fix (2026-09-12): FIXTURE_PREFIX is unique to THIS PROCESS
+// (pid + random) — never a bare "plane-learning-self-test-" literal shared
+// by every invocation. Two runs of this same script overlapping on the host
+// (a lead's `npm run verify` and a builder's manual run both mid-flight at
+// once, confirmed live) used to share one literal prefix, so one run's
+// before/after COUNT of tmpdir entries could include the OTHER run's
+// still-live dirs and go red under load though each run was itself correct
+// (`plane-learning.self-test: 1 FAILURE(S)` under load, green alone). The
+// sweep below is now pinned to every path THIS run recorded being gone after
+// cleanup, never a global count of other runs' dirs.
 const FIXTURE_DIRS = [];
-const FIXTURE_PREFIX = "plane-learning-self-test-";
+const FIXTURE_PREFIX = `plane-learning-self-test-${process.pid}-${Math.random().toString(36).slice(2, 8)}-`;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const countFixtureTmpDirs = () =>
   readdirSync(tmpdir()).filter((n) => n.startsWith(FIXTURE_PREFIX)).length;
@@ -97,15 +108,17 @@ function makeTmpDir() {
   return dir;
 }
 function cleanupFixtures() {
-  for (const dir of FIXTURE_DIRS.splice(0)) {
+  const dirs = FIXTURE_DIRS.splice(0);
+  for (const dir of dirs) {
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
       // a fixture dir that refuses to go (a live handle on Windows) must
-      // never turn an otherwise-passing run red — the final count check
-      // below reports it.
+      // never turn an otherwise-passing run red — the final leftover-path
+      // check below reports it instead.
     }
   }
+  return dirs;
 }
 function freshRunsPath() {
   return join(makeTmpDir(), "runs.jsonl");
@@ -1184,14 +1197,15 @@ const snapshot = (p) => (existsSync(p) ? readFileSync(p) : null);
 const bytesEqual = (a, b) => (a === null || b === null ? a === b : Buffer.compare(a, b) === 0);
 const realFilesBefore = { runs: snapshot(REAL_RUNS_PATH), knobs: snapshot(REAL_KNOBS_PATH) };
 
-const tmpDirsBefore = countFixtureTmpDirs();
+const tmpDirsBefore = countFixtureTmpDirs(); // always 0: FIXTURE_PREFIX embeds this process's own pid+random, so no dir under it can predate this run.
+let createdDirs = [];
 try {
   await main();
 } catch (err) {
   failures++;
   console.log(`  FAIL plane-learning.self-test threw: ${err?.stack ?? err}`);
 } finally {
-  cleanupFixtures();
+  createdDirs = cleanupFixtures();
 }
 
 const realFilesAfter = { runs: snapshot(REAL_RUNS_PATH), knobs: snapshot(REAL_KNOBS_PATH) };
@@ -1206,7 +1220,12 @@ check(
   true,
 );
 check(
-  "invariant: the run leaves no plane-learning-self-test-* dir behind",
+  "invariant: the run leaves no dir this run created behind",
+  createdDirs.filter((d) => existsSync(d)),
+  [],
+);
+check(
+  "invariant: no plane-learning-self-test-<pid>-<rand>-* dir from this run remains under tmpdir",
   countFixtureTmpDirs(),
   tmpDirsBefore,
 );

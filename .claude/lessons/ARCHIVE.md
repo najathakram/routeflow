@@ -1295,14 +1295,14 @@ so archiving it loses no enforcement.
   `voidInvoice`'s own order — a NOWAIT cycle is an ordering bug, not a timing one. Never add a
   code to a shared suppression set without checking every caller it also silences.**
 - **Guard:** Run A pins P15–P22 (orders.service.spec / invoices.service.spec REG pins).
-One active entry archived to clear headroom for L-112 (testing, CRM GoHighLevel handoff,
-feat/crm-gohighlevel-handoff, worktree rf-crm): L-034. Uncited by any `[[L-034]]` reference
-anywhere in the active register, and fully guarded (`turbo run test --force` + an mtime
-post-dates-the-change assertion, procedural but real and still enforceable). It is the oldest
-active entry by id among the fully-guarded, uncited candidates — `L-010`/`L-025`/`L-027`/`L-035`
-sit lower by date but each carries `Guard: none — judgment`, so they are not compaction-eligible
-under the "does the guard make the entry safe to stop reading" test; `L-041` and `L-074` are
-each cited once ([[L-041]] in L-050, [[L-074]] in L-111) and were kept for that reason.
+  One active entry archived to clear headroom for L-112 (testing, CRM GoHighLevel handoff,
+  feat/crm-gohighlevel-handoff, worktree rf-crm): L-034. Uncited by any `[[L-034]]` reference
+  anywhere in the active register, and fully guarded (`turbo run test --force` + an mtime
+  post-dates-the-change assertion, procedural but real and still enforceable). It is the oldest
+  active entry by id among the fully-guarded, uncited candidates — `L-010`/`L-025`/`L-027`/`L-035`
+  sit lower by date but each carries `Guard: none — judgment`, so they are not compaction-eligible
+  under the "does the guard make the entry safe to stop reading" test; `L-041` and `L-074` are
+  each cited once ([[L-041]] in L-050, [[L-074]] in L-111) and were kept for that reason.
 
 ### L-034 · 2026-09-01 · tooling · #TBD
 
@@ -1321,3 +1321,26 @@ each cited once ([[L-041]] in L-050, [[L-074]] in L-111) and were kept for that 
 - **Guard:** force execution (`turbo run test --force` or direct `npx jest`), then assert the
   artifact's mtime post-dates the change, before reading any gate that consumes it. Freshness is
   verified, never inferred from a green summary.
+
+## Archived 2026-09-12 — least-cited, fully guarded; headroom for L-114
+
+One active entry archived to clear headroom for L-114 (tooling, plane self-test tmpdir
+invariant, fix/plane-selftest-tmpdir worktree rf-plane3): L-108. Zero outside citations found
+(repo-wide grep excluding `.claude/lessons/**`, `.claude/pipeline/**`, and code-map
+CHANGELOG/`_meta.json`); tied at zero citations with L-109/L-110/L-111 (all 2026-09-11,
+fully guarded) — L-108 is the oldest of the tied set by id, so per the standing archiving rule
+(least-cited, fully-guarded, oldest first) it is the one archived. It carries a real automated
+guard that stays in the tree regardless of whether the register still narrates it (the engine
+gate runner's own `execFileSync` usage), so archiving it loses no enforcement.
+
+### L-108 · 2026-09-11 · process · engine gate runner
+
+- **Symptom:** `bash -c "cmd; echo EXIT=$?"` always printed `EXIT=0` even when `cmd` failed — a
+  red gate read green.
+- **Root cause:** `$?` in that string is expanded by the OUTER shell at parse time, before the
+  child runs — it reads the echo's own status, never `cmd`'s.
+- **Lesson:** **Never place `$?` after a semicolon in the SAME `-c` string expecting the prior
+  command's status — single-quote so `$?` expands INSIDE the child, or capture each command's
+  own exit code separately (`execFileSync`/spawnSync status), never a glued one-liner.**
+- **Guard:** the engine gate runner uses `execFileSync` with its own status check, never a
+  string-glued exit-code echo.

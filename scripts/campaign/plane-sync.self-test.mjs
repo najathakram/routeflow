@@ -135,21 +135,34 @@ const ledgerRow = (overrides = {}) => ({
 // removed in the `finally` at the bottom of the file. Earlier runs of this
 // self-test leaked one dir per case into os.tmpdir() forever — a per-block
 // cleanup would have been 20 near-identical edits, so the dirs are tracked in
-// one place and swept once, and the sweep is PINNED by a final check that the
-// `plane-sync-self-test-*` count in tmpdir is exactly what it was at start.
+// one place and swept once.
+//
+// Test-isolation fix (2026-09-12): FIXTURE_PREFIX is unique to THIS PROCESS
+// (pid + random) — never a bare "plane-sync-self-test-" literal shared by
+// every invocation. Two runs of this same script overlapping on the host (a
+// lead's `npm run verify` and a builder's manual run both mid-flight at once)
+// used to share one literal prefix, so one run's before/after COUNT of
+// tmpdir entries could include the OTHER run's still-live dirs and go red
+// under load even though each run was itself correct — `plane-learning.self-
+// test: 1 FAILURE(S)` under load, green alone. The sweep below is now pinned
+// to (a) every path THIS run recorded being gone after cleanup, never a
+// global count of other runs' dirs.
 const FIXTURE_DIRS = [];
-const FIXTURE_PREFIX = "plane-sync-self-test-";
+const FIXTURE_PREFIX = `plane-sync-self-test-${process.pid}-${Math.random().toString(36).slice(2, 8)}-`;
 const countFixtureTmpDirs = () =>
   readdirSync(tmpdir()).filter((n) => n.startsWith(FIXTURE_PREFIX)).length;
 function cleanupFixtures() {
-  for (const dir of FIXTURE_DIRS.splice(0)) {
+  const dirs = FIXTURE_DIRS.splice(0);
+  for (const dir of dirs) {
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
       // a fixture dir that refuses to go (a live handle on Windows) must never
-      // turn an otherwise-passing run red — the final count check reports it.
+      // turn an otherwise-passing run red — the final leftover-path check
+      // below reports it instead.
     }
   }
+  return dirs;
 }
 
 function makeFixture({
@@ -2343,14 +2356,15 @@ const realFilesBefore = snapshotRealFiles();
 
 // F4: the fixture sweep runs in a `finally`, and the summary/exit moved OUT of
 // main() to keep it reachable — `process.exit()` never runs a finally block.
-const tmpDirsBefore = countFixtureTmpDirs();
+const tmpDirsBefore = countFixtureTmpDirs(); // always 0: FIXTURE_PREFIX embeds this process's own pid+random, so no dir under it can predate this run.
+let createdDirs = [];
 try {
   await main();
 } catch (err) {
   failures++;
   console.log(`  FAIL plane-sync.self-test threw: ${err?.stack ?? err}`);
 } finally {
-  cleanupFixtures();
+  createdDirs = cleanupFixtures();
 }
 const realFilesAfter = snapshotRealFiles();
 check(
@@ -2378,7 +2392,12 @@ for (const p of [REAL_WRITES_LEDGER, REAL_SYNC_STATE, REAL_RUNS_PATH]) {
   }
 }
 check(
-  "F4: the run leaves no plane-sync-self-test-* dir behind",
+  "F4: the run leaves no dir this run created behind",
+  createdDirs.filter((d) => existsSync(d)),
+  [],
+);
+check(
+  "F4: no plane-sync-self-test-<pid>-<rand>-* dir from this run remains under tmpdir",
   countFixtureTmpDirs(),
   tmpDirsBefore,
 );
