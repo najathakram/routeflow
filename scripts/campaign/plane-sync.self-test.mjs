@@ -28,7 +28,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { deriveDesired, mapPriority, registryDigest } from "./plane-sync.mjs";
-import { createClient, gitEnv, repoRoot } from "./plane-client.mjs";
+import { createClient, gitEnv, repoRoot, CLOSED_MARKER } from "./plane-client.mjs";
 import { startFakePlane, DEFAULT_STATES } from "./plane-fake-server.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./plane-sync.mjs", import.meta.url));
@@ -217,6 +217,16 @@ function runCli(
   // this happens to run in), so a harness case can never write into a real
   // registry (test-plan.md §7).
   if (stateDir) env.PLANE_SYNC_STATE_DIR = stateDir;
+  // Fix-round (runs.jsonl pollution): every runCli invocation appends one
+  // telemetry line via plane-client.mjs's appendRun() in a `finally` inside
+  // plane-sync.mjs's main() — success OR failure. runsPath() only honours a
+  // PLANE_RUNS_PATH override when PLANE_SYNC_SELF_TEST=1 is ALSO set (same
+  // gate as PLANE_DENYLIST_PATH/PLANE_KNOBS_PATH), so both must be set on
+  // every call here or the child falls through to the real
+  // local-assets/plane/runs.jsonl of whatever repo/worktree this runs in —
+  // exactly the leak the final invariant below now guards against.
+  env.PLANE_SYNC_SELF_TEST = "1";
+  env.PLANE_RUNS_PATH = join(stateDir || registryDir, "self-test-runs.jsonl");
   if (noKey) delete env.PLANE_API_KEY;
   else env.PLANE_API_KEY = apiKey;
   const effectiveArgv =
@@ -1448,6 +1458,10 @@ async function main() {
       PLANE_API_KEY: "self-test-key",
       PLANE_DENYLIST_PATH: missingPath,
       PLANE_SYNC_SELF_TEST: "1",
+      // Marker is set above, so runsPath() would honour a PLANE_RUNS_PATH
+      // override too — set one so this run's appendRun() (finally, even on
+      // this fail-closed exit) never lands in the real runs.jsonl.
+      PLANE_RUNS_PATH: join(dir, "self-test-runs.jsonl"),
     };
     const { code, stdout, stderr } = await new Promise((resolve) => {
       const child = spawn(process.execPath, [SCRIPT_PATH, "--allow-branch"], {
@@ -1495,6 +1509,10 @@ async function main() {
       PLANE_API_KEY: "self-test-key",
       PLANE_DENYLIST_PATH: emptyPath,
       PLANE_SYNC_SELF_TEST: "1",
+      // Same as F3 above: the marker is set, so it must be paired with a
+      // PLANE_RUNS_PATH override to keep this run's telemetry line out of
+      // the real runs.jsonl.
+      PLANE_RUNS_PATH: join(emptyDenylistDir, "self-test-runs.jsonl"),
     };
     const { code, stdout, stderr } = await new Promise((resolve) => {
       const child = spawn(process.execPath, [SCRIPT_PATH, "--allow-branch"], {
@@ -1544,8 +1562,19 @@ async function main() {
       PLANE_SYNC_STATE_DIR: dir,
       PLANE_API_KEY: "self-test-key",
       PLANE_DENYLIST_PATH: nonexistentPath,
-      // deliberately NOT setting PLANE_SYNC_SELF_TEST
+      // deliberately NOT setting PLANE_SYNC_SELF_TEST — this case exists to
+      // prove the override is ignored without it. That also means
+      // runsPath() cannot be redirected via PLANE_RUNS_PATH here (same
+      // marker gates both), so the real script's appendRun() WILL append one
+      // line to this worktree's real local-assets/plane/runs.jsonl. Snapshot
+      // it immediately before/after this one spawn and put it back exactly
+      // as found, so the suite-wide "untouched by the suite" invariant below
+      // still holds — this is the one deliberate exception, self-healed
+      // rather than avoided.
     };
+    const runsSnapshotBeforeF3c = existsSync(REAL_RUNS_PATH)
+      ? readFileSync(REAL_RUNS_PATH, "utf8")
+      : null;
     const { code, stdout, stderr } = await new Promise((resolve) => {
       const child = spawn(process.execPath, [SCRIPT_PATH, "--allow-branch"], {
         env,
@@ -1561,6 +1590,15 @@ async function main() {
         resolve({ code: c, stdout: out, stderr: err });
       });
     });
+    if (runsSnapshotBeforeF3c === null) {
+      try {
+        if (existsSync(REAL_RUNS_PATH)) rmSync(REAL_RUNS_PATH);
+      } catch {
+        // best-effort — never turn cleanup itself into a red suite
+      }
+    } else {
+      writeFileSync(REAL_RUNS_PATH, runsSnapshotBeforeF3c);
+    }
     const writes = server.requests.filter(
       (r) => r.method === "PATCH" || r.method === "POST",
     ).length;
@@ -2153,6 +2191,128 @@ async function main() {
     await server2.close();
   }
 
+  // T21 (defect fix 2026-09-12, R2/CONTENT_KEYS) — proven live: the old
+  // scanBodyDeep walked EVERY string in a write body, so a uuid-shaped
+  // `state` id tripped the tenant-uuid pattern purely by coincidental shape.
+  // Every case above pins plane-fake-server.mjs's literal ids
+  // ("state-backlog", "item-1", ...), which never LOOK uuid-shaped — none of
+  // them could have caught this. `uuidIds: true` makes the fixture's ids
+  // real RFC-4122-shaped uuids so this case actually exercises the fixed
+  // path: 3 queued rows POST, 1 done row (already in Backlog) PATCHes to
+  // Live, and skipped(forbidden) never appears — proving ids ride through
+  // unscrubbed. Uses startFakePlane directly (T17's pattern) rather than the
+  // startFakeServer/DEFAULT_FAKE_STATES adapter, since that adapter's whole
+  // point is the literal, non-uuid ids this case must NOT use.
+  {
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const server = await startFakePlane({ uuidIds: true, workItems: { BUGS: [] } });
+    const bugsStates = server.state.states.BUGS;
+    const backlog = bugsStates.find((s) => s.name === "Backlog");
+    const live = bugsStates.find((s) => s.name === "Live");
+    check(
+      "T21: the uuidIds fixture's Backlog/Live state ids are actually uuid-shaped",
+      { backlog: UUID_RE.test(backlog?.id ?? ""), live: UUID_RE.test(live?.id ?? "") },
+      { backlog: true, live: true },
+    );
+
+    // One item already in Plane, in Backlog, whose registry row is "done" —
+    // must PATCH state -> Live. Pushed onto the live seed data directly
+    // (server.state, per plane-fake-server.mjs's own doc comment) rather
+    // than via the seed object, since the Backlog id isn't known until after
+    // the server (and its uuidIds counter) exists.
+    server.state.workItems.BUGS.push({
+      id: "item-t21-existing",
+      sequence_id: 1,
+      external_source: "routeflow-registry",
+      external_id: "B90",
+      name: "B90 · Existing item done",
+      state: backlog.id,
+      priority: "low",
+      description_stripped: "registry-hash: stale-hash",
+    });
+    // Pre-seed a "plane-sync:closed" marker comment (alreadyClosed(), R4/R5)
+    // so this Backlog -> Live transition (wasOpen && nowClosed) does not
+    // ALSO post a fresh close comment+link — this case is about the
+    // create/patch write bodies carrying real Plane ids unscrubbed, not the
+    // close-comment path (already covered by H5/H6/T5b), so it must produce
+    // exactly one PATCH and zero extra POSTs for B90.
+    server.state.comments["item-t21-existing"] = [
+      {
+        id: "comment-t21-preexisting",
+        comment_html: "<p>closed</p>",
+        comment_stripped: CLOSED_MARKER,
+      },
+    ];
+
+    const catalogue = [
+      { ...B01_CATALOGUE_ROW, id: "B90", title: "Existing item done" },
+      ...["B91", "B92", "B93"].map((id, i) => ({
+        ...B01_CATALOGUE_ROW,
+        id,
+        title: `T21 queued row ${i + 1}`,
+      })),
+    ];
+    const ledger = {
+      F01: [
+        ledgerRow({ id: "B90", state: "done", pr: 601, proof: "REG-B90 uuid-ids regression" }),
+        ledgerRow({ id: "B91" }),
+        ledgerRow({ id: "B92" }),
+        ledgerRow({ id: "B93" }),
+      ],
+    };
+    const dir = makeFixture({ catalogue, ledger });
+    const { stdout, stderr } = await runCli([], { registryDir: dir, baseUrl: server.url });
+    const combined = stdout + stderr;
+    const posts = server.requests.filter((r) => r.method === "POST");
+    const patches = server.requests.filter((r) => r.method === "PATCH");
+    check(
+      "T21: 3 queued rows POST, 1 done row PATCHes, skipped(forbidden) absent from the summary",
+      {
+        postCount: posts.length,
+        patchCount: patches.length,
+        patchState: patches[0]?.body?.state,
+        hasSkippedForbidden: /skipped\(forbidden\)/.test(combined),
+      },
+      { postCount: 3, patchCount: 1, patchState: live.id, hasSkippedForbidden: false },
+    );
+    check(
+      "T21: the recorded PATCH body carries the real uuid-shaped state id (ids sent, not scrubbed)",
+      UUID_RE.test(patches[0]?.body?.state ?? ""),
+      true,
+    );
+    check(
+      "T21: every recorded POST body's state is the uuid-shaped Backlog id, unscrubbed",
+      posts.length > 0 && posts.every((p) => p.body?.state === backlog.id),
+      true,
+    );
+
+    // T21 negative twin (T3 still applies with uuidIds on): a forbidden
+    // literal sitting in a CONTENT field (title, here) must still be caught
+    // — the id-key exemption never widens to content.
+    const dir2 = makeFixture({
+      catalogue: [
+        { ...B01_CATALOGUE_ROW, id: "B94", title: "Invoice INV-2026-12345 double-charged" },
+      ],
+      ledger: { F01: [ledgerRow({ id: "B94" })] },
+    });
+    const before = server.requests.length;
+    const { stdout: stdout2, stderr: stderr2 } = await runCli([], {
+      registryDir: dir2,
+      baseUrl: server.url,
+    });
+    const combined2 = stdout2 + stderr2;
+    check(
+      "T21 (negative twin, T3/R2 still applies): a content-field forbidden literal is still caught with uuidIds on",
+      {
+        newPosts: server.requests.slice(before).filter((r) => r.method === "POST").length,
+        summaryHasSkippedForbidden: /skipped\(forbidden\)=1/.test(combined2),
+      },
+      { newPosts: 0, summaryHasSkippedForbidden: true },
+    );
+
+    await server.close();
+  }
+
   return failures;
 }
 
@@ -2168,9 +2328,16 @@ async function main() {
 const REAL_CAMPAIGN_DIR = join(repoRoot(), ".claude", "campaign");
 const REAL_WRITES_LEDGER = join(REAL_CAMPAIGN_DIR, ".plane-writes.jsonl");
 const REAL_SYNC_STATE = join(REAL_CAMPAIGN_DIR, ".plane-sync-state.json");
+// Fix-round (runs.jsonl pollution, 2026-09-12): every runCli/direct-spawn
+// case above now pins PLANE_RUNS_PATH (paired with PLANE_SYNC_SELF_TEST=1)
+// to a throwaway file, and F3c self-heals the one case that must run with
+// the marker off. This is the belt-and-suspenders proof that none of it
+// ever falls through to the real local-assets/plane/runs.jsonl.
+const REAL_RUNS_PATH = join(repoRoot(), "local-assets", "plane", "runs.jsonl");
 const snapshotRealFiles = () => ({
   writes: existsSync(REAL_WRITES_LEDGER) ? readFileSync(REAL_WRITES_LEDGER, "utf8") : null,
   state: existsSync(REAL_SYNC_STATE) ? readFileSync(REAL_SYNC_STATE, "utf8") : null,
+  runs: existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null,
 });
 const realFilesBefore = snapshotRealFiles();
 
@@ -2196,9 +2363,14 @@ check(
   realFilesAfter.state,
   realFilesBefore.state,
 );
+check(
+  "F4: this worktree's real local-assets/plane/runs.jsonl is byte-identical before/after the suite (or absent both times)",
+  realFilesAfter.runs,
+  realFilesBefore.runs,
+);
 // One-time cleanup of the leak this finding was filed against — not this
 // run's own output (already proven above), the pre-existing leaked files.
-for (const p of [REAL_WRITES_LEDGER, REAL_SYNC_STATE]) {
+for (const p of [REAL_WRITES_LEDGER, REAL_SYNC_STATE, REAL_RUNS_PATH]) {
   try {
     if (existsSync(p)) rmSync(p);
   } catch {

@@ -54,21 +54,27 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import {
+  appendRun,
   createClient,
   EXTERNAL_SOURCE,
   gitEnv,
+  knob,
+  loadKnobs,
   NAME_ID_RE,
   repoRoot,
   scanForbidden,
   writesToday,
 } from "./plane-client.mjs";
+import { currentBranch } from "./plane-sync.mjs";
 
 const BUGS_SCRIPT = fileURLToPath(new URL("./bugs.mjs", import.meta.url));
 
-// intake default 20 (spec.md R3) — independent of plane-sync's 250 and
-// plane-apply's 20; each caller sets its own, never a shared constant.
+// intake default 20 (spec.md R3) — independent of plane-sync's syncMaxWrites
+// and plane-apply's own default; each caller sets its own, never a shared
+// constant. The MANUAL budget (writesToday ceiling, below) is knob-driven
+// (spec 2026-09-12-plane-learning R1: `applyManualBudgetPerDay`) — this
+// per-run client cap is not.
 const DEFAULT_MAX_WRITES = 20;
-const MANUAL_BUDGET_LIMIT = 20;
 
 const USAGE =
   'Usage: plane-intake.mjs [--apply] [--batch F##] [--over-budget "<reason>"] ' +
@@ -268,17 +274,22 @@ function printListing({ candidates, pending }, { batch, json }) {
 // Returns the process exit code (0 on success — non-zero cases each write
 // their own message and return immediately, per-item, so a mid-run failure
 // never silently swallows the items after it).
-async function applyCandidates(client, project, candidates, { batch, overBudgetReason, json }) {
+async function applyCandidates(
+  client,
+  project,
+  candidates,
+  { batch, overBudgetReason, json, manualBudgetLimit },
+) {
   const planned = candidates.length;
   if (!overBudgetReason) {
     const usedToday = writesToday({ exclude: ["plane-sync"] });
-    if (usedToday + planned > MANUAL_BUDGET_LIMIT) {
+    if (usedToday + planned > manualBudgetLimit) {
       process.stderr.write(
         `Plane intake: refused --apply — manual write budget exceeded ` +
-          `(${usedToday} today + ${planned} planned > ${MANUAL_BUDGET_LIMIT}); ` +
+          `(${usedToday} today + ${planned} planned > ${manualBudgetLimit}); ` +
           `pass --over-budget "<reason>" to proceed\n`,
       );
-      return 3;
+      return { exitCode: 3, filed: 0 };
     }
   }
 
@@ -304,7 +315,7 @@ async function applyCandidates(client, project, candidates, { batch, overBudgetR
         `Plane intake: #${i + 1} bugs.mjs file failed — ` +
           `${(fileRes.stderr || fileRes.stdout || fileRes.error?.message || "no output").trim()}\n`,
       );
-      return 1;
+      return { exitCode: 1, filed: applied.length };
     }
     const mintedId = minted[1];
 
@@ -330,7 +341,7 @@ async function applyCandidates(client, project, candidates, { batch, overBudgetR
       );
     } catch {
       process.stderr.write(`Plane intake: ${relinkHint()}\n`);
-      return 1;
+      return { exitCode: 1, filed: applied.length };
     }
     if (patchResult?.forbidden || patchResult?.deferred) {
       // forbidden should never trigger — item.name already passed
@@ -340,7 +351,7 @@ async function applyCandidates(client, project, candidates, { batch, overBudgetR
       // both get the SAME remediation path (Finding C1), never the old
       // "forbidden (...)" message that had no rerun story.
       process.stderr.write(`Plane intake: ${relinkHint()}\n`);
-      return 1;
+      return { exitCode: 1, filed: applied.length };
     }
 
     // Fable ruling: bugs.mjs's SECTIONS are Summary | What this feature is
@@ -367,7 +378,7 @@ async function applyCandidates(client, project, candidates, { batch, overBudgetR
   } else {
     process.stdout.write(`Plane intake: applied ${applied.length}/${candidates.length}\n`);
   }
-  return 0;
+  return { exitCode: 0, filed: applied.length };
 }
 
 // Finding C2 (Opus #4): the recovery half of C1's remediation line — repair
@@ -411,7 +422,7 @@ async function resolveRelink(client, mintedId, ref, registryRows) {
   return { project: targetProject, item };
 }
 
-async function applyRelinks(client, pairs, { overBudgetReason, json } = {}) {
+async function applyRelinks(client, pairs, { overBudgetReason, json, manualBudgetLimit } = {}) {
   const registryRows = readCatalogueRows();
 
   const resolved = [];
@@ -419,20 +430,20 @@ async function applyRelinks(client, pairs, { overBudgetReason, json } = {}) {
     const r = await resolveRelink(client, mintedId, ref, registryRows);
     if (r.error) {
       process.stderr.write(`Plane intake: ${r.error}\n`);
-      return 1;
+      return { exitCode: 1, relinked: 0 };
     }
     resolved.push({ mintedId, ref, project: r.project, item: r.item });
   }
 
   if (!overBudgetReason) {
     const usedToday = writesToday({ exclude: ["plane-sync"] });
-    if (usedToday + resolved.length > MANUAL_BUDGET_LIMIT) {
+    if (usedToday + resolved.length > manualBudgetLimit) {
       process.stderr.write(
         `Plane intake: refused --relink — manual write budget exceeded ` +
-          `(${usedToday} today + ${resolved.length} planned > ${MANUAL_BUDGET_LIMIT}); ` +
+          `(${usedToday} today + ${resolved.length} planned > ${manualBudgetLimit}); ` +
           `pass --over-budget "<reason>" to proceed\n`,
       );
-      return 3;
+      return { exitCode: 3, relinked: 0 };
     }
   }
 
@@ -451,11 +462,11 @@ async function applyRelinks(client, pairs, { overBudgetReason, json } = {}) {
       process.stderr.write(
         `Plane intake: --relink ${mintedId}=${ref} forbidden (${patchResult.forbidden.name})\n`,
       );
-      return 1;
+      return { exitCode: 1, relinked: relinked.length };
     }
     if (patchResult?.deferred) {
       process.stderr.write(`Plane intake: --relink ${mintedId}=${ref} deferred (max-writes)\n`);
-      return 1;
+      return { exitCode: 1, relinked: relinked.length };
     }
     relinked.push(mintedId);
   }
@@ -465,7 +476,7 @@ async function applyRelinks(client, pairs, { overBudgetReason, json } = {}) {
   } else {
     process.stdout.write(`Plane intake: relinked ${relinked.length}/${resolved.length}\n`);
   }
-  return 0;
+  return { exitCode: 0, relinked: relinked.length };
 }
 
 async function main() {
@@ -530,103 +541,173 @@ async function main() {
     return;
   }
 
-  const apiKey = process.env.PLANE_API_KEY;
-
-  // Finding C2: --relink is its own mode — it never mints, so it skips
-  // --apply's dirty-tree/origin-master preconditions entirely (those exist
-  // only to protect deterministic id minting) and short-circuits here,
-  // before falling into the listing/--apply branches below.
-  if (relinkPairs.length > 0) {
-    if (!apiKey) {
-      process.stderr.write("Plane intake: refused --relink — PLANE_API_KEY is not set\n");
-      process.exitCode = 2;
-      return;
-    }
-    const client = createClient({ apiKey, tool: "plane-intake", maxWrites: DEFAULT_MAX_WRITES });
-    try {
-      process.exitCode = await applyRelinks(client, relinkPairs, {
-        overBudgetReason,
-        json: jsonMode,
-      });
-    } catch (err) {
-      process.stderr.write(`Plane intake: failed — ${err?.message ?? err}\n`);
-      process.exitCode = 1;
-    }
-    return;
-  }
-
-  if (applyMode) {
-    // Precondition order, spec.md R6 / build-plan.md WP3, verbatim: dirty
-    // tree, then master-ancestor, then key — each exits 2 with zero writes.
-    // Explicit cwd (process.cwd(), matching the implicit default this always
-    // ran with — never repoRoot(), which would resolve to THIS script's own
-    // worktree rather than wherever the caller invoked it from) + gitEnv()
-    // (never inherit GIT_DIR/GIT_WORK_TREE from a pre-push-hook-style
-    // ambient env — see plane-client.mjs's gitEnv() doc).
-    const statusRes = spawnSync("git", ["status", "--porcelain", "--", ".claude/campaign"], {
-      cwd: process.cwd(),
-      env: gitEnv(),
-      encoding: "utf8",
-    });
-    if (statusRes.error || statusRes.status !== 0) {
-      process.stderr.write(
-        `Plane intake: refused --apply — could not check git status ` +
-          `(${statusRes.error?.message ?? statusRes.stderr ?? "git status failed"})\n`,
-      );
-      process.exitCode = 2;
-      return;
-    }
-    if (statusRes.stdout.trim()) {
-      process.stderr.write(
-        "Plane intake: refused --apply — .claude/campaign has uncommitted changes (dirty)\n",
-      );
-      process.exitCode = 2;
-      return;
-    }
-
-    const ancestorRes = spawnSync("git", ["merge-base", "--is-ancestor", "origin/master", "HEAD"], {
-      cwd: process.cwd(),
-      env: gitEnv(),
-      encoding: "utf8",
-    });
-    if (ancestorRes.error || ancestorRes.status !== 0) {
-      process.stderr.write(
-        "Plane intake: refused --apply — HEAD does not descend from origin/master\n",
-      );
-      process.exitCode = 2;
-      return;
-    }
-
-    if (!apiKey) {
-      process.stderr.write("Plane intake: refused --apply — PLANE_API_KEY is not set\n");
-      process.exitCode = 2;
-      return;
-    }
-  } else if (!apiKey) {
-    process.stderr.write("Plane intake: skipped (no PLANE_API_KEY)\n");
-    process.exitCode = 0;
-    return;
-  }
-
-  const client = createClient({ apiKey, tool: "plane-intake", maxWrites: DEFAULT_MAX_WRITES });
+  // R2 telemetry (spec 2026-09-12-plane-learning): started/rec set up BEFORE
+  // loadKnobs() so a `knobs invalid: <name>` throw still gets exactly one
+  // runs.jsonl line via the finally below — --help/usage exits above are the
+  // only ones that write none.
+  const started = Date.now();
+  const rec = { tool: "plane-intake", flags: argv, branch: currentBranch() };
+  let client;
+  const zeroClientSummary = () => ({
+    writes: 0,
+    deferred: 0,
+    forbidden: 0,
+    gets: 0,
+    rateLimitSleeps: 0,
+    retries: 0,
+  });
 
   try {
-    const { project, candidates, pending } = await gatherIntake(client);
+    // R1: loaded right after --help/usage handling, before any process.env
+    // read or network request (T1) — including `process.env.PLANE_API_KEY`
+    // below. Printed explicitly (not left to the outer catch) so the exact
+    // "knobs invalid: <name>" text always reaches stderr.
+    let manualBudgetLimit;
+    try {
+      loadKnobs();
+      manualBudgetLimit = knob("applyManualBudgetPerDay");
+    } catch (err) {
+      // See plane-sync.mjs's identical note: T1's contract is an out-of-range
+      // VALUE in an otherwise present file — that hard-fails. A missing/
+      // unreadable file falls back to the knob's documented default.
+      if (/^knobs invalid:/.test(String(err?.message ?? ""))) {
+        process.stderr.write(`Plane intake: ${err.message}\n`);
+        process.exitCode = 1;
+        rec.error = `${err?.name ?? "Error"}: ${String(err.message).slice(0, 200)}`;
+        return;
+      }
+      console.error(
+        `Plane intake warn: knobs unavailable (${err?.message ?? err}) — using defaults`,
+      );
+      manualBudgetLimit = 20;
+    }
 
-    if (!applyMode) {
-      printListing({ candidates, pending }, { batch, json: jsonMode });
-      process.exitCode = 0;
+    const apiKey = process.env.PLANE_API_KEY;
+
+    // Finding C2: --relink is its own mode — it never mints, so it skips
+    // --apply's dirty-tree/origin-master preconditions entirely (those exist
+    // only to protect deterministic id minting) and short-circuits here,
+    // before falling into the listing/--apply branches below.
+    if (relinkPairs.length > 0) {
+      if (!apiKey) {
+        process.stderr.write("Plane intake: refused --relink — PLANE_API_KEY is not set\n");
+        process.exitCode = 2;
+        rec.intake = { listed: 0, pending: 0, filed: 0, relinked: 0 };
+        return;
+      }
+      client = createClient({ apiKey, tool: "plane-intake", maxWrites: DEFAULT_MAX_WRITES });
+      try {
+        const result = await applyRelinks(client, relinkPairs, {
+          overBudgetReason,
+          json: jsonMode,
+          manualBudgetLimit,
+        });
+        process.exitCode = result.exitCode;
+        rec.intake = { listed: 0, pending: 0, filed: 0, relinked: result.relinked };
+      } catch (err) {
+        process.stderr.write(`Plane intake: failed — ${err?.message ?? err}\n`);
+        process.exitCode = 1;
+        rec.error = `${err?.name ?? "Error"}: ${String(err?.message ?? err).slice(0, 200)}`;
+      }
       return;
     }
 
-    process.exitCode = await applyCandidates(client, project, candidates, {
-      batch,
-      overBudgetReason,
-      json: jsonMode,
-    });
+    if (applyMode) {
+      // Precondition order, spec.md R6 / build-plan.md WP3, verbatim: dirty
+      // tree, then master-ancestor, then key — each exits 2 with zero writes.
+      // Explicit cwd (process.cwd(), matching the implicit default this always
+      // ran with — never repoRoot(), which would resolve to THIS script's own
+      // worktree rather than wherever the caller invoked it from) + gitEnv()
+      // (never inherit GIT_DIR/GIT_WORK_TREE from a pre-push-hook-style
+      // ambient env — see plane-client.mjs's gitEnv() doc).
+      const statusRes = spawnSync("git", ["status", "--porcelain", "--", ".claude/campaign"], {
+        cwd: process.cwd(),
+        env: gitEnv(),
+        encoding: "utf8",
+      });
+      if (statusRes.error || statusRes.status !== 0) {
+        process.stderr.write(
+          `Plane intake: refused --apply — could not check git status ` +
+            `(${statusRes.error?.message ?? statusRes.stderr ?? "git status failed"})\n`,
+        );
+        process.exitCode = 2;
+        return;
+      }
+      if (statusRes.stdout.trim()) {
+        process.stderr.write(
+          "Plane intake: refused --apply — .claude/campaign has uncommitted changes (dirty)\n",
+        );
+        process.exitCode = 2;
+        return;
+      }
+
+      const ancestorRes = spawnSync(
+        "git",
+        ["merge-base", "--is-ancestor", "origin/master", "HEAD"],
+        { cwd: process.cwd(), env: gitEnv(), encoding: "utf8" },
+      );
+      if (ancestorRes.error || ancestorRes.status !== 0) {
+        process.stderr.write(
+          "Plane intake: refused --apply — HEAD does not descend from origin/master\n",
+        );
+        process.exitCode = 2;
+        return;
+      }
+
+      if (!apiKey) {
+        process.stderr.write("Plane intake: refused --apply — PLANE_API_KEY is not set\n");
+        process.exitCode = 2;
+        return;
+      }
+    } else if (!apiKey) {
+      process.stderr.write("Plane intake: skipped (no PLANE_API_KEY)\n");
+      process.exitCode = 0;
+      rec.skipped = "no PLANE_API_KEY";
+      return;
+    }
+
+    client = createClient({ apiKey, tool: "plane-intake", maxWrites: DEFAULT_MAX_WRITES });
+
+    try {
+      const { project, candidates, pending } = await gatherIntake(client);
+
+      if (!applyMode) {
+        printListing({ candidates, pending }, { batch, json: jsonMode });
+        process.exitCode = 0;
+        rec.intake = { listed: candidates.length, pending, filed: 0, relinked: 0 };
+        return;
+      }
+
+      const result = await applyCandidates(client, project, candidates, {
+        batch,
+        overBudgetReason,
+        json: jsonMode,
+        manualBudgetLimit,
+      });
+      process.exitCode = result.exitCode;
+      rec.intake = { listed: candidates.length, pending, filed: result.filed, relinked: 0 };
+    } catch (err) {
+      process.stderr.write(`Plane intake: failed — ${err?.message ?? err}\n`);
+      process.exitCode = applyMode ? 1 : 0;
+      rec.error = `${err?.name ?? "Error"}: ${String(err?.message ?? err).slice(0, 200)}`;
+    }
   } catch (err) {
-    process.stderr.write(`Plane intake: failed — ${err?.message ?? err}\n`);
-    process.exitCode = applyMode ? 1 : 0;
+    process.exitCode = process.exitCode ?? 1;
+    rec.error = `${err?.name ?? "Error"}: ${String(err?.message ?? err).slice(0, 200)}`;
+  } finally {
+    // R2's `forbidden` field is `{count, byPattern}` — the count comes from
+    // the shared client's write-time guard (gatherIntake's own listing-time
+    // scanForbidden drops are a separate, non-write concern reported via the
+    // `Plane intake warn:` lines above, not folded in here).
+    const summary = client ? client.summary() : zeroClientSummary();
+    const { forbidden: forbiddenCount, ...restSummary } = summary;
+    appendRun({
+      ...rec,
+      exit: process.exitCode ?? 0,
+      durationMs: Date.now() - started,
+      ...restSummary,
+      forbidden: { count: forbiddenCount ?? 0, byPattern: {} },
+    });
   }
 }
 

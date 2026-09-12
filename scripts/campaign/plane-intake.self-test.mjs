@@ -26,7 +26,7 @@ import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { startFakePlane } from "./plane-fake-server.mjs";
-import { gitEnv } from "./plane-client.mjs";
+import { gitEnv, repoRoot } from "./plane-client.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./plane-intake.mjs", import.meta.url));
 
@@ -90,6 +90,16 @@ function cleanupFixtures() {
       // turn an otherwise-passing run red — the final count check reports it.
     }
   }
+}
+
+// A handful of runCli() calls (T15's --help/-h/--bogus probes) have no
+// registryDir/stateDir at all — this gives PLANE_RUNS_PATH somewhere to
+// point outside the real repo for those, one throwaway file per call.
+function fallbackRunsPath() {
+  return join(
+    tmpdir(),
+    `${FIXTURE_PREFIX}runs-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  );
 }
 
 // Builds a throwaway git repo carrying a `.claude/campaign` registry (empty
@@ -220,6 +230,17 @@ function runCli(
     ...(registryDir ? { PLANE_SYNC_REGISTRY_DIR: registryDir } : {}),
     ...(stateDir ? { PLANE_SYNC_STATE_DIR: stateDir } : {}),
     ...(baseUrl ? { PLANE_BASE_URL: baseUrl } : {}),
+    // Fix-round (runs.jsonl pollution): plane-intake.mjs's main() appends one
+    // telemetry line via appendRun() in a `finally` on every run, success or
+    // failure. runsPath() only honours PLANE_RUNS_PATH when
+    // PLANE_SYNC_SELF_TEST=1 is ALSO set — both are required on every call
+    // here or the child falls through to this worktree's real
+    // local-assets/plane/runs.jsonl.
+    PLANE_SYNC_SELF_TEST: "1",
+    PLANE_RUNS_PATH:
+      stateDir || registryDir
+        ? join(stateDir || registryDir, "self-test-runs.jsonl")
+        : fallbackRunsPath(),
     ...extraEnv,
   });
   if (noKey) delete env.PLANE_API_KEY;
@@ -562,6 +583,13 @@ async function main() {
   return failures;
 }
 
+// Fix-round (runs.jsonl pollution, 2026-09-12): belt-and-suspenders proof
+// that every runCli() call above's PLANE_SYNC_SELF_TEST+PLANE_RUNS_PATH pair
+// actually keeps this worktree's real local-assets/plane/runs.jsonl out of
+// it — mirrors plane-sync.self-test.mjs's own F4 real-file check.
+const REAL_RUNS_PATH = join(repoRoot(), "local-assets", "plane", "runs.jsonl");
+const realRunsBefore = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
+
 const tmpDirsBefore = countFixtureTmpDirs();
 try {
   await main();
@@ -575,6 +603,12 @@ check(
   "F4: the run leaves no plane-intake-self-test-* dir behind",
   countFixtureTmpDirs(),
   tmpDirsBefore,
+);
+const realRunsAfter = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
+check(
+  "F4: this worktree's real local-assets/plane/runs.jsonl is byte-identical before/after the suite (or absent both times)",
+  realRunsAfter,
+  realRunsBefore,
 );
 
 console.log(

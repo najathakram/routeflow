@@ -11,7 +11,17 @@
 //     issues (spec.md's binding rules: "Rate limit ≤ 50 req/min via the
 //     shared client"), independent of the per-write 260ms floor;
 //   - the denylist scan (R2) on every outbound POST/PATCH/DELETE body,
-//     recursively over every string value — a hit makes NO request;
+//     recursively over every string value that sits under a CONTENT_KEYS
+//     field (name/description*/comment*/url/title/html) — never a Plane id
+//     (state/labels/assignees/parent/type_id/issues/...), even a uuid-shaped
+//     one — a hit makes NO request. Defect fixed 2026-09-12 (proven live):
+//     the scan used to walk EVERY string regardless of key, so a uuid-shaped
+//     state/label/assignee id tripped the tenant-uuid pattern purely by
+//     coincidental shape — the first bulk sync created 0/72 and patched
+//     0/160 (skipped(forbidden)=232), and plane-apply refused every op that
+//     named a state or label. R2's "every outbound string" always meant
+//     CONTENT a human or this codebase wrote, never an id Plane itself
+//     handed back on a runtime resolve;
 //   - the write budget + ledger (R3): a per-client write counter that defers
 //     once `maxWrites` is reached, and appends one line per ACTUAL write to
 //     `.claude/campaign/.plane-writes.jsonl` (never for a deferred or
@@ -28,6 +38,7 @@ import { fileURLToPath } from "node:url";
 const THIS_FILE_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DENYLIST_PATH = join(THIS_FILE_DIR, "plane-denylist.json");
 const LEDGER_FILENAME = ".plane-writes.jsonl";
+const RUNS_FILENAME = "runs.jsonl";
 
 // PLANE_DENYLIST_PATH is a TEST-ONLY override (fix-round 2b, F3; hardened
 // fix-round 3, NEW-1) — it lets a self-test point this at a path that does
@@ -116,6 +127,108 @@ export function stateDir() {
   return process.env.PLANE_SYNC_STATE_DIR || join(repoRoot(), ".claude", "campaign");
 }
 
+// ── knobs (spec 2026-09-12-plane-learning R1) ───────────────────────────────
+// PLANE_KNOBS_PATH is a TEST-ONLY override, same gating pattern as
+// PLANE_DENYLIST_PATH above: honoured ONLY when PLANE_SYNC_SELF_TEST=1 is
+// ALSO set, so an accidental env leak into a real run is inert. Cached per
+// process (module-level) once a load succeeds validation — an invalid file
+// is never cached, so every call re-reads and re-throws until fixed (T1: a
+// tool must see `knobs invalid: <name>` on every attempt, not just the
+// first).
+let knobsCache = null;
+
+function resolveKnobsPath() {
+  if (process.env.PLANE_SYNC_SELF_TEST === "1" && process.env.PLANE_KNOBS_PATH) {
+    return process.env.PLANE_KNOBS_PATH;
+  }
+  return join(repoRoot(), "scripts", "campaign", "plane-knobs.json");
+}
+
+// Validated: every knob's `value` must sit within [min, max], else this
+// throws `knobs invalid: <name>` — a caller (any plane-*.mjs tool) is
+// expected to let this propagate BEFORE issuing any request, per the spec's
+// hard line. Never swallowed here.
+export function loadKnobs() {
+  if (knobsCache) return knobsCache;
+  const path = resolveKnobsPath();
+  const parsed = JSON.parse(readFileSync(path, "utf8"));
+  for (const [name, k] of Object.entries(parsed.knobs ?? {})) {
+    if (!(Number(k.min) <= Number(k.value) && Number(k.value) <= Number(k.max))) {
+      throw new Error(`knobs invalid: ${name}`);
+    }
+  }
+  knobsCache = parsed;
+  return knobsCache;
+}
+
+// Convenience accessor — `knob("triageGetBudget") -> 16`. Throws the same
+// way loadKnobs() does when the file is invalid, plus `unknown knob: <name>`
+// for a name not present.
+export function knob(name) {
+  const { knobs } = loadKnobs();
+  if (!knobs || !(name in knobs)) throw new Error(`unknown knob: ${name}`);
+  return knobs[name].value;
+}
+
+// ── run telemetry (R2) ──────────────────────────────────────────────────────
+// Machine-local, gitignored via local-assets/ — PLANE_RUNS_PATH is a
+// TEST-ONLY override, gated the same way as PLANE_KNOBS_PATH/
+// PLANE_DENYLIST_PATH (PLANE_SYNC_SELF_TEST=1 required alongside it).
+export function runsPath() {
+  return process.env.PLANE_SYNC_SELF_TEST === "1" && process.env.PLANE_RUNS_PATH
+    ? process.env.PLANE_RUNS_PATH
+    : join(repoRoot(), "local-assets", "plane", RUNS_FILENAME);
+}
+
+// One JSON line per tool run, appended at exit (success or failure — every
+// caller wraps this in a `finally`). Denylist-scanned before it ever touches
+// disk, and RE-scanned after redaction (fix-round rulings M1/m4) — a
+// free-text field is not the only place a secret can ride along; `branch`
+// (git branch names are caller-controlled and can embed anything, e.g. a
+// worktree branch salted with a uuid) is exactly as risky as `error`/`flags`.
+// First hit: strip `error`, `flags`, `skipped`, and sanitize `branch` to the
+// literal string "redacted" (kept, not dropped, so callers/readers can still
+// see a branch field exists), then re-serialise and re-scan. A SECOND hit
+// (the sanitized fields did not remove the match — e.g. a uuid sitting in
+// some other field this function does not know to strip) falls back to the
+// minimal safe record: only `{ts, tool, version, exit, redacted: true}`.
+//
+// Never throws outward (m4): the whole body — including the default
+// `loadDenylist()` resolution `scanForbidden()` triggers — is wrapped in
+// try/catch. Telemetry is a nice-to-have, never a reason to fail a tool run;
+// a missing/malformed denylist (loadDenylist()'s own fail-closed contract,
+// unchanged for actual WRITE callers) is reported here as one stderr line
+// (`Plane telemetry warn: <reason>`) and this function simply returns
+// without writing a line at all — there is nothing safe to write when the
+// scan itself could not run.
+export function appendRun(record) {
+  try {
+    const base = { ts: new Date().toISOString(), version: 1, ...record };
+    let out = base;
+    let line = JSON.stringify(out);
+    if (scanForbidden(line)) {
+      const { error, flags, skipped, branch, ...rest } = out;
+      out = { ...rest, redacted: true };
+      if ("branch" in base) out.branch = "redacted";
+      line = JSON.stringify(out);
+      if (scanForbidden(line)) {
+        out = {
+          ts: base.ts,
+          tool: base.tool,
+          version: base.version,
+          exit: base.exit,
+          redacted: true,
+        };
+        line = JSON.stringify(out);
+      }
+    }
+    mkdirSync(dirname(runsPath()), { recursive: true });
+    appendFileSync(runsPath(), line + "\n");
+  } catch (err) {
+    console.error(`Plane telemetry warn: ${err?.message ?? err}`);
+  }
+}
+
 // Fail CLOSED (fix-round 2b, F3; hardened fix-round 3, NEW-2): a missing
 // OR malformed/empty denylist used to read as "no patterns" (R2 failing
 // open — every write would have sailed through unscanned). The file is a
@@ -147,22 +260,52 @@ export function scanForbidden(text, patterns = loadDenylist()) {
   return null;
 }
 
+// The ONLY fields the deep scan below ever inspects — free-text content a
+// human or this codebase wrote. Every id-bearing field (state, labels,
+// assignees, parent, type_id, issues, external_id, external_source, issue,
+// cycle_id, module_id, relation_type) is deliberately absent: those carry
+// ids Plane itself handed back from a runtime resolve (resolveStates/
+// resolveLabels/resolveMember/resolveTypes, or DECIDE-27's own
+// external_id/external_source stamp), and a real Plane id is uuid-shaped —
+// exactly the tenant-uuid pattern's shape — so scanning it produced a false
+// positive on every single write that named a state or label (defect fixed
+// 2026-09-12). Exported so a self-test can pin the exact set.
+export const CONTENT_KEYS = new Set([
+  "name",
+  "description_html",
+  "description_stripped",
+  "description",
+  "comment_html",
+  "comment_stripped",
+  "url",
+  "title",
+  "html",
+]);
+
 // Recurses into every string value of a request body (nested objects and
-// arrays included) — R2's "every outbound string" applies to name,
-// description_html, comment_html, url, wherever they sit in the payload.
-function scanBodyDeep(value, patterns) {
+// arrays included), but ONLY once it has passed through a CONTENT_KEYS field
+// — `underContent` is false at the body's own top level (an object has no
+// "key" of its own) and only flips true when a key it walks into is a
+// content key; that flag then propagates to every string nested below,
+// however deep. A value sitting under a non-content (id-bearing) key is
+// walked for structure only — its strings are never scanned — so a
+// uuid-shaped state/label/assignee id can never trip a pattern meant for
+// content.
+function scanBodyDeep(value, patterns, underContent = false) {
   if (value == null) return null;
-  if (typeof value === "string") return scanForbidden(value, patterns);
+  if (typeof value === "string") {
+    return underContent ? scanForbidden(value, patterns) : null;
+  }
   if (Array.isArray(value)) {
     for (const v of value) {
-      const hit = scanBodyDeep(v, patterns);
+      const hit = scanBodyDeep(v, patterns, underContent);
       if (hit) return hit;
     }
     return null;
   }
   if (typeof value === "object") {
-    for (const v of Object.values(value)) {
-      const hit = scanBodyDeep(v, patterns);
+    for (const [k, v] of Object.entries(value)) {
+      const hit = scanBodyDeep(v, patterns, underContent || CONTENT_KEYS.has(k));
       if (hit) return hit;
     }
     return null;
@@ -228,9 +371,25 @@ export function createClient({
   let writes = 0;
   let deferred = 0;
   let forbidden = 0;
+  let gets = 0;
+  let rateLimitSleeps = 0;
+  let retries = 0;
   let lastWriteAt = 0;
   let printedTarget = false;
-  const requestTimes = []; // sliding window for the 50 req/min ceiling
+  const requestTimes = []; // sliding window for the req/min ceiling
+
+  // spec 2026-09-12-plane-learning R1: the ceiling is knob-driven
+  // (`clientRatePerMin`) with a silent fallback to the original 50/min when
+  // knobs cannot load — a tool that needs to SEE `knobs invalid: <name>`
+  // calls loadKnobs()/knob() itself before creating a client (see plane-
+  // client.mjs's loadKnobs() doc comment); this client never surfaces that
+  // error itself, it only consumes the value.
+  let rateLimitMaxPerWindow = RATE_LIMIT_MAX_PER_WINDOW;
+  try {
+    rateLimitMaxPerWindow = knob("clientRatePerMin");
+  } catch {
+    rateLimitMaxPerWindow = RATE_LIMIT_MAX_PER_WINDOW;
+  }
 
   const originForUrl = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
 
@@ -255,7 +414,7 @@ export function createClient({
       while (requestTimes.length && now - requestTimes[0] >= RATE_LIMIT_WINDOW_MS) {
         requestTimes.shift();
       }
-      if (requestTimes.length < RATE_LIMIT_MAX_PER_WINDOW) return;
+      if (requestTimes.length < rateLimitMaxPerWindow) return;
       const waitMs = requestTimes[0] + RATE_LIMIT_WINDOW_MS - now;
       if (waitMs > 0) await sleep(waitMs);
     }
@@ -277,12 +436,14 @@ export function createClient({
     for (let attempt = 0; ; attempt++) {
       await waitForRateWindow();
       requestTimes.push(Date.now());
+      if (method === "GET") gets++;
       const res = await fetch(url, {
         method,
         headers: { "X-API-Key": apiKey, "content-type": "application/json" },
         body: body !== undefined ? JSON.stringify(body) : undefined,
       });
       if ((res.status === 429 || res.status >= 500) && attempt < MAX_RETRIES) {
+        retries++;
         const resetHeader = res.headers.get("x-ratelimit-reset");
         let waitMs = 300 * (attempt + 1);
         if (resetHeader) {
@@ -303,7 +464,10 @@ export function createClient({
       if (remaining === "0") {
         const resetHeader = res.headers.get("x-ratelimit-reset");
         const resetAtMs = resetHeader ? Number(resetHeader) * 1000 : NaN;
-        if (Number.isFinite(resetAtMs)) await sleep(Math.max(0, resetAtMs - Date.now() + 50));
+        if (Number.isFinite(resetAtMs)) {
+          rateLimitSleeps++;
+          await sleep(Math.max(0, resetAtMs - Date.now() + 50));
+        }
       }
       return res.json();
     }
@@ -443,7 +607,7 @@ export function createClient({
       return deferred;
     },
     summary() {
-      return { writes, deferred, forbidden };
+      return { writes, deferred, forbidden, gets, rateLimitSleeps, retries };
     },
   };
 }

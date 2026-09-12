@@ -16,6 +16,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const atRoot = (...segs) => join(REPO_ROOT, ...segs);
@@ -162,6 +163,121 @@ function readIfExists(p) {
     },
     { bugsSelfTestPresent: true, allFourAfterBugsSelfTest: true },
   );
+}
+
+// ── T5 / R5 (2026-09-12-plane-learning) — package.json: plane:doctor and
+// plane:retro scripts exist, and `verify` runs `plane:doctor -- --offline`
+// after the plane self-tests. Pre-WP5 neither script nor the verify tail
+// exists, so this is expected to fail on the assertion below (a clean
+// false), never an ENOENT throw — same ground rule as every other check in
+// this file. ──────────────────────────────────────────────────────────────
+{
+  const pkgPath = atRoot("package.json");
+  const raw = readIfExists(pkgPath);
+  let parseOk = false;
+  let scripts = {};
+  if (raw !== null) {
+    try {
+      scripts = JSON.parse(raw).scripts ?? {};
+      parseOk = true;
+    } catch {
+      parseOk = false;
+    }
+  }
+  check(
+    "T5 (R5): package.json declares plane:doctor and plane:retro",
+    {
+      exists: raw !== null,
+      parseOk,
+      hasDoctor: typeof scripts["plane:doctor"] === "string" && scripts["plane:doctor"].length > 0,
+      hasRetro: typeof scripts["plane:retro"] === "string" && scripts["plane:retro"].length > 0,
+    },
+    { exists: true, parseOk: true, hasDoctor: true, hasRetro: true },
+  );
+
+  // R5, verbatim: "`verify` gains `plane:doctor -- --offline` after the
+  // self-tests" — pinned positionally against the same four self-test
+  // filenames T13 (above) already checks, so this stays independent of
+  // whichever other package under this run adds plane-learning.self-test.mjs
+  // / plane-doctor.self-test.mjs (TP1/TP2 — not this package's files).
+  const verifyScript = typeof scripts.verify === "string" ? scripts.verify : "";
+  const selfTestFiles = [
+    "plane-sync.self-test.mjs",
+    "plane-intake.self-test.mjs",
+    "plane-triage.self-test.mjs",
+    "plane-apply.self-test.mjs",
+  ];
+  const selfTestIdxs = selfTestFiles.map((n) => verifyScript.indexOf(n));
+  const lastSelfTestIdx = Math.max(-1, ...selfTestIdxs);
+  const doctorOfflineIdx = verifyScript.indexOf("plane:doctor -- --offline");
+  check(
+    "T5 (R5): verify runs `plane:doctor -- --offline` after the plane self-tests",
+    {
+      selfTestsPresent: selfTestIdxs.every((i) => i !== -1),
+      doctorOfflinePresent: doctorOfflineIdx !== -1,
+      afterSelfTests: doctorOfflineIdx !== -1 && doctorOfflineIdx > lastSelfTestIdx,
+    },
+    { selfTestsPresent: true, doctorOfflinePresent: true, afterSelfTests: true },
+  );
+}
+
+// ── T5 / R5 — SKILL.md documents the learning loop: still <= 6144 B (R3
+// pins the same cap), and now also names doctor/retro/knobs ──────────────
+{
+  const skillPath = atRoot(".claude", "skills", "plane", "SKILL.md");
+  const exists = existsSync(skillPath);
+  const size = exists ? statSync(skillPath).size : -1;
+  const src = exists ? readFileSync(skillPath, "utf8") : "";
+  check(
+    "T5 (R5): .claude/skills/plane/SKILL.md <= 6144 B and mentions plane-doctor, plane-retro, plane-knobs",
+    {
+      exists,
+      sizeOk: exists ? size <= 6144 : false,
+      mentionsDoctor: src.includes("plane-doctor"),
+      mentionsRetro: src.includes("plane-retro"),
+      mentionsKnobs: src.includes("plane-knobs"),
+    },
+    { exists: true, sizeOk: true, mentionsDoctor: true, mentionsRetro: true, mentionsKnobs: true },
+  );
+}
+
+// ── T5 / R5 — the weekly-PR report doc ────────────────────────────────────
+{
+  const readmePath = atRoot("docs", "plane", "retro", "README.md");
+  check(
+    "T5 (R5): docs/plane/retro/README.md exists",
+    { exists: existsSync(readmePath) },
+    { exists: true },
+  );
+}
+
+// ── T5 / R5 — the scheduled-task SKILL.md is MACHINE-LOCAL (lives under the
+// user's home directory, never this repo), so its absence is not a failure
+// of this package — only assert its contents when the file happens to be
+// present on the machine running this test, and print a `skip` line
+// otherwise (spec.md T5, verbatim: "assert it contains `plane:doctor` and
+// `plane:retro` only when the file exists (skip with a printed `skip` line
+// otherwise; it is machine-local)"). ───────────────────────────────────────
+{
+  const scheduledPath = join(
+    homedir(),
+    ".claude",
+    "scheduled-tasks",
+    "routeflow-plane-daily",
+    "SKILL.md",
+  );
+  if (!existsSync(scheduledPath)) {
+    console.log(
+      `  skip  T5 (R5): scheduled-task SKILL.md not present on this machine (${scheduledPath})`,
+    );
+  } else {
+    const src = readFileSync(scheduledPath, "utf8");
+    check(
+      "T5 (R5): ~/.claude/scheduled-tasks/routeflow-plane-daily/SKILL.md mentions plane:doctor and plane:retro",
+      { mentionsDoctor: src.includes("plane:doctor"), mentionsRetro: src.includes("plane:retro") },
+      { mentionsDoctor: true, mentionsRetro: true },
+    );
+  }
 }
 
 console.log(

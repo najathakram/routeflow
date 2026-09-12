@@ -1,10 +1,10 @@
 {
-  "nextId": 112,
+  "nextId": 113,
   "activeCount": 40,
-  "archivedCount": 67,
+  "archivedCount": 68,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-12T05:28:28.000Z",
+  "updatedAt": "2026-09-12T06:00:00.000Z",
   "schemaVersion": 1,
-  "note": "REBASE (feat/plane-harness worktree rf-plane2 onto master fafe0ecb, #694 plane-mirror + #698 bookkeeping): kept master's LESSONS.md/ARCHIVE.md exactly as-is and renumbered the branch's one new lesson (was L-104, process, Plane-sync-stale-cwd-Gate-5-incident, 2026-09-11) to master's nextId (L-111), appended at the end of the active list per the rebase ruling -- did NOT keep the branch's own L-104 (that id now belongs to master's unrelated domain/B215 entry) and did NOT re-apply the branch's original archiving of L-057 as a duplicate. Master's register was already at the 40-entry cap, so one more entry was archived to clear headroom for L-111: L-057 (2026-09-04, deploy, #609), tied at one outside citation with L-073 but older by id, both fully guarded (repo-wide grep, oldest-first per the standing rule) -- moved to ARCHIVE.md verbatim under a new '## Archived 2026-09-12' section; master's own prior archive blocks (including its 2026-09-11 sections for L-104/domain headroom and the L-069/L-077/L-078/L-090/L-091/L-097 batch) are untouched. nextId 112 (111 used by L-111), activeCount 40 (40 - L-057 + L-111), archivedCount 67 (66 + L-057) -- counted directly from '### L-' headers in the merged files, not carried over. validate-lessons.mjs to be re-run against the real files once applied."
+  "note": "Appended L-112 (testing, Plane bulk sync, feat/plane-harness-learning worktree rf-plane3, 2026-09-12): the first bulk registry->Plane sync from master adopted all 160 name-keyed items but created/patched 0 rows -- the write-path denylist scanned every string instead of only CONTENT_KEYS, so Plane's own uuid-shaped ids tripped the tenant-uuid guard, a collision no test caught because the fake server's ids were short non-uuid strings. Register was at the 40-entry cap, so one entry was archived to clear headroom: L-107 (2026-09-11, domain, train-4 Run A) -- the uniquely least-cited active entry (zero outside citations found via repo-wide grep excluding .claude/lessons/**, .claude/pipeline/**, and code-map CHANGELOG/_meta), fully guarded (Run A pins P15-P22), moved to ARCHIVE.md verbatim under a new '## Archived 2026-09-12' section. nextId 113 (112 used by L-112), activeCount 40 (40 - L-107 + L-112), archivedCount 68 (67 + L-107) -- counted directly from '### L-' headers in the real files."
 }

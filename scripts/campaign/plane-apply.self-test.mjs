@@ -22,12 +22,21 @@
 // `create` (which has no natural ref) carries an explicit `"project"` field
 // below. If WP5 lands requiring `project` on every op instead, these fixture
 // ops files need one field added, not a rewrite.
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { startFakePlane } from "./plane-fake-server.mjs";
+import { repoRoot } from "./plane-client.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./plane-apply.mjs", import.meta.url));
 
@@ -62,10 +71,24 @@ function writeOpsFile(ops) {
 // Runs plane-apply.mjs out-of-process via async `spawn` (never `spawnSync`
 // — the fake Plane server lives on this harness process's own event loop, so
 // a synchronous spawn would block it while the child's request is pending).
+function fallbackRunsPath() {
+  return join(
+    tmpdir(),
+    `${FIXTURE_PREFIX}runs-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  );
+}
+
 function runCli(argv, { baseUrl, stateDir, apiKey = "self-test-key", noKey = false } = {}) {
   const env = { ...process.env };
   if (baseUrl) env.PLANE_BASE_URL = baseUrl;
   if (stateDir) env.PLANE_SYNC_STATE_DIR = stateDir;
+  // Fix-round (runs.jsonl pollution): plane-apply.mjs's main() appends one
+  // telemetry line via appendRun() in a `finally` on every run. runsPath()
+  // only honours PLANE_RUNS_PATH when PLANE_SYNC_SELF_TEST=1 is ALSO set —
+  // both required here or the child writes into this worktree's real
+  // local-assets/plane/runs.jsonl.
+  env.PLANE_SYNC_SELF_TEST = "1";
+  env.PLANE_RUNS_PATH = stateDir ? join(stateDir, "self-test-runs.jsonl") : fallbackRunsPath();
   if (noKey) delete env.PLANE_API_KEY;
   else env.PLANE_API_KEY = apiKey;
   return new Promise((resolve) => {
@@ -387,6 +410,86 @@ async function main() {
     await server.close();
   }
 
+  // ── T11 (defect fix 2026-09-12, R2/CONTENT_KEYS/uuidIds) — proven live:
+  // the old scanBodyDeep walked EVERY string in a write body, so a
+  // uuid-shaped state/label id tripped the tenant-uuid pattern purely by
+  // coincidental shape and plane-apply refused every op that named a state
+  // or label. T10 above never caught this because plane-fake-server.mjs's
+  // literal ids ("state-backlog", ...) never LOOK uuid-shaped. `uuidIds:
+  // true` makes this server's ids real RFC-4122-shaped uuids so an update op
+  // setting state + labels by name must still issue exactly 1 PATCH and
+  // exit 0 — proving the id-key exemption works — while a comment whose HTML
+  // carries a uuid (content, not an id field) is still forbidden, exactly
+  // as T10 proved without uuidIds.
+  {
+    const server = await startFakePlane({
+      uuidIds: true,
+      workItems: { OPS: [] },
+      labels: { OPS: [{ name: "urgent" }] },
+    });
+    const opsStates = server.state.states.OPS;
+    const backlog = opsStates.find((s) => s.name === "Backlog");
+    const inReview = opsStates.find((s) => s.name === "In review");
+    const urgentLabel = server.state.labels.OPS.find((l) => l.name === "urgent");
+    check(
+      "T11: the uuidIds fixture's In review state and urgent label ids are actually uuid-shaped",
+      { state: UUID_RE.test(inReview?.id ?? ""), label: UUID_RE.test(urgentLabel?.id ?? "") },
+      { state: true, label: true },
+    );
+    server.state.workItems.OPS.push({
+      id: "item-t11-existing",
+      sequence_id: 23,
+      name: "Ops item",
+      state: backlog.id,
+    });
+    const stateDir = makeTmpDir();
+    const opsPath = writeOpsFile([
+      { op: "update", ref: "OPS-23", set: { state: "In review", labels: ["urgent"] } },
+    ]);
+    const before = server.requests.length;
+    const { code } = await runCli([opsPath], { baseUrl: server.url, stateDir });
+    const patches = writesSince(server, before).filter((r) => r.method === "PATCH");
+    check(
+      "T11: exactly 1 PATCH, exit 0",
+      { patches: patches.length, code },
+      { patches: 1, code: 0 },
+    );
+    check(
+      "T11: the PATCH body carries the real uuid-shaped state+labels ids, unscrubbed (proves ids are sent, not scrubbed)",
+      {
+        stateIsUuid: UUID_RE.test(patches[0]?.body?.state ?? ""),
+        stateMatchesInReview: patches[0]?.body?.state === inReview.id,
+        labelsMatchUrgent:
+          JSON.stringify(patches[0]?.body?.labels ?? []) === JSON.stringify([urgentLabel.id]),
+      },
+      { stateIsUuid: true, stateMatchesInReview: true, labelsMatchUrgent: true },
+    );
+
+    // Negative twin (T10 still applies with uuidIds on): a comment whose
+    // HTML carries a uuid is CONTENT, not an id field — still forbidden.
+    const uuid = "123e4567-e89b-12d3-a456-426614174000";
+    const badOpsPath = writeOpsFile([
+      { op: "comment", ref: "OPS-23", html: `<p>tenant ${uuid} needs review</p>` },
+    ]);
+    const before2 = server.requests.length;
+    const {
+      code: code2,
+      stdout: stdout2,
+      stderr: stderr2,
+    } = await runCli([badOpsPath], { baseUrl: server.url, stateDir });
+    const out2 = stdout2 + stderr2;
+    check(
+      "T11 (negative twin, T10/R2 still applies): a content-field uuid is still forbidden with uuidIds on",
+      {
+        code: code2,
+        writes: writesSince(server, before2).length,
+        namesForbidden: out2.includes("forbidden (tenant-uuid)"),
+      },
+      { code: 1, writes: 0, namesForbidden: true },
+    );
+    await server.close();
+  }
+
   // ── T15 — --help/-h short-circuit before any env read or network call;
   // an unknown flag exits 2 with Usage on stderr ────────────────────────────
   {
@@ -426,6 +529,12 @@ async function main() {
   return failures;
 }
 
+// Fix-round (runs.jsonl pollution, 2026-09-12): belt-and-suspenders proof
+// that every runCli() call above's PLANE_SYNC_SELF_TEST+PLANE_RUNS_PATH pair
+// keeps this worktree's real local-assets/plane/runs.jsonl untouched.
+const REAL_RUNS_PATH = join(repoRoot(), "local-assets", "plane", "runs.jsonl");
+const realRunsBefore = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
+
 const tmpDirsBefore = countFixtureTmpDirs();
 try {
   await main();
@@ -439,6 +548,12 @@ check(
   "F4: the run leaves no plane-apply-self-test-* dir behind",
   countFixtureTmpDirs(),
   tmpDirsBefore,
+);
+const realRunsAfter = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
+check(
+  "F4: this worktree's real local-assets/plane/runs.jsonl is byte-identical before/after the suite (or absent both times)",
+  realRunsAfter,
+  realRunsBefore,
 );
 
 console.log(

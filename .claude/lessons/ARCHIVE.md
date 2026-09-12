@@ -1274,3 +1274,24 @@ fully-guarded, oldest first) it is the one archived.
   watchdog with a fixed deadline, never a `finally` in an agent.**
 - **Guard:** `scripts/visibility-watchdog.mjs`, mandatory in
   `docs/runbooks/deploy-visibility-flip.md` and the `rebuild` skill.
+
+## Archived 2026-09-12 — least-cited, fully guarded; headroom for L-112
+
+One active entry archived to clear headroom for L-112 (testing, Plane bulk sync,
+feat/plane-harness-learning worktree rf-plane3): L-107. It has zero outside citations (the
+uniquely least-cited active entry — every other entry has at least one reference elsewhere in
+the repo) and carries a real automated guard that stays in the tree regardless of whether the
+register still narrates it (Run A pins P15–P22 in `orders.service.spec` / `invoices.service.spec`),
+so archiving it loses no enforcement.
+
+### L-107 · 2026-09-11 · domain · train-4 Run A
+
+- **Symptom:** a NOWAIT advisory lock taken Invoice-first cycled (Postgres 40P01) against
+  `voidInvoice`'s own lock order; separately, folding `CONCURRENT_UPDATE` into `HANDLED_CODES`
+  (to silence a duplicate toast) also silenced the delete flow's real failure toast.
+- **Root cause:** two guards on the same row acquired locks in opposite orders; and a status was
+  added to a shared toast-suppression set without checking every OTHER caller that fires on it.
+- **Lesson:** **Take the Invoice lock LAST, after dependent-row locks release, matching
+  `voidInvoice`'s own order — a NOWAIT cycle is an ordering bug, not a timing one. Never add a
+  code to a shared suppression set without checking every caller it also silences.**
+- **Guard:** Run A pins P15–P22 (orders.service.spec / invoices.service.spec REG pins).

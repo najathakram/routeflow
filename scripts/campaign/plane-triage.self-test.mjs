@@ -9,12 +9,21 @@
 // `spawn` (never a static top-level `import`), so a missing file surfaces as
 // an ordinary non-zero child exit / empty stdout — a clean assertion miss,
 // never a crash of this file (test-plan.md §6).
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { startFakePlane } from "./plane-fake-server.mjs";
+import { repoRoot } from "./plane-client.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./plane-triage.mjs", import.meta.url));
 
@@ -76,10 +85,44 @@ function makeRegistryFixture({ ids = ["B12"] } = {}) {
 
 // Runs plane-triage.mjs out-of-process via async `spawn` (never `spawnSync`
 // — the fake Plane server lives on this harness process's own event loop).
-function runCli(argv, { registryDir, baseUrl, apiKey = "self-test-key", noKey = false } = {}) {
+function fallbackRunsPath() {
+  return join(
+    tmpdir(),
+    `${FIXTURE_PREFIX}runs-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  );
+}
+
+function runCli(
+  argv,
+  {
+    registryDir,
+    baseUrl,
+    apiKey = "self-test-key",
+    noKey = false,
+    // F4 test-isolation (same pattern as plane-sync.self-test.mjs's runCli):
+    // plane-triage.mjs's own writesToday() call reads
+    // `.claude/campaign/.plane-writes.jsonl` via plane-client.mjs's
+    // stateDir(), which falls through to the ambient
+    // `.claude/campaign` of whatever repo/worktree this happens to run in
+    // unless PLANE_SYNC_STATE_DIR is set. Defaulting to `registryDir` (always
+    // a throwaway makeRegistryFixture() dir, tracked in FIXTURE_DIRS and
+    // swept in the `finally` below) gives every call site isolation for free.
+    stateDir = registryDir,
+  } = {},
+) {
   const env = { ...process.env };
   if (registryDir) env.PLANE_SYNC_REGISTRY_DIR = registryDir;
   if (baseUrl) env.PLANE_BASE_URL = baseUrl;
+  if (stateDir) env.PLANE_SYNC_STATE_DIR = stateDir;
+  // Fix-round (runs.jsonl pollution): plane-triage.mjs's main() appends one
+  // telemetry line via appendRun() in a `finally` on every run. runsPath()
+  // only honours PLANE_RUNS_PATH when PLANE_SYNC_SELF_TEST=1 is ALSO set —
+  // both required here or the child writes into this worktree's real
+  // local-assets/plane/runs.jsonl.
+  env.PLANE_SYNC_SELF_TEST = "1";
+  env.PLANE_RUNS_PATH = registryDir
+    ? join(registryDir, "self-test-runs.jsonl")
+    : fallbackRunsPath();
   if (noKey) delete env.PLANE_API_KEY;
   else env.PLANE_API_KEY = apiKey;
   return new Promise((resolve) => {
@@ -274,6 +317,25 @@ async function main() {
   return failures;
 }
 
+// Fix-round (runs.jsonl pollution, 2026-09-12): belt-and-suspenders proof
+// that every runCli() call above's PLANE_SYNC_SELF_TEST+PLANE_RUNS_PATH pair
+// keeps this worktree's real local-assets/plane/runs.jsonl untouched.
+const REAL_RUNS_PATH = join(repoRoot(), "local-assets", "plane", "runs.jsonl");
+const realRunsBefore = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
+
+// F4 (same belt-and-suspenders proof as plane-sync.self-test.mjs): every
+// runCli() call above now defaults PLANE_SYNC_STATE_DIR to its own throwaway
+// registryDir, so nothing here should ever fall through to the ambient
+// `.claude/campaign/` of whatever repo/worktree this happens to run in.
+const REAL_CAMPAIGN_DIR = join(repoRoot(), ".claude", "campaign");
+const REAL_WRITES_LEDGER = join(REAL_CAMPAIGN_DIR, ".plane-writes.jsonl");
+const REAL_SYNC_STATE = join(REAL_CAMPAIGN_DIR, ".plane-sync-state.json");
+const snapshotRealFiles = () => ({
+  writes: existsSync(REAL_WRITES_LEDGER) ? readFileSync(REAL_WRITES_LEDGER, "utf8") : null,
+  state: existsSync(REAL_SYNC_STATE) ? readFileSync(REAL_SYNC_STATE, "utf8") : null,
+});
+const realFilesBefore = snapshotRealFiles();
+
 const tmpDirsBefore = countFixtureTmpDirs();
 try {
   await main();
@@ -287,6 +349,23 @@ check(
   "F4: the run leaves no plane-triage-self-test-* dir behind",
   countFixtureTmpDirs(),
   tmpDirsBefore,
+);
+const realRunsAfter = existsSync(REAL_RUNS_PATH) ? readFileSync(REAL_RUNS_PATH, "utf8") : null;
+check(
+  "F4: this worktree's real local-assets/plane/runs.jsonl is byte-identical before/after the suite (or absent both times)",
+  realRunsAfter,
+  realRunsBefore,
+);
+const realFilesAfter = snapshotRealFiles();
+check(
+  "F4: this worktree's real .claude/campaign/.plane-writes.jsonl is untouched by the suite",
+  realFilesAfter.writes,
+  realFilesBefore.writes,
+);
+check(
+  "F4: this worktree's real .claude/campaign/.plane-sync-state.json is untouched by the suite",
+  realFilesAfter.state,
+  realFilesBefore.state,
 );
 
 console.log(

@@ -50,11 +50,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import {
+  appendRun,
   createClient,
   CLOSED_MARKER,
   EXTERNAL_SOURCE,
   gitEnv,
+  knob,
   loadDenylist,
+  loadKnobs,
   NAME_ID_RE,
   repoRoot,
   stateDir,
@@ -458,7 +461,7 @@ function planeConfig() {
 // non-zero exit, empty stdout) fails CLOSED: reported as branch "unknown",
 // which is itself "not master", so the skip line says why without a second
 // code path.
-function currentBranch() {
+export function currentBranch() {
   let res;
   try {
     res = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
@@ -521,14 +524,45 @@ export async function runSync({
   const emit = (line) => {
     process.stderr.write(`${line}\n`);
   };
-  const warnForbidden = (id, patternName) =>
+  // R2 telemetry's `forbidden: {count, byPattern}` — the count comes from
+  // client.summary().forbidden, but the per-pattern breakdown has to be
+  // tallied here, at the one place every forbidden write is already named.
+  const forbiddenByPattern = new Map();
+  const warnForbidden = (id, patternName) => {
     console.error(`Plane mirror warn: ${id} forbidden (${patternName})`);
+    forbiddenByPattern.set(patternName, (forbiddenByPattern.get(patternName) ?? 0) + 1);
+  };
+  const zeroClientSummary = () => ({
+    writes: 0,
+    deferred: 0,
+    forbidden: 0,
+    gets: 0,
+    rateLimitSleeps: 0,
+    retries: 0,
+  });
+  const zeroSyncBlock = () => ({
+    adopted: 0,
+    created: 0,
+    patched: 0,
+    comments: 0,
+    links: 0,
+    drift: false,
+    wouldAdopt: 0,
+  });
+  // R2 telemetry (spec 2026-09-12-plane-learning): `client` is declared here
+  // (not `const` inside the try) so a thrown failure before/after its
+  // creation can still report the accurate write/GET counters it reached —
+  // undefined only when the throw happened before createClient() ran.
+  let client;
 
   try {
     const rows = deriveDesired(registryDir);
     const registryIds = new Set(rows.map((d) => d.external_id));
-    const client = createClient({ baseUrl, slug, apiKey, tool: "plane-sync", maxWrites });
+    client = createClient({ baseUrl, slug, apiKey, tool: "plane-sync", maxWrites });
     const cache = loadSyncStateCache();
+    let adoptedCount = 0;
+    let commentsPosted = 0;
+    let linksPosted = 0;
 
     const project = await client.resolveProject("BUGS");
     const statesMap = await client.resolveStates(project.id); // Map<name-lower, {id, group}>
@@ -658,6 +692,8 @@ export async function runSync({
         updated: earlyPatches.length,
         skipped: skipped.length,
         unverified: unverified.length,
+        sync: { ...zeroSyncBlock(), drift, wouldAdopt },
+        clientSummary: client.summary(),
       };
     }
 
@@ -689,6 +725,18 @@ export async function runSync({
         updated: 0,
         skipped: skipped.length,
         unverified: unverified.length,
+        sync: {
+          ...zeroSyncBlock(),
+          drift:
+            earlyCreates.length +
+              earlyPatches.length +
+              skipped.length +
+              unverified.length +
+              wouldAdopt >
+            0,
+          wouldAdopt,
+        },
+        clientSummary: client.summary(),
       };
     }
 
@@ -704,6 +752,7 @@ export async function runSync({
       if (r.forbidden) warnForbidden(id, r.forbidden.name);
       else if (!r.deferred) {
         byExt.set(id, { ...item, external_source: EXTERNAL_SOURCE, external_id: id });
+        adoptedCount++;
       }
     }
     const existingItems = [...byExt.values()];
@@ -806,12 +855,14 @@ export async function runSync({
               if (cr.forbidden) {
                 warnForbidden(id, cr.forbidden.name);
               } else if (!cr.deferred) {
+                commentsPosted++;
                 if (ledgerRow.pr) {
-                  await client.post(
+                  const lr = await client.post(
                     `projects/${project.id}/work-items/${p.id}/links/`,
                     { url: `https://github.com/${GITHUB_REPO}/pull/${ledgerRow.pr}` },
                     { ref: id },
                   );
+                  if (!lr.forbidden && !lr.deferred) linksPosted++;
                 }
                 cache.closed[id] = new Date().toISOString();
                 saveSyncStateCache(cache);
@@ -822,7 +873,20 @@ export async function runSync({
       }
     }
 
-    const { deferred: deferredTotal, forbidden: forbiddenTotal } = client.summary();
+    const clientSummary = client.summary();
+    const { deferred: deferredTotal, forbidden: forbiddenTotal } = clientSummary;
+    // R4 telemetry's `drift` reuses the exact condition the digest-write gate
+    // just below checks — a run that left something unsynced (skipped state,
+    // unverified hash, exhausted budget, deferred, or forbidden write) IS
+    // drift, by the same definition the digest short-circuit relies on.
+    const driftAfterWrite = () =>
+      !(
+        skippedFinal.length === 0 &&
+        unverifiedFinal.length === 0 &&
+        !budgetExhausted &&
+        deferredTotal === 0 &&
+        forbiddenTotal === 0
+      );
 
     // Landmine 3 (build-plan.md): the digest is written ONLY after every
     // write above succeeded AND no row was skipped/unverified/deferred/
@@ -853,6 +917,17 @@ export async function runSync({
         skipped: skippedFinal.length,
         unverified: unverifiedFinal.length,
         budgetExhausted: true,
+        sync: {
+          adopted: adoptedCount,
+          created,
+          patched: updated,
+          comments: commentsPosted,
+          links: linksPosted,
+          drift: driftAfterWrite(),
+          wouldAdopt,
+        },
+        clientSummary,
+        forbiddenByPattern: Object.fromEntries(forbiddenByPattern),
       };
     }
 
@@ -868,10 +943,32 @@ export async function runSync({
       updated,
       skipped: skippedFinal.length,
       unverified: unverifiedFinal.length,
+      sync: {
+        adopted: adoptedCount,
+        created,
+        patched: updated,
+        comments: commentsPosted,
+        links: linksPosted,
+        drift: driftAfterWrite(),
+        wouldAdopt,
+      },
+      clientSummary,
+      forbiddenByPattern: Object.fromEntries(forbiddenByPattern),
     };
   } catch (err) {
+    const message = `${err?.name ?? "Error"}: ${String(err?.message ?? err).slice(0, 200)}`;
     emit(`Plane mirror: failed (non-blocking) — ${err?.message ?? err}`);
-    return { exitCode: strict ? 1 : 0, created: 0, updated: 0, skipped: 0, unverified: 0 };
+    return {
+      exitCode: strict ? 1 : 0,
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      unverified: 0,
+      sync: zeroSyncBlock(),
+      error: message,
+      forbiddenByPattern: Object.fromEntries(forbiddenByPattern),
+      clientSummary: client ? client.summary() : zeroClientSummary(),
+    };
   }
 }
 
@@ -916,95 +1013,165 @@ async function main() {
     }
   }
 
-  const dryRun = argv.includes("--dry-run");
-  const checkOnly = argv.includes("--check");
-  const quiet = argv.includes("--quiet");
-  const strict = argv.includes("--strict");
-  const ifDigestChanged = argv.includes("--if-digest-changed");
-  // R14: Gate 5 never passes this (spec.md R14) — a human running the script
-  // by hand off master/main is the only caller who can.
-  const allowBranch = argv.includes("--allow-branch");
-  // `--budget-ms <n>`: NO default. Unbounded is the right behavior for a human
-  // running `npm run bugs:plane` (a first mirror of the whole registry must be
-  // allowed to finish); only Gate 5 passes a budget, because only Gate 5 has a
-  // turn to hand back.
-  let budgetMs;
-  const budgetIdx = argv.indexOf("--budget-ms");
-  if (budgetIdx !== -1) {
-    const raw = Number(argv[budgetIdx + 1]);
-    if (Number.isFinite(raw) && raw >= 0) budgetMs = raw;
-    else
-      process.stderr.write(
-        `Plane mirror warn: ignoring --budget-ms "${argv[budgetIdx + 1] ?? ""}" (not a non-negative number)\n`,
-      );
-  }
-  // `--max-writes <n>` (R3/R12): default 250; Gate 5 passes 25.
-  let maxWrites = 250;
-  const mwIdx = argv.indexOf("--max-writes");
-  if (mwIdx !== -1) {
-    const raw = Number(argv[mwIdx + 1]);
-    if (Number.isFinite(raw) && raw >= 0) maxWrites = raw;
-    else
-      process.stderr.write(
-        `Plane mirror warn: ignoring --max-writes "${argv[mwIdx + 1] ?? ""}" (not a non-negative number)\n`,
-      );
-  }
-  const registryDir = process.env.PLANE_SYNC_REGISTRY_DIR || join(REPO_ROOT, ".claude", "campaign");
+  // R2 telemetry (spec 2026-09-12-plane-learning): started/rec are set up
+  // BEFORE loadKnobs() so a `knobs invalid: <name>` throw still gets exactly
+  // one runs.jsonl line via the finally below — the only exits that write NO
+  // telemetry are the --help/usage ones handled above, before this point.
+  const started = Date.now();
+  const rec = { tool: "plane-sync", flags: argv, branch: currentBranch() };
+  let clientSummaryForRun = {
+    writes: 0,
+    deferred: 0,
+    forbidden: 0,
+    gets: 0,
+    rateLimitSleeps: 0,
+    retries: 0,
+  };
+  let forbiddenByPatternForRun = {};
 
-  const apiKey = process.env.PLANE_API_KEY;
-  if (!apiKey) {
-    process.stderr.write("Plane mirror: skipped (no PLANE_API_KEY)\n");
-    process.exitCode = 0;
-    return;
-  }
-
-  // Fail-closed denylist check (F3, fix-round 2b): unlike a network hiccup
-  // (which this script never blocks a turn over), a missing denylist file is
-  // a broken checkout/config — R2's write-scan would fail open on it. Checked
-  // here, before any network call, so this exits non-zero with zero writes
-  // regardless of --strict.
   try {
-    loadDenylist();
-  } catch (err) {
-    process.stderr.write(`Plane mirror: ${err?.message ?? err}\n`);
-    process.exitCode = 1;
-    return;
-  }
-
-  if (ifDigestChanged && !dryRun && !checkOnly) {
-    const digestPath = join(registryDir, ".plane-sync-digest");
-    let current;
+    // R1: loaded right after --help/usage handling, before any process.env
+    // read or network request — a caller needing the exact "knobs invalid:
+    // <name>" text sees it before anything else happens (T1). Printed
+    // explicitly (not left to the outer catch) so that text always reaches
+    // stderr, matching every other fail-closed check in this file.
+    let knobs;
     try {
-      current = registryDigest(registryDir);
+      knobs = loadKnobs();
     } catch (err) {
-      process.stderr.write(`Plane mirror: failed (non-blocking) — ${err?.message ?? err}\n`);
-      process.exitCode = strict ? 1 : 0;
-      return;
+      // T1's contract is specifically an out-of-range VALUE in an otherwise
+      // present knobs file — that case hard-fails, exit != 0, zero requests.
+      // A missing/unreadable file (e.g. this script copied somewhere without
+      // its sibling plane-knobs.json) is a different failure class: this
+      // file's own "NEVER BLOCKS" rule wins instead, falling back to the
+      // knob's documented default rather than refusing to run at all.
+      if (/^knobs invalid:/.test(String(err?.message ?? ""))) {
+        process.stderr.write(`Plane mirror: ${err.message}\n`);
+        process.exitCode = 1;
+        rec.error = `${err?.name ?? "Error"}: ${String(err.message).slice(0, 200)}`;
+        return;
+      }
+      console.error(
+        `Plane mirror warn: knobs unavailable (${err?.message ?? err}) — using defaults`,
+      );
+      knobs = { knobs: { syncMaxWrites: { value: 250 } } };
     }
-    const stored = existsSync(digestPath) ? readFileSync(digestPath, "utf8").trim() : null;
-    if (stored === current) {
-      process.exitCode = 0;
-      return;
-    }
-  }
 
-  // NEVER process.exit() here: fetch (undici) can leave a keep-alive socket
-  // mid-teardown, and a forced exit racing that teardown crashes Node with a
-  // libuv assertion (observed on Windows: src/win/async.c, UV_HANDLE_CLOSING)
-  // instead of exiting with the intended code. Setting exitCode and returning
-  // lets the event loop drain and close its own handles before Node exits.
-  const result = await runSync({
-    registryDir,
-    apiKey,
-    dryRun,
-    checkOnly,
-    quiet,
-    strict,
-    budgetMs,
-    maxWrites,
-    allowBranch,
-  });
-  process.exitCode = result.exitCode;
+    const dryRun = argv.includes("--dry-run");
+    const checkOnly = argv.includes("--check");
+    const quiet = argv.includes("--quiet");
+    const strict = argv.includes("--strict");
+    const ifDigestChanged = argv.includes("--if-digest-changed");
+    // R14: Gate 5 never passes this (spec.md R14) — a human running the script
+    // by hand off master/main is the only caller who can.
+    const allowBranch = argv.includes("--allow-branch");
+    // `--budget-ms <n>`: NO default. Unbounded is the right behavior for a human
+    // running `npm run bugs:plane` (a first mirror of the whole registry must be
+    // allowed to finish); only Gate 5 passes a budget, because only Gate 5 has a
+    // turn to hand back.
+    let budgetMs;
+    const budgetIdx = argv.indexOf("--budget-ms");
+    if (budgetIdx !== -1) {
+      const raw = Number(argv[budgetIdx + 1]);
+      if (Number.isFinite(raw) && raw >= 0) budgetMs = raw;
+      else
+        process.stderr.write(
+          `Plane mirror warn: ignoring --budget-ms "${argv[budgetIdx + 1] ?? ""}" (not a non-negative number)\n`,
+        );
+    }
+    // `--max-writes <n>` (R3/R12): default from the `syncMaxWrites` knob
+    // (spec 2026-09-12-plane-learning R1); a CLI flag still overrides it.
+    let maxWrites = knobs.knobs.syncMaxWrites.value;
+    const mwIdx = argv.indexOf("--max-writes");
+    if (mwIdx !== -1) {
+      const raw = Number(argv[mwIdx + 1]);
+      if (Number.isFinite(raw) && raw >= 0) maxWrites = raw;
+      else
+        process.stderr.write(
+          `Plane mirror warn: ignoring --max-writes "${argv[mwIdx + 1] ?? ""}" (not a non-negative number)\n`,
+        );
+    }
+    const registryDir =
+      process.env.PLANE_SYNC_REGISTRY_DIR || join(REPO_ROOT, ".claude", "campaign");
+
+    const apiKey = process.env.PLANE_API_KEY;
+    if (!apiKey) {
+      process.stderr.write("Plane mirror: skipped (no PLANE_API_KEY)\n");
+      process.exitCode = 0;
+      rec.skipped = "no PLANE_API_KEY";
+      return;
+    }
+
+    // Fail-closed denylist check (F3, fix-round 2b): unlike a network hiccup
+    // (which this script never blocks a turn over), a missing denylist file is
+    // a broken checkout/config — R2's write-scan would fail open on it. Checked
+    // here, before any network call, so this exits non-zero with zero writes
+    // regardless of --strict.
+    try {
+      loadDenylist();
+    } catch (err) {
+      process.stderr.write(`Plane mirror: ${err?.message ?? err}\n`);
+      process.exitCode = 1;
+      rec.error = `${err?.name ?? "Error"}: ${String(err?.message ?? err).slice(0, 200)}`;
+      return;
+    }
+
+    if (ifDigestChanged && !dryRun && !checkOnly) {
+      const digestPath = join(registryDir, ".plane-sync-digest");
+      let current;
+      try {
+        current = registryDigest(registryDir);
+      } catch (err) {
+        process.stderr.write(`Plane mirror: failed (non-blocking) — ${err?.message ?? err}\n`);
+        process.exitCode = strict ? 1 : 0;
+        rec.error = `${err?.name ?? "Error"}: ${String(err?.message ?? err).slice(0, 200)}`;
+        return;
+      }
+      const stored = existsSync(digestPath) ? readFileSync(digestPath, "utf8").trim() : null;
+      if (stored === current) {
+        process.exitCode = 0;
+        return;
+      }
+    }
+
+    // NEVER process.exit() here: fetch (undici) can leave a keep-alive socket
+    // mid-teardown, and a forced exit racing that teardown crashes Node with a
+    // libuv assertion (observed on Windows: src/win/async.c, UV_HANDLE_CLOSING)
+    // instead of exiting with the intended code. Setting exitCode and returning
+    // lets the event loop drain and close its own handles before Node exits.
+    const result = await runSync({
+      registryDir,
+      apiKey,
+      dryRun,
+      checkOnly,
+      quiet,
+      strict,
+      budgetMs,
+      maxWrites,
+      allowBranch,
+    });
+    process.exitCode = result.exitCode;
+    if (result.sync) rec.sync = result.sync;
+    if (result.clientSummary) clientSummaryForRun = result.clientSummary;
+    if (result.forbiddenByPattern) forbiddenByPatternForRun = result.forbiddenByPattern;
+    // runSync catches its own network/registry failures internally (never
+    // throws out — this script never blocks a turn over them) and reports
+    // them via its own `error` field instead, so this outer catch alone
+    // would never see them; propagate it here so the telemetry line still
+    // names the failure (T2-sync-500).
+    if (result.error) rec.error = result.error;
+  } catch (err) {
+    rec.error = `${err?.name ?? "Error"}: ${String(err?.message ?? err).slice(0, 200)}`;
+  } finally {
+    const { forbidden: forbiddenCount, ...restSummary } = clientSummaryForRun;
+    appendRun({
+      ...rec,
+      exit: process.exitCode ?? 0,
+      durationMs: Date.now() - started,
+      ...restSummary,
+      forbidden: { count: forbiddenCount ?? 0, byPattern: forbiddenByPatternForRun },
+    });
+  }
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
