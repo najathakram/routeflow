@@ -27,7 +27,7 @@ import {
   type PromoContext,
   type PromotionRule,
 } from "@routeflow/pricing";
-import { withAdvisoryLock, type LockMode } from "../common/db-locks";
+import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
 import {
   LOCK_UNAVAILABLE,
   LOCK_UNAVAILABLE_MESSAGE,
@@ -79,6 +79,7 @@ import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -1455,6 +1456,9 @@ export class OrdersService implements OnApplicationBootstrap {
               // silently dropping a billed order (preserves prior safety).
               const loserDraft = await this.invoicesService.findOpenOrderDraft(loser.id, tx);
               if (loserDraft) {
+                // B214 (REG-B214): a DRAFT mirror can source a credit note; refuse before the FK
+                // SET NULL orphans it.
+                await assertNoUnspentSourcedCredits(tx, [loserDraft.id]);
                 await tx.invoiceItem.deleteMany({ where: { invoiceId: loserDraft.id } });
                 await tx.invoice.delete({ where: { id: loserDraft.id } });
               }
@@ -5249,11 +5253,6 @@ export class OrdersService implements OnApplicationBootstrap {
       });
     }
 
-    // Auto-revert a SENT pending-mirror invoice to DRAFT so the merge re-syncs
-    // into it; throws if it carries payments (money never detaches). Mirrors
-    // updateOrderItems :1630-1634.
-    await this.invoicesService.revertLinkedInvoicesForOrderEdit(order.id);
-
     // P5-08b posture: reference reads on separate pooled connections are
     // hoisted BEFORE the interactive tx (pool-starvation guard, :1660-1672).
     const taxRate = await this.getTaxRate();
@@ -5271,7 +5270,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // WP3: hoisted for the same reason — the credit guard below runs inside the tx.
     const creditCheckEnabled = await this.isCreditLimitCheckEnabled();
 
-    const { subtotal, tax, total } = await this.prisma.tenantTransaction(
+    const { subtotal, tax, total, shippingFee } = await this.prisma.tenantTransaction(
       async (tx: any) => {
         // WP1/F2: same in-transaction snapshot as updateOrderItems — lock the
         // order row so a concurrent web PATCH of this order serializes behind
@@ -5279,9 +5278,69 @@ export class OrdersService implements OnApplicationBootstrap {
         // inside the tx. `order` above was fetched before the tx opened; its
         // lineItems drive the stock delta and would otherwise be stale.
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${order.id} FOR UPDATE`;
+
+        // B135 (REG-B135): the ORDER is locked first (above), then the stop — and this tx NEVER
+        // waits on a stop row. Order→stop is the acquisition order the rest of the repo already
+        // uses (reopenStop, routes.service.ts: order.update then routeRunStop.update; the
+        // customers.service merge and purge paths: order writes then routeRunStop writes), so
+        // taking a blocking stop lock first would invert it and could deadlock (40P01). NOWAIT
+        // means the Order row is this tx's only blocking acquisition — the only way it could
+        // close a cycle with the stop→order writers (completeWithPayment / completeStop, which
+        // write the stop then the orders) is gone. NO KEY UPDATE, not FOR UPDATE, so a
+        // transaction merely holding an FK KEY SHARE on the stop (a DeliveryMutation insert) does
+        // not trip it, while a stop completion's own UPDATE does: an in-flight completion
+        // surfaces as an immediate 409 instead of merging an edit into a delivered order, and a
+        // committed one is still caught by the `live` re-read below.
+        // The refusal is CONCURRENT_UPDATE, not CHANGE_WINDOW_CLOSED: the stop is merely BUSY for
+        // this instant, so presenting it as a terminal "the window has closed" sent the resolver
+        // away from an edit that would succeed on a retry a second later.
+        if (order.routeRunStopId) {
+          await lockRowsNoWait(tx, "RouteRunStop", [order.routeRunStopId], "STOP_BUSY");
+        }
+
+        // B135 (REG-B135): the window guards above ran on a pre-tx snapshot. Re-assert them on
+        // the row we now hold locked — a stop completed (completeWithPayment) between that read
+        // and this lock must refuse, never merge into a delivered order. `select` (not include)
+        // with routeRunStop: the unit tests key the in-tx re-read on that shape.
+        const live = await tx.order.findUnique({
+          where: { id: order.id },
+          select: {
+            tenantId: true,
+            status: true,
+            // Money input to the total below — read here, under the Order FOR UPDATE lock, so a
+            // shipping-fee edit that landed after the pre-tx snapshot is not billed away.
+            shippingFee: true,
+            routeRun: { select: { status: true } },
+            routeRunStop: { select: { status: true } },
+          },
+        });
+        if (!live) throw new NotFoundException("Order not found");
+        if (!["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"].includes(live.status)) {
+          throw new ConflictException({ code: "CHANGE_WINDOW_CLOSED", reason: "ORDER_STATUS" });
+        }
+        if (live.routeRun == null || live.routeRun.status !== "IN_PROGRESS") {
+          throw new ConflictException({ code: "CHANGE_WINDOW_CLOSED", reason: "RUN_NOT_ACTIVE" });
+        }
+        if (
+          live.routeRunStop != null &&
+          ["COMPLETED", "SKIPPED"].includes(live.routeRunStop.status)
+        ) {
+          throw new ConflictException({ code: "STOP_ALREADY_COMPLETED" });
+        }
+
+        // B134 (REG-B134): auto-revert a SENT pending-mirror invoice to DRAFT INSIDE the merge tx
+        // (plain queries, no nested tx), so any later throw here — lost claim, stock, credit —
+        // rolls the un-send back with the merge. Before the claim: a payments-throw aborts
+        // before any mutation. Throws if it carries payments (money never detaches).
+        // `lockRows`: the un-send's payment count is read under the same Invoice row lock
+        // recordPayment takes, so a payment can't land between that count and the DRAFT flip.
+        await this.invoicesService.revertLinkedInvoicesForOrderEdit(order.id, tx, {
+          lockRows: true,
+        });
+
         const heldItems = await tx.orderItem.findMany({
           where: { orderId: order.id },
-          select: { productId: true, qty: true, deliveredQty: true, status: true },
+          select: { id: true, productId: true, qty: true, deliveredQty: true, status: true },
         });
 
         // ── G6 atomic claim: FIRST resolution wins and LOCKS ─────────────────
@@ -5311,12 +5370,32 @@ export class OrdersService implements OnApplicationBootstrap {
         if (cr.type === ChangeRequestType.CHANGE_QTY || cr.type === ChangeRequestType.REMOVE_ITEM) {
           const targetId = (cr.orderItemId ?? payload.orderItemId) as string;
           const li = order.lineItems.find((l) => l.id === targetId);
-          if (!li || li.status === "CANCELLED") {
+          // B135 (REG-B135): judge cancel/delivery — AND price — on the LOCKED in-tx row, not the
+          // pre-tx snapshot; the snapshot is the fallback only when the held read has no such row.
+          const held = heldItems.find((h: any) => h.id === targetId);
+          if (!li || li.status === "CANCELLED" || held?.status === "CANCELLED") {
             throw new BadRequestException("Order line not found or already cancelled");
           }
-          if (Number(li.deliveredQty) > 0) {
+          if (Number((held ?? li).deliveredQty ?? 0) > 0) {
             throw new ConflictException({ code: "LINE_ALREADY_DELIVERED" });
           }
+          // `heldItems` is a narrow select (status/qty/deliveredQty), so the money fields come
+          // from a full re-read of the same locked row — the ADD_ITEM idiom below. `src` is what
+          // every priced input is taken from; `li` (the pre-tx snapshot) survives only as the
+          // fallback for a line the held read never saw.
+          const liveLine = held ? await tx.orderItem.findUnique({ where: { id: targetId } }) : null;
+          if (held && !liveLine) {
+            // Defensive, and deliberately FAIL CLOSED: a row held under the Order lock cannot
+            // vanish inside this same tx, so a null re-read means the lock did not hold — never
+            // a licence to price the edit off the stale snapshot.
+            throw new ConflictException({
+              code: "CONCURRENT_UPDATE",
+              reason: "LINE_VANISHED",
+              retryable: true,
+              message: "Another update changed this order line. Try again.",
+            });
+          }
+          const src: any = liveLine ?? li;
           if (cr.type === ChangeRequestType.REMOVE_ITEM) {
             // CANCEL semantics, never hard-delete post-dispatch — a mirror
             // invoice line may reference it (mirrors updateOrderItems :2003-2007).
@@ -5335,7 +5414,7 @@ export class OrdersService implements OnApplicationBootstrap {
             mutationRow = {
               orderItemId: li.id,
               productId: li.productId,
-              qty: -Number(li.qty),
+              qty: -Number(src.qty),
               note: `Line removed via approved change request ${cr.id}`,
             };
           } else {
@@ -5347,25 +5426,25 @@ export class OrdersService implements OnApplicationBootstrap {
             if (!(newQty > 0)) {
               throw new BadRequestException("newQty must be > 0 — use REMOVE_ITEM instead");
             }
-            let upb = Number((li as any).unitsPerBox ?? 0);
-            if (upb === 0 && li.productId && li.boxes != null) {
+            let upb = Number(src.unitsPerBox ?? 0);
+            if (upb === 0 && li.productId && src.boxes != null) {
               const p = await tx.product.findFirst({
                 where: { id: li.productId },
                 select: { unitsPerBox: true },
               });
               upb = Number(p?.unitsPerBox ?? 0);
             }
-            const wasBoxSplit = li.boxes != null;
+            const wasBoxSplit = src.boxes != null;
             const split =
               wasBoxSplit && upb > 1
                 ? normalizeBoxesPieces({ qty: newQty, unitsPerBox: upb })
                 : { qty: newQty, boxes: null as number | null, pieces: null as number | null };
-            const unitPrice = Number(li.unitPrice);
+            const unitPrice = Number(src.unitPrice);
             // Agreed price wins (never re-runs applyBestPromotion for the unit
             // price), but BUY_N_GET_M free units are a function of the QUANTITY —
             // re-derive them for the new qty and write them back. Re-applying the
             // snapshot verbatim billed a 12 → 2 box door edit at $0.00.
-            const storedFreeUnits = Number((li as any).promoFreeUnits ?? 0);
+            const storedFreeUnits = Number(src.promoFreeUnits ?? 0);
             let promoCategory: string | null = null;
             if (storedFreeUnits > 0 && li.productId) {
               const prod = await tx.product.findFirst({
@@ -5380,7 +5459,7 @@ export class OrdersService implements OnApplicationBootstrap {
               category: promoCategory,
               unitPrice,
               storedFreeUnits,
-              oldUnits: li.boxes != null ? Number(li.boxes) : Number(li.qty),
+              oldUnits: src.boxes != null ? Number(src.boxes) : Number(src.qty),
               newUnits: split.boxes != null ? split.boxes : split.qty,
             });
             await tx.orderItem.update({
@@ -5408,8 +5487,8 @@ export class OrdersService implements OnApplicationBootstrap {
             mutationRow = {
               orderItemId: li.id,
               productId: li.productId,
-              qty: split.qty - Number(li.qty),
-              note: `Qty ${Number(li.qty)} -> ${split.qty} via approved change request ${cr.id}`,
+              qty: split.qty - Number(src.qty),
+              note: `Qty ${Number(src.qty)} -> ${split.qty} via approved change request ${cr.id}`,
             };
           }
         } else if (cr.type === ChangeRequestType.ADD_ITEM) {
@@ -5421,12 +5500,18 @@ export class OrdersService implements OnApplicationBootstrap {
           const addQty = Number(payload.qty);
           if (!(addQty > 0)) throw new BadRequestException("qty must be > 0");
 
-          const existing = order.lineItems.find(
-            (l) =>
-              l.productId === product.id &&
-              l.status !== "CANCELLED" &&
-              Number(l.deliveredQty) === 0,
+          // B135 (REG-B135): pick the merge target from the row held under the Order FOR UPDATE
+          // lock, then read its authoritative qty/price through the tx — the pre-tx snapshot can
+          // name a line a concurrent edit has since cancelled, delivered or re-quantified.
+          const heldMatch = heldItems.find(
+            (h: any) =>
+              h.productId === product.id &&
+              h.status !== "CANCELLED" &&
+              Number(h.deliveredQty) === 0,
           );
+          const existing = heldMatch
+            ? await tx.orderItem.findUnique({ where: { id: heldMatch.id } })
+            : null;
           if (existing) {
             // Same product already on the order → increase THAT line at its
             // stored (agreed) unitPrice; the agreed price always wins.
@@ -5563,9 +5648,8 @@ export class OrdersService implements OnApplicationBootstrap {
         // RF-4: re-derive + persist each regulated line's category tax from the
         // post-change set and fold Σ into the total (kept out of the `tax` column).
         const categoryTax = await this.recomputeLineCategoryTaxes(tx, activeItems);
-        const total = roundMoney(
-          subtotal + tax + categoryTax + Number((order as any).shippingFee ?? 0),
-        );
+        const shippingFee = Number((live as any).shippingFee ?? 0);
+        const total = roundMoney(subtotal + tax + categoryTax + shippingFee);
 
         // ── G6: stock + credit guards RE-RUN inside the tx (:2175-2187).
         // A throw rolls back the claim AND the merge. Resolver role drives the
@@ -5619,7 +5703,9 @@ export class OrdersService implements OnApplicationBootstrap {
             },
           });
         }
-        return { subtotal, tax, total };
+        // shippingFee rides out of the tx (updateOrderItems :4284 idiom) so the post-commit
+        // revision snapshots the value the total was actually built from.
+        return { subtotal, tax, total, shippingFee };
       },
       { timeout: 15_000 },
     );
@@ -5630,7 +5716,7 @@ export class OrdersService implements OnApplicationBootstrap {
     await this.appendOrderRevision(
       order.id,
       resolver,
-      { subtotal, tax, total, shippingFee: Number((order as any).shippingFee ?? 0) },
+      { subtotal, tax, total, shippingFee },
       "CHANGE_REQUEST",
       cr.note ?? null,
     );
@@ -5907,10 +5993,28 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     await this.prisma.tenantTransaction(async (tx) => {
+      // B214 (REG-B214): this loop hard-deletes invoices WITHOUT going through
+      // InvoicesService.deleteInvoice (ledger-reversal duplication, see below), so it must refuse
+      // on its own — same shared guard, before any write (L-072, L-081).
+      await assertNoUnspentSourcedCredits(
+        tx,
+        order.invoices.map((inv) => inv.id),
+      );
       await this.creditNotes.releaseOrderCreditsInTx(tx, id);
       for (const inv of order.invoices) {
         await this.invoicesService.releaseWalletPaymentsInTx(tx, inv.id);
       }
+      // B214: re-assert on post-release state — the releases above revive
+      // (un-spend/un-expire/un-VOID) notes sourced by these invoices; a throw here rolls the
+      // releases back with the tx.
+      // `lockRows` only HERE: the releases above already hold the InvoicePayment/CreditNote rows,
+      // so taking Invoice now puts it LAST — the order voidInvoice uses. Taking it on the
+      // pre-release call would make Invoice first and re-open the 40P01 cycle.
+      await assertNoUnspentSourcedCredits(
+        tx,
+        order.invoices.map((inv) => inv.id),
+        { afterRelease: true, lockRows: true },
+      );
       // Delete all invoices associated with this order
       for (const inv of order.invoices) {
         // B65 (REG-B65): reverse this invoice's regulated-ledger entries

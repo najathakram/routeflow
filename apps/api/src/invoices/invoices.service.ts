@@ -52,11 +52,13 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
 import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 import { startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
+import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 
 const TERM_DAYS: Record<string, number> = {
@@ -4294,8 +4296,18 @@ export class InvoicesService {
    * the reconcile provably picks it up. Anything outside the fence (split/partial
    * siblings, a delivered order) keeps the legacy revert, including its
    * throw-on-payments guard.
+   *
+   * `opts.lockRows` takes the SAME Invoice row lock `recordPayment` holds before counting that
+   * invoice's payments, so a payment cannot commit between the count and the DRAFT flip. It is
+   * opt-in because only a caller already inside a transaction can hold it usefully, and because
+   * the row is then held for the rest of that tx — the caller owns keeping Invoice last in the
+   * lock order (`lockRowsNoWait`). Contention surfaces as a retryable 409 (NOWAIT), not a wait.
    */
-  async revertLinkedInvoicesForOrderEdit(orderId: string, tx?: any): Promise<string[]> {
+  async revertLinkedInvoicesForOrderEdit(
+    orderId: string,
+    tx?: any,
+    opts?: { lockRows?: boolean },
+  ): Promise<string[]> {
     const db = tx ?? this.prisma.forTenant();
     const linked = await db.invoice.findMany({
       where: {
@@ -4327,6 +4339,9 @@ export class InvoicesService {
       // Exempt (see above): leave it SENT — the widened reconcile re-syncs it, and
       // its payments (if any) stay attached to a still-issued document.
       if (depositMirrorExempt && inv.depositPercent != null) continue;
+      // Under the caller's tx: hold the row before the count, so the payment-block below reads a
+      // state no concurrent recordPayment can change until this tx commits or rolls back.
+      if (opts?.lockRows) await lockRowsNoWait(db, "Invoice", [inv.id], "INVOICE_BUSY");
       const paymentCount = await db.invoicePayment.count({ where: { invoiceId: inv.id } });
       if (paymentCount > 0) {
         throw new BadRequestException(
@@ -5334,6 +5349,11 @@ export class InvoicesService {
         );
       }
 
+      // B214 (REG-B214): refuse while a credit note this invoice sourced still has spendable
+      // balance — deleting would orphan it (invoiceId → null) as provenance-less wallet money.
+      // Runs before any write, on rows read through this tx (L-081).
+      await assertNoUnspentSourcedCredits(tx, [id]);
+
       // Free up invoicedQty on the source order BEFORE deleting the invoice
       // items (we read them inside the helper). Otherwise a delete leaves the
       // source order's lines flagged as fully invoiced with no surviving
@@ -5344,7 +5364,8 @@ export class InvoicesService {
       // items are deleted (the ledger keeps its own snapshot; append-only, no FK).
       await this.ledger.reverseInvoiceEntries({ invoiceId: id, db: tx });
 
-      // Unlink credit notes that were generated for this invoice
+      // Unlink the remaining (closed: spent, VOID or expired) credit notes this invoice sourced;
+      // open ones were refused above.
       await tx.creditNote.updateMany({
         where: { invoiceId: id },
         data: { invoiceId: null },

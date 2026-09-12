@@ -71,7 +71,8 @@
  * crashing the process the way an idle client's unhandled `error` event would.
  */
 
-import { Logger } from "@nestjs/common";
+import { ConflictException, Logger } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { Pool, type PoolClient } from "pg";
 
 export type LockMode = "wait" | "try";
@@ -298,5 +299,66 @@ export async function withAdvisoryLock<T>(
     client.removeListener("error", onClientError);
     if (destroy) client.release(failure instanceof Error ? failure : new Error(String(failure)));
     else client.release();
+  }
+}
+
+/**
+ * Tables `lockRowsNoWait` will take a row lock on. Closed list for the same reason
+ * `LOCK_FAMILIES` is: the caller passes a code literal, never data, and a table name cannot be
+ * bound as a parameter — so the SQL below is written out once PER TABLE instead of interpolating
+ * an identifier at all.
+ */
+export const NOWAIT_LOCK_TABLES = ["RouteRunStop", "Invoice"] as const;
+export type NoWaitLockTable = (typeof NOWAIT_LOCK_TABLES)[number];
+
+/**
+ * Take `FOR NO KEY UPDATE NOWAIT` on the given rows inside `tx`; a lock held by an in-flight
+ * writer surfaces as 409 CONCURRENT_UPDATE (retryable) instead of a wait.
+ *
+ * What NOWAIT buys is exactly this much: the transaction never WAITS on these rows, so it cannot
+ * deadlock while ACQUIRING them. It still HOLDS them for the rest of the tx — so this is not a
+ * licence to take them out of order. Callers must take them in the same order as every other
+ * writer of the same rows (Invoice LAST, after InvoicePayment/CreditNote — see
+ * CreditNotesService.voidInvoice), or a later blocking lock can still close a cycle.
+ *
+ * NO KEY UPDATE, not FOR UPDATE, so a transaction merely holding an FK KEY SHARE on the row does
+ * not trip it while a real UPDATE does. The busy path writes nothing — callers take this before
+ * their first mutation.
+ */
+export async function lockRowsNoWait(
+  tx: any,
+  table: NoWaitLockTable,
+  ids: string[],
+  reason: string,
+): Promise<void> {
+  if (ids.length === 0) return;
+  if (!(NOWAIT_LOCK_TABLES as readonly string[]).includes(table)) {
+    throw new Error(
+      `lockRowsNoWait: unknown table "${table}" (expected one of ${NOWAIT_LOCK_TABLES.join(", ")})`,
+    );
+  }
+  try {
+    // One literal statement per table rather than an interpolated identifier: the table name
+    // never reaches the SQL from a value. This helper is the shared home of the lock — the
+    // hand-written statements it replaced locked a single id (`WHERE id = $1`); it takes a set.
+    if (table === "RouteRunStop") {
+      await tx.$executeRaw`SELECT id FROM "RouteRunStop" WHERE id IN (${Prisma.join(ids)}) FOR NO KEY UPDATE NOWAIT`;
+    } else {
+      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id IN (${Prisma.join(ids)}) FOR NO KEY UPDATE NOWAIT`;
+    }
+  } catch (err) {
+    // Prisma surfaces the SQLSTATE on `meta.code` for a raw query, but not on every driver/error
+    // shape — the message check is the fallback so a wrapped error is never mistaken for a real
+    // failure and rethrown as a 500.
+    const lockUnavailable =
+      (err as any)?.meta?.code === "55P03" ||
+      /55P03|could not obtain lock/i.test(String((err as any)?.message ?? ""));
+    if (!lockUnavailable) throw err;
+    throw new ConflictException({
+      code: "CONCURRENT_UPDATE",
+      reason,
+      retryable: true,
+      message: "Another update to this record is in progress. Try again in a moment.",
+    });
   }
 }

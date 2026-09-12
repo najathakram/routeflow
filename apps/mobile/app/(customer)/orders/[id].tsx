@@ -62,6 +62,10 @@ function friendlyChangeRequestError(e: any): string {
   if (code === "CHANGE_WINDOW_CLOSED") {
     return "This order is no longer accepting change requests.";
   }
+  // Transient, unlike the two above — the same request works on a retry.
+  if (code === "CONCURRENT_UPDATE") {
+    return e?.response?.data?.message ?? "Another update is in progress — try again in a moment.";
+  }
   return e?.response?.data?.message ?? e?.message ?? "Try again.";
 }
 
