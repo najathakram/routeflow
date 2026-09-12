@@ -107,6 +107,18 @@ after every attempt failed, and clears it itself on the next confirmed flip.
   ids for BOTH services to reach a terminal state (SUCCESS) before flipping private; an old
   SKIPPED/SUCCESS row at the top is not your deploy (Window 14, 2026-09-10).
 
+- **The container boots, then crashes — prod 502 with every gate green** (#702 → #703, Window 16,
+  2026-09-12: `CrmModule` shipped without `BillingModule`, so `AddonGuard` could not resolve
+  `AddonService`; Nest threw `UnknownDependenciesException` at InstanceLoader on every boot and
+  the API answered 502 for 26 minutes while web stayed up). Boundary-mocked specs, lint and `tsc`
+  cannot see DI scope, and the deploy showed a green healthcheck before the crash. Railway's CLI has
+  NO rollback to an earlier deployment (`redeploy` only re-runs the latest); the dashboard does
+  (service → deployment → Rollback) — hand the owner that path immediately, then FIX FORWARD:
+  keep the repo public, hotfix branch off master, verify → CI → merge → `SUCCESS` → health 200 →
+  private. Guards now: `apps/api/src/common/app-module-compile.spec.ts` (compiles the real
+  `AppModule` graph) + `addon-guard-module-import.spec.ts`; any diff touching `*.module.ts`
+  also runs the compose boot gate (`npm run local:up` → `local:validate`) before its push.
+
 ## Retirement checklist
 
 Retire this routine only when, in order:
