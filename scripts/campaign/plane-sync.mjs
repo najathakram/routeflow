@@ -1,14 +1,22 @@
 #!/usr/bin/env node
 // plane-sync.mjs — mirrors the in-repo bug registry (`.claude/campaign/`) into
 // Plane's BUGS project. See .claude/pipeline/2026-09-10-plane-sync/build-plan.md
-// (DECIDE-27, owner ruling 2026-09-10) for the full rationale.
+// (DECIDE-27, owner ruling 2026-09-10) and .claude/pipeline/
+// 2026-09-11-plane-harness/build-plan.md (WP2) for the full rationale.
 //
 // DIRECTION. The registry is the source of truth; Plane never writes back.
 // This script derives one desired Plane work item per catalogue row, diffs it
-// against what Plane already holds (matched by `external_id`, never by
-// title), and writes only the diffs. It never deletes — an item Plane holds
-// with no matching registry row is left exactly as it is, reported and
-// skipped, because deleting on the owner's behalf is not this script's call.
+// against what Plane already holds (matched by `external_id`, after an
+// adoption pass that stamps `external_id` onto a matching human-created item —
+// R1), and writes only the diffs. It never deletes — an item Plane holds with
+// no matching registry row is left exactly as it is, reported and skipped,
+// because deleting on the owner's behalf is not this script's call.
+//
+// SHARED CLIENT (WP1/R9). All HTTP — retry/backoff, the 50 req/min ceiling,
+// the ≤4 writes/s floor, the denylist scan (R2), the write budget + ledger
+// (R3), and identifier/name resolution — lives in plane-client.mjs, imported
+// below. This file owns only the registry-to-Plane mapping, the adoption
+// pass, the comment-on-close decision, and the CLI.
 //
 // WHY THIS RE-IMPLEMENTS TWO TINY READERS INSTEAD OF IMPORTING bugs.mjs.
 // bugs.mjs's dispatcher runs at import time (its module-scope `cmds.*` table
@@ -25,26 +33,40 @@
 // a thrown stack, never a non-zero exit — because Gate 5 in
 // .claude/hooks/stop.mjs spawns this on every turn and must never fail a turn
 // over Plane being unreachable. `--strict` (a human running this by hand)
-// is the only way to get a non-zero exit out of a failure.
+// is the only way to get a non-zero exit out of a failure. `--help`/`-h` and
+// an unknown flag are handled before any of that — see main() — so a bare
+// `--help` can never fall through to a live run (the 2026-09-11 incident
+// Landmine 3/R13 close).
 //
 // NO PLANE UUIDS, EVER. The BUGS project is resolved at runtime by its
 // `identifier === "BUGS"`; Plane states are resolved at runtime by `name`.
 // Hardcoding either id would work today and silently target the wrong
-// project/state the day someone recreates the workspace. See T11 in the
-// self-test, which greps this file (and stop.mjs) for a uuid-shaped literal.
+// project/state the day someone recreates the workspace. See T11/H11 in the
+// self-test, which greps this file (and stop.mjs, plane-client.mjs, …) for a
+// uuid-shaped literal.
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
+import {
+  createClient,
+  CLOSED_MARKER,
+  EXTERNAL_SOURCE,
+  loadDenylist,
+  NAME_ID_RE,
+  repoRoot,
+  stateDir,
+} from "./plane-client.mjs";
 
 // Resolved from this file's own location, independent of cwd — the same
 // convention bugs.mjs uses for REPO_ROOT, so `node scripts/campaign/plane-sync.mjs`
 // behaves the same whether invoked from the repo root (Gate 5) or elsewhere.
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BUGS_SCRIPT = join(REPO_ROOT, "scripts", "campaign", "bugs.mjs");
+const SYNC_STATE_FILENAME = ".plane-sync-state.json";
+const GITHUB_REPO = "najathakram/routeflow";
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const sha256Hex = (s) => createHash("sha256").update(s).digest("hex");
 
 // ── state / priority maps (build-plan.md WP1, verbatim) ────────────────────
@@ -212,6 +234,21 @@ function buildDescriptionHtml({ row, ledgerRow, batch, issue, wavePlacement, has
   return `${body}<p><code>registry-hash: ${hash}</code></p>`;
 }
 
+// R4's exact close-comment template, built only from the fields the ledger
+// row actually carries — never invented. `state <ledger state>` is always
+// present (it is what triggered the closure, e.g. "done" or "refuted"); every
+// other bullet is conditional on the ledger row actually carrying that field.
+function buildCloseCommentHtml(ledgerRow) {
+  const bits = [`state ${esc(ledgerRow.state ?? "")}`];
+  if (ledgerRow.batch) bits.push(`batch ${esc(ledgerRow.batch)}`);
+  if (ledgerRow.pr) bits.push(`PR #${esc(ledgerRow.pr)}`);
+  if (ledgerRow.roundSha) bits.push(`sha ${esc(String(ledgerRow.roundSha).slice(0, 7))}`);
+  if (ledgerRow.proof) {
+    bits.push(`proof ${esc(ledgerRow.proof)}${ledgerRow.tier ? ` / ${esc(ledgerRow.tier)}` : ""}`);
+  }
+  return `<p><b>Closed by the registry</b> · ${bits.join(" · ")}</p><p><small>${CLOSED_MARKER}</small></p>`;
+}
+
 // One desired Plane work item per catalogue row (R1/R2/R3). Never reads
 // Plane itself — that is planDiff's/runSync's job — so this stays a pure,
 // synchronous function of the registry directory's own content, which is
@@ -226,6 +263,11 @@ function buildDescriptionHtml({ row, ledgerRow, batch, issue, wavePlacement, has
 // text still renders in the description, re-asserted whenever anything the
 // hash DOES cover changes. `wavePlacement` (a Map keyed by batch) can be
 // injected to skip the spawn entirely.
+//
+// Each returned row also carries the raw `ledgerRow` (harness addition,
+// 2026-09-11-plane-harness WP2) — the comment-on-close decision needs the
+// ledger's own state/pr/proof/roundSha/tier verbatim, never re-derived from
+// the mapped Plane fields. This changes no existing field and no hash input.
 export function deriveDesired(registryDir, { wavePlacement: injectedWaves } = {}) {
   const catalogue = readCatalogue(registryDir);
   const ledger = readLedgerState(registryDir);
@@ -249,13 +291,14 @@ export function deriveDesired(registryDir, { wavePlacement: injectedWaves } = {}
       hash,
     });
     return {
-      external_source: "routeflow-registry",
+      external_source: EXTERNAL_SOURCE,
       external_id: row.id,
       name: `${row.id} · ${row.title}`,
       priority,
       stateName,
       description_html,
       hash,
+      ledgerRow,
     };
   });
 }
@@ -364,8 +407,39 @@ export function planDiff(desired, existingItems) {
   return { creates, patches, orphans, skipped, unverified };
 }
 
-// ── the Plane REST client (~40 lines, per the build plan — the gitignored
-// kit's shape copied for X-API-Key/retry, but this script owns its own) ────
+// ── comment-on-close local cache (R4) — .plane-sync-state.json under
+// stateDir(), gitignored. `{closed: {"B###": ts}}`. A missing/unparsable file
+// reads as "nothing cached" rather than throwing — the fallback (listing the
+// item's own comments) still catches an already-closed item either way.
+function loadSyncStateCache() {
+  const p = join(stateDir(), SYNC_STATE_FILENAME);
+  if (!existsSync(p)) return { closed: {} };
+  try {
+    const parsed = JSON.parse(readFileSync(p, "utf8"));
+    return {
+      closed: parsed && typeof parsed.closed === "object" && parsed.closed ? parsed.closed : {},
+    };
+  } catch {
+    return { closed: {} };
+  }
+}
+
+function saveSyncStateCache(cache) {
+  const dir = stateDir();
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, SYNC_STATE_FILENAME), JSON.stringify(cache));
+}
+
+// alreadyClosed(id): cache.closed[id] ?? (list comments -> some(c =>
+// (c.comment_stripped || "").includes(CLOSED_MARKER))) — the hard line,
+// verbatim. The fallback is read-only (GET), never a write, so a lost cache
+// never re-triggers a duplicate comment even under `--max-writes 0`.
+async function alreadyClosed(cache, id, client, projectId, itemId) {
+  if (cache.closed?.[id]) return true;
+  const comments = await client.listAll(`projects/${projectId}/work-items/${itemId}/comments/`);
+  return comments.some((c) => (c.comment_stripped || "").includes(CLOSED_MARKER));
+}
+
 function planeConfig() {
   return {
     baseUrl: process.env.PLANE_BASE_URL || "https://api.plane.so",
@@ -373,122 +447,33 @@ function planeConfig() {
   };
 }
 
-// Retries 429/5xx up to 3x, honouring `x-ratelimit-reset` (epoch seconds) when
-// present; falls back to a short linear backoff otherwise. Anything else that
-// isn't 2xx throws, which runSync turns into the one non-blocking failure
-// line (R5).
-async function planeRequest(baseUrl, apiKey, method, path, { body, query } = {}) {
-  const url = new URL(path, baseUrl);
-  if (query) {
-    for (const [k, v] of Object.entries(query)) {
-      if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
-    }
-  }
-  const maxRetries = 3;
-  for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, {
-      method,
-      headers: { "X-API-Key": apiKey, "content-type": "application/json" },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+// R14 — branch guard (incident 2026-09-11 23:26Z, L-074 class). The v1 Gate 5
+// hook ran from a feature worktree at a turn end with the real key in the
+// environment and created 282 live BUGS items (160 duplicates) — a hook
+// inherits the session's cwd, so a write path must be dry by default off the
+// integration branch. Resolved via `git rev-parse --abbrev-ref HEAD`, run
+// with cwd = repoRoot() (never process.cwd(), for the same worktree-cwd
+// reason) — never process.cwd(). Any failure (git missing, not a repo,
+// non-zero exit, empty stdout) fails CLOSED: reported as branch "unknown",
+// which is itself "not master", so the skip line says why without a second
+// code path.
+function currentBranch() {
+  let res;
+  try {
+    res = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd: repoRoot(),
+      encoding: "utf8",
+      timeout: 5_000,
     });
-    if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
-      const resetHeader = res.headers.get("x-ratelimit-reset");
-      let waitMs = 300 * (attempt + 1);
-      if (resetHeader) {
-        const resetAtMs = Number(resetHeader) * 1000;
-        if (Number.isFinite(resetAtMs)) waitMs = Math.max(waitMs, resetAtMs - Date.now() + 50);
-      }
-      await sleep(Math.min(Math.max(waitMs, 0), 5000));
-      continue;
-    }
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(
-        `${method} ${path} -> HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`,
-      );
-    }
-    if (res.status === 204) return null;
-    // Landmine 2: a caller told "no budget left" should not immediately fire
-    // its next request into the same window.
-    const remaining = res.headers.get("x-ratelimit-remaining");
-    if (remaining === "0") {
-      const resetHeader = res.headers.get("x-ratelimit-reset");
-      const resetAtMs = resetHeader ? Number(resetHeader) * 1000 : NaN;
-      if (Number.isFinite(resetAtMs)) await sleep(Math.max(0, resetAtMs - Date.now() + 50));
-    }
-    return res.json();
+  } catch {
+    return "unknown";
   }
+  if (!res || res.error || res.status !== 0) return "unknown";
+  return (res.stdout || "").trim() || "unknown";
 }
 
-// Landmine 2 (rate limit ≤ 4 writes/s): a floor on the gap between two
-// consecutive POST/PATCH calls, independent of whatever the response headers
-// say — cheap insurance against ever bursting past Plane's write budget.
-let lastWriteAt = 0;
-const MIN_WRITE_INTERVAL_MS = 260;
-async function throttleWrite() {
-  const wait = lastWriteAt + MIN_WRITE_INTERVAL_MS - Date.now();
-  if (wait > 0) await sleep(wait);
-  lastWriteAt = Date.now();
-}
-
-async function findBugsProject(baseUrl, apiKey, slug) {
-  const page = await planeRequest(baseUrl, apiKey, "GET", `/api/v1/workspaces/${slug}/projects/`);
-  const project = (page.results ?? []).find((p) => p.identifier === "BUGS");
-  if (!project) throw new Error(`no project with identifier "BUGS" in workspace "${slug}"`);
-  return project;
-}
-
-async function fetchStates(baseUrl, apiKey, slug, projectId) {
-  const page = await planeRequest(
-    baseUrl,
-    apiKey,
-    "GET",
-    `/api/v1/workspaces/${slug}/projects/${projectId}/states/`,
-  );
-  return page.results ?? [];
-}
-
-// Case-insensitive on purpose: Plane's stock board ships "In Progress" while
-// STATE_BY_LEDGER spells it "In progress", and a case-sensitive miss used to
-// mean "create the item with no state at all".
-function resolveStateId(states, stateName) {
-  const wanted = String(stateName ?? "").toLowerCase();
-  const match = states.find((s) => String(s.name ?? "").toLowerCase() === wanted);
-  if (!match) {
-    console.error(
-      `Plane mirror warn: no Plane state named "${stateName}" in BUGS — rows in that state are skipped`,
-    );
-    return undefined;
-  }
-  return match.id;
-}
-
-const workItemsPath = (slug, projectId) =>
-  `/api/v1/workspaces/${slug}/projects/${projectId}/work-items/`;
-
-// Landmine 1: `description_stripped` may be missing from the list response
-// even with `fields=` requested. There is deliberately NO per-item GET to
-// recover it: an item whose list row lacks the field is compared on
-// name/state/priority only and otherwise presumed unchanged (see planDiff).
-// Trading a per-item GET per mirrored row — 282 of them, against Gate 5's
-// 25 s budget — for "a description-only change is re-asserted the next time
-// name/state/priority move" is the cheaper side of that trade.
-async function fetchAllWorkItems(baseUrl, apiKey, slug, projectId) {
-  const items = [];
-  let cursor;
-  do {
-    const page = await planeRequest(baseUrl, apiKey, "GET", workItemsPath(slug, projectId), {
-      query: {
-        external_source: "routeflow-registry",
-        per_page: "100",
-        fields: "id,name,state,priority,external_id,description_stripped",
-        ...(cursor ? { cursor } : {}),
-      },
-    });
-    items.push(...(page.results ?? []));
-    cursor = page.next_page_results ? page.next_cursor : null;
-  } while (cursor);
-  return items;
+function isWriteAllowedBranch(branch) {
+  return branch === "master" || branch === "main";
 }
 
 // ── the sync itself ─────────────────────────────────────────────────────────
@@ -512,6 +497,16 @@ export async function runSync({
   // reported partial instead of a killed child and silence: the digest is not
   // advanced, and the next turn continues where this one stopped.
   budgetMs,
+  // R3/R12: a write-COUNT ceiling, independent of the time budget above.
+  // Sync default 250 (spec.md R3); Gate 5 passes 25 (R12). Once reached, the
+  // shared client defers every further write (never throws, never blocks) —
+  // this script just stops counting them as created/updated and reports the
+  // total via client.summary().deferred.
+  maxWrites = 250,
+  // R14: off master/main, writes are dry by default — this override (Gate 5
+  // never sets it, per spec.md R14) is the only way to write from another
+  // branch. Never affects --dry-run/--check, which never write regardless.
+  allowBranch = false,
 } = {}) {
   void quiet;
   const startedAt = Date.now();
@@ -524,21 +519,94 @@ export async function runSync({
   const emit = (line) => {
     process.stderr.write(`${line}\n`);
   };
+  const warnForbidden = (id, patternName) =>
+    console.error(`Plane mirror warn: ${id} forbidden (${patternName})`);
 
   try {
     const rows = deriveDesired(registryDir);
-    const project = await findBugsProject(baseUrl, apiKey, slug);
-    const states = await fetchStates(baseUrl, apiKey, slug, project.id);
+    const registryIds = new Set(rows.map((d) => d.external_id));
+    const client = createClient({ baseUrl, slug, apiKey, tool: "plane-sync", maxWrites });
+    const cache = loadSyncStateCache();
+
+    const project = await client.resolveProject("BUGS");
+    const statesMap = await client.resolveStates(project.id); // Map<name-lower, {id, group}>
+    const idToGroup = new Map([...statesMap.values()].map((s) => [s.id, s.group]));
+    // Reverse of statesMap (id -> display name) — used only to make the F7
+    // "state unknown" warn line readable; a stale/renamed state id naturally
+    // has no entry here either, so the warn falls back to the bare id.
+    const idToName = new Map([...statesMap.entries()].map(([name, s]) => [s.id, name]));
     // Resolve each DISTINCT desired state name once (one warn per missing
     // state, not one per row) and carry the id on every row, so both the diff
     // and the write bodies compare/send the same resolved id.
     const stateIdByName = new Map();
     for (const name of new Set(rows.map((d) => d.stateName))) {
-      stateIdByName.set(name, resolveStateId(states, name));
+      const entry = statesMap.get(String(name ?? "").toLowerCase());
+      if (!entry) {
+        console.error(
+          `Plane mirror warn: no Plane state named "${name}" in BUGS — rows in that state are skipped`,
+        );
+      }
+      stateIdByName.set(name, entry?.id);
     }
     const desired = rows.map((d) => ({ ...d, stateId: stateIdByName.get(d.stateName) }));
-    const existingItems = await fetchAllWorkItems(baseUrl, apiKey, slug, project.id);
-    const { creates, patches, orphans, skipped, unverified } = planDiff(desired, existingItems);
+
+    // Landmine 1: `description_stripped` may be missing from the list
+    // response even with `fields=` requested — see planDiff's own note. No
+    // `external_source` filter here (unlike v1): adoption needs to SEE the
+    // items that do NOT yet carry it.
+    const items = await client.listAll(`projects/${project.id}/work-items/`, {
+      query: { fields: "id,name,state,priority,external_id,description_stripped,sequence_id" },
+    });
+
+    // R1 adoption CANDIDATES — pure computation, no writes yet (fix-round 2b,
+    // F1: the actual PATCH that stamps external_source/external_id is a
+    // WRITE, and moved below, past both the --dry-run/--check return and the
+    // R14 branch guard — see the "R1 adoption pass" block near the write
+    // loops). Before creating an item for registry id B###, find an existing
+    // BUGS item whose external_id is null and whose name matches
+    // "B<n> · ..." with the same number. Two candidates for one id -> the
+    // lowest sequence_id wins (warned about here, since the warn itself is
+    // not a write and a dry-run/check caller still wants to see it).
+    const byExt = new Map();
+    const candidates = new Map();
+    for (const it of items) {
+      if (it.external_id) {
+        byExt.set(it.external_id, it);
+        continue;
+      }
+      const m = NAME_ID_RE.exec(it.name || "");
+      if (m) {
+        const id = `B${m[1]}`;
+        (candidates.get(id) ?? candidates.set(id, []).get(id)).push(it);
+      }
+    }
+    const adoptionWinners = new Map(); // id -> item (lowest sequence_id)
+    for (const [id, list] of candidates) {
+      if (byExt.has(id) || !registryIds.has(id)) continue;
+      list.sort((a, b) => a.sequence_id - b.sequence_id);
+      if (list.length > 1) {
+        console.error(
+          `Plane mirror warn: duplicate candidate ${id}: BUGS-${list.map((i) => i.sequence_id).join(", BUGS-")} (adopting the oldest)`,
+        );
+      }
+      adoptionWinners.set(id, list[0]);
+    }
+    const adoptIds = new Set(adoptionWinners.keys());
+
+    // Diff EXCLUDING rows pending adoption — they are neither a create (an
+    // item already exists) nor a patch (nothing has been written to it yet),
+    // so they must not double-count as either; they surface separately as
+    // `wouldAdopt`/adoption below. Used for the orphan/skip warnings and the
+    // --dry-run/--check summary; the real write path recomputes a full diff
+    // once adoption has actually run (see below).
+    const desiredPendingAdoptionExcluded = desired.filter((d) => !adoptIds.has(d.external_id));
+    const {
+      creates: earlyCreates,
+      patches: earlyPatches,
+      orphans,
+      skipped,
+      unverified,
+    } = planDiff(desiredPendingAdoptionExcluded, [...byExt.values()]);
 
     // `Plane mirror warn:` prefix (F5): every diagnostic this script writes
     // must be distinguishable from the ONE bare-prefixed report line Gate 5
@@ -557,41 +625,110 @@ export async function runSync({
       );
     }
 
+    const wouldAdopt = adoptionWinners.size;
+
     if (dryRun || checkOnly) {
-      for (const c of creates) console.log(`CREATE ${c.external_id}`);
-      for (const p of patches) console.log(`UPDATE ${p.desired.external_id}`);
+      for (const c of earlyCreates) console.log(`CREATE ${c.external_id}`);
+      for (const p of earlyPatches) console.log(`UPDATE ${p.desired.external_id}`);
       // Deliberately NOT the real-write sentence: a no-write run must never be
       // mistakable for a run that actually created or updated anything.
       const summary =
-        `Plane mirror: would create ${creates.length}, would update ${patches.length}` +
+        `Plane mirror: would create ${earlyCreates.length}, would update ${earlyPatches.length}` +
+        (wouldAdopt > 0 ? `, would adopt ${wouldAdopt}` : "") +
         (skipped.length > 0 ? `, ${skipped.length} skipped (no Plane state)` : "") +
         (unverified.length > 0 ? `, ${unverified.length} unverified` : "") +
         ` (${checkOnly ? "check" : "dry-run"})`;
       emit(summary);
       // F3: an unverifiable row is drift, not silence — `--check` exits 1 on it
       // so a run that cannot prove a mirrored row matches never reads as clean.
-      const drift = creates.length + patches.length + skipped.length + unverified.length > 0;
+      // An adoption candidate is drift too — F1: it is a write this run would
+      // make, just not one --check/--dry-run is allowed to issue.
+      const drift =
+        earlyCreates.length +
+          earlyPatches.length +
+          skipped.length +
+          unverified.length +
+          wouldAdopt >
+        0;
       return {
         exitCode: checkOnly && drift ? 1 : 0,
-        created: creates.length,
-        updated: patches.length,
+        created: earlyCreates.length,
+        updated: earlyPatches.length,
         skipped: skipped.length,
         unverified: unverified.length,
       };
     }
 
+    // R14 branch guard — checked only once dry-run/check (which never write)
+    // are ruled out above, and BEFORE the R1 adoption PATCH loop (F1: adoption
+    // is a write like any other, so it must never fire off master/main without
+    // --allow-branch either). Listing and diffing above still ran in full, so
+    // a skip here still reports accurate would-be drift via the warn lines
+    // already emitted (orphans/skipped) plus the would-adopt count folded into
+    // the skip line itself, it just makes zero POST/PATCH.
+    const branch = currentBranch();
+    if (!allowBranch && !isWriteAllowedBranch(branch)) {
+      // stdout, not emit()/stderr: ruling-s4-s5.md T16 (the R14 oracle) reads
+      // this exact line off stdout. Every other summary/skip/failed line in
+      // this file stays stderr-only (the emit() comment's "one line, one
+      // stream" rule) — this is the one line the oracle pins to stdout, so it
+      // is written directly rather than through emit(), and only here. The
+      // "; would adopt N" suffix is appended only when there is one, so the
+      // original (pre-F1) exact-match line is unchanged when there is none.
+      process.stdout.write(
+        `Plane mirror: skipped writes (branch ${branch} is not master; ` +
+          `pass --allow-branch to override)` +
+          (wouldAdopt > 0 ? `; would adopt ${wouldAdopt}` : "") +
+          `\n`,
+      );
+      return {
+        exitCode: 0,
+        created: 0,
+        updated: 0,
+        skipped: skipped.length,
+        unverified: unverified.length,
+      };
+    }
+
+    // R1 adoption pass — the actual WRITE (F1: moved past both gates above).
+    // PATCH stamps external_source/external_id on the winning candidate;
+    // never deletes the loser of a duplicate pair.
+    for (const [id, item] of adoptionWinners) {
+      const r = await client.patch(
+        `projects/${project.id}/work-items/${item.id}/`,
+        { external_source: EXTERNAL_SOURCE, external_id: id },
+        { ref: id },
+      );
+      if (r.forbidden) warnForbidden(id, r.forbidden.name);
+      else if (!r.deferred) {
+        byExt.set(id, { ...item, external_source: EXTERNAL_SOURCE, external_id: id });
+      }
+    }
+    const existingItems = [...byExt.values()];
+
+    // Full diff, recomputed now that adoption has actually happened — an
+    // adopted item may still need a further name/state/priority/hash PATCH,
+    // exactly like any other existing item.
+    const {
+      creates,
+      patches,
+      skipped: skippedFinal,
+      unverified: unverifiedFinal,
+    } = planDiff(desired, existingItems);
+
     let created = 0;
     let updated = 0;
     let budgetExhausted = false;
     const plannedWrites = creates.length + patches.length;
+
     for (const c of creates) {
       if (budgetSpent()) {
         budgetExhausted = true;
         break;
       }
-      await throttleWrite();
-      await planeRequest(baseUrl, apiKey, "POST", workItemsPath(slug, project.id), {
-        body: {
+      const r = await client.post(
+        `projects/${project.id}/work-items/`,
+        {
           external_source: c.external_source,
           external_id: c.external_id,
           name: c.name,
@@ -599,37 +736,106 @@ export async function runSync({
           priority: c.priority,
           description_html: c.description_html,
         },
-      });
+        { ref: c.external_id },
+      );
+      if (r.forbidden) {
+        warnForbidden(c.external_id, r.forbidden.name);
+        continue;
+      }
+      if (r.deferred) continue;
       created++;
+      // R4/T6: an item CREATED already in a closed state (the registry filed
+      // it as already done) posts no comment — the description block already
+      // carries the proof. No transition happened here, so nothing to do.
     }
+
     for (const p of patches) {
       if (budgetExhausted || budgetSpent()) {
         budgetExhausted = true;
         break;
       }
-      await throttleWrite();
-      await planeRequest(baseUrl, apiKey, "PATCH", `${workItemsPath(slug, project.id)}${p.id}/`, {
-        body: {
+      const r = await client.patch(
+        `projects/${project.id}/work-items/${p.id}/`,
+        {
           name: p.desired.name,
           state: p.desired.stateId,
           priority: p.desired.priority,
           description_html: p.desired.description_html,
         },
-      });
+        { ref: p.desired.external_id },
+      );
+      if (r.forbidden) {
+        warnForbidden(p.desired.external_id, r.forbidden.name);
+        continue;
+      }
+      if (r.deferred) continue;
       updated++;
+
+      // comment-on-close decision (R4/R5) — per diff that changes state.
+      // R5: Done (completed) -> Live is STILL a diff (distinct states), so a
+      // patch that only moves within the completed/cancelled groups (e.g.
+      // Done -> Live) must NOT be treated as "was open, now closed".
+      if (p.existing.state !== p.desired.stateId) {
+        // F7 (Opus fix-round 2b): a state id absent from idToGroup means the
+        // item's `state` is stale/renamed — not in the workspace's current
+        // state list at all. Treating a missing lookup as "not completed/
+        // cancelled" (JS `.includes(undefined)` is false) made wasOpen true
+        // for a state we know nothing about, so a close comment could post on
+        // an item that was never observed open. An unknown previous group
+        // posts NO comment — just one warn line — rather than guessing.
+        const existingGroup = idToGroup.get(p.existing.state);
+        if (existingGroup === undefined) {
+          console.error(
+            `Plane mirror warn: state ${idToName.get(p.existing.state) ?? p.existing.state} ` +
+              `unknown, skipping close comment for ${p.desired.external_id}`,
+          );
+        } else {
+          const wasOpen = !["completed", "cancelled"].includes(existingGroup);
+          const nowClosed = ["completed", "cancelled"].includes(idToGroup.get(p.desired.stateId));
+          if (wasOpen && nowClosed) {
+            const id = p.desired.external_id;
+            if (!(await alreadyClosed(cache, id, client, project.id, p.id))) {
+              const ledgerRow = p.desired.ledgerRow ?? {};
+              const cr = await client.post(
+                `projects/${project.id}/work-items/${p.id}/comments/`,
+                { comment_html: buildCloseCommentHtml(ledgerRow) },
+                { ref: id },
+              );
+              if (cr.forbidden) {
+                warnForbidden(id, cr.forbidden.name);
+              } else if (!cr.deferred) {
+                if (ledgerRow.pr) {
+                  await client.post(
+                    `projects/${project.id}/work-items/${p.id}/links/`,
+                    { url: `https://github.com/${GITHUB_REPO}/pull/${ledgerRow.pr}` },
+                    { ref: id },
+                  );
+                }
+                cache.closed[id] = new Date().toISOString();
+                saveSyncStateCache(cache);
+              }
+            }
+          }
+        }
+      }
     }
 
-    // Landmine 3: the digest is written ONLY after every write above
-    // succeeded AND no row was skipped — a run that fails partway through, or
-    // that leaves a row unwritten for lack of a Plane state, must be retried
-    // in full (or re-tried for the skipped rows) next time, not
-    // short-circuited on a digest that never saw the gap.
-    //
-    // Fix-round 1 adds two more gaps with exactly the same rule: a row whose
-    // Plane copy could not be verified (F3, no `description_stripped`), and a
-    // run that stopped early on `--budget-ms` (F1b). Either one means the
-    // digest would certify state this run never established.
-    if (skipped.length === 0 && unverified.length === 0 && !budgetExhausted) {
+    const { deferred: deferredTotal, forbidden: forbiddenTotal } = client.summary();
+
+    // Landmine 3 (build-plan.md): the digest is written ONLY after every
+    // write above succeeded AND no row was skipped/unverified/deferred/
+    // forbidden — a run that fails partway through, that leaves a row
+    // unwritten for lack of a Plane state, that hit `--max-writes`, or that
+    // had a write skipped by the denylist, must be retried in full (or for
+    // the affected rows) next time, never short-circuited on a digest that
+    // never saw the gap. Landmine 5: this is independent of the ledger file.
+    if (
+      skippedFinal.length === 0 &&
+      unverifiedFinal.length === 0 &&
+      !budgetExhausted &&
+      deferredTotal === 0 &&
+      forbiddenTotal === 0
+    ) {
       writeFileSync(join(registryDir, ".plane-sync-digest"), registryDigest(registryDir));
     }
 
@@ -642,23 +848,24 @@ export async function runSync({
         exitCode: strict ? 1 : 0,
         created,
         updated,
-        skipped: skipped.length,
-        unverified: unverified.length,
+        skipped: skippedFinal.length,
+        unverified: unverifiedFinal.length,
         budgetExhausted: true,
       };
     }
 
-    emit(
-      `Plane mirror: ${created} created, ${updated} updated` +
-        (skipped.length > 0 ? `, ${skipped.length} skipped (no Plane state)` : "") +
-        (unverified.length > 0 ? `, ${unverified.length} unverified` : ""),
-    );
+    let summaryLine = `Plane mirror: ${created} created, ${updated} updated`;
+    if (skippedFinal.length > 0) summaryLine += `, ${skippedFinal.length} skipped (no Plane state)`;
+    if (unverifiedFinal.length > 0) summaryLine += `, ${unverifiedFinal.length} unverified`;
+    if (deferredTotal > 0) summaryLine += `, deferred=${deferredTotal}`;
+    if (forbiddenTotal > 0) summaryLine += `, skipped(forbidden)=${forbiddenTotal}`;
+    emit(summaryLine);
     return {
       exitCode: 0,
       created,
       updated,
-      skipped: skipped.length,
-      unverified: unverified.length,
+      skipped: skippedFinal.length,
+      unverified: unverifiedFinal.length,
     };
   } catch (err) {
     emit(`Plane mirror: failed (non-blocking) — ${err?.message ?? err}`);
@@ -667,13 +874,54 @@ export async function runSync({
 }
 
 // ── CLI ──────────────────────────────────────────────────────────────────
+const USAGE =
+  "Usage: plane-sync.mjs [--dry-run] [--check] [--quiet] [--strict] " +
+  "[--if-digest-changed] [--budget-ms <n>] [--max-writes <n>] [--allow-branch] [--help]";
+
+const KNOWN_FLAGS = new Set([
+  "--dry-run",
+  "--check",
+  "--quiet",
+  "--strict",
+  "--if-digest-changed",
+  "--budget-ms",
+  "--max-writes",
+  "--allow-branch",
+]);
+
 async function main() {
   const argv = process.argv.slice(2);
+
+  // Landmine 3/R13/T15: --help/-h and an unknown flag are handled BEFORE
+  // process.env.PLANE_API_KEY is read at all, before any network call — the
+  // 2026-09-11 incident (a bare --help fell through to a live run and hit
+  // HTTP 429) this requirement exists to close.
+  if (argv.includes("--help") || argv.includes("-h")) {
+    process.stdout.write(`${USAGE}\n`);
+    process.exitCode = 0;
+    return;
+  }
+  for (let i = 0; i < argv.length; i++) {
+    const tok = argv[i];
+    if (tok === "--budget-ms" || tok === "--max-writes") {
+      i++; // consume the value token, never validated as a flag itself
+      continue;
+    }
+    if (!KNOWN_FLAGS.has(tok)) {
+      process.stderr.write(`${USAGE}\n`);
+      process.exitCode = 2;
+      return;
+    }
+  }
+
   const dryRun = argv.includes("--dry-run");
   const checkOnly = argv.includes("--check");
   const quiet = argv.includes("--quiet");
   const strict = argv.includes("--strict");
   const ifDigestChanged = argv.includes("--if-digest-changed");
+  // R14: Gate 5 never passes this (spec.md R14) — a human running the script
+  // by hand off master/main is the only caller who can.
+  const allowBranch = argv.includes("--allow-branch");
   // `--budget-ms <n>`: NO default. Unbounded is the right behavior for a human
   // running `npm run bugs:plane` (a first mirror of the whole registry must be
   // allowed to finish); only Gate 5 passes a budget, because only Gate 5 has a
@@ -688,12 +936,36 @@ async function main() {
         `Plane mirror warn: ignoring --budget-ms "${argv[budgetIdx + 1] ?? ""}" (not a non-negative number)\n`,
       );
   }
+  // `--max-writes <n>` (R3/R12): default 250; Gate 5 passes 25.
+  let maxWrites = 250;
+  const mwIdx = argv.indexOf("--max-writes");
+  if (mwIdx !== -1) {
+    const raw = Number(argv[mwIdx + 1]);
+    if (Number.isFinite(raw) && raw >= 0) maxWrites = raw;
+    else
+      process.stderr.write(
+        `Plane mirror warn: ignoring --max-writes "${argv[mwIdx + 1] ?? ""}" (not a non-negative number)\n`,
+      );
+  }
   const registryDir = process.env.PLANE_SYNC_REGISTRY_DIR || join(REPO_ROOT, ".claude", "campaign");
 
   const apiKey = process.env.PLANE_API_KEY;
   if (!apiKey) {
     process.stderr.write("Plane mirror: skipped (no PLANE_API_KEY)\n");
     process.exitCode = 0;
+    return;
+  }
+
+  // Fail-closed denylist check (F3, fix-round 2b): unlike a network hiccup
+  // (which this script never blocks a turn over), a missing denylist file is
+  // a broken checkout/config — R2's write-scan would fail open on it. Checked
+  // here, before any network call, so this exits non-zero with zero writes
+  // regardless of --strict.
+  try {
+    loadDenylist();
+  } catch (err) {
+    process.stderr.write(`Plane mirror: ${err?.message ?? err}\n`);
+    process.exitCode = 1;
     return;
   }
 
@@ -727,6 +999,8 @@ async function main() {
     quiet,
     strict,
     budgetMs,
+    maxWrites,
+    allowBranch,
   });
   process.exitCode = result.exitCode;
 }

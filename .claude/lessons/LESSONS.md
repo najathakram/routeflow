@@ -418,20 +418,6 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   it is unverified.**
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
-## deploy
-
-### L-057 · 2026-09-04 · deploy · #609
-
-- **Symptom:** a process restart killed the agent session inside a public-repo CI window;
-  the repo stayed public ~6.5 hours (07:38Z→14:18Z) before anyone noticed.
-- **Root cause:** the private flip lived only in the session's own control flow — a
-  `finally` in an agent that no longer existed to run it.
-- **Lesson:** **an irreversible-if-forgotten safety action (flip private) must be armed by
-  a process that outlives the session BEFORE the risky action (flip public) — a detached
-  watchdog with a fixed deadline, never a `finally` in an agent.**
-- **Guard:** `scripts/visibility-watchdog.mjs`, mandatory in
-  `docs/runbooks/deploy-visibility-flip.md` and the `rebuild` skill.
-
 ## domain
 
 ### L-104 · 2026-09-11 · domain · B215
@@ -574,3 +560,16 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
 - **Guard:** REG-B67 T1/T2/T5 (apply-side, incl. the auto-apply door) and REG-B66 T6/T7/T9–T11 in
   `apps/api/src/credit-notes/credit-notes.wallet-integrity.spec.ts`; the pins file (T3/T3b) proves
   PAID/WRITTEN_OFF still shrink; `apps/api/src/invoices/invoice-status-sets.ts` is the one home.
+
+### L-111 · 2026-09-11 · process · Plane sync
+
+- **Symptom:** Gate 5 (`.claude/hooks/stop.mjs`) ran registry→Plane sync against the LIVE
+  workspace from a feature worktree (282 items, 160 dupes) — cwd was still in the worktree from
+  an earlier `cd`, so its hook fired with the real `PLANE_API_KEY`.
+- **Root cause:** the hook had no branch/tree gate or write cap; hooks resolve against the tree
+  the cwd sits in, not the session's home tree.
+- **Lesson:** **A hook writing to an external system with real credentials must be dry by
+  default off the integration branch, cap writes per run — end every turn with the shell back
+  home.**
+- **Guard:** `plane-sync.mjs` R14 branch guard + `--max-writes` (25), tests T16/T16b;
+  `dedupe-2026-09-12.mjs` cleaned dupes. Sibling [[L-074]].

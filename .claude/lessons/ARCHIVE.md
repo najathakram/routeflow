@@ -1252,3 +1252,25 @@ standing archiving rule.
   follow-up by rule.**
 - **Guard:** campaign-check's exact-prefix rule (already enforced) + this step in the follow-up
   checklist.
+
+## Archived 2026-09-12 — least-cited, fully guarded; headroom for L-111
+
+One active entry archived to clear headroom for L-111 (process, Plane sync, feat/plane-harness
+rebase onto master): L-057. It carries a real automated guard that stays in the tree regardless
+of whether the register still narrates it (`scripts/visibility-watchdog.mjs`, mandatory in
+`docs/runbooks/deploy-visibility-flip.md` and the `rebuild` skill), so archiving it loses no
+enforcement. Tied at one outside citation (`HANDOFF.md`) with L-073 (2026-09-04, also fully
+guarded); L-057 is the older of the two by id — per the standing archiving rule (least-cited,
+fully-guarded, oldest first) it is the one archived.
+
+### L-057 · 2026-09-04 · deploy · #609
+
+- **Symptom:** a process restart killed the agent session inside a public-repo CI window;
+  the repo stayed public ~6.5 hours (07:38Z→14:18Z) before anyone noticed.
+- **Root cause:** the private flip lived only in the session's own control flow — a
+  `finally` in an agent that no longer existed to run it.
+- **Lesson:** **an irreversible-if-forgotten safety action (flip private) must be armed by
+  a process that outlives the session BEFORE the risky action (flip public) — a detached
+  watchdog with a fixed deadline, never a `finally` in an agent.**
+- **Guard:** `scripts/visibility-watchdog.mjs`, mandatory in
+  `docs/runbooks/deploy-visibility-flip.md` and the `rebuild` skill.

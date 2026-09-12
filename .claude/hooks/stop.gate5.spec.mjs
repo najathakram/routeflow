@@ -132,6 +132,17 @@ process.stdout.write("Plane mirror: 1 created, 0 updated (fixture-slept)\\n");
 process.exit(0);
 `;
 
+// T12 (test-plan.md, 2026-09-11-plane-harness, R12) — a fixture that only
+// echoes the argv it was spawned with, wrapped in the bare `Plane mirror:`
+// prefix so it rides through Gate 5's own relay regex: the gate only ever
+// relays a line matching /^Plane mirror:/ from the child's merged
+// stdout+stderr — anything else the child prints never reaches the hook's
+// own output at all, so the argv has to be smuggled inside that one line.
+const PLANE_SYNC_ARGV_FIXTURE = `
+process.stdout.write("Plane mirror: argv " + JSON.stringify(process.argv.slice(2)) + "\\n");
+process.exit(0);
+`;
+
 // F4: every scaffold repo this run creates is registered here and swept before
 // the final report (and again from an `exit` handler, which — unlike a
 // `finally` — still runs after the `process.exit()` calls this file uses).
@@ -421,6 +432,89 @@ function report(name, ok, detail) {
   );
 }
 
+// ── T12 / R12 (harness, 2026-09-11-plane-harness) — Gate 5 must pass
+// `--max-writes 25` to plane-sync so a hook never bulk-writes (bulk runs are
+// explicit: `npm run plane:sync -- --max-writes 400`). Pre-implementation
+// Gate 5's argv is only `--quiet --budget-ms 18000 [--if-digest-changed]` —
+// no `--max-writes` element at all — so this fails on the assertion below,
+// a true RED, never a crash.
+{
+  const dir = makeGate5Repo({ syncFixture: PLANE_SYNC_ARGV_FIXTURE });
+  const env = scrubbedEnv(); // the argv fixture answers regardless of key state
+  const res = await runStopHook(dir, env);
+
+  const m = /^Plane mirror: argv (\[.*\])$/m.exec(res.stderr);
+  let argv = [];
+  let parseOk = false;
+  if (m) {
+    try {
+      argv = JSON.parse(m[1]);
+      parseOk = true;
+    } catch {
+      parseOk = false;
+    }
+  }
+  const idx = argv.indexOf("--max-writes");
+  const hasMaxWrites25 = parseOk && idx !== -1 && argv[idx + 1] === "25";
+
+  const details = [];
+  if (!parseOk) {
+    details.push('      expected a relayed "Plane mirror: argv [...]" line on stderr');
+  }
+  if (parseOk && !hasMaxWrites25) {
+    details.push(
+      `      expected argv to contain "--max-writes","25" adjacent, got ${JSON.stringify(argv)}`,
+    );
+  }
+  report(
+    "T12/R12 (harness) — Gate 5 spawns plane-sync with --max-writes 25",
+    hasMaxWrites25,
+    [...details, `      stdout:\n${res.stdout}`, `      stderr:\n${res.stderr}`].join("\n"),
+  );
+}
+
+// ── T16b / R14 (harness, 2026-09-11-plane-harness) — REGRESSION LOCK: Gate 5's
+// argv must never carry `--allow-branch`, the R14 branch-guard override — a
+// hook must never bulk-write from a feature worktree the way the 2026-09-11
+// 23:26Z incident did (spec.md R14). Reuses T12's PLANE_SYNC_ARGV_FIXTURE.
+// GREEN today: pre-WP2, Gate 5's argv has no `--allow-branch` element at all
+// (same as T12's pre-implementation argv), and post-WP2 it must still be
+// absent — this case never flips red on a correct Gate 5, only on a future
+// change that adds the flag to the hook's own spawn call.
+{
+  const dir = makeGate5Repo({ syncFixture: PLANE_SYNC_ARGV_FIXTURE });
+  const env = scrubbedEnv(); // the argv fixture answers regardless of key state
+  const res = await runStopHook(dir, env);
+
+  const m = /^Plane mirror: argv (\[.*\])$/m.exec(res.stderr);
+  let argv = [];
+  let parseOk = false;
+  if (m) {
+    try {
+      argv = JSON.parse(m[1]);
+      parseOk = true;
+    } catch {
+      parseOk = false;
+    }
+  }
+  const noAllowBranch = parseOk && !argv.includes("--allow-branch");
+
+  const details = [];
+  if (!parseOk) {
+    details.push('      expected a relayed "Plane mirror: argv [...]" line on stderr');
+  }
+  if (parseOk && !noAllowBranch) {
+    details.push(
+      `      expected argv to never contain "--allow-branch", got ${JSON.stringify(argv)}`,
+    );
+  }
+  report(
+    "T16b/R14 (harness) — regression lock: Gate 5 argv never contains --allow-branch",
+    noAllowBranch,
+    [...details, `      stdout:\n${res.stdout}`, `      stderr:\n${res.stderr}`].join("\n"),
+  );
+}
+
 // ── F4 — the scaffold repos this run created are all gone ────────────────────
 cleanupRepos();
 report(
@@ -429,7 +523,7 @@ report(
   `      tmpdir stop-gate5-spec-* count: before=${tmpDirsBefore} after=${countSpecTmpDirs()}`,
 );
 
-const TOTAL_CASES = 5;
+const TOTAL_CASES = 7;
 if (failed > 0) {
   console.log(`\nstop.gate5.spec FAILED — ${failed}/${TOTAL_CASES} case(s).`);
   process.exit(1);

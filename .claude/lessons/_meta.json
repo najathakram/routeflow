@@ -1,10 +1,10 @@
 {
-  "nextId": 111,
+  "nextId": 112,
   "activeCount": 40,
-  "archivedCount": 66,
+  "archivedCount": 67,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-12T04:53:58.000Z",
+  "updatedAt": "2026-09-12T05:28:28.000Z",
   "schemaVersion": 1,
-  "note": "REBASE MERGE (docs/bookkeeping-train4 onto master 8f64d628): union-resolved a three-way conflict across LESSONS.md/ARCHIVE.md/_meta.json rather than dropping either side. LESSONS.md: kept master's L-104 (domain, B215 idempotency-key-covers-whole-unit-of-work) AND the branch's L-107 (domain, train-4 Run A lock-order/toast-suppression) side by side in ascending id order, no markers; the branch's other five new entries (L-105, L-106, L-108, L-109, L-110) had already merged cleanly with no conflict. ARCHIVE.md: kept both archived blocks verbatim -- master's '## Archived 2026-09-11 -- headroom for L-104' section (L-099) and the branch's '## Archived 2026-09-11 -- least-cited, fully guarded; making room' section (L-069, L-077, L-078, L-090, L-091, L-097) -- no duplicates. _meta.json: nextId 111 (branch's value, clears past L-105-L-110; L-104 was never a gap once merged), activeCount 40 and archivedCount 66 recomputed by counting '### L-' headers in the merged LESSONS.md/ARCHIVE.md files directly (40 active, 66 archived = master's prior 60 + the branch's 6 net-new archived entries), rather than carried over from either side's stale count."
+  "note": "REBASE (feat/plane-harness worktree rf-plane2 onto master fafe0ecb, #694 plane-mirror + #698 bookkeeping): kept master's LESSONS.md/ARCHIVE.md exactly as-is and renumbered the branch's one new lesson (was L-104, process, Plane-sync-stale-cwd-Gate-5-incident, 2026-09-11) to master's nextId (L-111), appended at the end of the active list per the rebase ruling -- did NOT keep the branch's own L-104 (that id now belongs to master's unrelated domain/B215 entry) and did NOT re-apply the branch's original archiving of L-057 as a duplicate. Master's register was already at the 40-entry cap, so one more entry was archived to clear headroom for L-111: L-057 (2026-09-04, deploy, #609), tied at one outside citation with L-073 but older by id, both fully guarded (repo-wide grep, oldest-first per the standing rule) -- moved to ARCHIVE.md verbatim under a new '## Archived 2026-09-12' section; master's own prior archive blocks (including its 2026-09-11 sections for L-104/domain headroom and the L-069/L-077/L-078/L-090/L-091/L-097 batch) are untouched. nextId 112 (111 used by L-111), activeCount 40 (40 - L-057 + L-111), archivedCount 67 (66 + L-057) -- counted directly from '### L-' headers in the merged files, not carried over. validate-lessons.mjs to be re-run against the real files once applied."
 }
