@@ -36,8 +36,8 @@ const EXPECTED_FILES = [
 // the split-time counts: the folder legitimately grows. Pinned as literals
 // per the brief; a real model/enum addition updates both the schema and this
 // pin in the same PR.
-const EXPECTED_MODEL_COUNT = 126;
-const EXPECTED_ENUM_COUNT = 80;
+const EXPECTED_MODEL_COUNT = 128;
+const EXPECTED_ENUM_COUNT = 83;
 
 function listSchemaFiles(): string[] {
   if (!fs.existsSync(SCHEMA_DIR)) return [];
