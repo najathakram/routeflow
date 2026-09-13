@@ -80,16 +80,30 @@ ENV NODE_PATH=/app/apps/mobile/node_modules
 RUN npx expo export --platform web
 
 # ─── Stage 2: Runner ──────────────────────────────────────────────────────────
-FROM nginx:alpine AS runner
+# B389/F12-003: nginx-unprivileged is nginx's own image, already hardened to
+# run entirely as a non-root user — no USER directive meant plain `nginx:alpine`
+# ran as root (this finding), and hand-patching that image's pid/cache/temp-dir
+# ownership here can't be verified without a Docker daemon (not available in
+# every environment that builds this file), so this uses the maintainers'
+# already-tested fix instead: pid and all temp paths are pre-redirected off
+# /var/run and /var/cache onto world-writable /tmp, matching the api
+# (docker-entrypoint.sh) and web (`USER node`) fixes for the same finding.
+FROM nginxinc/nginx-unprivileged:alpine AS runner
+
+# The base image ends on its non-root user; apk needs root, so reclaim it for
+# setup and drop again below before serving.
+USER root
 
 # gettext provides envsubst — used to inject Railway's $PORT into nginx config
 RUN apk add --no-cache gettext
 
 # Copy the static SPA output produced by expo export
 COPY --from=builder /app/apps/mobile/dist /usr/share/nginx/html
+RUN chown -R nginx:nginx /usr/share/nginx/html
 
 # Store the config template. At start-up we substitute PORT and reload nginx.
-# Railway injects PORT at runtime; default is 80 for local dev.
+# Railway injects PORT at runtime; default is 8080 (a non-root process can't
+# bind nginx:alpine's old default of 80).
 RUN printf 'server {\n\
   listen NGINX_PORT;\n\
   root /usr/share/nginx/html;\n\
@@ -105,13 +119,16 @@ RUN printf 'server {\n\
   location / {\n\
     try_files $uri $uri/ /index.html;\n\
   }\n\
-}\n' > /etc/nginx/conf.d/default.conf.template
+}\n' > /etc/nginx/conf.d/default.conf.template \
+  && chown nginx:nginx /etc/nginx/conf.d/default.conf.template
 
-EXPOSE 80
+USER nginx
 
-# At runtime: resolve $PORT (default 80), write config, start nginx.
+EXPOSE 8080
+
+# At runtime: resolve $PORT (default 8080), write config, start nginx.
 CMD ["/bin/sh", "-c", \
-  "NGINX_PORT=${PORT:-80} && \
+  "NGINX_PORT=${PORT:-8080} && \
    sed s/NGINX_PORT/$NGINX_PORT/ /etc/nginx/conf.d/default.conf.template \
      > /etc/nginx/conf.d/default.conf && \
    nginx -g 'daemon off;'"]
