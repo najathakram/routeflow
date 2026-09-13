@@ -32,19 +32,64 @@
  * create back to their snapshotted value — so this spec never leaves a durable side effect on
  * another session's data, independent of whether that data happened to reclassify "correctly".
  */
-import { execSync } from "child_process";
+import { execSync, spawnSync } from "child_process";
 import { randomUUID } from "crypto";
 import path from "path";
+import { pathToFileURL } from "url";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "./testing/db-spec";
+import { classifyTenantSlug } from "./tenant-class.util";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 
 const API_DIR = path.resolve(__dirname, "../..");
 const CLI = path.resolve(API_DIR, "scripts/backfill-tenant-class.mjs");
+const CLI_HREF = pathToFileURL(CLI).href;
+
+// Fixture slugs covering every TenantClass. No DB access needed for this cross-check — it's kept
+// alongside the CLI-mechanics tests below for discoverability (Task 3 Step 1 of the phase-0
+// plan), but runs as a plain `describe`, not `describeDb`.
+const CROSS_CHECK_SLUGS = [
+  "acme-wholesale", // PRODUCTION
+  "routeflow-demo", // DEMO
+  "qa-abc", // TEST (qa- pattern)
+  "e2e-x", // TEST (e2e- pattern)
+  "ux-audit-123", // TEST (ux-audit- pattern)
+  "test", // TEST (exact slug)
+  "e2e-routeflow", // TEST (exact slug)
+  "routeflow-hq", // INTERNAL
+];
+
+/**
+ * Imports the real `classify()` from backfill-tenant-class.mjs (ESM) in a
+ * `node --input-type=module` child — this suite runs under ts-jest's CommonJS transform, same
+ * shim shape as backfill-legacy-tenant-ids-script.spec.ts — and returns its result per slug.
+ */
+function classifyViaCli(slugs: string[]): string[] {
+  const program = `
+    import { classify } from ${JSON.stringify(CLI_HREF)};
+    console.log(JSON.stringify(${JSON.stringify(slugs)}.map(classify)));
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=module"], {
+    input: program,
+    encoding: "utf-8",
+  });
+  if (result.status !== 0) {
+    throw new Error(`classify() child failed: ${result.stderr}`);
+  }
+  return JSON.parse(result.stdout.trim());
+}
+
+describe("backfill-tenant-class.mjs classify() vs classifyTenantSlug (no DB)", () => {
+  it("agrees with classifyTenantSlug for every TenantClass across the fixture slugs", () => {
+    const fromCli = classifyViaCli(CROSS_CHECK_SLUGS);
+    const fromUtil = CROSS_CHECK_SLUGS.map((slug) => classifyTenantSlug(slug));
+    expect(fromCli).toEqual(fromUtil);
+  });
+});
 
 const RUN_SUFFIX = randomUUID().slice(0, 8);
 const TEST_TENANT_SLUG = assertTestTenant(

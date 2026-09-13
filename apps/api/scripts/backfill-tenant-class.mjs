@@ -19,7 +19,7 @@ const HOUSE_TENANT_SLUG = "routeflow-hq";
 const TEST_TENANT_SLUGS = new Set(["test", "e2e-routeflow", "routeflow-demo"]);
 const TEST_TENANT_PATTERN = /^(qa|e2e|ux-audit)-/;
 
-function classify(slug) {
+export function classify(slug) {
   if (slug === DEMO_SLUG) return "DEMO";
   if (slug === HOUSE_TENANT_SLUG) return "INTERNAL";
   if (TEST_TENANT_SLUGS.has(slug) || TEST_TENANT_PATTERN.test(slug)) return "TEST";
