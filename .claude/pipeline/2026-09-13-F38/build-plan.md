@@ -28,20 +28,34 @@ No migration, no data repair, no `*.module.ts` change, no new endpoint.
   `invoices: { where: { status: DRAFT, deliveryBatchId: null }, select: { id, subtotal, taxAmount,
 discount, shippingFee, total }, take: 1 }` — the exact rows `findOpenOrderDraft`
   (`invoices.service.ts:1340`) reconciles at delivery; `total = subtotal + taxAmount + shippingFee -
-discount` (:1232), `taxAmount` folds regular + category tax. (mobile) `orderAmountDue` = the draft's
-  `total`; fallback without a draft = `Order.total - discountAmount` (fee allocation right only for
-  the first visit — documented); last resort = the legacy pre-tax sum. `reconciledAmountDue` for a
-  short-pick = `reconciledSubtotal - discount + allocatedFee + taxAmount × deliveredShare` (discount
-  and the allocated fee whole, tax incl. category tax prorated by delivered/draft subtotal — the
-  server's rule at :1454-1472; share-proration of per-unit excise is exact for uniform lines).
+discount` (:1232), `taxAmount` folds regular + category tax. **Round 2 (Opus found three residuals):**
+  a regulated SEPARATE_INVOICE order carries SEVERAL open drafts (base + `-R#`,
+  `reconcileSplitOrderDrafts` ~:2154), so the projection takes them ALL (`orderBy createdAt asc`, no
+  `take`) and `orderAmountDue` = Σ open drafts' `total`; the `Order.total - discountAmount` fallback
+  is GONE (`Order.total` is already net of discount on the create path, orders.service.ts:2428, but
+  not on edit/merge — no client-side convention is safe; TO FILE) — without a draft the figure
+  falls back to the legacy pre-tax sum; the short-pick estimate follows the server's rule exactly
+  (:1447-1473): `deliveredSubtotal − Σdraft.discount + Σdraft.shippingFee + order.tax ×
+deliveredSubtotal/order.subtotal + Σ_delivered lines categoryTaxAmount × deliveredQty/qty` —
+  `Order.tax` is the REGULAR tax only, category tax is the server's per-line `categoryTaxAmount`
+  (now projected on `RUN_LINE_ITEMS_SELECT`; `OrderItem` has no `taxRate` column) scaled by delivered quantity; the short-pick
+  label reads "(est. — final on invoice)". **Round 3 (Opus):** neither `Order.tax` nor the per-line
+  category snapshots are exemption-aware while the invoice zeroes both for a tax-exempt customer, so
+  the stop payload now projects the customer's exemption flag and the short-pick estimate zeroes
+  both tax terms when it is set (exempt, deliver only the regulated line: 100, not 160). Known
+  residual → TO FILE: an order whose invoice was already SENT pre-delivery matches no open DRAFT and
+  is quoted pre-tax (pre-existing; the amount due there is the invoice's remaining balance).
   `payment.tsx` and `index.tsx` use them; the posted amount is the corrected figure.
 - Invariants: `lineItemSubtotal`/`sumOrderLineItems`/`sumStopOrders` unchanged (REG-B49); no
   client-side tax-rate math (no mirror of `packages/pricing` — the server's own draft is read);
   every `Number()` guarded by `Number.isFinite`, never NaN; a payload without the draft falls back
   as above.
 - Oracles: draft 128.51 (was 116.83); change 1.49 (was 13.17); DISCOUNT draft 95 vs `Order.total`
-  110; SPLIT FEE drafts 65 then 55 (never 121); short-pick with category tax 80 (server bills
-  50 + 5 + 25); fallback 110 − 15 = 95; malformed total → line sum.
+  110; SPLIT FEE drafts 65 then 55 (never 121); MULTI-DRAFT 120 + 80 = 200 (never one sibling);
+  short-pick, Opus's example (order subtotal 200 / regular tax 20; A plain 100, B regulated 100 with
+  category 50; draft 270): A only → 110, B only → 160, both → 270; fee/discount whole on a half
+  delivery → 50; per-unit category scales 50 × 4/10 = 20; no draft → legacy line sum, never a
+  discount guess; malformed total → line sum.
 
 ### B306 — a RUN-tagged over-collection advance is reversible; reconciliation and reopen respect it
 
@@ -110,3 +124,6 @@ device/emulator against the compose stack and recorded here at discharge time.
 ## Status
 
 - 2026-09-13 06:1xZ: all five fixes committed (ce3c1373 B306 · 0510a3f3 B309 · 939f6246 B305 api · c52b0d0b B305 mobile · 2ac0ade3 B307/B308); Opus refute-first review and revert probes in progress; push waits for the verify slot.
+- Revert probes (pre-fix file back → REG red → HEAD → green): B305 mobile 5/14 red → 14/14; B306 2 red (+1 guard) → 3/3; B309 4/4 red → 4/4; round-1 B305 discount oracle 7/18 red (`Received: 110` / `121`) → 18/18; round-2 multi-draft/short-pick red by revert (120 vs 200, 135 vs 110); round-3 exempt red (160 vs 100).
+- Opus refute-first rounds: **1** → 2 blockers + 4 majors + 5 minors (B305 basis = `Order.total`; B306 reopen dead end; B308 NewOrderScreen re-arm/re-key; B309 CUSTOMER path; NaN/`RUN:null`/queued shape) → fix round 1 (7d8b6a76 api, 722055d1 mobile). **2** → B306/B308/B309 CONFIRMED-CORRECT; B305 three residuals (multi-draft `take: 1`, discount fallback, category tax on short-pick) → fix round 2 (7e2083ee) + sibling spec mocks (9c350301). **3** → multi-draft/fallback RESOLVED, short-pick rule matches the server's linear snapshot proration; tax-exempt regression → fix round 3 (2b16d3db), hunk reviewed by the lead.
+- Final suites after round 3: mobile 128 suites / 1580 tests, api routes sweep 199/199 (full api 4683 green after round 2; re-run in full before the push), web 501, pricing 206; `check-types` clean on api + mobile. Ledger: raw-run row appended via `pipeline-ledger.mjs append-manual --approach raw` from this session's true usage.
