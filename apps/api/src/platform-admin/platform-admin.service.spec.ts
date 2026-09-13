@@ -731,5 +731,32 @@ describe("PlatformAdminService — audit provenance", () => {
 
       expect(billingEventService.emit).not.toHaveBeenCalled();
     });
+
+    it("rejects and leaves nothing else applied when the BillingEvent emit throws", async () => {
+      // The tenant update and the emit run inside one this.prisma.$transaction(async (tx) =>
+      // ...) — an emit failure must reject the whole call so a class flip that crosses the
+      // PRODUCTION boundary never lands without its BillingEvent. This mock's $transaction
+      // (beforeEach) just invokes the callback directly against a shared `tx`, so real
+      // Postgres rollback isn't exercised here — what IS provable at this layer is that the
+      // rejection propagates out of updateTenantClass and that recordAdminAction (which runs
+      // only AFTER the transaction settles) never fires, i.e. nothing after the throw executes.
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
+      prisma.tenant.update.mockResolvedValue({ id: TENANT_ID, slug: "acme", class: "TEST" } as any);
+      billingEventService.emit.mockRejectedValue(new Error("billing event emit failed"));
+
+      await expect(
+        service.updateTenantClass(
+          TENANT_ID,
+          { class: "TEST", reason: "reclassified as QA" } as any,
+          ADMIN_ID,
+        ),
+      ).rejects.toThrow("billing event emit failed");
+
+      expect(auditLog).not.toHaveBeenCalled();
+    });
   });
 });

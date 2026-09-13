@@ -1390,10 +1390,30 @@ ${paymentSection}
       select: { id: true, slug: true, class: true },
     });
 
-    const updated = await this.prisma.tenant.update({
-      where: { id: tenantId },
-      data: { class: dto.class },
-      select: { id: true, slug: true, class: true },
+    // The tenant update and the BillingEvent emit must land or roll back together: a class
+    // flip that crosses the PRODUCTION boundary without its BillingEvent would leave
+    // MrrService's ledger silently out of sync with the tenant table. recordAdminAction stays
+    // OUTSIDE the transaction (below) — it doesn't accept a Prisma client (see its signature
+    // above) and is fire-and-forget by design (AuditService.log swallows its own errors).
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.tenant.update({
+        where: { id: tenantId },
+        data: { class: dto.class },
+        select: { id: true, slug: true, class: true },
+      });
+
+      const wasProd = before.class === "PRODUCTION";
+      const isProd = dto.class === "PRODUCTION";
+      if (wasProd !== isProd) {
+        await this.billingEventService.emit(
+          tenantId,
+          BILLING_EVENTS.TENANT_CLASS_CHANGED,
+          { from: before.class, to: dto.class, reason: dto.reason, platformAdmin: true },
+          { actorId: adminId, tx },
+        );
+      }
+
+      return result;
     });
 
     await this.recordAdminAction(tenantId, adminId, AdminAuditAction.TENANT_CLASS_CHANGED, {
@@ -1401,17 +1421,6 @@ ${paymentSection}
       to: dto.class,
       reason: dto.reason,
     });
-
-    const wasProd = before.class === "PRODUCTION";
-    const isProd = dto.class === "PRODUCTION";
-    if (wasProd !== isProd) {
-      await this.billingEventService.emit(
-        tenantId,
-        BILLING_EVENTS.TENANT_CLASS_CHANGED,
-        { from: before.class, to: dto.class, reason: dto.reason, platformAdmin: true },
-        { actorId: adminId },
-      );
-    }
 
     return updated;
   }
