@@ -1596,6 +1596,9 @@ export class RoutesService {
         where: {
           method: { in: [PaymentMethod.CASH, PaymentMethod.CHECK] },
           reference: { startsWith: `RUN:${runId}` },
+          // B306: a reversed at-door over-collection (its door payments were
+          // voided) no longer reflects real collected money.
+          NOT: { reference: { endsWith: ":REVERSED" } },
         },
         select: { amount: true, method: true },
       }),
@@ -1781,6 +1784,9 @@ export class RoutesService {
         where: {
           method: { in: [PaymentMethod.CASH, PaymentMethod.CHECK] },
           OR: runIds.map((rid) => ({ reference: { startsWith: `RUN:${rid}` } })),
+          // B306: a reversed at-door over-collection (its door payments were
+          // voided) no longer reflects real collected money.
+          NOT: { reference: { endsWith: ":REVERSED" } },
         },
         select: { amount: true, method: true, reference: true },
       }),
@@ -3006,6 +3012,20 @@ export class RoutesService {
           "Payment already recorded against this delivery — contact your operator to correct",
         );
       }
+    }
+
+    // B306: a zero-payable-invoice completion books the WHOLE at-door amount
+    // as an AdvancePayment with no InvoicePayment row, so the liveMoney guard
+    // above never sees it. Block reopen while that advance stands — voiding
+    // the door payments reverses it (invoices.service.ts voidPayment).
+    const runAdvance = await this.prisma.forTenant().advancePayment.findFirst({
+      where: { reference: `RUN:${runId}:STOP:${stopId}` },
+      select: { id: true },
+    });
+    if (runAdvance) {
+      throw new BadRequestException(
+        "An at-door over-collection advance is booked against this stop — void the delivery payments (which reverses it) before reopening",
+      );
     }
 
     // Check for recorded payments on any transaction — block reopen if payment exists

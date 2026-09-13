@@ -5559,9 +5559,45 @@ export class InvoicesService {
       // not be counted as paid.
       const invoice = await tx.invoice.findUnique({
         where: { id: invoiceId },
-        include: { payments: { where: CONFIRMED_PAYMENT } },
+        include: {
+          payments: { where: CONFIRMED_PAYMENT },
+          order: { select: { routeRunId: true, routeRunStopId: true } },
+        },
       });
       if (!invoice) throw new NotFoundException("Invoice not found");
+
+      // B306: a driver's at-door over-collection on this stop is booked as an
+      // AdvancePayment tagged RUN:<runId>:STOP:<stopId> (recordDeliveryPaymentInTx).
+      // Once every confirmed door payment for the stop is voided, that advance
+      // no longer reflects real collected money — reverse it too, or the run's
+      // cash reconciliation keeps summing it forever.
+      const runStopId = (invoice as any).order?.routeRunStopId;
+      const runIdForAdvance = (invoice as any).order?.routeRunId;
+      if (runStopId) {
+        const remainingConfirmed = await tx.invoicePayment.count({
+          where: { ...CONFIRMED_PAYMENT, invoice: { order: { routeRunStopId: runStopId } } },
+        });
+        if (remainingConfirmed === 0) {
+          const advances = await tx.advancePayment.findMany({
+            where: { reference: `RUN:${runIdForAdvance}:STOP:${runStopId}` },
+          });
+          for (const a of advances) {
+            if (Number(a.balance) !== Number(a.amount)) {
+              throw new BadRequestException(
+                `The at-door over-collection advance ${a.id} has already been applied — release its applications before voiding this payment`,
+              );
+            }
+            await tx.advancePayment.update({
+              where: { id: a.id },
+              data: {
+                balance: 0,
+                reference: `${a.reference}:REVERSED`,
+                notes: `${a.notes ?? ""}\nREVERSED ${new Date().toISOString()}: door payments voided`,
+              },
+            });
+          }
+        }
+      }
 
       const totalPaid = sumConfirmed(invoice.payments.filter((p) => p.id !== paymentId));
       const newStatus = this.recomputeStatus(
