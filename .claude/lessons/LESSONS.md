@@ -765,11 +765,11 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   the server's claim predicate (same status set, from the shared enum), and a navigation off a
   mutation result reads the field the server actually returns — a hand-typed response type is a
   silent `undefined`.**
-- **Guard:** NOT IN PLACE for the predicate half — at aa47ee9e `estimates/[id]/page.tsx` still
-  gates Convert on `canConvert` (:220/:446) AND two inline `status === "ACCEPTED"` copies (:288,
-  :526): three predicates, the drift this lesson forbids. Only the navigation half holds
-  (`useConvertEstimate` typed `{ id }`). Open follow-up: collapse onto one `canConvert` + a unit
-  pin; the B394 (B15-NAV) row keeps the gap visible.
+- **Guard:** every Convert control in `estimates/[id]/page.tsx` (header :288, sidebar :446)
+  renders on the single `canConvert = status === "ACCEPTED"` binding (:220) since b47a74a5; the
+  inline `status === "ACCEPTED"` at :526 is the "Customer Accepted" banner, not a Convert control.
+  Navigation half: `useConvertEstimate` typed `{ id }`. No unit pin of the predicate yet
+  (`[id]/page.test.tsx` is untracked on the build tree) — follow-up; B394 (B15-NAV) keeps it visible.
 
 ### L-130 · 2026-09-13 · domain · F27 B17/B79 (estimates)
 
@@ -784,4 +784,5 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   sent", never "sent").**
 - **Guard:** `estimates.service.ts create()` persists `dto.issueDate`; shared
   `Estimate.issueDate?: string | null` in `packages/types/api/misc.ts`; the detail-page toast copy
-  (commit aa47ee9e). No spec pins the write yet — follow-up.
+  (commit aa47ee9e). No spec pins the write yet — follow-up. `createEstimate.mutate(dto as any, …)`
+  (`estimates/page.tsx:359`) still casts the create dto at b47a74a5 — criterion 6 pending.
