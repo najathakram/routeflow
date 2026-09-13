@@ -751,3 +751,35 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
 - **Guard:** `STRIPE_TERMINAL_STATUSES` + `REG-B408` ×8 in
   `subscription-mutation.service.spec.ts` — one case per non-terminal status, plus one pinning
   that an unrecognised status still surfaces the error. Sibling [[L-127]].
+
+### L-129 · 2026-09-13 · domain · F27 B15 (estimates)
+
+- **Symptom:** the estimate detail page offered "Convert to Invoice" on DRAFT and SENT rows while
+  the API's convert claims ACCEPTED only, so the control failed every time it was shown; and a
+  successful convert navigated to `/invoices/undefined` because the page read `invoiceId` from a
+  response keyed `id`.
+- **Root cause:** the client computed its own enable predicate (`DRAFT || SENT || ACCEPTED`) from
+  a guess rather than the server's claim predicate, and hand-typed the mutation result instead of
+  the shape the endpoint returns.
+- **Lesson:** **A control that fires a server state transition renders on ONE predicate equal to
+  the server's claim predicate (same status set, from the shared enum), and a navigation off a
+  mutation result reads the field the server actually returns — a hand-typed response type is a
+  silent `undefined`.**
+- **Guard:** `estimates/[id]/page.tsx` `canConvert = status === "ACCEPTED"` + `useConvertEstimate`
+  typed `{ id }` (commit aa47ee9e); verify-web `ui-evidence.json`. No unit pin yet — the B15-NAV
+  registry row keeps the gap visible.
+
+### L-130 · 2026-09-13 · domain · F27 B17/B79 (estimates)
+
+- **Symptom:** the create form required an Issue Date the request never carried and the service
+  never wrote (the column had landed by migration earlier); every row rendered `createdAt` in its
+  place. "Send" flipped DRAFT→SENT with a toast claiming an email went out — no email path exists.
+- **Root cause:** a column landed with no write path — DTO, form payload and service `create`
+  were never audited for it — and UI copy described a side effect the endpoint does not have.
+- **Lesson:** **A migrated column with no write path is a bug the schema cannot show — when a
+  column lands, audit every write site (DTO → service `create`/`update` → form payload) in the
+  same change; and UI copy names only the effect the endpoint has (a status flip is "marked as
+  sent", never "sent").**
+- **Guard:** `estimates.service.ts create()` persists `dto.issueDate`; shared
+  `Estimate.issueDate?: string | null` in `packages/types/api/misc.ts`; the detail-page toast copy
+  (commit aa47ee9e). No spec pins the write yet — follow-up.

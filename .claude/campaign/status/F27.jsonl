@@ -1,5 +1,6 @@
 {"id":"B15","batch":"F27","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"2d0270fd"}
-{"id":"B16","batch":"F27","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"2d0270fd"}
+{"id":"B16","batch":"F27","tier":"T2","state":"already-fixed","pr":621,"proof":null,"evidence":"STALE, not an F27 fix: the phantom EXPIRED value on the hand-typed EstimateStatus mirror (the filter's only failure mode) was removed in 60d10e66 (#621, lesson L-072); apps/api/src/common/enum-parity.spec.ts (~:222-237) pins the mirror set-equal to the Prisma enum, so the filter cannot regress. Verified on rf-F27-build @aa47ee9e: no EXPIRED literal in apps/web or packages/types.","roundSha":"2d0270fd"}
 {"id":"B17","batch":"F27","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"2d0270fd"}
 {"id":"B70","batch":"F27","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"e5b0af8e"}
 {"id":"B79","batch":"F27","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"e5b0af8e"}
+{"id":"B411","batch":"F27","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
