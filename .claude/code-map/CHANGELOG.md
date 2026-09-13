@@ -8,6 +8,13 @@ newest first**. This file replaces the old habit of prepending each session's no
 below, and set `_meta.json` `"notes"` to that same note plus the pointer to this file —
 never accumulate history in `"notes"`.
 
+- **2026-09-13 — #712 bookkeeping (`docs/712-bookkeeping`, master `bc36a0dd`)** — B389/F12-003:
+  mobile's web-export runner swaps `nginx:alpine` (root) for `nginxinc/nginx-unprivileged:alpine`,
+  ends on `USER nginx`, moves the listen port 80→8080 (`PORT` default 8080); new tripwire spec
+  `apps/mobile/__tests__/dockerfile-nonroot.test.ts` asserts the runner stage, last `USER`
+  directive, `EXPOSE 8080`, and `${PORT:-8080}` on the Dockerfile's text. api/infra-hardening-sec-2.md
+  F12-003 bullet extended; mobile.md gains one bullet (`Dockerfile` + `railway.toml`). No
+  transferable lesson (L-113 class, Dockerfile-only).
 - **2026-09-13 — F38 driver at-door money / offline close-out / run linkage (`docs/710-bookkeeping`,
   Option-B follow-up for PR #710 = master `14048230`)** — B305 (driver at-door amount due is now
   the order's open DRAFT invoice(s), never `Order.total` or a raw line sum — `RUN_STOP_INCLUDE`
@@ -244,4 +251,3 @@ react@18.3.1…`) and its `jest.config.js` `moduleNameMapper` twin — one repo-
 - **2026-09-08** — (branch `docs/673-signin-menu-bookkeeping`, Option-B bookkeeping follow-up for PR #673, mapped at `c138289c`) — **Sign-in menu focus-ring hotfix mapped.** `web.md`'s `components/site-header.tsx` bullet documents the Sign-in `DropdownMenu.Item asChild` anchors (`role="menuitem"`, icon + label + `ArrowUpRight` glyph): the `.signin-menu [role="menuitem"]` rule in `marketing.css` is now `display: flex; align-items: center; width: 100%; white-space: nowrap` with its own `:focus-visible` ring (`outline` + `outline-offset`) and `> * { outline: none }` on its children — was `inline`, so the ring painted once per line box (icon/label/arrow) and the arrow wrapped; resting colour unified `#6b81a0` → `#202124`. The `marketing-port.static.test.ts` bullet notes the 3 new R-MKT signin-menu CSS-rule-parser assertions (suite 59/59). Registry: B279 filed unbatched (ui-ux, medium) — `bugs.mjs prove`/`discharge` both require a `--batch` ledger shard by design (confirmed from source), so an unbatched row cannot reach `done`; full root-cause/fix/test-plan evidence written via `note` instead of a fabricated state. Lessons: L-098 appended (domain — a focusable element with more than one child is a flex/grid/block container with `white-space: nowrap`, the focus ring lives on the element never its children, pin with a CSS-rule test not a source-text grep); L-051 (2026-09-02, process, the pre-flagged headroom candidate from the #671 follow-up's own `_meta.json` note) archived, grep-confirmed clean. Register back to 40/40.
 
 **Older entries (archived 216, 2026-09-13 split):** [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md) — full verbatim history back to the changelog's creation. `git log -- .claude/code-map` for anything older still.
-
