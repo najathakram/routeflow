@@ -153,3 +153,46 @@ delta. Deviation from lead ruling 3 (row write dropped) reported to fb with the 
 lane**: the `POST /billing/quote` exemption was task 7 of the Phase 0 plan
 (`docs/superpowers/plans/2026-09-12-backoffice-phase-0-truth.md`, READ_ONLY allowlist gap); fb
 strikes it there and cites this PR; nobody else touches `tenant-status.guard.ts` until this lands.
+
+## Fix round 2 (committed `a1466890` api · `798f872c` web · `8c1fe5de` docs) → Opus round 2
+
+**Verdict: SHIP-READY, hold pending #710.** F1–F8 all CLOSED with traces (F7 partially — see N2);
+seven regression shapes walked against the specs (revert CAS→`update`, emit on lost CAS, return
+instead of throw on CAS-lost-ACTIVE, re-arm the row, drop the quote exemption, drop the READ_ONLY
+status gate, drop `isAdmin`) — each caught. Notable confirmations: CAS re-read is sound under
+Postgres READ COMMITTED (fresh per-statement snapshot after the blocked `updateMany`); `cancel()`
+never reached Stripe in any revision (`stripe.service.ts cancelSubscription` has zero call sites),
+so the READ_ONLY no-op skips nothing that mattered; SUSPENDED/CANCELLED tenants are 403'd by the
+guard on every method before any controller, so the quote exemption is READ_ONLY-only and the
+no-row 404 for those statuses is dead code; `/choose-plan` end-to-end for READ_ONLY verified
+(GETs → quote → `SUBSCRIBE` for any non-ACTIVE tenant → `POST /billing/subscribe`, all exempt).
+
+| Id  | Sev             | Finding                                                                                                                                                                                                                      | Disposition                                                                                             |
+| --- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| N1  | SHOULD (test)   | `subscribe()`'s new `readOnlyReason: null` had no pinning assertion (only a loose `toMatchObject`).                                                                                                                          | FIXED pre-hold: explicit assertion in the subscribe describe (`subscription-mutation.service.spec.ts`). |
+| N2  | SHOULD (F7)     | `platform-admin.service.ts` `updateStatus()` / `activateManualSubscription()` / `extendTrial()` still leave a stale `readOnlyReason`; cosmetic (every READ_ONLY entry path rewrites it; banner only renders when READ_ONLY). | TO FILE (out of lane). Code-map row reworded (N3).                                                      |
+| N4  | NIT             | CAS re-read returning `null` (row gone) → 409 not 404; unreachable (`deleteTenant` sets CANCELLED, guard 403s).                                                                                                              | Note only.                                                                                              |
+| N5  | NIT (pre-exist) | `Cancel` and both `resume()` controls on the billing page are still ungated for OPERATOR (API 403s) — now inconsistent with the admin-gated End trial.                                                                       | TO FILE.                                                                                                |
+| —   | pre-existing    | Self-serve `cancel()` never reaches Stripe: an admin-provisioned Stripe subscription keeps invoicing a READ_ONLY tenant and `onPaymentSucceeded` resurrects it to ACTIVE.                                                    | TO FILE (orthogonal; untouched by this diff).                                                           |
+
+## TO FILE (after W18, by routeflow-0d) — consolidated
+
+1. TRIAL-1 (high) · 2. RO-1 (high) — as above. 3. `onCheckoutCompleted` clears only the downgrade
+   fields, never `cancelAtPeriodEnd` (api code-map F18 note says "filed as a new bug" — verify a row
+   exists; else file). 4. N2 platform-admin status writers leave a stale `readOnlyReason` (low). 5. N5
+   billing-page Cancel/resume controls ungated for OPERATOR (low, pre-existing). 6. Self-serve
+   `cancel()` never cancels the Stripe subscription (admin-provisioned Stripe sub keeps invoicing a
+   READ_ONLY tenant; `onPaymentSucceeded` resurrects it) — medium, money.
+
+## Pre-push checklist (when #710 + its bookkeeping have landed)
+
+1. `git fetch` + rebase onto master (expect LESSONS.md/ARCHIVE.md/`_meta.json` adjacency
+   conflicts with #708 — same archive pair, keep L-120 + its numbering; code-map `_meta.json`
+   notes/mappedSha). 2. `npm ci` if the lockfile moved; `npx prisma generate`. 3. Compose boot
+   gate (`npm run local:up` → `local:seed` → `local:validate`) — the W16 rule; then the T3 manual
+   rows above on the `test` tenant (End trial → banner + toast action → Choose a plan → subscribe
+   restores ACTIVE). 4. `npx turbo run test --force --concurrency=2` (fresh worktree: no cache
+   hits or campaign-check goes red). 5. Push through the hook in the FOREGROUND; read git's own
+   output before announcing. 6. PR body: neutral tags, Opus rounds 1+2 summary, TO FILE list, F1
+   ownership note (Phase 0 task 7 struck by fb). No `Bookkeeping-Follow-Up` trailer — lessons +
+   code-map ride this PR.
