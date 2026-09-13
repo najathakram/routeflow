@@ -1,4 +1,10 @@
-import { BadRequestException, ConflictException, ForbiddenException, Logger } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Logger,
+  NotFoundException,
+} from "@nestjs/common";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 
@@ -149,6 +155,9 @@ function make(opts: Opts = {}) {
       findUnique: jest
         .fn()
         .mockResolvedValue({ status: opts.tenantStatus ?? "TRIAL", plan: opts.tenantPlan ?? null }),
+      // TRIAL-1: cancel() on a subscription-less trial/read-only tenant reads + writes the
+      // tenant row directly (there is no TenantSubscription row to update).
+      update: jest.fn().mockResolvedValue({}),
     },
     tenantSubscription: {
       findUnique: jest.fn().mockResolvedValue(opts.sub ?? null),
@@ -1030,6 +1039,49 @@ describe("SubscriptionMutationService — one armed transition at a time (REG-B5
     expect(data).not.toHaveProperty("planKey");
     expect(data).not.toHaveProperty("periodStart");
     expect(data).not.toHaveProperty("periodEnd");
+  });
+});
+
+describe("SubscriptionMutationService.cancel — trial/read-only tenants with no subscription row (TRIAL-1)", () => {
+  it("TRIAL-1 cancel() on a trial tenant with no subscription row ends the trial into READ_ONLY instead of 404", async () => {
+    const { svc, prisma } = make({ sub: null, tenantStatus: "TRIAL" });
+    await expect(svc.cancel("t-1", "u-1")).resolves.toEqual(
+      expect.objectContaining({ cancelled: "trial" }),
+    );
+    expect(prisma.tenant.update).toHaveBeenCalledWith({
+      where: { id: "t-1" },
+      data: expect.objectContaining({
+        status: "READ_ONLY",
+        readOnlyReason: "trial_cancelled",
+        trialEndsAt: expect.any(Date),
+      }),
+    });
+  });
+
+  it("TRIAL-1 cancel() on a read-only tenant with no subscription row is an idempotent success", async () => {
+    const { svc, prisma } = make({ sub: null, tenantStatus: "READ_ONLY" });
+    await expect(svc.cancel("t-1", "u-1")).resolves.toEqual(
+      expect.objectContaining({ cancelled: "already_read_only" }),
+    );
+    expect(prisma.tenant.update).not.toHaveBeenCalled();
+  });
+
+  // Regression guard: an active tenant with no subscription row is a genuine anomaly, not a
+  // trial ending — the existing 404 must stay. GREEN today.
+  it("TRIAL-1 cancel() on an active tenant with no subscription row still 404s (anomaly, not a trial)", async () => {
+    const { svc } = make({ sub: null, tenantStatus: "ACTIVE" });
+    await expect(svc.cancel("t-1", "u-1")).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  // Regression guard: a tenant that DOES have a subscription row keeps the existing
+  // schedule-at-period-end behavior untouched by the trial/read-only branch above. GREEN today.
+  it("TRIAL-1 cancel() with a subscription row is unchanged — schedules cancelAtPeriodEnd", async () => {
+    const periodEnd = new Date("2026-08-01");
+    const { svc, tx } = make({ sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd } });
+    await svc.cancel("t-1", "u-1");
+    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+      cancelAtPeriodEnd: true,
+    });
   });
 });
 
