@@ -651,3 +651,21 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
 - **Guard:** the rolled-period time-of-day fix shipped alone; the drift half is a filed row
   blocked on an `anchorDay` column, and its test is an `it.todo` naming that blocker rather
   than a passing test that implies a fix. Sibling [[L-118]].
+
+### L-126 · 2026-09-14 · domain · W1 admin plan change
+
+- **Symptom:** a new admin plan-change branch cleared `cancelAtPeriodEnd`, silently revoking a
+  cancellation the TENANT had asked for — no event, no audit line, and the scheduled-cancellation
+  sweep then never churned them, so a tenant who cancelled kept being billed indefinitely.
+- **Root cause:** the line was copied verbatim from the tenant's own `downgrade()`, where clearing
+  that flag is correct because the tenant is acting on their own subscription. The admin path
+  performs the same write on someone else's subscription. The code was identical; the authority
+  behind it was not — and the sibling branch two screens down already stated the opposite rule.
+- **Lesson:** **Consent does not travel with copied code. Before lifting a write from a
+  self-service path into an admin path (or the reverse), ask who is acting and on whose behalf: a
+  flag the owner of a subscription may clear for themselves is not one an operator may clear for
+  them. When a function already contains a branch stating a rule, a new branch that contradicts it
+  is the bug, not the discovery of an exception.**
+- **Guard:** the admin plan change now REFUSES in either direction while a cancellation is armed,
+  with `cancelAtPeriodEnd` added to the select it was blind to; REG tests in
+  `platform-admin.service.spec.ts`. Sibling [[L-123]] (the seam rule this is a special case of).
