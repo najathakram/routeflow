@@ -4299,13 +4299,14 @@ export class InvoicesService {
     }
     // Block if there are any LIVE payments. B314: a VOID (bounced) payment carries no money —
     // counting it here made a bounced check permanently block the revert with no way out.
-    // scan-ok: draft-payment-not-void — this is an EXISTENCE check ("is any payment record
-    // still live?"), not a money sum. A DRAFT payment must still block: it's an unconfirmed
-    // but real payment record sitting on the invoice, and reverting out from under it would
-    // orphan it the moment it's later confirmed. CONFIRMED_PAYMENT (status: "PAID" only) would
-    // be WRONG here — it would let an invoice with an outstanding DRAFT payment revert.
+    // This is an EXISTENCE check ("is any payment record still live?"), not a money sum — a
+    // DRAFT payment must still block: it's an unconfirmed but real payment record sitting on
+    // the invoice, and reverting out from under it would orphan it once it's later confirmed.
+    // CONFIRMED_PAYMENT (status: "PAID" only) would be WRONG here — it would let an invoice
+    // with an outstanding DRAFT payment revert.
     const paymentCount = await this.prisma
       .forTenant()
+      // scan-ok: draft-payment-not-void — existence check, not a money sum; see comment above.
       .invoicePayment.count({ where: { invoiceId: id, status: { not: "VOID" } } });
     if (paymentCount > 0) {
       throw new BadRequestException(
@@ -4394,8 +4395,9 @@ export class InvoicesService {
       if (opts?.lockRows) await lockRowsNoWait(db, "Invoice", [inv.id], "INVOICE_BUSY");
       // B314: same live-payments filter as revertInvoiceToDraft — a VOID (bounced) payment
       // carries no money and must never block an edit that would otherwise revert cleanly.
-      // scan-ok: draft-payment-not-void — existence check, not a money sum; see the identical
-      // note on revertInvoiceToDraft above. A DRAFT payment must still block this edit.
+      // Existence check, not a money sum — see the identical note on revertInvoiceToDraft
+      // above; a DRAFT payment must still block this edit.
+      // scan-ok: draft-payment-not-void — see comment above.
       const paymentCount = await db.invoicePayment.count({
         where: { invoiceId: inv.id, status: { not: "VOID" } },
       });
