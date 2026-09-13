@@ -5,6 +5,7 @@ import { CreditCard, Check, AlertTriangle, Loader2, Zap } from "lucide-react";
 import { Card, Button, Badge, useToast, cn } from "@routeflow/ui/web";
 import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { useAuth } from "@/lib/auth-context";
 import {
   useSubscription,
   useUsage,
@@ -83,6 +84,8 @@ function TrialBanner({ sub }: { sub: SubscriptionView }) {
 
 export default function BillingSettingsPage() {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "TENANT_ADMIN";
   const sub = useSubscription();
   const usage = useUsage();
   const plans = usePlans();
@@ -160,7 +163,7 @@ export default function BillingSettingsPage() {
       <TrialBanner sub={s} />
       <ReadOnlyBanner status={s.status} readOnlyReason={s.readOnlyReason} />
 
-      {s.cancelAtPeriodEnd && (
+      {s.cancelAtPeriodEnd && s.status !== "READ_ONLY" && (
         <div className="flex items-center justify-between gap-2 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-200">
           <span className="flex items-center gap-2">
             <AlertTriangle className="h-4 w-4" /> Cancellation scheduled for{" "}
@@ -224,7 +227,7 @@ export default function BillingSettingsPage() {
             <a href="/choose-plan">
               <Button size="sm">Change plan</Button>
             </a>
-            {s.status === "TRIAL" && (
+            {s.status === "TRIAL" && isAdmin && (
               <Button size="sm" variant="ghost" onClick={() => setEndTrialOpen(true)}>
                 End trial
               </Button>
