@@ -115,7 +115,11 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
  *   - enum REMOVED → drop its `ENUM_TABLE` row (if it had one), then bump the constant.
  * Bumping the number without that decision is the one way to defeat this tripwire.
  */
-const PINNED_PRISMA_ENUM_COUNT = 83;
+// Triage for TenantClass (Phase 0 T1, 2026-09-13): server-only for now — the platform-admin
+// updateTenantClass endpoint and the dark backfill script are the only consumers this phase;
+// no web/mobile surface reads or hand-types it yet, so it deliberately gets no ENUM_TABLE row
+// or packages/types mirror. Add one when a later phase's UI needs the value client-side.
+const PINNED_PRISMA_ENUM_COUNT = 84;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {
