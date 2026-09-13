@@ -165,19 +165,26 @@ export default function ReturnScreen() {
         return {
           orderId,
           ok: false,
+          // REG-B307: carry the offline-queue flag through to summarizeSubmissions.
+          isOfflineQueued: e?.isOfflineQueued === true,
           message: e?.response?.data?.message ?? e?.message ?? "",
         };
       });
-      const { done, failed } = summarizeSubmissions(results);
-      if (done.length > 0) {
+      const { done, failed, queued = [] } = summarizeSubmissions(results);
+      if (done.length > 0 || queued.length > 0) {
         setSubmittedOrderIds((prev) => {
           const next = new Set(prev);
-          for (const id of done) next.add(id);
+          for (const id of [...done, ...queued]) next.add(id);
           return next;
         });
       }
       if (failed.length === 0) {
-        showToast("Return submitted");
+        // REG-B307: a queued return is a pending success, not a failure.
+        showToast(
+          queued.length > 0
+            ? "Offline — return queued and will sync when you reconnect"
+            : "Return submitted",
+        );
         backToStop();
         return;
       }

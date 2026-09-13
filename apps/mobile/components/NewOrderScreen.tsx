@@ -32,6 +32,7 @@ import {
 import { useCreditNotes, useCreateCreditNote, type CreditNote } from "../lib/api/credit-notes";
 import { isCreditOpenForApply } from "../lib/credit-notes-logic";
 import { showToast } from "../lib/toast";
+import { classifyMutationError } from "../lib/offline-errors";
 import { resolveProductByCode } from "../lib/barcode-resolve";
 import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../lib/wedge-scan";
 import { makeScanHandler, runWedgeSubmit } from "../lib/scan-ladder";
@@ -1835,12 +1836,23 @@ function ProductPickView({
           await finalizeBoundDraft();
           onSaved(order.orderNumber);
         },
-        onError: (err: Error) => {
+        onError: async (err: Error) => {
           // Release the latch on EVERY failure branch below — each of them
           // either replays submitOrder (merge choice, license guard) or hands
           // the operator the button back. Success deliberately stays latched:
           // that path navigates away.
           endSubmit();
+          // REG-B308: a queued offline create is a pending success, not a
+          // failure — mirror onSuccess's id-independent cleanup and leave via
+          // the same navigation the cancel path uses (no order id exists yet).
+          const outcome = classifyMutationError(err);
+          if (outcome.kind === "queued") {
+            resetOrderSubmitKey(customerId);
+            await finalizeBoundDraft();
+            showToast("Offline — order queued and will sync when you reconnect");
+            onBack();
+            return;
+          }
           const errAny = err as unknown as {
             response?: {
               status?: number;
