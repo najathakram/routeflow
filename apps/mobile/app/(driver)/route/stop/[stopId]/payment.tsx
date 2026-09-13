@@ -42,9 +42,9 @@ import { useDeliveryPlanStore } from "../../../../../store/delivery-plan-store";
 import { useRunSettlementStore } from "../../../../../store/runSettlementStore";
 import type { CollectedMethod } from "../../../../../lib/run-settlement";
 import {
-  deliveredCategoryTax,
   orderAmountDue,
   reconciledAmountDue,
+  shortPickCategoryTax,
 } from "../../../../../lib/run-money";
 import { classifyMutationError } from "../../../../../lib/offline-errors";
 import {
@@ -143,12 +143,20 @@ export default function PaymentScreen() {
           // tax is the Σ of each DELIVERED line's own snapshot
           // (deliveredCategoryTax), and every open draft's discount/fee stay
           // whole. Never the draft's whole `taxAmount` prorated by subtotal
-          // share (that can't tell which lines shipped).
+          // share (that can't tell which lines shipped). REG-B305 round 4: both
+          // halves MUST derive from `shortPickLines` — never pass the raw
+          // `o.lineItems` to the category-tax half, or a cancelled/already-
+          // delivered regulated line leaks its full category tax into the quote
+          // while contributing zero subtotal (see run-money.ts#shortPickCategoryTax).
           reconciledAmountDue({
             drafts: o.invoices ?? [],
             order: { subtotal: o.subtotal, tax: o.tax },
             deliveredSubtotal: reconciledTotal(shortPickLines, deliveredQtyById),
-            deliveredCategoryTax: deliveredCategoryTax(o.lineItems ?? [], deliveredQtyById),
+            deliveredCategoryTax: shortPickCategoryTax(
+              o.lineItems ?? [],
+              shortPickLines,
+              deliveredQtyById,
+            ),
             // B305 round 3: an exempt customer's server-side reconcile zeroes
             // BOTH tax terms — mirror that here (RUN_STOP_INCLUDE.customer
             // projects the column; RouteRunStop.customer.isTaxExempt above).

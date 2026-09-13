@@ -9,11 +9,13 @@ import {
   lineItemSubtotal,
   orderAmountDue,
   reconciledAmountDue,
+  shortPickCategoryTax,
   stopAmountDue,
   sumOrderLineItems,
   sumStopOrders,
 } from "../lib/run-money";
-import { computeLineSubtotal } from "@routeflow/pricing";
+import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
+import { freeUnitSizeFor, reconciledTotal, type ShortPickLine } from "../lib/short-pick";
 
 describe("lineItemSubtotal (REG-B49)", () => {
   it("uses the server-computed subtotal for a boxed line, never qty * unitPrice", () => {
@@ -379,5 +381,239 @@ describe("reconciledAmountDue (REG-B305 round 3: tax-exempt customer)", () => {
     expect(
       reconciledAmountDue({ drafts, order, deliveredSubtotal: 200, deliveredCategoryTax: 50 }),
     ).toBe(270);
+  });
+});
+
+/**
+ * REG-B305 round 4: the door quote's two halves — `deliveredSubtotal` and
+ * `deliveredCategoryTax` — must be fed from the SAME line set. Round 3's
+ * `payment.tsx` built `shortPickLines` (the delivered-subtotal basis) from
+ * `order.lineItems` filtered `status !== "CANCELLED" && deliveredQty === 0`,
+ * but fed the RAW `order.lineItems` straight into `deliveredCategoryTax` —
+ * which defaults a line ABSENT from the delivery plan to fully delivered
+ * (matches `buildDeliveries`'s own convention). A cancelled regulated line,
+ * or one already delivered on an earlier split-delivery visit, is therefore
+ * excluded from the subtotal but still contributes its FULL
+ * `categoryTaxAmount` — cash over-collected at the door.
+ *
+ * These tests assert the INVARIANT (the door amount), never the filter
+ * mechanics, and build the fixture the same way `payment.tsx:110-128` does —
+ * `buildShortPickLines` below mirrors that mapping exactly (imports the real
+ * `ShortPickLine` type, `reconciledTotal`, and `freeUnitSizeFor` from
+ * `lib/short-pick`, the same helpers the page uses).
+ */
+describe("REG-B305 round 4 — door quote equals what the server invoices when regulated lines are cancelled or already delivered", () => {
+  // Mirrors payment.tsx:110-128's shortPickLines useMemo verbatim, over a
+  // fixture shaped like `order.lineItems` (id/productId/qty/subtotal/status/
+  // deliveredQty/categoryTaxAmount — a superset of both `ShortPickLine`'s
+  // raw material and `RunMoneyLineItem`).
+  function buildShortPickLines(
+    lines: Array<{
+      id: string;
+      productId: string;
+      qty: number;
+      subtotal: number;
+      status: string;
+      deliveredQty: number;
+      boxes?: number | null;
+    }>,
+  ): ShortPickLine[] {
+    return lines
+      .filter((li) => li.status !== "CANCELLED" && Number(li.deliveredQty ?? 0) === 0)
+      .map((li) => ({
+        orderItemId: li.id,
+        productId: li.productId,
+        orderedQty: Number(li.qty),
+        subtotal: li.subtotal ?? null,
+        freeUnits: 0,
+        freeUnitSize: freeUnitSizeFor(li),
+      }));
+  }
+
+  it("REG-B305 round 4: a CANCELLED regulated line contributes zero subtotal AND zero category tax (documents the leak it fixes)", () => {
+    // Line A: regulated, cancelled, qty 10, subtotal 100, categoryTaxAmount
+    // 12.00, deliveredQty 0 (never delivered — just cancelled). Line B: qty 5,
+    // subtotal 50, categoryTaxAmount 0. Order columns are already recomputed
+    // to exclude the cancelled line (subtotal 50, tax 4.00). One open draft
+    // with no discount/fee. Plan short-picks B down to 4.
+    const lines = [
+      { id: "A", productId: "p-A", qty: 10, subtotal: 100, status: "CANCELLED", deliveredQty: 0 },
+      { id: "B", productId: "p-B", qty: 5, subtotal: 50, status: "PENDING", deliveredQty: 0 },
+    ];
+    const runLines = [
+      { id: "A", qty: 10, unitPrice: 10, subtotal: 100, categoryTaxAmount: 12.0 },
+      { id: "B", qty: 5, unitPrice: 10, subtotal: 50, categoryTaxAmount: 0 },
+    ];
+    const order = { subtotal: 50, tax: 4.0 };
+    const draftDiscount = 0;
+    const draftShippingFee = 0;
+    const drafts = [{ discount: draftDiscount, shippingFee: draftShippingFee }];
+    const plan = { B: 4 };
+
+    const shortPickLines = buildShortPickLines(lines);
+    expect(shortPickLines.map((l) => l.orderItemId)).toEqual(["B"]); // A excluded: cancelled
+
+    // Oracle: invoices.service.ts#reconcileOrderDraftInvoice — regular tax
+    // scales by the delivered SHARE of the order's own subtotal; discount and
+    // shipping fee on the open draft stay WHOLE. #buildInvoiceItemData —
+    // `categoryTaxAmount = stored * billQty / orderQty`, summed only over the
+    // lines this visit actually bills (`where status != CANCELLED`, and never
+    // a line already fully billed on an earlier visit).
+    const deliveredSubtotal = reconciledTotal(shortPickLines, plan);
+    const regularTax = roundMoney(order.tax * (deliveredSubtotal / order.subtotal));
+    // Σ over the visit's delivered lines (B only — A is neither in
+    // shortPickLines nor billable) of categoryTaxAmount * delivered / qty.
+    const deliveredExcise = shortPickCategoryTax(runLines, shortPickLines, plan);
+    const expected = roundMoney(
+      deliveredSubtotal - draftDiscount + draftShippingFee + regularTax + deliveredExcise,
+    );
+    expect(expected).toBe(43.2); // 40 (delivered B) + 4.00 * 0.8 (B's share) + 0 excise
+
+    const actual = reconciledAmountDue({
+      drafts,
+      order,
+      deliveredSubtotal,
+      deliveredCategoryTax: deliveredExcise,
+      isTaxExempt: false,
+    });
+    expect(actual).toBe(expected);
+
+    // Documents the defect: the OLD composition fed the RAW runLines straight
+    // into deliveredCategoryTax, which defaults A (absent from `plan`) to
+    // fully delivered and leaks its whole $12.00 category tax in.
+    const leakedExcise = deliveredCategoryTax(runLines, plan);
+    const oldExpected = roundMoney(
+      deliveredSubtotal - draftDiscount + draftShippingFee + regularTax + leakedExcise,
+    );
+    expect(oldExpected).toBe(55.2); // 43.20 + A's leaked $12.00
+    const oldComposition = reconciledAmountDue({
+      drafts,
+      order,
+      deliveredSubtotal,
+      deliveredCategoryTax: leakedExcise,
+      isTaxExempt: false,
+    });
+    expect(oldComposition).toBe(oldExpected);
+    expect(oldComposition).not.toBe(actual);
+  });
+
+  it("REG-B305 round 4: split delivery visit 2 — a regulated line already billed on visit 1 contributes zero category tax here", () => {
+    // Line R: regulated, qty 10, subtotal 200, categoryTaxAmount 20.00,
+    // deliveredQty 10 (billed on visit 1's invoice already). Line S: qty 4,
+    // subtotal 80, categoryTaxAmount 0, deliveredQty 0. Order subtotal 280,
+    // tax 14.00. One open draft (the `-R2` split invoice), no discount/fee.
+    // Plan short-picks S down to 2.
+    const lines = [
+      { id: "R", productId: "p-R", qty: 10, subtotal: 200, status: "PENDING", deliveredQty: 10 },
+      { id: "S", productId: "p-S", qty: 4, subtotal: 80, status: "PENDING", deliveredQty: 0 },
+    ];
+    const runLines = [
+      { id: "R", qty: 10, unitPrice: 20, subtotal: 200, categoryTaxAmount: 20.0 },
+      { id: "S", qty: 4, unitPrice: 20, subtotal: 80, categoryTaxAmount: 0 },
+    ];
+    const order = { subtotal: 280, tax: 14.0 };
+    const draftDiscount = 0;
+    const draftShippingFee = 0;
+    const drafts = [{ discount: draftDiscount, shippingFee: draftShippingFee }];
+    const plan = { S: 2 };
+
+    const shortPickLines = buildShortPickLines(lines);
+    expect(shortPickLines.map((l) => l.orderItemId)).toEqual(["S"]); // R excluded: already delivered
+
+    // Same oracles as the test above.
+    const deliveredSubtotal = reconciledTotal(shortPickLines, plan);
+    const regularTax = roundMoney(order.tax * (deliveredSubtotal / order.subtotal));
+    const deliveredExcise = shortPickCategoryTax(runLines, shortPickLines, plan);
+    const expected = roundMoney(
+      deliveredSubtotal - draftDiscount + draftShippingFee + regularTax + deliveredExcise,
+    );
+    expect(expected).toBe(42.0); // 40 (delivered S) + 14.00 * (40/280) + 0 excise
+
+    const actual = reconciledAmountDue({
+      drafts,
+      order,
+      deliveredSubtotal,
+      deliveredCategoryTax: deliveredExcise,
+      isTaxExempt: false,
+    });
+    expect(actual).toBe(expected);
+
+    // Documents the defect: R is absent from `plan` (it was never re-picked
+    // this visit), so the OLD raw-lines composition defaults it to fully
+    // delivered and re-collects its whole $20.00 category tax a SECOND time.
+    const leakedExcise = deliveredCategoryTax(runLines, plan);
+    const oldExpected = roundMoney(
+      deliveredSubtotal - draftDiscount + draftShippingFee + regularTax + leakedExcise,
+    );
+    expect(oldExpected).toBe(62.0); // 42.00 + R's re-collected $20.00
+    const oldComposition = reconciledAmountDue({
+      drafts,
+      order,
+      deliveredSubtotal,
+      deliveredCategoryTax: leakedExcise,
+      isTaxExempt: false,
+    });
+    expect(oldComposition).toBe(oldExpected);
+    expect(oldComposition).not.toBe(actual);
+  });
+
+  it("REG-B305 round 4 guard: a line absent from shortPickLines contributes zero even with a categoryTaxAmount and a plan entry; a line present in both matches deliveredCategoryTax exactly", () => {
+    const runLines = [
+      // X is NOT in shortPickLines below (simulates cancelled/already-delivered)
+      // yet still carries a categoryTaxAmount AND an entry in the plan.
+      { id: "X", qty: 10, unitPrice: 10, subtotal: 100, categoryTaxAmount: 30 },
+      { id: "Y", qty: 8, unitPrice: 10, subtotal: 80, categoryTaxAmount: 40 },
+    ];
+    const shortPickLines: ShortPickLine[] = [
+      { orderItemId: "Y", productId: "p-Y", orderedQty: 8, subtotal: 80, freeUnits: 0 },
+    ];
+    const plan = { X: 5, Y: 3 };
+
+    // X has a plan entry and a nonzero categoryTaxAmount, but is absent from
+    // shortPickLines -> must contribute 0, not 30 * 5/10 = 15.
+    const restricted = shortPickCategoryTax(runLines, shortPickLines, plan);
+    // Y is present in both -> behaves exactly like calling deliveredCategoryTax
+    // on the already-restricted (Y-only) line set — same number.
+    expect(restricted).toBe(deliveredCategoryTax([runLines[1]], plan));
+    expect(restricted).toBe(15); // 40 * 3/8
+
+    // Contrast: the OLD unfiltered composition lets X's leak in too.
+    const unfiltered = deliveredCategoryTax(runLines, plan);
+    expect(unfiltered).toBe(30); // 15 (X leaked) + 15 (Y)
+    expect(restricted).not.toBe(unfiltered);
+  });
+
+  it("REG-B305 round 4 guard: a tax-exempt customer zeroes the regular-tax term too (split-visit scenario -> 40.00, never 42.00)", () => {
+    const lines = [
+      { id: "R", productId: "p-R", qty: 10, subtotal: 200, status: "PENDING", deliveredQty: 10 },
+      { id: "S", productId: "p-S", qty: 4, subtotal: 80, status: "PENDING", deliveredQty: 0 },
+    ];
+    const runLines = [
+      { id: "R", qty: 10, unitPrice: 20, subtotal: 200, categoryTaxAmount: 20.0 },
+      { id: "S", qty: 4, unitPrice: 20, subtotal: 80, categoryTaxAmount: 0 },
+    ];
+    const order = { subtotal: 280, tax: 14.0 };
+    const draftDiscount = 0;
+    const draftShippingFee = 0;
+    const drafts = [{ discount: draftDiscount, shippingFee: draftShippingFee }];
+    const plan = { S: 2 };
+
+    const shortPickLines = buildShortPickLines(lines);
+    const deliveredSubtotal = reconciledTotal(shortPickLines, plan);
+    const deliveredExcise = shortPickCategoryTax(runLines, shortPickLines, plan);
+    // Oracle: invoices.service.ts ~1495-1500 — an exempt customer zeroes BOTH
+    // the regular tax term and the category tax; discount/fee stay whole.
+    const expected = roundMoney(deliveredSubtotal - draftDiscount + draftShippingFee);
+    expect(expected).toBe(40.0);
+
+    const actual = reconciledAmountDue({
+      drafts,
+      order,
+      deliveredSubtotal,
+      deliveredCategoryTax: deliveredExcise,
+      isTaxExempt: true,
+    });
+    expect(actual).toBe(expected);
+    expect(actual).not.toBe(42.0);
   });
 });

@@ -165,6 +165,39 @@ export function deliveredCategoryTax(
   return roundMoney(sum);
 }
 
+/**
+ * REG-B305 round 4: the door quote's two halves MUST come from the SAME line
+ * set. Round 3's `payment.tsx` fed `deliveredSubtotal` from the filtered
+ * `shortPickLines` (`status !== "CANCELLED" && deliveredQty === 0`) but
+ * `deliveredCategoryTax` from the RAW `o.lineItems` — and `deliveredCategoryTax`
+ * defaults a line absent from `deliveredQtyById` to FULLY delivered (matches
+ * `buildDeliveries`'s own default), so a CANCELLED regulated line, or a
+ * regulated line already delivered on an earlier split-delivery visit, leaked
+ * its FULL `categoryTaxAmount` into the quote while contributing zero
+ * subtotal — cash over-collected at the door. The server never does this: it
+ * excludes CANCELLED lines from every money projection
+ * (invoices.service.ts's line select is `where status != CANCELLED`) and
+ * bills only the CURRENT visit's delivered lines
+ * (`reconcileOrderDraftInvoice` / `buildInvoiceItemData`, basis "delivered").
+ * This helper restricts `lineItems` to the ids already present in
+ * `shortPickLines` before delegating to `deliveredCategoryTax`, so a line
+ * excluded from the subtotal (cancelled, or already delivered) is excluded
+ * from the category tax the exact same way — never the plain "no entry ->
+ * fully delivered" default that only makes sense for a line still in play.
+ * `deliveredCategoryTax` itself is left unchanged: its default-to-fully-
+ * delivered contract is correct for the lines `buildDeliveries` actually
+ * plans against.
+ */
+export function shortPickCategoryTax(
+  lineItems: RunMoneyLineItem[],
+  shortPickLines: ReadonlyArray<{ orderItemId: string }>,
+  deliveredQtyById: Record<string, number>,
+): number {
+  const shortPickIds = new Set(shortPickLines.map((l) => l.orderItemId));
+  const restricted = lineItems.filter((li) => li.id != null && shortPickIds.has(li.id));
+  return deliveredCategoryTax(restricted, deliveredQtyById);
+}
+
 export interface ReconciledAmountDueInput {
   /**
    * ALL of the order's open draft invoices (RULING 1 — a regulated split
