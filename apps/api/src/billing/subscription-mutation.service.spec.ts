@@ -1669,21 +1669,26 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
     expect(emitted(events)).toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
   });
 
-  // (12) R4/R1(F1) — the un-repaired legacy cohort: a READ_ONLY tenant whose Stripe sub is
-  // still live because our cron cancelled it locally without ever telling Stripe. resume() must
-  // NOT resume Stripe billing here (it never restores tenant.status either — the tenant would
-  // pay for nothing).
-  it("REG resume() with stripeSubId + cancelAtPeriodEnd: true on a READ_ONLY tenant never calls Stripe — local clear still happens", async () => {
+  // (12) R4/R1(F1) — STRIPE-RESUME-1: the un-repaired legacy cohort: a READ_ONLY tenant whose
+  // Stripe sub is still live because our cron cancelled it locally without ever telling Stripe.
+  // resume() must REFUSE here, not clear the flag: clearing cancelAtPeriodEnd with nothing
+  // having happened at Stripe disarms the exact guard onPaymentSucceeded() reads, reinstating
+  // the tenant ACTIVE (and booking a +1 MRR delta) the next time Stripe happens to fire an
+  // invoice.payment_succeeded webhook — even though nothing about the tenant's real payment
+  // state changed and Stripe was never told to stop. Was: "never calls Stripe — local clear
+  // still happens" (asserted the bug as expected behaviour); now: refuses and writes nothing.
+  it("STRIPE-RESUME-1 resume() with stripeSubId + cancelAtPeriodEnd: true on a READ_ONLY tenant REFUSES — no Stripe call, no local write, no emit", async () => {
     const { svc, tx, events, stripe } = make({
       tenantStatus: "READ_ONLY",
       sub: activeSub({ stripeSubId: "sub_x", cancelAtPeriodEnd: true }),
     });
-    await svc.resume("t1", "admin");
+    await expect(svc.resume("t1", "admin")).rejects.toBeInstanceOf(ConflictException);
+    await expect(svc.resume("t1", "admin")).rejects.toThrow(
+      "The subscription cannot be resumed while the workspace is read-only; subscribe again to restore service.",
+    );
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
-    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
-      cancelAtPeriodEnd: false,
-    });
-    expect(emitted(events)).toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
   });
 
   // (14) R4 — documents that a SUSPENDED tenant's cancel() still propagates to Stripe: R1 only
@@ -1762,6 +1767,66 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
     });
     stripe.updateSubscription.mockRejectedValue({ statusCode: 500, code: "api_error" });
     await expect(svc.resume("t1", "admin")).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+});
+
+describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tenant with a live sub", () => {
+  // Same cohort STRIPE-RESUME-1 is about: applyScheduledCancellations
+  // (billing-cron.service.ts) flips tenant.status to READ_ONLY without ever touching
+  // stripeSubId, so a tenant cancelled locally before STRIPE-CANCEL-1 existed is stuck with
+  // Stripe still invoicing — and the web hides Cancel for READ_ONLY tenants, so there is no
+  // self-serve way out. cancel() must tell Stripe before taking the READ_ONLY short-circuit.
+  const activeSub = (extra: Record<string, unknown> = {}) => {
+    const { periodEnd } = activePeriod();
+    return { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd, stripeSubId: null, ...extra };
+  };
+
+  it("cancel() READ_ONLY + live stripeSubId propagates to Stripe BEFORE the short-circuit — no local write, no emit", async () => {
+    const { svc, tx, events, stripe } = make({
+      tenantStatus: "READ_ONLY",
+      sub: activeSub({ stripeSubId: "sub_x" }),
+    });
+    await expect(svc.cancel("t1", "admin")).resolves.toEqual({ cancelled: "already_read_only" });
+    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+    expect(stripe.updateSubscription).toHaveBeenCalledWith("sub_x", {
+      cancel_at_period_end: true,
+    });
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("cancel() READ_ONLY + stripeSubId: null never calls Stripe — immediate short-circuit, no write", async () => {
+    const { svc, tx, events, stripe } = make({
+      tenantStatus: "READ_ONLY",
+      sub: activeSub(), // stripeSubId: null
+    });
+    await expect(svc.cancel("t1", "admin")).resolves.toEqual({ cancelled: "already_read_only" });
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("cancel() READ_ONLY + live sub, Stripe generic failure → ServiceUnavailableException, nothing written (B107 semantics preserved)", async () => {
+    const { svc, tx, events, stripe } = make({
+      tenantStatus: "READ_ONLY",
+      sub: activeSub({ stripeSubId: "sub_x" }),
+    });
+    stripe.updateSubscription.mockRejectedValue(new Error("boom"));
+    await expect(svc.cancel("t1", "admin")).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("cancel() READ_ONLY + live sub, Stripe resource_missing → proceeds to the short-circuit result (B107 semantics preserved)", async () => {
+    const { svc, tx, events, stripe } = make({
+      tenantStatus: "READ_ONLY",
+      sub: activeSub({ stripeSubId: "sub_x" }),
+    });
+    stripe.updateSubscription.mockRejectedValue({ code: "resource_missing", statusCode: 404 });
+    await expect(svc.cancel("t1", "admin")).resolves.toEqual({ cancelled: "already_read_only" });
+    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
   });

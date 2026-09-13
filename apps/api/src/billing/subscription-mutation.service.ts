@@ -753,18 +753,27 @@ export class SubscriptionMutationService {
    * other status with no row → the existing 404 (a genuine anomaly today).
    */
   async cancel(tenantId: string, actorId?: string) {
-    const [sub, tenant] = await Promise.all([
-      this.prisma.tenantSubscription.findUnique({ where: { tenantId } }),
-      this.prisma.tenant.findUnique({
-        where: { id: tenantId },
-        select: { status: true },
-      }),
-    ]);
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { status: true },
+    });
 
     // Already read-only — with or without a row — is where cancellation lands. Checked
     // FIRST and unconditionally: the old with-row path below re-armed cancelAtPeriodEnd and
     // wrote a fresh SUBSCRIPTION_CANCELED ledger row on every repeat call.
     if (tenant?.status === "READ_ONLY") {
+      // STRIPE-CANCEL-2: applyScheduledCancellations (billing-cron.service.ts) flips a tenant
+      // to READ_ONLY without ever touching stripeSubId — a tenant cancelled locally BEFORE
+      // STRIPE-CANCEL-1 existed is exactly this un-repaired legacy cohort, and the web hides
+      // the Cancel control for READ_ONLY tenants, so there is no self-serve way out. Tell
+      // Stripe FIRST, before returning the short-circuit — never touch the local row, which is
+      // already correct either way. A row with no stripeSubId (the common, already-correct
+      // case: self-serve cancel already propagated, or a plans-as-data tenant with no Stripe at
+      // all) skips the Stripe call; the row is still read, because only it can say so.
+      const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
+      if (sub?.stripeSubId) {
+        await this.propagateCancelToStripe(tenantId, sub.stripeSubId);
+      }
       return { cancelled: "already_read_only" as const };
     }
 
@@ -816,6 +825,7 @@ export class SubscriptionMutationService {
       return result;
     }
 
+    const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
     if (!sub) {
       // Any other status with no row is a genuine anomaly today (e.g. ACTIVE with a missing
       // row) — revisit when Phase 0 subscription reconciliation lands: this case should
@@ -831,29 +841,7 @@ export class SubscriptionMutationService {
     // end. The reverse order would leave a tenant who thinks they cancelled still being charged.
     // A row with no stripeSubId (plans-as-data / manual) takes the path below byte-identically.
     if (sub.stripeSubId) {
-      try {
-        await this.stripe.updateSubscription(sub.stripeSubId, { cancel_at_period_end: true });
-      } catch (err) {
-        if (isStripeResourceMissing(err)) {
-          // The Stripe subscription is already gone — nothing left to stop invoicing; the
-          // deleted-subscription webhook handles the churn. Proceed with the local cancellation.
-          this.logger.warn(
-            `STRIPE-CANCEL-1: cancel() found Stripe subscription already gone for tenant ${tenantId} (stripeSubId ${sub.stripeSubId}) — proceeding with local cancellation`,
-          );
-        } else {
-          // Never log the raw error (may carry Stripe request/auth details) — tenantId +
-          // stripeSubId only.
-          this.logger.error(
-            `STRIPE-CANCEL-1: cancel() failed to schedule the Stripe cancellation for tenant ${tenantId} (stripeSubId ${sub.stripeSubId})`,
-          );
-          // R3: the local row really is unchanged, but claiming Stripe changed nothing too is
-          // false on a timeout Stripe actually applied — describe the provider outcome as
-          // UNCERTAIN instead.
-          throw new ServiceUnavailableException(
-            "The payment provider did not confirm the change — it may still apply. Check your subscription in a moment before retrying, or contact support.",
-          );
-        }
-      }
+      await this.propagateCancelToStripe(tenantId, sub.stripeSubId);
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -929,6 +917,18 @@ export class SubscriptionMutationService {
             "The payment provider did not confirm the change — it may still apply. Check your subscription in a moment before retrying, or contact support.",
           );
         }
+      } else {
+        // STRIPE-RESUME-1: the tenant is not ACTIVE (e.g. READ_ONLY — the un-repaired legacy
+        // cohort our cron cancelled locally without ever telling Stripe), so Stripe is
+        // correctly skipped above — but there is nothing legitimate to "resume" locally
+        // either: clearing cancelAtPeriodEnd here with nothing having changed at Stripe would
+        // disarm the exact guard onPaymentSucceeded() reads (billing.service.ts), reinstating
+        // the tenant ACTIVE (and booking a +1 MRR delta) the next time Stripe happens to fire
+        // an invoice.payment_succeeded webhook for a subscription it was never told to stop.
+        // Refuse instead, mirroring cancel()'s own handling of a state it cannot honour.
+        throw new ConflictException(
+          "The subscription cannot be resumed while the workspace is read-only; subscribe again to restore service.",
+        );
       }
     }
 
@@ -945,6 +945,38 @@ export class SubscriptionMutationService {
       await this.events.emit(tenantId, BILLING_EVENTS.SUBSCRIPTION_RESUMED, {}, { actorId, tx });
     });
     return this.subscription.getSubscription(tenantId);
+  }
+
+  /**
+   * STRIPE-CANCEL-2: the shared Stripe-propagation call `cancel()` makes both from the
+   * READ_ONLY short-circuit (a live sub the cron cancelled locally without ever telling
+   * Stripe) and from the ordinary with-row cancellation path — same call, same B107 error
+   * semantics, one place to keep them identical.
+   */
+  private async propagateCancelToStripe(tenantId: string, stripeSubId: string): Promise<void> {
+    try {
+      await this.stripe.updateSubscription(stripeSubId, { cancel_at_period_end: true });
+    } catch (err) {
+      if (isStripeResourceMissing(err)) {
+        // The Stripe subscription is already gone — nothing left to stop invoicing; the
+        // deleted-subscription webhook handles the churn. Proceed with the local cancellation.
+        this.logger.warn(
+          `STRIPE-CANCEL-1: cancel() found Stripe subscription already gone for tenant ${tenantId} (stripeSubId ${stripeSubId}) — proceeding with local cancellation`,
+        );
+      } else {
+        // Never log the raw error (may carry Stripe request/auth details) — tenantId +
+        // stripeSubId only.
+        this.logger.error(
+          `STRIPE-CANCEL-1: cancel() failed to schedule the Stripe cancellation for tenant ${tenantId} (stripeSubId ${stripeSubId})`,
+        );
+        // R3: the local row really is unchanged, but claiming Stripe changed nothing too is
+        // false on a timeout Stripe actually applied — describe the provider outcome as
+        // UNCERTAIN instead.
+        throw new ServiceUnavailableException(
+          "The payment provider did not confirm the change — it may still apply. Check your subscription in a moment before retrying, or contact support.",
+        );
+      }
+    }
   }
 
   /** Enable an add-on (prorated for the current cycle; SEAT_EXTRA adds seats). */
