@@ -1,10 +1,10 @@
 {
-  "nextId": 117,
-  "activeCount": 40,
-  "archivedCount": 72,
+  "nextId": 118,
+  "activeCount": 38,
+  "archivedCount": 75,
   "maxEntries": 40,
   "maxBytes": 40960,
-  "updatedAt": "2026-09-12T15:48:47.901Z",
+  "updatedAt": "2026-09-13T04:38:54.000Z",
   "schemaVersion": 1,
-  "note": "Rebase of fix/plane-write-ledger-local onto master 469d47a0 (#706 landed L-115 and archived L-041): union — both L-041 and L-109 archived, L-115 + L-116 active, nextId 117, activeCount 40, archivedCount 72. Branch note: fix/plane-write-ledger-local (worktree rf-plane3): landing lead numbering ruling -- a PR landing before ours already claimed L-115, so this fix's lesson is L-116 (tooling, plane self-test invariants must never bind to shared machine-local files -- PLANE_MACHINE_ROOT), nextId advanced to 117. Register was at the 40-entry cap, so L-109 (2026-09-11, process, registry-shard commits) was archived to clear headroom -- zero outside citations found (repo-wide grep excluding .claude/lessons/**, .claude/pipeline/**, and code-map CHANGELOG/_meta.json), tied at zero citations with L-110/L-111 (2026-09-11) and L-112/L-113 (2026-09-12), all fully guarded -- L-109 is the oldest of that tied set by id, per the standing archiving rule (least-cited, fully-guarded, oldest first). L-041 and L-108 were excluded from consideration per the landing lead's explicit instruction (L-108 already archived by an earlier commit in this same chain). Moved to ARCHIVE.md verbatim under a new 2026-09-12 section following the existing L-114 archival section. nextId 117, activeCount 40 (40 - L-109 + L-116), archivedCount 71 (70 + L-109) -- counted directly from '### L-' headers in the real files."
+  "note": "fix(mobile): B389 non-root Docker runner (worktree next-bug-fixing-wave). Register was at 40/40 entries and 40947/40960 bytes -- effectively at both caps -- so three entries were archived before recording this fix's lesson. Zero outside citations found for L-110/L-111/L-112 (repo-wide grep excluding .claude/lessons/**, .claude/pipeline/**, and code-map CHANGELOG/_meta.json); all three fully guarded. L-110 (2026-09-11) is the oldest of that tied-at-zero set by id, per the standing archiving rule (least-cited, fully-guarded, oldest first); L-111 and L-112 were archived alongside it in the same pass to restore real headroom (target <=30 per the lessons-learned skill) rather than landing back at the cap on the next fix. Moved to ARCHIVE.md verbatim under a new 2026-09-13 section following the existing L-109 (2026-09-12) archival section. Added L-117 (tooling: prefer an upstream-hardened Docker image variant over hand-patching an unverifiable one when no daemon is available to test). nextId 118, activeCount 38 (40 - 3 + L-117), archivedCount 75 (72 + 3) -- counted directly from '### L-' headers in the real files."
 }

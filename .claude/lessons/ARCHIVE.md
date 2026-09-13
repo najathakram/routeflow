@@ -1385,3 +1385,60 @@ so archiving it loses no enforcement.
   test file.**
 - **Guard:** campaign-check's freshness gate (already refuses a stale report by name with the
   regen command) — this is a usage note on WHEN to regenerate.
+
+## Archived 2026-09-13 — least-cited, fully guarded; headroom for the B389 lesson
+
+Three active entries archived to clear headroom (register was at 40/40 and ~40.9 KB, essentially
+at both caps) for a new tooling entry recording B389 (mobile Docker runner ran as root). Zero
+outside citations found for any of the three (repo-wide grep excluding `.claude/lessons/**`,
+`.claude/pipeline/**`, and code-map `CHANGELOG`/`_meta.json`), all fully guarded: L-110 and L-111
+(both 2026-09-11) and L-112 (2026-09-12). L-110 is the oldest of that tied set by id, so per the
+standing archiving rule (least-cited, fully-guarded, oldest first) it goes; L-111 and L-112 were
+archived alongside it (rather than one at a time) to restore real headroom rather than landing
+back at the cap on the very next fix. Each entry's own guard (a RESUME-card byte-size note,
+`plane-sync.mjs`'s R14 branch guard + `--max-writes`, and `plane-client.mjs`'s `CONTENT_KEYS`
+scoping + fixture uuid-shape tests) is an existing mechanism unrelated to the register entry
+itself, so archiving loses no enforcement.
+
+### L-110 · 2026-09-11 · tooling · workflow-tool resume
+
+- **Symptom:** resuming a Workflow-tool run failed with `JSON Parse error: Expected '}'` — the
+  stored `args` field was truncated mid-string.
+- **Root cause:** stored-args serialization truncates near 4 KB; a run with long inlined
+  briefs/content (not paths) lost its closing brace on write, undetected until resume.
+- **Lesson:** **Keep every Workflow-tool run's stored args under 4 KB — pass paths and short
+  briefs, never inlined content or transcripts, or resume fails opaquely.**
+- **Guard:** the RESUME card records the args byte size at launch, so a run near the limit is
+  visible before resume is relied on.
+
+### L-111 · 2026-09-11 · process · Plane sync
+
+- **Symptom:** Gate 5 (`.claude/hooks/stop.mjs`) ran registry→Plane sync against the LIVE
+  workspace from a feature worktree (282 items, 160 dupes) — cwd was still in the worktree from
+  an earlier `cd`, so its hook fired with the real `PLANE_API_KEY`.
+- **Root cause:** the hook had no branch/tree gate or write cap; hooks resolve against the tree
+  the cwd sits in, not the session's home tree.
+- **Lesson:** **A hook writing to an external system with real credentials must be dry by
+  default off the integration branch, cap writes per run — end every turn with the shell back
+  home.**
+- **Guard:** `plane-sync.mjs` R14 branch guard + `--max-writes` (25), tests T16/T16b;
+  `dedupe-2026-09-12.mjs` cleaned dupes. Sibling [[L-074]].
+
+### L-112 · 2026-09-12 · testing · Plane bulk sync
+
+- **Symptom:** the first bulk registry→Plane sync from master adopted all 160 name-keyed items
+  but created 0 of 72 rows and patched 0 of 160 (`skipped(forbidden)=232`), and plane-apply
+  refused every op with `forbidden (tenant-uuid)` — despite the full suite (T1–T18 plus an Opus
+  review and re-check) having been green.
+- **Root cause:** the write-path denylist scanned every string in a request body, so Plane's own
+  uuid-shaped state/label/assignee ids tripped the tenant-uuid pattern; the fake server's ids
+  were short strings (`state-1`), so no test could ever see the collision — the fixture's data
+  shape was less realistic than production's on exactly the axis the guard keyed on.
+- **Lesson:** **A fake/fixture must reproduce the production SHAPE of every value a guard keys
+  on (id formats, timestamp offsets, envelope vs bare array), and a content filter must be
+  scoped to the content fields it protects — never to "every string" — because a guard tested
+  only against toy shapes is a guard that fires first in production.**
+- **Guard:** `scripts/campaign/plane-client.mjs` scans `CONTENT_KEYS` only; `plane-fake-server.mjs`
+  `uuidIds: true` seeds + the uuid-id cases in plane-sync/plane-apply self-tests; Landmine 15
+  (live shapes) in the harness build plan. Related [[L-111]] (hook/branch gate), [[L-074]]
+  (fixture realism).

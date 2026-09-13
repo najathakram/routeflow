@@ -66,17 +66,6 @@
 - **Guard:** none yet — propose `--passWithNoTests` on the Baseline invocation and a close-out
   check that greps the run's JSON for the expected test titles.
 
-### L-110 · 2026-09-11 · tooling · workflow-tool resume
-
-- **Symptom:** resuming a Workflow-tool run failed with `JSON Parse error: Expected '}'` — the
-  stored `args` field was truncated mid-string.
-- **Root cause:** stored-args serialization truncates near 4 KB; a run with long inlined
-  briefs/content (not paths) lost its closing brace on write, undetected until resume.
-- **Lesson:** **Keep every Workflow-tool run's stored args under 4 KB — pass paths and short
-  briefs, never inlined content or transcripts, or resume fails opaquely.**
-- **Guard:** the RESUME card records the args byte size at launch, so a run near the limit is
-  visible before resume is relied on.
-
 ### L-103 · 2026-09-10 · tooling · chore/next-15
 
 - **Symptom:** `npm run local:up` built fine, then `docker compose … up -d` failed on a
@@ -246,6 +235,26 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 - **Guard:** the pid-reuse fixture forges `bootAt = bootStamp() − 1 year` and asserts the
   "predates this boot" verdict; the owner-write fixture clears the lock dir before its own precondition
   (`scripts/campaign/bugs.mjs` self-test, step 6 of `npm run verify`).
+
+### L-117 · 2026-09-13 · tooling · B389 mobile Docker non-root
+
+- **Symptom:** B389 (all three Docker images ran as root) was already fixed for api/web via
+  `USER node`, but hand-patching mobile's plain `nginx:alpine` runner the same way was blocked —
+  no Docker daemon was available in the session's sandbox to verify nginx's actual pid/cache/temp
+  directory ownership before flipping `USER`, so a wrong guess would silently break the deploy.
+- **Root cause:** "add a `USER` line" is not a uniform recipe — unlike a plain Node process,
+  nginx's own privilege-drop needs specific directories (pid file, cache, temp paths) writable by
+  the target user first, and those paths are undocumented image internals, not something you can
+  infer from the Dockerfile alone.
+- **Lesson:** **When a Docker/infra change can't be verified with a live daemon, prefer an
+  upstream-maintained hardened variant of the base image (here `nginxinc/nginx-unprivileged`,
+  which already redirects pid/cache/temp onto world-writable `/tmp` and ships its own non-root
+  user) over hand-patching the standard image's undocumented internal layout — an unverifiable
+  guess against internals you cannot inspect is exactly how a "safe" security fix ships a broken
+  deploy.**
+- **Guard:** none yet — propose a smoke-test container run (`docker run --rm <image>` + `curl`)
+  as a required manual step before any Dockerfile privilege-drop change merges without a Docker
+  daemon in the loop.
 
 ## testing
 
@@ -522,38 +531,6 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
 - **Guard:** REG-B67 T1/T2/T5 (apply-side, incl. the auto-apply door) and REG-B66 T6/T7/T9–T11 in
   `apps/api/src/credit-notes/credit-notes.wallet-integrity.spec.ts`; the pins file (T3/T3b) proves
   PAID/WRITTEN_OFF still shrink; `apps/api/src/invoices/invoice-status-sets.ts` is the one home.
-
-### L-111 · 2026-09-11 · process · Plane sync
-
-- **Symptom:** Gate 5 (`.claude/hooks/stop.mjs`) ran registry→Plane sync against the LIVE
-  workspace from a feature worktree (282 items, 160 dupes) — cwd was still in the worktree from
-  an earlier `cd`, so its hook fired with the real `PLANE_API_KEY`.
-- **Root cause:** the hook had no branch/tree gate or write cap; hooks resolve against the tree
-  the cwd sits in, not the session's home tree.
-- **Lesson:** **A hook writing to an external system with real credentials must be dry by
-  default off the integration branch, cap writes per run — end every turn with the shell back
-  home.**
-- **Guard:** `plane-sync.mjs` R14 branch guard + `--max-writes` (25), tests T16/T16b;
-  `dedupe-2026-09-12.mjs` cleaned dupes. Sibling [[L-074]].
-
-### L-112 · 2026-09-12 · testing · Plane bulk sync
-
-- **Symptom:** the first bulk registry→Plane sync from master adopted all 160 name-keyed items
-  but created 0 of 72 rows and patched 0 of 160 (`skipped(forbidden)=232`), and plane-apply
-  refused every op with `forbidden (tenant-uuid)` — despite the full suite (T1–T18 plus an Opus
-  review and re-check) having been green.
-- **Root cause:** the write-path denylist scanned every string in a request body, so Plane's own
-  uuid-shaped state/label/assignee ids tripped the tenant-uuid pattern; the fake server's ids
-  were short strings (`state-1`), so no test could ever see the collision — the fixture's data
-  shape was less realistic than production's on exactly the axis the guard keyed on.
-- **Lesson:** **A fake/fixture must reproduce the production SHAPE of every value a guard keys
-  on (id formats, timestamp offsets, envelope vs bare array), and a content filter must be
-  scoped to the content fields it protects — never to "every string" — because a guard tested
-  only against toy shapes is a guard that fires first in production.**
-- **Guard:** `scripts/campaign/plane-client.mjs` scans `CONTENT_KEYS` only; `plane-fake-server.mjs`
-  `uuidIds: true` seeds + the uuid-id cases in plane-sync/plane-apply self-tests; Landmine 15
-  (live shapes) in the harness build plan. Related [[L-111]] (hook/branch gate), [[L-074]]
-  (fixture realism).
 
 ### L-114 · 2026-09-12 · tooling · plane-learning self-test tmpdir
 
