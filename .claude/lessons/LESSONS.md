@@ -147,18 +147,6 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 - **Guard:** `apps/web/jest.config.js`'s inline comment on `testMatch`; the web suite count (19
   spec files) pinned in `.claude/code-map/web.md`.
 
-### L-062 · 2026-09-04 · tooling · imp-04
-
-- **Symptom:** dropping `@routeflow/api#test` (forbidden by package-shape.spec.ts) left
-  docs-truth.spec.ts/no-dead-deps.spec.ts's outside-workspace reads unhashed by any turbo task.
-- **Lesson:** a tripwire spec reaching outside its own workspace must own a turbo task whose
-  `inputs` name those files — a `<workspace>#<task>` override is one spec away from forbidden; a
-  GENERIC task with explicit inputs survives.
-- **Guard:** `turbo.json` `test:repo-truth`; `apps/api/src/common/turbo-inputs.spec.ts`.
-  Addendum (chore/next-15): moving a spec INTO the repo-truth lane must add it to the main
-  lane's `testPathIgnorePatterns` in the SAME change, or the main api lane still "collects" it,
-  runs zero assertions, and reports green.
-
 ### L-067 · 2026-09-04 · tooling · #597
 
 - **Symptom:** eight defects from one script: "updated" edits that changed nothing, mangled authored
@@ -252,20 +240,6 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 - **Guard:** `apps/web/app/(marketing)/distributors-redirect.static.test.ts` pins the config
   entry and the page's absence; a repo-wide sweep for the same shape filed 9 unbatched rows
   (B251–B259) rather than extending this one test to cover them.
-
-### L-076 · 2026-09-05 · testing · F13
-
-- **Symptom:** an E2E toast assertion via bare `getByText` hit a strict-mode violation
-  (2 elements) after the app gained an aria-live announcer that repeats toast copy.
-- **Root cause:** the same string is rendered twice on purpose — the visible toast
-  (`RadixToast.Title`) and Radix's own aria-live status region, portaled to `<body>`, which
-  mirrors the same title text for screen readers.
-- **Lesson:** **assert toasts through the toast container, never a bare text lookup — any copy
-  that is also announced resolves to two elements.** Scope through
-  `getByRole("region", { name: /notifications/i }).getByRole("listitem")`, not `page.getByText`.
-- **Guard:** the `getByRole("region"…).getByRole("listitem")` scoping convention (documented in
-  `21-destructive-guards.spec.ts`; no shared toast-assertion helper exists yet — a gap this entry
-  flags) applied at `apps/web/e2e/30-recurring-standing.spec.ts` (REG-B09, REG-B92).
 
 ### L-066 · 2026-09-04 · testing · watchdog spec
 
@@ -413,18 +387,6 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
   token (the red gate reads titles).**
 - **Guard:** `apps/api/src/**/{credit-note,payment,import}-numbering.db.spec.ts` (REG-B267/B268/B269),
   `numbering.service.spec.ts`.
-
-### L-098 · 2026-09-08 · domain · #673
-
-- **Symptom:** a keyboard user saw a fragmented purple focus ring and a wrapped arrow on the
-  Sign-in menu items.
-- **Root cause:** an interactive element containing several inline children (icon, label, glyph)
-  was left `display: inline`, so `:focus-visible` painted once per line box and the trailing
-  glyph wrapped.
-- **Lesson:** **Any focusable element that holds more than one child is a flex/grid/block
-  container with `white-space: nowrap` where the row must not break; the focus ring lives on the
-  element, never on its children; pin the rule with a CSS-rule test, never a source-text grep.**
-- **Guard:** the `signin-menu` assertions in `marketing-port.static.test.ts`.
 
 ### L-096 · 2026-09-08 · domain · #671
 
@@ -579,3 +541,34 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
 - **Guard:** `campaign-check` refuses the missing-report case (the refusal itself); CI verify on
   the PR head is the merge gate for the no-hook case; P-BUILD step 1 and P-CLOUD-0 step 7 carry
   the routine. Candidate: `scripts/worktree-audit.mjs` flags a worktree without `.husky/_`.
+
+### L-118 · 2026-09-13 · domain · F39 (B310/B311/B315 wallet/invoice lost updates)
+
+- **Symptom:** B310 — `applyAdvancePaymentToInvoice` read `AdvancePayment.balance` and decremented
+  it as two separate statements inside one Prisma transaction; two concurrent applies of the same
+  advance both read the same balance and both passed the "has remaining balance" check, driving it
+  negative. B311 — `recordStandalonePayment`'s buyer/online overpay guard had the identical shape
+  one call away, on `Invoice` instead of `AdvancePayment`.
+- **Root cause:** a single Prisma `tenantTransaction` is NOT a lock — under READ COMMITTED, a plain
+  read inside it sees only what's already committed, so a check-then-act on a row neither
+  transaction has locked lets two concurrent callers both read the pre-decrement value and both
+  proceed; only an explicit row lock (or an equivalent serializing primitive) closes the window.
+- **Lesson:** **A balance/limit check followed by a write to the SAME row, inside one transaction,
+  is a check-then-act race unless something locks the row (or the caller) BEFORE the read — a
+  customer-keyed `withAdvisoryLock` when the critical section spans multiple tables/calls (the
+  house pattern for money serialization), or a plain `SELECT ... FOR UPDATE` inside the same tx
+  when it's one row — or, when the write is a single column and the cap is expressible in SQL
+  (B315's advance-restore), skip locking altogether: one atomic `UPDATE ... SET col = LEAST(cap,
+col + delta)` has no read-modify-write window at all. And such a fix is regression-testable
+  WITHOUT a live database: mock the lock
+  primitive (`withAdvisoryLock`, or the specific `$executeRaw` call) with a per-key promise chain
+  that genuinely serializes concurrent callers in call order, drive two concurrent calls through
+  the real service method, and assert on the wrong VALUE (balance negative, sum overpaid) — then
+  confirm the test is real by temporarily reverting the fix and watching it fail on that same
+  wrong value before restoring it.**
+- **Guard:** `apps/api/src/customers/customers.service.spec.ts` "B310: two concurrent applies of
+  the SAME advance never drive its balance negative" (promise-chain `withAdvisoryLock` mock);
+  `apps/api/src/invoices/invoices.service.spec.ts` "B311: a concurrent office payment can no
+  longer overpay the invoice past its live balance" (promise-chain `$executeRaw` mock, released
+  when the whole `tenantTransaction` call settles — not at the raw-query call site). Both verified
+  red-then-green by hand before commit.

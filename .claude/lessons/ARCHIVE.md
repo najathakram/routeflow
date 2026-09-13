@@ -1411,3 +1411,41 @@ so archiving it loses no enforcement.
   home.**
 - **Guard:** `plane-sync.mjs` R14 branch guard + `--max-writes` (25), tests T16/T16b;
   `dedupe-2026-09-12.mjs` cleaned dupes. Sibling [[L-074]].
+
+### L-098 · 2026-09-08 · domain · #673
+
+- **Symptom:** a keyboard user saw a fragmented purple focus ring and a wrapped arrow on the
+  Sign-in menu items.
+- **Root cause:** an interactive element containing several inline children (icon, label, glyph)
+  was left `display: inline`, so `:focus-visible` painted once per line box and the trailing
+  glyph wrapped.
+- **Lesson:** **Any focusable element that holds more than one child is a flex/grid/block
+  container with `white-space: nowrap` where the row must not break; the focus ring lives on the
+  element, never on its children; pin the rule with a CSS-rule test, never a source-text grep.**
+- **Guard:** the `signin-menu` assertions in `marketing-port.static.test.ts`.
+
+### L-076 · 2026-09-05 · testing · F13
+
+- **Symptom:** an E2E toast assertion via bare `getByText` hit a strict-mode violation
+  (2 elements) after the app gained an aria-live announcer that repeats toast copy.
+- **Root cause:** the same string is rendered twice on purpose — the visible toast
+  (`RadixToast.Title`) and Radix's own aria-live status region, portaled to `<body>`, which
+  mirrors the same title text for screen readers.
+- **Lesson:** **assert toasts through the toast container, never a bare text lookup — any copy
+  that is also announced resolves to two elements.** Scope through
+  `getByRole("region", { name: /notifications/i }).getByRole("listitem")`, not `page.getByText`.
+- **Guard:** the `getByRole("region"…).getByRole("listitem")` scoping convention (documented in
+  `21-destructive-guards.spec.ts`; no shared toast-assertion helper exists yet — a gap this entry
+  flags) applied at `apps/web/e2e/30-recurring-standing.spec.ts` (REG-B09, REG-B92).
+
+### L-062 · 2026-09-04 · tooling · imp-04
+
+- **Symptom:** dropping `@routeflow/api#test` (forbidden by package-shape.spec.ts) left
+  docs-truth.spec.ts/no-dead-deps.spec.ts's outside-workspace reads unhashed by any turbo task.
+- **Lesson:** a tripwire spec reaching outside its own workspace must own a turbo task whose
+  `inputs` name those files — a `<workspace>#<task>` override is one spec away from forbidden; a
+  GENERIC task with explicit inputs survives.
+- **Guard:** `turbo.json` `test:repo-truth`; `apps/api/src/common/turbo-inputs.spec.ts`.
+  Addendum (chore/next-15): moving a spec INTO the repo-truth lane must add it to the main
+  lane's `testPathIgnorePatterns` in the SAME change, or the main api lane still "collects" it,
+  runs zero assertions, and reports green.
