@@ -82,7 +82,10 @@ describeDb("backfill-tenant-class.mjs (db)", () => {
       where: { slug: { in: [TEST_TENANT_SLUG, PRODUCTION_SLUG] } },
     });
     for (const t of otherTenantsBefore) {
-      await prisma.tenant.update({
+      // updateMany + id: a concurrently-running spec may have already deleted this tenant as
+      // part of its own teardown between our beforeAll snapshot and here; count 0 (no throw)
+      // just means there is nothing left to restore, same race class as the CLI's own writes.
+      await prisma.tenant.updateMany({
         where: { id: t.id },
         data: { class: t.class as never },
       });
@@ -118,11 +121,21 @@ describeDb("backfill-tenant-class.mjs (db)", () => {
     expect(bySlug[PRODUCTION_SLUG]).toBe("PRODUCTION");
   });
 
-  it("a second apply is a no-op (idempotent)", async () => {
-    const output = execSync(`node ${CLI} --apply`, {
+  it("a second apply is a no-op (idempotent) for this file's own tenants", async () => {
+    // Assert only on this file's own rows, not the printed global change count: 15 other
+    // db.spec.ts files run concurrently against this same database and create/delete their own
+    // tenants throughout the run, so a global "0 classification change(s)" assertion would flake
+    // whenever one of them happens to need reclassifying at the moment this runs.
+    execSync(`node ${CLI} --apply`, {
       encoding: "utf-8",
       env: { ...process.env, DATABASE_URL: dbUrl },
     });
-    expect(output).toContain("0 classification change(s)");
+    const rows = await prisma.tenant.findMany({
+      where: { slug: { in: [TEST_TENANT_SLUG, PRODUCTION_SLUG] } },
+      select: { slug: true, class: true },
+    });
+    const bySlug = Object.fromEntries(rows.map((r) => [r.slug, r.class]));
+    expect(bySlug[TEST_TENANT_SLUG]).toBe("TEST");
+    expect(bySlug[PRODUCTION_SLUG]).toBe("PRODUCTION");
   });
 });

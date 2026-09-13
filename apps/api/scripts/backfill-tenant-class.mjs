@@ -56,10 +56,37 @@ async function main() {
       return;
     }
 
+    // Dark backfill running against a live, concurrently-written table: a tenant scanned above
+    // can be deleted or reclassified by someone else before we get to write it. The write is
+    // conditioned on the row still holding the `class` value we scanned (`updateMany` returns a
+    // count instead of throwing when nothing matches — 0 = raced, count it as skipped, never
+    // crash). P2025 is a defensive fallback for any single-record path; P2034 is Prisma's
+    // write-conflict/deadlock code under concurrent writers. Every tenant is its own statement —
+    // never wrap this loop in one transaction, or a single race turns into a full-run rollback.
+    let applied = 0;
+    let skipped = 0;
     for (const c of changes) {
-      await prisma.tenant.update({ where: { id: c.id }, data: { class: c.newClass } });
+      try {
+        const result = await prisma.tenant.updateMany({
+          where: { id: c.id, class: c.class },
+          data: { class: c.newClass },
+        });
+        if (result.count === 0) {
+          skipped++;
+        } else {
+          applied++;
+        }
+      } catch (err) {
+        if (err.code === "P2025" || err.code === "P2034") {
+          skipped++;
+        } else {
+          throw err;
+        }
+      }
     }
-    console.log(`Applied ${changes.length} classification change(s).`);
+    console.log(
+      `Applied ${applied} classification change(s), skipped ${skipped} (raced with a concurrent change).`,
+    );
   } finally {
     await prisma.$disconnect();
     await pool.end();
