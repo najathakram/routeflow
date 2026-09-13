@@ -4,7 +4,14 @@
  * does not exist as a real implementation yet — imports resolve against a signature-only
  * stub so these fail on assertion, not on module resolution.
  */
-import { lineItemSubtotal, sumOrderLineItems, sumStopOrders } from "../lib/run-money";
+import {
+  lineItemSubtotal,
+  orderAmountDue,
+  reconciledAmountDue,
+  stopAmountDue,
+  sumOrderLineItems,
+  sumStopOrders,
+} from "../lib/run-money";
 import { computeLineSubtotal } from "@routeflow/pricing";
 
 describe("lineItemSubtotal (REG-B49)", () => {
@@ -85,5 +92,71 @@ describe("sumOrderLineItems / sumStopOrders (REG-B49)", () => {
 
   it("treats a stop with no orders as zero", () => {
     expect(sumStopOrders({})).toBe(0);
+  });
+});
+
+/**
+ * REG-B305: the driver "amount due" must be the tax-inclusive total the invoice
+ * will actually bill, not the pre-tax line subtotal — `sumOrderLineItems` alone
+ * (REG-B49 above) undercharges by the order's tax whenever the tenant has a
+ * non-zero tax rate. `orderAmountDue`/`stopAmountDue`/`reconciledAmountDue` do
+ * not exist in `lib/run-money.ts` yet, so every assertion below is red on
+ * missing export (a TypeError calling `undefined` as a function) until the fix
+ * adds them.
+ */
+describe("REG-B305 tax-inclusive amount due", () => {
+  // The bug's own numbers: invoice $128.51, driver screen asked $116.83 (pre-tax).
+  const taxedOrder = {
+    lineItems: [{ qty: 1, unitPrice: 116.83, subtotal: 116.83 }],
+    subtotal: "116.83",
+    tax: "11.68",
+    total: "128.51",
+  };
+
+  it("REG-B305 a stop on a tenant with a non-zero tax rate quotes and collects the tax-inclusive amount due", () => {
+    expect(orderAmountDue(taxedOrder as any)).toBe(128.51);
+    expect(stopAmountDue({ orders: [taxedOrder] } as any)).toBe(128.51);
+    // Documents the wrong value: the legacy pre-tax helper still returns the bare subtotal.
+    expect(sumOrderLineItems(taxedOrder as any)).toBe(116.83);
+  });
+
+  it("REG-B305 change is computed off the tax-inclusive amount", () => {
+    // Driver collected $130 cash; change should be $1.49, not $13.17 (pre-tax basis).
+    const change = Math.max(0, 130 - orderAmountDue(taxedOrder as any));
+    expect(change).toBeCloseTo(1.49, 2);
+  });
+
+  it("REG-B305 a short-picked order prorates the order's tax by the delivered share", () => {
+    // Half the goods delivered → half the tax carried forward.
+    expect(
+      reconciledAmountDue({
+        orderSubtotal: 116.83,
+        orderTax: 11.68,
+        orderTotal: 128.51,
+        reconciledSubtotal: 58.415,
+      }),
+    ).toBeCloseTo(64.26, 2);
+
+    // Everything delivered → the full order total, unprorated.
+    expect(
+      reconciledAmountDue({
+        orderSubtotal: 116.83,
+        orderTax: 11.68,
+        orderTotal: 128.51,
+        reconciledSubtotal: 116.83,
+      }),
+    ).toBeCloseTo(128.51, 2);
+  });
+
+  it("REG-B305 falls back to the pre-tax line sum when the payload carries no server total", () => {
+    const order = { lineItems: [{ qty: 2, unitPrice: 10, subtotal: 20 }] };
+    expect(orderAmountDue(order as any)).toBe(sumOrderLineItems(order as any));
+  });
+
+  it("REG-B305 coerces string-Decimal totals", () => {
+    const base = { lineItems: [{ qty: 1, unitPrice: 10, subtotal: 10 }] };
+    expect(orderAmountDue({ ...base, total: "128.51" } as any)).toBe(128.51);
+    expect(orderAmountDue({ ...base, total: 128.51 } as any)).toBe(128.51);
+    expect(orderAmountDue({ ...base, total: null } as any)).toBe(sumOrderLineItems(base as any));
   });
 });
