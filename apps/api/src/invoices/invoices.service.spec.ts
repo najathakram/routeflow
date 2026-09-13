@@ -8252,6 +8252,89 @@ describe("InvoicesService", () => {
       await expect(service.create(dto as any)).resolves.toMatchObject({ id: "inv-2" });
     });
   });
+
+  // ─── B306: driver at-door over-collection advance has no reversal ───────
+  // recordDeliveryPaymentInTx (:5035-5046) books a driver's excess at-door
+  // collection as an AdvancePayment tagged `RUN:<runId>:STOP:<stopId>`.
+  // Nothing today reverses that advance when the door payment(s) that
+  // produced it are later voided — routes.service.ts's run-cash
+  // reconciliation keeps summing it forever (see routes.service.spec.ts).
+  // voidPayment must detect "this invoice's order sits on a RUN stop AND no
+  // CONFIRMED payment remains for that stop" and reverse the matching
+  // RUN-tagged advance(s) instead of leaving them live.
+  describe("voidPayment — reverses a RUN-tagged at-door advance (REG-B306)", () => {
+    const arrangeRunStopVoid = (advanceOverrides: any = {}, confirmedRemaining = 0) => {
+      prisma.invoicePayment.findFirst.mockResolvedValue({
+        id: "pay-1",
+        invoiceId: "inv-1",
+        status: "PAID",
+        method: "CASH",
+        amount: 20,
+      });
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        total: 20,
+        dueDate: null,
+        status: "PAID",
+        payments: [],
+        order: { routeRunId: "run-1", routeRunStopId: "stop-1" },
+        invoiceNumber: "INV-1",
+        customerId: "c-1",
+      });
+      prisma.invoicePayment.count.mockResolvedValue(confirmedRemaining);
+      prisma.advancePayment.findMany.mockResolvedValue([
+        {
+          id: "adv-1",
+          amount: 5,
+          balance: 5,
+          reference: "RUN:run-1:STOP:stop-1",
+          notes: "Driver at-door over-collection",
+          ...advanceOverrides,
+        },
+      ]);
+    };
+
+    it("REG-B306 a RUN-tagged excess advance is reversible and the run's collected-cash total excludes advances whose payments were voided", async () => {
+      arrangeRunStopVoid();
+
+      await service.voidPayment("inv-1", "pay-1");
+
+      // Assert the reversal write first so a failure names the missing
+      // reversal itself, not just the absent lookup that would precede it.
+      expect(prisma.advancePayment.update).toHaveBeenCalledWith({
+        where: { id: "adv-1" },
+        data: expect.objectContaining({
+          balance: 0,
+          reference: "RUN:run-1:STOP:stop-1:REVERSED",
+          notes: expect.stringContaining("REVERSED"),
+        }),
+      });
+      expect(prisma.advancePayment.findMany).toHaveBeenCalledWith({
+        where: { reference: "RUN:run-1:STOP:stop-1" },
+      });
+    });
+
+    it("REG-B306 an advance that was already applied is not silently reversed", async () => {
+      arrangeRunStopVoid({ balance: 2 });
+
+      await expect(service.voidPayment("inv-1", "pay-1")).rejects.toThrow(BadRequestException);
+      await expect(service.voidPayment("inv-1", "pay-1")).rejects.toThrow(/advance.*applied/i);
+      expect(prisma.advancePayment.update).not.toHaveBeenCalled();
+    });
+
+    // Green today by accident: no reversal code exists yet at all, so a stop
+    // with one confirmed payment still standing never triggers a spurious
+    // reversal either. This pins the fix to the same "no confirmed payment
+    // remains for the stop" gate once it exists, as a regression guard.
+    it("REG-B306 voiding one of several confirmed door payments leaves the advance alone", async () => {
+      arrangeRunStopVoid({}, 1);
+
+      const result = await service.voidPayment("inv-1", "pay-1");
+
+      expect(result).toEqual({ success: true });
+      expect(prisma.advancePayment.findMany).not.toHaveBeenCalled();
+    });
+  });
 });
 
 /**

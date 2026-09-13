@@ -2286,4 +2286,95 @@ describe("RoutesService", () => {
       );
     });
   });
+
+  // ─── B306: at-door over-collection advance has no reversal ──────────────
+  // recordDeliveryPaymentInTx books a driver's at-door excess as an
+  // AdvancePayment tagged `RUN:<runId>:STOP:<stopId>`. getRunCashCollections
+  // and enrichRunsWithCollectedPayments sum every such advance unconditionally
+  // (no filter for one whose originating door payment was later voided), and
+  // reopenStop never looks at advancePayment at all. See
+  // invoices.service.spec.ts's "voidPayment — reverses a RUN-tagged at-door
+  // advance (REG-B306)" for the reversal side of this bug.
+  describe("run cash + reopenStop ignore a reversed at-door advance (REG-B306)", () => {
+    it("REG-B306 run cash reconciliation ignores a reversed advance", async () => {
+      const startedAt = new Date("2026-08-01T00:00:00.000Z");
+      prisma.routeRun.findUnique.mockResolvedValue({ ...MOCK_RUN, startedAt, stops: [] });
+      prisma.advancePayment.findMany.mockResolvedValue([
+        { amount: 5, method: "CASH", reference: "RUN:run-1:STOP:stop-1" },
+      ]);
+
+      await service.findOneRun("run-1");
+
+      expect(prisma.advancePayment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            reference: expect.objectContaining({ startsWith: "RUN:run-1" }),
+            NOT: { reference: { endsWith: ":REVERSED" } },
+          }),
+        }),
+      );
+    });
+
+    it("REG-B306 the runs list's collected-cash enrichment ignores a reversed advance", async () => {
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1", userId: "user-drv" });
+      prisma.routeRun.findMany.mockResolvedValue([
+        { ...MOCK_RUN, id: "run-1", status: "IN_PROGRESS" as const, stops: [] },
+      ]);
+      prisma.advancePayment.findMany.mockResolvedValue([
+        { amount: 5, method: "CASH", reference: "RUN:run-1:STOP:stop-1" },
+      ]);
+
+      await service.findMyRuns(driverPayload);
+
+      expect(prisma.advancePayment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            NOT: { reference: { endsWith: ":REVERSED" } },
+          }),
+        }),
+      );
+    });
+
+    it("REG-B306 a stop with an unreversed over-collection advance cannot be reopened", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...MOCK_RUN,
+        id: "run-1",
+        status: "COMPLETED" as const,
+        stops: [
+          {
+            id: "stop-1",
+            status: "COMPLETED",
+            orders: [{ id: "ord-1", status: "DELIVERED", lineItems: [] }],
+          },
+        ],
+      });
+      prisma.invoice.findFirst.mockResolvedValue(null);
+      prisma.advancePayment.findFirst.mockResolvedValue({ id: "adv-1" });
+      const txMock = {
+        ...prisma,
+        deliveryMutation: {
+          ...prisma.deliveryMutation,
+          deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+        orderItem: { ...prisma.orderItem, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        order: { ...prisma.order, update: jest.fn().mockResolvedValue({}) },
+        transaction: {
+          ...prisma.transaction,
+          deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+        routeRunStop: { ...prisma.routeRunStop, update: jest.fn().mockResolvedValue({}) },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        auditLog: { ...prisma.auditLog, create: jest.fn().mockResolvedValue({}) },
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+
+      await expect(service.reopenStop("run-1", "stop-1", operatorPayload)).rejects.toThrow(
+        BadRequestException,
+      );
+      await expect(service.reopenStop("run-1", "stop-1", operatorPayload)).rejects.toThrow(
+        /over-collection/i,
+      );
+      expect(txMock.deliveryMutation.deleteMany).not.toHaveBeenCalled();
+    });
+  });
 });
