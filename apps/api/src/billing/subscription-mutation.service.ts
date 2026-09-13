@@ -27,7 +27,7 @@ import {
   addonSkuCode,
   SELF_SERVICE_ADDON_SKUS,
 } from "./plan-catalog.constants";
-import { addCycle, annualPrice, Cycle } from "./billing-math";
+import { addCycle, Cycle } from "./billing-math";
 
 export interface SubscribeInput {
   planKey: string;
@@ -525,7 +525,7 @@ export class SubscriptionMutationService {
       const oldMonthly = this.planMonthly(version, fromKey);
       const newMonthly =
         publishedTargetDef?.monthlyPrice != null ? Number(publishedTargetDef.monthlyPrice) : 0;
-      const proratedNow = this.proratedDiff(
+      const proratedNow = this.proration.proratedDiff(
         { cycle: priorSub.cycle, periodStart: priorSub.periodStart, periodEnd: priorSub.periodEnd },
         newMonthly - oldMonthly,
       );
@@ -625,7 +625,7 @@ export class SubscriptionMutationService {
     // the entitlement instead: the tenant already holds `fromKey` and owes only the difference.
     const ledgerOldMonthly = sub.planKey ? oldMonthly : 0;
     const amountDelta = roundMoney(newMonthly - ledgerOldMonthly);
-    const proratedNow = this.proratedDiff(sub, newMonthly - oldMonthly);
+    const proratedNow = this.proration.proratedDiff(sub, newMonthly - oldMonthly);
 
     await this.prisma.$transaction(async (tx) => {
       // Optimistic guard: only apply if still on the expected plan (blocks a concurrent
@@ -1067,30 +1067,5 @@ export class SubscriptionMutationService {
 
     this.entitlements.invalidate(tenantId);
     return this.subscription.getSubscription(tenantId);
-  }
-
-  /** The prorated charge for a monthly price DELTA over the remaining current period. */
-  private proratedDiff(
-    sub: { cycle: string; periodStart: Date | null; periodEnd: Date | null },
-    monthlyDelta: number,
-  ): number {
-    const now = new Date();
-    if (sub.cycle === "ANNUAL" && sub.periodStart && sub.periodEnd) {
-      const aIn = sub.periodEnd.getTime() - sub.periodStart.getTime();
-      const aRem = Math.max(0, Math.min(aIn, sub.periodEnd.getTime() - now.getTime()));
-      return aIn > 0 ? roundMoney((annualPrice(monthlyDelta) * aRem) / aIn) : 0;
-    }
-    let start: Date;
-    let end: Date;
-    if (sub.periodStart && sub.periodEnd && sub.periodStart <= now && now < sub.periodEnd) {
-      start = sub.periodStart;
-      end = sub.periodEnd;
-    } else {
-      start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-      end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-    }
-    const msIn = end.getTime() - start.getTime();
-    const msRem = Math.max(0, Math.min(msIn, end.getTime() - now.getTime()));
-    return msIn > 0 ? roundMoney((monthlyDelta * msRem) / msIn) : 0;
   }
 }

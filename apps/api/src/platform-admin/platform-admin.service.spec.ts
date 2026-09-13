@@ -6,6 +6,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { BillingService } from "../billing/billing.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
+import { ProrationService } from "../billing/proration.service";
 import { PlatformPricingService } from "../billing/platform-pricing.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { BillingEventService } from "../billing/billing-event.service";
@@ -27,6 +28,7 @@ describe("PlatformAdminService — audit provenance", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   let auditLog: jest.Mock;
   let planCatalogService: { getPublishedVersion: jest.Mock };
+  let prorationService: { proratedDiff: jest.Mock };
   let entitlementsService: { resolve: jest.Mock; invalidate: jest.Mock };
   let billingEventService: { emit: jest.Mock };
   let meterService: { readAll: jest.Mock };
@@ -43,6 +45,10 @@ describe("PlatformAdminService — audit provenance", () => {
       findUnique: jest.fn().mockResolvedValue(null),
       // B216: updateStatus()'s admin-reactivation downgrade-disarm write.
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      // ADMIN-UPDATEPLAN-1: updatePlan()'s downgrade-scheduling write (mirrors
+      // SubscriptionMutationService.downgrade(), which also uses a plain update — the row
+      // must already exist to carry a periodEnd to schedule against).
+      update: jest.fn().mockResolvedValue({}),
     };
     (prisma as any).auditLog = {
       findMany: jest.fn().mockResolvedValue([]),
@@ -59,6 +65,7 @@ describe("PlatformAdminService — audit provenance", () => {
     auditLog = jest.fn().mockResolvedValue(undefined);
     // Default: unseeded catalog — MRR/entitlements tests override per-case.
     planCatalogService = { getPublishedVersion: jest.fn().mockResolvedValue(null) };
+    prorationService = { proratedDiff: jest.fn().mockReturnValue(0) };
     entitlementsService = { resolve: jest.fn(), invalidate: jest.fn() };
     billingEventService = { emit: jest.fn().mockResolvedValue({}) };
     meterService = { readAll: jest.fn() };
@@ -82,6 +89,7 @@ describe("PlatformAdminService — audit provenance", () => {
           },
         },
         { provide: PlanCatalogService, useValue: planCatalogService },
+        { provide: ProrationService, useValue: prorationService },
         { provide: PlatformPricingService, useValue: platformPricingService },
         { provide: EntitlementsService, useValue: entitlementsService },
         { provide: BillingEventService, useValue: billingEventService },
@@ -391,6 +399,142 @@ describe("PlatformAdminService — audit provenance", () => {
     expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
     expect(entitlementsService.invalidate).not.toHaveBeenCalled();
     expect(billingEventService.emit).not.toHaveBeenCalled();
+  });
+
+  // ADMIN-UPDATEPLAN-1: updatePlan() never computed or surfaced a mid-cycle prorated amount,
+  // and applied every change — upgrade AND downgrade — instantly, unlike the tenant-facing
+  // path (subscribe()/upgrade()/downgrade()), which schedules a downgrade at period end with
+  // no proration/credit. The lead ruling aligns the admin path to the tenant path: an upgrade
+  // stays instant but now surfaces `proratedNow` from the promoted ProrationService.proratedDiff;
+  // a downgrade now SCHEDULES instead of applying immediately.
+  describe("updatePlan — ADMIN-UPDATEPLAN-1 proration + downgrade scheduling", () => {
+    const periodStart = new Date("2026-09-01T00:00:00Z");
+    const periodEnd = new Date("2026-10-01T00:00:00Z");
+
+    it("REG-ADMIN-UPDATEPLAN-1 an UPGRADE surfaces proratedNow from the shared ProrationService.proratedDiff, called with the tenant path's own inputs, and still applies instantly", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "STARTER",
+        status: "ACTIVE",
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "PROFESSIONAL",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [
+          { planKey: "STARTER", monthlyPrice: 99 },
+          { planKey: "SCALE", monthlyPrice: 499 },
+        ],
+      });
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        planKey: "STARTER",
+        basePriceSnapshot: 99,
+        priceOverrideMonthly: null,
+        discount: null,
+        cycle: "MONTHLY",
+        periodStart,
+        periodEnd,
+      });
+      prorationService.proratedDiff.mockReturnValue(200);
+
+      const result = await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+
+      // Same inputs the tenant-facing upgrade() passes to the SAME shared helper: the sub's
+      // cycle/period window, and the monthly-price DELTA (new catalog price − old catalog
+      // price) — never the ledger-adjusted amountDelta computed below it.
+      expect(prorationService.proratedDiff).toHaveBeenCalledWith(
+        { cycle: "MONTHLY", periodStart, periodEnd },
+        400, // 499 − 99
+      );
+      expect(result.proratedNow).toBe(200);
+      // An upgrade still applies instantly — unchanged from today.
+      expect(prisma.tenant.update).toHaveBeenCalledWith({
+        where: { id: TENANT_ID },
+        data: { plan: "PROFESSIONAL", planVersionId: "v-9" },
+      });
+    });
+
+    it("REG-ADMIN-UPDATEPLAN-1 a DOWNGRADE schedules at period end (downgradeToPlanKey/downgradeEffectiveAt) and does NOT change the tenant's plan today", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "PROFESSIONAL",
+        status: "ACTIVE",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [
+          { planKey: "STARTER", monthlyPrice: 99 },
+          { planKey: "SCALE", monthlyPrice: 499 },
+        ],
+      });
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        planKey: "SCALE",
+        basePriceSnapshot: 499,
+        priceOverrideMonthly: null,
+        discount: null,
+        cycle: "MONTHLY",
+        periodStart,
+        periodEnd,
+      });
+
+      const result = await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
+
+      expect((prisma as any).tenantSubscription.update).toHaveBeenCalledWith({
+        where: { tenantId: TENANT_ID },
+        data: {
+          downgradeToPlanKey: "STARTER",
+          downgradeEffectiveAt: periodEnd,
+          retainedUserIds: [],
+          cancelAtPeriodEnd: false,
+        },
+      });
+      // Nothing applies today: no instant plan write, no upsert (that is the cron's job at
+      // period end, mirroring downgrade() never touching tenant.plan either).
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(result.plan).toBe("PROFESSIONAL");
+      expect(result.downgradeToPlanKey).toBe("STARTER");
+    });
+
+    it("REG-R4 a scheduled downgrade books NO plan.changed ledger delta at request time — billing-cron applyScheduledDowngrades books it when it actually fires", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "PROFESSIONAL",
+        status: "ACTIVE",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [
+          { planKey: "STARTER", monthlyPrice: 99 },
+          { planKey: "SCALE", monthlyPrice: 499 },
+        ],
+      });
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        planKey: "SCALE",
+        basePriceSnapshot: 499,
+        priceOverrideMonthly: null,
+        discount: null,
+        cycle: "MONTHLY",
+        periodStart,
+        periodEnd,
+      });
+
+      await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
+
+      // RED against pre-fix updatePlan(), which always emits "plan.changed" with the full
+      // instant run-rate delta, upgrade or downgrade alike — the run-rate has not actually
+      // changed yet, so booking it now (and again when the cron fires) would double-book.
+      const changedCalls = billingEventService.emit.mock.calls.filter(
+        (c: any[]) => c[1] === "plan.changed",
+      );
+      expect(changedCalls).toHaveLength(0);
+    });
   });
 
   it("activateManualSubscription disarms every pending transition when it rolls the period (round 3, findings 2/9)", async () => {
