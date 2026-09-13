@@ -750,7 +750,7 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   Pinned by `estimates.service.spec.ts` and `estimates.issue-date.db.spec.ts` (real Postgres) —
   landed 2026-09-13. `CreateEstimateDto` now declares `issueDate?: string`, no more `as any` cast.
 
-### L-119 · 2026-09-13 · domain · F27 B70 (estimates)
+### L-131 · 2026-09-13 · domain · F27 B70 (estimates)
 
 - **Symptom:** a fix round made `accept()`'s atomic claim exclude the full terminal-status set
   instead of CONVERTED alone, breaking the pre-existing invariant that a DECLINED estimate can
@@ -771,4 +771,11 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   the laundering chain. `PIN-B70 accept() still allows DECLINED->ACCEPTED` is live (un-skipped); a
   new `REG-B70 accept() alone cannot re-open a CONVERTED estimate` test covers the direct path the
   two pre-existing "laundered chain" tests miss (both short-circuit at `send()`, never reach
-  `accept()`).
+  `accept()`). **Corollary the pre-merge review then had to add (2026-09-13):** the restored PIN
+  stubbed `updateMany` to `{ count: 1 }` unconditionally, so it pinned the exclusion list's SHAPE
+  while never proving a real DECLINED row matches it — a test that mocks the predicate under test
+  into always-succeeding is not a behavioral pin. It now also runs through
+  `createLaunderingHarness`, which evaluates the predicate against a stateful row. Same pass
+  restored the two `accept()` assertions from nested `expect.objectContaining` to exact
+  `toHaveBeenCalledWith`: objectContaining silently admits extra `where` keys, so the key-set
+  (`{ id, status }`, no tenant key) was pinned nowhere.
