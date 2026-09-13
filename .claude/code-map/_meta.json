@@ -1,7 +1,7 @@
 {
-  "mappedSha": "2d3537522d94fa6a29c693c2e6d76988eca8f074",
-  "generatedAt": "2026-09-13T05:05:00.000Z",
+  "mappedSha": "f95d9574d7ee93f46c9b072e2c764ead0c936f15",
+  "generatedAt": "2026-09-13T21:04:04.000Z",
   "areas": ["api", "web", "mobile", "packages"],
   "fileCount": 1024,
-  "notes": "**2026-09-13** — (branch `docs/704-bookkeeping`, Option-B follow-up for #704 = master `2d353752`) — registry tooling from the `security-registry-tags` run: `bugs.mjs` `--tag` + `already-fixed` state, `plane-sync.mjs` tags → Plane labels (R8) + self-test T8, `bug-registry/SKILL.md` security-findings section, `docs/audit/security-findings-index.md` Registry column, `docs/security/security-testing-program.md` §7 pointer; F48 (B355–B360) + F49 (B361–B393 `already-fixed`) filed. INDEX.md rows 'Bug catalogue + agent fix carve-out' and 'Plane BUGS mirror' extended; the api.md section is still deferred (over the 1,024 KiB pre-commit cap until the area-file split on `chore/workflow-redesign` lands); web.md/mobile.md/packages.md untouched (no diff). Same PR: ledger row, RUN-LOG entry, B349 ruling note, L-117 (L-110/L-111 archived). See CHANGELOG.md for full detail."
+  "notes": "**2026-09-13** — (branch `feat/phase0-schema`, PR #718 fix round 1) — api.md surgically updated for the five BLOCK-review fixes: F1 inlined scripts/lib/test-tenants.cjs's constants into tenant-class.util.ts (repo-root scripts/ isn't in the API Docker image); F2 backfill-tenant-class.mjs now exports classify(), cross-checked against classifyTenantSlug in backfill-tenant-class.db.spec.ts; F3 TenantPlanEnumValue widened to the full 7-value TenantPlan enum + new SELECTABLE_TENANT_PLANS gating UpdateTenantPlanDto/ActivateSubscriptionDto off GROWTH/SCALE until Task 10; F5 updateTenantClass's tenant.update + BillingEvent emit now run in one $transaction. F4 (migration lint) needed no code change — require-concurrent-index-creation is already repo-wide excluded in apps/api/.squawk.toml, so the Customer_representsTenantId_key index lints clean as-is. web.md/mobile.md/packages.md untouched (no diff). See CHANGELOG.md for full detail."
 }
