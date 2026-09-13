@@ -16,6 +16,9 @@ in `useOpenPurchaseOrders` always return zero rows for that leg; `lib/api/buyer.
 `lib/buyer-cart-logic.ts` `matchingBogoPromo`, now removed). Sibling-sweep find: both apps'
 `EstimateStatus` carried a phantom `"EXPIRED"` — dead branch removed from `lib/estimates-logic.ts`.
 
+- **`Dockerfile` + `railway.toml` (#712, B389)** — web-export runner is nginx (non-root,
+  `nginx-unprivileged:alpine`); watchPatterns `apps/mobile/**` + `packages/**`.
+
 > **2026-09-13 split** (`docs/code-map-split-land`): this file used to hold ALL of mobile's
 > signature-level content (313,959 bytes — over 3x the 100,000-byte area cap; its own "Where to
 > find" table alone was padded to 165,321 bytes before de-padding). The content below was moved
