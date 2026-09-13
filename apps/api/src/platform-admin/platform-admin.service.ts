@@ -360,6 +360,14 @@ ${paymentSection}
 
   async updateStatus(id: string, dto: UpdateTenantStatusDto, adminId: string | null = null) {
     await this._findOrThrow(id);
+    // B216: captured BEFORE the write so we can tell a REAL non-ACTIVE→ACTIVE transition (an
+    // admin reactivation) from an already-ACTIVE tenant being set ACTIVE again. Only fetched when
+    // the target is ACTIVE — the other transitions never need it.
+    const wasActive =
+      dto.status === "ACTIVE"
+        ? (await this.prisma.tenant.findUnique({ where: { id }, select: { status: true } }))
+            ?.status === "ACTIVE"
+        : false;
     const tenant = await this.prisma.tenant.update({
       where: { id },
       data: { status: dto.status },
@@ -373,6 +381,25 @@ ${paymentSection}
           ? AdminAuditAction.TENANT_REACTIVATED
           : AdminAuditAction.TENANT_STATUS_CHANGED;
     await this.recordAdminAction(id, adminId, action, { status: tenant.status });
+
+    // B216: a downgrade armed before a tenant lapsed must not survive reinstatement and fire later
+    // against a paying tenant. The Stripe-webhook reinstatement paths already clear it via
+    // billing.service.ts's disarmedDowngrade(), guarded on a real non-ACTIVE→ACTIVE CAS — this is
+    // that same shape for the admin's non-Stripe reinstatement path. Not imported: disarmedDowngrade()
+    // is a private module-level function in billing.service.ts, not exported, and this service has
+    // no existing dependency on its internals to justify exporting it just for this — the field set
+    // is replicated here with billing.service.ts's disarmedDowngrade() named as the source of truth.
+    // Scoped to a REAL transition only (mirrors the webhook paths' CAS discipline): never fires for
+    // an already-ACTIVE tenant re-set ACTIVE, or for a transition to any other status, so a
+    // legitimately scheduled downgrade on a healthy tenant survives. cancelAtPeriodEnd is
+    // deliberately left untouched — that flag is a cancellation, not a downgrade.
+    if (dto.status === "ACTIVE" && !wasActive) {
+      await this.prisma.tenantSubscription.updateMany({
+        where: { tenantId: id },
+        data: { downgradeToPlanKey: null, downgradeEffectiveAt: null, retainedUserIds: [] },
+      });
+    }
+
     return { id: tenant.id, slug: tenant.slug, status: tenant.status };
   }
 

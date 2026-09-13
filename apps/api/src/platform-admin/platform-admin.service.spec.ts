@@ -41,6 +41,8 @@ describe("PlatformAdminService — audit provenance", () => {
     (prisma as any).tenantSubscription = {
       upsert: jest.fn().mockResolvedValue({}),
       findUnique: jest.fn().mockResolvedValue(null),
+      // B216: updateStatus()'s admin-reactivation downgrade-disarm write.
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     };
     (prisma as any).auditLog = {
       findMany: jest.fn().mockResolvedValue([]),
@@ -126,6 +128,80 @@ describe("PlatformAdminService — audit provenance", () => {
     expect(auditLog).toHaveBeenCalledWith(
       expect.objectContaining({ action: "TENANT_REACTIVATED", tenantId: TENANT_ID }),
     );
+  });
+
+  // B216: a downgrade armed BEFORE a tenant lapsed must not survive an admin reactivation and
+  // fire later against a paying tenant. The two Stripe-webhook reinstatement paths already clear
+  // it via billing.service.ts's disarmedDowngrade() (onCheckoutCompleted/onPaymentSucceeded,
+  // guarded on a real non-ACTIVE→ACTIVE CAS); updateStatus() is the admin's non-Stripe
+  // reinstatement path and never touched TenantSubscription at all.
+  describe("updateStatus — B216 downgrade disarm", () => {
+    it("REG-B216 clears an armed downgrade when an admin reactivates a lapsed (SUSPENDED) tenant", async () => {
+      // Call order: _findOrThrow's lookup, then updateStatus's own prior-status check.
+      prisma.tenant.findUnique
+        .mockResolvedValueOnce({ id: TENANT_ID, slug: "acme" } as any)
+        .mockResolvedValueOnce({ status: "SUSPENDED" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+      } as any);
+
+      await service.updateStatus(TENANT_ID, { status: "ACTIVE" } as any, ADMIN_ID);
+
+      // RED against pre-fix updateStatus(), which never references tenantSubscription at all.
+      expect((prisma as any).tenantSubscription.updateMany).toHaveBeenCalledWith({
+        where: { tenantId: TENANT_ID },
+        data: { downgradeToPlanKey: null, downgradeEffectiveAt: null, retainedUserIds: [] },
+      });
+    });
+
+    it("guard: does not touch a downgrade when an already-ACTIVE tenant is set ACTIVE again", async () => {
+      prisma.tenant.findUnique
+        .mockResolvedValueOnce({ id: TENANT_ID, slug: "acme" } as any)
+        .mockResolvedValueOnce({ status: "ACTIVE" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+      } as any);
+
+      await service.updateStatus(TENANT_ID, { status: "ACTIVE" } as any, ADMIN_ID);
+
+      expect((prisma as any).tenantSubscription.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("guard: does not touch a downgrade when transitioning to a non-ACTIVE status (READ_ONLY)", async () => {
+      prisma.tenant.findUnique.mockResolvedValueOnce({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "READ_ONLY",
+      } as any);
+
+      await service.updateStatus(TENANT_ID, { status: "READ_ONLY" } as any, ADMIN_ID);
+
+      expect((prisma as any).tenantSubscription.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("guard: never includes cancelAtPeriodEnd — only the three scheduled-downgrade fields clear", async () => {
+      prisma.tenant.findUnique
+        .mockResolvedValueOnce({ id: TENANT_ID, slug: "acme" } as any)
+        .mockResolvedValueOnce({ status: "SUSPENDED" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+      } as any);
+
+      await service.updateStatus(TENANT_ID, { status: "ACTIVE" } as any, ADMIN_ID);
+
+      const call = (prisma as any).tenantSubscription.updateMany.mock.calls.at(-1)![0];
+      expect(call.data).not.toHaveProperty("cancelAtPeriodEnd");
+      expect(Object.keys(call.data).sort()).toEqual(
+        ["downgradeEffectiveAt", "downgradeToPlanKey", "retainedUserIds"].sort(),
+      );
+    });
   });
 
   it("logs TENANT_PLAN_CHANGED with the previous and new plan in meta, writes planKey/planVersionId consistent with subscribe(), and invalidates entitlements", async () => {
