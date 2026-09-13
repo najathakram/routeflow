@@ -23,6 +23,13 @@ recordStandalonePayment`'s buyer/online overpay guard now takes a single id-sort
   (invoices, credit-notes), `-6.md` (bookkeeping); web.md: `web/routes-1.md` (customers page).
   Lesson content re-numbered L-118→**L-122** on merge (master had already spent L-118/L-119 on
   the F38 batch); L-120/L-121 stay reserved for the W1 billing PR.
+- **2026-09-13 — #712 bookkeeping (`docs/712-bookkeeping`, master `bc36a0dd`)** — B389/F12-003:
+  mobile's web-export runner swaps `nginx:alpine` (root) for `nginxinc/nginx-unprivileged:alpine`,
+  ends on `USER nginx`, moves the listen port 80→8080 (`PORT` default 8080); new tripwire spec
+  `apps/mobile/__tests__/dockerfile-nonroot.test.ts` asserts the runner stage, last `USER`
+  directive, `EXPOSE 8080`, and `${PORT:-8080}` on the Dockerfile's text. api/infra-hardening-sec-2.md
+  F12-003 bullet extended; mobile.md gains one bullet (`Dockerfile` + `railway.toml`). No
+  transferable lesson (L-113 class, Dockerfile-only).
 - **2026-09-13 — F38 driver at-door money / offline close-out / run linkage (`docs/710-bookkeeping`,
   Option-B follow-up for PR #710 = master `14048230`)** — B305 (driver at-door amount due is now
   the order's open DRAFT invoice(s), never `Order.total` or a raw line sum — `RUN_STOP_INCLUDE`
