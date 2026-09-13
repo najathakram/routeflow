@@ -1123,6 +1123,65 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       expect(cnUpdate.data.amountUsed).toBe(20);
     });
 
+    // B315: the shrink pass only ever looked at CREDIT_NOTE payments — an applied ADVANCE
+    // (wallet money exactly like a credit note) just stayed "spent" against a total that no
+    // longer existed once the order edit shrunk the invoice, silently losing the customer's
+    // prepaid dollars instead of giving them back to AdvancePayment.balance.
+    it("shrink pass: an invoice total dropped below an applied ADVANCE restores the excess to the wallet's AdvancePayment.balance", async () => {
+      prisma.orderCreditNote.findMany.mockResolvedValueOnce([]); // no apply-phase intents needed
+      prisma.invoice.findMany.mockResolvedValueOnce([
+        {
+          id: "inv-adv",
+          invoiceNumber: "INV-ADV",
+          total: 60, // shrunk from 100
+          dueDate: null,
+          status: "PARTIAL",
+          payments: [
+            {
+              id: "pay-advance",
+              amount: 100,
+              status: "PAID",
+              method: "ADVANCE",
+              advancePaymentId: "ap-1",
+              creditNoteId: null,
+              createdAt: new Date("2026-01-02"),
+            },
+          ],
+        },
+      ]);
+      prisma.invoice.findUnique.mockResolvedValueOnce({
+        id: "inv-adv",
+        total: 60,
+        dueDate: null,
+        status: "PARTIAL",
+        payments: [{ amount: 60, status: "PAID" }],
+      });
+
+      const result = await service.settleOrderCreditsInTx(prisma as any, "order-adv");
+
+      // $40 excess (100 paid - 60 total) comes back to the wallet.
+      expect(result.unapplied).toBe(40);
+      expect(prisma.invoicePayment.update).toHaveBeenCalledWith({
+        where: { id: "pay-advance" },
+        data: { amount: 60 },
+      });
+      expect(prisma.invoicePayment.delete).not.toHaveBeenCalled();
+      // Opus review (F39): the balance restore is ONE atomic `LEAST(amount, balance + $restore)`
+      // UPDATE — never a findUnique-then-update read-modify-write, which would reopen B310's
+      // lost-update class on this same column. No `advancePayment.findUnique`/`.update` mock is
+      // even set up above; if the code regressed to the read-then-write shape, those calls
+      // would return the mock's untouched defaults (null / {}) and this assertion would fail.
+      const rawCall = prisma.$executeRaw.mock.calls.find((args: any) =>
+        args[0].join("?").includes("AdvancePayment"),
+      );
+      expect(rawCall).toBeDefined();
+      const [strings, restoreArg, idArg] = rawCall!;
+      expect(strings.join("?")).toContain("LEAST(amount, balance +");
+      expect(restoreArg).toBe(40);
+      expect(idArg).toBe("ap-1");
+      expect(prisma.advancePayment.update).not.toHaveBeenCalled();
+    });
+
     it("explicit-amount intent applies exactly min(requested amount, credit remaining, invoice balance)", async () => {
       prisma.orderCreditNote.findMany.mockResolvedValueOnce([
         {
