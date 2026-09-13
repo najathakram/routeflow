@@ -321,6 +321,7 @@ describe("summarizeSubmissions", () => {
     expect(summarizeSubmissions([{ orderId: "ord-1", ok: true }])).toEqual({
       done: ["ord-1"],
       failed: [],
+      queued: [],
     });
   });
 
@@ -338,7 +339,7 @@ describe("summarizeSubmissions", () => {
           "Already returned: 4 of 4.",
       },
     ]);
-    expect(result).toEqual({ done: ["ord-1", "ord-2"], failed: [] });
+    expect(result).toEqual({ done: ["ord-1", "ord-2"], failed: [], queued: [] });
   });
 
   it("any other rejection stays pending, carrying its own message", () => {
@@ -355,8 +356,36 @@ describe("summarizeSubmissions", () => {
     ]);
   });
 
+  it("REG-B307 an offline-queued return counts as submitted and the screen says queued instead of inviting a resend", () => {
+    // Today `summarizeSubmissions` has no queued bucket, so this result lands in
+    // `failed` (asserted first so the failure line shows the wrong value).
+    const result = summarizeSubmissions([
+      {
+        orderId: "o1",
+        ok: false,
+        isOfflineQueued: true,
+        message: "You are offline. Action queued.",
+      } as any,
+    ]);
+    expect(result.failed).toEqual([]);
+    expect((result as any).queued).toEqual(["o1"]);
+  });
+
+  it("REG-B307 an over-return collision still counts as done", () => {
+    // Regression guard — green today, must stay green after the fix.
+    const result = summarizeSubmissions([
+      { orderId: "o1", ok: false, message: "Qty exceeds remaining returnable" },
+    ]);
+    expect(result.done).toEqual(["o1"]);
+  });
+
+  it("REG-B307 a real failure still lands in failed with its message", () => {
+    const result = summarizeSubmissions([{ orderId: "o1", ok: false, message: "boom" }]);
+    expect(result.failed).toEqual([{ orderId: "o1", message: "boom" }]);
+  });
+
   it("an empty round summarises to nothing done and nothing failed", () => {
-    expect(summarizeSubmissions([])).toEqual({ done: [], failed: [] });
+    expect(summarizeSubmissions([])).toEqual({ done: [], failed: [], queued: [] });
   });
 });
 

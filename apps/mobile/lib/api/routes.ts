@@ -30,6 +30,11 @@ export interface RouteRunOrderItem {
   boxes?: number | null;
   pieces?: number | null;
   unitsPerBox?: number | null;
+  // B305 round 2 (RULING 1/3): sale-time regulated-category tax snapshot
+  // (sales.prisma OrderItem.categoryTaxAmount), straight off
+  // `RUN_LINE_ITEMS_SELECT`. Feeds lib/run-money.ts#deliveredCategoryTax's
+  // per-unit proration for the short-pick payment estimate.
+  categoryTaxAmount?: number | string | null;
 }
 
 export interface RouteRunOrder {
@@ -40,6 +45,27 @@ export interface RouteRunOrder {
   notes?: string;
   invoiceId?: string;
   lineItems: RouteRunOrderItem[];
+  // REG-B305: tax-inclusive amount due (Prisma Decimals — may arrive as
+  // strings over the wire). See lib/run-money.ts#orderAmountDue.
+  subtotal?: number | string | null;
+  tax?: number | string | null;
+  total?: number | string | null;
+  // REG-B305 round 2: `Order.total` above carries NO discount and, on a
+  // split delivery, the WHOLE shipping fee on every visit — projected but no
+  // longer read by orderAmountDue's money math (RULING 2: no client-side
+  // total-minus-discount guess is ever safe). `invoices` — ALL open drafts
+  // (RULING 1; a regulated split order can have several: base + `-R#`
+  // siblings) — is the real basis. See lib/run-money.ts#orderAmountDue.
+  discountAmount?: number | string | null;
+  shippingFee?: number | string | null;
+  invoices?: Array<{
+    id: string;
+    subtotal: number | string | null;
+    taxAmount: number | string | null;
+    discount: number | string | null;
+    shippingFee: number | string | null;
+    total: number | string | null;
+  }>;
 }
 
 export interface RouteRunStop {
@@ -53,6 +79,11 @@ export interface RouteRunStop {
     phone?: string;
     deliveryWindowStart?: string;
     deliveryWindowEnd?: string;
+    // B305 round 3: mirrors RUN_STOP_INCLUDE.customer.select.isTaxExempt
+    // (sales.prisma Customer.isTaxExempt) — feeds reconciledAmountDue's
+    // isTaxExempt input so a short-picked stop's estimate zeroes tax for an
+    // exempt customer exactly as the server does.
+    isTaxExempt?: boolean;
   };
   customerAddress?: {
     line1: string;

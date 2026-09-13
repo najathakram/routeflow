@@ -1333,6 +1333,48 @@ export class InvoicesService {
     }
   }
 
+  /**
+   * B306: reverse every `RUN:<runId>:STOP:<stopId>`-tagged AdvancePayment for a
+   * stop, INSIDE the caller's own transaction. Extracted from voidPayment's
+   * reversal loop so reopenStop (routes.service.ts) can reverse a
+   * zero-payable-invoice completion's advance too — that path books the WHOLE
+   * at-door amount as an AdvancePayment with no InvoicePayment row at all, so
+   * voidPayment (which reverses only when a confirmed InvoicePayment is
+   * voided) never runs for it. Throws BadRequestException (message matches
+   * /advance.*applied/i) if any matching advance was already applied
+   * elsewhere (balance != amount) — same guard voidPayment always had.
+   * Returns the number of advances reversed.
+   */
+  async reverseRunAdvancesInTx(
+    tx: any,
+    args: { runId: string | null | undefined; stopId: string; reason: string },
+  ): Promise<number> {
+    const { runId, stopId, reason } = args;
+    // An order with a null routeRunId must not build a `RUN:null:…` reference
+    // and query for it.
+    if (!runId) return 0;
+
+    const advances = await tx.advancePayment.findMany({
+      where: { reference: `RUN:${runId}:STOP:${stopId}` },
+    });
+    for (const a of advances) {
+      if (Number(a.balance) !== Number(a.amount)) {
+        throw new BadRequestException(
+          `The at-door over-collection advance ${a.id} has already been applied — release its applications before voiding this payment`,
+        );
+      }
+      await tx.advancePayment.update({
+        where: { id: a.id },
+        data: {
+          balance: 0,
+          reference: `${a.reference}:REVERSED`,
+          notes: `${a.notes ?? ""}\nREVERSED ${new Date().toISOString()}: ${reason}`,
+        },
+      });
+    }
+    return advances.length;
+  }
+
   /** The order's single open "pending mirror" draft, or null. */
   async findOpenOrderDraft(orderId: string, tx?: any) {
     const db = tx ?? this.prisma.forTenant();
@@ -5559,9 +5601,32 @@ export class InvoicesService {
       // not be counted as paid.
       const invoice = await tx.invoice.findUnique({
         where: { id: invoiceId },
-        include: { payments: { where: CONFIRMED_PAYMENT } },
+        include: {
+          payments: { where: CONFIRMED_PAYMENT },
+          order: { select: { routeRunId: true, routeRunStopId: true } },
+        },
       });
       if (!invoice) throw new NotFoundException("Invoice not found");
+
+      // B306: a driver's at-door over-collection on this stop is booked as an
+      // AdvancePayment tagged RUN:<runId>:STOP:<stopId> (recordDeliveryPaymentInTx).
+      // Once every confirmed door payment for the stop is voided, that advance
+      // no longer reflects real collected money — reverse it too, or the run's
+      // cash reconciliation keeps summing it forever.
+      const runStopId = (invoice as any).order?.routeRunStopId;
+      const runIdForAdvance = (invoice as any).order?.routeRunId;
+      if (runStopId) {
+        const remainingConfirmed = await tx.invoicePayment.count({
+          where: { ...CONFIRMED_PAYMENT, invoice: { order: { routeRunStopId: runStopId } } },
+        });
+        if (remainingConfirmed === 0) {
+          await this.reverseRunAdvancesInTx(tx, {
+            runId: runIdForAdvance,
+            stopId: runStopId,
+            reason: "door payments voided",
+          });
+        }
+      }
 
       const totalPaid = sumConfirmed(invoice.payments.filter((p) => p.id !== paymentId));
       const newStatus = this.recomputeStatus(

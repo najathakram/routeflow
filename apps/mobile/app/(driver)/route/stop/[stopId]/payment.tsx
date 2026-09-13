@@ -41,7 +41,12 @@ import { usePodStore } from "../../../../../store/podStore";
 import { useDeliveryPlanStore } from "../../../../../store/delivery-plan-store";
 import { useRunSettlementStore } from "../../../../../store/runSettlementStore";
 import type { CollectedMethod } from "../../../../../lib/run-settlement";
-import { sumOrderLineItems } from "../../../../../lib/run-money";
+import {
+  orderAmountDue,
+  reconciledAmountDue,
+  shortPickCategoryTax,
+} from "../../../../../lib/run-money";
+import { classifyMutationError } from "../../../../../lib/offline-errors";
 import {
   buildDeliveries,
   freeUnitSizeFor,
@@ -80,9 +85,9 @@ async function readDriverLocation(): Promise<{ lat: number; lng: number } | null
 // short-pick overrides, or a stale deep link straight to this screen).
 const EMPTY_DELIVERY_PLAN: Record<string, number> = {};
 
-// REG-B49 (spec R2): box-aware line money, never qty * unitPrice.
+// REG-B305: the driver "amount due" is the server's tax-inclusive total.
 function fullOrderTotal(order: RouteRunOrder): number {
-  return sumOrderLineItems(order);
+  return orderAmountDue(order);
 }
 
 export default function PaymentScreen() {
@@ -132,12 +137,41 @@ export default function PaymentScreen() {
     (sum, o) =>
       sum +
       (o.id === orderId && shortPickLines.length > 0
-        ? reconciledTotal(shortPickLines, deliveredQtyById)
+        ? // REG-B305 round 2 (RULING 3): follow the SERVER's own delivered-basis
+          // rule (invoices.service.ts#reconcileOrderDraftInvoice) — regular tax
+          // scales by the delivered share of the ORDER's own subtotal, category
+          // tax is the Σ of each DELIVERED line's own snapshot
+          // (deliveredCategoryTax), and every open draft's discount/fee stay
+          // whole. Never the draft's whole `taxAmount` prorated by subtotal
+          // share (that can't tell which lines shipped). REG-B305 round 4: both
+          // halves MUST derive from `shortPickLines` — never pass the raw
+          // `o.lineItems` to the category-tax half, or a cancelled/already-
+          // delivered regulated line leaks its full category tax into the quote
+          // while contributing zero subtotal (see run-money.ts#shortPickCategoryTax).
+          reconciledAmountDue({
+            drafts: o.invoices ?? [],
+            order: { subtotal: o.subtotal, tax: o.tax },
+            deliveredSubtotal: reconciledTotal(shortPickLines, deliveredQtyById),
+            deliveredCategoryTax: shortPickCategoryTax(
+              o.lineItems ?? [],
+              shortPickLines,
+              deliveredQtyById,
+            ),
+            // B305 round 3: an exempt customer's server-side reconcile zeroes
+            // BOTH tax terms — mirror that here (RUN_STOP_INCLUDE.customer
+            // projects the column; RouteRunStop.customer.isTaxExempt above).
+            isTaxExempt: stop?.customer?.isTaxExempt === true,
+          })
         : fullOrderTotal(o)),
     0,
   );
+  // REG-B305 round 2 (RULING 3): the short-pick branch bills an ESTIMATE (the
+  // server recomputes the real invoice total independently once the batch
+  // lands) — flag it inline so the driver doesn't read it as the final figure.
   const invoiceLabel = stop?.orders?.[0]?.orderNumber
-    ? `ORDER ${stop.orders[0].orderNumber} · ${(stop.customer?.businessName ?? "Customer").toUpperCase()}`
+    ? `ORDER ${stop.orders[0].orderNumber} · ${(stop.customer?.businessName ?? "Customer").toUpperCase()}${
+        shortPickLines.length > 0 ? " (est. — final on invoice)" : ""
+      }`
     : "PAYMENT";
 
   // Per-tenant opt-in for at-door money collection (owner decision
@@ -425,8 +459,59 @@ export default function PaymentScreen() {
       // untyped, same pattern as admin.ts's orderId/invoiceGroupId).
       paymentIds = (result as unknown as { paymentIds?: string[] }).paymentIds;
     } catch (e: any) {
+      const outcome = classifyMutationError(e);
+      if (outcome.kind === "queued") {
+        // REG-B308: a queued offline completion is a pending success, not a
+        // failure — mirror the success path's cleanup below. `setClosing(false)`
+        // below releases the latch right before the Alert/navigate, exactly
+        // like the success path does further down — the mutation has already
+        // settled either way, and this screen navigates away next regardless.
+        // Known gap (TO FILE, out of scope here): the payment photo upload is
+        // dropped entirely on this path — it needs `paymentIds` off the real
+        // (non-queued) response, which never arrives for a queued completion.
+        showToast("Offline — completion queued and will sync when you reconnect");
+        clearPod(stopId);
+        if (unsentUris.length) usePodStore.getState().setPhotos(stopId, unsentUris);
+        if (stopId) clearPlan(stopId);
+        if (collected > 0 && runId) {
+          useRunSettlementStore.getState().recordCollection(runId, {
+            stopId,
+            method: apiMethod,
+            amount: collected,
+            collectedAt: Date.now(),
+          });
+        }
+        const remaining = (run?.stops ?? []).filter(
+          (s) => s.id !== stopId && (s.status === "PENDING" || s.status === "IN_PROGRESS"),
+        );
+        setClosing(false);
+        if (Platform.OS !== "web" && remaining.length > 0) {
+          Alert.alert(
+            "Continue in Google Maps?",
+            `${remaining.length} stop${remaining.length === 1 ? "" : "s"} left. Re-open Maps with the updated route from your current location?`,
+            [
+              {
+                text: "Stay in app",
+                style: "cancel",
+                onPress: () => router.replace("/(driver)/route"),
+              },
+              {
+                text: "Open Maps",
+                onPress: async () => {
+                  const loc = await readDriverLocation();
+                  openRouteInMaps(remaining, loc ? { originLat: loc.lat, originLng: loc.lng } : {});
+                  router.replace("/(driver)/route");
+                },
+              },
+            ],
+          );
+          return;
+        }
+        router.replace("/(driver)/route");
+        return;
+      }
       setClosing(false);
-      showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+      showToast(outcome.message);
       return;
     }
     setClosing(false);

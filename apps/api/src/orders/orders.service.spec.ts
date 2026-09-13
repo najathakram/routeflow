@@ -60,7 +60,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
-import { OrderStatus, UserRole, Prisma } from "@prisma/client";
+import { OrderStatus, UserRole, Prisma, RouteRunStatus, RouteRunStopStatus } from "@prisma/client";
 
 const MOCK_PRODUCT = {
   id: "prod-1",
@@ -1956,6 +1956,169 @@ describe("OrdersService", () => {
         expect(readDecrement().slice(0, 2)).toEqual(["prod-box12", 2]);
         expect(readDecrement()).toContain("test-tenant");
       });
+    });
+  });
+
+  // ─── REG-B309: driver order-create route linkage ──────────────────────────
+  // Today `create()`'s routeRunId/routeRunStopId branch (orders.service.ts
+  // ~2569-2582) runs for ANY role with zero validation — no check that the run
+  // belongs to the calling driver, that it is in progress, or that the stop is
+  // still open. These tests pin the ownership/status guard the fix must add,
+  // mirroring the pattern already used by `completeWithPayment`/`reopenStop` in
+  // routes.service.ts.
+
+  describe("REG-B309 driver order-create route linkage", () => {
+    const driverPayload = { ...operatorPayload, sub: "user-drv-1", role: "DRIVER" as const };
+
+    /** Baseline mocks so create() clears the customer/product/order-write path. */
+    const seedDriverCreateMocks = () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", pricingTier: 1 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+      prisma.order.create.mockResolvedValue(MOCK_ORDER);
+      (service as any).systemConfig.get.mockResolvedValue("0");
+    };
+
+    it("REG-B309 a DRIVER creating an order may only link it to a stop on their own active run", async () => {
+      seedDriverCreateMocks();
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
+      prisma.routeRun.findFirst.mockResolvedValue({
+        id: "run-9",
+        driverId: "drv-OTHER",
+        status: RouteRunStatus.IN_PROGRESS,
+      });
+
+      await expect(
+        service.create(
+          {
+            customerId: "cust-1",
+            items: [{ productId: "prod-1", qty: 1 }],
+            routeRunId: "run-9",
+          } as any,
+          driverPayload,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it("REG-B309 links the order when the run is the driver's own, in progress, and the stop is open", async () => {
+      seedDriverCreateMocks();
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
+      prisma.routeRun.findFirst.mockResolvedValue({
+        id: "run-1",
+        driverId: "drv-1",
+        status: RouteRunStatus.IN_PROGRESS,
+      });
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        status: RouteRunStopStatus.PENDING,
+        routeRunId: "run-1",
+      });
+
+      await service.create(
+        {
+          customerId: "cust-1",
+          items: [{ productId: "prod-1", qty: 1 }],
+          routeRunId: "run-1",
+          routeRunStopId: "stop-1",
+        } as any,
+        driverPayload,
+      );
+
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ routeRunId: "run-1", routeRunStopId: "stop-1" }),
+        }),
+      );
+      // L-113 shape proof: the exact where/select of both ownership lookups.
+      expect(prisma.routeRun.findFirst).toHaveBeenCalledWith({
+        where: { id: "run-1" },
+        select: { id: true, driverId: true, status: true },
+      });
+      expect(prisma.routeRunStop.findFirst).toHaveBeenCalledWith({
+        where: { id: "stop-1" },
+        select: { id: true, status: true, routeRunId: true },
+      });
+    });
+
+    it("REG-B309 a completed or skipped stop cannot receive a new order", async () => {
+      seedDriverCreateMocks();
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
+      prisma.routeRun.findFirst.mockResolvedValue({
+        id: "run-1",
+        driverId: "drv-1",
+        status: RouteRunStatus.IN_PROGRESS,
+      });
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        status: RouteRunStopStatus.COMPLETED,
+        routeRunId: "run-1",
+      });
+
+      await expect(
+        service.create(
+          {
+            customerId: "cust-1",
+            items: [{ productId: "prod-1", qty: 1 }],
+            routeRunId: "run-1",
+            routeRunStopId: "stop-1",
+          } as any,
+          driverPayload,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it("REG-B309 a stop that belongs to a different run than the one supplied is rejected", async () => {
+      seedDriverCreateMocks();
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
+      prisma.routeRun.findFirst.mockResolvedValue({
+        id: "run-1",
+        driverId: "drv-1",
+        status: RouteRunStatus.IN_PROGRESS,
+      });
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        status: RouteRunStopStatus.PENDING,
+        routeRunId: "run-1",
+      });
+
+      await expect(
+        service.create(
+          {
+            customerId: "cust-1",
+            items: [{ productId: "prod-1", qty: 1 }],
+            routeRunId: "run-2",
+            routeRunStopId: "stop-1",
+          } as any,
+          driverPayload,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    // B309 (Opus MAJOR): the link block above is role-agnostic and the
+    // controller admits CUSTOMER, so a buyer could POST routeRunId/
+    // routeRunStopId directly and attach their own order to a driver's
+    // manifest — the DRIVER-only ownership checks above never run for them.
+    it("REG-B309 a CUSTOMER cannot link an order to a route run or stop", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+      prisma.order.create.mockResolvedValue(MOCK_ORDER);
+      (service as any).systemConfig.get.mockResolvedValue("0");
+
+      await expect(
+        service.create(
+          {
+            items: [{ productId: "prod-1", qty: 1 }],
+            routeRunId: "run-1",
+          } as any,
+          customerPayload,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(prisma.order.create).not.toHaveBeenCalled();
     });
   });
 

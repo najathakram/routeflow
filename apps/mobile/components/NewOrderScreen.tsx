@@ -32,6 +32,7 @@ import {
 import { useCreditNotes, useCreateCreditNote, type CreditNote } from "../lib/api/credit-notes";
 import { isCreditOpenForApply } from "../lib/credit-notes-logic";
 import { showToast } from "../lib/toast";
+import { classifyMutationError } from "../lib/offline-errors";
 import { resolveProductByCode } from "../lib/barcode-resolve";
 import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../lib/wedge-scan";
 import { makeScanHandler, runWedgeSubmit } from "../lib/scan-ladder";
@@ -1835,7 +1836,25 @@ function ProductPickView({
           await finalizeBoundDraft();
           onSaved(order.orderNumber);
         },
-        onError: (err: Error) => {
+        onError: async (err: Error) => {
+          // REG-B308: classify FIRST. A queued offline create is a pending
+          // success, not a failure — it must NOT release the submit latch
+          // (endSubmit) or rotate the idempotency key (resetOrderSubmitKey)
+          // before finalizeBoundDraft() resolves: doing either re-arms the
+          // button and mints a fresh key while the ORIGINAL queued POST still
+          // carries the old one, so a double-tap in that window fires a
+          // SECOND create whose retry key can no longer dedupe against the
+          // one already queued. Mirror onSuccess's id-independent cleanup and
+          // leave via the same navigation the cancel path uses (no order id
+          // exists yet); only the fall-through error path below re-arms the
+          // button with endSubmit().
+          const outcome = classifyMutationError(err);
+          if (outcome.kind === "queued") {
+            await finalizeBoundDraft();
+            showToast("Offline — order queued and will sync when you reconnect");
+            onBack();
+            return;
+          }
           // Release the latch on EVERY failure branch below — each of them
           // either replays submitOrder (merge choice, license guard) or hands
           // the operator the button back. Success deliberately stays latched:

@@ -82,7 +82,7 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
   let messaging: { notify: jest.Mock; notifyEvent: jest.Mock };
-  let invoicesService: { recordDeliveryPaymentInTx: jest.Mock };
+  let invoicesService: { recordDeliveryPaymentInTx: jest.Mock; reverseRunAdvancesInTx: jest.Mock };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
   beforeEach(async () => {
@@ -97,6 +97,7 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
       recordDeliveryPaymentInTx: jest
         .fn()
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
+      reverseRunAdvancesInTx: jest.fn().mockResolvedValue(0),
     };
 
     gateway = {

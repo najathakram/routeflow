@@ -88,7 +88,7 @@ describe("RoutesService", () => {
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
   let messaging: { notify: jest.Mock; notifyEvent: jest.Mock };
-  let invoicesService: { recordDeliveryPaymentInTx: jest.Mock };
+  let invoicesService: { recordDeliveryPaymentInTx: jest.Mock; reverseRunAdvancesInTx: jest.Mock };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
   beforeEach(async () => {
@@ -97,6 +97,7 @@ describe("RoutesService", () => {
       recordDeliveryPaymentInTx: jest
         .fn()
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
+      reverseRunAdvancesInTx: jest.fn().mockResolvedValue(1),
     };
 
     gateway = {
@@ -1965,6 +1966,9 @@ describe("RoutesService", () => {
         boxes: true,
         pieces: true,
         unitsPerBox: true,
+        // B305 round 2 (RULING 1/3): per-line regulated-category tax snapshot —
+        // see routes.run-stop-select.spec.ts for the dedicated oracle.
+        categoryTaxAmount: true,
       });
     });
 
@@ -2284,6 +2288,122 @@ describe("RoutesService", () => {
           }),
         }),
       );
+    });
+  });
+
+  // ─── B306: at-door over-collection advance has no reversal ──────────────
+  // recordDeliveryPaymentInTx books a driver's at-door excess as an
+  // AdvancePayment tagged `RUN:<runId>:STOP:<stopId>`. getRunCashCollections
+  // and enrichRunsWithCollectedPayments sum every such advance unconditionally
+  // (no filter for one whose originating door payment was later voided), and
+  // reopenStop never looks at advancePayment at all. See
+  // invoices.service.spec.ts's "voidPayment — reverses a RUN-tagged at-door
+  // advance (REG-B306)" for the reversal side of this bug.
+  describe("run cash + reopenStop ignore a reversed at-door advance (REG-B306)", () => {
+    it("REG-B306 run cash reconciliation ignores a reversed advance", async () => {
+      const startedAt = new Date("2026-08-01T00:00:00.000Z");
+      prisma.routeRun.findUnique.mockResolvedValue({ ...MOCK_RUN, startedAt, stops: [] });
+      prisma.advancePayment.findMany.mockResolvedValue([
+        { amount: 5, method: "CASH", reference: "RUN:run-1:STOP:stop-1" },
+      ]);
+
+      await service.findOneRun("run-1");
+
+      expect(prisma.advancePayment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            reference: expect.objectContaining({ startsWith: "RUN:run-1" }),
+            NOT: { reference: { endsWith: ":REVERSED" } },
+          }),
+        }),
+      );
+    });
+
+    it("REG-B306 the runs list's collected-cash enrichment ignores a reversed advance", async () => {
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1", userId: "user-drv" });
+      prisma.routeRun.findMany.mockResolvedValue([
+        { ...MOCK_RUN, id: "run-1", status: "IN_PROGRESS" as const, stops: [] },
+      ]);
+      prisma.advancePayment.findMany.mockResolvedValue([
+        { amount: 5, method: "CASH", reference: "RUN:run-1:STOP:stop-1" },
+      ]);
+
+      await service.findMyRuns(driverPayload);
+
+      expect(prisma.advancePayment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            NOT: { reference: { endsWith: ":REVERSED" } },
+          }),
+        }),
+      );
+    });
+
+    it("REG-B306 a stop with an unreversed over-collection advance is reopened only after the advance is reversed inside the transaction", async () => {
+      const arrangeReopen = () => {
+        prisma.routeRun.findUnique.mockResolvedValue({
+          ...MOCK_RUN,
+          id: "run-1",
+          status: "COMPLETED" as const,
+          stops: [
+            {
+              id: "stop-1",
+              status: "COMPLETED",
+              orders: [{ id: "ord-1", status: "DELIVERED", lineItems: [] }],
+            },
+          ],
+        });
+        // No confirmed money on the delivery — the "Payment already recorded"
+        // guard above the reversal call must let this through.
+        prisma.invoice.findFirst.mockResolvedValue(null);
+      };
+      const buildTxMock = () => ({
+        ...prisma,
+        deliveryMutation: {
+          ...prisma.deliveryMutation,
+          deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+        orderItem: { ...prisma.orderItem, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        order: { ...prisma.order, update: jest.fn().mockResolvedValue({}) },
+        transaction: {
+          ...prisma.transaction,
+          deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+        routeRunStop: { ...prisma.routeRunStop, update: jest.fn().mockResolvedValue({}) },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        auditLog: { ...prisma.auditLog, create: jest.fn().mockResolvedValue({}) },
+      });
+
+      // Case 1: a zero-payable advance is reversed inside the transaction and
+      // the reopen proceeds.
+      arrangeReopen();
+      let txMock = buildTxMock();
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+
+      await service.reopenStop("run-1", "stop-1", operatorPayload);
+
+      expect(invoicesService.reverseRunAdvancesInTx).toHaveBeenCalledWith(expect.anything(), {
+        runId: "run-1",
+        stopId: "stop-1",
+        reason: "stop reopened",
+      });
+
+      // Case 2: an already-applied advance makes the helper throw — reopenStop
+      // must propagate that rejection, and none of the reopen's other writes
+      // (all inside the same transaction) should have run.
+      arrangeReopen();
+      txMock = buildTxMock();
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      invoicesService.reverseRunAdvancesInTx.mockRejectedValueOnce(
+        new BadRequestException(
+          "The at-door over-collection advance adv-1 has already been applied — release its applications before voiding this payment",
+        ),
+      );
+
+      await expect(service.reopenStop("run-1", "stop-1", operatorPayload)).rejects.toThrow(
+        /advance.*applied/i,
+      );
+      expect(txMock.deliveryMutation.deleteMany).not.toHaveBeenCalled();
     });
   });
 });

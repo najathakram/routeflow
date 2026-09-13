@@ -320,6 +320,8 @@ export interface ReturnSubmissionResult {
   ok: boolean;
   /** The server/transport message on a rejection. */
   message?: string;
+  /** REG-B307/B308: api-client.ts enqueued the POST and rejected — pending, not failed. */
+  isOfflineQueued?: boolean;
 }
 
 /**
@@ -333,10 +335,18 @@ export interface ReturnSubmissionResult {
 export function summarizeSubmissions(results: ReturnSubmissionResult[]): {
   done: string[];
   failed: { orderId: string; message: string }[];
+  /** REG-B307: an empty array when nothing queued offline, never omitted. */
+  queued: string[];
 } {
   const done: string[] = [];
   const failed: { orderId: string; message: string }[] = [];
+  const queued: string[] = [];
   for (const r of results) {
+    // REG-B307: an offline-queued return counts as submitted, never as failed.
+    if (r.isOfflineQueued) {
+      queued.push(r.orderId);
+      continue;
+    }
     const message = r.message ?? "";
     if (r.ok || message.toLowerCase().includes("exceeds remaining returnable")) {
       done.push(r.orderId);
@@ -344,7 +354,7 @@ export function summarizeSubmissions(results: ReturnSubmissionResult[]): {
       failed.push({ orderId: r.orderId, message: message || "Try again." });
     }
   }
-  return { done, failed };
+  return { done, failed, queued };
 }
 
 export function returnActionFlags(status: string): ReturnActionFlags {

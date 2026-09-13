@@ -66,7 +66,7 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
   let messaging: { notify: jest.Mock; notifyEvent: jest.Mock };
-  let invoicesService: { recordDeliveryPaymentInTx: jest.Mock };
+  let invoicesService: { recordDeliveryPaymentInTx: jest.Mock; reverseRunAdvancesInTx: jest.Mock };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
   beforeEach(async () => {
@@ -76,6 +76,7 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
       recordDeliveryPaymentInTx: jest
         .fn()
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
+      reverseRunAdvancesInTx: jest.fn().mockResolvedValue(0),
     };
 
     gateway = {

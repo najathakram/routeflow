@@ -88,6 +88,13 @@ export const RUN_LINE_ITEMS_SELECT = {
   boxes: true,
   pieces: true,
   unitsPerBox: true,
+  // B305 round 2 (RULING 1/3): the per-line regulated-category tax snapshot
+  // (sales.prisma OrderItem.categoryTaxAmount) — mobile's run-money.ts
+  // #deliveredCategoryTax scales this by delivered/ordered qty to reproduce
+  // invoices.service.ts#buildInvoiceItemData's own per-unit proration for a
+  // short-picked stop's estimate. NOTE: `OrderItem` has no `taxRate` column
+  // (only `categoryTaxAmount`) — see routes.run-stop-select.spec.ts.
+  categoryTaxAmount: true,
 } as const;
 
 // Shared per-stop include used by both list (`findAllRuns`) and detail
@@ -95,7 +102,7 @@ export const RUN_LINE_ITEMS_SELECT = {
 // `customer`, `customerAddress`, and `orders` to render addresses/totals and to
 // build Google Maps waypoints — selecting a slim shape here previously caused
 // scheduled-run cards to render "no location" for every stop.
-const RUN_STOP_INCLUDE = {
+export const RUN_STOP_INCLUDE = {
   customer: {
     select: {
       id: true,
@@ -104,6 +111,9 @@ const RUN_STOP_INCLUDE = {
       phone: true,
       deliveryWindowStart: true,
       deliveryWindowEnd: true,
+      // B305 round 3: the driver's short-pick estimate must zero tax for an
+      // exempt customer exactly as reconcileOrderDraftInvoice does.
+      isTaxExempt: true,
     },
   },
   customerAddress: true,
@@ -114,6 +124,35 @@ const RUN_STOP_INCLUDE = {
       status: true,
       urgent: true,
       notes: true,
+      // B305: the driver's at-door amount due needs the tax-inclusive total —
+      // these are Order Decimal columns (sales.prisma:559-561), arrive as
+      // strings on the wire, no conversion here.
+      subtotal: true,
+      tax: true,
+      total: true,
+      discountAmount: true,
+      shippingFee: true,
+      // B305 round 2 (RULING 1): ALL open drafts, not just the oldest one — a
+      // regulated SEPARATE_INVOICE order's `reconcileSplitOrderDrafts` can leave
+      // it with SEVERAL open DRAFT + deliveryBatchId:null invoices (base + `-R#`
+      // siblings), and every one of them is money the invoice actually bills.
+      // `take: 1` silently dropped every sibling but the oldest and
+      // under-charged the driver. `orderBy: createdAt asc` mirrors
+      // `findOpenOrderDraft`/`reconcileSplitOrderDrafts` (invoices.service.ts)
+      // so the payload lists them in the same order the server reasons about
+      // them — never re-sort client-side.
+      invoices: {
+        where: { status: InvoiceStatus.DRAFT, deliveryBatchId: null },
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          subtotal: true,
+          taxAmount: true,
+          discount: true,
+          shippingFee: true,
+          total: true,
+        },
+      },
       lineItems: { select: RUN_LINE_ITEMS_SELECT },
     },
   },
@@ -1596,6 +1635,9 @@ export class RoutesService {
         where: {
           method: { in: [PaymentMethod.CASH, PaymentMethod.CHECK] },
           reference: { startsWith: `RUN:${runId}` },
+          // B306: a reversed at-door over-collection (its door payments were
+          // voided) no longer reflects real collected money.
+          NOT: { reference: { endsWith: ":REVERSED" } },
         },
         select: { amount: true, method: true },
       }),
@@ -1781,6 +1823,9 @@ export class RoutesService {
         where: {
           method: { in: [PaymentMethod.CASH, PaymentMethod.CHECK] },
           OR: runIds.map((rid) => ({ reference: { startsWith: `RUN:${rid}` } })),
+          // B306: a reversed at-door over-collection (its door payments were
+          // voided) no longer reflects real collected money.
+          NOT: { reference: { endsWith: ":REVERSED" } },
         },
         select: { amount: true, method: true, reference: true },
       }),
@@ -3024,6 +3069,21 @@ export class RoutesService {
     }
 
     await this.prisma.tenantTransaction(async (tx) => {
+      // 0. B306: a zero-payable-invoice completion books the WHOLE at-door
+      // amount as an AdvancePayment with no InvoicePayment row, so the
+      // liveMoney guard above never sees it and voidPayment's own reversal
+      // (which only fires when a confirmed InvoicePayment is voided) never
+      // runs for it either — leaving the reopen with nothing to void and no
+      // way forward. Reverse any such advance here, inside this same
+      // transaction: a zero-payable advance is reversed and the reopen
+      // proceeds; an advance already applied elsewhere throws (propagating
+      // out of this transaction, so none of the writes below commit).
+      await this.invoicesService.reverseRunAdvancesInTx(tx, {
+        runId,
+        stopId,
+        reason: "stop reopened",
+      });
+
       // 1. Delete delivery mutations for this stop
       await tx.deliveryMutation.deleteMany({ where: { routeRunStopId: stopId } });
 
