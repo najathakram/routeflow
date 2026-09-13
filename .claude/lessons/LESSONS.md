@@ -66,17 +66,6 @@
 - **Guard:** none yet — propose `--passWithNoTests` on the Baseline invocation and a close-out
   check that greps the run's JSON for the expected test titles.
 
-### L-110 · 2026-09-11 · tooling · workflow-tool resume
-
-- **Symptom:** resuming a Workflow-tool run failed with `JSON Parse error: Expected '}'` — the
-  stored `args` field was truncated mid-string.
-- **Root cause:** stored-args serialization truncates near 4 KB; a run with long inlined
-  briefs/content (not paths) lost its closing brace on write, undetected until resume.
-- **Lesson:** **Keep every Workflow-tool run's stored args under 4 KB — pass paths and short
-  briefs, never inlined content or transcripts, or resume fails opaquely.**
-- **Guard:** the RESUME card records the args byte size at launch, so a run near the limit is
-  visible before resume is relied on.
-
 ### L-103 · 2026-09-10 · tooling · chore/next-15
 
 - **Symptom:** `npm run local:up` built fine, then `docker compose … up -d` failed on a
@@ -523,19 +512,6 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
   `apps/api/src/credit-notes/credit-notes.wallet-integrity.spec.ts`; the pins file (T3/T3b) proves
   PAID/WRITTEN_OFF still shrink; `apps/api/src/invoices/invoice-status-sets.ts` is the one home.
 
-### L-111 · 2026-09-11 · process · Plane sync
-
-- **Symptom:** Gate 5 (`.claude/hooks/stop.mjs`) ran registry→Plane sync against the LIVE
-  workspace from a feature worktree (282 items, 160 dupes) — cwd was still in the worktree from
-  an earlier `cd`, so its hook fired with the real `PLANE_API_KEY`.
-- **Root cause:** the hook had no branch/tree gate or write cap; hooks resolve against the tree
-  the cwd sits in, not the session's home tree.
-- **Lesson:** **A hook writing to an external system with real credentials must be dry by
-  default off the integration branch, cap writes per run — end every turn with the shell back
-  home.**
-- **Guard:** `plane-sync.mjs` R14 branch guard + `--max-writes` (25), tests T16/T16b;
-  `dedupe-2026-09-12.mjs` cleaned dupes. Sibling [[L-074]].
-
 ### L-112 · 2026-09-12 · testing · Plane bulk sync
 
 - **Symptom:** the first bulk registry→Plane sync from master adopted all 160 name-keyed items
@@ -587,3 +563,19 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
   lets every plane self-test point `machineRoot()` at its own temp root; the five real-runs.jsonl
   invariants became a temp-root-only check, and plane-learning's `T-concurrent-writer` proves
   isolation under a genuine concurrent writer. Related [[L-114]].
+
+### L-117 · 2026-09-13 · tooling · fresh-worktree first push
+
+- **Symptom:** a linked worktree's first push went out with NO verify (no hook output at all);
+  after `npm ci` the next push was REFUSED at the final `campaign-check` ("no test titled with
+  REG-B### found in the jest report") although every test existed and passed (#704, 2026-09-12).
+- **Root cause:** husky's `.husky/_` hooks exist only after `npm ci`, so a fresh worktree pushes
+  silently unverified; once installed, turbo replays shared-worktree-cache HITS for `test`, jest
+  never runs there, `.campaign/runs/<ws>.json` are never written and the gate fails on absence
+  (sibling of [[L-083]]: there the report was stale, here it does not exist).
+- **Lesson:** **A new worktree is push-ready only after `npm ci` has installed the hooks AND one
+  uncached `npx turbo run test --force --concurrency=2` has written the campaign reports; never
+  trust a push's exit code — read the hook output and confirm the remote head.**
+- **Guard:** `campaign-check` refuses the missing-report case (the refusal itself); CI verify on
+  the PR head is the merge gate for the no-hook case; P-BUILD step 1 and P-CLOUD-0 step 7 carry
+  the routine. Candidate: `scripts/worktree-audit.mjs` flags a worktree without `.husky/_`.

@@ -1385,3 +1385,29 @@ so archiving it loses no enforcement.
   test file.**
 - **Guard:** campaign-check's freshness gate (already refuses a stale report by name with the
   regen command) — this is a usage note on WHEN to regenerate.
+
+## Archived 2026-09-13 — least-cited, fully guarded; headroom for L-117
+
+### L-110 · 2026-09-11 · tooling · workflow-tool resume
+
+- **Symptom:** resuming a Workflow-tool run failed with `JSON Parse error: Expected '}'` — the
+  stored `args` field was truncated mid-string.
+- **Root cause:** stored-args serialization truncates near 4 KB; a run with long inlined
+  briefs/content (not paths) lost its closing brace on write, undetected until resume.
+- **Lesson:** **Keep every Workflow-tool run's stored args under 4 KB — pass paths and short
+  briefs, never inlined content or transcripts, or resume fails opaquely.**
+- **Guard:** the RESUME card records the args byte size at launch, so a run near the limit is
+  visible before resume is relied on.
+
+### L-111 · 2026-09-11 · process · Plane sync
+
+- **Symptom:** Gate 5 (`.claude/hooks/stop.mjs`) ran registry→Plane sync against the LIVE
+  workspace from a feature worktree (282 items, 160 dupes) — cwd was still in the worktree from
+  an earlier `cd`, so its hook fired with the real `PLANE_API_KEY`.
+- **Root cause:** the hook had no branch/tree gate or write cap; hooks resolve against the tree
+  the cwd sits in, not the session's home tree.
+- **Lesson:** **A hook writing to an external system with real credentials must be dry by
+  default off the integration branch, cap writes per run — end every turn with the shell back
+  home.**
+- **Guard:** `plane-sync.mjs` R14 branch guard + `--max-writes` (25), tests T16/T16b;
+  `dedupe-2026-09-12.mjs` cleaned dupes. Sibling [[L-074]].
