@@ -21,28 +21,44 @@ No migration, no data repair, no `*.module.ts` change, no new endpoint.
 - Cause: `RUN_STOP_INCLUDE.orders.select` projects only line items; `run-money.ts` sums line
   subtotals; the invoice bills subtotal + tax (`invoices.service.ts:1447-1473`). Evidence:
   invoice 128.51, driver asked 116.83, change on 130 shown 13.17 instead of 1.49.
-- Fix: (api) export `RUN_STOP_INCLUDE` and add `subtotal: true, tax: true, total: true` to its
-  `orders.select` (`Order.tax/total` already exist and are kept in sync — `sales.prisma:559-561`).
-  (mobile) `orderAmountDue` = `Number(total)` when present, else the legacy pre-tax sum;
-  `stopAmountDue`; `reconciledAmountDue` prorates the order's tax by delivered/ordered subtotal —
-  the server's own rule (`invoices.service.ts:1454-1456`) — from the three order totals.
+- Fix (as built after Opus round 1 — the first cut read `Order.total`, which carries NO discount and
+  the whole shipping fee on every visit of a split delivery; blocker): the driver's amount due is
+  the order's OPEN DRAFT INVOICE as the server last computed it. (api) `RUN_STOP_INCLUDE` is
+  exported and its `orders.select` projects `subtotal/tax/total/discountAmount/shippingFee` plus
+  `invoices: { where: { status: DRAFT, deliveryBatchId: null }, select: { id, subtotal, taxAmount,
+discount, shippingFee, total }, take: 1 }` — the exact rows `findOpenOrderDraft`
+  (`invoices.service.ts:1340`) reconciles at delivery; `total = subtotal + taxAmount + shippingFee -
+discount` (:1232), `taxAmount` folds regular + category tax. (mobile) `orderAmountDue` = the draft's
+  `total`; fallback without a draft = `Order.total - discountAmount` (fee allocation right only for
+  the first visit — documented); last resort = the legacy pre-tax sum. `reconciledAmountDue` for a
+  short-pick = `reconciledSubtotal - discount + allocatedFee + taxAmount × deliveredShare` (discount
+  and the allocated fee whole, tax incl. category tax prorated by delivered/draft subtotal — the
+  server's rule at :1454-1472; share-proration of per-unit excise is exact for uniform lines).
   `payment.tsx` and `index.tsx` use them; the posted amount is the corrected figure.
 - Invariants: `lineItemSubtotal`/`sumOrderLineItems`/`sumStopOrders` unchanged (REG-B49); no
-  client-side tax rate math (no mirror of `packages/pricing`); a payload without totals falls back
-  to today's pre-tax figure (old API), never to NaN.
-- Oracles: 128.51 (was 116.83); change 1.49 (was 13.17); half-delivered → 64.26.
+  client-side tax-rate math (no mirror of `packages/pricing` — the server's own draft is read);
+  every `Number()` guarded by `Number.isFinite`, never NaN; a payload without the draft falls back
+  as above.
+- Oracles: draft 128.51 (was 116.83); change 1.49 (was 13.17); DISCOUNT draft 95 vs `Order.total`
+  110; SPLIT FEE drafts 65 then 55 (never 121); short-pick with category tax 80 (server bills
+  50 + 5 + 25); fallback 110 − 15 = 95; malformed total → line sum.
 
 ### B306 — a RUN-tagged over-collection advance is reversible; reconciliation and reopen respect it
 
 - Cause: `recordDeliveryPaymentInTx` books excess as `AdvancePayment{reference:"RUN:<run>:STOP:<stop>"}`
   (`invoices.service.ts:5035-5046`); nothing reverses it; run cash sums every RUN-prefixed
   advance unconditionally (`routes.service.ts:1579-1613`, `~1780`); `reopenStop` ignores advances.
-- Fix (no schema): `voidPayment` — when the voided payment's invoice belongs to an order with
-  `routeRunStopId` and no CONFIRMED payment remains for that stop, reverse the stop's advances:
-  `balance: 0`, `reference += ":REVERSED"`, note appended; an already-applied advance
-  (`balance !== amount`) throws instead of being silently reversed. Reconciliation queries add
-  `NOT: { reference: { endsWith: ":REVERSED" } }`. `reopenStop` blocks on an unreversed advance.
-- Invariants: the money write stays inside `voidPayment`'s transaction (L-081); advances applied to
+- Fix (no schema): `InvoicesService.reverseRunAdvancesInTx(tx, { runId, stopId, reason })` reverses
+  the stop's `RUN:<run>:STOP:<stop>` advances (`balance: 0`, `reference += ":REVERSED"`, note
+  `REVERSED <ISO>: <reason>`), throws on an already-applied one (`balance !== amount`), and is a
+  no-op when the order has no `runId` (Opus minor: never build `RUN:null:…`). `voidPayment` calls it
+  once no CONFIRMED payment remains for the stop. Reconciliation queries add
+  `NOT: { reference: { endsWith: ":REVERSED" } }`. `reopenStop` (as built after Opus round 1 — the
+  first cut blocked on ANY advance, which dead-ended the zero-payable case it was written for) keeps
+  the "Payment already recorded" guard for confirmed money and otherwise reverses the advance INSIDE
+  its own transaction via the same helper, then proceeds.
+- Invariants: the money write stays inside the calling transaction (L-081); idempotent on a second
+  void/reopen (an exact-reference match never sees a `:REVERSED` row — L-104); advances applied to
   later invoices are never zeroed (the existing ADVANCE re-credit path is untouched).
 - Oracles: the exact `findMany`/`update` shapes (L-113); reversed rows excluded from cash totals.
 
@@ -62,8 +78,12 @@ No migration, no data repair, no `*.module.ts` change, no new endpoint.
 - Fix: in the DRIVER branch, BEFORE the order row is written: resolve the driver, load the stop
   (`{id,status,routeRunId}`) and run (`{id,driverId,status}`); 403 on foreign run (same message
   as `routes.service.ts:2470-2479`, B72's rule), 400 on a run not IN_PROGRESS, a COMPLETED/SKIPPED
-  stop, or a stop/run mismatch; the link block uses the resolved run id.
-- Invariants: OPERATOR/CUSTOMER paths byte-identical; a rejected link creates no order.
+  stop, or a stop/run mismatch; the link block uses the resolved run id. After Opus round 1: the
+  CUSTOMER branch rejects any `routeRunId`/`routeRunStopId` outright (a buyer must never attach an
+  order to a driver's manifest) — the link block itself is role-agnostic and the controller admits
+  CUSTOMER. Known stricter behaviour: an at-stop create on a SCHEDULED (not yet started) run now
+  400s, matching `completeWithPayment`'s own in-progress rule.
+- Invariants: OPERATOR path byte-identical; a rejected link creates no order.
 
 ## DECIDE-30 conditions (standing go)
 
