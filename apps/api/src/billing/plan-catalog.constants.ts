@@ -159,6 +159,8 @@ export const BILLING_EVENTS = {
   GRACE_EXPIRED: "grace.expired",
   TRIAL_CONVERTED: "trial.converted",
   TRIAL_EXPIRED: "trial.expired",
+  /** TRIAL-1: tenant self-serve "End trial" — see SubscriptionMutationService.cancel(). */
+  TRIAL_CANCELLED: "trial.cancelled",
   SUBSCRIPTION_CANCELED: "subscription.canceled",
   SUBSCRIPTION_SUSPENDED: "subscription.suspended",
   SUBSCRIPTION_RESUMED: "subscription.resumed",

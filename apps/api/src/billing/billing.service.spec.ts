@@ -12,6 +12,7 @@ jest.mock("../common/db-locks", () => ({
 }));
 
 import { Test, TestingModule } from "@nestjs/testing";
+import { Logger } from "@nestjs/common";
 import { BillingService } from "./billing.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import { PrismaService } from "../prisma/prisma.service";
@@ -206,10 +207,130 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
       expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(349);
     });
 
+    it("R3 an ACTIVE transition's CAS write also clears a stale readOnlyReason", async () => {
+      const { svc, tx } = make({ transitionCount: 1 });
+      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      expect(tx.tenant.updateMany.mock.calls[0][0].data).toEqual({
+        status: "ACTIVE",
+        readOnlyReason: null,
+      });
+    });
+
     it("emits no delta on a renewal / lost race (CAS finds the tenant already ACTIVE)", async () => {
       const { svc, events } = make({ transitionCount: 0 });
       await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
       expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+    });
+
+    // STRIPE-CANCEL-1: a tenant who self-serve cancelled (cancelAtPeriodEnd armed) must not be
+    // silently resurrected by the next invoice.payment_succeeded — the Stripe subscription was
+    // never actually cancelled at period end (that's the defect), so reinstating here would flap
+    // the tenant READ_ONLY<->ACTIVE every cycle while Stripe keeps charging. R4.
+    it("STRIPE-CANCEL-1 does not reinstate a READ_ONLY tenant with cancelAtPeriodEnd armed — warns and returns, refresh still runs", async () => {
+      const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+      const { svc, prisma, tx, events, tenantStatus } = make({
+        transitionCount: 1,
+        sub: {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          basePriceSnapshot: 349,
+          discount: 0,
+          stripeSubId: "sub_1",
+          cancelAtPeriodEnd: true,
+          // R2: the guard is now narrowed to EXECUTED cancellations (READ_ONLY/CANCELLED) —
+          // this is the case the guard must still catch.
+          tenant: { status: "READ_ONLY" },
+        },
+      });
+      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      // The best-effort period-date refresh still runs (it happens before the check).
+      expect(prisma.tenantSubscription.update).toHaveBeenCalledWith({
+        where: { tenantId: "t1" },
+        data: { periodStart: expect.any(Date), periodEnd: expect.any(Date) },
+      });
+      // No status write, no ledger delta, no disarmedDowngrade (a 2nd tenantSubscription.update),
+      // no cache invalidation — nothing else changed.
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+      expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+      expect(prisma.tenantSubscription.update).toHaveBeenCalledTimes(1);
+      expect(tenantStatus.invalidate).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("STRIPE-CANCEL-1"));
+      warn.mockRestore();
+    });
+
+    it("STRIPE-CANCEL-1 guard: cancelAtPeriodEnd:false reinstates exactly as before", async () => {
+      const { svc, tx, events } = make({
+        transitionCount: 1,
+        sub: {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          basePriceSnapshot: 349,
+          discount: 0,
+          stripeSubId: null,
+          cancelAtPeriodEnd: false,
+        },
+      });
+      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
+        where: { id: "t1", status: { not: "ACTIVE" } },
+        data: { status: "ACTIVE" },
+      });
+      expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(349);
+    });
+
+    // (15) R2 (Opus F3) — a SUSPENDED (past-due) tenant who scheduled a cancellation and then
+    // PAYS the past-due invoice paid for the period and must be reinstated: nothing else moves
+    // them (applyScheduledCancellations only ever looks at ACTIVE tenants). The guard is
+    // narrowed to EXECUTED cancellations (READ_ONLY/CANCELLED) only — SUSPENDED falls through
+    // to the existing reinstatement exactly as before this fix; cancelAtPeriodEnd stays armed,
+    // and cancel() (now Stripe-first) has already told Stripe, which ends the subscription at
+    // period end via onSubscriptionDeleted.
+    it("REG R2 reinstates a SUSPENDED tenant even though cancelAtPeriodEnd is armed", async () => {
+      const { svc, tx, events, tenantStatus } = make({
+        transitionCount: 1,
+        sub: {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          basePriceSnapshot: 349,
+          discount: 0,
+          stripeSubId: "sub_1",
+          cancelAtPeriodEnd: true,
+          tenant: { status: "SUSPENDED" },
+        },
+      });
+      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
+        where: { id: "t1", status: { not: "ACTIVE" } },
+        data: { status: "ACTIVE" },
+      });
+      expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(349);
+      expect(tenantStatus.invalidate).toHaveBeenCalledWith("t1");
+    });
+
+    // (16) R2 — a terminal CANCELLED tenant with cancelAtPeriodEnd armed stays refused, same as
+    // READ_ONLY: reinstating a terminal tenant off a late invoice.payment_succeeded is never
+    // correct.
+    it("REG R2 still refuses reinstatement for a CANCELLED tenant with cancelAtPeriodEnd armed", async () => {
+      const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+      const { svc, prisma, tx, events } = make({
+        transitionCount: 1,
+        sub: {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          basePriceSnapshot: 349,
+          discount: 0,
+          stripeSubId: "sub_1",
+          cancelAtPeriodEnd: true,
+          tenant: { status: "CANCELLED" },
+        },
+      });
+      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+      expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("STRIPE-CANCEL-1"));
+      warn.mockRestore();
     });
   });
 

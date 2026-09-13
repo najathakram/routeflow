@@ -147,6 +147,18 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 - **Guard:** `apps/web/jest.config.js`'s inline comment on `testMatch`; the web suite count (19
   spec files) pinned in `.claude/code-map/web.md`.
 
+### L-062 · 2026-09-04 · tooling · imp-04
+
+- **Symptom:** dropping `@routeflow/api#test` (forbidden by package-shape.spec.ts) left
+  docs-truth.spec.ts/no-dead-deps.spec.ts's outside-workspace reads unhashed by any turbo task.
+- **Lesson:** a tripwire spec reaching outside its own workspace must own a turbo task whose
+  `inputs` name those files — a `<workspace>#<task>` override is one spec away from forbidden; a
+  GENERIC task with explicit inputs survives.
+- **Guard:** `turbo.json` `test:repo-truth`; `apps/api/src/common/turbo-inputs.spec.ts`.
+  Addendum (chore/next-15): moving a spec INTO the repo-truth lane must add it to the main
+  lane's `testPathIgnorePatterns` in the SAME change, or the main api lane still "collects" it,
+  runs zero assertions, and reports green.
+
 ### L-067 · 2026-09-04 · tooling · #597
 
 - **Symptom:** eight defects from one script: "updated" edits that changed nothing, mangled authored
@@ -240,6 +252,20 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 - **Guard:** `apps/web/app/(marketing)/distributors-redirect.static.test.ts` pins the config
   entry and the page's absence; a repo-wide sweep for the same shape filed 9 unbatched rows
   (B251–B259) rather than extending this one test to cover them.
+
+### L-076 · 2026-09-05 · testing · F13
+
+- **Symptom:** an E2E toast assertion via bare `getByText` hit a strict-mode violation
+  (2 elements) after the app gained an aria-live announcer that repeats toast copy.
+- **Root cause:** the same string is rendered twice on purpose — the visible toast
+  (`RadixToast.Title`) and Radix's own aria-live status region, portaled to `<body>`, which
+  mirrors the same title text for screen readers.
+- **Lesson:** **assert toasts through the toast container, never a bare text lookup — any copy
+  that is also announced resolves to two elements.** Scope through
+  `getByRole("region", { name: /notifications/i }).getByRole("listitem")`, not `page.getByText`.
+- **Guard:** the `getByRole("region"…).getByRole("listitem")` scoping convention (documented in
+  `21-destructive-guards.spec.ts`; no shared toast-assertion helper exists yet — a gap this entry
+  flags) applied at `apps/web/e2e/30-recurring-standing.spec.ts` (REG-B09, REG-B92).
 
 ### L-066 · 2026-09-04 · testing · watchdog spec
 
@@ -388,6 +414,18 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
 - **Guard:** `apps/api/src/**/{credit-note,payment,import}-numbering.db.spec.ts` (REG-B267/B268/B269),
   `numbering.service.spec.ts`.
 
+### L-098 · 2026-09-08 · domain · #673
+
+- **Symptom:** a keyboard user saw a fragmented purple focus ring and a wrapped arrow on the
+  Sign-in menu items.
+- **Root cause:** an interactive element containing several inline children (icon, label, glyph)
+  was left `display: inline`, so `:focus-visible` painted once per line box and the trailing
+  glyph wrapped.
+- **Lesson:** **Any focusable element that holds more than one child is a flex/grid/block
+  container with `white-space: nowrap` where the row must not break; the focus ring lives on the
+  element, never on its children; pin the rule with a CSS-rule test, never a source-text grep.**
+- **Guard:** the `signin-menu` assertions in `marketing-port.static.test.ts`.
+
 ### L-096 · 2026-09-08 · domain · #671
 
 - **Symptom:** F16's design of record specified a new `InvoiceCounter` table; S2 found the
@@ -474,25 +512,6 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
   `apps/api/src/credit-notes/credit-notes.wallet-integrity.spec.ts`; the pins file (T3/T3b) proves
   PAID/WRITTEN_OFF still shrink; `apps/api/src/invoices/invoice-status-sets.ts` is the one home.
 
-### L-112 · 2026-09-12 · testing · Plane bulk sync
-
-- **Symptom:** the first bulk registry→Plane sync from master adopted all 160 name-keyed items
-  but created 0 of 72 rows and patched 0 of 160 (`skipped(forbidden)=232`), and plane-apply
-  refused every op with `forbidden (tenant-uuid)` — despite the full suite (T1–T18 plus an Opus
-  review and re-check) having been green.
-- **Root cause:** the write-path denylist scanned every string in a request body, so Plane's own
-  uuid-shaped state/label/assignee ids tripped the tenant-uuid pattern; the fake server's ids
-  were short strings (`state-1`), so no test could ever see the collision — the fixture's data
-  shape was less realistic than production's on exactly the axis the guard keyed on.
-- **Lesson:** **A fake/fixture must reproduce the production SHAPE of every value a guard keys
-  on (id formats, timestamp offsets, envelope vs bare array), and a content filter must be
-  scoped to the content fields it protects — never to "every string" — because a guard tested
-  only against toy shapes is a guard that fires first in production.**
-- **Guard:** `scripts/campaign/plane-client.mjs` scans `CONTENT_KEYS` only; `plane-fake-server.mjs`
-  `uuidIds: true` seeds + the uuid-id cases in plane-sync/plane-apply self-tests; Landmine 15
-  (live shapes) in the harness build plan. Related [[L-111]] (hook/branch gate), [[L-074]]
-  (fixture realism).
-
 ### L-114 · 2026-09-12 · tooling · plane-learning self-test tmpdir
 
 - **Symptom:** a lead's pre-push verify failed at `plane-learning.self-test: 1 FAILURE(S)` while
@@ -542,7 +561,32 @@ tenantId })` with `tenantId` passed EXPLICITLY (never inferred from `forTenant()
   the PR head is the merge gate for the no-hook case; P-BUILD step 1 and P-CLOUD-0 step 7 carry
   the routine. Candidate: `scripts/worktree-audit.mjs` flags a worktree without `.husky/_`.
 
-### L-118 · 2026-09-13 · domain · F39 (B310/B311/B315 wallet/invoice lost updates)
+### L-118 · 2026-09-13 · domain · F38 at-door money (B305)
+
+- **Symptom:** the at-door amount was the pre-tax line sum; three rounds refuted each "obvious"
+  server basis — `Order.total` omits discount, one draft misses a split order's siblings,
+  per-line tax snapshots ignore exemption.
+- **Root cause:** the client mirrored whichever column looked like the answer instead of
+  reproducing what the server bills.
+- **Lesson:** **A client money figure must reproduce the SERVER's billing rule from the inputs
+  the server bills from — its open DRAFT invoices — never a convenient column, and every flag
+  that rule applies must be projected to the client too.**
+- **Guard:** REG-B305 in `run-money.test.ts` + `routes.run-stop-select.spec.ts`.
+
+### L-119 · 2026-09-13 · process · F38 round 4
+
+- **Symptom:** an independent pre-merge review found the door quote collecting excise on
+  cancelled and already-delivered lines — after three in-lane rounds passed that code.
+- **Root cause:** the two halves of one money figure came from differently filtered line sets;
+  each file read correctly alone, so the defect lived only in the seam.
+- **Lesson:** **Both halves of one money figure must derive from ONE collection — pass the
+  filtered array, never re-derive the filter at the second call site. A reviewer inside the lane
+  is the wrong instrument for a seam; it takes an independent pre-merge pass to see across two
+  files that are each individually right.**
+- **Guard:** REG-B305 round 4 + the source pin `short-pick-category-tax.pins.test.ts` (the
+  composition lives in a screen unit tests cannot import).
+
+### L-122 · 2026-09-13 · domain · F39 (B310/B311/B315 wallet/invoice lost updates)
 
 - **Symptom:** B310 — `applyAdvancePaymentToInvoice` read `AdvancePayment.balance` and decremented
   it as two separate statements inside one Prisma transaction; two concurrent applies of the same

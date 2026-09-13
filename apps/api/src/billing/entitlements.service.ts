@@ -31,6 +31,9 @@ export interface Entitlements {
   addons: string[];
   caps: EntitlementCaps;
   trialEndsAt: Date | null;
+  /** RO-1: why `status` is READ_ONLY (trial_expired | subscription_cancelled |
+   *  trial_cancelled); null otherwise. Mirrors `Tenant.readOnlyReason`. */
+  readOnlyReason: string | null;
 }
 
 /** Compact subset carried in the JWT so the client can render gates without a round-trip. */
@@ -237,6 +240,7 @@ export class EntitlementsService {
         customers: cap(def.customersIncluded ?? null, "CUSTOMERS"),
       },
       trialEndsAt: tenant.trialEndsAt,
+      readOnlyReason: tenant.readOnlyReason ?? null,
     };
   }
 
