@@ -765,9 +765,9 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   the server's claim predicate (same status set, from the shared enum), and a navigation off a
   mutation result reads the field the server actually returns — a hand-typed response type is a
   silent `undefined`.**
-- **Guard:** `estimates/[id]/page.tsx` `canConvert = status === "ACCEPTED"` + `useConvertEstimate`
-  typed `{ id }` (commit aa47ee9e); verify-web `ui-evidence.json`. No unit pin yet — the B15-NAV
-  registry row keeps the gap visible.
+- **Guard:** PARTIAL — `useConvertEstimate` typed `{ id }` (aa47ee9e) holds; `estimates/[id]/page.tsx`
+  still gates Convert on `canConvert` (:446) AND two inline `status === "ACCEPTED"` copies (:288,
+  :526) — collapsing them is open. No unit pin yet — the B394 (B15-NAV) row keeps the gap visible.
 
 ### L-130 · 2026-09-13 · domain · F27 B17/B79 (estimates)
 
