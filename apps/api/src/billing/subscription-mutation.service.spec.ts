@@ -126,6 +126,9 @@ interface Opts {
   tenantPlan?: string | null;
   /** STRIPE-CANCEL-1: `sub.stripeSubId` (default null) gates whether cancel()/resume() talk to Stripe. */
   sub?: any;
+  /** R5: override the stripe mock instead of mutating the shared default (e.g. a hostile/
+   *  unconfigured Stripe used to prove the `stripeSubId == null` path never touches it). */
+  stripe?: any;
   priorAddons?: any[];
   existingAddon?: any;
   addonRow?: any;
@@ -194,10 +197,14 @@ function make(opts: Opts = {}) {
   const tenantStatus = { invalidate: jest.fn() } as any;
   // STRIPE-CANCEL-1: 8th ctor arg — cancel()/resume() tell Stripe about a self-serve
   // schedule change when the row carries a stripeSubId (Opts.sub.stripeSubId, default null).
-  const stripe = {
-    isConfigured: true,
-    updateSubscription: jest.fn().mockResolvedValue({}),
-  } as any;
+  // R5: a test that needs a hostile/unconfigured Stripe passes opts.stripe instead of
+  // mutating this shared default.
+  const stripe =
+    opts.stripe ??
+    ({
+      isConfigured: true,
+      updateSubscription: jest.fn().mockResolvedValue({}),
+    } as any);
   const svc = new SubscriptionMutationService(
     prisma,
     cat,
@@ -1534,6 +1541,12 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
     });
     stripe.updateSubscription.mockRejectedValue(new Error("boom"));
     await expect(svc.cancel("t1", "admin")).rejects.toBeInstanceOf(ServiceUnavailableException);
+    // R3: the local row is genuinely unchanged, but the old copy claimed Stripe changed
+    // nothing too — false on a timeout Stripe actually applied. Reworded to describe an
+    // UNCERTAIN provider outcome instead.
+    await expect(svc.cancel("t1", "admin")).rejects.toThrow(
+      "The payment provider did not confirm the change — it may or may not have been applied. Refresh to check before retrying, or contact support.",
+    );
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
   });
@@ -1563,6 +1576,9 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
 
   it("resume() with a stripeSubId un-schedules the Stripe cancellation BEFORE the local write, then writes + emits", async () => {
     const { svc, tx, events, stripe } = make({
+      // R4 (13): ACTIVE is a precondition of the R1 fix — spelled out, never relied on as a
+      // default, so this case cannot pass by accident if the default ever changes.
+      tenantStatus: "ACTIVE",
       sub: activeSub({ stripeSubId: "sub_x", cancelAtPeriodEnd: true }),
     });
     await svc.resume("t1", "admin");
@@ -1580,16 +1596,23 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
 
   it("resume() rejects ServiceUnavailableException on a generic Stripe failure — no write, no emit", async () => {
     const { svc, tx, events, stripe } = make({
+      tenantStatus: "ACTIVE",
       sub: activeSub({ stripeSubId: "sub_x", cancelAtPeriodEnd: true }),
     });
     stripe.updateSubscription.mockRejectedValue(new Error("boom"));
     await expect(svc.resume("t1", "admin")).rejects.toBeInstanceOf(ServiceUnavailableException);
+    // R3: the 503 copy now describes an UNCERTAIN provider outcome, not "nothing was changed"
+    // (which is false on a timeout Stripe actually applied).
+    await expect(svc.resume("t1", "admin")).rejects.toThrow(
+      "The payment provider did not confirm the change — it may or may not have been applied. Refresh to check before retrying, or contact support.",
+    );
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
   });
 
   it("resume() rejects ConflictException when Stripe reports resource_missing — no write, no emit", async () => {
     const { svc, tx, events, stripe } = make({
+      tenantStatus: "ACTIVE",
       sub: activeSub({ stripeSubId: "sub_x", cancelAtPeriodEnd: true }),
     });
     stripe.updateSubscription.mockRejectedValue({ code: "resource_missing", statusCode: 404 });
@@ -1608,5 +1631,112 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
       cancelAtPeriodEnd: false,
     });
     expect(emitted(events)).toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+  });
+
+  // (10) R4 — guards against widening isStripeResourceMissing: an api_error/500 must still
+  // refuse, never be read as "resource already gone".
+  it("REG cancel() rejects ServiceUnavailableException on a Stripe api_error (500) — no write, no emit", async () => {
+    const { svc, tx, events, stripe } = make({
+      tenantStatus: "ACTIVE",
+      sub: activeSub({ stripeSubId: "sub_x" }),
+    });
+    stripe.updateSubscription.mockRejectedValue({ statusCode: 500, code: "api_error" });
+    await expect(svc.cancel("t1", "admin")).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  // (11) R4/R1(F2) — undoing a scheduled DOWNGRADE (cancelAtPeriodEnd already false) must never
+  // call Stripe: there is no cancellation to un-schedule, and doing so risked silently revoking
+  // a cancellation the tenant made in the Stripe customer portal that this row never learned of.
+  it("REG resume() with a stripeSubId but cancelAtPeriodEnd: false (undoing a scheduled downgrade, not a cancellation) never calls Stripe — local clear + SUBSCRIPTION_RESUMED still happen", async () => {
+    const { svc, tx, events, stripe } = make({
+      tenantStatus: "ACTIVE",
+      sub: activeSub({ stripeSubId: "sub_x", cancelAtPeriodEnd: false }),
+    });
+    await svc.resume("t1", "admin");
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+      cancelAtPeriodEnd: false,
+    });
+    expect(emitted(events)).toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+  });
+
+  // (12) R4/R1(F1) — the un-repaired legacy cohort: a READ_ONLY tenant whose Stripe sub is
+  // still live because our cron cancelled it locally without ever telling Stripe. resume() must
+  // NOT resume Stripe billing here (it never restores tenant.status either — the tenant would
+  // pay for nothing).
+  it("REG resume() with stripeSubId + cancelAtPeriodEnd: true on a READ_ONLY tenant never calls Stripe — local clear still happens", async () => {
+    const { svc, tx, events, stripe } = make({
+      tenantStatus: "READ_ONLY",
+      sub: activeSub({ stripeSubId: "sub_x", cancelAtPeriodEnd: true }),
+    });
+    await svc.resume("t1", "admin");
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+      cancelAtPeriodEnd: false,
+    });
+    expect(emitted(events)).toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+  });
+
+  // (14) R4 — documents that a SUSPENDED tenant's cancel() still propagates to Stripe: R1 only
+  // narrows resume(), never cancel().
+  it("REG cancel() on a SUSPENDED tenant with a row + stripeSubId — legacy path: Stripe called with true, row armed", async () => {
+    const { svc, tx, events, stripe } = make({
+      tenantStatus: "SUSPENDED",
+      sub: activeSub({ stripeSubId: "sub_x" }),
+    });
+    await svc.cancel("t1", "admin");
+    expect(stripe.updateSubscription).toHaveBeenCalledWith("sub_x", {
+      cancel_at_period_end: true,
+    });
+    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+      cancelAtPeriodEnd: true,
+    });
+    expect(emitted(events)).toContain(BILLING_EVENTS.SUBSCRIPTION_CANCELED);
+  });
+
+  // (17) R5 (lead addendum) — the stripeSubId == null branch is 100% of real production
+  // cancels today (zero tenants have a Stripe sub). It must be byte-identical to pre-fix AND
+  // immune to Stripe being down/unconfigured: the `if (sub.stripeSubId)` guard is the ONLY
+  // gate, so a hostile, unconfigured Stripe mock must never be reached.
+  it("REG cancel() ACTIVE + stripeSubId: null resolves even with a HOSTILE/unconfigured Stripe — legacy path never touches Stripe", async () => {
+    const hostileStripe = {
+      isConfigured: false,
+      updateSubscription: jest.fn().mockRejectedValue(new Error("stripe down")),
+    };
+    const { svc, tx, events, stripe } = make({
+      tenantStatus: "ACTIVE",
+      sub: activeSub(), // stripeSubId: null
+      stripe: hostileStripe,
+    });
+    const result = await svc.cancel("t1", "admin");
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+      cancelAtPeriodEnd: true,
+    });
+    expect(emitted(events)).toContain(BILLING_EVENTS.SUBSCRIPTION_CANCELED);
+    // Return shape unchanged: still whatever subscription.getSubscription() resolves to.
+    expect(result).toEqual({ planKey: "TEAM" });
+  });
+
+  // (18) R5 (lead addendum) — the resume() mirror of (17).
+  it("REG resume() ACTIVE + stripeSubId: null resolves even with a HOSTILE/unconfigured Stripe — legacy path never touches Stripe", async () => {
+    const hostileStripe = {
+      isConfigured: false,
+      updateSubscription: jest.fn().mockRejectedValue(new Error("stripe down")),
+    };
+    const { svc, tx, events, stripe } = make({
+      tenantStatus: "ACTIVE",
+      sub: activeSub({ cancelAtPeriodEnd: true }), // stripeSubId: null
+      stripe: hostileStripe,
+    });
+    const result = await svc.resume("t1", "admin");
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+      cancelAtPeriodEnd: false,
+    });
+    expect(emitted(events)).toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+    expect(result).toEqual({ planKey: "TEAM" });
   });
 });

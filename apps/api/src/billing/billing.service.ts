@@ -589,6 +589,9 @@ export class BillingService {
 
     const sub = await this.prisma.tenantSubscription.findFirst({
       where: { stripeCustomerId: customerId },
+      // R2: the tenant's CURRENT status is what decides whether the cancelAtPeriodEnd guard
+      // below applies — onPaymentFailed already includes the tenant the same way.
+      include: { tenant: { select: { status: true } } },
     });
     if (!sub) {
       this.logger.debug(
@@ -617,10 +620,22 @@ export class BillingService {
     // Reinstating here on the next invoice.payment_succeeded would resurrect them to ACTIVE
     // without ever checking whether Stripe actually stopped billing — the exact defect (our
     // cron takes them READ_ONLY at period end, then this handler flips them back ACTIVE every
-    // cycle while Stripe keeps charging). Nothing is written; this needs manual reconciliation.
-    if (sub.cancelAtPeriodEnd) {
+    // cycle while Stripe keeps charging).
+    //
+    // R2 (Opus F3): narrowed to EXECUTED cancellations only — READ_ONLY (the cancellation
+    // already took effect) or CANCELLED (terminal). Any OTHER status, chiefly SUSPENDED, falls
+    // through to the reinstatement below exactly as before this fix: a SUSPENDED (past-due)
+    // tenant who scheduled a cancellation and then PAYS the past-due invoice paid for that
+    // period and must be reinstated — nothing else moves them out of SUSPENDED
+    // (applyScheduledCancellations only ever looks at ACTIVE tenants). The flag stays armed;
+    // cancel() (Stripe-first) has already told Stripe, which ends the subscription at period
+    // end via onSubscriptionDeleted.
+    if (
+      sub.cancelAtPeriodEnd &&
+      (sub.tenant.status === "READ_ONLY" || sub.tenant.status === "CANCELLED")
+    ) {
       this.logger.warn(
-        `STRIPE-CANCEL-1: invoice.payment_succeeded for tenant ${sub.tenantId} while cancelAtPeriodEnd is armed (stripeSubId ${sub.stripeSubId ?? "none"}) — not reinstating; the provider subscription was not cancelled at period end. Needs manual reconciliation.`,
+        `STRIPE-CANCEL-1: invoice.payment_succeeded for tenant ${sub.tenantId} while cancelAtPeriodEnd is armed and tenant.status is ${sub.tenant.status} (stripeSubId ${sub.stripeSubId ?? "none"}) — not reinstating; the provider subscription was not cancelled at period end. Needs manual reconciliation.`,
       );
       return;
     }

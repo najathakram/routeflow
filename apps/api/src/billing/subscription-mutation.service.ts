@@ -869,8 +869,11 @@ export class SubscriptionMutationService {
           this.logger.error(
             `STRIPE-CANCEL-1: cancel() failed to schedule the Stripe cancellation for tenant ${tenantId} (stripeSubId ${sub.stripeSubId})`,
           );
+          // R3: the local row really is unchanged, but claiming Stripe changed nothing too is
+          // false on a timeout Stripe actually applied — describe the provider outcome as
+          // UNCERTAIN instead.
           throw new ServiceUnavailableException(
-            "Could not schedule the cancellation with the payment provider — nothing was changed; retry, or contact support.",
+            "The payment provider did not confirm the change — it may or may not have been applied. Refresh to check before retrying, or contact support.",
           );
         }
       }
@@ -906,13 +909,28 @@ export class SubscriptionMutationService {
    * only self-service "keep my current plan"; it never touches planKey or the period.
    */
   async resume(tenantId: string, actorId?: string) {
-    const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
+    const [sub, tenant] = await Promise.all([
+      this.prisma.tenantSubscription.findUnique({ where: { tenantId } }),
+      this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { status: true } }),
+    ]);
     if (!sub) throw new NotFoundException("No subscription.");
 
     // STRIPE-CANCEL-1: the mirror of cancel()'s Stripe-first write — undo the scheduled
     // cancellation with Stripe before touching our own row. A row with no stripeSubId takes the
     // existing path unchanged.
-    if (sub.stripeSubId) {
+    //
+    // R1 (Opus F1+F2): call Stripe ONLY when cancelAtPeriodEnd is actually ARMED on a tenant
+    // Stripe is still charging (tenant.status === "ACTIVE"). Two money defects otherwise:
+    // (F1) a READ_ONLY tenant with a live Stripe sub — the un-repaired legacy cohort our cron
+    // cancelled locally without ever telling Stripe — reaches resume() (the route is
+    // allowlisted for READ_ONLY, and the web "Keep current plan" downgrade-undo control is
+    // gated only on downgradeToPlanKey): an unconditional call here would RESUME Stripe
+    // billing while resume() never restores tenant.status — the tenant pays for nothing.
+    // (F2) when cancelAtPeriodEnd is already false (undoing a scheduled DOWNGRADE, never a
+    // cancellation), calling Stripe here could silently revoke a cancellation the tenant made
+    // in the Stripe customer portal that our local row never learned about — only
+    // onSubscriptionUpdated syncs Stripe→local, and there is no ordering guard against this call.
+    if (sub.stripeSubId && sub.cancelAtPeriodEnd === true && tenant?.status === "ACTIVE") {
       try {
         await this.stripe.updateSubscription(sub.stripeSubId, { cancel_at_period_end: false });
       } catch (err) {
@@ -925,8 +943,9 @@ export class SubscriptionMutationService {
         this.logger.error(
           `STRIPE-CANCEL-1: resume() failed to resume the Stripe subscription for tenant ${tenantId} (stripeSubId ${sub.stripeSubId})`,
         );
+        // R3: same UNCERTAIN-provider-outcome wording as cancel()'s 503.
         throw new ServiceUnavailableException(
-          "Could not resume the subscription with the payment provider — nothing was changed; retry, or contact support.",
+          "The payment provider did not confirm the change — it may or may not have been applied. Refresh to check before retrying, or contact support.",
         );
       }
     }
