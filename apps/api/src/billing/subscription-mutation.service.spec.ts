@@ -1582,6 +1582,7 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
       sub: activeSub({ stripeSubId: "sub_x", cancelAtPeriodEnd: true }),
     });
     await svc.resume("t1", "admin");
+    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
     expect(stripe.updateSubscription).toHaveBeenCalledWith("sub_x", {
       cancel_at_period_end: false,
     });
@@ -1653,12 +1654,15 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
   // call Stripe: there is no cancellation to un-schedule, and doing so risked silently revoking
   // a cancellation the tenant made in the Stripe customer portal that this row never learned of.
   it("REG resume() with a stripeSubId but cancelAtPeriodEnd: false (undoing a scheduled downgrade, not a cancellation) never calls Stripe — local clear + SUBSCRIPTION_RESUMED still happen", async () => {
-    const { svc, tx, events, stripe } = make({
+    const { svc, tx, events, stripe, prisma } = make({
       tenantStatus: "ACTIVE",
       sub: activeSub({ stripeSubId: "sub_x", cancelAtPeriodEnd: false }),
     });
     await svc.resume("t1", "admin");
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    // The tenant read lives INSIDE the Stripe gate — a refactor to `if (stripeSubId) { read; … }`
+    // would re-add a query to the flag-false path; cases 9/18 alone would not catch it.
+    expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
     expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
       cancelAtPeriodEnd: false,
     });
