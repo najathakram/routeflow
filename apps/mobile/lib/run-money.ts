@@ -7,7 +7,7 @@
  * wire); fall back to `computeLineSubtotal` (mirrors the server's own boxed
  * proration) only when it doesn't. Pure — no React import — Jest-testable.
  */
-import { computeLineSubtotal } from "@routeflow/pricing";
+import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 
 export interface RunMoneyLineItem {
   qty: number;
@@ -21,6 +21,10 @@ export interface RunMoneyLineItem {
 
 export interface RunMoneyOrder {
   lineItems: RunMoneyLineItem[];
+  /** Prisma Decimals — may arrive as strings over the wire. */
+  subtotal?: number | string | null;
+  tax?: number | string | null;
+  total?: number | string | null;
 }
 
 export interface RunMoneyStop {
@@ -45,4 +49,37 @@ export function sumOrderLineItems(order: RunMoneyOrder): number {
 
 export function sumStopOrders(stop: RunMoneyStop): number {
   return (stop.orders ?? []).reduce((sum, order) => sum + sumOrderLineItems(order), 0);
+}
+
+/**
+ * REG-B305: the driver "amount due" is the server's tax-inclusive total, not
+ * the pre-tax line subtotal. Falls back to `sumOrderLineItems` (legacy
+ * pre-tax basis) only when the payload carries no `total` yet.
+ */
+export function orderAmountDue(order: RunMoneyOrder): number {
+  if (order.total != null && order.total !== "") return Number(order.total);
+  return sumOrderLineItems(order);
+}
+
+export function stopAmountDue(stop: RunMoneyStop): number {
+  return (stop.orders ?? []).reduce((sum, order) => sum + orderAmountDue(order), 0);
+}
+
+/**
+ * REG-B305: reproduces invoices.service.ts:1454-1456's proration of an
+ * order's tax by delivered/ordered subtotal (discount/fee stay whole).
+ */
+export function reconciledAmountDue(input: {
+  orderSubtotal: number;
+  orderTax: number;
+  orderTotal: number;
+  reconciledSubtotal: number;
+}): number {
+  const { orderSubtotal, orderTax, orderTotal, reconciledSubtotal } = input;
+  if (!(orderSubtotal > 0) || !Number.isFinite(orderTotal) || !Number.isFinite(orderTax)) {
+    return reconciledSubtotal;
+  }
+  const deliveredShare = reconciledSubtotal / orderSubtotal;
+  const taxCarried = orderTax * (1 - deliveredShare);
+  return roundMoney(orderTotal - (orderSubtotal - reconciledSubtotal) - taxCarried);
 }

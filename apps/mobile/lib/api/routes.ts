@@ -40,6 +40,11 @@ export interface RouteRunOrder {
   notes?: string;
   invoiceId?: string;
   lineItems: RouteRunOrderItem[];
+  // REG-B305: tax-inclusive amount due (Prisma Decimals — may arrive as
+  // strings over the wire). See lib/run-money.ts#orderAmountDue.
+  subtotal?: number | string | null;
+  tax?: number | string | null;
+  total?: number | string | null;
 }
 
 export interface RouteRunStop {

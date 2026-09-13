@@ -41,7 +41,8 @@ import { usePodStore } from "../../../../../store/podStore";
 import { useDeliveryPlanStore } from "../../../../../store/delivery-plan-store";
 import { useRunSettlementStore } from "../../../../../store/runSettlementStore";
 import type { CollectedMethod } from "../../../../../lib/run-settlement";
-import { sumOrderLineItems } from "../../../../../lib/run-money";
+import { orderAmountDue, reconciledAmountDue } from "../../../../../lib/run-money";
+import { classifyMutationError } from "../../../../../lib/offline-errors";
 import {
   buildDeliveries,
   freeUnitSizeFor,
@@ -80,9 +81,9 @@ async function readDriverLocation(): Promise<{ lat: number; lng: number } | null
 // short-pick overrides, or a stale deep link straight to this screen).
 const EMPTY_DELIVERY_PLAN: Record<string, number> = {};
 
-// REG-B49 (spec R2): box-aware line money, never qty * unitPrice.
+// REG-B305: the driver "amount due" is the server's tax-inclusive total.
 function fullOrderTotal(order: RouteRunOrder): number {
-  return sumOrderLineItems(order);
+  return orderAmountDue(order);
 }
 
 export default function PaymentScreen() {
@@ -132,7 +133,14 @@ export default function PaymentScreen() {
     (sum, o) =>
       sum +
       (o.id === orderId && shortPickLines.length > 0
-        ? reconciledTotal(shortPickLines, deliveredQtyById)
+        ? // REG-B305: prorate the order's tax by the delivered share, same as
+          // invoices.service.ts:1454-1456.
+          reconciledAmountDue({
+            orderSubtotal: Number(o.subtotal),
+            orderTax: Number(o.tax),
+            orderTotal: Number(o.total),
+            reconciledSubtotal: reconciledTotal(shortPickLines, deliveredQtyById),
+          })
         : fullOrderTotal(o)),
     0,
   );
@@ -425,8 +433,55 @@ export default function PaymentScreen() {
       // untyped, same pattern as admin.ts's orderId/invoiceGroupId).
       paymentIds = (result as unknown as { paymentIds?: string[] }).paymentIds;
     } catch (e: any) {
+      const outcome = classifyMutationError(e);
+      if (outcome.kind === "queued") {
+        // REG-B308: a queued offline completion is a pending success, not a
+        // failure — mirror the success path's cleanup below (minus the
+        // paymentIds-only photo upload, which needs the real response) and
+        // keep `closing` true until navigation so the button is never re-armed.
+        showToast("Offline — completion queued and will sync when you reconnect");
+        clearPod(stopId);
+        if (unsentUris.length) usePodStore.getState().setPhotos(stopId, unsentUris);
+        if (stopId) clearPlan(stopId);
+        if (collected > 0 && runId) {
+          useRunSettlementStore.getState().recordCollection(runId, {
+            stopId,
+            method: apiMethod,
+            amount: collected,
+            collectedAt: Date.now(),
+          });
+        }
+        const remaining = (run?.stops ?? []).filter(
+          (s) => s.id !== stopId && (s.status === "PENDING" || s.status === "IN_PROGRESS"),
+        );
+        setClosing(false);
+        if (Platform.OS !== "web" && remaining.length > 0) {
+          Alert.alert(
+            "Continue in Google Maps?",
+            `${remaining.length} stop${remaining.length === 1 ? "" : "s"} left. Re-open Maps with the updated route from your current location?`,
+            [
+              {
+                text: "Stay in app",
+                style: "cancel",
+                onPress: () => router.replace("/(driver)/route"),
+              },
+              {
+                text: "Open Maps",
+                onPress: async () => {
+                  const loc = await readDriverLocation();
+                  openRouteInMaps(remaining, loc ? { originLat: loc.lat, originLng: loc.lng } : {});
+                  router.replace("/(driver)/route");
+                },
+              },
+            ],
+          );
+          return;
+        }
+        router.replace("/(driver)/route");
+        return;
+      }
       setClosing(false);
-      showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+      showToast(outcome.message);
       return;
     }
     setClosing(false);
