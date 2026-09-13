@@ -1972,10 +1972,17 @@ export class CustomersService {
    * cross-tenant ids (returns null → NotFound), preventing a tenant-isolation
    * oracle.
    */
-  async restoreCustomer(id: string, restoreStatus?: string) {
+  async restoreCustomer(id: string, restoreStatus?: string, overrideUsername?: string) {
     const customer = await this.prisma.forTenant().customer.findUnique({
       where: { id },
-      select: { id: true, userId: true, deletedAt: true, tenantId: true },
+      select: {
+        id: true,
+        userId: true,
+        deletedAt: true,
+        tenantId: true,
+        email: true,
+        user: { select: { username: true } },
+      },
     });
     if (!customer) throw new NotFoundException("Customer not found");
     if (!customer.deletedAt) return { success: true, restored: false };
@@ -1984,12 +1991,40 @@ export class CustomersService {
     // state); default to ACTIVE when the caller does not specify.
     const status = restoreStatus === "SUSPENDED" ? "SUSPENDED" : "ACTIVE";
 
-    await this.prisma.tenantTransaction(async (tx) => {
-      await tx.customer.update({ where: { id }, data: { deletedAt: null } });
-      if (customer.userId) {
-        await tx.user.update({ where: { id: customer.userId }, data: { status } });
-      }
-    });
+    // REG-B159: reverse the soft-delete tombstone. A pre-fix removed row carries no
+    // "~removed~<id8>" suffix — nothing to strip, its username was never touched. The real
+    // email always lived on Customer.email (untouched by the delete), so restoring it here
+    // is correct whether or not this row was ever tombstoned; a customer created with no
+    // email gets a fresh placeholder, same as create() mints for one today.
+    const tombstoneSuffix = `~removed~${id.slice(0, 8)}`;
+    const currentUsername = customer.user.username;
+    const restoredUsername =
+      overrideUsername ||
+      (currentUsername.endsWith(tombstoneSuffix)
+        ? currentUsername.slice(0, -tombstoneSuffix.length)
+        : currentUsername);
+    const restoredEmail = customer.email ?? `no-email+${crypto.randomUUID()}@placeholder.local`;
+
+    try {
+      await this.prisma.tenantTransaction(async (tx) => {
+        await tx.customer.update({ where: { id }, data: { deletedAt: null } });
+        await tx.user.update({
+          where: { id: customer.userId },
+          data: {
+            status,
+            deletedAt: null,
+            username: restoredUsername,
+            email: restoredEmail,
+          },
+        });
+      });
+    } catch (err: any) {
+      // A newer customer claimed this username/email while the original was removed.
+      if (err?.code !== "P2002") throw err;
+      throw new ConflictException(
+        "That username is now used by another customer — restore with a different username",
+      );
+    }
     return { success: true, restored: true };
   }
 
@@ -2025,7 +2060,7 @@ export class CustomersService {
   ) {
     const customer = await this.prisma.forTenant().customer.findUnique({
       where: { id },
-      include: { user: { select: { status: true } } },
+      include: { user: { select: { status: true, username: true } } },
     });
     if (!customer) throw new NotFoundException("Customer not found");
 
@@ -2051,9 +2086,25 @@ export class CustomersService {
       // All financial records are preserved with their customerId FK intact.
       // A forced delete stays reversible unless the caller explicitly opted into
       // hardDeleteWhenRecordFree (batchDelete) — the web's Undo depends on it.
+      //
+      // REG-B159: also release the User row's identity. tenantId-scoped @@unique
+      // constraints on email/username/googleId (tenancy.prisma) stayed occupied by a
+      // merely-deactivated row, so re-adding the same shop (or a CSV re-import) always
+      // collided — the real email lives on Customer.email untouched, so nothing is lost;
+      // the real username is deterministically recoverable as the prefix before
+      // "~removed~". isInternalEmail already treats @placeholder.local as non-routable.
       await this.prisma.tenantTransaction(async (tx) => {
         await tx.customer.update({ where: { id }, data: { deletedAt: new Date() } });
-        await tx.user.update({ where: { id: customer.userId }, data: { status: "INACTIVE" } });
+        await tx.user.update({
+          where: { id: customer.userId },
+          data: {
+            status: "INACTIVE",
+            deletedAt: new Date(),
+            username: `${customer.user.username}~removed~${id.slice(0, 8)}`,
+            email: `removed+${id}@placeholder.local`,
+            googleId: null,
+          },
+        });
       });
       return { success: true, softDeleted: true };
     }

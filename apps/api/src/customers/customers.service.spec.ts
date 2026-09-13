@@ -960,6 +960,8 @@ describe("CustomersService", () => {
         id: "cust-1",
         userId: "user-1",
         deletedAt: new Date(),
+        email: "acme@shop.com",
+        user: { username: "acme" },
       });
 
       const result = await service.restoreCustomer("cust-1");
@@ -970,7 +972,7 @@ describe("CustomersService", () => {
       });
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { id: "user-1" },
-        data: { status: "ACTIVE" },
+        data: { status: "ACTIVE", deletedAt: null, username: "acme", email: "acme@shop.com" },
       });
       expect(result).toEqual({ success: true, restored: true });
     });
@@ -980,14 +982,18 @@ describe("CustomersService", () => {
         id: "cust-1",
         userId: "user-1",
         deletedAt: new Date(),
+        email: "acme@shop.com",
+        user: { username: "acme" },
       });
 
       await service.restoreCustomer("cust-1", "SUSPENDED");
 
-      expect(prisma.user.update).toHaveBeenCalledWith({
-        where: { id: "user-1" },
-        data: { status: "SUSPENDED" },
-      });
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "user-1" },
+          data: expect.objectContaining({ status: "SUSPENDED" }),
+        }),
+      );
     });
 
     it("is a no-op for a customer that is not soft-deleted", async () => {
@@ -995,6 +1001,8 @@ describe("CustomersService", () => {
         id: "cust-1",
         userId: "user-1",
         deletedAt: null,
+        email: "acme@shop.com",
+        user: { username: "acme" },
       });
 
       const result = await service.restoreCustomer("cust-1");
@@ -1006,6 +1014,79 @@ describe("CustomersService", () => {
     it("throws NotFoundException when the customer does not exist", async () => {
       prisma.customer.findUnique.mockResolvedValue(null);
       await expect(service.restoreCustomer("missing")).rejects.toThrow(NotFoundException);
+    });
+
+    // ─── REG-B159 ────────────────────────────────────────────────────────────
+
+    it("REG-B159 T2: strips the tombstone suffix and restores Customer.email onto the User row", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        userId: "user-1",
+        deletedAt: new Date(),
+        email: "acme@shop.com",
+        user: { username: `acme~removed~${"cust-1".slice(0, 8)}` },
+      });
+
+      await service.restoreCustomer("cust-1");
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: "user-1" },
+        data: { status: "ACTIVE", deletedAt: null, username: "acme", email: "acme@shop.com" },
+      });
+    });
+
+    it("REG-B159 T2: mints a fresh placeholder email when the customer never had a real one", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        userId: "user-1",
+        deletedAt: new Date(),
+        email: null,
+        user: { username: `acme~removed~${"cust-1".slice(0, 8)}` },
+      });
+
+      await service.restoreCustomer("cust-1");
+
+      const data = prisma.user.update.mock.calls[0][0].data;
+      expect(data.username).toBe("acme");
+      expect(data.email).toMatch(/^no-email\+.+@placeholder\.local$/);
+    });
+
+    it("REG-B159 T3: 409s when the restored identity was reused by a newer customer, and accepts an override username", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        userId: "user-1",
+        deletedAt: new Date(),
+        email: "acme@shop.com",
+        user: { username: `acme~removed~${"cust-1".slice(0, 8)}` },
+      });
+      prisma.user.update.mockRejectedValueOnce({ code: "P2002" });
+
+      await expect(service.restoreCustomer("cust-1")).rejects.toThrow(ConflictException);
+
+      prisma.user.update.mockResolvedValueOnce({ id: "user-1" });
+      await service.restoreCustomer("cust-1", undefined, "acme-2");
+
+      expect(prisma.user.update).toHaveBeenLastCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ username: "acme-2" }) }),
+      );
+    });
+
+    it("REG-B159 T4 (pin): a pre-fix removed row (no tombstone suffix) restores unchanged", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        userId: "user-1",
+        deletedAt: new Date(),
+        email: "acme@shop.com",
+        // No "~removed~" suffix — this row predates the B159 fix.
+        user: { username: "acme" },
+      });
+
+      await service.restoreCustomer("cust-1");
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: "user-1" },
+        data: { status: "ACTIVE", deletedAt: null, username: "acme", email: "acme@shop.com" },
+      });
     });
   });
 
@@ -2508,12 +2589,29 @@ describe("CustomersService", () => {
 
     beforeEach(() => {
       prisma.customer.findUnique.mockImplementation(async ({ where }: any) =>
-        where.id === CUSTOMER.id ? { ...CUSTOMER, user: { status: "ACTIVE" } } : null,
+        where.id === CUSTOMER.id
+          ? { ...CUSTOMER, user: { status: "ACTIVE", username: "acme" } }
+          : null,
       );
       // Record-free: nothing to orphan, so the 409 never fires either way.
       prisma.order.count.mockResolvedValue(0);
       prisma.invoice.count.mockResolvedValue(0);
       prisma.return.count.mockResolvedValue(0);
+    });
+
+    it("REG-B159 T1: releases the User row's username/email/googleId on soft delete", async () => {
+      await service.deleteCustomer(CUSTOMER.id, true);
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: CUSTOMER.userId },
+        data: {
+          status: "INACTIVE",
+          deletedAt: expect.any(Date),
+          username: `acme~removed~${CUSTOMER.id.slice(0, 8)}`,
+          email: `removed+${CUSTOMER.id}@placeholder.local`,
+          googleId: null,
+        },
+      });
     });
 
     it("REG-B130b: soft-deletes a RECORD-FREE customer when force=true (the detail page's Undo contract)", async () => {

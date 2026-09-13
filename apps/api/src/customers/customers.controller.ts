@@ -403,11 +403,13 @@ export class CustomersController {
 
   // Restore a soft-deleted customer (the server side of the 8-second Undo).
   // `status` is the user's pre-delete status so the undo restores exactly.
+  // `username` (REG-B159) lets the caller retry with a different one after a
+  // 409 — the original was claimed by a newer customer while this one was removed.
   @Post(":id/restore")
   @Roles(UserRole.OPERATOR)
   @HttpCode(200)
-  restore(@Param("id") id: string, @Body() body?: { status?: string }) {
-    return this.customersService.restoreCustomer(id, body?.status);
+  restore(@Param("id") id: string, @Body() body?: { status?: string; username?: string }) {
+    return this.customersService.restoreCustomer(id, body?.status, body?.username);
   }
 
   // ─── Suggest buyer account merge ──────────────────────────────────────────
