@@ -56,6 +56,34 @@ deliveredSubtotal/order.subtotal + Σ_delivered lines categoryTaxAmount × deliv
   category 50; draft 270): A only → 110, B only → 160, both → 270; fee/discount whole on a half
   delivery → 50; per-unit category scales 50 × 4/10 = 20; no draft → legacy line sum, never a
   discount guess; malformed total → line sum.
+- **Round 4 (2026-09-13, independent pre-merge review — blocked #710):** the two halves of the
+  door quote were fed from DIFFERENT line sets. `payment.tsx` built `deliveredSubtotal` from the
+  filtered `shortPickLines` (`status !== "CANCELLED" && deliveredQty === 0`, off the rich
+  `order.lineItems`) but `deliveredCategoryTax` from the RAW run-payload `o.lineItems`, and
+  `run-money.ts#deliveredCategoryTax` defaults a line absent from the plan to FULLY delivered — so a
+  CANCELLED regulated line, or a regulated line already billed on an earlier split visit, added its
+  full `categoryTaxAmount` while contributing zero subtotal (cash over-collected at the door →
+  `AdvancePayment` the customer must be made whole on). It survived three in-lane Opus rounds
+  because each file is correct on its own — the defect lives in the seam. Fix `df635fdb`: new pure
+  `run-money.ts#shortPickCategoryTax(lineItems, shortPickLines, plan)` restricts the sum to
+  `shortPickLines`' ids and delegates (`deliveredCategoryTax`'s default stays — it is right for
+  `buildDeliveries`); the page calls it, so both halves derive from ONE set. Tests derive their
+  expectations from named terms, and a source-pin test fences the screen (the unit tests cannot
+  import it, so a revert to the raw-lines call would otherwise stay green):
+  - **Cancelled regulated line → 43.20** (old composition 55.20). This one IS a server oracle and was
+    independently re-derived: `Order.subtotal`/`tax` are recomputed from non-cancelled lines
+    (`orders.service.ts` ~:4481-4487), so billable = B alone (40) + 4.00 × 40/50 = 43.20.
+  - **Split-delivery visit 2 → 42.00** (old 62.00) **fences the DOOR COMPOSITION, not a server
+    invoice** (corrected after the round-4 refutation, which refuted my first framing): the server's
+    `reconcileOrderDeliveredInvoices` → `rebuildSiblingDrafts` (`invoices.service.ts` ~:1863-1872)
+    bills `billQtyOf = deliveredQty` with NO `priorBilledQty`, so a rebuilt visit-2 draft would be
+    272.00. No reachable path to `deliveredQty > 0` with the stop still open was found
+    (`completeWithPayment` completes the stop; `reopenStop` zeroes it) → latent, not live.
+  - Scope guard + tax-exempt guard (40.00) unchanged.
+    Lesson candidate for the follow-up: two halves of one money figure must derive from ONE line set —
+    a seam between files is invisible to per-file review, and an independent pre-merge pass (not more
+    in-lane rounds) is the instrument that finds it; a test may only claim a server oracle it can
+    actually derive from the server's own code.
 
 ### B306 — a RUN-tagged over-collection advance is reversible; reconciliation and reopen respect it
 
@@ -120,6 +148,7 @@ device/emulator against the compose stack and recorded here at discharge time.
 
 - approach-rotation hook resolves its state file relative to cwd (`apps/api/.claude/pipeline/approach-rotation.json` written from a drifted cwd) — same class as the BUGS_ROOT trap (B278).
 - Returns credit total (`return/index.tsx` uses `sumStopOrders`, pre-tax) — decide whether return credits should carry tax; out of F38's scope.
+- Hygiene (independent pre-merge review, non-blocking): `invoices.service.ts` ~:5648 `tx.invoicePayment.count({ where: { …CONFIRMED_PAYMENT, invoice: { order: { routeRunStopId } } } })` — the tenant proxy scopes the top-level model only; the nested `invoice.order` filter is unscoped. UUID keys make collision implausible; hygiene, not an exploit.
 
 ## Status
 
