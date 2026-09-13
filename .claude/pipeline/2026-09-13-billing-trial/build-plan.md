@@ -204,7 +204,12 @@ no-row 404 for those statuses is dead code; `/choose-plan` end-to-end for READ_O
    (legacy cohort — zero in prod today) is signalled only by the `STRIPE-CANCEL-1` warn in
    `onPaymentSucceeded`; `cancel()` returns `already_read_only` before any Stripe call, so they
    have no self-serve way to stop the charge — needs an alert/report, not a log line (Opus F6;
-   low while the cohort is empty).
+   low while the cohort is empty). 10. `cancel()`'s TRIAL branch never reaches the Stripe block: a
+   TRIAL tenant with a live `stripeSubId` — reachable only via platform-admin `extendTrial()` on a
+   checkout-provisioned ACTIVE tenant (`platform-admin.service.ts:1054-1062` sets `status: TRIAL`
+   on any tenant) — ends the trial locally while Stripe keeps invoicing (STRIPE-CANCEL-1 on a
+   second branch; Opus round-2 finding 1; zero exposure; inside the #8 gating precondition;
+   case (5) pins today's behaviour on purpose) (low-med, money).
 
 ## STRIPE-CANCEL-1 (owner-directed via fb, 2026-09-13 ~12:00Z — built on this branch, same PR)
 
@@ -268,6 +273,40 @@ skipping `disarmedDowngrade()`/cache invalidation is safe (C3 iii/iv). It REFUTE
 
 Round 2 = Sonnet api fixer on R1–R5 above, then Opus round 2 on the delta (named items: null-branch
 byte-identical + outage-proof + boot path; resume gate; narrowed guard; copy).
+
+### STRIPE-CANCEL-1 round 2 (`9550b675` api · `5a222c0b` docs) → Opus round 2: SHIP-READY
+
+F1–F4 CLOSED and pinned (cases 11/12, R2 SUSPENDED case, verbatim 503 copy); C6 gaps closed; N1
+null branch byte-identical for `cancel()` and outage-proof for both (hostile-mock cases 17/18; the
+single `if (sub.stripeSubId)` gate; `StripeService` boots without a key; `app-module-compile` 1/1);
+N2 gate matches the mock, null tenant → skip (safe direction); N3 the `include` is inert
+(`transitionAndEmit`/`emitPayingDelta` read only `planKey/basePriceSnapshot/discount`; the relation
+is required; SUSPENDED arc nets zero MRR; TRIAL+armed unchanged); N5 every regression shape named
+to its case. Three LOW findings, all latent behind the gating precondition (0 prod `stripeSubId`):
+
+| Id  | Sev     | Finding                                                                                                                                                                                                                                                                                                               | Ruling (Fable)                                                                                                                                                                                                                |
+| --- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | LOW-MED | `cancel()`'s TRIAL branch returns before the Stripe block, so a TRIAL tenant with a live `stripeSubId` — reachable only via platform-admin `extendTrial()` on a checkout-provisioned ACTIVE tenant — cancels locally while Stripe keeps invoicing (the defect on a second branch; F6/#9 covers READ_ONLY, not TRIAL). | TO FILE #10 beside #9 (scope creep to touch the TRIAL branch here; zero exposure; inside the gating sentence). Case (5) pins the current behaviour deliberately.                                                              |
+| 2   | LOW     | `resume()`'s null-`stripeSubId` branch gained an unconditional second query (`tenant.findUnique`) — not query-identical to pre-fix; a pool timeout on that read would 500 a resume that used to succeed.                                                                                                              | Round 3: scope the tenant read inside `if (stripeSubId && cancelAtPeriodEnd === true)`; pin "no tenant read on the null branch" in cases 9/18. (fb's "changed nothing for tenants with no `stripeSubId`" made this in-scope.) |
+| 3   | LOW     | 503 copy "Refresh to check" is only true once `customer.subscription.updated` lands; ~140 chars renders as a 5-line toast title.                                                                                                                                                                                      | Round 3: "The payment provider did not confirm the change — it may still apply. Check your subscription in a moment before retrying, or contact support." + resume-side `statusCode: 500` REG.                                |
+
+Round 3 = Sonnet mechanic on 2 + 3, narrow Opus re-check, docs commit, ping fb.
+
+### STRIPE-CANCEL-1 round 3 (`2c29917d` api) → Opus narrow re-check: SHIP-READY
+
+V1 `resume()`'s null-`stripeSubId` branch is byte-identical to pre-fix (`f3165963` lines 870-886:
+same read, NotFound, transaction data, emit, return; zero extra queries; the tenant read sits
+inside `if (stripeSubId && cancelAtPeriodEnd === true)`, pinned by cases 9/18). V2 Stripe branch
+unchanged vs round 2 (armed + ACTIVE → once, before the write; READ_ONLY → skipped; flag false →
+skipped). V3 copy identical at both 503 sites, verbatim-asserted; 97/97. V4 `check-types` +
+prettier clean, no raw errors logged, neutral fixtures. One LOW test-hardening gap applied
+post-verdict (Fable, two assertion lines): case 11 also asserts `prisma.tenant.findUnique` is NOT
+called (a refactor to `if (stripeSubId) { read; … }` would otherwise slip past cases 9/18), and
+the resume happy path asserts `toHaveBeenCalledTimes(1)`.
+
+**STRIPE-CANCEL-1 final:** `7c0d162c` → `9550b675` → `2c29917d` (+ the two-assertion hardening
+commit). Three Opus rounds (NOT SHIP-READY → SHIP-READY w/ LOWs → SHIP-READY). TO FILE #6–#10.
+HOLD — ping fb "STRIPE-CANCEL-1 ready, holding".
 
 ## Pre-push checklist (when #710 + its bookkeeping have landed)
 
