@@ -182,7 +182,29 @@ no-row 404 for those statuses is dead code; `/choose-plan` end-to-end for READ_O
    exists; else file). 4. N2 platform-admin status writers leave a stale `readOnlyReason` (low). 5. N5
    billing-page Cancel/resume controls ungated for OPERATOR (low, pre-existing). 6. Self-serve
    `cancel()` never cancels the Stripe subscription (admin-provisioned Stripe sub keeps invoicing a
-   READ_ONLY tenant; `onPaymentSucceeded` resurrects it) — medium, money.
+   READ_ONLY tenant; `onPaymentSucceeded` resurrects it) — medium, money — **FIXED on this branch
+   as STRIPE-CANCEL-1; exposure at time of fix: ZERO** (owner-approved read-only prod aggregate
+   2026-09-13: `count(*) FROM "TenantSubscription" WHERE "stripeSubId" IS NOT NULL` = 0, hence 0
+   with `cancelAtPeriodEnd = true`; Stripe checkout has never been exercised in production — the
+   code path was live, the real-world exposure nil; no tenant was ever wrongly invoiced; no data
+   repair needed). 7. Spec files are excluded from `tsc` (`apps/api/tsconfig.json`,
+   `tsconfig.build.json`; Jest transpile-only) — `billing.service.spec.ts` `make()` passes 5 of 6
+   `BillingService` ctor args silently (tooling, low). 8. CANCELLED is a UI dead end (Opus
+   STRIPE-CANCEL-1 F5): the guard 403s every method incl. GET, `ReadOnlyBanner` renders only for
+   READ_ONLY, no resubscribe CTA, `/choose-plan`/`subscribe()` unreachable; only platform-admin
+   `updateStatus` restores — with STRIPE-CANCEL-1 a self-serve-cancelled Stripe tenant now ends
+   there (fb: correct terminal state) (medium, UX). **fb ruling — file as a GATING PRECONDITION, not
+   a UI gap: "Do not enable Stripe checkout for any real tenant until CANCELLED has a path back
+   (self-serve resubscribe, or at minimum read-only data access + a support CTA)."** Rationale:
+   this fix makes a total-lockout state (403 on GET — the tenant cannot see or export their own
+   invoices/data, which cuts against the data-export position vs K-HUB's 30-day-deletion terms)
+   reachable by a self-service click; zero tenants today, real the moment someone completes a
+   Stripe checkout. Whoever first generates a Stripe checkout link for a customer must trip over
+   this item. The PR body carries that sentence verbatim. 9. A READ_ONLY tenant with a live Stripe sub
+   (legacy cohort — zero in prod today) is signalled only by the `STRIPE-CANCEL-1` warn in
+   `onPaymentSucceeded`; `cancel()` returns `already_read_only` before any Stripe call, so they
+   have no self-serve way to stop the charge — needs an alert/report, not a log line (Opus F6;
+   low while the cohort is empty).
 
 ## STRIPE-CANCEL-1 (owner-directed via fb, 2026-09-13 ~12:00Z — built on this branch, same PR)
 
@@ -225,6 +247,28 @@ proceeds / resume 409; TRIAL branch never calls Stripe; null `stripeSubId` untou
 `billing.service.spec.ts` (armed flag → no reinstatement, warn logged; unarmed → reinstates).
 Gates: Opus refute-first → fix → re-review; commit, HOLD, ping fb "STRIPE-CANCEL-1 ready, holding".
 
+### STRIPE-CANCEL-1 round 1 (`7c0d162c` api · `2d6aa80b` docs) → Opus refutation: NOT SHIP-READY
+
+Opus confirmed the ordering (C1: a DB failure after a Stripe success self-heals — `onSubscriptionUpdated`
+re-arms the same values, `onSubscriptionDeleted` books −MRR at most once via the ACTIVE CAS), the DI
+path (C7: single provider, `app-module-compile` green), logging/copy safety (C8), and that the guard
+skipping `disarmedDowngrade()`/cache invalidation is safe (C3 iii/iv). It REFUTED C2, C3(i), C5:
+
+| Id  | Sev     | Finding                                                                                                                                                                                                                                                                                                  | Ruling (Fable)                                                                                                                                                                                                                    |
+| --- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F1  | MUST    | `resume()` called Stripe for ANY row with a `stripeSubId`, no status check → a READ_ONLY tenant with a live Stripe sub (legacy cohort; route allowlisted for READ_ONLY; the downgrade-undo control is gated only on `downgradeToPlanKey`) makes Stripe RESUME charging while the tenant stays read-only. | `resume()` reads `tenant.status`; Stripe called only when `stripeSubId && cancelAtPeriodEnd === true && status === "ACTIVE"`. Local clear + `SUBSCRIPTION_RESUMED` unchanged.                                                     |
+| F2  | MUST    | `resume()` sent `cancel_at_period_end: false` even when the local flag was already false (undoing a DOWNGRADE) → silently revokes a cancellation made in the Stripe customer portal that the local row never learned about (only `onSubscriptionUpdated` syncs, no ordering guard).                      | Same gate (`cancelAtPeriodEnd === true`). Not an extra round trip — a money direction bug.                                                                                                                                        |
+| F3  | SHOULD  | The payment guard refused reinstatement for ANY armed tenant → a SUSPENDED (past-due) tenant who scheduled a cancel and then PAID stays SUSPENDED (hard 403 incl. exports) for a period they paid for; nothing else moves them.                                                                          | Narrow the guard to executed cancellations: armed AND status ∈ {READ_ONLY, CANCELLED}. SUSPENDED + armed reinstates as before; Stripe (now told) ends the sub at period end.                                                      |
+| F4  | SHOULD  | 503 copy "nothing was changed" is false on a timeout Stripe actually applied (local self-heals via `onSubscriptionUpdated`, but the sentence lies).                                                                                                                                                      | Reword: "The payment provider did not confirm the change — it may or may not have been applied. Refresh to check before retrying, or contact support."                                                                            |
+| F5  | TO FILE | CANCELLED is a genuine UI dead end (guard 403s every method incl. GET; no banner; no CTA; only platform-admin `updateStatus`). fb: correct terminal state.                                                                                                                                               | TO FILE #8, not built here.                                                                                                                                                                                                       |
+| F6  | TO FILE | Legacy READ_ONLY-with-live-Stripe cohort (zero in prod) is signalled only by a warn; `cancel()` short-circuits before any Stripe call, so no self-serve way to stop the charge.                                                                                                                          | TO FILE #9 (alert/report).                                                                                                                                                                                                        |
+| F7  | TO FILE | `billing.service.spec.ts` `make()` passes 5 of 6 `BillingService` ctor args; spec files excluded from `tsc`.                                                                                                                                                                                             | TO FILE #7.                                                                                                                                                                                                                       |
+| C6  | gaps    | `isStripeResourceMissing` widening only probed with a code-less Error; no case for resume-with-flag-false, resume-on-READ_ONLY, cancel-on-SUSPENDED.                                                                                                                                                     | Red-first REGs (10)–(16) added in round 2.                                                                                                                                                                                        |
+| fb  | lead    | The `stripeSubId == null` branch is 100% of real cancels today (0 Stripe subs in prod) — the regression that matters is "did the Stripe call change anything for a tenant with no `stripeSubId`", incl. a Stripe outage making them uncancellable.                                                       | Red-first (17)/(18): cancel/resume with `stripeSubId: null` under a HOSTILE Stripe mock (rejects + `isConfigured=false`) → identical writes/events/return, Stripe never invoked. Named Opus round-2 item with boot-path evidence. |
+
+Round 2 = Sonnet api fixer on R1–R5 above, then Opus round 2 on the delta (named items: null-branch
+byte-identical + outage-proof + boot path; resume gate; narrowed guard; copy).
+
 ## Pre-push checklist (when #710 + its bookkeeping have landed)
 
 1. `git fetch` + rebase onto master (expect LESSONS.md/ARCHIVE.md/`_meta.json` adjacency
@@ -236,4 +280,8 @@ Gates: Opus refute-first → fix → re-review; commit, HOLD, ping fb "STRIPE-CA
    hits or campaign-check goes red). 5. Push through the hook in the FOREGROUND; read git's own
    output before announcing. 6. PR body: neutral tags, Opus rounds 1+2 summary, TO FILE list, F1
    ownership note (Phase 0 task 7 struck by fb). No `Bookkeeping-Follow-Up` trailer — lessons +
-   code-map ride this PR.
+   code-map ride this PR. MUST also carry, for STRIPE-CANCEL-1: (i) "zero affected rows at time
+   of fix, verified against prod (0 `stripeSubId`, 0 armed cancellations; Stripe checkout never
+   exercised in production) — no data repair needed"; (ii) the gating sentence verbatim: "Do not
+   enable Stripe checkout for any real tenant until CANCELLED has a path back (self-serve
+   resubscribe, or at minimum read-only data access + a support CTA)."
