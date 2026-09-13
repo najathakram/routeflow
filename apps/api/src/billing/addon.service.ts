@@ -11,6 +11,7 @@ import { StripeService } from "./stripe.service";
 import { EntitlementsService } from "./entitlements.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { LEGACY_ADDON_KEY_TO_SKU } from "./plan-catalog.constants";
+import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 
 /**
  * A Stripe `resource_missing` / 404 error means the item we tried to act on is
@@ -96,105 +97,150 @@ export class AddonService {
    * already have an active Stripe subscription and the Stripe subscription-item
    * create MUST succeed — otherwise the call is refused and no row is written.
    * With no stripePriceId (free-grant path) Stripe is never touched.
+   *
+   * B342: the existing-addon check, the Stripe subscription-item create, and the row
+   * upsert below are a check-then-act sequence — without serialisation, two concurrent
+   * calls for the same (tenantId, addonKey) can both pass the "already active" guard,
+   * both create a live Stripe subscription item, and race the final upsert down to ONE
+   * surviving `stripeItemId` pointer (double billing with a single handle to stop it).
+   * The whole window is wrapped in `withAdvisoryLock` below, on its own dedicated
+   * `"billing"` lock family (`common/db-locks.ts`) — the same cross-replica advisory-lock
+   * primitive `order-merge` uses to serialise customer-order merges, but its own pool so
+   * billing traffic can never contend with (or be starved by) the order-merge or cron
+   * pools. The loser observes the winner's committed row and takes the
+   * `ConflictException` path instead of ever touching Stripe. Never add a second,
+   * in-process lock on top of this.
    */
   async enableAddon(tenantId: string, addonKey: string, stripePriceId?: string) {
-    // Check tenant exists
+    // Check tenant exists — not part of the race (immutable for this call), so it stays
+    // outside the lock.
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
       select: { id: true, slug: true },
     });
     if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
 
-    // Check if add-on already exists
-    const existing = await this.prisma.tenantAddon.findUnique({
-      where: { tenantId_addonKey: { tenantId, addonKey } },
-    });
+    // Dedicated "billing" lock family (`common/db-locks.ts`'s `LOCK_FAMILIES`) — its own
+    // pool, sized for this call's own peak (max 4: a short, request-path critical section
+    // like order-merge's, but a far rarer settings action than a checkout merge). The
+    // "addon:"-prefixed key can never collide with another billing-family key.
+    const lockKey = `addon:${tenantId}:${addonKey}`;
+    try {
+      const result = await withAdvisoryLock(
+        { family: "billing", key: lockKey, mode: "wait", waitMs: 10_000 },
+        async () => {
+          // Check if add-on already exists
+          const existing = await this.prisma.tenantAddon.findUnique({
+            where: { tenantId_addonKey: { tenantId, addonKey } },
+          });
 
-    if (existing?.active) {
-      throw new ConflictException(
-        `Add-on "${addonKey}" is already active for tenant ${tenant.slug}`,
+          if (existing?.active) {
+            throw new ConflictException(
+              `Add-on "${addonKey}" is already active for tenant ${tenant.slug}`,
+            );
+          }
+
+          // Bridged legacy keys (tobacco_dealer, msrp, sales_agents, …) must resolve to a SKU
+          // that actually exists in the published catalog — otherwise the row activates but
+          // EntitlementsService.compute() can never turn it into a flag (see the silent-continue
+          // fix there), which is how the sales-agents "not available on your plan" outage
+          // happened. Unbridged legacy keys (e.g. developer_mode) have no SKU to check and are
+          // allowed unchanged — that is the documented client-only pattern.
+          const sku = LEGACY_ADDON_KEY_TO_SKU[addonKey];
+          if (sku) {
+            const published = await this.catalog.getPublishedCatalog();
+            const skuIsPublished = published.addonSkus.some((s) => s.sku === sku);
+            if (!skuIsPublished) {
+              throw new BadRequestException(
+                `Addon '${addonKey}' maps to SKU '${sku}' which is not in the published catalog — ` +
+                  `publish the catalog version that defines it first`,
+              );
+            }
+          }
+
+          // Add Stripe subscription item if configured. A price means this add-on is
+          // billed — the entitlement and the Stripe item must move together, so any
+          // failure here refuses the whole call instead of silently granting an
+          // unbilled add-on.
+          let stripeItemId: string | null = null;
+          if (stripePriceId && this.stripe.isConfigured) {
+            const sub = await this.prisma.tenantSubscription.findUnique({
+              where: { tenantId },
+            });
+            if (!sub?.stripeSubId) {
+              // A handled 4xx leaves no other trace — Sentry captures >= 500 only and there is no
+              // access log — so the refusal is logged like addon.guard.ts's denials.
+              this.logger.warn(
+                `Add-on "${addonKey}" refused for tenant ${tenant.slug} — priced add-on with no Stripe subscription`,
+              );
+              throw new ConflictException(
+                `Tenant ${tenant.slug} has no active Stripe subscription — cannot bill add-on ` +
+                  `"${addonKey}"; subscribe the tenant to a paid plan first`,
+              );
+            }
+            try {
+              const item = await this.stripe.client.subscriptionItems.create({
+                subscription: sub.stripeSubId,
+                price: stripePriceId,
+                quantity: 1,
+              });
+              stripeItemId = item.id;
+              this.logger.log(
+                `Stripe subscription item ${item.id} added for add-on "${addonKey}" on tenant ${tenant.slug}`,
+              );
+            } catch (err) {
+              this.logger.error(
+                `Failed to add Stripe item for add-on "${addonKey}" on tenant ${tenant.slug}: ${(err as Error).message}`,
+              );
+              throw new ServiceUnavailableException(
+                `Could not create the Stripe subscription item for add-on "${addonKey}" — the add-on ` +
+                  `was not enabled; retry, or check the tenant's Stripe subscription`,
+              );
+            }
+          }
+
+          // Upsert the add-on record
+          const addon = await this.prisma.tenantAddon.upsert({
+            where: { tenantId_addonKey: { tenantId, addonKey } },
+            create: {
+              tenantId,
+              addonKey,
+              stripePriceId: stripePriceId ?? null,
+              stripeItemId,
+              active: true,
+            },
+            update: {
+              active: true,
+              stripePriceId: stripePriceId ?? undefined,
+              stripeItemId: stripeItemId ?? undefined,
+            },
+          });
+
+          this.entitlements.invalidate(tenantId);
+          this.logger.log(`Add-on "${addonKey}" enabled for tenant ${tenant.slug}`);
+          return addon;
+        },
       );
-    }
 
-    // Bridged legacy keys (tobacco_dealer, msrp, sales_agents, …) must resolve to a SKU
-    // that actually exists in the published catalog — otherwise the row activates but
-    // EntitlementsService.compute() can never turn it into a flag (see the silent-continue
-    // fix there), which is how the sales-agents "not available on your plan" outage
-    // happened. Unbridged legacy keys (e.g. developer_mode) have no SKU to check and are
-    // allowed unchanged — that is the documented client-only pattern.
-    const sku = LEGACY_ADDON_KEY_TO_SKU[addonKey];
-    if (sku) {
-      const published = await this.catalog.getPublishedCatalog();
-      const skuIsPublished = published.addonSkus.some((s) => s.sku === sku);
-      if (!skuIsPublished) {
-        throw new BadRequestException(
-          `Addon '${addonKey}' maps to SKU '${sku}' which is not in the published catalog — ` +
-            `publish the catalog version that defines it first`,
+      if (!result.acquired) {
+        // Unreachable under `mode: "wait"` (it either acquires or the catch below maps a
+        // `LockTimeoutError`) — kept only so this exhaustively narrows `LockResult` without a cast.
+        throw new ServiceUnavailableException(
+          `Could not enable add-on "${addonKey}" for tenant ${tenant.slug} — lock unavailable`,
         );
       }
-    }
-
-    // Add Stripe subscription item if configured. A price means this add-on is
-    // billed — the entitlement and the Stripe item must move together, so any
-    // failure here refuses the whole call instead of silently granting an
-    // unbilled add-on.
-    let stripeItemId: string | null = null;
-    if (stripePriceId && this.stripe.isConfigured) {
-      const sub = await this.prisma.tenantSubscription.findUnique({
-        where: { tenantId },
-      });
-      if (!sub?.stripeSubId) {
-        // A handled 4xx leaves no other trace — Sentry captures >= 500 only and there is no
-        // access log — so the refusal is logged like addon.guard.ts's denials.
-        this.logger.warn(
-          `Add-on "${addonKey}" refused for tenant ${tenant.slug} — priced add-on with no Stripe subscription`,
-        );
-        throw new ConflictException(
-          `Tenant ${tenant.slug} has no active Stripe subscription — cannot bill add-on ` +
-            `"${addonKey}"; subscribe the tenant to a paid plan first`,
-        );
-      }
-      try {
-        const item = await this.stripe.client.subscriptionItems.create({
-          subscription: sub.stripeSubId,
-          price: stripePriceId,
-          quantity: 1,
-        });
-        stripeItemId = item.id;
-        this.logger.log(
-          `Stripe subscription item ${item.id} added for add-on "${addonKey}" on tenant ${tenant.slug}`,
-        );
-      } catch (err) {
+      return result.value;
+    } catch (e) {
+      if (e instanceof LockTimeoutError || e instanceof LockUnavailableError) {
         this.logger.error(
-          `Failed to add Stripe item for add-on "${addonKey}" on tenant ${tenant.slug}: ${(err as Error).message}`,
+          `Add-on "${addonKey}" lock unavailable for tenant ${tenant.slug}: ${(e as Error).message}`,
         );
         throw new ServiceUnavailableException(
-          `Could not create the Stripe subscription item for add-on "${addonKey}" — the add-on ` +
-            `was not enabled; retry, or check the tenant's Stripe subscription`,
+          `Could not serialise enabling add-on "${addonKey}" for tenant ${tenant.slug} — retry shortly`,
         );
       }
+      throw e;
     }
-
-    // Upsert the add-on record
-    const addon = await this.prisma.tenantAddon.upsert({
-      where: { tenantId_addonKey: { tenantId, addonKey } },
-      create: {
-        tenantId,
-        addonKey,
-        stripePriceId: stripePriceId ?? null,
-        stripeItemId,
-        active: true,
-      },
-      update: {
-        active: true,
-        stripePriceId: stripePriceId ?? undefined,
-        stripeItemId: stripeItemId ?? undefined,
-      },
-    });
-
-    this.entitlements.invalidate(tenantId);
-    this.logger.log(`Add-on "${addonKey}" enabled for tenant ${tenant.slug}`);
-    return addon;
   }
 
   /**

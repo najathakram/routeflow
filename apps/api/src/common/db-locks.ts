@@ -21,7 +21,7 @@
  * `LockTimeoutError`); `try` returns `{ acquired: false }` instead of waiting. `fn` never runs
  * without the lock held.
  *
- * WHY ONE POOL PER FAMILY (the sizing derivation): the two workloads have opposite hold
+ * WHY ONE POOL PER FAMILY (the sizing derivation): the three workloads have different hold
  * profiles, so they must not share slots. An `order-merge` checkout is request-path and short;
  * a `cron` checkout is a `@LeaderCron` tick (`./cron-lock.ts`, `mode: "try"`) whose LOSERS free
  * their slot at once but whose WINNER pins one for the WHOLE tick — full-tenant sweeps that run
@@ -37,13 +37,19 @@
  * a straggling hourly sweep still holding its slot when the next hour's five fire must not
  * exhaust the pool, because a cron holder that cannot get a connection skips its tick outright.
  * `order-merge` keeps `max: 8` — its checkouts are request-path and short, and its real bound is
- * the callers' wait budgets, not the schedule. Worst case is therefore 12 + 8 = 20 lock
- * connections; with Prisma's pool (default 10) that is 30 — far below Postgres's
- * `max_connections`, so the split costs nothing it cannot pay for.
+ * the callers' wait budgets, not the schedule. `billing` gets `max: 4`: like `order-merge` its
+ * checkouts (`addon.service.ts`'s `enableAddon`, serialising the Stripe-item-create + row-upsert
+ * window per `(tenantId, addonKey)`) are short and request-path, but toggling an add-on is a rare
+ * admin/self-serve settings action, not a per-order hot path — nowhere near order-merge's
+ * checkout volume — so 4 slots covers plausible concurrent enables across different tenants
+ * without idling connections sized for a workload this family doesn't have; a caller that still
+ * can't get a slot within its wait budget surfaces cleanly as a 503 to retry. Worst case is
+ * therefore 12 + 8 + 4 = 24 lock connections; with Prisma's pool (default 10) that is 34 — far
+ * below Postgres's `max_connections`, so the split costs nothing it cannot pay for.
  * Exhausting the CRON pool surfaces as `LockUnavailableError`, which `@LeaderCron` turns into a
  * skipped tick plus a warn — never a request-path error. `LOCK_FAMILIES` is the closed
  * allow-list of families (they are code literals, never derived from data), enforced before any
- * connect, so a typo cannot silently stand up a THIRD pool whose holders serialize against
+ * connect, so a typo cannot silently stand up a FOURTH pool whose holders serialize against
  * nobody while reading as locked.
  *
  * WHY KEEPALIVE (`keepAlive: true`, `keepAliveInitialDelayMillis: 30_000`, on BOTH families —
@@ -81,7 +87,7 @@ export type LockMode = "wait" | "try";
  * derived from data, so the list is closed: `withAdvisoryLock` rejects anything else BEFORE it
  * connects (see the header's "WHY ONE POOL PER FAMILY").
  */
-export const LOCK_FAMILIES = ["order-merge", "cron"] as const;
+export const LOCK_FAMILIES = ["order-merge", "cron", "billing"] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 export interface AdvisoryLockOptions {
   family: string;
@@ -116,11 +122,13 @@ const pools = new Map<string, Pool>();
 /**
  * Per-family `max`, derived in the header's "WHY ONE POOL PER FAMILY": `cron` needs room for the
  * monthly 7-holder peak PLUS a straggling hourly sweep (a cron holder that finds no slot skips
- * its tick), while `order-merge` checkouts are short and request-path. Declared
- * `number | undefined` so the fallback below is a real branch: `withAdvisoryLock` rejects an
- * unknown family before `lockPool` is ever reached, so it is unreachable in practice.
+ * its tick); `order-merge` checkouts are short and request-path with real checkout volume;
+ * `billing` checkouts are the same short, request-path shape but a far rarer settings action, so
+ * it gets a smaller pool rather than order-merge's size. Declared `number | undefined` so the
+ * fallback below is a real branch: `withAdvisoryLock` rejects an unknown family before `lockPool`
+ * is ever reached, so it is unreachable in practice.
  */
-const POOL_MAX: Record<string, number | undefined> = { "order-merge": 8, cron: 12 };
+const POOL_MAX: Record<string, number | undefined> = { "order-merge": 8, cron: 12, billing: 4 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {
   let pool = pools.get(family);

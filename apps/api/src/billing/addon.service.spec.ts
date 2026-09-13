@@ -1,9 +1,69 @@
+/**
+ * B342 — `enableAddon` now serialises its check-then-act window through `withAdvisoryLock`
+ * (`common/db-locks.ts`). This mock is a per-key FIFO mutex: a second call for the SAME lock
+ * key does not start running its callback until the first call's callback has fully settled —
+ * the same observable effect the real Postgres advisory lock gives across replicas. For every
+ * existing (non-concurrent) test this behaves exactly like a bare pass-through; only the
+ * dedicated B342 race test below relies on the actual serialisation.
+ *
+ * `MockLockTimeoutError`/`MockLockUnavailableError` mirror the real `db-locks.ts` exports so
+ * `addon.service.ts`'s `instanceof` checks against the (mocked) module keep working.
+ */
+const lockQueues = new Map<string, Promise<unknown>>();
+const mockWithAdvisoryLock = jest.fn(async (opts: { key: string }, fn: () => Promise<unknown>) => {
+  const prior = lockQueues.get(opts.key) ?? Promise.resolve();
+  let release!: () => void;
+  const done = new Promise<void>((res) => {
+    release = res;
+  });
+  lockQueues.set(
+    opts.key,
+    prior.then(() => done),
+  );
+  await prior;
+  try {
+    const value = await fn();
+    return { acquired: true as const, value };
+  } finally {
+    release();
+  }
+});
+
+class MockLockTimeoutError extends Error {
+  constructor(
+    public readonly family: string,
+    public readonly key: string,
+    public readonly waitMs: number,
+  ) {
+    super(`lock timeout: ${family}/${key} after ${waitMs}ms`);
+    this.name = "LockTimeoutError";
+  }
+}
+
+class MockLockUnavailableError extends Error {
+  constructor(public readonly cause?: unknown) {
+    super("lock unavailable");
+    this.name = "LockUnavailableError";
+  }
+}
+
+jest.mock("../common/db-locks", () => ({
+  withAdvisoryLock: mockWithAdvisoryLock,
+  LockTimeoutError: MockLockTimeoutError,
+  LockUnavailableError: MockLockUnavailableError,
+}));
+
 import {
   BadRequestException,
   ConflictException,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { AddonService } from "./addon.service";
+
+beforeEach(() => {
+  lockQueues.clear();
+  mockWithAdvisoryLock.mockClear();
+});
 
 function published(skus: string[]) {
   return { addonSkus: skus.map((sku) => ({ sku, name: sku, monthlyPrice: 10 })) };
@@ -221,5 +281,80 @@ describe("AddonService.enableAddon Stripe refusal", () => {
       }),
     );
     expect(entitlements.invalidate).toHaveBeenCalledWith("t1");
+  });
+});
+
+// B342: enabling a priced add-on twice created TWO Stripe subscription items while only ONE
+// `stripeItemId` pointer survived the final upsert — double billing with a single handle to stop
+// it. The sequential case was already guarded (`existing?.active` throws `ConflictException`
+// before Stripe is ever touched); the live defect was a check-then-act RACE with no lock around
+// the existing-check -> Stripe-create -> upsert sequence, so two concurrent calls could both pass
+// the guard. `enableAddon` now serialises that whole window per (tenantId, addonKey) through
+// `withAdvisoryLock` (`common/db-locks.ts`), the same primitive customer-order merges use.
+describe("AddonService.enableAddon — B342 concurrency lock", () => {
+  it("REG-B342 guard (sequential, unchanged): a second enable while the row is already active is refused before Stripe, no second item created", async () => {
+    const create = jest.fn();
+    const { svc, prisma } = make({
+      stripe: { isConfigured: true, client: { subscriptionItems: { create } } },
+      subscription: { stripeSubId: "sub_1" },
+      existingAddon: { id: "addon1", addonKey: "ai_scanning", active: true },
+    });
+
+    await expect(svc.enableAddon("t1", "ai_scanning", "price_1")).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(create).not.toHaveBeenCalled();
+    expect(prisma.tenantAddon.upsert).not.toHaveBeenCalled();
+  });
+
+  it("REG-B342 race: two concurrent enableAddon calls for the same tenant+addon create exactly ONE Stripe item and ONE row — the loser is refused, never double-billed", async () => {
+    // A STATEFUL TenantAddon "row", unlike the static mocks above: the second call, once
+    // serialised behind the first by the (mocked) advisory lock, must observe the FIRST call's
+    // committed write — exactly what a real Postgres advisory lock guarantees across replicas.
+    // Before the fix (no lock at all) both calls read `null` here regardless of order, which is
+    // precisely how B342 double-bills: both pass the existing-addon guard, both call Stripe.
+    let row: { active: boolean; stripeItemId: string | null } | null = null;
+    const tenantAddon = {
+      findUnique: jest.fn(async () => (row ? { ...row } : null)),
+      upsert: jest.fn(async ({ create }: any) => {
+        row = { active: true, stripeItemId: create.stripeItemId };
+        return { id: "addon1", ...row };
+      }),
+      update: jest.fn(),
+    };
+    const prisma = {
+      tenant: { findUnique: jest.fn().mockResolvedValue({ id: "t1", slug: "acme" }) },
+      tenantAddon,
+      tenantSubscription: { findUnique: jest.fn().mockResolvedValue({ stripeSubId: "sub_1" }) },
+    } as any;
+    let nextItemId = 0;
+    const create = jest.fn(async () => ({ id: `si_${++nextItemId}` }));
+    const stripe = { isConfigured: true, client: { subscriptionItems: { create } } } as any;
+    const entitlements = { invalidate: jest.fn() } as any;
+    // "ai_scanning" is not in LEGACY_ADDON_KEY_TO_SKU, so the catalog is never consulted.
+    const catalog = { getPublishedCatalog: jest.fn() } as any;
+    const svc = new AddonService(prisma, stripe, entitlements, catalog);
+
+    const [a, b] = await Promise.allSettled([
+      svc.enableAddon("t1", "ai_scanning", "price_1"),
+      svc.enableAddon("t1", "ai_scanning", "price_1"),
+    ]);
+
+    const fulfilled = [a, b].filter((r) => r.status === "fulfilled");
+    const rejected = [a, b].filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].reason).toBeInstanceOf(ConflictException);
+
+    // The whole point of the lock: only ONE Stripe subscription item is ever created and only
+    // ONE row write happens — the loser never reaches Stripe at all.
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(tenantAddon.upsert).toHaveBeenCalledTimes(1);
+
+    // Structural pin: the lock actually wraps the critical section, keyed per (tenantId, addonKey).
+    expect(mockWithAdvisoryLock).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "addon:t1:ai_scanning", mode: "wait" }),
+      expect.any(Function),
+    );
   });
 });
