@@ -17,6 +17,7 @@ import { EntitlementsService } from "./entitlements.service";
 import { BillingEventService } from "./billing-event.service";
 import { StripeService } from "./stripe.service";
 import { isStripeResourceMissing } from "./addon.service";
+import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import {
   BILLING_EVENTS,
   findPlanDefinition,
@@ -997,7 +998,27 @@ export class SubscriptionMutationService {
     }
   }
 
-  /** Enable an add-on (prorated for the current cycle; SEAT_EXTRA adds seats). */
+  /**
+   * Enable an add-on (prorated for the current cycle; SEAT_EXTRA adds seats).
+   *
+   * F1 (W1 review-fix round): the existence read, the delta-quantity computation, the row
+   * write and the ledger emit below are a check-then-act sequence — without serialisation,
+   * two concurrent calls for the same (tenantId, sku) can both read `priorQty` from the
+   * pre-write state and both emit `ADDON_ENABLED` at the full delta, overstating MRR by a
+   * ledger entry that never self-heals (the ledger is a running Σ amountDelta). This is the
+   * SAME race `AddonService.enableAddon` (`addon.service.ts`) closed for the platform-admin
+   * grant path — this tenant self-serve path (`POST /billing/addons/:sku/enable`, callable
+   * by any OPERATOR) is more exposed and had no lock at all. The whole window is now wrapped
+   * in `withAdvisoryLock`, on the SAME `"billing"` lock family and the SAME
+   * `addon:<tenantId>:<sku>` key shape as the admin path, so an admin enable and a tenant
+   * enable of the same add-on serialise against EACH OTHER too, not merely against
+   * themselves. A second, now-serialised call re-reads the first call's committed write, so
+   * `priorQty` already reflects it — an identical re-enable still nets `deltaQty === 0` and
+   * emits nothing (the existing idempotent-repeat behaviour, unchanged: this method has no
+   * "already active" refusal the way the admin path's boolean enable/disable does), and a
+   * genuine quantity bump nets only the real incremental delta. Never add a second,
+   * in-process lock on top of this (see `common/db-locks.ts`).
+   */
   async enableAddon(tenantId: string, sku: string, quantity: number | undefined, actorId?: string) {
     const version = await this.catalog.getPublishedCatalog();
     const skuDef = version.addonSkus.find((s) => s.sku === sku);
@@ -1006,42 +1027,69 @@ export class SubscriptionMutationService {
     const qty = Math.max(1, Math.trunc(quantity ?? 1));
     const preview = await this.proration.prorationPreview(tenantId, sku);
 
-    const existing = await this.prisma.tenantAddon.findUnique({
-      where: { tenantId_addonKey: { tenantId, addonKey: sku } },
-    });
-    const priorQty = existing?.active ? existing.quantity : 0;
-    const deltaQty = qty - priorQty; // MRR change relative to prior active quantity
+    const lockKey = `addon:${tenantId}:${sku}`;
+    try {
+      const result = await withAdvisoryLock(
+        { family: "billing", key: lockKey, mode: "wait", waitMs: 10_000 },
+        async () => {
+          const existing = await this.prisma.tenantAddon.findUnique({
+            where: { tenantId_addonKey: { tenantId, addonKey: sku } },
+          });
+          const priorQty = existing?.active ? existing.quantity : 0;
+          const deltaQty = qty - priorQty; // MRR change relative to prior active quantity
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.tenantAddon.upsert({
-        where: { tenantId_addonKey: { tenantId, addonKey: sku } },
-        create: {
-          tenantId,
-          addonKey: sku,
-          sku,
-          quantity: qty,
-          active: true,
-          priceSnapshot: skuDef.monthlyPrice,
+          await this.prisma.$transaction(async (tx) => {
+            await tx.tenantAddon.upsert({
+              where: { tenantId_addonKey: { tenantId, addonKey: sku } },
+              create: {
+                tenantId,
+                addonKey: sku,
+                sku,
+                quantity: qty,
+                active: true,
+                priceSnapshot: skuDef.monthlyPrice,
+              },
+              update: { sku, quantity: qty, active: true, priceSnapshot: skuDef.monthlyPrice },
+            });
+            if (deltaQty !== 0) {
+              await this.events.emit(
+                tenantId,
+                BILLING_EVENTS.ADDON_ENABLED,
+                { sku, quantity: qty, prorated: preview.proratedToday },
+                { amountDelta: roundMoney(Number(skuDef.monthlyPrice) * deltaQty), actorId, tx },
+              );
+              if (sku === "SEAT_EXTRA" && priorQty === 0) {
+                await this.events.emit(
+                  tenantId,
+                  BILLING_EVENTS.SEAT_ADDED,
+                  { quantity: qty },
+                  { actorId, tx },
+                );
+              }
+            }
+          });
         },
-        update: { sku, quantity: qty, active: true, priceSnapshot: skuDef.monthlyPrice },
-      });
-      if (deltaQty !== 0) {
-        await this.events.emit(
-          tenantId,
-          BILLING_EVENTS.ADDON_ENABLED,
-          { sku, quantity: qty, prorated: preview.proratedToday },
-          { amountDelta: roundMoney(Number(skuDef.monthlyPrice) * deltaQty), actorId, tx },
+      );
+
+      if (!result.acquired) {
+        // Unreachable under `mode: "wait"` (it either acquires or the catch below maps a
+        // `LockTimeoutError`) — kept only so this exhaustively narrows `LockResult` without
+        // a cast, matching `addon.service.ts`'s own shape.
+        throw new ServiceUnavailableException(
+          `Could not enable add-on "${sku}" for tenant ${tenantId} — lock unavailable`,
         );
-        if (sku === "SEAT_EXTRA" && priorQty === 0) {
-          await this.events.emit(
-            tenantId,
-            BILLING_EVENTS.SEAT_ADDED,
-            { quantity: qty },
-            { actorId, tx },
-          );
-        }
       }
-    });
+    } catch (e) {
+      if (e instanceof LockTimeoutError || e instanceof LockUnavailableError) {
+        this.logger.error(
+          `Add-on "${sku}" lock unavailable for tenant ${tenantId}: ${(e as Error).message}`,
+        );
+        throw new ServiceUnavailableException(
+          `Could not serialise enabling add-on "${sku}" for tenant ${tenantId} — retry shortly`,
+        );
+      }
+      throw e;
+    }
 
     this.entitlements.invalidate(tenantId);
     return {

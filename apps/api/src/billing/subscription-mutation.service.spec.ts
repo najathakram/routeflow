@@ -1,3 +1,62 @@
+/**
+ * F1 (W1 review-fix round, 2026-09-13): `enableAddon`'s existence read, delta-quantity
+ * computation, row write and ledger emit are a check-then-act sequence — without
+ * serialisation, two concurrent calls for the same (tenantId, sku) can both read the
+ * pre-write state and both emit `ADDON_ENABLED` at the full delta, overstating MRR by a
+ * ledger entry that never self-heals (the ledger is Σ amountDelta). `enableAddon` now wraps
+ * that window in the SAME `withAdvisoryLock` (`common/db-locks.ts`) the admin path
+ * (`AddonService.enableAddon`, `addon.service.ts`) already uses — `family: "billing"`, key
+ * `addon:<tenantId>:<sku>`. This mock mirrors `addon.service.spec.ts`'s exactly: a per-key
+ * FIFO mutex, so a second call for the SAME key does not start its callback until the
+ * first call's callback has fully settled — the same observable effect the real Postgres
+ * advisory lock gives across replicas. Every OTHER test in this file (cancel/resume/
+ * subscribe/upgrade/downgrade/disableAddon) never touches the lock, so this is a bare
+ * pass-through for them.
+ */
+const lockQueues = new Map<string, Promise<unknown>>();
+const mockWithAdvisoryLock = jest.fn(async (opts: { key: string }, fn: () => Promise<unknown>) => {
+  const prior = lockQueues.get(opts.key) ?? Promise.resolve();
+  let release!: () => void;
+  const done = new Promise<void>((res) => {
+    release = res;
+  });
+  lockQueues.set(
+    opts.key,
+    prior.then(() => done),
+  );
+  await prior;
+  try {
+    const value = await fn();
+    return { acquired: true as const, value };
+  } finally {
+    release();
+  }
+});
+
+class MockLockTimeoutError extends Error {
+  constructor(
+    public readonly family: string,
+    public readonly key: string,
+    public readonly waitMs: number,
+  ) {
+    super(`lock timeout: ${family}/${key} after ${waitMs}ms`);
+    this.name = "LockTimeoutError";
+  }
+}
+
+class MockLockUnavailableError extends Error {
+  constructor(public readonly cause?: unknown) {
+    super("lock unavailable");
+    this.name = "LockUnavailableError";
+  }
+}
+
+jest.mock("../common/db-locks", () => ({
+  withAdvisoryLock: mockWithAdvisoryLock,
+  LockTimeoutError: MockLockTimeoutError,
+  LockUnavailableError: MockLockUnavailableError,
+}));
+
 import {
   BadRequestException,
   ConflictException,
@@ -9,6 +68,11 @@ import {
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { ProrationService } from "./proration.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
+
+beforeEach(() => {
+  lockQueues.clear();
+  mockWithAdvisoryLock.mockClear();
+});
 
 /** A same-cycle ACTIVE period straddling "now" (mid-cycle, so proration is partial and > 0). */
 function activePeriod() {
@@ -510,6 +574,101 @@ describe("SubscriptionMutationService downgrade / add-ons", () => {
       where: { id: "a1" },
       data: { active: false },
     });
+  });
+});
+
+// F1: enabling a priced add-on twice concurrently could book the ADDON_ENABLED delta TWICE
+// while only one final row survives — a permanent MRR overstatement, since the ledger is a
+// running Σ amountDelta that never self-heals. The sequential case was already correct
+// (idempotent re-enable at the same qty emits nothing — see "enableAddon charges the qty
+// delta only" above); the live defect was a check-then-act RACE with no lock around the
+// existence-read → delta-compute → row-write → ledger-emit sequence, so two concurrent calls
+// could both read the pre-write state. `enableAddon` now serialises that whole window per
+// (tenantId, sku) through `withAdvisoryLock` (`common/db-locks.ts`), the SAME "billing"
+// family and `addon:<tenantId>:<sku>` key shape the admin path (`AddonService.enableAddon`,
+// `addon.service.ts`) already uses for its own B342 fix — so an admin enable and a tenant
+// enable of the same add-on now serialise against EACH OTHER too.
+describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency lock", () => {
+  it("REG-F1 guard (sequential, unchanged): re-enabling at the SAME qty stays idempotent — no exception, no second MRR emit", async () => {
+    // NOTE: unlike the admin path's `AddonService.enableAddon` (a boolean "already active"
+    // guard that throws ConflictException), this method's enableAddon is a delta-quantity
+    // model — re-enabling at the same qty is documented, tested idempotent behaviour (see
+    // "enableAddon charges the qty delta only" above), not a conflict. The lock must not
+    // change that: this guard test pins it stays a no-op, not a new refusal.
+    const first = make();
+    await first.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "admin");
+    expect(deltaOf(first.events, BILLING_EVENTS.ADDON_ENABLED)).toBe(24); // 12 × 2
+
+    const again = make({ existingAddon: { active: true, quantity: 2 } });
+    await expect(again.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2)).resolves.toBeDefined();
+    expect(emitted(again.events)).not.toContain(BILLING_EVENTS.ADDON_ENABLED);
+  });
+
+  it("REG-F1 race: two concurrent enableAddon calls for the same tenant+sku emit ADDON_ENABLED EXACTLY ONCE — the ledger never double-books the delta", async () => {
+    // A STATEFUL TenantAddon "row", unlike `make()`'s static mocks: the second call, once
+    // serialised behind the first by the (mocked) advisory lock, must observe the FIRST
+    // call's committed write — exactly what a real Postgres advisory lock guarantees across
+    // replicas. Before this fix (no lock at all) both calls read `null` here regardless of
+    // order, which is precisely how F1 double-books: both compute deltaQty against a
+    // priorQty of 0 and both emit the full delta.
+    let row: { active: boolean; quantity: number } | null = null;
+    const tenantAddon = {
+      findUnique: jest.fn(async () => (row ? { ...row } : null)),
+      upsert: jest.fn(async ({ create, update }: any) => {
+        const applied = row ? update : create;
+        row = { active: true, quantity: applied.quantity };
+        return { id: "addon1", ...row };
+      }),
+    };
+    const prisma = {
+      tenantAddon,
+      $transaction: jest.fn(async (fn: any) => fn({ tenantAddon })),
+    } as any;
+    const cat = { getPublishedCatalog: jest.fn().mockResolvedValue(catalog()) } as any;
+    const proration = {
+      prorationPreview: jest.fn().mockResolvedValue({ proratedToday: 6.4 }),
+    } as any;
+    const subscription = {
+      getSubscription: jest.fn().mockResolvedValue({ planKey: "TEAM" }),
+    } as any;
+    const entitlements = { invalidate: jest.fn() } as any;
+    const events = { emit: jest.fn().mockResolvedValue({}) } as any;
+    const tenantStatus = { invalidate: jest.fn() } as any;
+    const stripe = { isConfigured: false } as any;
+    const svc = new SubscriptionMutationService(
+      prisma,
+      cat,
+      proration,
+      subscription,
+      entitlements,
+      events,
+      tenantStatus,
+      stripe,
+    );
+
+    const [a, b] = await Promise.allSettled([
+      svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "admin"),
+      svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "admin"),
+    ]);
+
+    // Both succeed — this method's delta-quantity model has no "already active" refusal
+    // (unlike the admin path's boolean enable/disable), and the fix must not invent one.
+    expect(a.status).toBe("fulfilled");
+    expect(b.status).toBe("fulfilled");
+
+    const enabledEmits = events.emit.mock.calls.filter(
+      (c: any[]) => c[1] === BILLING_EVENTS.ADDON_ENABLED,
+    );
+    expect(enabledEmits).toHaveLength(1);
+    expect(enabledEmits[0][3].amountDelta).toBe(12); // ONE delta of 1 × $12, never 24
+
+    // Structural pin: the lock actually wraps the critical section, keyed per (tenantId, sku)
+    // — matching the admin path's key shape exactly so the two paths serialise against
+    // EACH OTHER too, not just within themselves.
+    expect(mockWithAdvisoryLock).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "addon:t1:CUSTOMER_PACK_100", mode: "wait" }),
+      expect.any(Function),
+    );
   });
 });
 

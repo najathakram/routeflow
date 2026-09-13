@@ -40,6 +40,22 @@ export class BillingCronService {
     return d?.monthlyPrice != null ? Number(d.monthlyPrice) : 0;
   }
 
+  /**
+   * F2 (W1 review-fix round): true only for `planKeyToEnum()`'s specific unresolvable-key
+   * `Error` (`plan-catalog.constants.ts`) — the ONLY failure `applyScheduledDowngrades`'
+   * per-tenant catch below may still log-and-skip. `planKeyToEnum` throws a plain `Error`
+   * with no dedicated class and no stable `.code` to match on, so its fixed message PREFIX
+   * (set once, at the single throw site — never the free-text suffix, which is the
+   * offending key) is the most precise discriminator available without editing that shared
+   * helper, which sits outside this fix's file ownership. Everything else — a pool
+   * exhaustion, a Prisma error, any other unrelated failure — must NOT match here, so the
+   * caller rethrows it instead of disguising a real infrastructure failure as a bad plan
+   * key (the sweep would otherwise silently report success while masking one).
+   */
+  private isUnresolvablePlanKeyError(err: unknown): boolean {
+    return err instanceof Error && err.message.startsWith("planKeyToEnum: unrecognized plan key");
+  }
+
   /** Trial expiry → READ_ONLY (NOT suspended — exports + sign-in still work). */
   @LeaderCron(CronExpression.EVERY_HOUR, "billing-cron.expireTrials")
   async expireTrials(): Promise<void> {
@@ -209,6 +225,11 @@ export class BillingCronService {
           );
         });
       } catch (err) {
+        // F2: narrowed from "catch everything" — only planKeyToEnum()'s own unresolvable-key
+        // Error is a data problem this sweep may skip past. Anything else (pool exhaustion, a
+        // Prisma error, any other unrelated failure) rethrows so it surfaces as a real cron
+        // failure instead of being logged and swallowed as if it were a bad plan key.
+        if (!this.isUnresolvablePlanKeyError(err)) throw err;
         // B218: log and move on — a cron that dies on tenant N's bad row would silently
         // strand every tenant after it unapplied too, which is worse than the one bad row.
         this.logger.error(

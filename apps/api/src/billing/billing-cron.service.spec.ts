@@ -279,6 +279,40 @@ describe("BillingCronService", () => {
     errorSpy.mockRestore();
   });
 
+  // F2 (W1 review-fix round): the catch around applyScheduledDowngrades' per-tenant
+  // $transaction was, pre-fix, broad enough to swallow EVERY error class — a pool
+  // exhaustion, a Prisma error, any unrelated failure — and log it as if it were a bad
+  // plan key, so the sweep reported success while masking a real infrastructure failure.
+  // The B218 skip-and-continue behaviour above (an unresolvable plan key) must stay
+  // exactly as it is; everything else must now propagate instead.
+  it("REG-F2 applyScheduledDowngrades PROPAGATES a non-plan-key failure instead of logging it as a bad plan key", async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    const { svc, tx } = make({
+      downgrades: [
+        {
+          tenantId: "infra-1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER", // a perfectly valid plan key — NOT the failure here
+          retainedUserIds: [],
+        },
+      ],
+      activeTeam: 5,
+    });
+    // A Prisma-style failure (e.g. pool exhaustion, P2025) thrown from inside the
+    // transaction — NOT planKeyToEnum()'s unresolvable-key Error.
+    const dbError = Object.assign(new Error("Connection pool timeout"), { code: "P2024" });
+    tx.tenantSubscription.update.mockRejectedValueOnce(dbError);
+
+    await expect(svc.applyScheduledDowngrades()).rejects.toThrow("Connection pool timeout");
+
+    // Must never be reported through the "Skipping ... " bad-plan-key path — that would
+    // disguise a real infrastructure failure as a data problem.
+    expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining("Skipping"));
+
+    errorSpy.mockRestore();
+  });
+
   it("applyScheduledCancellations flips cancelled+expired subs to READ_ONLY + emits a NEGATIVE churn delta", async () => {
     const { svc, prisma, events, tenantStatus } = make({
       cancellations: [{ tenantId: "t1", basePriceSnapshot: 349, discount: 10 }],
