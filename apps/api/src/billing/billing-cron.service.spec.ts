@@ -267,11 +267,47 @@ describe("BillingCronService", () => {
   it("rollCycles advances the billing period so meters bucket into the new cycle", async () => {
     const periodEnd = new Date("2026-06-01T00:00:00Z"); // in the past
     const { svc, prisma } = make({
-      rollSubs: [{ tenantId: "t1", cycle: "MONTHLY", periodEnd }],
+      rollSubs: [{ tenantId: "t1", cycle: "MONTHLY", periodEnd, createdAt: periodEnd }],
     });
     await svc.rollCycles();
     const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
     expect(data.periodStart).toEqual(periodEnd); // new period starts at the old end
     expect(data.periodEnd.getTime()).toBeGreaterThan(periodEnd.getTime()); // advanced ~1 month
+  });
+
+  // B329's anchor-ratchet half stayed UNFIXED (correction 2026-09-13 — see the
+  // rollCycles() comment in billing-cron.service.ts): the previously-landed fix used
+  // TenantSubscription.createdAt as the anchor day, but createdAt is not a safe billing
+  // anchor — 7 call sites create that row, several unrelated to subscribing (e.g.
+  // customers.service.ts's maybeStartCustomerGrace(), billing.service.ts's
+  // ensureStripeCustomer()) — so a tenant whose row was minted by one of those would have
+  // every future period computed from the wrong date. rollCycles() still re-derives the
+  // clamp day from the already-clamped periodEnd on every tick and therefore still
+  // ratchets an anchor day down after a short month clips it, exactly like master.
+  // addMonthsUtc already supports the anchorDay parameter that would fix this (full
+  // coverage in billing-math.spec.ts) — it just needs an immutable, never-clamped
+  // anchorDay column on TenantSubscription to pass it, which does not exist yet.
+  it.todo(
+    "rollCycles preserves the tenant's original anchor day across repeated short-month clips, never ratcheting down — blocked on a persisted anchorDay column; no safe anchor source exists today (createdAt is not the billing anchor)",
+  );
+
+  it("rollCycles preserves the period's time-of-day instead of collapsing to midnight — B329 (2)", async () => {
+    const periodEnd = new Date("2026-01-15T09:30:15.250Z");
+    const { svc, prisma } = make({
+      rollSubs: [{ tenantId: "t1", cycle: "MONTHLY", periodEnd, createdAt: periodEnd }],
+    });
+    await svc.rollCycles();
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data.periodEnd.toISOString()).toBe("2026-02-15T09:30:15.250Z");
+  });
+
+  it("rollCycles guard: a mid-month anchor at midnight rolls byte-identically (no clip, nothing to preserve) — B329 (4)", async () => {
+    const periodEnd = new Date("2026-03-15T00:00:00.000Z");
+    const { svc, prisma } = make({
+      rollSubs: [{ tenantId: "t1", cycle: "MONTHLY", periodEnd, createdAt: periodEnd }],
+    });
+    await svc.rollCycles();
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data.periodEnd.toISOString()).toBe("2026-04-15T00:00:00.000Z");
   });
 });

@@ -27,7 +27,7 @@ import {
   addonSkuCode,
   SELF_SERVICE_ADDON_SKUS,
 } from "./plan-catalog.constants";
-import { annualPrice, Cycle } from "./billing-math";
+import { addCycle, annualPrice, Cycle } from "./billing-math";
 
 export interface SubscribeInput {
   planKey: string;
@@ -76,29 +76,6 @@ export interface PlanChangePreview {
    *  cancellation, a cycle switch), and inferring the seat consequence from its mere presence
    *  made the UI demand consent to a deactivation that would never happen. */
   seatAckRequired: boolean;
-}
-
-/** Add whole months (or a year) to a UTC date, clamping the day to the target month's length
- *  (Jan 31 + 1mo → Feb 28/29, never overflowing into March). */
-function addMonthsUtc(from: Date, months: number): Date {
-  const day = from.getUTCDate();
-  const d = new Date(
-    Date.UTC(
-      from.getUTCFullYear(),
-      from.getUTCMonth() + months,
-      1,
-      from.getUTCHours(),
-      from.getUTCMinutes(),
-      from.getUTCSeconds(),
-    ),
-  );
-  const lastDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
-  d.setUTCDate(Math.min(day, lastDay));
-  return d;
-}
-
-function addCycle(from: Date, cycle: Cycle): Date {
-  return addMonthsUtc(from, cycle === "ANNUAL" ? 12 : 1);
 }
 
 /** A SKU a TENANT_ADMIN may add or drop themselves. Everything else "ships dark" —

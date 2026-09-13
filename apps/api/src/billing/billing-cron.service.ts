@@ -14,17 +14,7 @@ import {
   GRACE_DAYS,
   planKeyToEnum,
 } from "./plan-catalog.constants";
-
-/** Add whole months (or a year) to a UTC date, clamping the day to the target month. */
-function addCycle(from: Date, cycle: string): Date {
-  const day = from.getUTCDate();
-  const d = new Date(
-    Date.UTC(from.getUTCFullYear(), from.getUTCMonth() + (cycle === "ANNUAL" ? 12 : 1), 1),
-  );
-  const lastDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
-  d.setUTCDate(Math.min(day, lastDay));
-  return d;
-}
+import { addCycle } from "./billing-math";
 
 /**
  * Plan lifecycle crons (Plans & Billing Phase 5). Operate cross-tenant with explicit
@@ -278,7 +268,27 @@ export class BillingCronService {
   }
 
   /** Advance billing periods past their end so SCANS/MSGS meters bucket into the new
-   *  cycle (bucketed by periodStart, so a new period reads 0 automatically). */
+   *  cycle (bucketed by periodStart, so a new period reads 0 automatically).
+   *
+   *  B329, time-of-day half (fixed here): a rolled `periodEnd` used to collapse to
+   *  midnight; `addCycle`/`addMonthsUtc` (billing-math.ts) now preserve `periodEnd`'s
+   *  hours/minutes/seconds/ms exactly.
+   *
+   *  B329, anchor-ratchet half (NOT fixed here — correction 2026-09-13): `periodEnd`
+   *  gets overwritten with a clamped value on every roll (Jan 31 → Feb 28), and
+   *  re-deriving the clamp day from THAT already-clamped `periodEnd` on the next roll
+   *  ratchets the anchor down forever (Feb 28 → Mar 28, never back to the 31st).
+   *  `addMonthsUtc` takes an `anchorDay` override that would fix this, but there is no
+   *  persisted, never-clamped billing-anchor-day column to pass it —
+   *  `TenantSubscription.createdAt` is NOT a safe substitute: seven call sites create
+   *  this row, and several have nothing to do with subscribing (e.g.
+   *  `customers.service.ts`'s `maybeStartCustomerGrace()` mints one when a tenant
+   *  crosses the customer soft cap; `billing.service.ts`'s `ensureStripeCustomer()`
+   *  mints one on first Stripe customer creation) — using either would compute every
+   *  future period off a date that has nothing to do with the tenant's real billing
+   *  anchor. So this stays byte-identical to master's ratchet behaviour (the clamp day
+   *  is re-derived from the period being rolled, i.e. `addCycle`'s own default) until
+   *  an immutable `anchorDay` column exists; that is filed separately. */
   @LeaderCron("5 0 * * *", "billing-cron.rollCycles")
   async rollCycles(): Promise<void> {
     const now = new Date();
