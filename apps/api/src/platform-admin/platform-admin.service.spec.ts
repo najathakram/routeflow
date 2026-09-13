@@ -145,10 +145,10 @@ describe("PlatformAdminService — audit provenance", () => {
   // reinstatement path and never touched TenantSubscription at all.
   describe("updateStatus — B216 downgrade disarm", () => {
     it("REG-B216 clears an armed downgrade when an admin reactivates a lapsed (SUSPENDED) tenant", async () => {
-      // Call order: _findOrThrow's lookup, then updateStatus's own prior-status check.
-      prisma.tenant.findUnique
-        .mockResolvedValueOnce({ id: TENANT_ID, slug: "acme" } as any)
-        .mockResolvedValueOnce({ status: "SUSPENDED" } as any);
+      // FINDING-3 shape: the prior-status read is now a CAS `updateMany` predicated on
+      // status != ACTIVE — count === 1 means THIS call performed a real transition.
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",
@@ -157,7 +157,6 @@ describe("PlatformAdminService — audit provenance", () => {
 
       await service.updateStatus(TENANT_ID, { status: "ACTIVE" } as any, ADMIN_ID);
 
-      // RED against pre-fix updateStatus(), which never references tenantSubscription at all.
       expect((prisma as any).tenantSubscription.updateMany).toHaveBeenCalledWith({
         where: { tenantId: TENANT_ID },
         data: { downgradeToPlanKey: null, downgradeEffectiveAt: null, retainedUserIds: [] },
@@ -165,9 +164,9 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("guard: does not touch a downgrade when an already-ACTIVE tenant is set ACTIVE again", async () => {
-      prisma.tenant.findUnique
-        .mockResolvedValueOnce({ id: TENANT_ID, slug: "acme" } as any)
-        .mockResolvedValueOnce({ status: "ACTIVE" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      // Lost CAS: the where clause (status != ACTIVE) matched nothing — already ACTIVE.
+      prisma.tenant.updateMany.mockResolvedValue({ count: 0 });
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",
@@ -189,13 +188,14 @@ describe("PlatformAdminService — audit provenance", () => {
 
       await service.updateStatus(TENANT_ID, { status: "READ_ONLY" } as any, ADMIN_ID);
 
+      // A non-ACTIVE target never runs the CAS at all.
+      expect(prisma.tenant.updateMany).not.toHaveBeenCalled();
       expect((prisma as any).tenantSubscription.updateMany).not.toHaveBeenCalled();
     });
 
     it("guard: never includes cancelAtPeriodEnd — only the three scheduled-downgrade fields clear", async () => {
-      prisma.tenant.findUnique
-        .mockResolvedValueOnce({ id: TENANT_ID, slug: "acme" } as any)
-        .mockResolvedValueOnce({ status: "SUSPENDED" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",
@@ -209,6 +209,33 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(Object.keys(call.data).sort()).toEqual(
         ["downgradeEffectiveAt", "downgradeToPlanKey", "retainedUserIds"].sort(),
       );
+    });
+
+    // FINDING-3 (SHOULD, round 2 review): the old version read `wasActive`, wrote the status,
+    // then cleared the downgrade as THREE separate, unserialized queries — a downgrade() armed
+    // by the tenant in the gap between the write and the clear got silently wiped (told
+    // "scheduled", never fires). This is a STRUCTURAL PIN, not a live race test: jest's Prisma
+    // mock has no real concurrency to exercise, so it can only assert the new SHAPE is atomic —
+    // one `$transaction` call wrapping a CAS predicated on the prior status, exactly like
+    // billing.service.ts's transitionAndEmit(). A genuine concurrent-arm scenario would need an
+    // integration test against a real Postgres transaction.
+    it("REG-FINDING-3 folds the status CAS and the downgrade clear into ONE transaction (structural pin — see note)", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+      } as any);
+
+      await service.updateStatus(TENANT_ID, { status: "ACTIVE" } as any, ADMIN_ID);
+
+      // RED against pre-fix updateStatus(), which never wraps any of this in a transaction.
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.tenant.updateMany).toHaveBeenCalledWith({
+        where: { id: TENANT_ID, status: { not: "ACTIVE" } },
+        data: { status: "ACTIVE" },
+      });
     });
   });
 
@@ -484,13 +511,15 @@ describe("PlatformAdminService — audit provenance", () => {
 
       const result = await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
 
+      // FINDING-1 (round 2 review): cancelAtPeriodEnd is no longer part of this write at all —
+      // the admin path has no standing to silently flip a tenant's own cancellation flag (see
+      // the dedicated "FINDING-1" describe block below). Was: `..., cancelAtPeriodEnd: false`.
       expect((prisma as any).tenantSubscription.update).toHaveBeenCalledWith({
         where: { tenantId: TENANT_ID },
         data: {
           downgradeToPlanKey: "STARTER",
           downgradeEffectiveAt: periodEnd,
           retainedUserIds: [],
-          cancelAtPeriodEnd: false,
         },
       });
       // Nothing applies today: no instant plan write, no upsert (that is the cron's job at
@@ -576,6 +605,140 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(prisma.tenant.update).not.toHaveBeenCalled();
       expect(billingEventService.emit).not.toHaveBeenCalled();
     });
+  });
+
+  // FINDING-1 (MUST-FIX, money, round 2 review): updatePlan()'s DOWNGRADE branch used to write
+  // `cancelAtPeriodEnd: false`, silently revoking a tenant's own pending cancellation with no
+  // SUBSCRIPTION_RESUMED event and no audit line — billing then continued indefinitely on a
+  // tenant who had cancelled. downgrade() (subscription-mutation.service.ts) may clear its OWN
+  // tenant's cancellation because that is the tenant replacing their own choice; updatePlan() is
+  // a platform admin acting on someone else's subscription and has no standing to make that
+  // call. The fix refuses the WHOLE mutation — either direction — up front, before either branch
+  // runs, whenever a cancellation is armed.
+  describe("updatePlan — FINDING-1 refuses an admin plan change while a cancellation is armed", () => {
+    const periodStart = new Date("2026-09-01T00:00:00Z");
+    const periodEnd = new Date("2026-10-01T00:00:00Z");
+
+    beforeEach(() => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "STARTER",
+        status: "ACTIVE",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [
+          { planKey: "STARTER", monthlyPrice: 99 },
+          { planKey: "SCALE", monthlyPrice: 499 },
+        ],
+      });
+    });
+
+    it("REG-FINDING-1 refuses an UPGRADE attempt for a tenant with cancelAtPeriodEnd: true — nothing written, no event", async () => {
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        planKey: "STARTER",
+        basePriceSnapshot: 99,
+        priceOverrideMonthly: null,
+        discount: null,
+        cycle: "MONTHLY",
+        periodStart,
+        periodEnd,
+        cancelAtPeriodEnd: true,
+      });
+
+      // PROFESSIONAL normalizes to SCALE — rankTo > rankFrom, an upgrade.
+      await expect(
+        service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID),
+      ).rejects.toThrow(/cancellation pending/i);
+
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+      expect((prisma as any).tenantSubscription.update).not.toHaveBeenCalled();
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(billingEventService.emit).not.toHaveBeenCalled();
+    });
+
+    it("REG-FINDING-1 refuses a DOWNGRADE attempt for a tenant with cancelAtPeriodEnd: true — nothing written, no event", async () => {
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        planKey: "SCALE",
+        basePriceSnapshot: 499,
+        priceOverrideMonthly: null,
+        discount: null,
+        cycle: "MONTHLY",
+        periodStart,
+        periodEnd,
+        cancelAtPeriodEnd: true,
+      });
+
+      // STARTER is a downgrade from the prior SCALE plan — rankTo < rankFrom.
+      await expect(
+        service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID),
+      ).rejects.toThrow(/cancellation pending/i);
+
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+      expect((prisma as any).tenantSubscription.update).not.toHaveBeenCalled();
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(billingEventService.emit).not.toHaveBeenCalled();
+    });
+  });
+
+  // FINDING-2 (MUST-FIX, money, round 2 review): the scheduling branch guarded periodEnd but not
+  // the tenant's status. billing-cron.service.ts's applyScheduledDowngrades() filters on
+  // `tenant.status === "ACTIVE"`, so a READ_ONLY or TRIAL tenant's "scheduled" downgrade could
+  // never fire — the tenant kept the higher plan's entitlements/MRR forever. Before this wave
+  // that path applied instantly, so this closes a regression the wave introduced. `before.status`
+  // (read once, at the top of updatePlan, before this call writes anything) is the gate.
+  describe("updatePlan — FINDING-2 gates scheduling on the tenant actually being ACTIVE", () => {
+    const periodStart = new Date("2026-09-01T00:00:00Z");
+    const periodEnd = new Date("2026-10-01T00:00:00Z");
+
+    it.each(["READ_ONLY", "TRIAL"])(
+      "REG-FINDING-2 a DOWNGRADE for a %s tenant applies instantly and does not schedule",
+      async (status) => {
+        prisma.tenant.findUnique.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          plan: "PROFESSIONAL",
+          status,
+        } as any);
+        prisma.tenant.update.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          plan: "STARTER",
+        } as any);
+        planCatalogService.getPublishedVersion.mockResolvedValue({
+          id: "v-9",
+          definitions: [
+            { planKey: "STARTER", monthlyPrice: 99 },
+            { planKey: "SCALE", monthlyPrice: 499 },
+          ],
+        });
+        (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+          planKey: "SCALE",
+          basePriceSnapshot: 499,
+          priceOverrideMonthly: null,
+          discount: null,
+          cycle: "MONTHLY",
+          periodStart,
+          periodEnd,
+          cancelAtPeriodEnd: false,
+        });
+
+        const result = await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
+
+        // RED today: the pre-fix scheduling branch guards only periodEnd, not tenant status, so
+        // a READ_ONLY/TRIAL tenant gets "scheduled" against a cron that filters ACTIVE-only —
+        // the change never fires and the tenant keeps paying (and using) the higher plan.
+        expect((prisma as any).tenantSubscription.update).not.toHaveBeenCalled();
+        expect(prisma.tenant.update).toHaveBeenCalledWith({
+          where: { id: TENANT_ID },
+          data: { plan: "STARTER", planVersionId: "v-9" },
+        });
+        const upsertArg = (prisma as any).tenantSubscription.upsert.mock.calls.at(-1)[0];
+        expect(upsertArg.update.downgradeToPlanKey).toBeNull();
+        expect(result.downgradeToPlanKey).toBeUndefined();
+      },
+    );
   });
 
   it("activateManualSubscription disarms every pending transition when it rolls the period (round 3, findings 2/9)", async () => {

@@ -363,18 +363,53 @@ ${paymentSection}
 
   async updateStatus(id: string, dto: UpdateTenantStatusDto, adminId: string | null = null) {
     await this._findOrThrow(id);
-    // B216: captured BEFORE the write so we can tell a REAL non-ACTIVE→ACTIVE transition (an
-    // admin reactivation) from an already-ACTIVE tenant being set ACTIVE again. Only fetched when
-    // the target is ACTIVE — the other transitions never need it.
-    const wasActive =
-      dto.status === "ACTIVE"
-        ? (await this.prisma.tenant.findUnique({ where: { id }, select: { status: true } }))
-            ?.status === "ACTIVE"
-        : false;
-    const tenant = await this.prisma.tenant.update({
-      where: { id },
-      data: { status: dto.status },
+
+    // B216 / FINDING-3 (round 2 review): the prior-status read, the status write, and the
+    // downgrade clear are now ONE transaction, using the same non-ACTIVE→ACTIVE CAS shape as
+    // billing.service.ts's transitionAndEmit() (a conditional `updateMany` predicated on the
+    // PRIOR status IS the "was this a REAL transition" read — count===1 only if THIS call
+    // flipped the row). The old shape ran three separate, unserialized queries (read wasActive
+    // → write status → clear downgrade); a downgrade() armed by the tenant in the gap between
+    // the write and the clear was silently wiped — the tenant was told "scheduled" and it never
+    // fired. Folding everything into one transaction closes that gap: nothing outside it can
+    // observe or act on the row between the CAS and the clear.
+    const tenant = await this.prisma.$transaction(async (tx) => {
+      let wasRealReactivation = false;
+      if (dto.status === "ACTIVE") {
+        const { count } = await tx.tenant.updateMany({
+          where: { id, status: { not: "ACTIVE" } },
+          data: { status: dto.status },
+        });
+        wasRealReactivation = count === 1;
+      }
+      // Always followed by a plain update: `updateMany` doesn't return the row, and a lost CAS
+      // (already ACTIVE) still needs the write for every other target status, so one path
+      // covers both — it's an idempotent no-op re-write of the same value when the CAS already
+      // won.
+      const updated = await tx.tenant.update({
+        where: { id },
+        data: { status: dto.status },
+      });
+
+      // Scoped to a REAL non-ACTIVE→ACTIVE transition only (mirrors the Stripe webhook paths'
+      // CAS discipline): never fires for an already-ACTIVE tenant re-set ACTIVE, or for a
+      // transition to any other status, so a legitimately scheduled downgrade on a healthy
+      // tenant survives. cancelAtPeriodEnd is deliberately left untouched — that flag is a
+      // cancellation, not a downgrade. Not imported: disarmedDowngrade() is a private
+      // module-level function in billing.service.ts, not exported, and this service has no
+      // existing dependency on its internals to justify exporting it just for this — the field
+      // set is replicated here with billing.service.ts's disarmedDowngrade() named as the
+      // source of truth.
+      if (wasRealReactivation) {
+        await tx.tenantSubscription.updateMany({
+          where: { tenantId: id },
+          data: { downgradeToPlanKey: null, downgradeEffectiveAt: null, retainedUserIds: [] },
+        });
+      }
+
+      return updated;
     });
+
     // Evict cached status so the guard picks up the change immediately
     this.tenantStatusGuard.invalidate(id);
     const action =
@@ -384,24 +419,6 @@ ${paymentSection}
           ? AdminAuditAction.TENANT_REACTIVATED
           : AdminAuditAction.TENANT_STATUS_CHANGED;
     await this.recordAdminAction(id, adminId, action, { status: tenant.status });
-
-    // B216: a downgrade armed before a tenant lapsed must not survive reinstatement and fire later
-    // against a paying tenant. The Stripe-webhook reinstatement paths already clear it via
-    // billing.service.ts's disarmedDowngrade(), guarded on a real non-ACTIVE→ACTIVE CAS — this is
-    // that same shape for the admin's non-Stripe reinstatement path. Not imported: disarmedDowngrade()
-    // is a private module-level function in billing.service.ts, not exported, and this service has
-    // no existing dependency on its internals to justify exporting it just for this — the field set
-    // is replicated here with billing.service.ts's disarmedDowngrade() named as the source of truth.
-    // Scoped to a REAL transition only (mirrors the webhook paths' CAS discipline): never fires for
-    // an already-ACTIVE tenant re-set ACTIVE, or for a transition to any other status, so a
-    // legitimately scheduled downgrade on a healthy tenant survives. cancelAtPeriodEnd is
-    // deliberately left untouched — that flag is a cancellation, not a downgrade.
-    if (dto.status === "ACTIVE" && !wasActive) {
-      await this.prisma.tenantSubscription.updateMany({
-        where: { tenantId: id },
-        data: { downgradeToPlanKey: null, downgradeEffectiveAt: null, retainedUserIds: [] },
-      });
-    }
 
     return { id: tenant.id, slug: tenant.slug, status: tenant.status };
   }
@@ -442,19 +459,42 @@ ${paymentSection}
         cycle: true,
         periodStart: true,
         periodEnd: true,
+        // FINDING-1 (round 2 review, money): the admin path must be able to SEE whether a
+        // cancellation is armed before it can silently interact with it (see the refusal right
+        // below) — this branch was blind to the field entirely before.
+        cancelAtPeriodEnd: true,
       },
     });
+
+    // FINDING-1 (MUST-FIX, money): refuse ANY admin plan change — either direction — while a
+    // cancellation is armed, before either branch below runs (nothing written, no event
+    // emitted). SubscriptionMutationService.downgrade() is allowed to clear its OWN tenant's
+    // cancelAtPeriodEnd because that is the tenant replacing their own pending cancellation
+    // with their own new choice; updatePlan() is a platform admin acting on someone ELSE's
+    // subscription and has no standing to make that call for them. Resuming — or letting the
+    // cancellation run its course — stays the tenant's decision; it is never a side effect of
+    // an admin plan edit.
+    if (priorSub?.cancelAtPeriodEnd) {
+      throw new BadRequestException(
+        "This tenant has a cancellation pending — resolve that before changing their plan.",
+      );
+    }
 
     // ADMIN-UPDATEPLAN-1 (lead ruling 2026-09-13): branch exactly like the tenant path
     // (subscribe()/upgrade()/downgrade()) instead of always applying instantly with no
     // proration. An UPGRADE stays instant but now surfaces a prorated "due today" figure; a
-    // DOWNGRADE now SCHEDULES at period end with no proration/credit — a deliberate behaviour
-    // change for admins (today's instant, uncredited downgrade was strictly worse than the
-    // tenant path). A same-rank, custom (Enterprise), or off-catalog plan is none of those —
-    // B58 never built a "change" for them either — so that bucket keeps today's instant-apply,
-    // no-proration behaviour untouched. `rankFrom`/`rankTo` are guarded defensively (mirroring
-    // SubscriptionMutationService's own style): a loaded tenant's `Tenant.plan` always resolves
-    // to a real rank via planKeyFromEnum, so neither is actually expected to be -1 here.
+    // DOWNGRADE for an ACTIVE tenant now SCHEDULES at period end with no proration/credit — a
+    // deliberate behaviour change for admins (today's instant, uncredited downgrade was
+    // strictly worse than the tenant path). A same-rank, custom (Enterprise), or off-catalog
+    // plan is none of those — B58 never built a "change" for them either — so that bucket keeps
+    // today's instant-apply, no-proration behaviour untouched. FINDING-2: neither does a
+    // non-ACTIVE tenant (READ_ONLY, TRIAL, SUSPENDED, …) — billing-cron.service.ts's
+    // applyScheduledDowngrades() filters on `tenant.status === "ACTIVE"`, so scheduling one for
+    // any other status is a schedule the cron can never fire; those tenants keep the pre-wave
+    // instant-apply behaviour by falling through to the shared path below. `rankFrom`/`rankTo`
+    // are guarded defensively (mirroring SubscriptionMutationService's own style): a loaded
+    // tenant's `Tenant.plan` always resolves to a real rank via planKeyFromEnum, so neither is
+    // actually expected to be -1 here.
     const fromKey = normalizePlanKey(priorSub?.planKey) ?? planKeyFromEnum(before.plan);
     const fromDefinition = findPlanDefinition(version.definitions, fromKey);
     const rankFrom = planRank(fromKey);
@@ -466,9 +506,12 @@ ${paymentSection}
       !definition.isCustom &&
       !fromDefinition?.isCustom;
 
-    if (isRankedPlanChange && rankTo < rankFrom) {
-      // DOWNGRADE — schedule at period end, no proration/credit: the same fields
-      // SubscriptionMutationService.downgrade() writes, never applied instantly. R4 (the
+    // `before.status` was read once, at the very top of this method, before this call wrote
+    // anything — the tenant's status immediately prior to this mutation, exactly what
+    // applyScheduledDowngrades() will see if a schedule is armed here.
+    if (isRankedPlanChange && rankTo < rankFrom && before.status === "ACTIVE") {
+      // DOWNGRADE (ACTIVE tenant only) — schedule at period end, no proration/credit: the same
+      // fields SubscriptionMutationService.downgrade() writes, never applied instantly. R4 (the
       // ledger trap): the MRR delta is booked ONLY when billing-cron.service.ts
       // applyScheduledDowngrades() actually fires the change later — booking it now (or a
       // second time when the cron fires) would silently corrupt the run-rate.
@@ -484,8 +527,10 @@ ${paymentSection}
             downgradeToPlanKey: definition.planKey,
             downgradeEffectiveAt: priorSub.periodEnd,
             retainedUserIds: [],
-            // Exactly one transition may be armed — mirrors downgrade()'s own write.
-            cancelAtPeriodEnd: false,
+            // FINDING-1: cancelAtPeriodEnd is never written here. The refusal above already
+            // guarantees no cancellation is armed by the time this write runs, and even so this
+            // path has no standing to touch a tenant's own cancellation choice — see the
+            // refusal for the full reasoning.
           },
         });
         // Mirrors downgrade()'s own ledger shape: PLAN_DOWNGRADE_SCHEDULED at amountDelta 0,
