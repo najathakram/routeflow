@@ -175,6 +175,15 @@ export class BookkeepingService implements OnModuleInit {
         include: { payments: { where: CONFIRMED_PAYMENT } },
       });
       if (!inv) throw new NotFoundException("Transaction not found");
+      // B312: this ledger writer had no status guard at all — unlike invoices.service's
+      // recordPayment (which refuses VOID), a WRITTEN_OFF invoice's `remaining` balance is
+      // still > 0 (write-off doesn't touch `total`), so this path would happily flip it back
+      // to PARTIAL/PAID — resurrecting a forgiven invoice as if it were still collectible.
+      if (inv.status === InvoiceStatus.VOID || inv.status === InvoiceStatus.WRITTEN_OFF) {
+        throw new BadRequestException(
+          `Cannot record a payment on a ${inv.status === InvoiceStatus.VOID ? "voided" : "written-off"} invoice.`,
+        );
+      }
 
       const alreadyPaid = inv.payments.reduce((sum, p) => sum + Number(p.amount), 0);
       const totalOwed = Number(inv.total);
