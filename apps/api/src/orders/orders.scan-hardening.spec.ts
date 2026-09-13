@@ -223,6 +223,12 @@ async function buildOrdersService(
       { provide: getQueueToken("invoices"), useValue: { add: jest.fn() } },
       { provide: RouteFlowGateway, useValue: gateway },
       { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(0.1) } },
+      // B323: sweepAllPendingOrders() now takes TenantContextService; this spec never
+      // exercises the sweep, so a bare run-through mock is enough to satisfy DI.
+      {
+        provide: TenantContextService,
+        useValue: { run: (_tenantId: string | null, fn: () => unknown) => fn() },
+      },
       {
         provide: InvoicesService,
         useValue: {
