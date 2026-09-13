@@ -268,6 +268,19 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
     expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(349);
   });
 
+  it("RO-1 subscribe() clears a stale readOnlyReason when the tenant becomes ACTIVE", async () => {
+    const { svc, tx } = make({
+      tenantStatus: "READ_ONLY",
+      sub: { planKey: "BUSINESS" },
+    });
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+    expect(tx.tenant.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "ACTIVE", readOnlyReason: null }),
+      }),
+    );
+  });
+
   it("reactivation re-adds add-ons (churn deactivated them) so the ledger nets symmetrically", async () => {
     const { svc, events } = make({
       tenantStatus: "READ_ONLY",
