@@ -746,10 +746,70 @@ export class SubscriptionMutationService {
     return this.subscription.getSubscription(tenantId);
   }
 
-  /** Schedule cancellation at period end (reversible via resume). */
+  /**
+   * Schedule cancellation at period end (reversible via resume) — OR, for a tenant with no
+   * `TenantSubscription` row (every fresh trial: `register()`/`createTenant()` write no row;
+   * see build-plan.md S0), key on `Tenant.status` directly instead of 404ing.
+   *
+   * TRIAL-1: the no-row state is TEMPORARY (a Phase 0 reconciliation will backfill rows
+   * later) — this must be correct in BOTH worlds, so it never assumes no-row is steady
+   * state. `TRIAL` → end the trial now (mirrors `billing-cron.service.ts` `expireTrials()`);
+   * if a row also exists, mark it `cancelAtPeriodEnd` too so it agrees with the tenant.
+   * `READ_ONLY` with no row → idempotent no-op success (already where cancelling would land).
+   * Any other status with no row → the existing 404 (a genuine anomaly today).
+   */
   async cancel(tenantId: string, actorId?: string) {
-    const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
-    if (!sub) throw new NotFoundException("No subscription to cancel.");
+    const [sub, tenant] = await Promise.all([
+      this.prisma.tenantSubscription.findUnique({ where: { tenantId } }),
+      this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { status: true, trialEndsAt: true },
+      }),
+    ]);
+
+    if (tenant?.status === "TRIAL") {
+      const now = new Date();
+      await this.prisma.$transaction(async (tx) => {
+        await tx.tenant.update({
+          where: { id: tenantId },
+          data: { status: "READ_ONLY", readOnlyReason: "trial_cancelled", trialEndsAt: now },
+        });
+        if (sub) {
+          // Keep the row in agreement with the tenant — same shape the no-row-less path
+          // below writes — so a later Phase 0 reconciliation finds a consistent state.
+          await tx.tenantSubscription.update({
+            where: { tenantId },
+            data: {
+              cancelAtPeriodEnd: true,
+              downgradeToPlanKey: null,
+              downgradeEffectiveAt: null,
+              retainedUserIds: [],
+            },
+          });
+        }
+        await this.events.emit(
+          tenantId,
+          BILLING_EVENTS.TRIAL_CANCELLED,
+          { at: now.toISOString() },
+          { actorId, tx },
+        );
+      });
+      this.entitlements.invalidate(tenantId);
+      this.tenantStatus.invalidate(tenantId);
+      return { cancelled: "trial" as const };
+    }
+
+    if (!sub) {
+      if (tenant?.status === "READ_ONLY") {
+        // Already read-only with nothing to schedule — a success, not a 404.
+        return { cancelled: "already_read_only" as const };
+      }
+      // Any other status with no row is a genuine anomaly today (e.g. ACTIVE with a missing
+      // row) — revisit when Phase 0 subscription reconciliation lands: this case should
+      // become unreachable, not stay a 404 forever.
+      throw new NotFoundException("No subscription to cancel.");
+    }
+
     await this.prisma.$transaction(async (tx) => {
       await tx.tenantSubscription.update({
         where: { tenantId },

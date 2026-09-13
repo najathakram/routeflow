@@ -1044,11 +1044,14 @@ describe("SubscriptionMutationService — one armed transition at a time (REG-B5
 
 describe("SubscriptionMutationService.cancel — trial/read-only tenants with no subscription row (TRIAL-1)", () => {
   it("TRIAL-1 cancel() on a trial tenant with no subscription row ends the trial into READ_ONLY instead of 404", async () => {
-    const { svc, prisma } = make({ sub: null, tenantStatus: "TRIAL" });
+    // NOTE (build-plan.md ruling): the write is transactional (tenant + subscription row must
+    // agree atomically when a row exists — see the WITH-a-row test below), so it goes through
+    // `tx.tenant.update`, not the bare `prisma.tenant.update` — asserting on the tx client here.
+    const { svc, tx } = make({ sub: null, tenantStatus: "TRIAL" });
     await expect(svc.cancel("t-1", "u-1")).resolves.toEqual(
       expect.objectContaining({ cancelled: "trial" }),
     );
-    expect(prisma.tenant.update).toHaveBeenCalledWith({
+    expect(tx.tenant.update).toHaveBeenCalledWith({
       where: { id: "t-1" },
       data: expect.objectContaining({
         status: "READ_ONLY",
@@ -1059,11 +1062,11 @@ describe("SubscriptionMutationService.cancel — trial/read-only tenants with no
   });
 
   it("TRIAL-1 cancel() on a read-only tenant with no subscription row is an idempotent success", async () => {
-    const { svc, prisma } = make({ sub: null, tenantStatus: "READ_ONLY" });
+    const { svc, tx } = make({ sub: null, tenantStatus: "READ_ONLY" });
     await expect(svc.cancel("t-1", "u-1")).resolves.toEqual(
       expect.objectContaining({ cancelled: "already_read_only" }),
     );
-    expect(prisma.tenant.update).not.toHaveBeenCalled();
+    expect(tx.tenant.update).not.toHaveBeenCalled();
   });
 
   // Regression guard: an active tenant with no subscription row is a genuine anomaly, not a
@@ -1079,6 +1082,28 @@ describe("SubscriptionMutationService.cancel — trial/read-only tenants with no
     const periodEnd = new Date("2026-08-01");
     const { svc, tx } = make({ sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd } });
     await svc.cancel("t-1", "u-1");
+    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+      cancelAtPeriodEnd: true,
+    });
+  });
+
+  it("TRIAL-1 cancel() on a trial tenant WITH a subscription row ends the trial now and marks the row cancelAtPeriodEnd", async () => {
+    const periodEnd = new Date("2026-08-01");
+    const { svc, tx } = make({
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd },
+      tenantStatus: "TRIAL",
+    });
+    await expect(svc.cancel("t-1", "u-1")).resolves.toEqual(
+      expect.objectContaining({ cancelled: "trial" }),
+    );
+    expect(tx.tenant.update).toHaveBeenCalledWith({
+      where: { id: "t-1" },
+      data: expect.objectContaining({
+        status: "READ_ONLY",
+        readOnlyReason: "trial_cancelled",
+        trialEndsAt: expect.any(Date),
+      }),
+    });
     expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
       cancelAtPeriodEnd: true,
     });
