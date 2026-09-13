@@ -11,34 +11,6 @@
 
 ## process
 
-### L-035 · 2026-09-01 · process · #TBD
-
-- **Symptom:** B120's POD archive was designed onto a generic `AuditLog` row; review found
-  `RouteRunStop.podHistory` already existed, unused, with a schema comment naming the exact entry
-  shape and the words "F10 wires the write".
-- **Root cause:** an earlier enablement batch pre-added the column FOR this batch, and the design
-  was drawn from the register's suggested fix without grepping the schema for what was already
-  provisioned.
-- **Lesson:** **Before designing where something is stored, grep the schema for a column addressed
-  to your batch — the schema comment IS the spec.** Enablement batches leave columns waiting; a
-  field with no readers is a contract, not dead weight.
-- **Guard:** none — judgment. The mismatch also showed up as a blocker (the shared test mock had
-  no `auditLog` model), so "the harness fights you" is a hint you are off the intended path.
-
-### L-027 · 2026-09-01 · process
-
-- **Symptom:** with several sessions running in git worktrees, a repo-file gate was about to be
-  satisfied by writing into a _different_ session's working tree — surfacing later as a mystery diff
-  in someone else's PR.
-- **Root cause:** worktrees are nested inside the main checkout, and hooks resolve their paths
-  against that main checkout, not the worktree the session is working in. Whatever branch the shared
-  checkout happens to be parked on is the file the gate points at.
-- **Lesson:** **Never satisfy a gate by writing into whatever tree the hook happens to run from —
-  defer the write to your own worktree and say plainly why. Keep the shared checkout on the
-  integration branch; it is the only sane resting state for a tree that hooks resolve against.**
-- **Guard:** none — judgment. A gate demanding a repo file while you work in a worktree is the cue
-  to check which tree that path actually lands in.
-
 ## tooling
 
 ### L-105 · 2026-09-11 · tooling · train-4 engine gate
@@ -122,16 +94,6 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 - **Guard:** `split-prisma-schema.mjs --check` proves block-identity + `MODEL_DOMAIN` placement;
   `npm run local:drift` is the output-side oracle — both cheap/re-runnable, unlike a `.d.ts` diff.
   Its comment stripper treats a quote left unterminated on its line as regex text, never a string opener.
-
-### L-010 · 2026-08-29 · tooling
-
-- **Symptom:** one workspace's tests "failed" under verify while the same code passed everywhere
-  else.
-- **Root cause:** worker exhaustion under host load — the task exited 1 with **no test report at
-  all**; nothing ever ran.
-- **Lesson:** **A bare non-zero task exit with no test report is environmental — re-run that
-  workspace directly before debugging; CI on clean runners is the authoritative gate.**
-- **Guard:** none — judgment (triage: direct `npx jest`, then filtered turbo).
 
 ### L-055 · 2026-09-03 · tooling · wave D imp-05
 
@@ -765,11 +727,10 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   the server's claim predicate (same status set, from the shared enum), and a navigation off a
   mutation result reads the field the server actually returns — a hand-typed response type is a
   silent `undefined`.**
-- **Guard:** every Convert control in `estimates/[id]/page.tsx` (header :288, sidebar :446)
-  renders on the single `canConvert = status === "ACCEPTED"` binding (:220) since b47a74a5; the
-  inline `status === "ACCEPTED"` at :526 is the "Customer Accepted" banner, not a Convert control.
-  Navigation half: `useConvertEstimate` typed `{ id }`. No unit pin of the predicate yet
-  (`[id]/page.test.tsx` is untracked on the build tree) — follow-up; B394 (B15-NAV) keeps it visible.
+- **Guard:** every Convert control in `estimates/[id]/page.tsx` renders on the single
+  `canConvert = status === "ACCEPTED"` binding (:220) since b47a74a5; `useConvertEstimateToInvoice`
+  typed `{ id }`. Pinned by `[id]/page.test.tsx` (zero controls on DRAFT/SENT, exactly two on
+  ACCEPTED, navigates on `data.id`) — landed 2026-09-13; B394 (B15-NAV) closes with this proof.
 
 ### L-130 · 2026-09-13 · domain · F27 B17/B79 (estimates)
 
@@ -782,7 +743,32 @@ tenantId: null } })` run alongside the main query counts and warns every null-te
   column lands, audit every write site (DTO → service `create`/`update` → form payload) in the
   same change; and UI copy names only the effect the endpoint has (a status flip is "marked as
   sent", never "sent").**
-- **Guard:** `estimates.service.ts create()` persists `dto.issueDate`; shared
-  `Estimate.issueDate?: string | null` in `packages/types/api/misc.ts`; the detail-page toast copy
-  (commit aa47ee9e). No spec pins the write yet — follow-up. `createEstimate.mutate(dto as any, …)`
-  (`estimates/page.tsx:359`) still casts the create dto at b47a74a5 — criterion 6 pending.
+- **Guard:** `estimates.service.ts create()` validates (`/^\d{4}-\d{2}-\d{2}$/` plus an ISO
+  round-trip compare — the regex alone accepts an out-of-range day/month, e.g. `2026-02-31`, which
+  `Date` silently rolls over instead of rejecting) then persists `dto.issueDate`; shared
+  `Estimate.issueDate?: string | null` in `packages/types/api/misc.ts`; the toast copy (aa47ee9e).
+  Pinned by `estimates.service.spec.ts` and `estimates.issue-date.db.spec.ts` (real Postgres) —
+  landed 2026-09-13. `CreateEstimateDto` now declares `issueDate?: string`, no more `as any` cast.
+
+### L-119 · 2026-09-13 · domain · F27 B70 (estimates)
+
+- **Symptom:** a fix round made `accept()`'s atomic claim exclude the full terminal-status set
+  instead of CONVERTED alone, breaking the pre-existing invariant that a DECLINED estimate can
+  still be accepted — then edited the two pre-existing tests that caught this to match, and left
+  the PIN test that would have caught it `it.skip`'d. Shipped invisibly until an adversarial review
+  re-derived the invariant from the baseline.
+- **Root cause:** `voidEstimate()` writes the same enum value `decline()` does (no separate VOID
+  member exists), so one shared exclusion set applied to every transition method is wrong for
+  `accept()` alone, which has a pre-existing invariant the shared value must not block. The fix
+  widened a helper's default to a caller needing an exception, then edited that caller's own
+  regression test instead of the implementation.
+- **Lesson:** **When a change makes a pre-existing, already-passing test fail, that failure is the
+  finding — fix the implementation to keep satisfying it, never the test's assertion to match the
+  new behavior.** A shared helper's default allow/exclude-list is a hypothesis for every caller, not
+  a fact; a caller with its own documented invariant takes an explicit, narrower parameter.
+- **Guard:** `claimTransition(id, to, refusal, exclude = TERMINAL_ESTIMATE_STATUSES)` takes
+  `exclude`; `accept()` passes `["CONVERTED"]` explicitly, commented with why this doesn't reopen
+  the laundering chain. `PIN-B70 accept() still allows DECLINED->ACCEPTED` is live (un-skipped); a
+  new `REG-B70 accept() alone cannot re-open a CONVERTED estimate` test covers the direct path the
+  two pre-existing "laundered chain" tests miss (both short-circuit at `send()`, never reach
+  `accept()`).

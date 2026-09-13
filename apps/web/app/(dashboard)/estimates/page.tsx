@@ -356,7 +356,7 @@ function CreateEstimateModal({
       })),
     };
 
-    createEstimate.mutate(dto as any, {
+    createEstimate.mutate(dto, {
       onSuccess: (est) => {
         toast({ title: "Estimate created", description: est.estimateNumber, variant: "success" });
         onClose();

@@ -46,8 +46,9 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
 
   describe("accept()", () => {
     it("throws and does not flip status when the estimate is already CONVERTED", async () => {
-      // The atomic claim via claimTransition excludes CONVERTED and DECLINED
-      // in its WHERE, so a re-accept attempt matches zero rows.
+      // The atomic claim via claimTransition excludes ONLY CONVERTED in its WHERE
+      // (accept() deliberately keeps DECLINED eligible — see the service's accept()
+      // comment), so a re-accept attempt on a CONVERTED row matches zero rows.
       prisma.estimate.updateMany.mockResolvedValue({ count: 0 });
       // PIN-B70 T27 (bug-test-plan.md): once accept() routes its count-0 path
       // through a findFirst lookup to tell "missing" (404) apart from "wrong
@@ -65,7 +66,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         expect.objectContaining({
           where: expect.objectContaining({
             id: "est-1",
-            status: { notIn: ["CONVERTED", "DECLINED"] },
+            status: { notIn: ["CONVERTED"] },
           }),
           data: { status: "ACCEPTED" },
         }),
@@ -74,7 +75,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       expect(prisma.estimate.findUniqueOrThrow).not.toHaveBeenCalled();
     });
 
-    it("claims the status and returns the updated estimate when not CONVERTED or voided", async () => {
+    it("claims the status and returns the updated estimate when not CONVERTED", async () => {
       prisma.estimate.updateMany.mockResolvedValue({ count: 1 });
       prisma.estimate.findUniqueOrThrow.mockResolvedValue({ id: "est-1", status: "ACCEPTED" });
 
@@ -85,7 +86,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         expect.objectContaining({
           where: expect.objectContaining({
             id: "est-1",
-            status: { notIn: ["CONVERTED", "DECLINED"] },
+            status: { notIn: ["CONVERTED"] },
           }),
           data: { status: "ACCEPTED" },
         }),
@@ -363,18 +364,23 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
   // of 1x. See tests-report.md's "Verbatim runner output" for the exact
   // received-vs-expected value on every one of these.
   //
-  // KNOWN OPEN CONFLICT (flagged by rc-b70, unresolved as of this test-authoring
-  // pass — see this task's tests-report.md and the rt-b70 diff brief): because
+  // RESOLVED CONFLICT (flagged by rc-b70 as open during test-authoring; ruled
+  // by the F27 lead 2026-09-13 after a fix round resolved it the wrong way —
+  // see the service's accept() comment and the "accept() —
+  // DECLINED/voided estimates and missing ids" describe block below): because
   // voidEstimate() has no distinct VOID status, <VOID-STATUS> === "DECLINED".
-  // T4/T28 require the terminal-status notIn set to contain "DECLINED", while
-  // T26 requires accept()'s notIn set to NOT contain "DECLINED" so
-  // DECLINED -> ACCEPTED keeps working. Both are transcribed here verbatim from
-  // bug-test-plan.md; no implementation can satisfy both without a real,
-  // distinct VOID status — a decision the brief explicitly defers to fix-b70.
-  // This conflict is unresolved by this remediation pass; it is a fix-b70
-  // design decision (add a distinct VOID enum value, or accept the functional
-  // limitation), not a test-structure defect, and is called out again in
-  // tests-report.md's "Open issues" section for the PR description.
+  // T4/T28 require the terminal-status notIn set to contain "DECLINED" (send/
+  // decline/voidEstimate all exclude it); T26 requires accept()'s notIn set to
+  // NOT contain "DECLINED" so DECLINED -> ACCEPTED keeps working. Both hold:
+  // accept() takes a narrower, explicit exclude list (`["CONVERTED"]`) than the
+  // other three transitions (`TERMINAL_ESTIMATE_STATUSES`) — the functional
+  // limitation this comment anticipated, not a new distinct VOID enum value
+  // (out of scope for F27, no schema change). An earlier fix round instead made
+  // accept() use the full terminal set and silently edited the accept() tests
+  // above to match, which is the wrong direction: it deleted the evidence of a
+  // real regression instead of catching it. Do not repeat that — if accept()'s
+  // exclusion ever needs to change, that is a separate proposal with its own
+  // evidence, never something folded into a B70-shaped diff.
   //
   // Red-gate scope (rt-b70 remediation item 1): the structural RED check
   // requires every un-skipped test declared in this file to fail against
@@ -387,7 +393,6 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
   // tests-report.md) even though bug-test-plan.md labels them PIN, because
   // what they assert (updateMany key-set parity across all four mutators, and
   // the TERMINAL_ESTIMATE_STATUSES export) doesn't exist until fix-b70 lands.
-  const ACCEPT_MSG = "Converted estimates cannot be re-accepted";
   const VOID_MSG = "Converted estimates cannot be voided";
   const VOID_STATUS = "DECLINED";
   const TERMINAL_NOT_IN = ["CONVERTED", VOID_STATUS];
@@ -491,15 +496,18 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
     // Non-regression only (rt-b70 remediation, red-gate finding #1): this test
     // is GREEN on HEAD today and must stay green after fix-b70 — it is not a
     // repro and does not belong in the structural RED count, which requires
-    // every un-skipped test in this file to fail on HEAD. Skipped here rather
-    // than deleted so fix-b70's own revert-probe / PIN verification pass can
-    // re-enable it (drop `.skip`) to confirm the fix didn't change send()'s
-    // response shape.
-    it.skip("PIN-B70 send() response shape unchanged", async () => {
+    // every un-skipped test in this file to fail on HEAD. Un-skipped now that
+    // fix-b70 has landed: send()'s post-claim read uses findUniqueOrThrow
+    // (chosen over findUnique so a row vanishing between the claim and the
+    // read surfaces loudly instead of returning undefined) — mocked here
+    // alongside the other read methods so this stays agnostic to exactly
+    // which one the implementation ends up using.
+    it("PIN-B70 send() response shape unchanged", async () => {
       const ROW = { id: "est-1", status: "SENT" };
       prisma.estimate.updateMany.mockResolvedValue({ count: 1 });
       prisma.estimate.findFirst.mockResolvedValue(ROW);
       prisma.estimate.findUnique.mockResolvedValue(ROW);
+      prisma.estimate.findUniqueOrThrow.mockResolvedValue(ROW);
       prisma.estimate.update.mockResolvedValue(ROW);
 
       await expect(service.send("est-1")).resolves.toEqual(ROW);
@@ -543,21 +551,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
     });
   });
 
-  describe("accept() — voided estimates and missing ids", () => {
-    it("REG-B70 accept() refuses a voided estimate", async () => {
-      prisma.estimate.updateMany.mockResolvedValue({ count: 0 });
-      prisma.estimate.findFirst.mockResolvedValue({ id: "est-1", status: VOID_STATUS });
-
-      await expect(service.accept("est-1")).rejects.toThrow(BadRequestException);
-      await expect(service.accept("est-1")).rejects.toThrow(ACCEPT_MSG);
-      // The where-shape is the discriminator here, not the rejection alone —
-      // HEAD's `{ not: "CONVERTED" }` also rejects a voided row via count-0,
-      // but never carries a `notIn` set that includes the void status.
-      expect(prisma.estimate.updateMany.mock.calls[0][0].where.status).toEqual({
-        notIn: TERMINAL_NOT_IN,
-      });
-    });
-
+  describe("accept() — DECLINED/voided estimates and missing ids", () => {
     it("REG-B70 missing id is 404 not 400 — accept", async () => {
       prisma.estimate.updateMany.mockResolvedValue({ count: 0 });
       prisma.estimate.findFirst.mockResolvedValue(null);
@@ -566,11 +560,20 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       await expect(service.accept("nope")).rejects.toThrow("Estimate not found");
     });
 
-    // Non-regression only (rt-b70 remediation, red-gate finding #1) — same
-    // rationale as the skipped send() shape pin above: GREEN on HEAD today,
-    // must stay GREEN after fix-b70, not a repro. Skipped from the structural
-    // RED count; re-enable during fix-b70's PIN verification pass.
-    it.skip("PIN-B70 accept() still allows DECLINED->ACCEPTED", async () => {
+    // Ownership note (owner/lead ruling 2026-09-13): an earlier fix round made
+    // accept() exclude the full TERMINAL_ESTIMATE_STATUSES set (CONVERTED +
+    // DECLINED/voided) and mutated the two accept() tests above this describe
+    // block to match — silently dropping the pre-existing DECLINED->ACCEPTED
+    // invariant instead of catching the regression. This test is the restored
+    // original PIN-B70 T26 (bug-test-plan.md), un-skipped: accept() must keep
+    // allowing DECLINED->ACCEPTED (staff can override a decline OR un-void an
+    // estimate — the schema has no separate VOID enum value, so "voided" and
+    // "declined" are the same status and cannot be told apart without a schema
+    // change, which is out of scope for F27). The laundering chain B70 exists to
+    // close does not depend on this exclusion: voidEstimate()/send()/decline()
+    // each refuse to act on an already-CONVERTED row, and convertToInvoice()'s
+    // own ACCEPTED->CONVERTED claim is the actual gate against a second invoice.
+    it("PIN-B70 accept() still allows DECLINED->ACCEPTED", async () => {
       prisma.estimate.updateMany.mockResolvedValue({ count: 1 });
       prisma.estimate.findUniqueOrThrow.mockResolvedValue({ id: "est-1", status: "ACCEPTED" });
 
@@ -604,10 +607,9 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
     // This is a PIN, not a REG (bug-test-plan.md T11 / Escalated item 2).
     // Non-regression only (rt-b70 remediation, red-gate finding #1) — same
     // rationale as above: reclassified REG->PIN per rc-b70 finding 4 because
-    // HEAD already 404s here, so it is GREEN today and after fix-b70. Skipped
-    // from the structural RED count; re-enable during fix-b70's PIN
-    // verification pass.
-    it.skip("PIN-B70 missing id is 404 not 400 — voidEstimate", async () => {
+    // HEAD already 404s here, so it is GREEN today and after fix-b70.
+    // Un-skipped now that fix-b70 has landed.
+    it("PIN-B70 missing id is 404 not 400 — voidEstimate", async () => {
       prisma.estimate.updateMany.mockResolvedValue({ count: 0 });
       prisma.estimate.findUnique.mockResolvedValue(null);
       prisma.estimate.findFirst.mockResolvedValue(null);
@@ -689,6 +691,41 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       }
 
       expect(sendRejected).toBe(true);
+      expect(prisma.invoice.create).toHaveBeenCalledTimes(1);
+    });
+
+    // Chains A/B above both short-circuit at the `send()` refusal (asserted via
+    // `expect(sendRejected).toBe(true)`), so neither one ever actually calls
+    // accept() or exercises accept()'s narrower CONVERTED-only exclusion (Opus
+    // refute-first review, 2026-09-13) — this test closes that gap directly:
+    // the shortest possible re-accept attempt on an already-CONVERTED estimate,
+    // with no send()/void() leg in between.
+    it("REG-B70 accept() alone cannot re-open a CONVERTED estimate for a second invoice", async () => {
+      createLaunderingHarness(prisma, {
+        id: "est-1",
+        tenantId: "test-tenant",
+        status: "ACCEPTED",
+        customerId: "c-1",
+        subtotal: 100,
+        taxAmount: 0,
+        discount: 0,
+        total: 100,
+        notes: null,
+        terms: null,
+        items: [
+          { productId: "prod-1", description: "Widget", qty: 1, unitPrice: 100, subtotal: 100 },
+        ],
+      });
+
+      await service.convertToInvoice("est-1");
+
+      await expect(service.accept("est-1")).rejects.toThrow(
+        "Converted estimates cannot be re-accepted",
+      );
+      await expect(service.convertToInvoice("est-1")).rejects.toThrow(
+        "Only ACCEPTED estimates can be converted",
+      );
+
       expect(prisma.invoice.create).toHaveBeenCalledTimes(1);
     });
   });
@@ -829,6 +866,74 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         data: { status: "CONVERTED" },
       });
       expect(result).toMatchObject(mintedInvoice);
+    });
+  });
+
+  // B79 (rc-b79 finding, bug-test-plan.md T15/T16/T31/T32): create() has an
+  // issueDate write path today (commit aa47ee9e) but no format validation, so
+  // a malformed issueDate ("2026-13-45" -> Invalid Date, "09/01/2026" -> a
+  // silently-misparsed valid Date) is written or produces `Invalid Date`
+  // instead of a 400. DB-lane round-trip and web-submit coverage live in
+  // rt-b79-db / rt-b79-web, not here.
+  describe("create() — B79 issueDate", () => {
+    const VALID_DTO = {
+      customerId: "cust-1",
+      items: [{ description: "Widget", unitPrice: 10, qty: 1 }],
+    };
+
+    beforeEach(() => {
+      prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", pricingTier: 1 });
+      prisma.estimate.create.mockResolvedValue({ id: "est-1" });
+    });
+
+    it("REG-B79 create() persists issueDate", async () => {
+      await service.create({ ...VALID_DTO, issueDate: "2026-09-01" });
+
+      // Red today for the wrong reason expected by bug-test-plan.md (HEAD's
+      // write path already sets this key — see the describe-block comment
+      // above) but still verified against a running assertion, not assumed.
+      expect(prisma.estimate.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ issueDate: new Date("2026-09-01") }),
+        }),
+      );
+    });
+
+    // Red today: HEAD has no format/NaN check on dto.issueDate, so neither case
+    // throws — "2026-13-45" silently becomes `Invalid Date` in the write,
+    // "09/01/2026" silently becomes a valid-but-wrong Date. "2026-02-31" is a
+    // third bypass class the regex-plus-NaN check alone misses: it matches the
+    // YYYY-MM-DD shape and produces a VALID Date via day-of-month rollover
+    // (2026-02-31 -> 2026-03-03) rather than NaN — caught only by round-tripping
+    // the parsed Date back through toISOString and comparing to the input.
+    // Split one test per malformed value (rather than looping in a single "it")
+    // so a failure names the exact offending issueDate in the test title, not
+    // just "REG-B79 create() rejects a malformed issueDate".
+    it.each(["2026-13-45", "09/01/2026", "2026-02-31"])(
+      "REG-B79 create() rejects a malformed issueDate (%s)",
+      async (issueDate) => {
+        await expect(service.create({ ...VALID_DTO, issueDate })).rejects.toThrow(
+          BadRequestException,
+        );
+        await expect(service.create({ ...VALID_DTO, issueDate })).rejects.toThrow(
+          "issueDate must be YYYY-MM-DD",
+        );
+        expect(prisma.estimate.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it("PIN-B79 create() without issueDate leaves it unset", async () => {
+      await service.create({ ...VALID_DTO });
+
+      const data = prisma.estimate.create.mock.calls[0][0].data;
+      expect(data.issueDate).toBeUndefined();
+    });
+
+    it("PIN-B79 expiresAt still parsed as before", async () => {
+      await service.create({ ...VALID_DTO, expiresAt: "2026-04-01" });
+
+      const data = prisma.estimate.create.mock.calls[0][0].data;
+      expect(data.expiresAt.toISOString()).toBe("2026-04-01T00:00:00.000Z");
     });
   });
 });

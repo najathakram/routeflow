@@ -118,15 +118,14 @@ export default function EstimateDetailPage() {
     sendEstimate.mutate(estimate.id, {
       onSuccess: () => {
         toast({
-          // POST /estimates/:id/send only flips DRAFT -> SENT; no email goes out.
           title: "Estimate marked as sent",
-          description: "No email was sent.",
+          description: `${estimate.estimateNumber} is marked Sent. No email was sent.`,
           variant: "success",
         });
       },
       onError: () => {
         toast({
-          title: "Failed to send estimate",
+          title: "Failed to mark estimate as sent",
           description: "Please try again.",
           variant: "error",
         });
@@ -186,10 +185,20 @@ export default function EstimateDetailPage() {
         const target = inv?.id ?? (inv as unknown as { invoiceId?: string } | undefined)?.invoiceId;
         if (target) router.push(`/invoices/${target}`);
       },
-      onError: () => {
+      onError: (err: unknown) => {
+        // B15: surface the server's rejection reason (e.g. "Estimate must be
+        // ACCEPTED") instead of a fixed "Please try again." that hid why a
+        // convert attempt failed. `message` may be a string or an array of
+        // validation messages (class-validator's default shape).
+        const serverMessage = (
+          err as { response?: { data?: { message?: string | string[] } } } | undefined
+        )?.response?.data?.message;
+        const description = Array.isArray(serverMessage)
+          ? serverMessage.join(", ")
+          : (serverMessage ?? "Please try again.");
         toast({
           title: "Failed to convert estimate",
-          description: "Please try again.",
+          description,
           variant: "error",
         });
       },

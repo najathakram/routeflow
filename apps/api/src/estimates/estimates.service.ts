@@ -33,14 +33,21 @@ export class EstimatesService {
   /**
    * B70: atomic claim for estimate status transitions. Ensures only one call succeeds
    * when multiple transitions are attempted concurrently; throws NotFoundException if
-   * estimate is missing, or BadRequestException if the estimate is in a terminal state
-   * (CONVERTED or DECLINED/voided) and the transition is not allowed.
+   * estimate is missing, or BadRequestException if the estimate is in one of `exclude`
+   * and the transition is not allowed. `exclude` defaults to the full terminal set
+   * (CONVERTED + DECLINED/voided); accept() passes a narrower set — see its call site
+   * for why DECLINED is not terminal there.
    */
-  private async claimTransition(id: string, to: EstimateStatus, refusal: string): Promise<void> {
+  private async claimTransition(
+    id: string,
+    to: EstimateStatus,
+    refusal: string,
+    exclude: readonly EstimateStatus[] = TERMINAL_ESTIMATE_STATUSES,
+  ): Promise<void> {
     const r = await this.prisma.forTenant().estimate.updateMany({
       where: {
         id,
-        status: { notIn: [...TERMINAL_ESTIMATE_STATUSES] },
+        status: { notIn: [...exclude] },
       },
       data: { status: to },
     });
@@ -73,6 +80,26 @@ export class EstimatesService {
   }
 
   async create(dto: any) {
+    // B79: issueDate is optional and, unlike expiresAt, has no legacy loose-parse
+    // behavior to preserve — validate the shape before touching the DB so a
+    // malformed value 400s instead of writing Invalid Date or a misparsed date.
+    let issueDate: Date | undefined;
+    if (dto.issueDate != null) {
+      if (typeof dto.issueDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(dto.issueDate)) {
+        throw new BadRequestException("issueDate must be YYYY-MM-DD");
+      }
+      issueDate = new Date(`${dto.issueDate}T00:00:00.000Z`);
+      // The regex alone accepts an out-of-range day/month (e.g. "2026-02-31"),
+      // which Date's day-rollover then silently turns into "2026-03-03" instead
+      // of failing — round-trip through ISO and compare to catch that class.
+      if (
+        Number.isNaN(issueDate.getTime()) ||
+        issueDate.toISOString().slice(0, 10) !== dto.issueDate
+      ) {
+        throw new BadRequestException("issueDate must be YYYY-MM-DD");
+      }
+    }
+
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId } });
@@ -177,7 +204,7 @@ export class EstimatesService {
           taxAmount: tax,
           discount,
           total,
-          issueDate: dto.issueDate ? new Date(dto.issueDate) : null,
+          issueDate,
           expiresAt: dto.expiresAt
             ? new Date(dto.expiresAt)
             : dto.expiryDate
@@ -263,10 +290,23 @@ export class EstimatesService {
     await this.claimTransition(id, "SENT", "Converted or voided estimates cannot be re-sent");
     return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
-  // Atomic claim: a CONVERTED or voided estimate must never be re-accepted, or the
-  // convert path below will mint a second invoice for the same estimate.
+  // Atomic claim: a CONVERTED estimate must never be re-accepted, or the convert path
+  // below could see it as ACCEPTED again. Deliberately excludes ONLY CONVERTED (not
+  // the full TERMINAL_ESTIMATE_STATUSES set): accept() has always allowed
+  // DECLINED -> ACCEPTED (a pre-existing, pre-B70 invariant — staff can override a
+  // decline), and that stays true here. This does not reopen the laundering chain
+  // B70 closed: CONVERTED is an absorbing state across every writer of `status` —
+  // voidEstimate()/send()/decline() below each atomically refuse to act on an
+  // already-CONVERTED row (excluding the full terminal set), so nothing can ever
+  // move a CONVERTED estimate back to ACCEPTED. THAT is what actually gates a second
+  // invoice — convertToInvoice()'s own ACCEPTED->CONVERTED claim only prevents two
+  // *concurrent* converts of one already-ACCEPTED estimate; it does not by itself stop
+  // a laundered one, so never relax voidEstimate/send/decline's exclusion set while
+  // trusting this claim alone.
   async accept(id: string) {
-    await this.claimTransition(id, "ACCEPTED", "Converted estimates cannot be re-accepted");
+    await this.claimTransition(id, "ACCEPTED", "Converted estimates cannot be re-accepted", [
+      "CONVERTED",
+    ]);
     return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
   async decline(id: string) {
@@ -373,6 +413,19 @@ export class EstimatesService {
           },
           include: { customer: { select: { id: true, businessName: true } }, items: true },
         });
+
+        // B17: link the estimate to the invoice it minted, inside the same transaction
+        // as the claim above — a mismatch here (another write raced this same estimate
+        // between the claim and this link) rolls the whole conversion back rather than
+        // leaving a CONVERTED estimate with no invoiceId.
+        const linked = await tx.estimate.updateMany({
+          where: { id, status: "CONVERTED" },
+          data: { invoiceId: inv.id },
+        });
+        if (linked.count !== 1) {
+          throw new ConflictException("Estimate link failed");
+        }
+
         return inv;
       } catch (err: any) {
         // B100/F16b (REG-B100-F): had no P2002 catch — a concurrent convert's

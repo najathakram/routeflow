@@ -53,6 +53,7 @@ export interface CreateEstimateItem {
 
 export interface CreateEstimateDto {
   customerId: string;
+  issueDate?: string;
   expiresAt?: string;
   items: CreateEstimateItem[];
   notes?: string;
