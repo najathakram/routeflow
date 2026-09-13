@@ -1,5 +1,5 @@
-{"id":"B305","batch":"F38","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B306","batch":"F38","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B307","batch":"F38","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B308","batch":"F38","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B309","batch":"F38","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B305","batch":"F38","tier":"T3","state":"in-flight","pr":null,"proof":null,"evidence":null,"claimedFrom":"queued","claimedBy":"rf-F38"}
+{"id":"B306","batch":"F38","tier":"T1","state":"in-flight","pr":null,"proof":null,"evidence":null,"claimedFrom":"queued","claimedBy":"rf-F38"}
+{"id":"B307","batch":"F38","tier":"T3","state":"in-flight","pr":null,"proof":null,"evidence":null,"claimedFrom":"queued","claimedBy":"rf-F38"}
+{"id":"B308","batch":"F38","tier":"T3","state":"in-flight","pr":null,"proof":null,"evidence":null,"claimedFrom":"queued","claimedBy":"rf-F38"}
+{"id":"B309","batch":"F38","tier":"T1","state":"in-flight","pr":null,"proof":null,"evidence":null,"claimedFrom":"queued","claimedBy":"rf-F38"}
