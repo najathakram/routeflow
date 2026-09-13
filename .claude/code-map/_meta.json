@@ -1,6 +1,6 @@
 {
-  "mappedSha": "3f206e6f2170a63aa34ecb1aa88367dc37a86241",
-  "generatedAt": "2026-09-13T23:00:00.000Z",
+  "mappedSha": "bc36a0dd285d3e1b1c442fce6915acc173163bf7",
+  "generatedAt": "2026-09-13T21:27:22.000Z",
   "layout": "split-2026-09-13",
   "areas": ["api", "web", "mobile", "packages"],
   "partCounts": { "api": 13, "web": 9, "mobile": 5, "packages": 0 },
